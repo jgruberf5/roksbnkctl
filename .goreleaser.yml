@@ -1,0 +1,51 @@
+# goreleaser config for roksctl.
+# Run with: goreleaser release --clean (after tagging a release)
+# Cross-compile sweep: linux/darwin/windows × amd64/arm64.
+version: 2
+
+project_name: roksctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: roksctl
+    main: ./cmd/roksctl
+    binary: roksctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/jgruberf5/roksctl/internal/cli.Version={{.Version}}
+      - -X github.com/jgruberf5/roksctl/internal/cli.Commit={{.ShortCommit}}
+      - -X github.com/jgruberf5/roksctl/internal/cli.BuildDate={{.Date}}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # goreleaser v2 renamed `format` (singular) to `formats` (list).
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  # goreleaser v2 renamed name_template → version_template here.
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

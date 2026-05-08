@@ -1,0 +1,24 @@
+# Terraform state and credentials
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+!terraform.tfvars.example
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Schematics lifecycle test artifacts
+workspace.json
+test-reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

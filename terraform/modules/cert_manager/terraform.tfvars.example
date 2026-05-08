@@ -1,0 +1,18 @@
+# ============================================================
+# IBM Cloud Credentials
+# ============================================================
+ibmcloud_api_key        = "your-ibm-cloud-api-key"
+ibmcloud_cluster_region = "ca-tor"
+ibmcloud_resource_group = ""
+
+# ============================================================
+# Target Cluster (required)
+# Provide the name or ID of the existing ROKS cluster
+# ============================================================
+roks_cluster_name_or_id = "my-openshift-cluster"
+
+# ============================================================
+# Namespace Configuration
+# ============================================================
+cert_manager_namespace = "cert-manager"
+cert_manager_version   = "v1.17.3"

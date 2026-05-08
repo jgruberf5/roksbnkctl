@@ -1,0 +1,205 @@
+# ============================================================
+# terraform.tfvars.example
+# F5 BIG-IP Next for Kubernetes 2.3 — Direct Terraform Project
+#
+# Copy this file to terraform.tfvars and fill in your values.
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # edit terraform.tfvars
+#   terraform init
+#   terraform plan
+#   terraform apply
+#   terraform destroy
+#
+# To use a specific branch of a sub-repo, edit the `source`
+# argument in main.tf (e.g. change ?ref=main to ?ref=my-branch).
+# Module sources cannot be parameterised — they must be literals.
+#
+# Required (no default):
+#   ibmcloud_api_key
+# ============================================================
+
+
+# ============================================================
+# IBM Cloud — Common
+# ============================================================
+
+# IBM Cloud API key for all operations.
+ibmcloud_api_key = "YOUR_IBMCLOUD_API_KEY"
+
+# IBM Cloud region where the ROKS cluster and VPC resources are created.
+ibmcloud_cluster_region = "ca-tor"
+
+# Resource group for all resources.
+ibmcloud_resource_group = "default"
+
+
+# ============================================================
+# ROKS Cluster (ws1)
+# ============================================================
+
+# Set to false to skip cluster creation and supply an existing cluster below.
+create_roks_cluster = true
+
+# Required when create_roks_cluster = false.
+roks_cluster_id_or_name = ""
+
+# Set to false to skip Transit Gateway creation.
+create_roks_transit_gateway = true
+
+# Set to false to skip COS instance creation for the OpenShift image registry.
+create_roks_registry_cos_instance = true
+
+# Name of the cluster VPC.
+roks_cluster_vpc_name = "tf-cluster-vpc"
+
+# Name of the OpenShift cluster.
+openshift_cluster_name = "tf-openshift-cluster"
+
+# OpenShift version. Leave empty to use the latest available.
+openshift_cluster_version = "4.18"
+
+# Worker nodes per availability zone.
+roks_workers_per_zone = 1
+
+# Minimum vCPU count for auto-selecting the worker node flavor.
+roks_min_worker_vcpu_count = 16
+
+# Minimum memory (GB) for auto-selecting the worker node flavor.
+roks_min_worker_memory_gb = 64
+
+# Name of the COS instance for the OpenShift image registry.
+roks_cos_instance_name = "tf-openshift-cos-instance"
+
+# Name of the Transit Gateway.
+roks_transit_gateway_name = "tf-tgw"
+
+
+# ============================================================
+# cert-manager (ws2)
+# ============================================================
+
+# Set to false to skip cert-manager installation.
+# cert_manager_namespace is still passed to ws3 (FLO) when false.
+install_cert_manager = true
+
+# Kubernetes namespace for cert-manager.
+cert_manager_namespace = "cert-manager"
+
+# cert-manager Helm chart version.
+cert_manager_version = "v1.17.3"
+
+
+# ============================================================
+# COS Bucket — shared by FLO (ws3) and License (ws5)
+# ============================================================
+
+# Region of the COS bucket containing FAR credentials and JWT files.
+ibmcloud_cos_bucket_region = "us-south"
+
+# Name of the COS instance holding the FAR auth key and JWT.
+ibmcloud_cos_instance_name = "bnk-orchestration"
+
+# Name of the COS bucket holding the FAR auth key and JWT files.
+ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
+
+
+# ============================================================
+# BIG-IP Next for Kubernetes — FLO / CNEInstance / License (ws3–ws5)
+# ============================================================
+
+# Set to false to skip FLO (ws3), CNEInstance (ws4), and License (ws5).
+deploy_bnk = true
+
+
+# --- FLO (ws3) ---
+
+# FAR repository URL for Docker and Helm images.
+far_repo_url = "repo.f5.com"
+
+# Version of the f5-bigip-k8s-manifest chart.
+f5_bigip_k8s_manifest_version = "2.3.0-3.2598.3-0.0.170"
+
+# Filename of the FAR auth key archive in the COS bucket.
+f5_cne_far_auth_file = "f5-far-auth-key.tgz"
+
+# Filename of the subscription JWT in the COS bucket.
+f5_cne_subscription_jwt_file = "trial.jwt"
+
+# Kubernetes namespace for the F5 Lifecycle Operator.
+flo_namespace = "f5-bnk"
+
+# Kubernetes namespace for F5 utility components.
+flo_utils_namespace = "f5-utils"
+
+# BIG-IP credentials for the CIS controller (leave blank if not using CIS).
+bigip_username = "admin"
+bigip_password = "admin"
+bigip_url      = "https://192.168.1.245"
+
+
+# --- FLO output overrides (ws3 → ws4) ---
+#
+# Terraform wires these automatically from ws3 module outputs.
+# Override here only if ws3 was applied outside this Terraform state
+# and you need to supply the values manually.
+
+# flo_trusted_profile_id  = ""
+# flo_cluster_issuer_name = ""
+# cneinstance_network_attachments = ["ens3-ipvlan-l2", "macvlan-conf"]
+
+
+# --- CNEInstance (ws4) ---
+
+# Deployment size for the CNEInstance.  Options: Small, Medium, Large.
+cneinstance_deployment_size = "Small"
+
+# GSLB datacenter name. Leave empty if not using GSLB.
+cneinstance_gslb_datacenter_name = ""
+
+
+# --- License (ws5) ---
+
+# License mode. Options: connected, disconnected.
+license_mode = "connected"
+
+
+# ============================================================
+# Testing Jumphosts (ws6)
+# ============================================================
+
+# Create a jumphost in a client VPC connected to the cluster via Transit Gateway.
+testing_create_tgw_jumphost = true
+
+# Create one jumphost per availability zone inside the cluster VPC.
+testing_create_cluster_jumphosts = false
+
+# Name of the IBM Cloud SSH key to inject into jumphosts.
+# Must already exist in the target region.
+testing_ssh_key_name = "my-ssh-key"
+
+# Instance profile for jumphosts. Leave empty to auto-select.
+testing_jumphost_profile = ""
+
+# Minimum vCPU count for auto-selecting the jumphost profile.
+testing_min_vcpu_count = 4
+
+# Minimum memory (GB) for auto-selecting the jumphost profile.
+testing_min_memory_gb = 8
+
+# Set to true to create a new client VPC for the TGW jumphost.
+# When false, testing_client_vpc_name must reference an existing VPC.
+testing_create_client_vpc = false
+
+# Name of the client VPC for the TGW jumphost.
+testing_client_vpc_name = "tf-testing-vpc"
+
+# Region for the client VPC and TGW jumphost.
+testing_client_vpc_region = "ca-tor"
+
+# Name of the TGW-connected jumphost instance.
+testing_tgw_jumphost_name = "tf-testing-jumphost-tgw"
+
+# Name prefix for cluster jumphosts. Zone is appended: <prefix>-<zone>.
+testing_cluster_jumphost_name_prefix = "tf-testing-jumphost-cluster"

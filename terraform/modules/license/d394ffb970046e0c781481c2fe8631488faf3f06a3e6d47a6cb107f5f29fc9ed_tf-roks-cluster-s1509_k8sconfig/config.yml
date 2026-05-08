@@ -1,0 +1,25 @@
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://c115-e.us-south.containers.cloud.ibm.com:30367
+  name: tf-roks-cluster-s1509/d7scfo9d0nih4si7fdt0
+- cluster:
+    server: https://c115-e.us-south.containers.cloud.ibm.com:30367
+  name: c115-e-us-south-containers-cloud-ibm-com:30367
+contexts:
+- context:
+    cluster: tf-roks-cluster-s1509/d7scfo9d0nih4si7fdt0
+    namespace: default
+    user: ""
+  name: tf-roks-cluster-s1509/d7scfo9d0nih4si7fdt0
+- context:
+    cluster: c115-e-us-south-containers-cloud-ibm-com:30367
+    namespace: default
+    user: IAM#j.gruber@f5.com/c115-e-us-south-containers-cloud-ibm-com:30367
+  name: default/c115-e-us-south-containers-cloud-ibm-com:30367/IAM#j.gruber@f5.com
+current-context: default/c115-e-us-south-containers-cloud-ibm-com:30367/IAM#j.gruber@f5.com
+kind: Config
+users:
+- name: IAM#j.gruber@f5.com/c115-e-us-south-containers-cloud-ibm-com:30367
+  user:
+    token: sha256~epwOKAsmTaPcI1WE91qXqKTS0nJCUuaNKq1aGBas6Vc

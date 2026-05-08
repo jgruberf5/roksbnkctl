@@ -1,0 +1,29 @@
+# ============================================================
+# IBM Cloud Credentials
+# ============================================================
+ibmcloud_api_key        = "your-ibm-cloud-api-key"
+ibmcloud_cluster_region = "ca-tor"
+ibmcloud_resource_group = ""
+
+# ============================================================
+# COS Bucket — JWT fetched from IBM COS
+# ============================================================
+ibmcloud_cos_bucket_region    = "us-south"
+ibmcloud_cos_instance_name    = "bnk-orchestration"
+ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
+
+# ============================================================
+# ROKs Output
+# ============================================================
+roks_cluster_name_or_id = "my-openshift-cluster"
+
+# ============================================================
+# FLO Output
+# ============================================================
+flo_utils_namespace        = "f5-utils"
+
+# ============================================================
+# License
+# ============================================================
+f5_cne_subscription_jwt_file  = "trial.jwt"
+license_mode = "connected"

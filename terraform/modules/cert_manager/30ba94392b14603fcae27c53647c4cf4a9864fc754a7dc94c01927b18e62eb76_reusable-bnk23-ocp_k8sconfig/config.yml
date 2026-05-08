@@ -1,0 +1,25 @@
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://c130-e.us-south.containers.cloud.ibm.com:32332
+  name: reusable-bnk23-ocp/d7t5h2ld028ef2o7uugg
+- cluster:
+    server: https://c130-e.us-south.containers.cloud.ibm.com:32332
+  name: c130-e-us-south-containers-cloud-ibm-com:32332
+contexts:
+- context:
+    cluster: reusable-bnk23-ocp/d7t5h2ld028ef2o7uugg
+    namespace: default
+    user: ""
+  name: reusable-bnk23-ocp/d7t5h2ld028ef2o7uugg
+- context:
+    cluster: c130-e-us-south-containers-cloud-ibm-com:32332
+    namespace: default
+    user: IAM#j.gruber@f5.com/c130-e-us-south-containers-cloud-ibm-com:32332
+  name: default/c130-e-us-south-containers-cloud-ibm-com:32332/IAM#j.gruber@f5.com
+current-context: default/c130-e-us-south-containers-cloud-ibm-com:32332/IAM#j.gruber@f5.com
+kind: Config
+users:
+- name: IAM#j.gruber@f5.com/c130-e-us-south-containers-cloud-ibm-com:32332
+  user:
+    token: sha256~ojgYPVPsvkG7FnkWzd49JuAXZ4ofNLJygja-7H9XcdM
