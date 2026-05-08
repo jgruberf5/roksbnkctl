@@ -1,0 +1,16 @@
+/bin/
+*.test
+*.out
+*.exe
+*.exe~
+.DS_Store
+
+# roksctl-managed state, never commit
+.roksctl/
+
+# IDE
+.vscode/
+.idea/
+
+# goreleaser
+dist/

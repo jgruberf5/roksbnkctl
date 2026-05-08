@@ -1,0 +1,50 @@
+# ============================================================
+# IBM Cloud Credentials
+# ============================================================
+ibmcloud_api_key        = "your-ibm-cloud-api-key"
+ibmcloud_cluster_region = "ca-tor"
+ibmcloud_resource_group = ""
+
+# ============================================================
+# Referenced Cluster (required)
+# ============================================================
+roks_cluster_name_or_id = "my-openshift-cluster"
+
+# ============================================================
+# Shared SSH Key
+# The same key name is used for both jumphost types.
+# The key must exist in client_vpc_region (TGW jumphost)
+# and in ibmcloud_cluster_region (cluster jumphosts).
+# ============================================================
+testing_ssh_key_name     = "my-ssh-key"   # must exist in relevant region(s)
+testing_jumphost_profile = ""             # leave empty to auto-select
+testing_min_vcpu_count   = 4
+testing_min_memory_gb    = 8
+
+# ============================================================
+# Feature Flags
+# Enable one or both jumphost types independently.
+# ============================================================
+testing_create_tgw_jumphost      = false
+testing_create_cluster_jumphosts = false
+
+# ============================================================
+# TGW Jumphost Configuration
+# Only relevant when create_tgw_jumphost = true.
+#
+# VPC resolution:
+#   create_client_vpc = true   → create new VPC named client_vpc_name
+#   create_client_vpc = false  → look up existing VPC named client_vpc_name
+# ============================================================
+testing_create_client_vpc    = true
+testing_client_vpc_name      = "tf-testing-vpc"
+testing_client_vpc_region    = "eu-gb"          # may differ from ibmcloud_cluster_region
+testing_transit_gateway_name = "tf-tgw"         # leave empty to skip TGW attachment
+testing_tgw_jumphost_name    = "tf-testing-jumphost-tgw"
+
+# ============================================================
+# Cluster Jumphosts Configuration
+# Only relevant when create_cluster_jumphosts = true.
+# One jumphost is created per availability zone in ibmcloud_cluster_region.
+# ============================================================
+testing_cluster_jumphost_name_prefix = "tf-testing-jumphost-cluster"

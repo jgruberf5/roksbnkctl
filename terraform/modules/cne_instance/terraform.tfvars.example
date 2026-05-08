@@ -1,0 +1,27 @@
+# ============================================================
+# IBM Cloud Credentials
+# ============================================================
+ibmcloud_api_key        = "your-ibm-cloud-api-key"
+ibmcloud_cluster_region = "ca-tor"
+ibmcloud_resource_group = ""
+
+# ============================================================
+# ROKs Output
+# ============================================================
+roks_cluster_name_or_id = "my-openshift-cluster"
+
+# ============================================================
+# FLO Output
+# ============================================================
+flo_namespace            = "f5-bnk"
+flo_utils_namespace      = "f5-utils"
+flo_cluster_issuer_name  = "sample-issuer"
+flo_f5_bigip_k8s_manifest_version = "2.3.0-3.2598.3-0.0.170"
+flo_ibm_trusted_profile_id = ""
+
+# ============================================================
+# CNEInstance
+# ============================================================
+cneinstance_deployment_size         = "Small"
+cneinstance_gslb_datacenter_name    = ""
+cneinstance_network_attachments     = ["ens3-ipvlan-l2", "macvlan-conf"]
