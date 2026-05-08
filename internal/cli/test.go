@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/k8s"
-	"github.com/jgruberf5/roksctl/internal/test"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/test"
 )
 
 var (
@@ -24,7 +24,7 @@ var (
 var testCmd = &cobra.Command{
 	Use:   "test [suite]",
 	Short: "Run deployment validation tests (default: all)",
-	Long: `roksctl test runs deployment validation against the current workspace.
+	Long: `roksbnkctl test runs deployment validation against the current workspace.
 
 Suites:
   connectivity   HTTP/HTTPS reachability of deployed BNK services
@@ -32,7 +32,7 @@ Suites:
   throughput     iperf3 measurements (north-south by default; v1.x)
   all            run all of the above (default if no suite is specified)
 
-Honors -o json with the roksctl.v1 schema. Exit code 0 on all-pass,
+Honors -o json with the roksbnkctl.v1 schema. Exit code 0 on all-pass,
 non-zero on any-fail — CI-friendly.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runTestDispatch,
@@ -54,7 +54,7 @@ var testThroughputCmd = &cobra.Command{
 	Use:   "throughput",
 	Short: "iperf3 throughput; deploys server pod automatically (v1.x)",
 	Long: `Deploys an iperf3 server in the test namespace and runs the client
-either from the roksctl host (--mode north-south, default) or from a second
+either from the roksbnkctl host (--mode north-south, default) or from a second
 in-cluster pod (--mode east-west).
 
 Not yet implemented — landing in v1.x once the internal/k8s client-go
@@ -79,7 +79,7 @@ func init() {
 	rootCmd.AddCommand(testCmd)
 }
 
-// runTestDispatch handles `roksctl test [suite]` — dispatches the bare
+// runTestDispatch handles `roksbnkctl test [suite]` — dispatches the bare
 // suite name to the corresponding subcommand impl.
 func runTestDispatch(cmd *cobra.Command, args []string) error {
 	suite := "all"
@@ -136,7 +136,7 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
 	kc, err := k8s.NewFromDefault()
@@ -243,7 +243,7 @@ func loadHosts() (*config.Context, []string, error) {
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 	hosts := test.HostsFromConfig(cctx.Workspace)
 	if len(hosts) == 0 {

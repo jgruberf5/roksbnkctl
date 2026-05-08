@@ -1,4 +1,4 @@
-// Package k8s wraps client-go for roksctl's internal Kubernetes
+// Package k8s wraps client-go for roksbnkctl's internal Kubernetes
 // operations:
 //
 //   - kubeconfig loading (env / file / raw bytes)
@@ -6,7 +6,7 @@
 //     teardown)
 //   - (v1.x) component log fetching, pod-readiness watch for status
 //
-// `roksctl kubectl` and `roksctl oc` shell to local installs and do not
+// `roksbnkctl kubectl` and `roksbnkctl oc` shell to local installs and do not
 // use this package — they're convenience verbs that just load the
 // workspace's KUBECONFIG before exec'ing.
 //

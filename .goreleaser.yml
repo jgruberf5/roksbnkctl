@@ -1,18 +1,18 @@
-# goreleaser config for roksctl.
+# goreleaser config for roksbnkctl.
 # Run with: goreleaser release --clean (after tagging a release)
 # Cross-compile sweep: linux/darwin/windows × amd64/arm64.
 version: 2
 
-project_name: roksctl
+project_name: roksbnkctl
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: roksctl
-    main: ./cmd/roksctl
-    binary: roksctl
+  - id: roksbnkctl
+    main: ./cmd/roksbnkctl
+    binary: roksbnkctl
     env:
       - CGO_ENABLED=0
     goos:
@@ -24,9 +24,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/jgruberf5/roksctl/internal/cli.Version={{.Version}}
-      - -X github.com/jgruberf5/roksctl/internal/cli.Commit={{.ShortCommit}}
-      - -X github.com/jgruberf5/roksctl/internal/cli.BuildDate={{.Date}}
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version={{.Version}}
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Commit={{.ShortCommit}}
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
 
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

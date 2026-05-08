@@ -23,17 +23,17 @@ import (
 )
 
 const (
-	roksctlRepo        = "jgruberf5/roksctl"
+	roksbnkctlRepo        = "jgruberf5/roksbnkctl"
 	selfUpdateTimeout = 5 * time.Minute
 )
 
-// runSelfUpdate implements `roksctl self update`:
+// runSelfUpdate implements `roksbnkctl self update`:
 //
 //  1. fetch the latest release tag from GitHub
 //  2. find the asset matching this OS/arch (goreleaser naming)
 //  3. download tarball + checksums.txt
 //  4. verify SHA256
-//  5. extract the roksctl binary
+//  5. extract the roksbnkctl binary
 //  6. atomic-rename onto $0
 //
 // Windows is gated behind a clear error pointing at scoop — the OS
@@ -60,7 +60,7 @@ func runSelfUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if runtime.GOOS == "windows" {
-		return errors.New("in-place update not supported on Windows; use `scoop update roksctl` or download from GitHub Releases")
+		return errors.New("in-place update not supported on Windows; use `scoop update roksbnkctl` or download from GitHub Releases")
 	}
 
 	if !promptYesNo("Update?", true) {
@@ -130,13 +130,13 @@ type ghRelease struct {
 }
 
 func fetchLatestRelease(ctx context.Context) (*ghRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", roksctlRepo)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", roksbnkctlRepo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
@@ -149,7 +149,7 @@ func fetchLatestRelease(ctx context.Context) (*ghRelease, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return nil, fmt.Errorf("no releases for %s yet", roksctlRepo)
+		return nil, fmt.Errorf("no releases for %s yet", roksbnkctlRepo)
 	default:
 		return nil, fmt.Errorf("github returned %s", resp.Status)
 	}
@@ -169,7 +169,7 @@ func assetName(tag string) string {
 	if runtime.GOOS == "windows" {
 		ext = ".zip"
 	}
-	return fmt.Sprintf("roksctl_%s_%s_%s%s", ver, runtime.GOOS, runtime.GOARCH, ext)
+	return fmt.Sprintf("roksbnkctl_%s_%s_%s%s", ver, runtime.GOOS, runtime.GOARCH, ext)
 }
 
 func findAsset(assets []ghAsset, name string) (ghAsset, bool) {
@@ -188,7 +188,7 @@ func httpGetBytes(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -224,8 +224,8 @@ func sha256Hex(b []byte) string {
 
 // ── extraction + atomic replace ─────────────────────────────────────
 
-// extractBnkctlBinary pulls the roksctl binary out of a goreleaser
-// tarball (which contains roksctl + LICENSE + README.md at the top level).
+// extractBnkctlBinary pulls the roksbnkctl binary out of a goreleaser
+// tarball (which contains roksbnkctl + LICENSE + README.md at the top level).
 func extractBnkctlBinary(tarball []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(tarball))
 	if err != nil {
@@ -245,12 +245,12 @@ func extractBnkctlBinary(tarball []byte) ([]byte, error) {
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		if filepath.Base(hdr.Name) != "roksctl" {
+		if filepath.Base(hdr.Name) != "roksbnkctl" {
 			continue
 		}
 		return io.ReadAll(tr)
 	}
-	return nil, errors.New("roksctl binary not found in tarball")
+	return nil, errors.New("roksbnkctl binary not found in tarball")
 }
 
 // replaceBinary writes newBinary to a temp file in the same dir as

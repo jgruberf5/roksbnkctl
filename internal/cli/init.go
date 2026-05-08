@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/ibm"
-	"github.com/jgruberf5/roksctl/internal/tf"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
 // githubRepoPattern matches a GitHub-shaped "owner/repo" slug. Used by
@@ -28,7 +28,7 @@ func looksLikeGitHubRepo(s string) bool {
 }
 
 // envHasAPIKey reports whether any of the env vars the resolution chain
-// honours is set. Used by `roksctl init` to decide whether to opportunistically
+// honours is set. Used by `roksbnkctl init` to decide whether to opportunistically
 // persist the resolved key into the workspace — env-driven setups don't
 // need persistent storage; they have it already.
 func envHasAPIKey() bool {
@@ -41,8 +41,8 @@ func envHasAPIKey() bool {
 }
 
 const (
-	// defaultTFRepo is the source roksctl drives by default. Per the
-	// PRD's "unified tag stream" decision, roksctl pins to the latest
+	// defaultTFRepo is the source roksbnkctl drives by default. Per the
+	// PRD's "unified tag stream" decision, roksbnkctl pins to the latest
 	// release of this repo at init time.
 	defaultTFRepo = "jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3"
 
@@ -52,7 +52,7 @@ const (
 	initTimeout = 60 * time.Second
 )
 
-// runInit implements `roksctl init` — interactive setup that writes the
+// runInit implements `roksbnkctl init` — interactive setup that writes the
 // workspace's config.yaml and (if no global pointer is set) sets the
 // current_workspace pointer.
 //
@@ -72,7 +72,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 	// --upgrade-tf is the cheap path: re-resolve TF source on existing config.
 	if flagUpgradeTF {
 		if cctx.Workspace == nil {
-			return fmt.Errorf("workspace %q does not exist; run `roksctl init` (without --upgrade-tf) to create it", cctx.WorkspaceName)
+			return fmt.Errorf("workspace %q does not exist; run `roksbnkctl init` (without --upgrade-tf) to create it", cctx.WorkspaceName)
 		}
 		ctx, cancel := contextWithTimeout(initTimeout)
 		defer cancel()
@@ -179,7 +179,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "\nNext: roksctl up")
+	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
 	return nil
 }
 
@@ -188,7 +188,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 // rewrites the workspace config. No prompts.
 //
 // For embedded sources there's nothing to upgrade — the TF version is
-// whatever the binary ships, so update via `roksctl self update` (or
+// whatever the binary ships, so update via `roksbnkctl self update` (or
 // reinstall) rather than --upgrade-tf.
 func runUpgradeTF(ctx context.Context, cctx *config.Context) error {
 	if flagTFSource != "" {
@@ -198,8 +198,8 @@ func runUpgradeTF(ctx context.Context, cctx *config.Context) error {
 	}
 	switch cctx.Workspace.TFSource.Type {
 	case "", "embedded":
-		fmt.Fprintln(os.Stderr, "TF source is embedded — its version is tied to the roksctl binary.")
-		fmt.Fprintln(os.Stderr, "Update via `roksctl self update` (or reinstall) to pick up newer HCL.")
+		fmt.Fprintln(os.Stderr, "TF source is embedded — its version is tied to the roksbnkctl binary.")
+		fmt.Fprintln(os.Stderr, "Update via `roksbnkctl self update` (or reinstall) to pick up newer HCL.")
 		return nil
 	case "github":
 		repo := cctx.Workspace.TFSource.Repo
@@ -246,7 +246,7 @@ func saveTFSourceUpdate(cctx *config.Context, tfCfg config.TFSourceCfg) error {
 // just press Enter to keep it.
 //
 // Default for fresh workspaces is "embedded" — the HCL bundled into the
-// roksctl binary. Most users want this; install one binary, get matched
+// roksbnkctl binary. Most users want this; install one binary, get matched
 // CLI + TF together with no separate fetch step.
 func promptTFSource(ctx context.Context, cctx *config.Context) (config.TFSourceCfg, error) {
 	if flagTFSource != "" {
@@ -271,12 +271,12 @@ func promptTFSource(ctx context.Context, cctx *config.Context) (config.TFSourceC
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "\nTerraform source — leave as 'embedded' to use the HCL bundled in roksctl,")
+	fmt.Fprintln(os.Stderr, "\nTerraform source — leave as 'embedded' to use the HCL bundled in roksbnkctl,")
 	fmt.Fprintln(os.Stderr, "or supply owner/repo for a GitHub release, or a path for a local checkout.")
 	input := promptString("TF source", def)
 
 	if input == "" || input == "embedded" {
-		fmt.Fprintln(os.Stderr, "✓ TF source: embedded (bundled with roksctl)")
+		fmt.Fprintln(os.Stderr, "✓ TF source: embedded (bundled with roksbnkctl)")
 		return config.TFSourceCfg{Type: "embedded"}, nil
 	}
 

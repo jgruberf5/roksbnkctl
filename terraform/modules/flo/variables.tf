@@ -186,7 +186,7 @@ variable "kubeconfig_dir" {
 #
 # Default targets the bnk runner image's bind-mount layout (/work is the
 # host cwd inside the container). Consumers running terraform directly on
-# a host (e.g., roksctl) override this to a writable path.
+# a host (e.g., roksbnkctl) override this to a writable path.
 variable "scratch_dir" {
   description = "Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount."
   type        = string

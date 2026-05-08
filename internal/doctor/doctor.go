@@ -10,9 +10,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/ibm"
-	"github.com/jgruberf5/roksctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
 
 // Status is the outcome of a single check.
@@ -24,10 +24,10 @@ const (
 	StatusFail Status = "fail"
 )
 
-// CheckResult is one row in `roksctl doctor` output.
+// CheckResult is one row in `roksbnkctl doctor` output.
 type CheckResult struct {
 	Name   string
-	Why    string // why roksctl cares — one short clause
+	Why    string // why roksbnkctl cares — one short clause
 	Status Status
 	Detail string
 }
@@ -38,11 +38,11 @@ func Run(ctx context.Context, cctx *config.Context) []CheckResult {
 	var out []CheckResult
 
 	// Required + optional tooling.
-	out = append(out, checkBinary("terraform", true, "required for `roksctl up`"))
-	out = append(out, checkBinary("iperf3", false, "needed for `roksctl test throughput`"))
-	out = append(out, checkBinary("kubectl", false, "optional; `roksctl kubectl` passthrough"))
-	out = append(out, checkBinary("oc", false, "optional; `roksctl oc` passthrough"))
-	out = append(out, checkBinary("ibmcloud", false, "optional; `roksctl ibmcloud` passthrough"))
+	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up`"))
+	out = append(out, checkBinary("iperf3", false, "needed for `roksbnkctl test throughput`"))
+	out = append(out, checkBinary("kubectl", false, "optional; `roksbnkctl kubectl` passthrough"))
+	out = append(out, checkBinary("oc", false, "optional; `roksbnkctl oc` passthrough"))
+	out = append(out, checkBinary("ibmcloud", false, "optional; `roksbnkctl ibmcloud` passthrough"))
 
 	// Kubeconfig: warn if missing, since throughput/status/etc need it.
 	out = append(out, checkKubeconfig())
@@ -132,7 +132,7 @@ func checkWorkspace(cctx *config.Context) CheckResult {
 	cr := CheckResult{Name: "workspace", Why: "per-environment config + state"}
 	if cctx.Workspace == nil {
 		cr.Status = StatusWarn
-		cr.Detail = fmt.Sprintf("%q not initialised — run `roksctl init`", cctx.WorkspaceName)
+		cr.Detail = fmt.Sprintf("%q not initialised — run `roksbnkctl init`", cctx.WorkspaceName)
 		return cr
 	}
 	cr.Status = StatusOK

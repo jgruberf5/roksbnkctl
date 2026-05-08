@@ -10,7 +10,7 @@ import (
 // SchemaVersion is the JSON output schema. Bumped only on breaking
 // changes to the result shape — additive changes (new fields) keep the
 // version. CI consumers depend on this for stability.
-const SchemaVersion = "roksctl.v1"
+const SchemaVersion = "roksbnkctl.v1"
 
 // Status is the outcome of a probe or suite.
 type Status string
@@ -45,7 +45,7 @@ type SuiteRun struct {
 	Overall    Status        `json:"overall"`
 }
 
-// AllRun is the umbrella result for `roksctl test all` — composes
+// AllRun is the umbrella result for `roksbnkctl test all` — composes
 // multiple SuiteRuns plus a single overall status.
 type AllRun struct {
 	Schema     string     `json:"schema"`

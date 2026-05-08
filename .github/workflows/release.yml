@@ -4,7 +4,7 @@ name: Release
 # builds linux/darwin/windows × amd64/arm64 binaries, generates the
 # checksums.txt asset, and attaches everything.
 #
-# This is what makes `roksctl self update` actually work — the asset
+# This is what makes `roksbnkctl self update` actually work — the asset
 # names goreleaser produces match what self.go expects.
 #
 # To cut a release:

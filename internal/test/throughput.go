@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ThroughputOptions configures `roksctl test throughput`.
+// ThroughputOptions configures `roksbnkctl test throughput`.
 type ThroughputOptions struct {
 	Mode     string // north-south | east-west (informational; affects how Endpoint was resolved)
 	Endpoint string // host or IP the iperf3 client connects to (port 5201 implied)

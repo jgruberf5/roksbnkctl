@@ -11,7 +11,7 @@ import (
 )
 
 // COSInstance is a thin view of an IBM Cloud Object Storage service
-// instance — the fields roksctl actually displays / uses.
+// instance — the fields roksbnkctl actually displays / uses.
 type COSInstance struct {
 	Name      string
 	GUID      string // short ID (UUID-like)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jgruberf5/roksctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
 func TestRenderTFVars_CreateMode(t *testing.T) {
@@ -86,13 +86,13 @@ func TestRenderTFVars_KubeconfigDir(t *testing.T) {
 		Cluster: config.ClusterCfg{Create: true, Name: "demo"},
 	}
 	var buf bytes.Buffer
-	if err := RenderTFVars(&buf, ws, "/home/user/.roksctl/default/state/kubeconfig", "/home/user/.roksctl/default/state/scratch"); err != nil {
+	if err := RenderTFVars(&buf, ws, "/home/user/.roksbnkctl/default/state/kubeconfig", "/home/user/.roksbnkctl/default/state/scratch"); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
 	for _, want := range []string{
-		`kubeconfig_dir = "/home/user/.roksctl/default/state/kubeconfig"`,
-		`scratch_dir = "/home/user/.roksctl/default/state/scratch"`,
+		`kubeconfig_dir = "/home/user/.roksbnkctl/default/state/kubeconfig"`,
+		`scratch_dir = "/home/user/.roksbnkctl/default/state/scratch"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s\noutput:\n%s", want, out)

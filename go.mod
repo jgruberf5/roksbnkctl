@@ -1,4 +1,4 @@
-module github.com/jgruberf5/roksctl
+module github.com/jgruberf5/roksbnkctl
 
 go 1.23
 

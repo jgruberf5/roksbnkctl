@@ -1,4 +1,4 @@
-// Package roksctl exposes the embedded Terraform source tree as an
+// Package roksbnkctl exposes the embedded Terraform source tree as an
 // embed.FS so the compiled binary ships with the matched HCL — no
 // separate TF download for the default deploy path. External tf_source
 // overrides (a GitHub release, a local path) bypass this and still
@@ -8,7 +8,7 @@
 // resolved relative to the source file's directory and Go forbids
 // embedding paths outside the embedding file's package — so the
 // embedding shim has to sit alongside ./terraform/.
-package roksctl
+package roksbnkctl
 
 import "embed"
 

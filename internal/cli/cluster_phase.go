@@ -11,14 +11,14 @@ import (
 	"github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/ibm"
-	"github.com/jgruberf5/roksctl/internal/tf"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
-// `roksctl cluster ...` is the cluster-phase command group: durable,
+// `roksbnkctl cluster ...` is the cluster-phase command group: durable,
 // per-workspace ROKS cluster lifecycle that's decoupled from BNK trial
-// runs. Subcommands write/read ~/.roksctl/<workspace>/cluster-outputs.json
+// runs. Subcommands write/read ~/.roksbnkctl/<workspace>/cluster-outputs.json
 // so a single cluster can host many BNK trials with different tfvars
 // over its lifetime.
 var clusterCmd = &cobra.Command{
@@ -28,12 +28,12 @@ var clusterCmd = &cobra.Command{
 sits underneath your BNK trials.
 
 Commands:
-  roksctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
-  roksctl cluster down      Destroy the cluster and everything cluster-scoped
-  roksctl cluster register  Discover an already-existing cluster and persist its identity
-  roksctl cluster show      Print the registered cluster from cluster-outputs.json
+  roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
+  roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
+  roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
+  roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json
 
-Each ` + "`roksctl up`" + ` against this workspace will reuse the registered
+Each ` + "`roksbnkctl up`" + ` against this workspace will reuse the registered
 cluster (reading cluster-outputs.json) so multiple BNK trials can share
 one cluster.`,
 }
@@ -48,9 +48,9 @@ var clusterRegisterCmd = &cobra.Command{
 	Short: "Discover an existing ROKS cluster and persist its identity",
 	Long: `Looks up an existing ROKS cluster in your IBM Cloud account,
 verifies its registry COS instance exists, and writes the cluster's
-identity to ~/.roksctl/<workspace>/cluster-outputs.json.
+identity to ~/.roksbnkctl/<workspace>/cluster-outputs.json.
 
-Subsequent ` + "`roksctl up`" + ` runs in this workspace will pick up the
+Subsequent ` + "`roksbnkctl up`" + ` runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.
 
@@ -75,10 +75,10 @@ var clusterUpCmd = &cobra.Command{
 ROKS cluster, transit gateway, registry COS, cert-manager, and the test
 jumphost, but skips the BNK trial modules (flo, cne_instance, license).
 On success, writes the cluster's identity to
-~/.roksctl/<workspace>/cluster-outputs.json so subsequent ` + "`roksctl up`" + `
+~/.roksbnkctl/<workspace>/cluster-outputs.json so subsequent ` + "`roksbnkctl up`" + `
 runs can deploy BNK trials onto this cluster.
 
-Uses a separate state directory (~/.roksctl/<workspace>/state-cluster/)
+Uses a separate state directory (~/.roksbnkctl/<workspace>/state-cluster/)
 so it doesn't tangle with BNK-trial state.`,
 	RunE: runClusterUp,
 }
@@ -86,9 +86,9 @@ so it doesn't tangle with BNK-trial state.`,
 var clusterDownCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Destroy the cluster phase (ROKS + cluster-shared services)",
-	Long: `Tears down everything roksctl cluster up created. Refuses to run
+	Long: `Tears down everything roksbnkctl cluster up created. Refuses to run
 if any BNK trial state exists for this workspace — destroy those first
-with ` + "`roksctl down`" + ` to avoid orphaned BNK resources.`,
+with ` + "`roksbnkctl down`" + ` to avoid orphaned BNK resources.`,
 	RunE: runClusterDown,
 }
 
@@ -98,7 +98,7 @@ func init() {
 	clusterRegisterCmd.Flags().BoolVar(&flagClusterRegisterPrompt, "prompt", false,
 		"prompt for the cluster name even if one is given as an argument")
 
-	// up/down share the same lifecycle flags as `roksctl up`/`down` so users
+	// up/down share the same lifecycle flags as `roksbnkctl up`/`down` so users
 	// only have one mental model. Reuses the package-level flag vars.
 	clusterUpCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt before apply")
 	clusterUpCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
@@ -147,7 +147,7 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 		info.Name, info.ID, info.State, info.MasterKubeVersion)
 	vpc := info.VPCID()
 	if vpc == "" {
-		return fmt.Errorf("cluster %q has no VPC — roksctl only supports vpc-gen2 clusters", info.Name)
+		return fmt.Errorf("cluster %q has no VPC — roksbnkctl only supports vpc-gen2 clusters", info.Name)
 	}
 	fmt.Fprintf(os.Stderr, "✓ VPC %s (resource group %s)\n", vpc, info.ResourceGroupName)
 
@@ -162,7 +162,7 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "→ Verifying registry COS instance %q\n", cosName)
 	cos, err := ic.GetCOSInstanceByName(ctx, cosName)
 	if err != nil {
-		return fmt.Errorf("registry COS instance %q not found in account: %w\n  Either run `roksctl cluster up` to create it, or pass --registry-cos-name <name> if your tfvars uses a different roks_cos_instance_name",
+		return fmt.Errorf("registry COS instance %q not found in account: %w\n  Either run `roksbnkctl cluster up` to create it, or pass --registry-cos-name <name> if your tfvars uses a different roks_cos_instance_name",
 			cosName, err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ COS instance %s (%s)\n", cos.Name, cos.GUID)
@@ -228,7 +228,7 @@ func runClusterShow(cmd *cobra.Command, _ []string) error {
 // user's tfvars during cluster up/down. Forces the BNK trial modules
 // off so cluster phase is genuinely "cluster + cluster-shared services
 // only," regardless of what the user's tfvars say about deploy_bnk.
-const clusterPhaseOverrideContent = `# Generated by roksctl. Do not edit by hand.
+const clusterPhaseOverrideContent = `# Generated by roksbnkctl. Do not edit by hand.
 # Cluster-phase override: BNK trial modules (flo / cne_instance /
 # license) are skipped. cert-manager and the testing jumphost still run
 # — they're cluster-shared singletons that belong with the cluster.
@@ -247,7 +247,7 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 		return nil, nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return nil, nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
 	if err != nil {
@@ -310,7 +310,7 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 
 	if err := persistClusterOutputs(ctx, cctx, tfws, "cluster-up"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: apply succeeded but cluster-outputs.json write failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "         (run `roksctl cluster register <name>` to populate it manually)")
+		fmt.Fprintln(os.Stderr, "         (run `roksbnkctl cluster register <name>` to populate it manually)")
 	}
 	tryAutoKubeconfig(ctx, cctx, tfws)
 	return nil
@@ -324,7 +324,7 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	}
 	if !flagAuto {
 		fmt.Fprintf(os.Stderr, "This will destroy the cluster phase for workspace %q (ROKS + transit gateway + registry COS + cert-manager + jumphost).\n", cctx.WorkspaceName)
-		fmt.Fprintln(os.Stderr, "Any BNK trial state on top of this cluster will be orphaned — run `roksctl down` first if needed.")
+		fmt.Fprintln(os.Stderr, "Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.")
 		if !promptYesNo("Continue?", false) {
 			return errors.New("aborted")
 		}
@@ -344,9 +344,9 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 }
 
 // persistClusterOutputs reads relevant terraform outputs after a
-// cluster apply and writes ~/.roksctl/<workspace>/cluster-outputs.json.
+// cluster apply and writes ~/.roksbnkctl/<workspace>/cluster-outputs.json.
 // Falls back to the IBM SDK for fields the upstream root doesn't emit
-// (VPC ID, registry COS CRN) — same path roksctl cluster register uses.
+// (VPC ID, registry COS CRN) — same path roksbnkctl cluster register uses.
 func persistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, source string) error {
 	outputs, err := tfws.Output(ctx)
 	if err != nil {

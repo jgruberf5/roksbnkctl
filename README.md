@@ -1,16 +1,16 @@
-# roksctl
+# roksbnkctl
 
 A single-binary CLI to deploy F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS, manage its IBM Cloud Object Storage supply chain, and validate the deployment with built-in connectivity / DNS / throughput tests.
 
 > **Status:** Pre-release. Source compiles, unit tests pass, every PRD verb is implemented. Real-cluster shake-out items are tracked in [docs/SHAKEOUT.md](docs/SHAKEOUT.md). No tagged release yet — install via build-from-source.
 
-`roksctl` is the cross-platform Go successor to `bnk` (bash + Docker). The Terraform that drives the deployment lives **in this repo** under [`./terraform/`](./terraform/) and is embedded into the binary at build time — install one binary and you have CLI + matched HCL together. External `tf_source` overrides (`type: github` or `local`) still work for testing forks.
+`roksbnkctl` is the cross-platform Go successor to `bnk` (bash + Docker). The Terraform that drives the deployment lives **in this repo** under [`./terraform/`](./terraform/) and is embedded into the binary at build time — install one binary and you have CLI + matched HCL together. External `tf_source` overrides (`type: github` or `local`) still work for testing forks.
 
 ## What's in this repo
 
 ```
-roksctl/
-├── cmd/roksctl/         # binary entry point
+roksbnkctl/
+├── cmd/roksbnkctl/         # binary entry point
 ├── internal/            # Go packages (cli, tf, ibm, k8s, config, ...)
 ├── terraform/           # the HCL deployment — embedded into the binary at build time
 │   ├── main.tf          # root module
@@ -19,15 +19,15 @@ roksctl/
 └── docs/                # PRD, shake-out notes
 ```
 
-`roksctl` and the Terraform are released and versioned **together** — each tag ships a CLI + matched HCL pair, eliminating skew between binary and TF.
+`roksbnkctl` and the Terraform are released and versioned **together** — each tag ships a CLI + matched HCL pair, eliminating skew between binary and TF.
 
 ## Highlights
 
-- **3-command happy path** — `roksctl init` → `roksctl up` → `roksctl test`. Customer evaluators go from "I have an API key" to "deployed BNK with a passing throughput test" without touching the IBM Cloud web console.
+- **3-command happy path** — `roksbnkctl init` → `roksbnkctl up` → `roksbnkctl test`. Customer evaluators go from "I have an API key" to "deployed BNK with a passing throughput test" without touching the IBM Cloud web console.
 - **Full lifecycle** — `up` / `plan` / `apply` / `down` with auto-resolved Terraform source, automatic post-apply admin-kubeconfig fetch, and idempotent re-runs.
-- **Built-in test suite** — DNS, HTTP/HTTPS connectivity (no external `curl` / `dig` deps), iperf3 throughput against an in-cluster fixture deployed and torn down automatically. Versioned JSON output (`roksctl.v1`) for CI.
+- **Built-in test suite** — DNS, HTTP/HTTPS connectivity (no external `curl` / `dig` deps), iperf3 throughput against an in-cluster fixture deployed and torn down automatically. Versioned JSON output (`roksbnkctl.v1`) for CI.
 - **First-class COS supply chain** — `cos instance/bucket/object` CRUD via official IBM Go SDKs, multipart upload / streaming download for large objects.
-- **Workspaces** — kubectl-style per-environment config + state bundles under `~/.roksctl/<name>/`. Switch with `roksctl ws use`, override one-off with `-w`.
+- **Workspaces** — kubectl-style per-environment config + state bundles under `~/.roksbnkctl/<name>/`. Switch with `roksbnkctl ws use`, override one-off with `-w`.
 - **Cross-platform single binary** — Linux, macOS, Windows. No Docker dependency. ~25 MB statically linked.
 - **No `ibmcloud` CLI dependency** — IBM Go SDKs (platform-services / container-services / cos) cover everything internally.
 
@@ -38,8 +38,8 @@ roksctl/
 > **Build requires Go 1.23 or newer.** If you don't have a recent Go on PATH, use the [Docker-based build](#build-with-docker-no-go-installation-required) — same result, no host Go needed.
 
 ```bash
-git clone https://github.com/jgruberf5/roksctl.git
-cd roksctl
+git clone https://github.com/jgruberf5/roksbnkctl.git
+cd roksbnkctl
 
 # Path A — native build (requires Go 1.23+):
 go version       # confirm: go version go1.23.x or newer
@@ -48,93 +48,93 @@ make build
 # Path B — Docker build (no host Go installation required):
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksctl ./cmd/roksctl'
+  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 export PATH="$PWD/bin:$PATH"
 
-roksctl doctor      # check prereqs (terraform, iperf3, kubeconfig, IBM creds)
-roksctl init        # interactive — region, RG, cluster, OpenShift version
-roksctl up          # plan + confirm + apply + auto-fetch admin kubeconfig
-roksctl test        # DNS + connectivity + throughput
+roksbnkctl doctor      # check prereqs (terraform, iperf3, kubeconfig, IBM creds)
+roksbnkctl init        # interactive — region, RG, cluster, OpenShift version
+roksbnkctl up          # plan + confirm + apply + auto-fetch admin kubeconfig
+roksbnkctl test        # DNS + connectivity + throughput
 ```
 
 ---
 
 ## Full deployments — for people who already know Terraform
 
-If you live in `terraform plan` / `apply` / `destroy` and want to know *exactly* what roksctl is doing for you and where the escape hatches are, this section is the long-form walkthrough.
+If you live in `terraform plan` / `apply` / `destroy` and want to know *exactly* what roksbnkctl is doing for you and where the escape hatches are, this section is the long-form walkthrough.
 
-### What roksctl does on top of Terraform
+### What roksbnkctl does on top of Terraform
 
-| Concern | Raw Terraform | roksctl |
+| Concern | Raw Terraform | roksbnkctl |
 |---|---|---|
-| **Source code** | `git clone`, `git checkout <tag>` | bundled into the roksctl binary (`./terraform/` here, embedded via `go:embed`); `roksctl init` defaults to `tf_source.type=embedded` |
-| **Working directory** | wherever you `cd`'d | `~/.roksctl/<workspace>/state/tf-source/<repo>-<tag>/` (per-workspace, cached) |
-| **State storage** | `terraform.tfstate` next to the .tf files (or a backend block) | roksctl writes a `roksctl_backend_override.tf` configuring `backend "local" { path = ~/.roksctl/<ws>/state/terraform.tfstate }` |
-| **`.terraform/`** | next to the .tf files | `TF_DATA_DIR=~/.roksctl/<ws>/state/terraform/` (out of the source tree) |
+| **Source code** | `git clone`, `git checkout <tag>` | bundled into the roksbnkctl binary (`./terraform/` here, embedded via `go:embed`); `roksbnkctl init` defaults to `tf_source.type=embedded` |
+| **Working directory** | wherever you `cd`'d | `~/.roksbnkctl/<workspace>/state/tf-source/<repo>-<tag>/` (per-workspace, cached) |
+| **State storage** | `terraform.tfstate` next to the .tf files (or a backend block) | roksbnkctl writes a `roksbnkctl_backend_override.tf` configuring `backend "local" { path = ~/.roksbnkctl/<ws>/state/terraform.tfstate }` |
+| **`.terraform/`** | next to the .tf files | `TF_DATA_DIR=~/.roksbnkctl/<ws>/state/terraform/` (out of the source tree) |
 | **API key** | `ibmcloud_api_key = "..."` in tfvars (plaintext on disk) | `IBMCLOUD_API_KEY` env / OS keychain / base64 in `config.yaml` / interactive prompt — **never written to disk in plaintext.** Passed to terraform via `TF_VAR_ibmcloud_api_key` env so it doesn't land in argv either. |
-| **`terraform.tfvars`** | hand-write or copy from `*.example` | `roksctl tfvars` copies `terraform.tfvars.example` from the pinned source. `--var-file` then layers your edits on top of roksctl's auto-rendered tfvars (config.yaml-derived). |
-| **Pre-flight dirs** | upstream module assumes `/work/.bnk/scratch/...` exists (the bnk runner image's bind-mount) | roksctl pre-creates `<state>/kubeconfig/{cert_manager,cne_instance,flo,license}` and `<state>/scratch/f5-manifest`. Renders `kubeconfig_dir` and `scratch_dir` overrides into the auto-tfvars to point the upstream there. |
-| **`terraform init`** | run manually | run automatically as part of every `roksctl up` / `plan` / `apply` / `destroy`, with `-reconfigure` so backend transitions land cleanly |
-| **`terraform plan` summary** | full resource diff | full resource diff (roksctl streams terraform's stdout/stderr verbatim) |
-| **Confirmation gate** | `-auto-approve` flag or interactive prompt | `roksctl up` prompts; `--auto` skips. `roksctl apply` is direct (CI-style). |
-| **Transient apply failures** | re-run `terraform apply` manually | roksctl auto-retries on `exit status 7`, `Connection refused`, `i/o timeout`, etc. — terraform's idempotence skips already-created resources |
-| **Post-apply admin kubeconfig** | `ibmcloud ks cluster config --admin -c <name>` | roksctl reads `roks_cluster_id` from `terraform output`, fetches the admin kubeconfig directly from IBM's container service, writes to `~/.kube/config` (mode 0600). Retries on 404 (cluster propagation lag). |
+| **`terraform.tfvars`** | hand-write or copy from `*.example` | `roksbnkctl tfvars` copies `terraform.tfvars.example` from the pinned source. `--var-file` then layers your edits on top of roksbnkctl's auto-rendered tfvars (config.yaml-derived). |
+| **Pre-flight dirs** | upstream module assumes `/work/.bnk/scratch/...` exists (the bnk runner image's bind-mount) | roksbnkctl pre-creates `<state>/kubeconfig/{cert_manager,cne_instance,flo,license}` and `<state>/scratch/f5-manifest`. Renders `kubeconfig_dir` and `scratch_dir` overrides into the auto-tfvars to point the upstream there. |
+| **`terraform init`** | run manually | run automatically as part of every `roksbnkctl up` / `plan` / `apply` / `destroy`, with `-reconfigure` so backend transitions land cleanly |
+| **`terraform plan` summary** | full resource diff | full resource diff (roksbnkctl streams terraform's stdout/stderr verbatim) |
+| **Confirmation gate** | `-auto-approve` flag or interactive prompt | `roksbnkctl up` prompts; `--auto` skips. `roksbnkctl apply` is direct (CI-style). |
+| **Transient apply failures** | re-run `terraform apply` manually | roksbnkctl auto-retries on `exit status 7`, `Connection refused`, `i/o timeout`, etc. — terraform's idempotence skips already-created resources |
+| **Post-apply admin kubeconfig** | `ibmcloud ks cluster config --admin -c <name>` | roksbnkctl reads `roks_cluster_id` from `terraform output`, fetches the admin kubeconfig directly from IBM's container service, writes to `~/.kube/config` (mode 0600). Retries on 404 (cluster propagation lag). |
 
 You can drop down to plain terraform at any point — see [§ Dropping to raw terraform](#dropping-to-raw-terraform) below.
 
 ### Day 0 — first deployment, end-to-end
 
 ```bash
-# 1. Install the roksctl binary (one-time)
-git clone https://github.com/jgruberf5/roksctl.git
-cd roksctl
+# 1. Install the roksbnkctl binary (one-time)
+git clone https://github.com/jgruberf5/roksbnkctl.git
+cd roksbnkctl
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go build -o bin/roksctl ./cmd/roksctl'
-./bin/roksctl install                 # → ~/.local/bin/roksctl
+  golang:1.23-alpine sh -c 'go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+./bin/roksbnkctl install                 # → ~/.local/bin/roksbnkctl
 
 # 2. Sanity-check prereqs (terraform / iperf3 / IBM creds / kubeconfig)
-roksctl doctor
+roksbnkctl doctor
 
 # 3. Initialise a workspace.
 #    - Verifies the IBM Cloud API key against IAM
 #    - Resolves the resource group ID
 #    - Pins the TF source to the latest release tag
 #    - Persists the API key (keychain → config.yaml b64 fallback)
-#    - Writes ~/.roksctl/default/config.yaml
-roksctl init
+#    - Writes ~/.roksbnkctl/default/config.yaml
+roksbnkctl init
 
 # 4. Bootstrap a starter terraform.tfvars from the pinned upstream source.
 mkdir -p ~/my-bnk-deploy
 cd ~/my-bnk-deploy
-roksctl tfvars
+roksbnkctl tfvars
 #   ✓ Wrote ./terraform.tfvars (1187 bytes)
 
 # 5. Edit. Set whatever the upstream's example doesn't default. The
-#    api_key line can stay as YOUR_IBMCLOUD_API_KEY — roksctl supplies
+#    api_key line can stay as YOUR_IBMCLOUD_API_KEY — roksbnkctl supplies
 #    it via TF_VAR_ibmcloud_api_key from env/keychain.
 $EDITOR ./terraform.tfvars
 
 # 6. Plan — read-only, never prompts.
-roksctl plan --var-file ./terraform.tfvars
+roksbnkctl plan --var-file ./terraform.tfvars
 
 # 7. Apply.
 #    - Pre-creates the kubeconfig + scratch dirs the upstream assumes
-#    - Layers roksctl's auto-tfvars (kubeconfig_dir + scratch_dir overrides)
+#    - Layers roksbnkctl's auto-tfvars (kubeconfig_dir + scratch_dir overrides)
 #      under your --var-file
 #    - Streams terraform output verbatim
 #    - Auto-retries on transient failures
 #    - Post-apply: fetches admin kubeconfig from IBM
-roksctl up --var-file ./terraform.tfvars
+roksbnkctl up --var-file ./terraform.tfvars
 #   ... 25–40 min for fresh ROKS + BNK ...
 #   → Fetching admin kubeconfig for "<cluster-id-from-tf-output>"
 #   ✓ Wrote /home/<user>/.kube/config (...)
 
 # 8. Verify.
-roksctl status                        # workspace + cluster reachability
-roksctl logs flo                      # tail F5 Lifecycle Operator logs
-roksctl test                          # connectivity + DNS + throughput
+roksbnkctl status                        # workspace + cluster reachability
+roksbnkctl logs flo                      # tail F5 Lifecycle Operator logs
+roksbnkctl test                          # connectivity + DNS + throughput
 ```
 
 ### Day N — iteration
@@ -144,38 +144,38 @@ roksctl test                          # connectivity + DNS + throughput
 $EDITOR ./terraform.tfvars
 
 # Re-apply (terraform's natural idempotence handles the diff):
-roksctl up --var-file ./terraform.tfvars
+roksbnkctl up --var-file ./terraform.tfvars
 
 # Bump the TF source to a newer release:
-roksctl init --upgrade-tf
-roksctl up --var-file ./terraform.tfvars
+roksbnkctl init --upgrade-tf
+roksbnkctl up --var-file ./terraform.tfvars
 
-# Inspect a specific terraform output without leaving roksctl:
-roksctl exec terraform output -raw roks_cluster_id
+# Inspect a specific terraform output without leaving roksbnkctl:
+roksbnkctl exec terraform output -raw roks_cluster_id
 
 # Or drop into a workspace-credentialed shell for ad-hoc kubectl/oc/ibmcloud:
-roksctl shell
-(roksctl-default) $ kubectl get pods -A
-(roksctl-default) $ ibmcloud ks cluster ls
-(roksctl-default) $ exit
+roksbnkctl shell
+(roksbnkctl-default) $ kubectl get pods -A
+(roksbnkctl-default) $ ibmcloud ks cluster ls
+(roksbnkctl-default) $ exit
 ```
 
 ### Tear-down
 
 ```bash
 # tfvars still required at destroy time — terraform parses it the same way as apply.
-roksctl down --var-file ./terraform.tfvars
+roksbnkctl down --var-file ./terraform.tfvars
 
 # Optionally remove the workspace's local state dir:
-roksctl ws delete default
+roksbnkctl ws delete default
 ```
 
 ### Layering order — what wins
 
-When `roksctl up`/`plan`/`apply`/`destroy` runs, terraform sees variables from these layers, in order (later wins):
+When `roksbnkctl up`/`plan`/`apply`/`destroy` runs, terraform sees variables from these layers, in order (later wins):
 
-1. **Auto-rendered `terraform.tfvars`** at `~/.roksctl/<ws>/state/terraform.tfvars`. Generated from `config.yaml`. Includes `kubeconfig_dir`, `scratch_dir`, region, RG, cluster, BNK basics.
-2. **Workspace override** at `~/.roksctl/<ws>/terraform.tfvars.user` — optional, persistent across runs of this workspace.
+1. **Auto-rendered `terraform.tfvars`** at `~/.roksbnkctl/<ws>/state/terraform.tfvars`. Generated from `config.yaml`. Includes `kubeconfig_dir`, `scratch_dir`, region, RG, cluster, BNK basics.
+2. **Workspace override** at `~/.roksbnkctl/<ws>/terraform.tfvars.user` — optional, persistent across runs of this workspace.
 3. **`--var-file <path>`** (repeatable). Each `--var-file` flag adds a file in the order given.
 4. **`TF_VAR_*` env vars** — `IBMCLOUD_API_KEY` becomes `TF_VAR_ibmcloud_api_key` automatically. Useful for one-off overrides without editing files.
 
@@ -183,42 +183,42 @@ Standard terraform precedence applies: a `--var-file` value wins over an env-var
 
 ### Dropping to raw terraform
 
-roksctl owns *no* state that terraform doesn't already track. Everything roksctl writes is in the workspace dir; terraform owns the .tf files in the resolved source dir. You can drop into either:
+roksbnkctl owns *no* state that terraform doesn't already track. Everything roksbnkctl writes is in the workspace dir; terraform owns the .tf files in the resolved source dir. You can drop into either:
 
 ```bash
 # All workspace state:
-ls ~/.roksctl/default/
+ls ~/.roksbnkctl/default/
 #   config.yaml                terraform.tfvars.user   (optional)
 #   state/
 #     terraform.tfstate        # terraform's state file
-#     terraform.tfvars         # roksctl's auto-rendered tfvars
+#     terraform.tfvars         # roksbnkctl's auto-rendered tfvars
 #     tf-source/<repo>-<tag>/  # the resolved upstream source
 #       main.tf
 #       variables.tf
 #       modules/...
-#       roksctl_backend_override.tf   # roksctl-managed; configures local backend
+#       roksbnkctl_backend_override.tf   # roksbnkctl-managed; configures local backend
 #     terraform/               # TF_DATA_DIR (.terraform internals)
 #     kubeconfig/<modulename>/ # IBM provider kubeconfig downloads
 #     scratch/                 # FLO FAR + manifest extraction
 #     scratch/f5-manifest/
-#     kubeconfig (file)        # roksctl's downloaded admin kubeconfig
+#     kubeconfig (file)        # roksbnkctl's downloaded admin kubeconfig
 
 # To use plain terraform, cd into the source and set TF_DATA_DIR:
-cd ~/.roksctl/default/state/tf-source/ibmcloud_terraform_bigip_next_for_kubernetes_2_3-v0.6.9/
-export TF_DATA_DIR=~/.roksctl/default/state/terraform
-export TF_VAR_ibmcloud_api_key="$(security find-generic-password -s roksctl -a default/ibmcloud_api_key -w)"  # macOS
+cd ~/.roksbnkctl/default/state/tf-source/ibmcloud_terraform_bigip_next_for_kubernetes_2_3-v0.6.9/
+export TF_DATA_DIR=~/.roksbnkctl/default/state/terraform
+export TF_VAR_ibmcloud_api_key="$(security find-generic-password -s roksbnkctl -a default/ibmcloud_api_key -w)"  # macOS
 terraform plan -var-file ~/my-bnk-deploy/terraform.tfvars
 terraform apply -var-file ~/my-bnk-deploy/terraform.tfvars
 ```
 
-The `roksctl_backend_override.tf` file ensures `terraform plan` writes state to the same `~/.roksctl/<ws>/state/terraform.tfstate` whether you invoke via roksctl or directly. Subsequent `roksctl up` reads the same state seamlessly.
+The `roksbnkctl_backend_override.tf` file ensures `terraform plan` writes state to the same `~/.roksbnkctl/<ws>/state/terraform.tfstate` whether you invoke via roksbnkctl or directly. Subsequent `roksbnkctl up` reads the same state seamlessly.
 
 ### Common questions
 
-- **Does `roksctl up` modify `terraform.tfstate` from a previous bnk-runner deployment?** Yes — same state file, terraform's normal `apply` semantics. Existing resources stay; roksctl just runs the plan against the current TF source.
-- **Can I run multiple workspaces against different clusters?** Yes — each `roksctl -w <name> up` is fully isolated under `~/.roksctl/<name>/`. State, kubeconfig, scratch, even pinned TF version are per-workspace.
-- **What if I want to run terraform from CI without roksctl?** Use the upstream repo's `terraform.tfvars.example` directly and run `terraform` against the upstream module. roksctl's contributions (kubeconfig pre-creation, scratch_dir override, backend.tf) only matter if you want to skip the bnk-runner's `/work` mount layout. Most CI setups can either run inside the bnk runner or replicate roksctl's layout via env vars.
-- **What if the upstream source moves to v0.7.0 with breaking changes?** `roksctl init --upgrade-tf` re-pins; you'll see new variables in `roksctl tfvars` output. roksctl's tfvars rendering is forward-compatible — undeclared variables warn but don't break.
+- **Does `roksbnkctl up` modify `terraform.tfstate` from a previous bnk-runner deployment?** Yes — same state file, terraform's normal `apply` semantics. Existing resources stay; roksbnkctl just runs the plan against the current TF source.
+- **Can I run multiple workspaces against different clusters?** Yes — each `roksbnkctl -w <name> up` is fully isolated under `~/.roksbnkctl/<name>/`. State, kubeconfig, scratch, even pinned TF version are per-workspace.
+- **What if I want to run terraform from CI without roksbnkctl?** Use the upstream repo's `terraform.tfvars.example` directly and run `terraform` against the upstream module. roksbnkctl's contributions (kubeconfig pre-creation, scratch_dir override, backend.tf) only matter if you want to skip the bnk-runner's `/work` mount layout. Most CI setups can either run inside the bnk runner or replicate roksbnkctl's layout via env vars.
+- **What if the upstream source moves to v0.7.0 with breaking changes?** `roksbnkctl init --upgrade-tf` re-pins; you'll see new variables in `roksbnkctl tfvars` output. roksbnkctl's tfvars rendering is forward-compatible — undeclared variables warn but don't break.
 
 ---
 
@@ -228,41 +228,41 @@ The `roksctl_backend_override.tf` file ensures `terraform plan` writes state to 
 
 | Command | Description |
 |---|---|
-| `roksctl init [--upgrade-tf] [--tf-source PATH]` | Interactive setup. Verifies IBM Cloud credentials, resolves the resource group, pins the latest Terraform release, writes `~/.roksctl/<workspace>/config.yaml`. |
-| `roksctl up [--auto] [--var-file PATH ...] [--no-kubeconfig]` | The everyday deploy: `terraform plan` → confirm (unless `--auto`) → `terraform apply` → fetch admin kubeconfig to `~/.kube/config`. |
-| `roksctl plan [--var-file PATH ...]` | Read-only diff. Never prompts. |
-| `roksctl apply [--auto] [--var-file PATH ...] [--no-kubeconfig]` | Direct apply for CI / scripted flows. Skips the plan-and-confirm gate. |
-| `roksctl down [--auto] [--var-file PATH ...]` | `terraform destroy` with confirmation gate. |
+| `roksbnkctl init [--upgrade-tf] [--tf-source PATH]` | Interactive setup. Verifies IBM Cloud credentials, resolves the resource group, pins the latest Terraform release, writes `~/.roksbnkctl/<workspace>/config.yaml`. |
+| `roksbnkctl up [--auto] [--var-file PATH ...] [--no-kubeconfig]` | The everyday deploy: `terraform plan` → confirm (unless `--auto`) → `terraform apply` → fetch admin kubeconfig to `~/.kube/config`. |
+| `roksbnkctl plan [--var-file PATH ...]` | Read-only diff. Never prompts. |
+| `roksbnkctl apply [--auto] [--var-file PATH ...] [--no-kubeconfig]` | Direct apply for CI / scripted flows. Skips the plan-and-confirm gate. |
+| `roksbnkctl down [--auto] [--var-file PATH ...]` | `terraform destroy` with confirmation gate. |
 
 `--var-file` matches terraform's own flag (repeatable, later-wins). See [Supplying your own `terraform.tfvars`](#supplying-your-own-terraformtfvars) for the full layering story.
 
-The Terraform source is pinned at `init` time to the latest release tag of [`ibmcloud_terraform_bigip_next_for_kubernetes_2_3`](https://github.com/jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3). Bump it later with `roksctl init --upgrade-tf`. Use `--tf-source ./path-to-local-checkout` to develop against a local TF working tree.
+The Terraform source is pinned at `init` time to the latest release tag of [`ibmcloud_terraform_bigip_next_for_kubernetes_2_3`](https://github.com/jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3). Bump it later with `roksbnkctl init --upgrade-tf`. Use `--tf-source ./path-to-local-checkout` to develop against a local TF working tree.
 
 ### Workspaces (kubectl-style per-environment isolation)
 
 | Command | Description |
 |---|---|
-| `roksctl ws list` | Table of workspaces; `*` marks current. Shows region / cluster / TF source. |
-| `roksctl ws current` | Print current workspace name. |
-| `roksctl ws use <name>` | Set the persistent current-workspace pointer. |
-| `roksctl ws new <name>` | Create an empty workspace skeleton. |
-| `roksctl ws delete <name> [--force]` | Remove. Refuses if Terraform state lists resources unless `--force`. Cleans the keychain entry. |
+| `roksbnkctl ws list` | Table of workspaces; `*` marks current. Shows region / cluster / TF source. |
+| `roksbnkctl ws current` | Print current workspace name. |
+| `roksbnkctl ws use <name>` | Set the persistent current-workspace pointer. |
+| `roksbnkctl ws new <name>` | Create an empty workspace skeleton. |
+| `roksbnkctl ws delete <name> [--force]` | Remove. Refuses if Terraform state lists resources unless `--force`. Cleans the keychain entry. |
 | `-w/--workspace <name>` | Per-command override. Doesn't touch the persistent pointer. |
 
 ### COS supply chain
 
 | Command | Description |
 |---|---|
-| `roksctl cos instance list` | List COS service instances in the account. |
-| `roksctl cos instance create <name> [--plan standard\|lite] [--plan-id UUID]` | Create a COS instance under the workspace's resource group. |
-| `roksctl cos instance delete <name> [--auto] [--no-recursive]` | Delete an instance and its bound resources. |
-| `roksctl cos bucket create <bucket> --instance <name> [--class standard]` | Create a bucket on the named instance. Storage class configurable. |
-| `roksctl cos bucket delete <bucket> --instance <name>` | Delete a (must-be-empty) bucket. |
-| `roksctl cos bucket list --instance <name>` | List buckets on the instance. |
-| `roksctl cos object put <bucket>/<key> <local-file> --instance <name>` | Upload — multipart for large files, streaming. |
-| `roksctl cos object get <bucket>/<key> <local-file> --instance <name>` | Streaming download. Removes partial files on failure. |
-| `roksctl cos object delete <bucket>/<key> --instance <name>` | Delete an object. |
-| `roksctl cos object list <bucket>[/<prefix>] --instance <name>` | List objects (optionally under a prefix). |
+| `roksbnkctl cos instance list` | List COS service instances in the account. |
+| `roksbnkctl cos instance create <name> [--plan standard\|lite] [--plan-id UUID]` | Create a COS instance under the workspace's resource group. |
+| `roksbnkctl cos instance delete <name> [--auto] [--no-recursive]` | Delete an instance and its bound resources. |
+| `roksbnkctl cos bucket create <bucket> --instance <name> [--class standard]` | Create a bucket on the named instance. Storage class configurable. |
+| `roksbnkctl cos bucket delete <bucket> --instance <name>` | Delete a (must-be-empty) bucket. |
+| `roksbnkctl cos bucket list --instance <name>` | List buckets on the instance. |
+| `roksbnkctl cos object put <bucket>/<key> <local-file> --instance <name>` | Upload — multipart for large files, streaming. |
+| `roksbnkctl cos object get <bucket>/<key> <local-file> --instance <name>` | Streaming download. Removes partial files on failure. |
+| `roksbnkctl cos object delete <bucket>/<key> --instance <name>` | Delete an object. |
+| `roksbnkctl cos object list <bucket>[/<prefix>] --instance <name>` | List objects (optionally under a prefix). |
 
 `--instance` accepts either a friendly name or a CRN.
 
@@ -270,56 +270,56 @@ The Terraform source is pinned at `init` time to the latest release tag of [`ibm
 
 | Command | Description |
 |---|---|
-| `roksctl status` | Workspace + region + cluster + TF source + last-apply timestamp + cluster reachability (node ready count). |
-| `roksctl logs <component> [-f]` | Tail logs for `flo` / `cis` / `cert-manager` / `cneinstance`. Component → namespace + label selector mapping is hardcoded against the upstream chart's defaults. |
-| `roksctl kubeconfig` | Print kubeconfig path. |
-| `roksctl kubeconfig --download [--cluster X]` | Fetch admin kubeconfig from IBM Cloud and write to `$KUBECONFIG` / `~/.kube/config` at mode 0600. |
-| `roksctl kubeconfig --export` | Print kubeconfig contents to stdout. |
-| `roksctl shell` | Interactive `$SHELL` subshell with `KUBECONFIG`, `IBMCLOUD_API_KEY`, `IC_API_KEY`, `IBMCLOUD_REGION` exported. |
-| `roksctl exec <command...>` | One-shot run with the same env loaded. |
-| `roksctl kubectl <args...>` | Passthrough to local `kubectl` with workspace credentials loaded. |
-| `roksctl oc <args...>` | Passthrough to local `oc`. |
-| `roksctl ibmcloud <args...>` | Passthrough to local `ibmcloud`. |
+| `roksbnkctl status` | Workspace + region + cluster + TF source + last-apply timestamp + cluster reachability (node ready count). |
+| `roksbnkctl logs <component> [-f]` | Tail logs for `flo` / `cis` / `cert-manager` / `cneinstance`. Component → namespace + label selector mapping is hardcoded against the upstream chart's defaults. |
+| `roksbnkctl kubeconfig` | Print kubeconfig path. |
+| `roksbnkctl kubeconfig --download [--cluster X]` | Fetch admin kubeconfig from IBM Cloud and write to `$KUBECONFIG` / `~/.kube/config` at mode 0600. |
+| `roksbnkctl kubeconfig --export` | Print kubeconfig contents to stdout. |
+| `roksbnkctl shell` | Interactive `$SHELL` subshell with `KUBECONFIG`, `IBMCLOUD_API_KEY`, `IC_API_KEY`, `IBMCLOUD_REGION` exported. |
+| `roksbnkctl exec <command...>` | One-shot run with the same env loaded. |
+| `roksbnkctl kubectl <args...>` | Passthrough to local `kubectl` with workspace credentials loaded. |
+| `roksbnkctl oc <args...>` | Passthrough to local `oc`. |
+| `roksbnkctl ibmcloud <args...>` | Passthrough to local `ibmcloud`. |
 
 ### Built-in deployment validation
 
 | Command | Description |
 |---|---|
-| `roksctl test [suite]` | Run `connectivity` / `dns` / `throughput`. Bare `test` runs `all` (DNS + connectivity in v1). |
-| `roksctl test connectivity [--insecure]` | HTTP/HTTPS reachability of hosts in `test.connectivity.extra_hosts`. Built-in `net/http` — no external `curl`. `--insecure` skips TLS validation. |
-| `roksctl test dns` | DNS resolution via Go's `net.Resolver` — no external `dig`. |
-| `roksctl test throughput [--mode north-south\|east-west] [--keep]` | Deploys an `iperf3 -s` pod (image configurable) into the `roksctl-test` namespace, exposes via LoadBalancer (north-south) or ClusterIP (east-west), runs `iperf3 -c` from the host, parses `-J` JSON output. Tears down on exit unless `--keep`. |
-| `roksctl test list` | List available suites. |
-| `roksctl test -o json` | Versioned JSON output (`{"schema":"roksctl.v1", ...}`) for CI consumers. Exit 0 on all-pass, 1 on any-fail. |
+| `roksbnkctl test [suite]` | Run `connectivity` / `dns` / `throughput`. Bare `test` runs `all` (DNS + connectivity in v1). |
+| `roksbnkctl test connectivity [--insecure]` | HTTP/HTTPS reachability of hosts in `test.connectivity.extra_hosts`. Built-in `net/http` — no external `curl`. `--insecure` skips TLS validation. |
+| `roksbnkctl test dns` | DNS resolution via Go's `net.Resolver` — no external `dig`. |
+| `roksbnkctl test throughput [--mode north-south\|east-west] [--keep]` | Deploys an `iperf3 -s` pod (image configurable) into the `roksbnkctl-test` namespace, exposes via LoadBalancer (north-south) or ClusterIP (east-west), runs `iperf3 -c` from the host, parses `-J` JSON output. Tears down on exit unless `--keep`. |
+| `roksbnkctl test list` | List available suites. |
+| `roksbnkctl test -o json` | Versioned JSON output (`{"schema":"roksbnkctl.v1", ...}`) for CI consumers. Exit 0 on all-pass, 1 on any-fail. |
 
 ### Operations + meta
 
 | Command | Description |
 |---|---|
-| `roksctl doctor` | Eight-check prereq + credentials report: `terraform` / `iperf3` / `kubectl` / `oc` / `ibmcloud` on PATH, kubeconfig present, workspace initialised, API key resolves, IBM Cloud auth works. Exits non-zero on failures (warnings don't block). |
-| `roksctl version` | Version + commit + build date (populated via `-ldflags`). |
-| `roksctl install [--dir PATH] [--force]` | Copy the running binary into a directory on `$PATH`. Defaults to `~/.local/bin` (no sudo); overridable. Idempotent — if the running binary is already at the destination, no-op. |
-| `roksctl tfvars [-o PATH] [--force]` | Emit the pinned TF source's `terraform.tfvars.example` to a file (default `./terraform.tfvars`) or stdout (`-o -`). Use as a starter for `roksctl up --var-file`. |
-| `roksctl self update` | Pull the latest GitHub release tarball, verify SHA256 against `checksums.txt`, atomic-replace the running binary. Linux/macOS only. |
-| `roksctl completion {bash\|zsh\|fish\|powershell}` | Print shell completion script (cobra built-in). |
+| `roksbnkctl doctor` | Eight-check prereq + credentials report: `terraform` / `iperf3` / `kubectl` / `oc` / `ibmcloud` on PATH, kubeconfig present, workspace initialised, API key resolves, IBM Cloud auth works. Exits non-zero on failures (warnings don't block). |
+| `roksbnkctl version` | Version + commit + build date (populated via `-ldflags`). |
+| `roksbnkctl install [--dir PATH] [--force]` | Copy the running binary into a directory on `$PATH`. Defaults to `~/.local/bin` (no sudo); overridable. Idempotent — if the running binary is already at the destination, no-op. |
+| `roksbnkctl tfvars [-o PATH] [--force]` | Emit the pinned TF source's `terraform.tfvars.example` to a file (default `./terraform.tfvars`) or stdout (`-o -`). Use as a starter for `roksbnkctl up --var-file`. |
+| `roksbnkctl self update` | Pull the latest GitHub release tarball, verify SHA256 against `checksums.txt`, atomic-replace the running binary. Linux/macOS only. |
+| `roksbnkctl completion {bash\|zsh\|fish\|powershell}` | Print shell completion script (cobra built-in). |
 | `-o json`, `--no-color`, `-v/--verbose`, `-q/--quiet` | Global output flags. |
 
 ### Configuration model
 
-- **Per-workspace:** `~/.roksctl/<workspace>/config.yaml` — region, resource group, cluster details, BNK options, TF source pin, test settings.
-- **Global:** `~/.roksctl/config.yaml` — `current_workspace` pointer + UI defaults.
-- **State:** `~/.roksctl/<workspace>/state/` — `terraform.tfstate`, the auto-generated `terraform.tfvars`, kubeconfig, scratch downloads.
-- **User tfvars override** *(optional)*: `~/.roksctl/<workspace>/terraform.tfvars.user` — see [Importing an existing tfvars](#importing-an-existing-terraformtfvars) below.
-- **Override base dir:** `ROKSCTL_HOME=/path/to/state` env var.
+- **Per-workspace:** `~/.roksbnkctl/<workspace>/config.yaml` — region, resource group, cluster details, BNK options, TF source pin, test settings.
+- **Global:** `~/.roksbnkctl/config.yaml` — `current_workspace` pointer + UI defaults.
+- **State:** `~/.roksbnkctl/<workspace>/state/` — `terraform.tfstate`, the auto-generated `terraform.tfvars`, kubeconfig, scratch downloads.
+- **User tfvars override** *(optional)*: `~/.roksbnkctl/<workspace>/terraform.tfvars.user` — see [Importing an existing tfvars](#importing-an-existing-terraformtfvars) below.
+- **Override base dir:** `ROKSBNKCTL_HOME=/path/to/state` env var.
 - **Secrets:** `IBMCLOUD_API_KEY` env var, OS keychain (macOS Keychain / libsecret / Windows Credential Manager via `zalando/go-keyring`), or — opt-in — a base64-encoded `api_key_b64` field in the workspace `config.yaml`. Plaintext `api_key:` is still rejected. The keychain/env path is the recommended secure default; see [API key resolution](#api-key-resolution) below.
-- **`.env` file in cwd:** roksctl loads `./.env` at startup (if present) so project-scoped credentials don't have to live in your shell profile. Existing environment variables take precedence — `.env` only fills in unset ones.
+- **`.env` file in cwd:** roksbnkctl loads `./.env` at startup (if present) so project-scoped credentials don't have to live in your shell profile. Existing environment variables take precedence — `.env` only fills in unset ones.
 
 ### API key resolution
 
-When roksctl needs the IBM Cloud API key — at `init`, before any cluster operation, before terraform runs — it walks this chain:
+When roksbnkctl needs the IBM Cloud API key — at `init`, before any cluster operation, before terraform runs — it walks this chain:
 
 1. **Environment variables** (in order): `IBMCLOUD_API_KEY`, `IC_API_KEY`, `TF_VAR_ibmcloud_api_key`, `TF_VAR_IBMCLOUD_API_KEY`, `TF_VAR_IC_API_KEY`.
-2. **OS keychain** — `roksctl` service, user `<workspace>/ibmcloud_api_key`. Saved via `roksctl init`'s post-prompt offer.
+2. **OS keychain** — `roksbnkctl` service, user `<workspace>/ibmcloud_api_key`. Saved via `roksbnkctl init`'s post-prompt offer.
 3. **Workspace config** — `ibmcloud.api_key_b64` (base64-encoded, see warning below).
 4. **Interactive prompt** — only on a TTY; offers to save to the keychain after.
 
@@ -333,7 +333,7 @@ If keychain isn't an option (sealed CI workstation, custom VM image, working-fro
 echo -n "$IBMCLOUD_API_KEY" | base64
 # 9MfeoOlh...
 
-# Then edit ~/.roksctl/<workspace>/config.yaml:
+# Then edit ~/.roksbnkctl/<workspace>/config.yaml:
 #   ibmcloud:
 #     region: us-south
 #     resource_group: default
@@ -351,7 +351,7 @@ The plaintext-rejection guard for `config.yaml` only blocks fields *named* `api_
 
 ### `.env` in the working directory
 
-Any process-level env var roksctl reads can come from a `.env` file in the directory where you run `roksctl`. Standard `KEY=VALUE` syntax with `#` comments and quoted values, parsed by [`github.com/joho/godotenv`](https://github.com/joho/godotenv).
+Any process-level env var roksbnkctl reads can come from a `.env` file in the directory where you run `roksbnkctl`. Standard `KEY=VALUE` syntax with `#` comments and quoted values, parsed by [`github.com/joho/godotenv`](https://github.com/joho/godotenv).
 
 ```ini
 # .env (in your project dir)
@@ -365,7 +365,7 @@ Then:
 
 ```bash
 cd ~/myproject
-roksctl up                       # picks up .env automatically
+roksbnkctl up                       # picks up .env automatically
 ```
 
 Precedence:
@@ -377,10 +377,10 @@ Precedence:
 
 `.env` only loads from cwd, not the workspace dir or `$HOME`. The convention follows tools like `direnv` / `dotenv-cli` / Docker Compose. **Make sure `.env` is in your project's `.gitignore`** — it has secrets.
 
-If `.env` exists but parses badly, roksctl prints a warning and continues with whatever env vars were already set:
+If `.env` exists but parses badly, roksbnkctl prints a warning and continues with whatever env vars were already set:
 
 ```
-roksctl: warning: parsing .env: line 3: unterminated string
+roksbnkctl: warning: parsing .env: line 3: unterminated string
 ```
 
 ### Supplying your own `terraform.tfvars`
@@ -390,26 +390,26 @@ Three ways, depending on whether you already have a tfvars or want to start from
 #### Bootstrap from the upstream example
 
 ```bash
-roksctl init                    # pins a TF source first
-roksctl tfvars                  # writes ./terraform.tfvars from the
+roksbnkctl init                    # pins a TF source first
+roksbnkctl tfvars                  # writes ./terraform.tfvars from the
                                # pinned source's terraform.tfvars.example
 $EDITOR ./terraform.tfvars
-roksctl up --var-file ./terraform.tfvars
+roksbnkctl up --var-file ./terraform.tfvars
 ```
 
-`roksctl tfvars` resolves the workspace's pinned TF source (downloading the tarball if not yet cached), reads its `terraform.tfvars.example`, and writes a copy to a path you can edit. Refuses to clobber an existing file unless `--force`. Pass `-o -` to write to stdout instead, or `-o <path>` for a non-default destination.
+`roksbnkctl tfvars` resolves the workspace's pinned TF source (downloading the tarball if not yet cached), reads its `terraform.tfvars.example`, and writes a copy to a path you can edit. Refuses to clobber an existing file unless `--force`. Pass `-o -` to write to stdout instead, or `-o <path>` for a non-default destination.
 
 #### `--var-file` (recommended; matches terraform's flag exactly)
 
 ```bash
-roksctl plan --var-file /path/to/terraform.tfvars
-roksctl up   --var-file /path/to/terraform.tfvars
+roksbnkctl plan --var-file /path/to/terraform.tfvars
+roksbnkctl up   --var-file /path/to/terraform.tfvars
 ```
 
 Repeatable, in the order given:
 
 ```bash
-roksctl up --var-file base.tfvars --var-file overlay.tfvars
+roksbnkctl up --var-file base.tfvars --var-file overlay.tfvars
 ```
 
 Available on `up`, `plan`, `apply`, and `down`. Same precedence as terraform: later files override earlier ones.
@@ -417,7 +417,7 @@ Available on `up`, `plan`, `apply`, and `down`. Same precedence as terraform: la
 This is the right primary surface when:
 
 - You have an existing `terraform.tfvars` from a prior bnk workflow.
-- You want to set TF variables not exposed in roksctl's `config.yaml` schema (`testing_*`, `roks_min_worker_*`, `cert_manager_namespace`, `bigip_*`, etc. — the upstream module accepts ~40 variables; `config.yaml` maps the most common subset).
+- You want to set TF variables not exposed in roksbnkctl's `config.yaml` schema (`testing_*`, `roks_min_worker_*`, `cert_manager_namespace`, `bigip_*`, etc. — the upstream module accepts ~40 variables; `config.yaml` maps the most common subset).
 - You're scripting CI runs and want explicit, file-by-file control.
 
 #### `terraform.tfvars.user` (workspace-persistent override)
@@ -425,23 +425,23 @@ This is the right primary surface when:
 If you want the same override every time without remembering the flag, drop a file at:
 
 ```
-~/.roksctl/<workspace>/terraform.tfvars.user
+~/.roksbnkctl/<workspace>/terraform.tfvars.user
 ```
 
-roksctl picks it up automatically on every up/plan/apply/down. Useful for per-workspace persistence; `--var-file` flags still apply on top.
+roksbnkctl picks it up automatically on every up/plan/apply/down. Useful for per-workspace persistence; `--var-file` flags still apply on top.
 
 #### Layering order
 
-roksctl assembles `-var-file` arguments in this order — terraform's later-wins rule means each layer can override earlier ones:
+roksbnkctl assembles `-var-file` arguments in this order — terraform's later-wins rule means each layer can override earlier ones:
 
-1. **Auto-rendered** `~/.roksctl/<workspace>/state/terraform.tfvars` (from `config.yaml`).
+1. **Auto-rendered** `~/.roksbnkctl/<workspace>/state/terraform.tfvars` (from `config.yaml`).
 2. **`terraform.tfvars.user`** in the workspace dir, if present.
 3. **`--var-file`** paths from the command line, in flag order.
 
 You'll see the layering in the run output:
 
 ```
-→ Layering user tfvars from /home/jgruber/.roksctl/default/terraform.tfvars.user
+→ Layering user tfvars from /home/jgruber/.roksbnkctl/default/terraform.tfvars.user
 → terraform init
 → terraform plan
 ```
@@ -449,19 +449,19 @@ You'll see the layering in the run output:
 #### Quick start with an existing tfvars
 
 ```bash
-roksctl init                                              # answer minimally — your tfvars will override
-roksctl plan --var-file /home/me/project/terraform.tfvars # confirm merged values
-roksctl up   --var-file /home/me/project/terraform.tfvars
+roksbnkctl init                                              # answer minimally — your tfvars will override
+roksbnkctl plan --var-file /home/me/project/terraform.tfvars # confirm merged values
+roksbnkctl up   --var-file /home/me/project/terraform.tfvars
 ```
 
 #### Note on the API key
 
-If your `terraform.tfvars` contains `ibmcloud_api_key = "..."` it'll be sourced from the file rather than roksctl's normal env-var/keychain path. That works, but the key ends up in plaintext on disk wherever the file lives. The recommended pattern: remove the `ibmcloud_api_key` line from your tfvars and let roksctl's keychain/env-var resolution pass it via `TF_VAR_ibmcloud_api_key` instead.
+If your `terraform.tfvars` contains `ibmcloud_api_key = "..."` it'll be sourced from the file rather than roksbnkctl's normal env-var/keychain path. That works, but the key ends up in plaintext on disk wherever the file lives. The recommended pattern: remove the `ibmcloud_api_key` line from your tfvars and let roksbnkctl's keychain/env-var resolution pass it via `TF_VAR_ibmcloud_api_key` instead.
 
 ```bash
 # Strip the api_key line on the way in:
 grep -v '^ibmcloud_api_key' /path/to/terraform.tfvars > /tmp/no-key.tfvars
-roksctl up --var-file /tmp/no-key.tfvars
+roksbnkctl up --var-file /tmp/no-key.tfvars
 ```
 
 ---
@@ -474,24 +474,24 @@ roksctl up --var-file /tmp/no-key.tfvars
   - **No Go installed (or have an older version)?** Skip to [Build with Docker](#build-with-docker-no-go-installation-required) — produces the same binary without touching the host Go install.
   - Need to upgrade? Pre-built Go installers: [go.dev/dl](https://go.dev/dl/). On macOS: `brew install go`. On Linux: distro package or the tarball from go.dev.
 - **terraform** on `PATH` (>= 1.5) — required at runtime for `up` / `plan` / `apply` / `down`.
-- **iperf3** on `PATH` — required for `roksctl test throughput`.
-- (Optional) **kubectl / oc / ibmcloud** — only for the corresponding passthrough commands and `roksctl shell`.
+- **iperf3** on `PATH` — required for `roksbnkctl test throughput`.
+- (Optional) **kubectl / oc / ibmcloud** — only for the corresponding passthrough commands and `roksbnkctl shell`.
 
-`roksctl doctor` reports each of the above with ✓/⚠/✗ once you have a binary.
+`roksbnkctl doctor` reports each of the above with ✓/⚠/✗ once you have a binary.
 
 ### Build with Docker (no Go installation required)
 
 This is the recommended path if your host doesn't have Go 1.23+. Uses the official `golang:1.23-alpine` image; produces a binary in `./bin/`.
 
 ```bash
-git clone https://github.com/jgruberf5/roksctl.git
-cd roksctl
+git clone https://github.com/jgruberf5/roksbnkctl.git
+cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksctl ./cmd/roksctl'
+  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
-./bin/roksctl --help
+./bin/roksbnkctl --help
 ```
 
 Anatomy of the docker invocation:
@@ -513,13 +513,13 @@ Set `GOOS` / `GOARCH` env vars in the same `docker run` to produce binaries for 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksctl-darwin-arm64 ./cmd/roksctl'
+  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksctl.exe ./cmd/roksctl'
+  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 
 # Full sweep (mirror of what goreleaser produces for tagged releases)
 for os in linux darwin windows; do
@@ -528,7 +528,7 @@ for os in linux darwin windows; do
     docker run --rm -v "$PWD:/work" -w /work \
       --user "$(id -u):$(id -g)" -e HOME=/tmp \
       -e GOOS=$os -e GOARCH=$arch \
-      golang:1.23-alpine sh -c "go build -o bin/roksctl_${os}_${arch}${ext} ./cmd/roksctl"
+      golang:1.23-alpine sh -c "go build -o bin/roksbnkctl_${os}_${arch}${ext} ./cmd/roksbnkctl"
   done
 done
 ```
@@ -540,45 +540,45 @@ Each binary is statically linked (Alpine + `CGO_ENABLED=0` is the default for cr
 If `go version` reports `1.23` or newer:
 
 ```bash
-git clone https://github.com/jgruberf5/roksctl.git
-cd roksctl
+git clone https://github.com/jgruberf5/roksbnkctl.git
+cd roksbnkctl
 
 go mod tidy                          # first time only — populates go.sum
-make build                           # → bin/roksctl
+make build                           # → bin/roksbnkctl
 
 # Or without Make:
-go build -o bin/roksctl ./cmd/roksctl
+go build -o bin/roksbnkctl ./cmd/roksbnkctl
 
-# Install via roksctl itself (recommended — copies into ~/.local/bin):
-./bin/roksctl install
+# Install via roksbnkctl itself (recommended — copies into ~/.local/bin):
+./bin/roksbnkctl install
 
 # Or specify a directory:
-./bin/roksctl install --dir ~/bin
-sudo ./bin/roksctl install --dir /usr/local/bin
+./bin/roksbnkctl install --dir ~/bin
+sudo ./bin/roksbnkctl install --dir /usr/local/bin
 
 # Or just add ./bin to PATH for ad-hoc use:
 export PATH="$PWD/bin:$PATH"
 
-roksctl --help
+roksbnkctl --help
 ```
 
 Make targets:
 
 ```
-make build      # go build -ldflags ... -o bin/roksctl ./cmd/roksctl
+make build      # go build -ldflags ... -o bin/roksbnkctl ./cmd/roksbnkctl
 make test       # go test ./...
 make vet        # go vet ./...
 make tidy       # go mod tidy
-make run        # build + ./bin/roksctl --help
+make run        # build + ./bin/roksbnkctl --help
 make clean      # rm -rf bin/
 ```
 
-`VERSION` / `COMMIT` / `DATE` are passed via `-ldflags` and surface in `roksctl version`:
+`VERSION` / `COMMIT` / `DATE` are passed via `-ldflags` and surface in `roksbnkctl version`:
 
 ```bash
 make build VERSION=v0.1.0
-./bin/roksctl version
-# roksctl v0.1.0 (commit abc1234, built 2026-05-08T...)
+./bin/roksbnkctl version
+# roksbnkctl v0.1.0 (commit abc1234, built 2026-05-08T...)
 ```
 
 ### Tests
@@ -621,8 +621,8 @@ The most common failure on a fresh clone is **Go too old** — `go: module requi
 ## Layout
 
 ```
-roksctl/
-├── cmd/roksctl/                # main package — calls cli.Execute()
+roksbnkctl/
+├── cmd/roksbnkctl/                # main package — calls cli.Execute()
 ├── internal/
 │   ├── cli/                   # cobra command tree (15 files, every verb wired)
 │   ├── config/                # workspace + global YAML, secrets via go-keyring
@@ -630,7 +630,7 @@ roksctl/
 │   ├── ibm/                   # IAM, Resource Manager, Resource Controller, container-service
 │   ├── cos/                   # IBM/ibm-cos-sdk-go bucket + object I/O
 │   ├── k8s/                   # client-go + iperf3 fixture lifecycle
-│   ├── test/                  # dns + connectivity + throughput probes, roksctl.v1 JSON
+│   ├── test/                  # dns + connectivity + throughput probes, roksbnkctl.v1 JSON
 │   ├── doctor/                # prereq + creds checks
 │   └── ui/                    # (placeholder)
 ├── docs/
@@ -683,8 +683,8 @@ roksctl/
 ## What this is *not*
 
 - Not a Terraform authoring tool. Terraform lives in its own repo and is the source of truth for the deployment shape.
-- Not a general-purpose IBM Cloud CLI. `ibmcloud` covers that. `roksctl`'s scope on IBM Cloud is the BNK supply chain — ROKS for the cluster, COS for prerequisite artefacts (FAR pull keys, JWT licenses), IAM for what BNK consumes.
-- Not a general-purpose Kubernetes CLI. `kubectl` and `oc` cover that. `roksctl shell` and the `roksctl kubectl` / `roksctl oc` passthroughs make their context easy to load.
+- Not a general-purpose IBM Cloud CLI. `ibmcloud` covers that. `roksbnkctl`'s scope on IBM Cloud is the BNK supply chain — ROKS for the cluster, COS for prerequisite artefacts (FAR pull keys, JWT licenses), IAM for what BNK consumes.
+- Not a general-purpose Kubernetes CLI. `kubectl` and `oc` cover that. `roksbnkctl shell` and the `roksbnkctl kubectl` / `roksbnkctl oc` passthroughs make their context easy to load.
 - Not an arbitrary workload deployer. BNK is the workload; the iperf3 / nginx test fixtures exist only to validate it.
 
 ---

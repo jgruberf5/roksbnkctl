@@ -3,8 +3,8 @@
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BIN     := bin/roksctl
-PKG     := github.com/jgruberf5/roksctl
+BIN     := bin/roksbnkctl
+PKG     := github.com/jgruberf5/roksbnkctl
 
 LDFLAGS := -s -w \
 	-X $(PKG)/internal/cli.Version=$(VERSION) \
@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 	-X $(PKG)/internal/cli.BuildDate=$(DATE)
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/roksctl
+	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/roksbnkctl
 
 test:
 	go test ./...

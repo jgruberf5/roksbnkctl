@@ -374,8 +374,8 @@ variable "testing_cluster_jumphost_name_prefix" {
 #
 # Default targets the bnk runner image's bind-mount layout (/work is
 # the host cwd inside the container). Consumers running terraform
-# directly on a host (e.g., roksctl) should override this to a writable
-# path, e.g., ~/.roksctl/<workspace>/state/kubeconfig.
+# directly on a host (e.g., roksbnkctl) should override this to a writable
+# path, e.g., ~/.roksbnkctl/<workspace>/state/kubeconfig.
 #
 # The path must already exist (the IBM provider does NOT MkdirAll) and
 # be writable by the user running terraform.
@@ -397,7 +397,7 @@ variable "kubeconfig_dir" {
 # automatically; users only need to override this single root variable.
 #
 # Default targets the bnk runner image's /work bind-mount; override for
-# direct-on-host runs (e.g., roksctl).
+# direct-on-host runs (e.g., roksbnkctl).
 variable "scratch_dir" {
   description = "Persistent scratch directory for FLO's FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount; override for direct-on-host runs."
   type        = string

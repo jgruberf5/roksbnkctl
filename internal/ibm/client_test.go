@@ -75,7 +75,7 @@ func TestResolveResourceGroup_Integration(t *testing.T) {
 	t.Logf("default resource group ID = %s", rgID)
 
 	// A nonsense name should error cleanly.
-	_, err = c.ResolveResourceGroup(ctx, "this-rg-should-not-exist-roksctl-test")
+	_, err = c.ResolveResourceGroup(ctx, "this-rg-should-not-exist-roksbnkctl-test")
 	if err == nil {
 		t.Error("expected ResolveResourceGroup to error on missing name")
 	}

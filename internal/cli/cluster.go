@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/k8s"
-	"github.com/jgruberf5/roksctl/internal/tf"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
 var (
@@ -26,7 +26,7 @@ var (
 var shellCmd = &cobra.Command{
 	Use:   "shell",
 	Short: "Interactive bash with KUBECONFIG, IBMCLOUD_API_KEY, and region pre-loaded",
-	Long: `roksctl shell drops into a $SHELL subshell with the workspace's
+	Long: `roksbnkctl shell drops into a $SHELL subshell with the workspace's
 KUBECONFIG, IBMCLOUD_API_KEY, IC_API_KEY, and IBMCLOUD_REGION exported so
 locally-installed kubectl / oc / ibmcloud commands work without further
 setup. Exits when the subshell does.`,
@@ -48,7 +48,7 @@ var kubeconfigCmd = &cobra.Command{
 }
 
 // Passthrough commands — DisableFlagParsing so cobra doesn't grab flags
-// intended for the wrapped tool (e.g. `roksctl kubectl get pods --all-namespaces`).
+// intended for the wrapped tool (e.g. `roksbnkctl kubectl get pods --all-namespaces`).
 var kubectlCmd = &cobra.Command{
 	Use:                "kubectl [args...]",
 	Short:              "Passthrough to local kubectl with workspace KUBECONFIG loaded",
@@ -113,7 +113,7 @@ func runKubeconfig(cmd *cobra.Command, _ []string) error {
 
 	path := k8s.DefaultKubeconfigPath()
 	if path == "" {
-		return fmt.Errorf("no kubeconfig found; run `roksctl kubeconfig --download` or `ibmcloud ks cluster config --admin -c <cluster>`")
+		return fmt.Errorf("no kubeconfig found; run `roksbnkctl kubeconfig --download` or `ibmcloud ks cluster config --admin -c <cluster>`")
 	}
 	if flagExportKubeconfig {
 		b, err := os.ReadFile(path)
@@ -152,7 +152,7 @@ func runKubeconfigDownload(cmd *cobra.Command) error {
 		cluster = cctx.Workspace.Cluster.Name
 	}
 	if cluster == "" {
-		return fmt.Errorf("--cluster required (or set cluster.name in the workspace config, or run after `roksctl up`)")
+		return fmt.Errorf("--cluster required (or set cluster.name in the workspace config, or run after `roksbnkctl up`)")
 	}
 
 	fmt.Fprintf(os.Stderr, "→ Fetching admin kubeconfig for %q\n", cluster)
@@ -191,7 +191,7 @@ func runOCPassthrough(_ *cobra.Command, args []string) error {
 func runIBMCloudPassthrough(_ *cobra.Command, args []string) error {
 	bin, err := exec.LookPath("ibmcloud")
 	if err != nil {
-		return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksctl ibmcloud`)")
+		return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
 	}
 	_, env, err := workspaceEnv()
 	if err != nil {
@@ -216,7 +216,7 @@ func runIBMCloudPassthrough(_ *cobra.Command, args []string) error {
 //     var is set.
 //
 // Login output is streamed to stderr so users see what's happening
-// when roksctl is taking the extra second.
+// when roksbnkctl is taking the extra second.
 func ensureIBMCloudLoggedIn(bin string, env []string) error {
 	probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -255,7 +255,7 @@ func envValue(env []string, key string) string {
 func runPassthrough(tool string, args []string) error {
 	bin, err := exec.LookPath(tool)
 	if err != nil {
-		return fmt.Errorf("%s not found on PATH (install it to use `roksctl %s`)", tool, tool)
+		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)
 	}
 	_, env, err := workspaceEnv()
 	if err != nil {
@@ -278,7 +278,7 @@ func workspaceEnv() (*config.Context, []string, error) {
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
 	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
@@ -297,7 +297,7 @@ func workspaceEnv() (*config.Context, []string, error) {
 	}
 	// Silence the "New plug-in version available" / "TIP: --check-version"
 	// banner the ibmcloud CLI prints on every invocation. It's noise the
-	// user can't act on inside the roksctl flow.
+	// user can't act on inside the roksbnkctl flow.
 	env = append(env, "IBMCLOUD_VERSION_CHECK=false")
 	return cctx, env, nil
 }

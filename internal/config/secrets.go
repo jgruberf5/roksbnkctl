@@ -19,9 +19,9 @@ const (
 	APIKeySourceConfig   = "config" // base64-encoded in workspace config.yaml — obfuscation only
 	APIKeySourcePrompt   = "prompt"
 
-	// keychainService is the OS-keychain "service" namespace roksctl uses.
+	// keychainService is the OS-keychain "service" namespace roksbnkctl uses.
 	// Per-workspace entries are stored under user="<workspace>/ibmcloud_api_key".
-	keychainService = "roksctl"
+	keychainService = "roksbnkctl"
 )
 
 // apiKeyEnvVars are the env vars consulted (in order) when resolving from
@@ -127,7 +127,7 @@ func apiKeyFromConfig(workspace string) (string, error) {
 }
 
 // EncodeAPIKeyForConfig base64-encodes a plaintext API key for storage
-// in IBMCloudCfg.APIKeyB64. Convenience for callers (e.g. `roksctl init
+// in IBMCloudCfg.APIKeyB64. Convenience for callers (e.g. `roksbnkctl init
 // --save-api-key` in v1.x); users can also encode by hand:
 //
 //	echo -n "$IBMCLOUD_API_KEY" | base64
@@ -151,7 +151,7 @@ func apiKeyFromKeychain(workspace string) (string, error) {
 // save it to the OS keychain.
 func apiKeyFromPrompt(workspace string) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", errors.New("no IBM Cloud API key available and stdin is not a TTY (cannot prompt; set IBMCLOUD_API_KEY or run `roksctl init`)")
+		return "", errors.New("no IBM Cloud API key available and stdin is not a TTY (cannot prompt; set IBMCLOUD_API_KEY or run `roksbnkctl init`)")
 	}
 	fmt.Fprintf(os.Stderr, "Enter IBM Cloud API key for workspace %q: ", workspace)
 	keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -182,8 +182,8 @@ func apiKeyFromPrompt(workspace string) (string, error) {
 	return key, nil
 }
 
-// SaveAPIKeyToKeychain stores the API key under the roksctl service for the
-// given workspace. Used by `roksctl init` once the user has entered the key.
+// SaveAPIKeyToKeychain stores the API key under the roksbnkctl service for the
+// given workspace. Used by `roksbnkctl init` once the user has entered the key.
 func SaveAPIKeyToKeychain(workspace, key string) error {
 	if err := ValidateName(workspace); err != nil {
 		return err
@@ -224,7 +224,7 @@ func SaveAPIKeyForWorkspace(workspace, key string) (string, error) {
 
 // saveAPIKeyToConfig writes api_key_b64 into the workspace's existing
 // config.yaml. The workspace must already be initialised — for first
-// `roksctl init` flow, callers should run SaveWorkspace first then call
+// `roksbnkctl init` flow, callers should run SaveWorkspace first then call
 // this.
 func saveAPIKeyToConfig(workspace, plaintext string) error {
 	ws, err := LoadWorkspace(workspace)
@@ -236,7 +236,7 @@ func saveAPIKeyToConfig(workspace, plaintext string) error {
 }
 
 // DeleteAPIKeyFromKeychain removes the workspace's keychain entry. Used
-// by `roksctl workspaces delete` to leave no residue. Missing entry is
+// by `roksbnkctl workspaces delete` to leave no residue. Missing entry is
 // not an error.
 func DeleteAPIKeyFromKeychain(workspace string) error {
 	if err := ValidateName(workspace); err != nil {

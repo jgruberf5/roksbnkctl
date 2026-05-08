@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/cos"
-	"github.com/jgruberf5/roksctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cos"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 )
 
 var (
@@ -28,7 +28,7 @@ var (
 var cosCmd = &cobra.Command{
 	Use:   "cos",
 	Short: "Manage IBM Cloud Object Storage (instances, buckets, objects)",
-	Long: `roksctl cos provides full CRUD on the COS supply chain BNK depends on:
+	Long: `roksbnkctl cos provides full CRUD on the COS supply chain BNK depends on:
 COS instances (via Resource Controller), buckets, and keyed objects (FAR pull
 keys, JWT licenses, etc.). All calls go through the IBM Go SDKs — no
 ibmcloud CLI dependency.`,
@@ -47,7 +47,7 @@ var cosInstanceCreateCmd = &cobra.Command{
 	Long: `Create a COS service instance under the workspace's resource group.
 
 --plan accepts a friendly name (standard | lite); --plan-id takes a
-catalog UUID directly when IBM ships a tier roksctl hasn't mapped yet.
+catalog UUID directly when IBM ships a tier roksbnkctl hasn't mapped yet.
 --target defaults to "global" (COS instances are global; buckets carry
 the regional affinity).`,
 	Args: cobra.ExactArgs(1),
@@ -131,7 +131,7 @@ var cosObjectListCmd = &cobra.Command{
 
 func init() {
 	cosInstanceCreateCmd.Flags().StringVar(&flagCOSPlan, "plan", "standard", "service plan name (standard | lite)")
-	cosInstanceCreateCmd.Flags().StringVar(&flagCOSPlanID, "plan-id", "", "service plan UUID (overrides --plan; for plans roksctl hasn't mapped)")
+	cosInstanceCreateCmd.Flags().StringVar(&flagCOSPlanID, "plan-id", "", "service plan UUID (overrides --plan; for plans roksbnkctl hasn't mapped)")
 	cosInstanceCreateCmd.Flags().StringVar(&flagCOSTarget, "target", "global", "target region (default: global; COS instances are global)")
 
 	cosInstanceDeleteCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt")
@@ -349,7 +349,7 @@ func openIBMClient() (*config.Context, *ibm.Client, error) {
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
 	if err != nil {

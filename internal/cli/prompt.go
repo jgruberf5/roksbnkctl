@@ -40,7 +40,7 @@ func promptString(label, def string) string {
 }
 
 // promptInt parses the line as an integer. Bad input falls back to def
-// (after a one-line warning) — keeps `roksctl init` from aborting on a
+// (after a one-line warning) — keeps `roksbnkctl init` from aborting on a
 // fat-finger.
 func promptInt(label string, def int) int {
 	s := promptString(label, strconv.Itoa(def))

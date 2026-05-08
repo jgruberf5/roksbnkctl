@@ -19,7 +19,7 @@ type Client struct {
 }
 
 // NewFromKubeconfigBytes builds a Client from raw kubeconfig YAML.
-// Used in v1.x when roksctl fetches the kubeconfig itself via the IBM
+// Used in v1.x when roksbnkctl fetches the kubeconfig itself via the IBM
 // container service SDK.
 func NewFromKubeconfigBytes(b []byte) (*Client, error) {
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(b)

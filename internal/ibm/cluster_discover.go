@@ -13,7 +13,7 @@ import (
 )
 
 // ClusterInfo is the subset of `GET /global/v2/getCluster` fields
-// roksctl uses for cluster registration / display. Not exhaustive — only
+// roksbnkctl uses for cluster registration / display. Not exhaustive — only
 // what ends up in ClusterOutputs or shown to the user.
 type ClusterInfo struct {
 	ID                string   `json:"id"`
@@ -49,7 +49,7 @@ var ErrClusterNotFound = errors.New("cluster not found")
 // GetCluster fetches cluster metadata from the IBM Container Service.
 // Hits the same endpoint the `ibmcloud ks cluster get` CLI uses.
 //
-// Returns ErrClusterNotFound on 404 — `roksctl cluster register` uses
+// Returns ErrClusterNotFound on 404 — `roksbnkctl cluster register` uses
 // that to give a clean "no such cluster" error.
 func (c *Client) GetCluster(ctx context.Context, idOrName string) (*ClusterInfo, error) {
 	if idOrName == "" {
@@ -70,7 +70,7 @@ func (c *Client) GetCluster(ctx context.Context, idOrName string) (*ClusterInfo,
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	if c.region != "" {
 		req.Header.Set("X-Region", c.region)
 	}

@@ -14,9 +14,9 @@ import (
 // Defaults for the iperf3 fixture. Pod and service share a name so the
 // teardown logic can find them with a fixed label selector.
 const (
-	Iperf3Namespace    = "roksctl-test"
-	Iperf3PodName      = "roksctl-iperf3"
-	Iperf3SvcName      = "roksctl-iperf3"
+	Iperf3Namespace    = "roksbnkctl-test"
+	Iperf3PodName      = "roksbnkctl-iperf3"
+	Iperf3SvcName      = "roksbnkctl-iperf3"
 	Iperf3Port         = 5201
 	Iperf3DefaultImage = "networkstatic/iperf3:latest"
 
@@ -27,7 +27,7 @@ const (
 
 // Iperf3Options configures the in-cluster fixture.
 type Iperf3Options struct {
-	Namespace   string             // default: "roksctl-test"
+	Namespace   string             // default: "roksbnkctl-test"
 	Image       string             // default: networkstatic/iperf3:latest
 	ServiceType corev1.ServiceType // ClusterIP for east-west, LoadBalancer for north-south
 }
@@ -55,7 +55,7 @@ func (c *Client) DeployIperf3(ctx context.Context, opts Iperf3Options) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      Iperf3PodName,
 			Namespace: opts.Namespace,
-			Labels:    map[string]string{"app": Iperf3PodName, "roksctl.io/test": "iperf3"},
+			Labels:    map[string]string{"app": Iperf3PodName, "roksbnkctl.io/test": "iperf3"},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
@@ -72,7 +72,7 @@ func (c *Client) DeployIperf3(ctx context.Context, opts Iperf3Options) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      Iperf3SvcName,
 			Namespace: opts.Namespace,
-			Labels:    map[string]string{"app": Iperf3PodName, "roksctl.io/test": "iperf3"},
+			Labels:    map[string]string{"app": Iperf3PodName, "roksbnkctl.io/test": "iperf3"},
 		},
 		Spec: corev1.ServiceSpec{
 			Type:     opts.ServiceType,
@@ -107,7 +107,7 @@ func (c *Client) ensureNamespace(ctx context.Context, name string) error {
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("checking namespace %s: %w", name, err)
 	}
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"roksctl.io/test": "true"}}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"roksbnkctl.io/test": "true"}}}
 	if _, err := c.clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("creating namespace %s: %w", name, err)

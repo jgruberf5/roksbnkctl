@@ -13,7 +13,7 @@ import (
 // been chosen — see PRD § "Default workspace".
 const DefaultWorkspace = "default"
 
-// Global is ~/.roksctl/config.yaml — non-secret user-wide preferences and
+// Global is ~/.roksbnkctl/config.yaml — non-secret user-wide preferences and
 // the current_workspace pointer that all commands resolve through.
 type Global struct {
 	CurrentWorkspace string `yaml:"current_workspace,omitempty"`
@@ -21,7 +21,7 @@ type Global struct {
 	Output           string `yaml:"output,omitempty"` // text | json
 }
 
-// LoadGlobal reads ~/.roksctl/config.yaml. Missing file returns a
+// LoadGlobal reads ~/.roksbnkctl/config.yaml. Missing file returns a
 // zero-valued Global (not an error) — first-run users haven't written one
 // yet. Empty file is also OK.
 func LoadGlobal() (*Global, error) {
@@ -43,7 +43,7 @@ func LoadGlobal() (*Global, error) {
 	return &g, nil
 }
 
-// SaveGlobal writes ~/.roksctl/config.yaml, creating the directory tree if
+// SaveGlobal writes ~/.roksbnkctl/config.yaml, creating the directory tree if
 // needed. Permissions: 0644 file, 0755 dir (config is non-secret).
 func SaveGlobal(g *Global) error {
 	path, err := GlobalConfigPath()

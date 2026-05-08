@@ -53,7 +53,7 @@ func httpProbe(ctx context.Context, client *http.Client, url string) ProbeResult
 		p.DurationMS = time.Since(start).Milliseconds()
 		return p
 	}
-	req.Header.Set("User-Agent", "roksctl/test")
+	req.Header.Set("User-Agent", "roksbnkctl/test")
 
 	resp, err := client.Do(req)
 	p.DurationMS = time.Since(start).Milliseconds()

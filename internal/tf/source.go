@@ -14,7 +14,7 @@ import (
 var githubAPIBase = "https://api.github.com"
 
 // httpClient is the package-level client. Timeout caps each HTTP call so
-// a flaky network can't hang `roksctl init` indefinitely.
+// a flaky network can't hang `roksbnkctl init` indefinitely.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 type githubRelease struct {
@@ -42,7 +42,7 @@ func ResolveLatestRelease(ctx context.Context, repo string) (string, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}

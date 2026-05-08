@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	roksctl "github.com/jgruberf5/roksctl"
-	"github.com/jgruberf5/roksctl/internal/config"
+	roksbnkctl "github.com/jgruberf5/roksbnkctl"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
 // FetchSource resolves a TFSourceCfg into a local directory containing
@@ -23,7 +23,7 @@ import (
 // type=embedded (or empty) — extracts the bundled ./terraform/ tree
 // from the binary's go:embed FS into baseDir/embedded-terraform/ and
 // returns that path. Default for new workspaces; means a fresh
-// `roksctl up` works without any network access for the source.
+// `roksbnkctl up` works without any network access for the source.
 //
 // type=local — uses Path directly (verified to exist + be a dir).
 //
@@ -72,7 +72,7 @@ func FetchSource(ctx context.Context, src config.TFSourceCfg, baseDir string) (s
 // extractEmbeddedTF walks the bundled go:embed FS and writes its files
 // into baseDir/embedded-terraform/. Re-extracts on every invocation so
 // a binary upgrade picks up new HCL — embed.FS file sizes are tiny vs
-// roksctl's overall startup cost so the redundant write is fine.
+// roksbnkctl's overall startup cost so the redundant write is fine.
 //
 // Returns the resolved source dir for terraform-exec.
 func extractEmbeddedTF(baseDir string) (string, error) {
@@ -82,7 +82,7 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 	}
 	cleanDest := filepath.Clean(dest)
 
-	err := fs.WalkDir(roksctl.EmbeddedTerraform, "terraform", func(path string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(roksbnkctl.EmbeddedTerraform, "terraform", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -100,7 +100,7 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		body, err := fs.ReadFile(roksctl.EmbeddedTerraform, path)
+		body, err := fs.ReadFile(roksbnkctl.EmbeddedTerraform, path)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func downloadGitHubTarball(ctx context.Context, repo, ref, baseDir string) (stri
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}

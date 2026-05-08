@@ -6,33 +6,33 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/doctor"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/doctor"
 )
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version, commit, and build date",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		fmt.Printf("roksctl %s (commit %s, built %s)\n", Version, Commit, BuildDate)
+		fmt.Printf("roksbnkctl %s (commit %s, built %s)\n", Version, Commit, BuildDate)
 		return nil
 	},
 }
 
 var selfCmd = &cobra.Command{
 	Use:   "self",
-	Short: "Manage the roksctl binary itself",
+	Short: "Manage the roksbnkctl binary itself",
 }
 
 var selfUpdateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Pull the latest roksctl release matching the host arch",
+	Short: "Pull the latest roksbnkctl release matching the host arch",
 	Long: `Downloads the latest GitHub release tarball for this platform,
 verifies its SHA256 against the release's checksums.txt, and replaces
 the running binary in place.
 
 Linux/macOS only — Windows can't replace a running .exe in place; use
-` + "`scoop update roksctl`" + ` instead.
+` + "`scoop update roksbnkctl`" + ` instead.
 
 Requires write permission on the binary's directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
@@ -43,7 +43,7 @@ upgrade verb).`,
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check prerequisites and report missing pieces",
-	Long: `Verifies the host has what roksctl needs:
+	Long: `Verifies the host has what roksbnkctl needs:
   - terraform on PATH (required)
   - iperf3 / kubectl / oc / ibmcloud on PATH (optional but recommended)
   - kubeconfig is reachable

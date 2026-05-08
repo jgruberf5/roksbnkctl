@@ -18,9 +18,9 @@ var (
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Copy the running roksctl binary into a directory on PATH",
-	Long: `Install the roksctl binary you're currently running into a directory
-on $PATH so you can invoke it as ` + "`roksctl`" + ` from any working
+	Short: "Copy the running roksbnkctl binary into a directory on PATH",
+	Long: `Install the roksbnkctl binary you're currently running into a directory
+on $PATH so you can invoke it as ` + "`roksbnkctl`" + ` from any working
 directory.
 
 Default destination, in order of preference:
@@ -35,11 +35,11 @@ prints a message and exits 0. Use --force to overwrite (useful right
 after a local rebuild that landed at the install path).
 
 Examples:
-  roksctl install                       # default — ~/.local/bin
-  roksctl install --dir ~/bin           # specific user dir
-  sudo roksctl install --dir /usr/local/bin   # system-wide
+  roksbnkctl install                       # default — ~/.local/bin
+  roksbnkctl install --dir ~/bin           # specific user dir
+  sudo roksbnkctl install --dir /usr/local/bin   # system-wide
 
-Note: this is distinct from ` + "`roksctl self update`" + `, which
+Note: this is distinct from ` + "`roksbnkctl self update`" + `, which
 pulls the latest GitHub release tarball over the network.`,
 	RunE: runInstall,
 }
@@ -59,9 +59,9 @@ func runInstall(_ *cobra.Command, _ []string) error {
 		self = resolved
 	}
 
-	binName := "roksctl"
+	binName := "roksbnkctl"
 	if runtime.GOOS == "windows" {
-		binName = "roksctl.exe"
+		binName = "roksbnkctl.exe"
 	}
 
 	destDir := flagInstallDir
@@ -105,7 +105,7 @@ func runInstall(_ *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "    export PATH=\"%s:$PATH\"\n", destDir)
 		fmt.Fprintln(os.Stderr, "  then `hash -r` or open a new shell.")
 	} else {
-		fmt.Fprintln(os.Stderr, "  (open a new shell or run `hash -r` if `roksctl` doesn't resolve immediately)")
+		fmt.Fprintln(os.Stderr, "  (open a new shell or run `hash -r` if `roksbnkctl` doesn't resolve immediately)")
 	}
 	return nil
 }

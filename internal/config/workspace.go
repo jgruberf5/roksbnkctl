@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Workspace is ~/.roksctl/<name>/config.yaml.
+// Workspace is ~/.roksbnkctl/<name>/config.yaml.
 //
 // Mirrors the per-workspace example in docs/PRD.md. Note that there is no
 // `api_key` field — secrets live in env vars or the OS keychain, never in
@@ -76,7 +76,7 @@ type ConnectivityCfg struct {
 // TFSourceCfg picks where Terraform's source tree comes from. Type
 // drives which other fields apply:
 //
-//   embedded — uses the HCL bundled into the roksctl binary via
+//   embedded — uses the HCL bundled into the roksbnkctl binary via
 //              go:embed. No other fields needed. This is the default
 //              and what most users want; install one binary, get
 //              CLI + matched TF together.
@@ -106,7 +106,7 @@ type COSUpload struct {
 }
 
 // ErrWorkspaceNotFound is returned by LoadWorkspace when the workspace's
-// config.yaml does not exist. Callers (e.g. `roksctl init`) check for this
+// config.yaml does not exist. Callers (e.g. `roksbnkctl init`) check for this
 // to distinguish "workspace doesn't exist yet" from real I/O errors.
 var ErrWorkspaceNotFound = errors.New("workspace not found")
 
@@ -127,7 +127,7 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// LoadWorkspace reads ~/.roksctl/<name>/config.yaml. Returns
+// LoadWorkspace reads ~/.roksbnkctl/<name>/config.yaml. Returns
 // ErrWorkspaceNotFound (wrapped) if the file is missing.
 func LoadWorkspace(name string) (*Workspace, error) {
 	if err := ValidateName(name); err != nil {
@@ -154,7 +154,7 @@ func LoadWorkspace(name string) (*Workspace, error) {
 	return &ws, nil
 }
 
-// SaveWorkspace writes ~/.roksctl/<name>/config.yaml, creating both the
+// SaveWorkspace writes ~/.roksbnkctl/<name>/config.yaml, creating both the
 // workspace dir and its state/ subdir.
 func SaveWorkspace(name string, ws *Workspace) error {
 	if err := ValidateName(name); err != nil {
@@ -225,7 +225,7 @@ func WorkspaceExists(name string) bool {
 	return err == nil
 }
 
-// DeleteWorkspace removes ~/.roksctl/<name>/. Refuses to delete if the
+// DeleteWorkspace removes ~/.roksbnkctl/<name>/. Refuses to delete if the
 // workspace's terraform.tfstate has resources (would orphan live infra)
 // unless force is true.
 func DeleteWorkspace(name string, force bool) error {
@@ -269,7 +269,7 @@ var plaintextSecretsRE = regexp.MustCompile(`(?m)^[\t ]*(api_key|apikey|ibmcloud
 
 func rejectPlaintextSecrets(b []byte) error {
 	if loc := plaintextSecretsRE.FindIndex(b); loc != nil {
-		return fmt.Errorf("plaintext secret detected (offset %d): workspace config.yaml must not contain credentials — use IBMCLOUD_API_KEY env var or the OS keychain (see `roksctl init`)", loc[0])
+		return fmt.Errorf("plaintext secret detected (offset %d): workspace config.yaml must not contain credentials — use IBMCLOUD_API_KEY env var or the OS keychain (see `roksbnkctl init`)", loc[0])
 	}
 	return nil
 }

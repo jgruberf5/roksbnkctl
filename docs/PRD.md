@@ -1,13 +1,13 @@
-# roksctl — Product Requirements Document
+# roksbnkctl — Product Requirements Document
 
 > **Status:** Draft v0.2 · 2026-05-08
 > **Owner:** John Gruber (j.gruber@f5.com)
 
 ## TL;DR
 
-`roksctl` is a single Go binary that deploys F5 BIG-IP Next for Kubernetes (BNK) onto an IBM Cloud Red Hat OpenShift on IBM Cloud (ROKS) cluster, manages the IBM Cloud Object Storage (COS) supply chain (instances, buckets, keyed objects) BNK depends on, and validates the deployment with built-in connectivity, DNS, and throughput tests. It replaces the current `bnk` bash-script-plus-docker-runner with a cross-platform, install-once, run-anywhere CLI in the kubectl tradition.
+`roksbnkctl` is a single Go binary that deploys F5 BIG-IP Next for Kubernetes (BNK) onto an IBM Cloud Red Hat OpenShift on IBM Cloud (ROKS) cluster, manages the IBM Cloud Object Storage (COS) supply chain (instances, buckets, keyed objects) BNK depends on, and validates the deployment with built-in connectivity, DNS, and throughput tests. It replaces the current `bnk` bash-script-plus-docker-runner with a cross-platform, install-once, run-anywhere CLI in the kubectl tradition.
 
-The Terraform that does the actual provisioning continues to live in its own repo (`ibmcloud_terraform_bigip_next_for_kubernetes_2_3`) and remains the source of truth for the cluster + BNK deployment. `roksctl` is an orchestrator, a supply-chain manager, and a test harness; it does not author Terraform. All IBM Cloud calls go through the official Go SDKs — no `ibmcloud` CLI dependency at runtime.
+The Terraform that does the actual provisioning continues to live in its own repo (`ibmcloud_terraform_bigip_next_for_kubernetes_2_3`) and remains the source of truth for the cluster + BNK deployment. `roksbnkctl` is an orchestrator, a supply-chain manager, and a test harness; it does not author Terraform. All IBM Cloud calls go through the official Go SDKs — no `ibmcloud` CLI dependency at runtime.
 
 ## Problem
 
@@ -20,19 +20,19 @@ The current `bnk` tool gets the job done but its shape produces recurring fricti
 
 ## Goals
 
-1. **One binary, three commands**: `roksctl init`, `roksctl up`, `roksctl test` covers the 90% path.
-2. **Drive the existing Terraform unchanged.** The TF modules in `ibmcloud_terraform_bigip_next_for_kubernetes_2_3` continue to be developed, versioned, and released independently; `roksctl` consumes them via a pinned source URL.
+1. **One binary, three commands**: `roksbnkctl init`, `roksbnkctl up`, `roksbnkctl test` covers the 90% path.
+2. **Drive the existing Terraform unchanged.** The TF modules in `ibmcloud_terraform_bigip_next_for_kubernetes_2_3` continue to be developed, versioned, and released independently; `roksbnkctl` consumes them via a pinned source URL.
 3. **Built-in deployment validation.** Connectivity (curl), DNS (dig), and throughput (iperf3) tests ship with the tool, run against the just-deployed BNK, and produce structured pass/fail output.
 4. **Cross-platform.** Linux, macOS, Windows (native, no WSL required). Single statically-linked binary.
 5. **Sensible defaults, escape hatches everywhere.** Simple users never see a flag; power users can override anything.
-6. **Idempotent and resumable.** Re-running `roksctl up` after a partial failure picks up where it left off — same as `terraform apply` already does.
+6. **Idempotent and resumable.** Re-running `roksbnkctl up` after a partial failure picks up where it left off — same as `terraform apply` already does.
 7. **Manage the COS supply chain.** First-class commands to create/delete COS instances and buckets, and to put/get/delete/list keyed objects. The customer goes from "I have an API key" to "deployed BNK" with no console clicks for the prerequisite artifacts BNK needs (FAR pull keys, JWT licenses, future per-tenant config).
 
 ## Non-goals
 
-- **Not a Terraform IDE / authoring tool.** TF is written and tested in the TF repo. `roksctl` is consumer-side.
-- **Not a general-purpose IBM Cloud CLI.** `ibmcloud` exists for that. `roksctl`'s scope on IBM Cloud is the BNK supply chain — ROKS for the cluster, COS for prerequisite artifacts, IAM for what BNK consumes — not Code Engine, Satellite, IKS, Watson, etc.
-- **Not a general-purpose Kubernetes CLI.** `kubectl` and `oc` exist for that; `roksctl shell` drops into a context where they Just Work.
+- **Not a Terraform IDE / authoring tool.** TF is written and tested in the TF repo. `roksbnkctl` is consumer-side.
+- **Not a general-purpose IBM Cloud CLI.** `ibmcloud` exists for that. `roksbnkctl`'s scope on IBM Cloud is the BNK supply chain — ROKS for the cluster, COS for prerequisite artifacts, IAM for what BNK consumes — not Code Engine, Satellite, IKS, Watson, etc.
+- **Not a general-purpose Kubernetes CLI.** `kubectl` and `oc` exist for that; `roksbnkctl shell` drops into a context where they Just Work.
 - **Not an arbitrary workload deployer.** BNK is the workload; iperf3 / nginx test fixtures are deployed only in service of testing.
 - **Not a replacement for `terraform plan`/`apply` for TF developers.** They keep using terraform directly against the TF repo.
 
@@ -52,7 +52,7 @@ The simplest user flow must work for the customer evaluator. Power-user flags mu
 ### The 3-command happy path
 
 ```
-$ roksctl init
+$ roksbnkctl init
 ✓ IBM Cloud API key (from $IBMCLOUD_API_KEY)
 ? Region [ca-tor]: us-south
 ? Resource group [default]:
@@ -60,9 +60,9 @@ $ roksctl init
 ? Cluster name [bnk-demo]:
 ? Workers per zone [1]:
 ? OpenShift version [4.18]:
-✓ Wrote ~/.roksctl/default/config.yaml
+✓ Wrote ~/.roksbnkctl/default/config.yaml
 
-$ roksctl up
+$ roksbnkctl up
 → Validating IBM Cloud credentials      ✓ (j.gruber@f5.com, account "Main F5")
 → Resolving Terraform source            ✓ (github.com/jgruberf5/...@v0.6.7, latest at init time)
 → terraform init                        ✓
@@ -75,7 +75,7 @@ $ roksctl up
   console:    https://...
   cneinstance: 1 ready, 3/3 TMM pods running
 
-$ roksctl test
+$ roksbnkctl test
 → DNS                                   ✓ ingress.bnk-demo... resolves to 169.x.x.x
 → Connectivity                          ✓ HTTPS 200 in 184ms
 → Throughput                            ✓ 9.42 Gbit/s (iperf3, 30s, 8 streams)
@@ -87,7 +87,7 @@ Three commands. No flags. No reading docs. Output is brief but informative; verb
 ### Tear-down
 
 ```
-$ roksctl down
+$ roksbnkctl down
 ? This will destroy cluster "bnk-demo" and all BNK resources. Continue? [y/N]: y
 → terraform destroy                     ✓
 ✓ All resources removed
@@ -96,21 +96,21 @@ $ roksctl down
 ### Iteration loop (engineer)
 
 ```
-$ roksctl plan                # read-only, what would change
-$ roksctl apply               # apply without re-init prompts
-$ roksctl logs flo            # tail logs of the lifecycle operator
-$ roksctl shell               # drop into a cluster-context bash with kubectl/oc/ibmcloud
-$ roksctl test throughput     # rerun just the perf test
+$ roksbnkctl plan                # read-only, what would change
+$ roksbnkctl apply               # apply without re-init prompts
+$ roksbnkctl logs flo            # tail logs of the lifecycle operator
+$ roksbnkctl shell               # drop into a cluster-context bash with kubectl/oc/ibmcloud
+$ roksbnkctl test throughput     # rerun just the perf test
 ```
 
 ### Multi-environment (workspaces)
 
-Each workspace is a named, isolated config + state bundle under `~/.roksctl/<name>/`. The default workspace is `default`. Switch with `--workspace` or `-w`:
+Each workspace is a named, isolated config + state bundle under `~/.roksbnkctl/<name>/`. The default workspace is `default`. Switch with `--workspace` or `-w`:
 
 ```
-$ roksctl -w prod up
-$ roksctl -w demo up
-$ roksctl workspaces list
+$ roksbnkctl -w prod up
+$ roksbnkctl -w demo up
+$ roksbnkctl workspaces list
 NAME      CLUSTER         REGION     STATE
 default   bnk-demo        us-south   applied
 prod      bnk-prod-1      ca-tor     applied
@@ -120,79 +120,79 @@ demo      bnk-canada      ca-tor     destroyed
 ### Pointing at a local Terraform checkout (engineer)
 
 ```
-$ roksctl up --tf-source ~/code/ibmcloud_terraform_bigip_next_for_kubernetes_2_3
+$ roksbnkctl up --tf-source ~/code/ibmcloud_terraform_bigip_next_for_kubernetes_2_3
 ```
 
-Bypasses the pinned release; uses the local working tree. Used when iterating on TF and `roksctl` together.
+Bypasses the pinned release; uses the local working tree. Used when iterating on TF and `roksbnkctl` together.
 
 ## Command surface
 
 ```
-roksctl init                      Interactive setup; writes workspace config.yaml
-roksctl up [--auto]               plan + apply; the everyday deploy command
-roksctl plan                      Read-only; show what would change
-roksctl apply [--auto]            Apply without re-prompting (assumes config exists)
-roksctl down [--auto]             Destroy everything in the workspace
-roksctl status                    Summary: cluster, components, last apply timestamp
-roksctl logs <component> [-f]     Tail logs (flo / cis / cert-manager / cneinstance)
-roksctl shell                     Interactive bash with kubectl/oc/ibmcloud on PATH
-roksctl exec <cmd>...             Run a command with cluster context loaded
-roksctl kubeconfig [--export]     Print the workspace's kubeconfig path or contents
-roksctl kubectl <args>...         Passthrough to local kubectl with workspace KUBECONFIG loaded
-roksctl oc <args>...              Passthrough to local oc with workspace KUBECONFIG loaded
-roksctl ibmcloud <args>...        Passthrough to local ibmcloud with workspace API key + region loaded
-roksctl test [suite]              Run tests; default suite is "all"
-roksctl test connectivity         HTTP(S) reachability against deployed services
-roksctl test dns                  DNS resolution of ingress and service hostnames
-roksctl test throughput           iperf3 throughput, deploys server pod automatically
-roksctl test list                 Available test suites
-roksctl workspaces list           List workspaces and their states
-roksctl workspaces use <name>     Set default workspace
-roksctl workspaces delete <name>  Delete workspace (refuses if state is non-empty)
-roksctl ws ...                    Short alias for `workspaces`
-roksctl cos instance create <name>                     Create a COS instance
-roksctl cos instance delete <name>                     Delete a COS instance
-roksctl cos instance list                              List COS instances in account
-roksctl cos bucket create <bucket> --instance <name>   Create a bucket on the named instance
-roksctl cos bucket delete <bucket> --instance <name>   Delete a bucket
-roksctl cos bucket list --instance <name>              List buckets on the named instance
-roksctl cos object put <bucket>/<key> <local-file>     Upload (multipart for large files, streaming)
-roksctl cos object get <bucket>/<key> <local-file>     Download (streaming)
-roksctl cos object delete <bucket>/<key>               Delete an object
-roksctl cos object list <bucket>[/<prefix>]            List objects (optionally under a prefix)
-roksctl version                   Print version + tf-source pin
-roksctl self update               Pull the latest roksctl release
-roksctl completion <shell>        Print shell completion script
-roksctl doctor                    Check prerequisites and report missing pieces
+roksbnkctl init                      Interactive setup; writes workspace config.yaml
+roksbnkctl up [--auto]               plan + apply; the everyday deploy command
+roksbnkctl plan                      Read-only; show what would change
+roksbnkctl apply [--auto]            Apply without re-prompting (assumes config exists)
+roksbnkctl down [--auto]             Destroy everything in the workspace
+roksbnkctl status                    Summary: cluster, components, last apply timestamp
+roksbnkctl logs <component> [-f]     Tail logs (flo / cis / cert-manager / cneinstance)
+roksbnkctl shell                     Interactive bash with kubectl/oc/ibmcloud on PATH
+roksbnkctl exec <cmd>...             Run a command with cluster context loaded
+roksbnkctl kubeconfig [--export]     Print the workspace's kubeconfig path or contents
+roksbnkctl kubectl <args>...         Passthrough to local kubectl with workspace KUBECONFIG loaded
+roksbnkctl oc <args>...              Passthrough to local oc with workspace KUBECONFIG loaded
+roksbnkctl ibmcloud <args>...        Passthrough to local ibmcloud with workspace API key + region loaded
+roksbnkctl test [suite]              Run tests; default suite is "all"
+roksbnkctl test connectivity         HTTP(S) reachability against deployed services
+roksbnkctl test dns                  DNS resolution of ingress and service hostnames
+roksbnkctl test throughput           iperf3 throughput, deploys server pod automatically
+roksbnkctl test list                 Available test suites
+roksbnkctl workspaces list           List workspaces and their states
+roksbnkctl workspaces use <name>     Set default workspace
+roksbnkctl workspaces delete <name>  Delete workspace (refuses if state is non-empty)
+roksbnkctl ws ...                    Short alias for `workspaces`
+roksbnkctl cos instance create <name>                     Create a COS instance
+roksbnkctl cos instance delete <name>                     Delete a COS instance
+roksbnkctl cos instance list                              List COS instances in account
+roksbnkctl cos bucket create <bucket> --instance <name>   Create a bucket on the named instance
+roksbnkctl cos bucket delete <bucket> --instance <name>   Delete a bucket
+roksbnkctl cos bucket list --instance <name>              List buckets on the named instance
+roksbnkctl cos object put <bucket>/<key> <local-file>     Upload (multipart for large files, streaming)
+roksbnkctl cos object get <bucket>/<key> <local-file>     Download (streaming)
+roksbnkctl cos object delete <bucket>/<key>               Delete an object
+roksbnkctl cos object list <bucket>[/<prefix>]            List objects (optionally under a prefix)
+roksbnkctl version                   Print version + tf-source pin
+roksbnkctl self update               Pull the latest roksbnkctl release
+roksbnkctl completion <shell>        Print shell completion script
+roksbnkctl doctor                    Check prerequisites and report missing pieces
 ```
 
 Global flags: `-w/--workspace`, `-v/--verbose`, `-q/--quiet`, `-o/--output {text|json}`, `--no-color`.
 
 ## The test surface in detail
 
-The test suite ships *with* `roksctl` so that "did the deployment succeed" has a machine-readable answer.
+The test suite ships *with* `roksbnkctl` so that "did the deployment succeed" has a machine-readable answer.
 
-### `roksctl test connectivity`
+### `roksbnkctl test connectivity`
 - Discovers the deployed BNK service endpoints from cluster state (annotations on the CNEInstance / its services).
 - For each endpoint, performs an HTTP GET (or HTTPS with cert validation as configured).
 - Pass criteria: 2xx response within timeout, TLS handshake completes, optionally a body match.
 - Implemented with Go's `net/http` — no external `curl` dependency.
 
-### `roksctl test dns`
+### `roksbnkctl test dns`
 - Looks up the cluster ingress hostname, the BNK GSLB datacenter hostname (if configured), and any user-specified hosts in `config.yaml`.
 - Verifies records resolve, A/AAAA values are sane (not 127.x.x.x, not RFC1918 unless expected).
 - Implemented with Go's `net.Resolver` — no external `dig`.
 
-### `roksctl test throughput`
+### `roksbnkctl test throughput`
 - Two modes, selected via `--mode {north-south,east-west}` (default `north-south`):
-  - **north-south**: deploys an `iperf3 -s` pod behind a Service that exercises BNK's data path (typically LoadBalancer / TMM VIP). Client runs on the roksctl host. This is what the demo and customer-evaluation flows care about — measures the data plane BNK is meant to accelerate.
+  - **north-south**: deploys an `iperf3 -s` pod behind a Service that exercises BNK's data path (typically LoadBalancer / TMM VIP). Client runs on the roksbnkctl host. This is what the demo and customer-evaluation flows care about — measures the data plane BNK is meant to accelerate.
   - **east-west**: deploys both client and server as in-cluster pods. Useful for triage ("is BNK slow, or is the cluster slow?"). `--cross-node` forces client and server onto different nodes.
 - Server image is configurable (`test.throughput.image:` in `config.yaml`); default `networkstatic/iperf3:latest` (public, no F5 supply chain to manage). Customers with a mirror or F5-built image override.
 - Reports peak / average throughput, retransmits, jitter.
 - Tears down the iperf3 pod + service unless `--keep` is passed.
 - iperf3 client binary required on PATH locally; doctor flags if missing. (Server side always runs in-cluster via the image.)
 
-### `roksctl test all`
+### `roksbnkctl test all`
 - Runs the three above sequentially with structured output (table by default, JSON with `-o json`).
 - Exit code 0 on all-pass, 1 on any-fail. CI-friendly.
 
@@ -202,7 +202,7 @@ A v2 feature: declarative `tests.yaml` in the workspace describing additional pr
 ## Configuration
 
 ### Per-workspace config
-File: `~/.roksctl/<workspace>/config.yaml`
+File: `~/.roksbnkctl/<workspace>/config.yaml`
 
 ```yaml
 ibmcloud:
@@ -230,10 +230,10 @@ test:
 tf_source:
   type: github
   repo: jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3
-  ref: v0.6.7   # resolved at init time from latest release; bump with `roksctl init --upgrade-tf`
+  ref: v0.6.7   # resolved at init time from latest release; bump with `roksbnkctl init --upgrade-tf`
 
 # Optional, future (see "Out-of-scope for v1"). v1 ships the primitives via
-# `roksctl cos object put …`; this block is the eventual auto-orchestration shape.
+# `roksbnkctl cos object put …`; this block is the eventual auto-orchestration shape.
 # cos:
 #   instance: bnk-orchestration
 #   bucket: bnk-schematics-resources
@@ -244,13 +244,13 @@ tf_source:
 #       key: test-terraform.jwt
 ```
 
-`roksctl init` produces this file via interactive prompts. Sensible defaults are picked for everything; users only see prompts for unavoidable choices (region, cluster name, create-new-or-attach).
+`roksbnkctl init` produces this file via interactive prompts. Sensible defaults are picked for everything; users only see prompts for unavoidable choices (region, cluster name, create-new-or-attach).
 
 ### Global config
-File: `~/.roksctl/config.yaml` — non-secret defaults (default workspace, telemetry on/off, color/output preferences).
+File: `~/.roksbnkctl/config.yaml` — non-secret defaults (default workspace, telemetry on/off, color/output preferences).
 
 ### State
-Directory: `~/.roksctl/<workspace>/state/`
+Directory: `~/.roksbnkctl/<workspace>/state/`
 - `terraform.tfstate` (driven by hashicorp/terraform-exec)
 - `kubeconfig`
 - `scratch/` (transient downloads, FAR tarballs, kubeconfigs fetched via the IBM container-services SDK)
@@ -262,7 +262,7 @@ State location is fixed per workspace and not user-relocatable in v1 (kept simpl
 API key resolution order, all in v1:
 
 1. `IBMCLOUD_API_KEY` env var — honored without prompting.
-2. OS keychain (per-workspace entry: `roksctl/<workspace>/ibmcloud_api_key`):
+2. OS keychain (per-workspace entry: `roksbnkctl/<workspace>/ibmcloud_api_key`):
    - macOS: Keychain via `zalando/go-keyring`.
    - Linux: libsecret via `zalando/go-keyring` (gnome-keyring, kwallet, KeePassXC, etc.).
    - Windows: Credential Manager via `zalando/go-keyring`.
@@ -273,15 +273,15 @@ Plaintext in `config.yaml` is rejected at load time. `--api-key-from {env|keycha
 
 ## Terraform integration
 
-- **Source**: pinned to a release tag of the TF repo by default. Resolved at `roksctl init` time and persisted in `config.yaml`'s `tf_source` block. Re-run `roksctl init --upgrade-tf` (or edit the file) to bump.
-- **Driver**: `hashicorp/terraform-exec` Go library wraps the `terraform` binary. Streams plan/apply progress to roksctl's UI.
-- **Terraform binary**: required on PATH. `roksctl doctor` reports the version and a clear install hint if missing. (v2 may auto-install via `hashicorp/hc-install` into `~/.roksctl/bin/`.)
-- **Module fetching**: `terraform init` handles it. `roksctl` does no source resolution itself beyond writing the right `source = "..."` for the root module.
-- **Variables**: roksctl translates `config.yaml` into `terraform.tfvars` in the workspace state dir before each apply. Users do not edit `terraform.tfvars` directly; the file is treated as build output.
+- **Source**: pinned to a release tag of the TF repo by default. Resolved at `roksbnkctl init` time and persisted in `config.yaml`'s `tf_source` block. Re-run `roksbnkctl init --upgrade-tf` (or edit the file) to bump.
+- **Driver**: `hashicorp/terraform-exec` Go library wraps the `terraform` binary. Streams plan/apply progress to roksbnkctl's UI.
+- **Terraform binary**: required on PATH. `roksbnkctl doctor` reports the version and a clear install hint if missing. (v2 may auto-install via `hashicorp/hc-install` into `~/.roksbnkctl/bin/`.)
+- **Module fetching**: `terraform init` handles it. `roksbnkctl` does no source resolution itself beyond writing the right `source = "..."` for the root module.
+- **Variables**: roksbnkctl translates `config.yaml` into `terraform.tfvars` in the workspace state dir before each apply. Users do not edit `terraform.tfvars` directly; the file is treated as build output.
 
 ## IBM Cloud integration
 
-- **Approach**: Go SDKs only. `roksctl` does not shell out to the `ibmcloud` CLI for any of its operations — `ibmcloud` is not a runtime dependency. (Users can still install it; `roksctl shell` will load credentials so it works.)
+- **Approach**: Go SDKs only. `roksbnkctl` does not shell out to the `ibmcloud` CLI for any of its operations — `ibmcloud` is not a runtime dependency. (Users can still install it; `roksbnkctl shell` will load credentials so it works.)
 - **SDKs**:
   - [`IBM/platform-services-go-sdk`](https://github.com/IBM/platform-services-go-sdk) — IAM (auth verification, identity), Resource Controller (COS instance CRUD, generic resource lookup), Resource Manager (resource group resolution).
   - [`IBM/container-services-go-sdk`](https://github.com/IBM/container-services-go-sdk) — IKS / ROKS cluster config download, cluster status.
@@ -294,28 +294,28 @@ Plaintext in `config.yaml` is rejected at load time. `--api-key-from {env|keycha
 | Tool | Required for | If missing |
 |------|--------------|------------|
 | `terraform` | All deploy operations | doctor reports + clear install hint |
-| `iperf3` (client) | `roksctl test throughput` | doctor reports; throughput skipped, others run |
-| `oc` (optional) | `roksctl shell --oc` (preferred shell mode) | falls back to kubectl |
-| `kubectl` (optional) | `roksctl shell --kubectl` | bundled client-go covers most ops |
-| `ibmcloud` | **not required at runtime** | roksctl uses Go SDKs (`platform-services-go-sdk`, `container-services-go-sdk`, `ibm-cos-sdk-go`) for everything it does on IBM Cloud — auth, cluster config, COS instance/bucket/object I/O |
+| `iperf3` (client) | `roksbnkctl test throughput` | doctor reports; throughput skipped, others run |
+| `oc` (optional) | `roksbnkctl shell --oc` (preferred shell mode) | falls back to kubectl |
+| `kubectl` (optional) | `roksbnkctl shell --kubectl` | bundled client-go covers most ops |
+| `ibmcloud` | **not required at runtime** | roksbnkctl uses Go SDKs (`platform-services-go-sdk`, `container-services-go-sdk`, `ibm-cos-sdk-go`) for everything it does on IBM Cloud — auth, cluster config, COS instance/bucket/object I/O |
 
-`roksctl shell` deserves a note: when a user wants a real interactive shell with full IBM Cloud + OpenShift CLIs, those CLIs do need to be installed on the host. `roksctl shell` doesn't bundle them, but it does set `KUBECONFIG`, `IBMCLOUD_API_KEY`, etc. correctly so that whichever CLIs the user has installed Just Work.
+`roksbnkctl shell` deserves a note: when a user wants a real interactive shell with full IBM Cloud + OpenShift CLIs, those CLIs do need to be installed on the host. `roksbnkctl shell` doesn't bundle them, but it does set `KUBECONFIG`, `IBMCLOUD_API_KEY`, etc. correctly so that whichever CLIs the user has installed Just Work.
 
 ## Distribution
 
 - **Releases**: GitHub Releases via goreleaser. Cross-compiled to `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/{amd64,arm64}`.
 - **Install methods**:
-  - `brew install jgruberf5/tap/roksctl` (homebrew tap)
-  - `scoop install roksctl` (Windows)
+  - `brew install jgruberf5/tap/roksbnkctl` (homebrew tap)
+  - `scoop install roksbnkctl` (Windows)
   - `curl -fsSL .../install.sh | bash` (mirrors current bnk pattern)
-  - `go install github.com/jgruberf5/roksctl/cmd/roksctl@latest` (Go users)
-- **Self-update**: `roksctl self update` downloads the latest release matching the host arch, replaces the binary in place. Optional, never automatic.
+  - `go install github.com/jgruberf5/roksbnkctl/cmd/roksbnkctl@latest` (Go users)
+- **Self-update**: `roksbnkctl self update` downloads the latest release matching the host arch, replaces the binary in place. Optional, never automatic.
 - **Binary size budget**: target < 30 MB stripped. client-go pulls weight; acceptable.
 
 ## Architecture sketch (high level)
 
 ```
-cmd/roksctl/             cobra root, command files
+cmd/roksbnkctl/             cobra root, command files
 internal/
   config/               workspace + global config, secrets resolution
   tf/                   hashicorp/terraform-exec wrapper, tfvars rendering
@@ -324,11 +324,11 @@ internal/
                         + IBM/container-services-go-sdk
   cos/                  COS bucket and object I/O — IBM/ibm-cos-sdk-go
                         (S3-compatible, streaming, multipart)
-  k8s/                  client-go for roksctl's own ops (apply iperf3 pod, fetch
-                        logs, watch readiness). `roksctl kubectl` / `roksctl oc`
+  k8s/                  client-go for roksbnkctl's own ops (apply iperf3 pod, fetch
+                        logs, watch readiness). `roksbnkctl kubectl` / `roksbnkctl oc`
                         passthrough commands shell to the local install with
                         the workspace's KUBECONFIG loaded — they are not
-                        required to be installed for roksctl's internal work.
+                        required to be installed for roksbnkctl's internal work.
   test/
     connectivity/       net/http probes
     dns/                net.Resolver probes
@@ -343,51 +343,51 @@ Cobra for CLI structure (kubectl-like). Bubbletea or simpler for the progress UI
 
 - Remote Terraform state backends (S3, COS, Terraform Cloud)
 - Custom test plan files (`tests.yaml`)
-- Auto-install of terraform binary into `~/.roksctl/bin/`
+- Auto-install of terraform binary into `~/.roksbnkctl/bin/`
 - Multi-cluster workspaces (one workspace = many clusters)
 - Telemetry / opt-in usage analytics
 - A web UI / TUI dashboard
-- Plugin model (`roksctl plugin install <thing>`)
-- Auto-upload of FAR pull key + JWT from local files via a `cos.upload:` block in `config.yaml` — `roksctl up` orchestrating the COS supply chain end-to-end. v1 ships the primitives (`roksctl cos object put …`); the orchestration glue follows once usage patterns settle.
+- Plugin model (`roksbnkctl plugin install <thing>`)
+- Auto-upload of FAR pull key + JWT from local files via a `cos.upload:` block in `config.yaml` — `roksbnkctl up` orchestrating the COS supply chain end-to-end. v1 ships the primitives (`roksbnkctl cos object put …`); the orchestration glue follows once usage patterns settle.
 - HMAC keys for COS auth (v1 uses IAM bearer; HMAC opt-in for third-party S3 tooling against the same buckets).
 - Air-gapped install bundle (binary + terraform + container images in one tarball)
 
 ## Open questions
 
-1. **Failure recovery**: when `terraform apply` fails halfway, `roksctl up` re-runs apply transparently. But what about logical failure modes — pods crash-looping, CRD not ready — that don't surface in TF? `roksctl status` should detect these; do we surface them as deploy-time failures, or only when `roksctl test` runs?
-2. **What does `roksctl` do when the TF repo's contract changes** (new required variable in some future tag)? `roksctl init --upgrade-tf` re-prompts for any new fields; old config without them gets a clear error pointing at the new key. Worth a small RFC.
-3. **`roksctl up` and the COS supply chain**: should `up` (driven by a `cos:` block in `config.yaml`) auto-create the COS instance + bucket and auto-upload the FAR pull key + JWT, or keep that as an explicit prerequisite via `roksctl cos …` commands? v1 has the primitives either way; the question is whether the 3-command happy path includes COS prep or assumes it's been done.
-4. **`roksctl status` shape**: what fields and how deep? Cluster + namespace + component status is the minimum; should it also probe BNK CRDs (CNEInstance.status, License.status), or stop at "are the pods healthy"?
+1. **Failure recovery**: when `terraform apply` fails halfway, `roksbnkctl up` re-runs apply transparently. But what about logical failure modes — pods crash-looping, CRD not ready — that don't surface in TF? `roksbnkctl status` should detect these; do we surface them as deploy-time failures, or only when `roksbnkctl test` runs?
+2. **What does `roksbnkctl` do when the TF repo's contract changes** (new required variable in some future tag)? `roksbnkctl init --upgrade-tf` re-prompts for any new fields; old config without them gets a clear error pointing at the new key. Worth a small RFC.
+3. **`roksbnkctl up` and the COS supply chain**: should `up` (driven by a `cos:` block in `config.yaml`) auto-create the COS instance + bucket and auto-upload the FAR pull key + JWT, or keep that as an explicit prerequisite via `roksbnkctl cos …` commands? v1 has the primitives either way; the question is whether the 3-command happy path includes COS prep or assumes it's been done.
+4. **`roksbnkctl status` shape**: what fields and how deep? Cluster + namespace + component status is the minimum; should it also probe BNK CRDs (CNEInstance.status, License.status), or stop at "are the pods healthy"?
 
 ### Decided
 
 | Decision | Outcome | Date |
 |----------|---------|------|
-| Naming | `roksctl` | 2026-05-08 |
-| Repo URL | `github.com/jgruberf5/roksctl` | 2026-05-08 |
+| Naming | `roksbnkctl` | 2026-05-08 |
+| Repo URL | `github.com/jgruberf5/roksbnkctl` | 2026-05-08 |
 | License | MIT | 2026-05-08 |
-| State directory | `~/.roksctl/<workspace>/` | 2026-05-08 |
+| State directory | `~/.roksbnkctl/<workspace>/` | 2026-05-08 |
 | Default workspace | literal `default` | 2026-05-08 |
-| TF source pinning | latest release at init time, written into `config.yaml`, bumped via `roksctl init --upgrade-tf` | 2026-05-08 |
+| TF source pinning | latest release at init time, written into `config.yaml`, bumped via `roksbnkctl init --upgrade-tf` | 2026-05-08 |
 | TF tag scheme | one unified tag stream (TF + bnk image share tags) | 2026-05-08 |
 | IBM Cloud integration | Go SDKs only (`platform-services-go-sdk`, `container-services-go-sdk`, `ibm-cos-sdk-go`); no `ibmcloud` CLI runtime dep | 2026-05-08 |
-| Kubernetes integration | Hybrid — `client-go` for internals, `roksctl kubectl` / `roksctl oc` passthrough for user verbs | 2026-05-08 |
+| Kubernetes integration | Hybrid — `client-go` for internals, `roksbnkctl kubectl` / `roksbnkctl oc` passthrough for user verbs | 2026-05-08 |
 | v1 probes | All three: connectivity + DNS + throughput | 2026-05-08 |
 | iperf3 fixture image | Configurable; default `networkstatic/iperf3:latest` | 2026-05-08 |
 | Throughput shape | Both north-south (default) and east-west (`--mode east-west`) | 2026-05-08 |
 | Secrets | Env or OS keychain on day 1 (zalando/go-keyring) | 2026-05-08 |
 | Cluster lifecycle | Both create-new and attach-to-existing | 2026-05-08 |
-| Self update | `roksctl self update` ships in v1.0 | 2026-05-08 |
-| JSON output | `-o json` in v1.0 with versioned schema (`"schema":"roksctl.v1"`) | 2026-05-08 |
+| Self update | `roksbnkctl self update` ships in v1.0 | 2026-05-08 |
+| JSON output | `-o json` in v1.0 with versioned schema (`"schema":"roksbnkctl.v1"`) | 2026-05-08 |
 | COS scope | Full instance/bucket/object CRUD via Go SDK | 2026-05-08 |
 
 ## Success metrics
 
-- Customer evaluator can go from `curl install.sh` to passing `roksctl test` on a fresh laptop in < 35 minutes (most of which is waiting for ROKS to provision).
+- Customer evaluator can go from `curl install.sh` to passing `roksbnkctl test` on a fresh laptop in < 35 minutes (most of which is waiting for ROKS to provision).
 - F5 SE can spin up a demo, run throughput, tear down, and have all artefacts gone in 3 commands.
 - Number of GitHub issues citing busybox / docker / WSL trends to zero (compared with bnk's recent v0.6.x release cadence).
 - One binary download serves Linux, macOS, and Windows users with no platform-specific docs.
 
 ## Appendix: relationship to `bnk`
 
-`bnk` (the current tool) and `roksctl` (this PRD) coexist during a transition window. `bnk` continues to receive bug fixes; `roksctl` is the recommended path for new users from v1.0 onward. The TF repo is unchanged by either: it's the shared source of truth.
+`bnk` (the current tool) and `roksbnkctl` (this PRD) coexist during a transition window. `bnk` continues to receive bug fixes; `roksbnkctl` is the recommended path for new users from v1.0 onward. The TF repo is unchanged by either: it's the shared source of truth.

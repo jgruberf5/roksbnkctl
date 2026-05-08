@@ -1,11 +1,11 @@
 // Package test contains the deployment-validation probe runners for
-// `roksctl test`.
+// `roksbnkctl test`.
 //
 //   - dns          — DNS resolution via net.Resolver
 //   - connectivity — HTTP/HTTPS reachability via net/http
 //   - throughput   — iperf3 client + in-cluster fixture lifecycle (v1.x)
 //
-// Output conforms to the roksctl.v1 JSON schema (see SchemaVersion in
+// Output conforms to the roksbnkctl.v1 JSON schema (see SchemaVersion in
 // result.go). Text output is for humans; JSON is the contract for CI
 // consumers.
 //

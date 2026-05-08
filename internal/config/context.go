@@ -5,12 +5,12 @@ import (
 	"fmt"
 )
 
-// Context is the resolved roksctl runtime context for a single command:
+// Context is the resolved roksbnkctl runtime context for a single command:
 // which workspace we're operating on, plus the loaded global and (if the
 // workspace exists) workspace config.
 //
 // CLI commands acquire a Context near their start and use it for the rest
-// of their execution. `roksctl init` is the one command that may run with
+// of their execution. `roksbnkctl init` is the one command that may run with
 // Workspace == nil — every other command should treat that as "needs init".
 type Context struct {
 	WorkspaceName string
@@ -26,7 +26,7 @@ type Context struct {
 //
 // It then loads the workspace config if it exists. Missing workspace is
 // not propagated as an error — the caller decides whether that's OK
-// (`roksctl init` is fine with it; everything else should error).
+// (`roksbnkctl init` is fine with it; everything else should error).
 func New(workspaceFlag string) (*Context, error) {
 	g, err := LoadGlobal()
 	if err != nil {
@@ -58,7 +58,7 @@ func New(workspaceFlag string) (*Context, error) {
 	return ctx, nil
 }
 
-// SetCurrent persists the workspace pointer in ~/.roksctl/config.yaml so
+// SetCurrent persists the workspace pointer in ~/.roksbnkctl/config.yaml so
 // later commands without -w default to it. Refuses if the workspace
 // doesn't exist on disk yet — pointing at a phantom would just produce
 // confusing "workspace not found" errors on every subsequent command.
@@ -67,7 +67,7 @@ func SetCurrent(name string) error {
 		return err
 	}
 	if !WorkspaceExists(name) {
-		return fmt.Errorf("workspace %q does not exist; create it with `roksctl init -w %s`", name, name)
+		return fmt.Errorf("workspace %q does not exist; create it with `roksbnkctl init -w %s`", name, name)
 	}
 	g, err := LoadGlobal()
 	if err != nil {

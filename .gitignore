@@ -5,8 +5,8 @@
 *.exe~
 .DS_Store
 
-# roksctl-managed state, never commit
-.roksctl/
+# roksbnkctl-managed state, never commit
+.roksbnkctl/
 
 # IDE
 .vscode/

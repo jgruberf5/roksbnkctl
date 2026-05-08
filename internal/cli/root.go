@@ -1,4 +1,4 @@
-// Package cli wires the cobra command tree for roksctl.
+// Package cli wires the cobra command tree for roksbnkctl.
 //
 // Build-time variables (Version, Commit, BuildDate) are populated via
 // -ldflags by goreleaser / Makefile.
@@ -32,18 +32,18 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "roksctl",
+	Use:   "roksbnkctl",
 	Short: "Deploy and validate F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud ROKS",
-	Long: `roksctl deploys F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS,
+	Long: `roksbnkctl deploys F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS,
 manages the COS supply chain BNK depends on, and runs built-in connectivity,
 DNS, and throughput tests against the deployed environment.
 
 The 3-command happy path:
-  roksctl init    Interactive setup; writes the workspace config
-  roksctl up      Provision (or attach) and deploy BNK
-  roksctl test    Run connectivity, DNS, and throughput tests
+  roksbnkctl init    Interactive setup; writes the workspace config
+  roksbnkctl up      Provision (or attach) and deploy BNK
+  roksbnkctl test    Run connectivity, DNS, and throughput tests
 
-See docs/PRD.md or https://github.com/jgruberf5/roksctl for the full surface.`,
+See docs/PRD.md or https://github.com/jgruberf5/roksbnkctl for the full surface.`,
 	SilenceUsage:      true,
 	PersistentPreRunE: warnLegacyState,
 }
@@ -54,7 +54,7 @@ See docs/PRD.md or https://github.com/jgruberf5/roksctl for the full surface.`,
 // state moves are user decisions (multiple workspaces, kubeconfig
 // linkage, etc.) so we just point at the path and let them act.
 func warnLegacyState(_ *cobra.Command, _ []string) error {
-	if os.Getenv("ROKSCTL_HOME") != "" {
+	if os.Getenv("ROKSBNKCTL_HOME") != "" {
 		// Custom home — legacy detection isn't meaningful.
 		return nil
 	}
@@ -63,7 +63,7 @@ func warnLegacyState(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 	legacy := filepath.Join(home, ".bnkctl")
-	current := filepath.Join(home, ".roksctl")
+	current := filepath.Join(home, ".roksbnkctl")
 	if _, err := os.Stat(legacy); err != nil {
 		return nil // no legacy dir → nothing to warn about
 	}
@@ -88,7 +88,7 @@ func Execute() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "roksctl: %v\n", err)
+		fmt.Fprintf(os.Stderr, "roksbnkctl: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -101,7 +101,7 @@ func loadDotenv() {
 		return
 	}
 	if err := godotenv.Load(); err != nil {
-		fmt.Fprintf(os.Stderr, "roksctl: warning: parsing .env: %v\n", err)
+		fmt.Fprintf(os.Stderr, "roksbnkctl: warning: parsing .env: %v\n", err)
 	}
 }
 

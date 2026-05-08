@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// All tests redirect $ROKSCTL_HOME via t.Setenv so they never touch the
-// real ~/.roksctl. t.TempDir auto-cleans on failure.
+// All tests redirect $ROKSBNKCTL_HOME via t.Setenv so they never touch the
+// real ~/.roksbnkctl. t.TempDir auto-cleans on failure.
 
 func TestNew_DefaultWorkspace_NoState(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	ctx, err := New("")
 	if err != nil {
@@ -26,7 +26,7 @@ func TestNew_DefaultWorkspace_NoState(t *testing.T) {
 }
 
 func TestNew_FlagOverridesGlobalCurrent(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SaveGlobal(&Global{CurrentWorkspace: "prod"}); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestNew_FlagOverridesGlobalCurrent(t *testing.T) {
 }
 
 func TestNew_GlobalCurrentUsedWhenNoFlag(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SaveGlobal(&Global{CurrentWorkspace: "prod"}); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestNew_GlobalCurrentUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	in := &Workspace{
 		IBMCloud: IBMCloudCfg{Region: "us-south", ResourceGroup: "default", APIKeySource: APIKeySourceEnv},
@@ -77,7 +77,7 @@ func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
 }
 
 func TestLoadWorkspace_NotFound(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	_, err := LoadWorkspace("nope")
 	if err == nil {
@@ -112,7 +112,7 @@ func TestValidateName(t *testing.T) {
 }
 
 func TestRejectPlaintextSecrets(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	tmpHome, _ := BaseDir()
 	cfg := filepath.Join(tmpHome, "tainted", "config.yaml")
@@ -133,7 +133,7 @@ func TestRejectPlaintextSecrets(t *testing.T) {
 }
 
 func TestRejectPlaintextSecrets_AllowsCommentedExamples(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	tmpHome, _ := BaseDir()
 	cfg := filepath.Join(tmpHome, "ok", "config.yaml")
@@ -163,7 +163,7 @@ tf_source:
 }
 
 func TestListWorkspaces(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	for _, n := range []string{"alpha", "beta", "gamma"} {
 		if err := SaveWorkspace(n, &Workspace{}); err != nil {
@@ -192,7 +192,7 @@ func TestListWorkspaces(t *testing.T) {
 }
 
 func TestSetCurrent_RejectsMissingWorkspace(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SetCurrent("phantom"); err == nil {
 		t.Fatal("expected SetCurrent to reject missing workspace")
@@ -200,7 +200,7 @@ func TestSetCurrent_RejectsMissingWorkspace(t *testing.T) {
 }
 
 func TestAPIKeyFromConfig_Roundtrip(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 	// Don't let the host env shadow the config-stored key.
 	for _, v := range []string{"IBMCLOUD_API_KEY", "IC_API_KEY", "TF_VAR_ibmcloud_api_key", "TF_VAR_IBMCLOUD_API_KEY", "TF_VAR_IC_API_KEY"} {
 		t.Setenv(v, "")
@@ -238,7 +238,7 @@ func TestAPIKeyFromConfig_Roundtrip(t *testing.T) {
 }
 
 func TestAPIKeyFromConfig_NotSet(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	// Workspace exists but has no api_key_b64.
 	if err := SaveWorkspace("empty", &Workspace{}); err != nil {
@@ -250,7 +250,7 @@ func TestAPIKeyFromConfig_NotSet(t *testing.T) {
 }
 
 func TestRejectPlaintextSecrets_DoesNotRejectAPIKeyB64(t *testing.T) {
-	t.Setenv(ROKSCTLHomeEnv, t.TempDir())
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	ws := &Workspace{
 		IBMCloud: IBMCloudCfg{Region: "us-south", APIKeyB64: EncodeAPIKeyForConfig("k")},

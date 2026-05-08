@@ -12,17 +12,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jgruberf5/roksctl/internal/config"
-	"github.com/jgruberf5/roksctl/internal/ibm"
-	"github.com/jgruberf5/roksctl/internal/k8s"
-	"github.com/jgruberf5/roksctl/internal/tf"
+	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
 // Apply retry tuning. ROKS master endpoints take 1–5 minutes to fully
 // propagate after creation; the cneinstance/license/cert-manager
 // modules race that propagation by curl-ing the master directly. When
 // terraform-exec surfaces a transient-shaped failure, sleep and retry
-// rather than making the user type `roksctl up` again.
+// rather than making the user type `roksbnkctl up` again.
 const (
 	applyMaxAttempts = 3
 	applyRetryWait   = 60 * time.Second
@@ -41,8 +41,8 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Interactive setup; writes the workspace config.yaml",
-	Long: `roksctl init walks through the prompts (region, resource group, cluster,
-BNK version) and writes ~/.roksctl/<workspace>/config.yaml.
+	Long: `roksbnkctl init walks through the prompts (region, resource group, cluster,
+BNK version) and writes ~/.roksbnkctl/<workspace>/config.yaml.
 
 On first run with no -w flag, creates and uses the 'default' workspace.
 Re-run with --upgrade-tf to bump the pinned Terraform source to its latest
@@ -53,15 +53,15 @@ release.`,
 var upCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Provision (or attach) and deploy BNK — terraform plan + apply",
-	Long: `roksctl up validates credentials, resolves the pinned Terraform source,
+	Long: `roksbnkctl up validates credentials, resolves the pinned Terraform source,
 runs plan, and (after confirmation, unless --auto) applies. Idempotent and
-resumable: a partial failure is recovered by re-running 'roksctl up'.`,
+resumable: a partial failure is recovered by re-running 'roksbnkctl up'.`,
 	RunE: runUp,
 }
 
 var planCmd = &cobra.Command{
 	Use:   "plan",
-	Short: "Read-only; show what roksctl up would change",
+	Short: "Read-only; show what roksbnkctl up would change",
 	RunE:  runPlan,
 }
 
@@ -90,7 +90,7 @@ func init() {
 	downCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 
 	// --var-file matches terraform's own flag: repeatable, later wins.
-	// Layered after the roksctl-generated tfvars and the workspace's
+	// Layered after the roksbnkctl-generated tfvars and the workspace's
 	// optional terraform.tfvars.user override.
 	for _, c := range []*cobra.Command{upCmd, planCmd, applyCmd, downCmd} {
 		c.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
@@ -151,7 +151,7 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 }
 
 // runApply = direct apply, no plan-and-confirm gate. For users who know
-// what they're doing (CI, scripted flows, post-`roksctl plan`).
+// what they're doing (CI, scripted flows, post-`roksbnkctl plan`).
 func runApply(cmd *cobra.Command, _ []string) error {
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
@@ -202,7 +202,7 @@ func openTF(ctx context.Context, needAPIKey bool) (*config.Context, *tf.Workspac
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksctl init` first", cctx.WorkspaceName)
+		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
 	var apiKey string
@@ -243,8 +243,8 @@ func writeAndInit(ctx context.Context, tfws *tf.Workspace, ws *config.Workspace)
 // tryAutoKubeconfig fetches the admin kubeconfig from IBM Cloud and
 // writes it to $KUBECONFIG (or ~/.kube/config). Best-effort: any error
 // is logged as a warning rather than failing the parent command —
-// `roksctl up` succeeded if terraform succeeded; the kubeconfig is a
-// convenience the user can still grab via `roksctl kubeconfig --download`.
+// `roksbnkctl up` succeeded if terraform succeeded; the kubeconfig is a
+// convenience the user can still grab via `roksbnkctl kubeconfig --download`.
 //
 // Skipped entirely with --no-kubeconfig.
 func tryAutoKubeconfig(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) {
@@ -272,7 +272,7 @@ func tryAutoKubeconfig(ctx context.Context, cctx *config.Context, tfws *tf.Works
 	body, err := ic.FetchClusterConfig(ctx, cluster)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: kubeconfig fetch failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "         (run `roksctl kubeconfig --download` to retry)")
+		fmt.Fprintln(os.Stderr, "         (run `roksbnkctl kubeconfig --download` to retry)")
 		return
 	}
 	target := k8s.DefaultKubeconfigPath()

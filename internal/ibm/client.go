@@ -9,7 +9,7 @@ import (
 	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
 )
 
-// Client wraps the IBM Cloud platform-services SDKs that roksctl uses.
+// Client wraps the IBM Cloud platform-services SDKs that roksbnkctl uses.
 // Holds initialised service handles for IAM Identity (auth verification)
 // and Resource Manager (resource group lookup). IAM and Resource Manager
 // are global services — region only matters for region-bound operations

@@ -7,7 +7,7 @@ import (
 
 // ResolveResourceGroup looks up a resource group by name and returns its
 // ID. Auto-verifies credentials (and populates Identity) if Verify has
-// not yet been called — `roksctl init` calls Verify explicitly first; later
+// not yet been called — `roksbnkctl init` calls Verify explicitly first; later
 // commands can skip and let this auto-verify.
 //
 // Returns a clear "not found" error when the name doesn't match any

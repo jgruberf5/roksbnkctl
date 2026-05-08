@@ -1,4 +1,4 @@
-# roksctl First-Build Shake-Out Checklist
+# roksbnkctl First-Build Shake-Out Checklist
 
 > **Status:** Drafted at end of scaffolding session, 2026-05-08.
 > **Purpose:** the things I wrote on faith without a Go toolchain in
@@ -9,13 +9,13 @@
 ## How to drive this
 
 ```bash
-cd /mnt/d/project/roksctl
+cd /mnt/d/project/roksbnkctl
 go mod tidy                 # resolves indirect deps, fills go.sum
 make vet                    # syntactic + cheap correctness checks
 make test                   # unit tests (~30 cases, no network)
 make build                  # full binary
-./bin/roksctl --help         # confirm help tree
-./bin/roksctl doctor         # confirm runtime checks shape
+./bin/roksbnkctl --help         # confirm help tree
+./bin/roksbnkctl doctor         # confirm runtime checks shape
 ```
 
 When something breaks, fix the smallest thing that compiles, then move on. Don't pre-emptively redesign — most issues here are 1-character fixes (Api → API, etc.).
@@ -172,7 +172,7 @@ var bnkComponents = []bnkComponent{
 }
 ```
 
-These are educated guesses based on Helm chart conventions. Verify after a real `roksctl up`:
+These are educated guesses based on Helm chart conventions. Verify after a real `roksbnkctl up`:
 
 ```bash
 kubectl -n f5-bnk get pods --show-labels
@@ -192,11 +192,11 @@ func assetName(tag string) string {
     ver := strings.TrimPrefix(tag, "v")     // v1.2.3 → 1.2.3
     ext := ".tar.gz"
     if runtime.GOOS == "windows" { ext = ".zip" }
-    return fmt.Sprintf("roksctl_%s_%s_%s%s", ver, runtime.GOOS, runtime.GOARCH, ext)
+    return fmt.Sprintf("roksbnkctl_%s_%s_%s%s", ver, runtime.GOOS, runtime.GOARCH, ext)
 }
 ```
 
-This matches goreleaser's default `name_template`. The `.goreleaser.yml` we wrote uses the default. If you customize the template, update this in lockstep. **First release will reveal any mismatch — `roksctl self update` will report `no asset matching X`.**
+This matches goreleaser's default `name_template`. The `.goreleaser.yml` we wrote uses the default. If you customize the template, update this in lockstep. **First release will reveal any mismatch — `roksbnkctl self update` will report `no asset matching X`.**
 
 ---
 
@@ -207,7 +207,7 @@ This matches goreleaser's default `name_template`. The `.goreleaser.yml` we wrot
 - Self-update: gated with a clear error message pointing at `scoop update` (a running .exe can't be replaced in place).
 - Path handling: `filepath` everywhere (not `path`); should be portable.
 - `os.Stdin.Fd()` for `term.ReadPassword` and `term.IsTerminal`: cross-platform.
-- Shell command in `roksctl shell`: defaults to `/bin/bash` if `$SHELL` is unset; on Windows that fails. **Add Windows handling**: try `cmd.exe` or `pwsh.exe` if `runtime.GOOS == "windows"`.
+- Shell command in `roksbnkctl shell`: defaults to `/bin/bash` if `$SHELL` is unset; on Windows that fails. **Add Windows handling**: try `cmd.exe` or `pwsh.exe` if `runtime.GOOS == "windows"`.
 
 ### macOS Apple Silicon
 
@@ -216,7 +216,7 @@ This matches goreleaser's default `name_template`. The `.goreleaser.yml` we wrot
 ### Linux distro variability
 
 - terraform-exec and client-go are pure Go.
-- `iperf3` for `roksctl test throughput`: package-managed; `roksctl doctor` already flags missing.
+- `iperf3` for `roksbnkctl test throughput`: package-managed; `roksbnkctl doctor` already flags missing.
 
 ---
 
@@ -224,24 +224,24 @@ This matches goreleaser's default `name_template`. The `.goreleaser.yml` we wrot
 
 Once compile + unit tests pass, drive the verbs in order against a real workspace:
 
-1. `roksctl doctor` — surfaces every dep that's wrong. Fix what fails before the rest.
-2. `roksctl init` — interactive; verify the prompts match the PRD's happy-path script.
-3. `roksctl ws list` / `roksctl ws current` — confirm workspace plumbing.
-4. `roksctl version` — confirms ldflags wiring.
-5. `roksctl up` (with a *small* test cluster, not your prod one) — exercises:
+1. `roksbnkctl doctor` — surfaces every dep that's wrong. Fix what fails before the rest.
+2. `roksbnkctl init` — interactive; verify the prompts match the PRD's happy-path script.
+3. `roksbnkctl ws list` / `roksbnkctl ws current` — confirm workspace plumbing.
+4. `roksbnkctl version` — confirms ldflags wiring.
+5. `roksbnkctl up` (with a *small* test cluster, not your prod one) — exercises:
    - terraform source fetch (GitHub tarball)
    - tfvars rendering (compare to a known-good `terraform.tfvars` from the existing TF repo)
    - `terraform init` against the upstream module
    - confirmation prompt
    - `terraform apply` streaming
    - auto-kubeconfig fetch
-6. `roksctl status` — should show the just-applied workspace.
-7. `roksctl logs flo` — exercises the component map (this is the most likely place for a label-selector bug).
-8. `roksctl test connectivity` / `roksctl test dns` — pure-Go probes; should be solid if hosts are configured.
-9. `roksctl test throughput` — exercises k8s client-go fixture lifecycle. **This is the highest-risk roksctl-local code path.**
-10. `roksctl cos instance list` — exercises Resource Controller pagination + CRN filter.
-11. `roksctl cos object put`/`get` — exercises ibm-cos-sdk-go IAM auth.
-12. `roksctl down` — exercises destroy path; verify state is cleaned up.
+6. `roksbnkctl status` — should show the just-applied workspace.
+7. `roksbnkctl logs flo` — exercises the component map (this is the most likely place for a label-selector bug).
+8. `roksbnkctl test connectivity` / `roksbnkctl test dns` — pure-Go probes; should be solid if hosts are configured.
+9. `roksbnkctl test throughput` — exercises k8s client-go fixture lifecycle. **This is the highest-risk roksbnkctl-local code path.**
+10. `roksbnkctl cos instance list` — exercises Resource Controller pagination + CRN filter.
+11. `roksbnkctl cos object put`/`get` — exercises ibm-cos-sdk-go IAM auth.
+12. `roksbnkctl down` — exercises destroy path; verify state is cleaned up.
 
 ---
 
@@ -250,9 +250,9 @@ Once compile + unit tests pass, drive the verbs in order against a real workspac
 These aren't bugs; they're ship-after-feedback decisions captured in PRD's Open Questions:
 
 - **east-west iperf3 with in-cluster client pod** (current east-west uses host as client; only useful for ClusterIP-reachable test rigs)
-- **`roksctl logs --all-pods`** (multi-pod tail)
-- **component-aware `roksctl status`** (BNK pod readiness, CRD health)
-- **`cos.upload:` config block + auto-orchestration in `roksctl up`**
+- **`roksbnkctl logs --all-pods`** (multi-pod tail)
+- **component-aware `roksbnkctl status`** (BNK pod readiness, CRD health)
+- **`cos.upload:` config block + auto-orchestration in `roksbnkctl up`**
 - **Auto-install terraform via `hashicorp/hc-install`** (currently requires terraform on PATH)
 - **HMAC keys for COS auth** (currently IAM bearer only)
 - **Custom `tests.yaml`** (extra hostnames, custom HTTP paths)

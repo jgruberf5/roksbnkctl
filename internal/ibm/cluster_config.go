@@ -110,7 +110,7 @@ func (c *Client) fetchClusterConfigOnce(ctx context.Context, clusterIDOrName, to
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "roksctl")
+	req.Header.Set("User-Agent", "roksbnkctl")
 	if c.region != "" {
 		req.Header.Set("X-Region", c.region)
 	}
