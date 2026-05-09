@@ -288,7 +288,19 @@ YAML
 
     step "D5 test connectivity" "$ROKSBNKCTL" test connectivity -o json -w "$WORKSPACE"
     step "D6 test dns"          "$ROKSBNKCTL" test dns -o json -w "$WORKSPACE"
-    step "D7 test throughput"   "$ROKSBNKCTL" test throughput -o json -w "$WORKSPACE"
+
+    # `roksbnkctl test throughput` runs the iperf3 client locally
+    # against the iperf3 server it deploys into the cluster. If iperf3
+    # isn't installed on this host, the binary's pod-deploy path still
+    # works (verified up to "iperf3 endpoint:" in the JSON output) but
+    # the client invocation fails. Skip cleanly rather than mark the
+    # whole run failed — the throughput-test path is gated by host
+    # tooling, not by anything roksbnkctl owns.
+    if command -v iperf3 >/dev/null 2>&1; then
+        step "D7 test throughput" "$ROKSBNKCTL" test throughput -o json -w "$WORKSPACE"
+    else
+        yellow "  ⊘ D7 skipped — iperf3 not on PATH (install iperf3 to enable throughput test)"
+    fi
 
     step "D8 down" "$ROKSBNKCTL" down --auto -w "$WORKSPACE" --var-file "$TFVARS"
 }
