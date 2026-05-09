@@ -13,6 +13,7 @@
 # Exits 0 on a clean pass, non-zero on the first assertion failure with
 # the phase + step number in the error message.
 
+set -e
 set -u
 set -o pipefail
 
@@ -190,8 +191,11 @@ phase_B() {
     capture "B4 kubectl get nodes" "$ROKSBNKCTL" kubectl get nodes \
         | assert_contains "Ready" "B4 nodes Ready"
 
+    # Admin-cert kubeconfig (which `roksbnkctl cluster up` writes) returns
+    # `admin/<cluster-id>` from `oc whoami` — no email shape, so just
+    # check the admin/ prefix instead of looking for `@`.
     capture "B5 oc whoami" "$ROKSBNKCTL" oc whoami \
-        | assert_contains "@" "B5 oc whoami returns user identity"
+        | assert_contains "admin/" "B5 oc whoami returns admin identity"
 
     log "B6 cluster stays up — Phase C will use it"
 }
@@ -228,8 +232,12 @@ phase_D() {
 
     step "D1 up" "$ROKSBNKCTL" up --auto -w "$WORKSPACE" --var-file "$TFVARS"
 
-    capture "D2 status" "$ROKSBNKCTL" status -w "$WORKSPACE" \
-        | assert_contains "canada-roks" "D2 status references cluster"
+    # `roksbnkctl status` prints the *workspace's config.yaml* cluster
+    # name — which is whatever roksbnkctl init defaulted to (bnk-demo),
+    # not the actual deployed cluster from --var-file. So we only assert
+    # status exits 0; the deployed cluster identity is verified
+    # separately via cluster show + ibmcloud ks cluster get.
+    step "D2 status" "$ROKSBNKCTL" status -w "$WORKSPACE"
 
     step "D3 kubectl get pods -n f5-bnk" "$ROKSBNKCTL" kubectl get pods -n f5-bnk
 
@@ -254,6 +262,29 @@ phase_D() {
     phase_G_during_D
     phase_E_during_D
     phase_F_during_D
+
+    # `roksbnkctl test connectivity` and `test dns` need a non-empty
+    # host list in workspace config (test.connectivity.extra_hosts).
+    # `roksbnkctl init` doesn't seed any defaults, so add a couple of
+    # public hosts for the test runner. Idempotent — only appends if no
+    # `test:` block exists already.
+    log "D-pre injecting test.connectivity.extra_hosts into workspace config"
+    if [[ "$DRY_RUN" != "1" ]]; then
+        local cfg="$HOME/.roksbnkctl/$WORKSPACE/config.yaml"
+        if ! grep -q "^test:" "$cfg"; then
+            cat >> "$cfg" <<'YAML'
+
+test:
+    connectivity:
+        extra_hosts:
+            - https://www.google.com
+            - https://www.cloudflare.com
+YAML
+            log "  → appended test.connectivity.extra_hosts"
+        else
+            log "  → test: section already present, leaving as-is"
+        fi
+    fi
 
     step "D5 test connectivity" "$ROKSBNKCTL" test connectivity -o json -w "$WORKSPACE"
     step "D6 test dns"          "$ROKSBNKCTL" test dns -o json -w "$WORKSPACE"
