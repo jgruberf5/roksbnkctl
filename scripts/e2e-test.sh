@@ -390,6 +390,16 @@ phase_G_during_D() {
 phase_H() {
     phase_header H "final cleanup"
 
+    # `ws delete` refuses to drop the current workspace — create a
+    # parking-lot workspace first and switch to it. Idempotent: if
+    # `e2e-cleanup` already exists from a previous run, ws new will
+    # error out and we just use it. Either way, the ws use afterward
+    # makes it current so the e2e delete is allowed.
+    if [[ "$DRY_RUN" != "1" ]]; then
+        "$ROKSBNKCTL" ws new e2e-cleanup >/dev/null 2>&1 || true
+    fi
+    step "H0 ws use e2e-cleanup (parking lot)" "$ROKSBNKCTL" ws use e2e-cleanup
+
     step "H1 ws delete $WORKSPACE" "$ROKSBNKCTL" ws delete "$WORKSPACE" --force
 
     if [[ "$DRY_RUN" != "1" ]]; then
