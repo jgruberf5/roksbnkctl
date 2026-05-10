@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-71da58cb.js";
+            window.path_to_searchindex_js = "searchindex-6719f835.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -185,8 +185,8 @@
 <pre><code>roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
-✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (informational; `roksbnkctl k get/apply/...` covers the happy path natively)
-✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (informational; `roksbnkctl k ...` covers the happy path natively)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
@@ -263,7 +263,7 @@
 </tbody>
 </table>
 </div>
-<p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> covers the longer tail.</p>
+<p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> (lands in Sprint 6) covers the longer tail.</p>
 <h2 id="the---target-name-ssh-check-sprint-1"><a class="header" href="#the---target-name-ssh-check-sprint-1">The <code>--target &lt;name&gt;</code> SSH check (Sprint 1)</a></h2>
 <p>Sprint 1’s <code>--on jumphost</code> flag introduced an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
 <pre><code class="language-bash">roksbnkctl doctor --target jumphost

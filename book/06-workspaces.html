@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-71da58cb.js";
+            window.path_to_searchindex_js = "searchindex-6719f835.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -299,7 +299,7 @@ roksbnkctl -w default k get pods -A
 <h2 id="the-parking-lot-pattern"><a class="header" href="#the-parking-lot-pattern">The parking-lot pattern</a></h2>
 <p>A subtle gotcha: <code>ws delete</code> refuses to remove the current workspace, but the end-to-end test suite needs to clean itself up after running against the <code>default</code> workspace.</p>
 <p>The fix is the <strong>parking-lot pattern</strong>: have a throwaway workspace that exists only to be the “current” pointer while you delete other workspaces.</p>
-<pre><code class="language-bash"># Phase H of scripts/e2e-test.sh: tear-down + cleanup
+<pre><code class="language-bash"># End-to-end test cleanup (e2e-test.sh: Phase D destroys; Phase H runs the parking-lot dance below)
 
 # Run the destroy against "default" (still current at this point)
 roksbnkctl down --auto
