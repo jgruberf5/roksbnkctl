@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58e0a648.js";
+            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,216 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="choosing-a-backend-per-tool"><a class="header" href="#choosing-a-backend-per-tool">Choosing a backend per tool</a></h1>
-<p><em>Coming in Sprint 4.</em></p>
-<p><em>A decision tree for picking a backend per tool: GSLB DNS testing (local + k8s), iperf3 throughput (k8s default), <code>ibmcloud</code> from a customer-firewalled office (ssh), frozen toolchain version in CI (docker).</em></p>
+<p><a href="./17-execution-backends.html">Chapter 17</a> covered the <strong>mechanics</strong> of each backend. This chapter is the <strong>decision tree</strong>: given a tool and a scenario, which of <code>local</code> / <code>docker</code> / <code>k8s</code> / <code>ssh</code> is the right call.</p>
+<p>If you’re searching for “which backend should I use”, you’ve landed on the right page.</p>
+<h2 id="the-four-backends-in-one-line-each"><a class="header" href="#the-four-backends-in-one-line-each">The four backends in one line each</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>One-line summary</th><th>Deep dive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>local</code></td><td><code>os/exec</code> on your laptop; fastest, requires the tool on PATH</td><td><a href="./17-execution-backends.html#local-backend">§ Local backend</a></td></tr>
+<tr><td><code>docker</code></td><td><code>docker run</code> against a vendored image; frozen tool version, no host install</td><td><a href="./17-execution-backends.html#docker-backend">§ Docker backend</a></td></tr>
+<tr><td><code>k8s</code></td><td>inside the cluster (long-lived ops pod or one-shot Job); cluster-correct network identity</td><td><a href="./17-execution-backends.html#k8s-backend">§ K8s backend</a></td></tr>
+<tr><td><code>ssh:&lt;target&gt;</code></td><td>on a registered SSH target; opt-in apt-bootstrap on Ubuntu</td><td><a href="./17-execution-backends.html#ssh-backend">§ SSH backend</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>If you’re skimming, the cheat-sheet is:</p>
+<ul>
+<li><strong><code>local</code></strong> when you have the tool installed and the host’s network identity is correct for the call.</li>
+<li><strong><code>docker</code></strong> when you don’t have the tool and don’t want to install it, or you need a frozen version for CI.</li>
+<li><strong><code>k8s</code></strong> when the call’s <em>network position</em> matters and the cluster is the right vantage point.</li>
+<li><strong><code>ssh:&lt;target&gt;</code></strong> when the call needs to originate from a specific external host (a customer bastion, an air-gapped bridge).</li>
+</ul>
+<p>The rest of this chapter is the longer version.</p>
+<h2 id="per-tool-default-backends"><a class="header" href="#per-tool-default-backends">Per-tool default backends</a></h2>
+<p>Every tool has a default backend baked into <code>roksbnkctl</code>. Workspace config (<code>exec:</code> block) can override the default per workspace; <code>--backend</code> overrides for a single invocation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default</th><th>Resolved by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td><code>internal/cli/cluster.go::resolveBackendSpecWith("ibmcloud", flagOverride)</code></td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td><code>internal/cli/test.go::resolveBackendSpecWith("iperf3", flagOverride)</code></td></tr>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td><code>internal/cli/lifecycle.go::resolveBackendSpecWith("terraform", flagOverride)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The defaults reflect “what’s the right answer for the most common scenario”:</p>
+<ul>
+<li><strong><code>ibmcloud</code> defaults to <code>local</code></strong> because most users have it on PATH or are happy installing it. The compliance + firewall scenarios where <code>ssh</code> or <code>docker</code> are better are the minority of calls.</li>
+<li><strong><code>iperf3</code> defaults to <code>k8s</code></strong> because throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s backend places the iperf3 client in (or adjacent to) the cluster so the number reflects fabric, not Wi-Fi. Laptop-uplink-to-cluster is a real measurement too, but it’s the special case — opt in via <code>--backend local</code>.</li>
+<li><strong><code>terraform</code> defaults to <code>local</code></strong> because the terraform-exec local path is the established workflow. State handling is simplest there. Frozen-version CI runs use <code>--backend docker</code>; non-local network-locality use cases (cluster-side, SSH-bastion-side) are deferred to a future release pending a state-handling design — see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>.</li>
+</ul>
+<p>To change a default per workspace, edit <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
+<pre><code class="language-yaml">exec:
+  iperf3:    { backend: k8s }      # already the default; shown for clarity
+  ibmcloud:  { backend: ssh:bastion }
+  terraform: { backend: docker }
+</code></pre>
+<p><a href="./12-workspace-config.html">Chapter 12 §“<code>exec:</code>”</a> covers the schema. The <code>--backend</code> CLI flag overrides whatever is in <code>exec:</code> for a single invocation.</p>
+<h2 id="per-tool-supported-backend-matrix"><a class="header" href="#per-tool-supported-backend-matrix">Per-tool supported-backend matrix</a></h2>
+<p>Not every tool supports every backend. The supported set per tool:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th><code>local</code></th><th><code>docker</code></th><th><code>k8s</code></th><th><code>ssh:&lt;target&gt;</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud</code></td><td>yes</td><td>yes</td><td>yes (long-lived ops pod)</td><td>yes</td></tr>
+<tr><td><code>iperf3</code></td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes (default)</td><td>yes</td></tr>
+<tr><td><code>terraform</code></td><td>yes (default)</td><td>yes</td><td>deferred</td><td>deferred</td></tr>
+<tr><td>DNS probe (Sprint 5)</td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes</td><td>yes</td></tr>
+</tbody>
+</table>
+</div>
+<p>The “no” entries are intentional design decisions, not gaps:</p>
+<ul>
+<li><strong><code>iperf3</code> over <code>docker</code> is rejected</strong> because a Docker container running locally has the same network identity as the host — same NAT egress, same uplink, same observed bandwidth as <code>--backend local</code>. The user’s mental model would be “I picked docker, so the iperf3 must be hermetic now” but the throughput number wouldn’t actually differ. Better to refuse and force the user to pick <code>local</code> (deliberate laptop measurement) or <code>k8s</code> (cluster measurement).</li>
+<li><strong>DNS probe over <code>docker</code> is rejected</strong> for the same reason. DNS resolution from a Docker container with default bridge networking goes through the same resolver as the host. There’s no GSLB-relevant network-locality difference. The probe subcommand errors with “DNS probe doesn’t benefit from docker; use local instead” when <code>--backend docker</code> is passed.</li>
+<li><strong><code>terraform</code> over <code>k8s</code> and <code>ssh</code> is deferred</strong>. The state file is sensitive (admin tokens, generated TLS keys, license bundles); moving it into a Kubernetes Secret or scp’ing it pre/post-run requires a state-handling design that hasn’t shipped yet. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> lays out the considerations; expect this in a Sprint 5+ release.</li>
+</ul>
+<p>Passing an unsupported <code>(tool, backend)</code> pair errors at the CLI layer before the backend is invoked:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: iperf3 doesn't support backend `docker` (same network identity as `local`,
+       no value-add); supported: local, k8s, ssh:&lt;target&gt;
+</code></pre>
+<h2 id="decision-tree"><a class="header" href="#decision-tree">Decision tree</a></h2>
+<p>Pick the question that matches your scenario.</p>
+<h3 id="i-want-to-measure-cluster-bandwidth"><a class="header" href="#i-want-to-measure-cluster-bandwidth">“I want to measure cluster bandwidth”</a></h3>
+<p>Use <code>--backend k8s</code>. The default for <code>iperf3</code> is already <code>k8s</code> — the explicit flag is redundant unless you’ve overridden the default in workspace config:</p>
+<pre><code class="language-bash">roksbnkctl test throughput
+# equivalent to:
+roksbnkctl test throughput --backend k8s
+</code></pre>
+<p>The k8s backend deploys a server-side Deployment + LoadBalancer Service in <code>roksbnkctl-test</code>, runs the iperf3 client as a one-shot Job in the same namespace, collects the JSON output from the client pod’s logs, and tears down both. The bandwidth number reflects the cluster fabric.</p>
+<p>If you instead want to measure your laptop’s uplink to the cluster:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --backend local --endpoint &lt;cluster-LB-ip&gt;:5201
+</code></pre>
+<p>That’s a deliberately different measurement — useful when you suspect office Wi-Fi, not cluster fabric, is the bottleneck.</p>
+<h3 id="im-doing-gslb-dns-validation"><a class="header" href="#im-doing-gslb-dns-validation">“I’m doing GSLB DNS validation”</a></h3>
+<p>Use <strong>both</strong> <code>local</code> and <code>k8s</code>. F5 BIG-IP Next’s GSLB returns different answers depending on the requesting resolver’s IP — geographic affinity, datacenter routing, health-check state. To validate that the GSLB is actually doing this, query from multiple network vantage points and compare.</p>
+<p>The full multi-vantage probe is a <strong>Sprint 5 deliverable</strong>; today (Sprint 4) <code>roksbnkctl test dns</code> is the simpler single-vantage workspace probe. The shape below is what the Sprint 5 expanded surface will look like — the flags (<code>--target</code>, <code>--type</code>, <code>--server</code>, <code>--gslb-compare</code>) don’t exist on <code>roksbnkctl test dns</code> yet:</p>
+<pre><code class="language-bash"># Sprint 5+ — the flags below don't exist on `roksbnkctl test dns` today
+roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.f5.example.com \
+  --gslb-compare
+</code></pre>
+<p>When it lands, <code>--gslb-compare</code> will fan out to every configured backend (<code>local</code> for your office IP, <code>k8s</code> for the cluster’s egress IP, <code>ssh:&lt;region-bastion&gt;</code> for a bastion in another region) and emit a single comparison JSON. Different answers across vantages are <strong>expected</strong> in a healthy GSLB; identical answers might mean the GSLB rules aren’t taking effect.</p>
+<p><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> is the chapter to read once the probe ships.</p>
+<h3 id="i-need-to-run-ibmcloud-from-a-customer-firewalled-office"><a class="header" href="#i-need-to-run-ibmcloud-from-a-customer-firewalled-office">“I need to run <code>ibmcloud</code> from a customer-firewalled office”</a></h3>
+<p>Use <code>--backend ssh:&lt;bastion&gt;</code>. Your customer’s network policy lets the corporate jumphost reach <code>*.cloud.ibm.com</code> but blocks your laptop. The SSH backend ships your kubeconfig to the bastion (single file, mode <code>0600</code>, removed via <code>trap</code> on session exit), runs <code>ibmcloud</code> there, streams the output back:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend ssh:bastion ks cluster ls
+</code></pre>
+<p>If <code>ibmcloud</code> isn’t installed on the bastion, you’ll get a clear error:</p>
+<pre><code>error: tool `ibmcloud` not found on ssh target bastion; re-run with --bootstrap to install
+       via apt-get, or pre-install on the target manually
+</code></pre>
+<p>Re-run with <code>--bootstrap</code> if you want <code>roksbnkctl</code> to <code>sudo apt-get install -y ibmcloud-cli</code> on the bastion. The opt-in default reflects “we don’t surprise users with <code>sudo apt-get</code> on a remote they didn’t expect mutation on” — see <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a> for the bootstrap mechanics.</p>
+<h3 id="im-in-ci-and-want-a-frozen-toolchain-version"><a class="header" href="#im-in-ci-and-want-a-frozen-toolchain-version">“I’m in CI and want a frozen toolchain version”</a></h3>
+<p>Use <code>--backend docker</code>. The vendored images are tagged in lock-step with <code>roksbnkctl</code> releases — <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0</code> is the exact same <code>ibmcloud</code> binary every CI run sees, regardless of when the runner image was built or what <code>apt-get</code> happens to ship that day:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend docker iam oauth-tokens
+roksbnkctl up --backend docker     # terraform inside hashicorp/terraform:&lt;v&gt;
+</code></pre>
+<p>For CI specifically, also pin <code>ibmcloud.api_key_source: env</code> in workspace config so the API key resolution is unambiguous (no keychain fallback to confuse a non-interactive runner) — see <a href="./14-credentials-resolver.html#pinning-a-single-source">Chapter 14 §“Pinning a single source”</a>.</p>
+<h3 id="im-on-a-clean-dev-machine-without-ibmcloud-installed"><a class="header" href="#im-on-a-clean-dev-machine-without-ibmcloud-installed">“I’m on a clean dev machine without <code>ibmcloud</code> installed”</a></h3>
+<p>Use <code>--backend docker</code>. No <code>apt-get install ibmcloud-cli</code>, no IBM repo + GPG key dance, no upstream-package-version mismatch — <code>docker pull ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> is the only setup, and <code>roksbnkctl</code> does that for you on first invocation.</p>
+<p>Alternatively, if your laptop is the dev machine and you’ll run <code>ibmcloud</code> more than once, just install it. The <code>local</code> backend has lower per-invocation startup latency than <code>docker</code> (no container create/start/log-attach), so once you’ve paid the install cost the local path is faster for the rest of the session.</p>
+<h3 id="i-want-a-cluster-side-ad-hoc-shell"><a class="header" href="#i-want-a-cluster-side-ad-hoc-shell">“I want a cluster-side ad-hoc shell”</a></h3>
+<p>Use <code>--backend k8s</code> with the long-lived ops pod. Once <code>roksbnkctl ops install</code> has run, <code>--backend k8s</code> for <code>ibmcloud</code> (or any future tool) routes through <code>kubectl exec -n roksbnkctl-ops ops -- &lt;argv&gt;</code>. The pod stays alive between invocations, so the second and subsequent commands skip pod-startup latency.</p>
+<pre><code class="language-bash">roksbnkctl ops install
+roksbnkctl ibmcloud --backend k8s iam oauth-tokens
+roksbnkctl ibmcloud --backend k8s ks cluster ls
+roksbnkctl ibmcloud --backend k8s account list
+</code></pre>
+<p><a href="./19-in-cluster-ops-pod.html">Chapter 19</a> is the full reference for the ops pod lifecycle.</p>
+<h3 id="im-pre-cluster--theres-no-cluster-yet"><a class="header" href="#im-pre-cluster--theres-no-cluster-yet">“I’m pre-cluster — there’s no cluster yet”</a></h3>
+<p>Use <code>local</code> or <code>ssh:&lt;target&gt;</code>. The <code>k8s</code> backend prereq is a working kubeconfig pointing at a running cluster; before <code>roksbnkctl up</code> has succeeded, that doesn’t exist. For pre-cluster ibmcloud + terraform calls (account inspection, IAM tinkering, the cluster-create itself), <code>local</code> and <code>ssh:bastion</code> are the only two paths.</p>
+<h2 id="when-not-to-use-a-backend"><a class="header" href="#when-not-to-use-a-backend">When <em>not</em> to use a backend</a></h2>
+<p>Common foot-guns, in rough order of how often they come up:</p>
+<h3 id="--backend-k8s-without-roksbnkctl-ops-install"><a class="header" href="#--backend-k8s-without-roksbnkctl-ops-install"><code>--backend k8s</code> without <code>roksbnkctl ops install</code></a></h3>
+<p>The ops pod must exist before the k8s backend can route <code>ibmcloud</code> calls through it. First-time use:</p>
+<pre><code class="language-bash">roksbnkctl ops install         # one-time setup per cluster
+roksbnkctl ibmcloud --backend k8s ks cluster ls
+</code></pre>
+<p>If you skip the install, the backend errors with a clear remediation:</p>
+<pre><code>error: ops pod not found in roksbnkctl-ops namespace; run `roksbnkctl ops install` first
+</code></pre>
+<p><a href="./19-in-cluster-ops-pod.html">Chapter 19</a> covers the install/show/uninstall lifecycle.</p>
+<h3 id="--backend-docker-for-a-network-locality-test"><a class="header" href="#--backend-docker-for-a-network-locality-test"><code>--backend docker</code> for a network-locality test</a></h3>
+<p><code>iperf3</code> and the DNS probe both reject <code>--backend docker</code> because a local Docker container has the same network identity as the host (default bridge networking). The probe wouldn’t measure anything different. The CLI errors at parse time:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: iperf3 doesn't support backend `docker` (same network identity as `local`,
+       no value-add); supported: local, k8s, ssh:&lt;target&gt;
+</code></pre>
+<p>If you actually want a hermetic-tools throughput test, <code>--backend k8s</code> is the right answer.</p>
+<h3 id="--backend-sshhost-without---bootstrap-on-a-fresh-target"><a class="header" href="#--backend-sshhost-without---bootstrap-on-a-fresh-target"><code>--backend ssh:host</code> without <code>--bootstrap</code> on a fresh target</a></h3>
+<p>If <code>ibmcloud</code> (or <code>iperf3</code>) isn’t installed on the target, the SSH backend won’t silently <code>sudo apt-get</code> for you — <code>--bootstrap</code> is opt-in. The first call on a fresh target tells you exactly what’s needed:</p>
+<pre><code>error: tool `ibmcloud` not found on ssh target bastion; re-run with --bootstrap to install
+       via apt-get, or pre-install on the target manually
+</code></pre>
+<p>Re-run with <code>--bootstrap</code> if mutation is OK; otherwise pre-install via your config-management of choice (Ansible, Salt, baked-in-image).</p>
+<h3 id="--backend-sshhost-to-a-non-ubuntu-target-with---bootstrap"><a class="header" href="#--backend-sshhost-to-a-non-ubuntu-target-with---bootstrap"><code>--backend ssh:host</code> to a non-Ubuntu target with <code>--bootstrap</code></a></h3>
+<p>The apt-bootstrap recipe is Ubuntu-only this round. RHEL / CentOS / Alpine targets need pre-installation via <code>yum</code> / <code>dnf</code> / <code>apk</code> — <code>--bootstrap</code> errors out cleanly:</p>
+<pre><code>error: auto-install only supports Ubuntu. Pre-install `ibmcloud-cli` on the target
+       (RHEL: `yum install ibmcloud-cli`)
+</code></pre>
+<p>Once the tool is installed, <code>--backend ssh:host</code> works without <code>--bootstrap</code>.</p>
+<h3 id="--backend-k8s-for-terraform"><a class="header" href="#--backend-k8s-for-terraform"><code>--backend k8s</code> for <code>terraform</code></a></h3>
+<p>Deferred. The <code>terraform</code> tool’s k8s + ssh backends require a state-handling design that hasn’t shipped — moving the state file into a Kubernetes Secret or scp’ing it pre/post-run is fiddly enough to be a feature in its own right (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>). For now, <code>terraform</code> supports <code>local</code> and <code>docker</code> only. If the network-locality use case (running <code>terraform</code> from a customer VPC for IP-egress reasons) is blocking, file an issue.</p>
+<h3 id="mixing---on-and---backend-sshtarget"><a class="header" href="#mixing---on-and---backend-sshtarget">Mixing <code>--on</code> and <code>--backend ssh:&lt;target&gt;</code></a></h3>
+<p><code>--on &lt;target&gt;</code> is the <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a> lightweight remote-exec — it runs the <em>passthrough</em> shape (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on the target by literally re-running the command via SSH. <code>--backend ssh:&lt;target&gt;</code> is the heavier-duty form — it routes through the <code>Backend</code> interface, which means file materialisation, env propagation hardening, opt-in apt-bootstrap, and the redactor are all wired in.</p>
+<p>You generally want one or the other, not both. The supported precedence is “<code>--backend ssh:&lt;target&gt;</code> wins”; passing both flags on the same invocation surfaces a warning. If you’re calling <code>roksbnkctl ibmcloud …</code>, prefer <code>--backend ssh:&lt;target&gt;</code> for the same target — you get the better cred-handling story automatically.</p>
+<h2 id="workspace-config----backend-flag-interaction"><a class="header" href="#workspace-config----backend-flag-interaction">Workspace config + <code>--backend</code> flag interaction</a></h2>
+<p>Recap of <a href="./12-workspace-config.html">Chapter 12 §“<code>exec:</code>”</a>:</p>
+<p>The flag wins. If <code>~/.roksbnkctl/&lt;ws&gt;/config.yaml</code> says:</p>
+<pre><code class="language-yaml">exec:
+  iperf3: { backend: k8s }
+</code></pre>
+<p>…and you run <code>roksbnkctl test throughput --backend local</code>, the <code>local</code> backend runs. The flag is the <strong>per-invocation override</strong>; the workspace config is the <strong>per-workspace default</strong>.</p>
+<p>If neither is set, the per-tool default from the previous section applies (iperf3 → k8s, ibmcloud → local, terraform → local). The resolution order is exact:</p>
+<ol>
+<li><code>--backend</code> flag</li>
+<li><code>exec.&lt;tool&gt;.backend</code> in workspace config</li>
+<li>Per-tool baked-in default</li>
+</ol>
+<p>There’s no fallback chain inside this resolution — if you pass <code>--backend k8s</code> and the cluster is unreachable, the backend errors with “cluster API unreachable” (exit <code>127</code>). It does <strong>not</strong> fall through to <code>local</code>. Silent fallback hides intent and produces confusing CI results; the failure-mode discipline in <a href="./17-execution-backends.html#backend-failure-semantics">Chapter 17 §“Backend-failure semantics”</a> applies here too.</p>
+<h2 id="summary-table"><a class="header" href="#summary-table">Summary table</a></h2>
+<p>The decision-tree contents collapsed into one table:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>If you want to…</th><th>Backend</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td>Measure cluster bandwidth</td><td><code>k8s</code></td><td>iperf3 client + server in cluster (the default)</td></tr>
+<tr><td>Measure laptop-uplink-to-cluster bandwidth</td><td><code>local</code></td><td>deliberate; not the iperf3 default</td></tr>
+<tr><td>GSLB DNS cross-vantage compare</td><td><code>local</code> + <code>k8s</code> (<code>--gslb-compare</code>)</td><td>Sprint 5; multiple vantages</td></tr>
+<tr><td><code>ibmcloud</code> from a customer-firewalled office</td><td><code>ssh:bastion</code></td><td>with <code>--bootstrap</code> if first call on fresh Ubuntu</td></tr>
+<tr><td>Frozen-version CI for any tool</td><td><code>docker</code></td><td>image tag matches <code>roksbnkctl</code> release</td></tr>
+<tr><td>Cluster-side ad-hoc <code>ibmcloud</code> debugging</td><td><code>k8s</code></td><td>requires <code>roksbnkctl ops install</code> first</td></tr>
+<tr><td>Pre-cluster ibmcloud / terraform</td><td><code>local</code> or <code>ssh</code></td><td><code>k8s</code> requires a working cluster</td></tr>
+<tr><td><code>terraform up</code> on a clean dev machine</td><td><code>local</code> (default) or <code>docker</code></td><td>k8s + ssh deferred</td></tr>
+<tr><td>Air-gapped: laptop can’t reach IBM Cloud, bastion can</td><td><code>ssh:bastion</code></td><td>with kubeconfig propagation</td></tr>
+<tr><td>Just learning the tool</td><td><code>local</code></td><td>simplest mental model</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — how creds reach each backend.</li>
+<li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag and SSH jumphosts</a> — the lightweight remote-exec predecessor to the SSH backend.</li>
+<li><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> — per-backend mechanics.</li>
+<li><a href="./19-in-cluster-ops-pod.html">Chapter 19 — The in-cluster ops pod</a> — the cluster-side prerequisite for <code>--backend k8s</code>.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — iperf3-specific flags.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03 — pluggable execution backends</a> — the design spec.</li>
+</ul>
 
                     </main>
 

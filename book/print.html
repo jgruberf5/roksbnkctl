@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58e0a648.js";
+            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -2835,18 +2835,18 @@ roksbnkctl oc --on jumphost projects
 <h1 id="execution-backends-local-docker-k8s-ssh"><a class="header" href="#execution-backends-local-docker-k8s-ssh">Execution backends: local, docker, k8s, ssh</a></h1>
 <p><code>roksbnkctl</code> runs a handful of external tools as part of its job — <code>ibmcloud</code>, <code>terraform</code>, <code>iperf3</code>, eventually <code>dig</code>-equivalents and others. By default each tool runs as a child process on your laptop. That’s fine for some tools and wrong for others: <code>iperf3</code> from your laptop measures your laptop’s internet uplink, not the cluster’s bandwidth.</p>
 <p>The execution-backend system lets you pick <strong>where</strong> each tool runs without changing the surface command. The same <code>roksbnkctl ibmcloud ks cluster ls</code> invocation can run as a local process, inside a vendored container, inside the cluster, or on a remote SSH host — selected by a flag or a per-tool default in your workspace config.</p>
-<p>This chapter is the introduction. Sprint 3 ships the system foundations and the <code>local</code> + <code>docker</code> backends; Sprint 4 expands the chapter with deep-dive sections on the <code>k8s</code> and <code>ssh</code> backends. Look for the <code>*Coming in Sprint 4.*</code> markers below.</p>
+<p>This chapter is the user-facing reference for all four backends. After the introduction, each backend gets its own deep-dive section covering the mechanics, the credential-propagation rules, the failure modes, and a short “when to use it” callout. <a href="#choosing-a-backend-per-tool">Chapter 18</a> is the decision-tree companion that picks one for a given (tool, scenario) pair.</p>
 <h2 id="the-four-backends-at-a-glance"><a class="header" href="#the-four-backends-at-a-glance">The four backends at a glance</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Backend</th><th>What it does</th><th>Ships in</th></tr>
+<tr><th>Backend</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>local</strong></td><td><code>os/exec</code> — spawns the tool as a child process, inheriting your env and PATH</td><td>Sprint 3 (today; today’s default for everything)</td></tr>
-<tr><td><strong>docker</strong></td><td><code>docker run</code> against a vendored image (<code>ghcr.io/jgruberf5/roksbnkctl-tools-&lt;tool&gt;:&lt;v&gt;</code>); frozen toolchain version</td><td>Sprint 3 (today)</td></tr>
-<tr><td><strong>k8s</strong></td><td>Runs inside the cluster, either in a long-lived ops pod or as a one-shot Job; auth via SA token</td><td>Sprint 4</td></tr>
-<tr><td><strong>ssh</strong></td><td>Runs on a registered SSH target via the SSH client; auto-installs missing tools on Ubuntu</td><td>Sprint 4</td></tr>
+<tr><td><strong>local</strong></td><td><code>os/exec</code> — spawns the tool as a child process, inheriting your env and PATH</td></tr>
+<tr><td><strong>docker</strong></td><td><code>docker run</code> against a vendored image (<code>ghcr.io/jgruberf5/roksbnkctl-tools-&lt;tool&gt;:&lt;v&gt;</code>); frozen toolchain version</td></tr>
+<tr><td><strong>k8s</strong></td><td>Runs inside the cluster, either in a long-lived ops pod or as a one-shot Job; auth via the pod’s ServiceAccount token</td></tr>
+<tr><td><strong>ssh</strong></td><td>Runs on a registered SSH target via the built-in SSH client; opt-in apt-bootstrap of missing tools on Ubuntu</td></tr>
 </tbody>
 </table>
 </div>
@@ -2860,33 +2860,33 @@ roksbnkctl oc --on jumphost projects
 <p>All four implementations conform to the same Go interface (<code>internal/exec.Backend</code>) so callers don’t branch on backend type — they just call <code>backend.Run(ctx, argv, opts)</code> and let the implementation handle the mechanics. That uniformity is what lets the same <code>roksbnkctl ibmcloud ks cluster ls</code> work across all four with no surface-level change.</p>
 <h2 id="the---backend-cli-flag"><a class="header" href="#the---backend-cli-flag">The <code>--backend</code> CLI flag</a></h2>
 <p>Override the per-tool default for a single invocation:</p>
-<pre><code class="language-bash"># Today's default (local) is implicit
+<pre><code class="language-bash"># Local (the implicit default for ibmcloud + terraform)
 roksbnkctl ibmcloud ks cluster ls
 
-# Same command, in a vendored docker image (today)
+# Same command, in a vendored docker image
 roksbnkctl ibmcloud --backend docker ks cluster ls
 
-# Same command, in the cluster (Sprint 4)
+# Same command, in the cluster (requires `roksbnkctl ops install` first)
 roksbnkctl ibmcloud --backend k8s ks cluster ls
 
-# Same command, on a remote SSH host (Sprint 4)
+# Same command, on a remote SSH host
 roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 </code></pre>
 <p>Format:</p>
-<pre><code>--backend &lt;name&gt;            # local | docker | k8s
---backend ssh:&lt;target-name&gt; # SSH backend; target name from `roksbnkctl targets list`
+<pre><code>--backend local|docker|k8s|ssh:&lt;target&gt;
 </code></pre>
+<p>The <code>ssh:&lt;target&gt;</code> form pins the SSH backend to a specific named target from <code>roksbnkctl targets list</code> (registered via <code>roksbnkctl targets add</code>; see <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a>).</p>
 <p>The flag is <strong>persistent at the root</strong> — it works for any command that runs an external tool. Commands that don’t run external tools (like <code>roksbnkctl ws list</code>) ignore it.</p>
 <p>The flag wins over the workspace-config default. If <code>config.yaml</code> says <code>iperf3: { backend: k8s }</code> and you pass <code>--backend local</code>, the local backend runs.</p>
 <h3 id="backend-failure-semantics"><a class="header" href="#backend-failure-semantics">Backend-failure semantics</a></h3>
 <p>Each backend has a different failure surface. The convention is:</p>
 <ul>
-<li><strong>Backend-side failure of any kind</strong> (Docker daemon down, image pull failed, container create/start error, binary not on PATH for <code>local</code>) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
-<li><strong>Tool exit code</strong> (the actual <code>ibmcloud</code> / <code>terraform</code> / <code>iperf3</code> exit code) ⇒ propagated 1:1, including non-zero codes.</li>
+<li><strong>Backend startup failure</strong> (Docker daemon unreachable, k8s API unreachable, SSH connect refused, binary not on PATH for <code>local</code>) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
+<li><strong>Backend mid-run failure</strong> (the container started but couldn’t pull a sub-resource; the pod was OOMKilled before the wrapped tool ran; the SSH session died after <code>apt-get install</code> but before the tool exec) ⇒ exit code <code>126</code>, distinct from <code>127</code> so CI can tell “we never got going” from “we got going then broke”.</li>
+<li><strong>Tool exit code</strong> (the actual <code>ibmcloud</code> / <code>terraform</code> / <code>iperf3</code> exit code, anything in <code>0-125</code> or <code>128-255</code>) ⇒ propagated 1:1, including non-zero codes.</li>
 <li><strong>Context cancellation / timeout</strong> ⇒ exit code <code>137</code> (the conventional SIGKILL-on-signal code).</li>
 </ul>
-<p>PRD 03 reserves both <code>126</code> and <code>127</code> for backend-specific failures with a finer-grained split (<code>126</code> for “backend started but mid-run failure”, <code>127</code> for “backend startup failure”). Sprint 3’s <code>local</code> + <code>docker</code> implementations collapse to <code>127</code> for both cases; the split lands in Sprint 4 if the use cases that motivated PRD 03’s distinction surface in practice.</p>
-<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (<code>127</code>) from “we ran out of time” (<code>137</code>).</p>
+<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “we never reached the tool” (<code>127</code>) from “we reached the tool, then the backend died mid-flight” (<code>126</code>) from “we ran out of time” (<code>137</code>).</p>
 <h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
 <p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
@@ -2895,7 +2895,7 @@ exec:
   iperf3:    { backend: k8s }
   terraform: { backend: local }
 </code></pre>
-<p>The defaults shipped today (Sprint 3):</p>
+<p>The defaults shipped today:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2904,40 +2904,95 @@ exec:
 <tbody>
 <tr><td><code>terraform</code></td><td><code>local</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here.</td></tr>
 <tr><td><code>ibmcloud</code></td><td><code>local</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
-<tr><td><code>iperf3</code></td><td><code>k8s</code> (Sprint 4) / <code>local</code> (today)</td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default lands when Sprint 4 wires the backend; today’s default falls back to <code>local</code>.</td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi.</td></tr>
 </tbody>
 </table>
 </div>
 <p><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> covers the <code>exec:</code> block schema in detail; this chapter just notes its place in the backend system.</p>
-<p><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> (Sprint 4) is the decision tree for “which backend should I pick for this tool in this scenario”.</p>
-<h2 id="whats-available-today-sprint-3"><a class="header" href="#whats-available-today-sprint-3">What’s available today (Sprint 3)</a></h2>
-<h3 id="local"><a class="header" href="#local"><code>local</code></a></h3>
-<p>The default. <code>os/exec.CommandContext(ctx, argv[0], argv[1:]...)</code>, inheriting the parent process’s environment, PATH, working directory. Identical to today’s behaviour from previous sprints — the <code>local</code> backend is mostly a refactor of existing call sites through the new <code>Backend</code> interface so everything is uniform.</p>
-<p>Scenarios where <code>local</code> is the right call:</p>
+<p><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> is the decision tree for “which backend should I pick for this tool in this scenario”.</p>
+<h2 id="per-backend-deep-dives"><a class="header" href="#per-backend-deep-dives">Per-backend deep dives</a></h2>
+<h3 id="local-backend"><a class="header" href="#local-backend"><code>local</code> backend</a></h3>
+<p>The default for <code>ibmcloud</code> and <code>terraform</code>. <code>os/exec.CommandContext(ctx, argv[0], argv[1:]...)</code>, inheriting the parent process’s environment, PATH, and working directory. Mechanically the simplest of the four — no container, no cluster, no network handshake.</p>
+<h4 id="osexec-shape"><a class="header" href="#osexec-shape"><code>os/exec</code> shape</a></h4>
+<p><code>internal/exec/local.go</code> resolves <code>argv[0]</code> via <code>exec.LookPath</code>, then builds a <code>*exec.Cmd</code>:</p>
+<pre><code class="language-go">bin, err := exec.LookPath(argv[0])
+// fall through to argv[0] verbatim if it's an absolute path that LookPath rejects
+cmd := exec.CommandContext(ctx, bin, argv[1:]...)
+cmd.Env    = effectiveEnv     // os.Environ() + opts.Env + Credentials.EnvVars()
+cmd.Dir    = opts.WorkDir     // empty → inherit caller's CWD
+cmd.Stdin  = opts.Stdin
+cmd.Stdout = redactor(opts.Stdout, creds)
+cmd.Stderr = redactor(opts.Stderr, creds)
+</code></pre>
+<p>The redactor wrap is defense-in-depth — see <a href="#the-redactor">Chapter 14 §“The redactor”</a>. If a wrapped tool ever prints <code>IBMCLOUD_API_KEY</code> value to stdout (a debug trace, an error message), the redactor replaces it with <code>[REDACTED]</code> before the bytes leave the binary.</p>
+<h4 id="env-propagation"><a class="header" href="#env-propagation">Env propagation</a></h4>
+<p>Three sources, in order:</p>
+<ol>
+<li><strong>The host process’s environment</strong> (<code>os.Environ()</code>) — your shell’s <code>PATH</code>, <code>HOME</code>, <code>KUBECONFIG</code>, etc.</li>
+<li><strong><code>RunOpts.Env</code></strong> — caller-supplied <code>KEY=VALUE</code> strings (e.g., <code>IBMCLOUD_REGION=ca-tor</code> from the workspace config).</li>
+<li><strong><code>Credentials.EnvVars()</code></strong> — <code>IBMCLOUD_API_KEY=…</code> plus the legacy <code>IC_API_KEY=…</code> alias older <code>ibmcloud</code> versions accept.</li>
+</ol>
+<p><code>os/exec</code> documents that for duplicate keys the <strong>last</strong> entry wins. So caller-supplied vars override host env, and credential vars override caller-supplied — meaning a workspace’s API key always wins over a stale <code>IBMCLOUD_API_KEY</code> in your shell.</p>
+<p>The local backend does <strong>not</strong> scrub the host env. If you have an unrelated <code>AWS_ACCESS_KEY_ID</code> in your shell, the wrapped tool sees it. That’s by design — local is the “trust the user’s shell” path; if you want a hermetic env, switch to <code>docker</code>.</p>
+<h4 id="working-directory"><a class="header" href="#working-directory">Working directory</a></h4>
+<p><code>RunOpts.WorkDir</code> becomes <code>cmd.Dir</code>. Empty → inherit the caller’s CWD (Cobra’s <code>RootCmd.Run</code> runs from wherever the user invoked <code>roksbnkctl</code>).</p>
+<p>When <code>RunOpts.Files</code> is non-empty and <code>WorkDir</code> is empty, the local backend creates a tempdir under <code>os.TempDir()</code>, writes each <code>Files</code> entry as a <code>0600</code> file inside, and uses the tempdir as <code>WorkDir</code>. The tempdir is removed via <code>defer</code> after <code>Run</code> returns. This is mostly there for symmetry with the docker / k8s / ssh backends; today’s <code>ibmcloud</code> passthrough never uses it.</p>
+<h4 id="signal-handling"><a class="header" href="#signal-handling">Signal handling</a></h4>
+<p><code>exec.CommandContext</code> wires ctx cancellation to the child: when the ctx ticks past its deadline (or the user hits Ctrl-C and the root cobra command cancels), Go sends <code>SIGKILL</code> (the default <code>Cmd.Cancel</code>) to the child. The child has no opportunity to clean up; this is intentional — we’d rather kill a stuck <code>terraform</code> than wait on an indefinite hang.</p>
+<p>The kill is process-only, not process-group. If <code>terraform</code> has spawned grandchildren (the IBM provider’s helpers, an SSH key generator, etc.) those grandchildren may outlive the ctx-cancel by a few seconds. We haven’t seen this matter in practice; if it does, a <code>pgid</code> kill is a small follow-up.</p>
+<h4 id="exit-code-mapping"><a class="header" href="#exit-code-mapping">Exit-code mapping</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Outcome</th><th>Exit code</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td>Child exits 0</td><td><code>0</code></td><td>child</td></tr>
+<tr><td>Child exits non-zero (e.g., <code>terraform plan</code> saw drift)</td><td>child’s exit code, <code>1-125</code> or <code>128-255</code></td><td>child</td></tr>
+<tr><td><code>argv[0]</code> not on PATH and not an absolute path</td><td><code>127</code></td><td>local backend (POSIX shell convention)</td></tr>
+<tr><td>Child binary couldn’t be exec’d despite being present (e.g., not executable)</td><td><code>126</code></td><td>local backend (mid-run failure: we found the binary but couldn’t spawn it)</td></tr>
+<tr><td>Ctx cancelled mid-run, child SIGKILL’d</td><td><code>137</code></td><td><code>128 + SIGKILL</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Note the <strong>126 vs 127 split</strong>: 127 means “we never reached the tool” (binary missing, daemon unreachable, SSH refused); 126 means “we reached the tool but the backend itself broke after that point” (couldn’t fork, container created but crashed, pod scheduled but evicted before exec). Sprint 3 collapsed both to 127 in the local + docker implementations; this sprint splits them per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface">PRD 03 §“Backend interface”</a>. CI scripts that distinguish “test infra broken” from “real test failure” can now key on the difference.</p>
+<h4 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h4>
 <ul>
 <li>You have the tool installed and on PATH already.</li>
-<li>You want fastest startup (no container, no SSH handshake, no cluster API call).</li>
+<li>You want the fastest startup — no container daemon, no SSH handshake, no cluster API call.</li>
 <li>You’re running <code>terraform</code> against the workspace’s local state (the established workflow).</li>
 <li>You’re debugging and want the simplest mental model for “where did that output come from”.</li>
 </ul>
-<h3 id="docker"><a class="header" href="#docker"><code>docker</code></a></h3>
-<p>Runs the tool inside a vendored container image:</p>
+<p><a href="#decision-tree">Chapter 18 §“Decision tree”</a> expands these into a per-(tool, scenario) walkthrough.</p>
+<h3 id="docker-backend"><a class="header" href="#docker-backend"><code>docker</code> backend</a></h3>
+<p>Runs the tool inside a vendored container image, talking to the local docker daemon over its socket. <code>docker</code> on PATH is <strong>not</strong> required — <code>roksbnkctl</code> uses the official Docker Go SDK (<code>github.com/moby/moby/client</code>) and dials the socket directly.</p>
 <pre><code class="language-bash">roksbnkctl ibmcloud --backend docker ks cluster ls
 </code></pre>
-<p>Mechanically (Sprint 3’s <code>ibmcloud</code> passthrough shape):</p>
+<h4 id="container-shape"><a class="header" href="#container-shape">Container shape</a></h4>
+<p>Mechanically (the <code>ibmcloud</code> passthrough; iperf3 client is similar with a different image and ports):</p>
 <pre><code>docker run --rm \
-  -v &lt;kubeconfig-path&gt;:/root/.kube/config:ro \ # if the tool needs a kubeconfig
-  -e IBMCLOUD_API_KEY \                        # env var name only; value inherits
+  -v &lt;tempdir&gt;/kubeconfig:/root/.kube/config:ro \  # if Credentials.KubeconfigBytes set
+  -e IBMCLOUD_API_KEY \                            # bare name; value inherits
+  -e IC_API_KEY \                                  # legacy alias
   ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt; \
   ks cluster ls
 </code></pre>
-<p>There’s no workspace-wide bind-mount: each invocation’s mount set comes from <code>RunOpts.Files</code> (per-file <code>/work/&lt;basename&gt;</code> mounts), the kubeconfig (single-file at <code>/root/.kube/config</code>), and any explicit working dir from <code>RunOpts.WorkDir</code>. Sprint 3’s <code>ibmcloud</code> passthrough sets none of those except the kubeconfig and <code>IBMCLOUD_API_KEY</code>.</p>
-<p>Three things to call out:</p>
+<p><code>internal/exec/docker.go</code> doesn’t shell out to <code>docker run</code>; it builds a <code>container.Config</code> + <code>container.HostConfig</code> and calls <code>cli.ContainerCreate</code> → <code>ContainerStart</code> → <code>ContainerLogs(stream=true)</code>. The bash-style above is the conceptual equivalent.</p>
+<p>There’s no workspace-wide bind-mount. Per-invocation mounts come from three sources only:</p>
 <ol>
-<li><strong>Frozen toolchain version.</strong> The image tag pins the tool’s version. Updates happen on <code>roksbnkctl</code> release, not on the host’s package manager schedule.</li>
-<li><strong>No host install.</strong> You don’t need <code>ibmcloud</code> on PATH. <code>docker</code> is the only prerequisite.</li>
-<li><strong>Credential propagation by reference.</strong> The <code>--env IBMCLOUD_API_KEY</code> form (no <code>=value</code>) inherits the value from the caller’s env. The literal string never appears in <code>docker inspect</code> or <code>ps</code> listings — that’s a <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a> acceptance criterion. See <a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> for the full propagation story.</li>
+<li><strong><code>Credentials.KubeconfigBytes</code></strong> — written to <code>&lt;tempdir&gt;/kubeconfig</code> (mode <code>0600</code>) on the host, bind-mounted <strong>as a single file</strong> at <code>/root/.kube/config</code> read-only. Single-file mount per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#docker-container">PRD 04 §“Anti-patterns”</a> — bind-mounting <code>~/.kube/</code> exposes other clusters’ configs.</li>
+<li><strong><code>RunOpts.Files</code></strong> — each name → bytes entry written to <code>&lt;tempdir&gt;/&lt;basename&gt;</code> and bind-mounted at <code>/work/&lt;basename&gt;</code>. The container’s <code>WorkingDir</code> is set to <code>/work</code> so callers can reference files by relative path. (<code>ibmcloud</code> passthrough doesn’t use this; it lands when the iperf3 client backend wants to ship <code>iperf3.json</code> to the pod, or when a future tool wants a config file.)</li>
+<li><strong><code>RunOpts.WorkDir</code></strong> — overrides <code>WorkingDir</code> if explicitly set.</li>
 </ol>
+<p>The tempdir is removed via <code>defer</code> after <code>Run</code> returns, regardless of exit code or panic.</p>
+<h4 id="credential-propagation-specifics"><a class="header" href="#credential-propagation-specifics">Credential propagation specifics</a></h4>
+<p>Three things matter, all enforced by <code>internal/exec/creds.go::Credentials.DockerArgs(...)</code>:</p>
+<ol>
+<li><strong><code>--env IBMCLOUD_API_KEY</code> (bare name, no <code>=value</code>).</strong> The docker daemon looks up the value from the <em>daemon’s</em> environment at container-create time, not from argv. So the literal API key string never appears in <code>docker inspect</code>, <code>docker ps -a --format</code>, or the daemon’s container metadata. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#docker-container">PRD 04 §“Anti-patterns”</a> calls out the <code>--env IBMCLOUD_API_KEY=$KEY</code> form as a leak vector — we don’t use it. See <a href="#backend-specific-cred-propagation-forward-look">Chapter 14 — <code>Credentials.DockerArgs()</code></a> for the full call shape.</li>
+<li><strong>Single-file kubeconfig mount, read-only.</strong> Not the parent dir. The container can read exactly the kubeconfig you handed it — nothing else under <code>~/.kube/</code>.</li>
+<li><strong>Stdout/stderr through the redactor.</strong> Same defense-in-depth as the local backend: if the wrapped tool prints the API key value (rare but possible), the redactor masks it before the bytes leave <code>roksbnkctl</code>’s process.</li>
+</ol>
+<h4 id="dev-tag-resolution"><a class="header" href="#dev-tag-resolution"><code>:dev</code> tag resolution</a></h4>
 <p>The vendored images live at:</p>
 <div class="table-wrapper">
 <table>
@@ -2945,14 +3000,25 @@ exec:
 <tr><th>Tool</th><th>Image</th></tr>
 </thead>
 <tbody>
-<tr><td><code>ibmcloud</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt;</code> (vendored from <code>icr.io/ibm-cloud/ibmcloud-cli</code> upstream)</td></tr>
-<tr><td><code>iperf3</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> (Alpine + iperf3)</td></tr>
+<tr><td><code>ibmcloud</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;tag&gt;</code> (vendored from <code>icr.io/ibm-cloud/ibmcloud-cli</code> upstream)</td></tr>
+<tr><td><code>iperf3</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;tag&gt;</code> (Alpine + iperf3)</td></tr>
 <tr><td><code>terraform</code></td><td><code>hashicorp/terraform:&lt;v&gt;</code> (official upstream)</td></tr>
 </tbody>
 </table>
 </div>
-<p>Image versions are tagged in lock-step with <code>roksbnkctl</code> releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See <a href="#building-from-source">Chapter 31 — Building from source</a> (Sprint 6) for the build pipeline details.</p>
-<p>When <code>docker</code> is the right call:</p>
+<p>The <code>&lt;tag&gt;</code> for the vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) is resolved at runtime by <code>internal/exec/docker.go::toolImageTag()</code>. It reads the binary’s <code>internal/version.Version</code> (set via ldflags at build time): a release-built binary like <code>v0.10.0</code> pulls <code>:v0.10.0</code>; a dev build (<code>Version == "dev"</code>) pulls <code>:dev</code>. Sprint 4 landed this version-pinning in place of Sprint 3’s hard-coded <code>:dev</code> so a <code>go install</code> of a tagged release pulls a matching tagged image rather than a <code>:dev</code> that may not exist for the published binary. The <code>terraform</code> row is the exception — it points at the upstream <code>hashicorp/terraform</code> image and stays pinned to a specific version (currently <code>1.5.7</code>) regardless of <code>roksbnkctl</code>’s own version.</p>
+<p>The <code>:dev</code> tag is still the local-development idiom: <code>cd tools/docker &amp;&amp; make build-all</code> builds and tags every tools image as <code>:dev</code> locally; a dev-build <code>roksbnkctl</code> finds them via the local docker cache without a ghcr.io round-trip.</p>
+<p>If you’re cutting a custom tools image and want <code>roksbnkctl</code> to pick it up, the simplest path is <code>docker tag your-image ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> locally — the docker backend pulls the local-cached version first.</p>
+<h4 id="auto-remove-and-ctx-cancel-kill"><a class="header" href="#auto-remove-and-ctx-cancel-kill">Auto-remove and ctx-cancel-kill</a></h4>
+<p>Two cleanup mechanisms work together:</p>
+<ul>
+<li><strong><code>AutoRemove: true</code></strong> in <code>HostConfig</code>. The docker daemon removes the container as soon as it exits, regardless of exit code. No <code>docker ps -a</code> clutter, no manual <code>docker rm</code> ever required.</li>
+<li><strong>Ctx-cancel triggers <code>ContainerKill</code>.</strong> When <code>ctx.Done()</code> fires, the docker backend issues <code>cli.ContainerKill(ctx, id, "SIGKILL")</code> and waits a few seconds for the daemon to confirm. The <code>--rm</code> then takes care of removal. Net effect: hitting Ctrl-C during a stuck <code>ibmcloud login</code> doesn’t leave a zombie container behind.</li>
+</ul>
+<p>Combined with the daemon’s own watchdog on the container, the worst case is a few seconds of “container is dying” between Ctrl-C and the container disappearing. We haven’t seen leaked containers in dev or CI.</p>
+<h4 id="image-build-pipeline"><a class="header" href="#image-build-pipeline">Image build pipeline</a></h4>
+<p>Image versions are tagged in lock-step with <code>roksbnkctl</code> releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See <a href="#building-from-source">Chapter 31 — Building from source</a> for the build pipeline details.</p>
+<h4 id="when-to-use-it-1"><a class="header" href="#when-to-use-it-1">When to use it</a></h4>
 <ul>
 <li>You’re on a clean dev machine without <code>ibmcloud</code> installed and don’t want to install it.</li>
 <li>You need a frozen tool version for CI reproducibility.</li>
@@ -2961,34 +3027,223 @@ exec:
 <p>When <code>docker</code> is the <strong>wrong</strong> call:</p>
 <ul>
 <li>The tool needs network access that your laptop has but the container doesn’t (rare; default bridge networking usually preserves laptop’s egress).</li>
-<li>You’re running <code>iperf3</code> and want a network-locality benefit — <code>docker</code> doesn’t give you that vs <code>local</code>. Use <code>k8s</code> (Sprint 4) instead.</li>
+<li>You’re running <code>iperf3</code> and want a network-locality benefit — <code>docker</code> doesn’t give you that vs <code>local</code>. Use <code>k8s</code> instead.</li>
+<li>You’re running a DNS probe and want a different network vantage — same network identity as the host, no value-add. The DNS subcommand rejects <code>--backend docker</code> by design.</li>
 <li>You’re on Windows. Linux/macOS docker daemons are in scope; Windows Docker Desktop coverage is deferred to a future round.</li>
 </ul>
-<h2 id="coming-in-sprint-4"><a class="header" href="#coming-in-sprint-4">Coming in Sprint 4</a></h2>
-<h3 id="k8s-backend-deep-dive"><a class="header" href="#k8s-backend-deep-dive"><code>k8s</code> backend deep-dive</a></h3>
-<p><em>Coming in Sprint 4.</em></p>
-<p>The k8s backend will cover:</p>
+<h3 id="k8s-backend"><a class="header" href="#k8s-backend"><code>k8s</code> backend</a></h3>
+<p>Runs the wrapped tool inside the cluster. Two distinct execution patterns share the same <code>Backend.Run</code> interface:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Pattern</th><th>Used for</th><th>Lives in</th><th>Lifetime</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Long-lived ops pod</strong></td><td>ad-hoc <code>ibmcloud</code> commands, future interactive shells</td><td><code>roksbnkctl-ops</code> namespace</td><td>manually managed via <code>roksbnkctl ops install/uninstall</code></td></tr>
+<tr><td><strong>One-shot Job</strong></td><td>iperf3 client runs, future <code>terraform</code> runs, future DNS probes</td><td><code>roksbnkctl-test</code> namespace</td><td>per-invocation; auto-deleted after <code>ttlSecondsAfterFinished: 60</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The split mirrors the two latency budgets. Long-lived pods amortise the pod-startup cost across many invocations — perfect for <code>ibmcloud iam oauth-tokens</code> which you might run twenty times in a debugging session. One-shot Jobs are clean (no leftover state, no concurrency questions) — perfect for <code>iperf3 -c &lt;server&gt;</code> which runs once, emits its JSON, and exits.</p>
+<h4 id="long-lived-ops-pod-pattern"><a class="header" href="#long-lived-ops-pod-pattern">Long-lived ops pod pattern</a></h4>
+<p>The pod is named <code>roksbnkctl-ops</code> in the <code>roksbnkctl-ops</code> namespace. <code>roksbnkctl ops install</code> deploys it (see <a href="#the-in-cluster-ops-pod">Chapter 19</a> for the full lifecycle). The image bundles <code>ibmcloud</code> CLI plus <code>kubectl</code> as backup; future iterations may add <code>oc</code>, <code>terraform</code>, etc. The container inside the pod is named <code>tools</code>.</p>
+<p><code>Backend.Run(ctx, argv, opts)</code> for the ops-pod path is essentially:</p>
+<pre><code class="language-go">exec, _ := remotecommand.NewSPDYExecutor(restConfig, "POST",
+    clientset.CoreV1().RESTClient().Post().
+        Resource("pods").Namespace("roksbnkctl-ops").Name("roksbnkctl-ops").
+        SubResource("exec").
+        VersionedParams(&amp;corev1.PodExecOptions{
+            Container: "tools",
+            Command:   argv,
+            Stdin:     opts.Stdin != nil,
+            Stdout:    true,
+            Stderr:    true,
+            TTY:       opts.TTY,
+        }, scheme.ParameterCodec).URL())
+exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+    Stdin: opts.Stdin, Stdout: redactor(opts.Stdout, creds), Stderr: redactor(opts.Stderr, creds), Tty: opts.TTY,
+})
+</code></pre>
+<p>The exit code comes back via the SPDY channel’s <code>metav1.Status</code> — the executor surfaces it as a <code>exec.CodeExitError</code>. We propagate that as the backend’s exit code, same as <code>local</code> propagates <code>exec.ExitError.ExitCode()</code>.</p>
+<p><code>opts.WorkDir</code> is <strong>ignored</strong> for the ops pod path. The pod’s <code>WorkingDir</code> is fixed at container-spec time (<code>/work</code>); per-exec working-dir changes would require recreating the pod. Callers that need a specific cwd should <code>cd &lt;dir&gt; &amp;&amp;</code> it into argv (the <code>local</code> backend’s symmetric escape hatch).</p>
+<h4 id="one-shot-job-pattern"><a class="header" href="#one-shot-job-pattern">One-shot Job pattern</a></h4>
+<p>For each invocation, the backend builds a <code>batchv1.Job</code> spec, applies it, streams logs from the Job’s pod, waits for completion, reads the exit code from the pod’s container status, and lets <code>ttlSecondsAfterFinished</code> clean up.</p>
+<p>Skeleton:</p>
+<pre><code class="language-yaml">apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: roksbnkctl-iperf3-client-     # randomized; multiple runs don't collide
+  namespace: roksbnkctl-test
+spec:
+  ttlSecondsAfterFinished: 60                  # auto-delete the Job + its Pod 60s after completion
+  backoffLimit: 0                              # no retries; the test reports failure once and stops
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: iperf3-client
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;
+        command: ["iperf3", "-c", "&lt;server-svc&gt;", "-J"]
+        envFrom:
+        - secretRef:
+            name: roksbnkctl-job-creds-&lt;random&gt;   # projected per invocation
+        volumeMounts:
+        - name: files
+          mountPath: /work
+      volumes:
+      - name: files
+        projected:
+          sources:
+          - secret:
+              name: roksbnkctl-job-files-&lt;random&gt;  # one Secret per invocation, holds RunOpts.Files
+</code></pre>
+<p>Three details to call out:</p>
+<ol>
+<li><strong>Projected Secret for cred propagation.</strong> <code>Credentials.IBMCloudAPIKey</code> (when set) becomes a one-shot Secret, mounted via <code>envFrom: secretRef</code>. Per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 §“In-cluster pod”</a> this beats argv (which would show in <code>kubectl describe pod</code>) and beats inline <code>env:</code> blocks (which surface in <code>kubectl get pod -o yaml</code>). The Secret carries the same <code>ttlSecondsAfterFinished</code>-equivalent lifecycle: when the Job’s <code>ttlSecondsAfterFinished</code> deletes the Job, the owning controller’s GC sweeps the Secret too via <code>ownerReferences</code>.</li>
+<li><strong>Log streaming via <code>client-go</code>.</strong> Once the Job’s pod is in <code>Running</code> state, <code>clientset.CoreV1().Pods(ns).GetLogs(name, &amp;corev1.PodLogOptions{Follow: true}).Stream(ctx)</code> returns an <code>io.ReadCloser</code> that we copy through the redactor into <code>opts.Stdout</code>. The stream stays open until the pod terminates or ctx cancels.</li>
+<li><strong>Exit-code extraction.</strong> When the pod transitions to <code>Succeeded</code> or <code>Failed</code>, we read <code>pod.Status.ContainerStatuses[0].State.Terminated.ExitCode</code> and return that as the backend’s exit code. A <code>Failed</code> pod with <code>ExitCode: 0</code> (rare; usually OOMKilled or evicted) maps to backend exit code <code>126</code> — backend mid-run failure rather than tool failure.</li>
+</ol>
+<p>The <code>roksbnkctl-test</code> namespace is a fresh namespace dedicated to one-shot test workloads. It’s separate from <code>roksbnkctl-ops</code> (the long-lived pod’s home) so RBAC can be scoped tighter — see <a href="#rbac-the-clusterrole-rules">Chapter 19 §“RBAC”</a>.</p>
+<h4 id="iperf3-server-side"><a class="header" href="#iperf3-server-side">iperf3 server side</a></h4>
+<p>Worth calling out because it’s the asymmetric piece. The <code>iperf3</code> test deploys a <strong>server</strong> bare Pod + Service into <code>roksbnkctl-test</code>, then runs the <strong>client</strong> as the one-shot Job described above:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Side</th><th>Resource</th><th>Lifetime</th></tr>
+</thead>
+<tbody>
+<tr><td>Server</td><td><code>roksbnkctl-iperf3</code> bare Pod + Service (<code>LoadBalancer</code> for <code>--mode north-south</code>; <code>ClusterIP</code> for <code>--mode east-west</code>)</td><td>torn down after the client Job completes</td></tr>
+<tr><td>Client</td><td>one-shot Job</td><td><code>ttlSecondsAfterFinished: 60</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The bare-Pod (rather than Deployment) shape is intentional — the iperf3 server is single-shot, scoped to one test, torn down on completion; the controller-managed replica machinery a Deployment provides is unused and would only confuse the cleanup story. Service type is driven by <code>--mode</code>: <code>north-south</code> measures laptop-to-cluster bandwidth and needs a publicly reachable endpoint (<code>LoadBalancer</code>); <code>east-west</code> measures node-to-pod and stays in-cluster (<code>ClusterIP</code>). See <a href="#throughput-testing">Chapter 22 — Throughput testing</a> for the user-facing flag surface.</p>
+<p>The client Job’s argv is <code>iperf3 -c &lt;server-cluster-ip-or-lb&gt; -J</code>. The <code>-J</code> JSON flows back via log streaming, parsed in <code>internal/test/throughput.go</code>, surfaced as <code>roksbnkctl test throughput</code> JSON output.</p>
+<p>The server pod’s <code>securityContext</code> is set to satisfy OpenShift’s <code>restricted-v2</code> SCC: <code>runAsNonRoot: true</code>, <code>allowPrivilegeEscalation: false</code>, <code>seccompProfile.type: RuntimeDefault</code>, <code>capabilities.drop: [ALL]</code>. iperf3 listens on port 5201 (unprivileged) so no root is needed. The Sprint 3 cluster baseline tripped the SCC by missing one or more of these fields; the manifest the k8s backend emits this sprint sets all four.</p>
+<h4 id="when-to-use-it-2"><a class="header" href="#when-to-use-it-2">When to use it</a></h4>
 <ul>
-<li>The two execution patterns (long-lived ops pod vs one-shot Job).</li>
-<li><code>roksbnkctl ops install/show/uninstall</code> — managing the cluster-side ops pod, namespace, ServiceAccount, ClusterRole.</li>
-<li>Credential propagation via Kubernetes Secret (or, preferred, IAM trusted profile linking the ops pod’s SA to a per-cluster IAM identity).</li>
-<li>iperf3-specific orchestration: server-side Deployment + LoadBalancer Service, client-side Job, log-collection workflow.</li>
+<li>You’re running <code>iperf3</code> and want a number that reflects cluster fabric, not your office Wi-Fi.</li>
+<li>You’re running <code>ibmcloud</code> from a network that can reach the cluster but not <code>*.cloud.ibm.com</code> directly. The ops pod has both lines of sight; your laptop has only one.</li>
+<li>You want a cluster-side ad-hoc shell for debugging — <code>roksbnkctl exec --backend k8s -- bash</code> (when implemented) drops into the ops pod.</li>
 </ul>
-<p>For now: the long-lived ops pod is the recommended path for <code>ibmcloud</code>-style ad-hoc commands; one-shot Jobs are the path for <code>iperf3</code> and (eventually) <code>terraform</code>. <a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> (Sprint 4) covers the deployment-time mechanics.</p>
-<h3 id="ssh-backend-deep-dive"><a class="header" href="#ssh-backend-deep-dive"><code>ssh</code> backend deep-dive</a></h3>
-<p><em>Coming in Sprint 4.</em></p>
-<p>The ssh backend will cover:</p>
+<p>When <code>k8s</code> is the <strong>wrong</strong> call:</p>
 <ul>
-<li>How it builds on Sprint 1’s <code>internal/remote.Client</code> (the same SSH client backing <code>--on</code>).</li>
-<li>File materialisation: <code>RunOpts.Files</code> written to <code>/tmp/roksbnkctl.&lt;rand&gt;/</code> on the remote, cleaned up via <code>trap</code> on session exit.</li>
-<li>Env propagation via <code>ssh -o SetEnv=KEY=VALUE</code> (preferred), falling back to a 0700 wrapper script when the remote sshd doesn’t allow <code>AcceptEnv</code>.</li>
-<li>Apt-bootstrap: <code>command -v &lt;tool&gt;</code> first, <code>sudo apt-get install -y &lt;pkg&gt;</code> on missing (Ubuntu only this round).</li>
-<li>The SCP-and-cleanup pattern for shipping a kubeconfig to the remote without a persistent on-disk file.</li>
+<li>The cluster doesn’t exist yet (<code>roksbnkctl ops install</code> requires a working kubeconfig). Use <code>local</code> or <code>ssh</code> for pre-cluster ops.</li>
+<li>You haven’t run <code>roksbnkctl ops install</code>. Run it first; it’s a one-time setup per cluster.</li>
+<li>You’re running <code>terraform</code> — <code>--backend k8s</code> for terraform is deferred to a future release pending a state-handling design (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>).</li>
 </ul>
-<p>For now: the <code>--on jumphost ...</code> path covered in <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> is the lightweight predecessor. The same <code>targets:</code> config block drives both; Sprint 4’s backend just gives the system more it can do with each target.</p>
-<h3 id="per-backend-when-to-use-it-table"><a class="header" href="#per-backend-when-to-use-it-table">Per-backend “when to use it” table</a></h3>
-<p><em>Coming in Sprint 4.</em></p>
-<p>The full decision matrix lands in <a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a>, with concrete scenarios per (tool, backend) pair: GSLB DNS testing wants <code>local</code>+<code>k8s</code>; iperf3 throughput wants <code>k8s</code>; ibmcloud from a customer-firewalled office wants <code>ssh</code>; frozen toolchain in CI wants <code>docker</code>.</p>
+<p><a href="#the-in-cluster-ops-pod">Chapter 19</a> is the full reference for the cluster-side mechanics: namespace, ServiceAccount, ClusterRole, Secret, lifecycle.</p>
+<h3 id="ssh-backend"><a class="header" href="#ssh-backend"><code>ssh</code> backend</a></h3>
+<p>Runs the wrapped tool on a registered SSH target. Builds on Sprint 1’s <code>internal/remote.Client</code> (the same SSH client backing the <code>--on</code> flag); this section assumes you’ve read <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> for the target-config and host-key TOFU framing.</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
+roksbnkctl ibmcloud --backend ssh:bastion --bootstrap iam oauth-tokens
+</code></pre>
+<h4 id="per-tool-apt-bootstrap-and-the---bootstrap-flag"><a class="header" href="#per-tool-apt-bootstrap-and-the---bootstrap-flag">Per-tool apt-bootstrap and the <code>--bootstrap</code> flag</a></h4>
+<p>Before exec’ing the wrapped tool, the SSH backend probes whether it’s installed:</p>
+<pre><code>ssh &lt;target&gt; 'command -v &lt;tool&gt;'
+</code></pre>
+<p>Exit <code>0</code> → tool present, proceed. Non-zero → tool missing. What happens next depends on <code>--bootstrap</code>:</p>
+<ul>
+<li>
+<p><strong>Without <code>--bootstrap</code> (the default).</strong> The backend errors with exit <code>127</code> and a clear message:</p>
+<pre><code>error: tool `iperf3` not found on ssh target jumphost; re-run with --bootstrap to install via apt-get,
+       or pre-install on the target manually
+</code></pre>
+<p>No <code>sudo apt-get</code> ever runs. The backend won’t surprise the user with package-manager invocations or sudo password prompts on a remote they didn’t expect mutation on.</p>
+</li>
+<li>
+<p><strong>With <code>--bootstrap</code>.</strong> The backend runs the per-tool bootstrap recipe. For Ubuntu (the only OS supported this round), the recipe is roughly:</p>
+<pre><code class="language-bash"># ibmcloud needs IBM's apt repo + GPG key first
+curl -fsSL https://download.clis.cloud.ibm.com/Linux/Ubuntu/repo.gpg | sudo apt-key add -
+echo 'deb https://download.clis.cloud.ibm.com/Linux/Ubuntu jammy main' \
+  | sudo tee /etc/apt/sources.list.d/ibmcloud.list
+sudo -n apt-get update -y
+sudo -n apt-get install -y ibmcloud-cli
+</code></pre>
+<p><code>iperf3</code> is simpler — no repo addition, just <code>sudo -n apt-get install -y iperf3</code>.</p>
+</li>
+</ul>
+<p>The opt-in default reflects <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#open-questions">PRD 03 open question §“<code>--bootstrap</code> opt-in for SSH”</a>: silent <code>sudo apt-get</code> on a remote host is the kind of surprise that erodes operator trust, especially when the remote is shared between teams. Make the user say “yes, install for me”.</p>
+<p>Bootstrap failure modes split between the two backend-failure exit codes per <a href="#backend-failure-semantics">§“Backend-failure semantics”</a>: <code>127</code> when we never got going (couldn’t reach the repo, no apt mapping, tool missing without <code>--bootstrap</code>); <code>126</code> when we got partway in and then something broke (sudo / OS-detect / install).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Failure</th><th>Exit</th><th>What you see</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--bootstrap</code> not set and tool missing</td><td><code>127</code></td><td>“tool <code>&lt;name&gt;</code> not found on ssh target <code>&lt;target&gt;</code>; re-run with –bootstrap to install via apt-get, or pre-install on the target manually”</td></tr>
+<tr><td><code>sudo</code> requires a password (NOPASSWD not configured)</td><td><code>126</code></td><td><code>sudo: a password is required</code> → “the SSH user needs passwordless sudo for <code>apt-get install</code>. Configure <code>&lt;user&gt; ALL=(ALL) NOPASSWD: /usr/bin/apt-get</code> in /etc/sudoers, or pre-install <pkg> manually.”</pkg></td></tr>
+<tr><td>Non-Ubuntu OS (<code>lsb_release -is</code> doesn’t return <code>Ubuntu</code>)</td><td><code>126</code></td><td>“auto-install only supports Ubuntu. Pre-install <code>&lt;pkg&gt;</code> on the target (RHEL: <code>yum install &lt;pkg&gt;</code>).”</td></tr>
+<tr><td>Network unreachable from target (apt-get can’t reach the repo)</td><td><code>127</code></td><td>“target can’t reach the package repo. Check the target’s egress policy or pre-install <code>&lt;pkg&gt;</code> manually.”</td></tr>
+<tr><td>No apt mapping for the requested tool</td><td><code>126</code></td><td>“no bootstrap recipe known for tool <code>&lt;name&gt;</code>; the SSH backend only auto-installs <code>ibmcloud</code> + <code>iperf3</code> today”</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="file-materialisation"><a class="header" href="#file-materialisation">File materialisation</a></h4>
+<p><code>RunOpts.Files</code> entries are written to a per-invocation tempdir on the remote. The tempdir is <code>/tmp/roksbnkctl.&lt;random&gt;/</code> where <code>&lt;random&gt;</code> is a fresh 16-byte hex string per <code>Run</code>:</p>
+<pre><code class="language-bash"># pseudo-flow
+ssh &lt;target&gt; 'mkdir -m 0700 /tmp/roksbnkctl.&lt;rand&gt;'
+scp &lt;local-temp&gt;/&lt;basename&gt; &lt;target&gt;:/tmp/roksbnkctl.&lt;rand&gt;/&lt;basename&gt;
+ssh &lt;target&gt; '
+  trap "rm -rf /tmp/roksbnkctl.&lt;rand&gt;" EXIT
+  cd /tmp/roksbnkctl.&lt;rand&gt;
+  &lt;argv...&gt;
+'
+</code></pre>
+<p>The <code>trap … EXIT</code> is shell-builtin; it fires on normal exit, on <code>set -e</code> failure, on <code>SIGINT</code> (Ctrl-C), on <code>SIGTERM</code>. So even if the user kills their <code>roksbnkctl</code> invocation mid-run, the remote tempdir is cleaned up by the wrapper script’s own trap before the SSH session terminates.</p>
+<p>The <code>0700</code> mode on the tempdir ensures only the SSH user can read it during the brief on-disk window. On shared bastions (multi-user jumphosts) this matters — and it’s why we materialise to <code>/tmp</code> (which the user owns) rather than <code>/var/tmp</code> or some shared scratch path.</p>
+<p>Kubeconfig follows the same pattern: <code>Credentials.KubeconfigBytes</code> becomes <code>&lt;tempdir&gt;/kubeconfig</code>, the wrapper exports <code>KUBECONFIG=&lt;tempdir&gt;/kubeconfig</code>, the trap removes the file on exit. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#ssh-host-ssh-backend">PRD 04 §“Kubeconfig options for SSH backend”</a> calls this “Option A” — scp-and-cleanup. We picked it over the in-memory <code>&lt;()</code> process-substitution alternative because it’s robust across remote shells and sshd configs.</p>
+<h4 id="env-propagation-setenv-vs-wrapper-script"><a class="header" href="#env-propagation-setenv-vs-wrapper-script">Env propagation: <code>SetEnv</code> vs wrapper script</a></h4>
+<p>OpenSSH supports two ways to pass an env var to a remote command:</p>
+<ol>
+<li><strong><code>ssh -o SetEnv=KEY=VALUE target …</code></strong> — client tells the server “please add this to the env”. Works only if the server’s <code>sshd_config</code> has <code>AcceptEnv KEY</code> matching. Most stock sshd configs don’t enable <code>AcceptEnv</code> for arbitrary keys.</li>
+<li><strong>Wrapper script with <code>export KEY=VALUE</code></strong> — the script writes the env var into its own process before <code>exec "$@"</code>. Works regardless of sshd config, but the value lives briefly in a 0700 file on the remote.</li>
+</ol>
+<p>The SSH backend tries <code>SetEnv</code> first. On the first connect to a new target, it sends a sentinel env var (<code>ROKSBNKCTL_SETENV_TEST=ok</code>) and runs <code>echo "$ROKSBNKCTL_SETENV_TEST"</code>. If the output is <code>ok</code>, <code>SetEnv</code> works on this target — the result is cached in workspace state, and subsequent runs use <code>SetEnv</code> directly.</p>
+<p>If the sentinel doesn’t surface, sshd silently dropped it (it logs <code>refused setenv request</code> on the server side, but clients don’t see that). The backend falls back to a wrapper script:</p>
+<pre><code class="language-bash">#!/bin/sh
+# /tmp/roksbnkctl.&lt;rand&gt;/wrap.sh, mode 0700, owner-readable only
+trap 'rm -f "$0"' EXIT
+set +o history
+export IBMCLOUD_API_KEY='&lt;value&gt;'
+exec "$@"
+</code></pre>
+<p>Then: <code>ssh &lt;target&gt; /tmp/roksbnkctl.&lt;rand&gt;/wrap.sh ibmcloud iam oauth-tokens</code>.</p>
+<p>The wrapper-script path is the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/issues/resolved_sprint1_validator.md">Sprint 1 validator Issue 4 carry-over</a> — the same shape <code>--on</code> uses for env passing today. Risks (file content includes the secret) are mitigated by:</p>
+<ul>
+<li>Mode <code>0700</code> so only the SSH user can read.</li>
+<li><code>set +o history</code> so the value doesn’t leak into shell history.</li>
+<li><code>trap 'rm -f "$0"' EXIT</code> deletes the wrapper as soon as it exits — including on Ctrl-C, since the trap covers SIGINT/SIGTERM by virtue of being in the script’s main process.</li>
+<li>The key is <strong>never</strong> in argv, so <code>ps -ef</code> on the remote doesn’t show it.</li>
+</ul>
+<p><code>roksbnkctl targets show &lt;name&gt;</code> reports which mechanism the target uses (e.g., <code>env propagation: SetEnv (AcceptEnv ok)</code> or <code>env propagation: wrapper script (sshd refused SetEnv)</code>) so users can choose to enable <code>AcceptEnv</code> server-side if they prefer.</p>
+<h4 id="bootstrap-failure-modes-consolidated"><a class="header" href="#bootstrap-failure-modes-consolidated">Bootstrap failure modes (consolidated)</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th><th>Remediation</th></tr>
+</thead>
+<tbody>
+<tr><td><code>sudo: a password is required</code></td><td>NOPASSWD sudo not configured</td><td>Add <code>&lt;ssh-user&gt; ALL=(ALL) NOPASSWD: /usr/bin/apt-get</code> to <code>/etc/sudoers.d/roksbnkctl</code> on the target</td></tr>
+<tr><td><code>auto-install only supports Ubuntu</code></td><td><code>/etc/os-release</code> ID is not <code>ubuntu</code></td><td>Pre-install the tool manually; RHEL: <code>sudo yum install &lt;pkg&gt;</code>; Alpine: <code>sudo apk add &lt;pkg&gt;</code></td></tr>
+<tr><td><code>target can't reach the package repo</code></td><td>Target’s egress policy blocks <code>download.clis.cloud.ibm.com</code> (or upstream Ubuntu mirrors)</td><td>Pre-install or open egress; doctor’s <code>--backend ssh:&lt;target&gt;</code> flags this</td></tr>
+<tr><td><code>tool not found on ssh target …; re-run with --bootstrap</code></td><td><code>--bootstrap</code> not passed and tool missing</td><td>Re-run with <code>--bootstrap</code>, or pre-install on the target</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="when-to-use-it-3"><a class="header" href="#when-to-use-it-3">When to use it</a></h4>
+<ul>
+<li>You’re running <code>ibmcloud</code> from a customer-firewalled office where the corporate jumphost can reach IBM Cloud APIs but your laptop can’t.</li>
+<li>You’re working in an air-gapped environment where <code>roksbnkctl</code> runs on your laptop but the IBM Cloud API conversations have to happen from a specific bastion’s IP.</li>
+<li>You want a low-overhead remote-exec path that doesn’t require a cluster (the <code>k8s</code> backend’s prereq).</li>
+</ul>
+<p>When <code>ssh</code> is the <strong>wrong</strong> call:</p>
+<ul>
+<li>The target lacks the tool and you don’t want to mutate it. Skip <code>--bootstrap</code>; the backend errors clearly without installing anything.</li>
+<li>The target isn’t Ubuntu and you don’t want to pre-install. Bootstrap won’t work; pre-install or use <code>local</code>/<code>docker</code>/<code>k8s</code>.</li>
+<li>You’re running <code>iperf3</code> to measure cluster bandwidth. SSH puts the client somewhere on the network path <em>to</em> the cluster but not necessarily <em>adjacent to</em> it — <code>k8s</code> is the right answer for that case.</li>
+</ul>
+<p><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> covers the lighter-weight <code>--on jumphost</code> predecessor that uses the same <code>targets:</code> config block. The SSH backend is the heavier-duty form: file materialisation, env propagation hardening, opt-in bootstrap. <a href="#choosing-a-backend-per-tool">Chapter 18</a> is the decision tree.</p>
 <h2 id="the-backend-interface"><a class="header" href="#the-backend-interface">The <code>Backend</code> interface</a></h2>
 <p>For the curious, the Go interface every backend conforms to:</p>
 <pre><code class="language-go">package exec
@@ -3013,7 +3268,7 @@ type Credentials struct {
     IBMCloudAPIKey  string
 }
 </code></pre>
-<p>All four implementations (today’s <code>local</code> + <code>docker</code>, Sprint 4’s <code>k8s</code> + <code>ssh</code>) satisfy this interface. Call sites in <code>cli/cluster.go</code>, <code>cli/test.go</code>, etc., get a <code>Backend</code> from the registry and call <code>Run(...)</code> — no branching on backend type. The uniformity is what makes the system extensible without rewriting callers each time a backend lands.</p>
+<p>All four implementations satisfy this interface. Call sites in <code>cli/cluster.go</code>, <code>cli/test.go</code>, etc., get a <code>Backend</code> from the registry and call <code>Run(...)</code> — no branching on backend type. The uniformity is what makes the system extensible without rewriting callers each time a backend lands.</p>
 <p>The <code>Credentials</code> struct is the bridge between the resolver chain (env → keychain → config-b64 → prompt) covered in <a href="#credentials-and-the-resolver-chain">Chapter 14</a> and the per-backend propagation rules in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a>. Each backend translates the struct into the mechanism appropriate to where it runs: env vars for <code>local</code>, <code>--env KEY</code> (no <code>=value</code>) for <code>docker</code>, secretKeyRef for <code>k8s</code>, <code>SetEnv</code> or wrapper script for <code>ssh</code>.</p>
 <h2 id="cross-references-9"><a class="header" href="#cross-references-9">Cross-references</a></h2>
 <ul>
@@ -3022,17 +3277,517 @@ type Credentials struct {
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
 <li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — how creds reach the backend in the first place.</li>
 <li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a> — the lightweight remote-exec predecessor to the SSH backend.</li>
-<li><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> — the decision tree (Sprint 4).</li>
-<li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — deploy-time mechanics for the <code>k8s</code> backend (Sprint 4).</li>
+<li><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> — the decision tree.</li>
+<li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — deploy-time mechanics for the <code>k8s</code> backend.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="choosing-a-backend-per-tool"><a class="header" href="#choosing-a-backend-per-tool">Choosing a backend per tool</a></h1>
-<p><em>Coming in Sprint 4.</em></p>
-<p><em>A decision tree for picking a backend per tool: GSLB DNS testing (local + k8s), iperf3 throughput (k8s default), <code>ibmcloud</code> from a customer-firewalled office (ssh), frozen toolchain version in CI (docker).</em></p>
+<p><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17</a> covered the <strong>mechanics</strong> of each backend. This chapter is the <strong>decision tree</strong>: given a tool and a scenario, which of <code>local</code> / <code>docker</code> / <code>k8s</code> / <code>ssh</code> is the right call.</p>
+<p>If you’re searching for “which backend should I use”, you’ve landed on the right page.</p>
+<h2 id="the-four-backends-in-one-line-each"><a class="header" href="#the-four-backends-in-one-line-each">The four backends in one line each</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>One-line summary</th><th>Deep dive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>local</code></td><td><code>os/exec</code> on your laptop; fastest, requires the tool on PATH</td><td><a href="#local-backend">§ Local backend</a></td></tr>
+<tr><td><code>docker</code></td><td><code>docker run</code> against a vendored image; frozen tool version, no host install</td><td><a href="#docker-backend">§ Docker backend</a></td></tr>
+<tr><td><code>k8s</code></td><td>inside the cluster (long-lived ops pod or one-shot Job); cluster-correct network identity</td><td><a href="#k8s-backend">§ K8s backend</a></td></tr>
+<tr><td><code>ssh:&lt;target&gt;</code></td><td>on a registered SSH target; opt-in apt-bootstrap on Ubuntu</td><td><a href="#ssh-backend">§ SSH backend</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>If you’re skimming, the cheat-sheet is:</p>
+<ul>
+<li><strong><code>local</code></strong> when you have the tool installed and the host’s network identity is correct for the call.</li>
+<li><strong><code>docker</code></strong> when you don’t have the tool and don’t want to install it, or you need a frozen version for CI.</li>
+<li><strong><code>k8s</code></strong> when the call’s <em>network position</em> matters and the cluster is the right vantage point.</li>
+<li><strong><code>ssh:&lt;target&gt;</code></strong> when the call needs to originate from a specific external host (a customer bastion, an air-gapped bridge).</li>
+</ul>
+<p>The rest of this chapter is the longer version.</p>
+<h2 id="per-tool-default-backends"><a class="header" href="#per-tool-default-backends">Per-tool default backends</a></h2>
+<p>Every tool has a default backend baked into <code>roksbnkctl</code>. Workspace config (<code>exec:</code> block) can override the default per workspace; <code>--backend</code> overrides for a single invocation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default</th><th>Resolved by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td><code>internal/cli/cluster.go::resolveBackendSpecWith("ibmcloud", flagOverride)</code></td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td><code>internal/cli/test.go::resolveBackendSpecWith("iperf3", flagOverride)</code></td></tr>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td><code>internal/cli/lifecycle.go::resolveBackendSpecWith("terraform", flagOverride)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The defaults reflect “what’s the right answer for the most common scenario”:</p>
+<ul>
+<li><strong><code>ibmcloud</code> defaults to <code>local</code></strong> because most users have it on PATH or are happy installing it. The compliance + firewall scenarios where <code>ssh</code> or <code>docker</code> are better are the minority of calls.</li>
+<li><strong><code>iperf3</code> defaults to <code>k8s</code></strong> because throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s backend places the iperf3 client in (or adjacent to) the cluster so the number reflects fabric, not Wi-Fi. Laptop-uplink-to-cluster is a real measurement too, but it’s the special case — opt in via <code>--backend local</code>.</li>
+<li><strong><code>terraform</code> defaults to <code>local</code></strong> because the terraform-exec local path is the established workflow. State handling is simplest there. Frozen-version CI runs use <code>--backend docker</code>; non-local network-locality use cases (cluster-side, SSH-bastion-side) are deferred to a future release pending a state-handling design — see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>.</li>
+</ul>
+<p>To change a default per workspace, edit <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
+<pre><code class="language-yaml">exec:
+  iperf3:    { backend: k8s }      # already the default; shown for clarity
+  ibmcloud:  { backend: ssh:bastion }
+  terraform: { backend: docker }
+</code></pre>
+<p><a href="#workspace-config-configyaml">Chapter 12 §“<code>exec:</code>”</a> covers the schema. The <code>--backend</code> CLI flag overrides whatever is in <code>exec:</code> for a single invocation.</p>
+<h2 id="per-tool-supported-backend-matrix"><a class="header" href="#per-tool-supported-backend-matrix">Per-tool supported-backend matrix</a></h2>
+<p>Not every tool supports every backend. The supported set per tool:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th><code>local</code></th><th><code>docker</code></th><th><code>k8s</code></th><th><code>ssh:&lt;target&gt;</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud</code></td><td>yes</td><td>yes</td><td>yes (long-lived ops pod)</td><td>yes</td></tr>
+<tr><td><code>iperf3</code></td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes (default)</td><td>yes</td></tr>
+<tr><td><code>terraform</code></td><td>yes (default)</td><td>yes</td><td>deferred</td><td>deferred</td></tr>
+<tr><td>DNS probe (Sprint 5)</td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes</td><td>yes</td></tr>
+</tbody>
+</table>
+</div>
+<p>The “no” entries are intentional design decisions, not gaps:</p>
+<ul>
+<li><strong><code>iperf3</code> over <code>docker</code> is rejected</strong> because a Docker container running locally has the same network identity as the host — same NAT egress, same uplink, same observed bandwidth as <code>--backend local</code>. The user’s mental model would be “I picked docker, so the iperf3 must be hermetic now” but the throughput number wouldn’t actually differ. Better to refuse and force the user to pick <code>local</code> (deliberate laptop measurement) or <code>k8s</code> (cluster measurement).</li>
+<li><strong>DNS probe over <code>docker</code> is rejected</strong> for the same reason. DNS resolution from a Docker container with default bridge networking goes through the same resolver as the host. There’s no GSLB-relevant network-locality difference. The probe subcommand errors with “DNS probe doesn’t benefit from docker; use local instead” when <code>--backend docker</code> is passed.</li>
+<li><strong><code>terraform</code> over <code>k8s</code> and <code>ssh</code> is deferred</strong>. The state file is sensitive (admin tokens, generated TLS keys, license bundles); moving it into a Kubernetes Secret or scp’ing it pre/post-run requires a state-handling design that hasn’t shipped yet. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> lays out the considerations; expect this in a Sprint 5+ release.</li>
+</ul>
+<p>Passing an unsupported <code>(tool, backend)</code> pair errors at the CLI layer before the backend is invoked:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: iperf3 doesn't support backend `docker` (same network identity as `local`,
+       no value-add); supported: local, k8s, ssh:&lt;target&gt;
+</code></pre>
+<h2 id="decision-tree"><a class="header" href="#decision-tree">Decision tree</a></h2>
+<p>Pick the question that matches your scenario.</p>
+<h3 id="i-want-to-measure-cluster-bandwidth"><a class="header" href="#i-want-to-measure-cluster-bandwidth">“I want to measure cluster bandwidth”</a></h3>
+<p>Use <code>--backend k8s</code>. The default for <code>iperf3</code> is already <code>k8s</code> — the explicit flag is redundant unless you’ve overridden the default in workspace config:</p>
+<pre><code class="language-bash">roksbnkctl test throughput
+# equivalent to:
+roksbnkctl test throughput --backend k8s
+</code></pre>
+<p>The k8s backend deploys a server-side Deployment + LoadBalancer Service in <code>roksbnkctl-test</code>, runs the iperf3 client as a one-shot Job in the same namespace, collects the JSON output from the client pod’s logs, and tears down both. The bandwidth number reflects the cluster fabric.</p>
+<p>If you instead want to measure your laptop’s uplink to the cluster:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --backend local --endpoint &lt;cluster-LB-ip&gt;:5201
+</code></pre>
+<p>That’s a deliberately different measurement — useful when you suspect office Wi-Fi, not cluster fabric, is the bottleneck.</p>
+<h3 id="im-doing-gslb-dns-validation"><a class="header" href="#im-doing-gslb-dns-validation">“I’m doing GSLB DNS validation”</a></h3>
+<p>Use <strong>both</strong> <code>local</code> and <code>k8s</code>. F5 BIG-IP Next’s GSLB returns different answers depending on the requesting resolver’s IP — geographic affinity, datacenter routing, health-check state. To validate that the GSLB is actually doing this, query from multiple network vantage points and compare.</p>
+<p>The full multi-vantage probe is a <strong>Sprint 5 deliverable</strong>; today (Sprint 4) <code>roksbnkctl test dns</code> is the simpler single-vantage workspace probe. The shape below is what the Sprint 5 expanded surface will look like — the flags (<code>--target</code>, <code>--type</code>, <code>--server</code>, <code>--gslb-compare</code>) don’t exist on <code>roksbnkctl test dns</code> yet:</p>
+<pre><code class="language-bash"># Sprint 5+ — the flags below don't exist on `roksbnkctl test dns` today
+roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.f5.example.com \
+  --gslb-compare
+</code></pre>
+<p>When it lands, <code>--gslb-compare</code> will fan out to every configured backend (<code>local</code> for your office IP, <code>k8s</code> for the cluster’s egress IP, <code>ssh:&lt;region-bastion&gt;</code> for a bastion in another region) and emit a single comparison JSON. Different answers across vantages are <strong>expected</strong> in a healthy GSLB; identical answers might mean the GSLB rules aren’t taking effect.</p>
+<p><a href="#dns-testing-for-gslb">Chapter 21 — DNS testing for GSLB</a> is the chapter to read once the probe ships.</p>
+<h3 id="i-need-to-run-ibmcloud-from-a-customer-firewalled-office"><a class="header" href="#i-need-to-run-ibmcloud-from-a-customer-firewalled-office">“I need to run <code>ibmcloud</code> from a customer-firewalled office”</a></h3>
+<p>Use <code>--backend ssh:&lt;bastion&gt;</code>. Your customer’s network policy lets the corporate jumphost reach <code>*.cloud.ibm.com</code> but blocks your laptop. The SSH backend ships your kubeconfig to the bastion (single file, mode <code>0600</code>, removed via <code>trap</code> on session exit), runs <code>ibmcloud</code> there, streams the output back:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend ssh:bastion ks cluster ls
+</code></pre>
+<p>If <code>ibmcloud</code> isn’t installed on the bastion, you’ll get a clear error:</p>
+<pre><code>error: tool `ibmcloud` not found on ssh target bastion; re-run with --bootstrap to install
+       via apt-get, or pre-install on the target manually
+</code></pre>
+<p>Re-run with <code>--bootstrap</code> if you want <code>roksbnkctl</code> to <code>sudo apt-get install -y ibmcloud-cli</code> on the bastion. The opt-in default reflects “we don’t surprise users with <code>sudo apt-get</code> on a remote they didn’t expect mutation on” — see <a href="#ssh-backend">Chapter 17 §“SSH backend”</a> for the bootstrap mechanics.</p>
+<h3 id="im-in-ci-and-want-a-frozen-toolchain-version"><a class="header" href="#im-in-ci-and-want-a-frozen-toolchain-version">“I’m in CI and want a frozen toolchain version”</a></h3>
+<p>Use <code>--backend docker</code>. The vendored images are tagged in lock-step with <code>roksbnkctl</code> releases — <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0</code> is the exact same <code>ibmcloud</code> binary every CI run sees, regardless of when the runner image was built or what <code>apt-get</code> happens to ship that day:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend docker iam oauth-tokens
+roksbnkctl up --backend docker     # terraform inside hashicorp/terraform:&lt;v&gt;
+</code></pre>
+<p>For CI specifically, also pin <code>ibmcloud.api_key_source: env</code> in workspace config so the API key resolution is unambiguous (no keychain fallback to confuse a non-interactive runner) — see <a href="#pinning-a-single-source">Chapter 14 §“Pinning a single source”</a>.</p>
+<h3 id="im-on-a-clean-dev-machine-without-ibmcloud-installed"><a class="header" href="#im-on-a-clean-dev-machine-without-ibmcloud-installed">“I’m on a clean dev machine without <code>ibmcloud</code> installed”</a></h3>
+<p>Use <code>--backend docker</code>. No <code>apt-get install ibmcloud-cli</code>, no IBM repo + GPG key dance, no upstream-package-version mismatch — <code>docker pull ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> is the only setup, and <code>roksbnkctl</code> does that for you on first invocation.</p>
+<p>Alternatively, if your laptop is the dev machine and you’ll run <code>ibmcloud</code> more than once, just install it. The <code>local</code> backend has lower per-invocation startup latency than <code>docker</code> (no container create/start/log-attach), so once you’ve paid the install cost the local path is faster for the rest of the session.</p>
+<h3 id="i-want-a-cluster-side-ad-hoc-shell"><a class="header" href="#i-want-a-cluster-side-ad-hoc-shell">“I want a cluster-side ad-hoc shell”</a></h3>
+<p>Use <code>--backend k8s</code> with the long-lived ops pod. Once <code>roksbnkctl ops install</code> has run, <code>--backend k8s</code> for <code>ibmcloud</code> (or any future tool) routes through <code>kubectl exec -n roksbnkctl-ops ops -- &lt;argv&gt;</code>. The pod stays alive between invocations, so the second and subsequent commands skip pod-startup latency.</p>
+<pre><code class="language-bash">roksbnkctl ops install
+roksbnkctl ibmcloud --backend k8s iam oauth-tokens
+roksbnkctl ibmcloud --backend k8s ks cluster ls
+roksbnkctl ibmcloud --backend k8s account list
+</code></pre>
+<p><a href="#the-in-cluster-ops-pod">Chapter 19</a> is the full reference for the ops pod lifecycle.</p>
+<h3 id="im-pre-cluster--theres-no-cluster-yet"><a class="header" href="#im-pre-cluster--theres-no-cluster-yet">“I’m pre-cluster — there’s no cluster yet”</a></h3>
+<p>Use <code>local</code> or <code>ssh:&lt;target&gt;</code>. The <code>k8s</code> backend prereq is a working kubeconfig pointing at a running cluster; before <code>roksbnkctl up</code> has succeeded, that doesn’t exist. For pre-cluster ibmcloud + terraform calls (account inspection, IAM tinkering, the cluster-create itself), <code>local</code> and <code>ssh:bastion</code> are the only two paths.</p>
+<h2 id="when-not-to-use-a-backend"><a class="header" href="#when-not-to-use-a-backend">When <em>not</em> to use a backend</a></h2>
+<p>Common foot-guns, in rough order of how often they come up:</p>
+<h3 id="--backend-k8s-without-roksbnkctl-ops-install"><a class="header" href="#--backend-k8s-without-roksbnkctl-ops-install"><code>--backend k8s</code> without <code>roksbnkctl ops install</code></a></h3>
+<p>The ops pod must exist before the k8s backend can route <code>ibmcloud</code> calls through it. First-time use:</p>
+<pre><code class="language-bash">roksbnkctl ops install         # one-time setup per cluster
+roksbnkctl ibmcloud --backend k8s ks cluster ls
+</code></pre>
+<p>If you skip the install, the backend errors with a clear remediation:</p>
+<pre><code>error: ops pod not found in roksbnkctl-ops namespace; run `roksbnkctl ops install` first
+</code></pre>
+<p><a href="#the-in-cluster-ops-pod">Chapter 19</a> covers the install/show/uninstall lifecycle.</p>
+<h3 id="--backend-docker-for-a-network-locality-test"><a class="header" href="#--backend-docker-for-a-network-locality-test"><code>--backend docker</code> for a network-locality test</a></h3>
+<p><code>iperf3</code> and the DNS probe both reject <code>--backend docker</code> because a local Docker container has the same network identity as the host (default bridge networking). The probe wouldn’t measure anything different. The CLI errors at parse time:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: iperf3 doesn't support backend `docker` (same network identity as `local`,
+       no value-add); supported: local, k8s, ssh:&lt;target&gt;
+</code></pre>
+<p>If you actually want a hermetic-tools throughput test, <code>--backend k8s</code> is the right answer.</p>
+<h3 id="--backend-sshhost-without---bootstrap-on-a-fresh-target"><a class="header" href="#--backend-sshhost-without---bootstrap-on-a-fresh-target"><code>--backend ssh:host</code> without <code>--bootstrap</code> on a fresh target</a></h3>
+<p>If <code>ibmcloud</code> (or <code>iperf3</code>) isn’t installed on the target, the SSH backend won’t silently <code>sudo apt-get</code> for you — <code>--bootstrap</code> is opt-in. The first call on a fresh target tells you exactly what’s needed:</p>
+<pre><code>error: tool `ibmcloud` not found on ssh target bastion; re-run with --bootstrap to install
+       via apt-get, or pre-install on the target manually
+</code></pre>
+<p>Re-run with <code>--bootstrap</code> if mutation is OK; otherwise pre-install via your config-management of choice (Ansible, Salt, baked-in-image).</p>
+<h3 id="--backend-sshhost-to-a-non-ubuntu-target-with---bootstrap"><a class="header" href="#--backend-sshhost-to-a-non-ubuntu-target-with---bootstrap"><code>--backend ssh:host</code> to a non-Ubuntu target with <code>--bootstrap</code></a></h3>
+<p>The apt-bootstrap recipe is Ubuntu-only this round. RHEL / CentOS / Alpine targets need pre-installation via <code>yum</code> / <code>dnf</code> / <code>apk</code> — <code>--bootstrap</code> errors out cleanly:</p>
+<pre><code>error: auto-install only supports Ubuntu. Pre-install `ibmcloud-cli` on the target
+       (RHEL: `yum install ibmcloud-cli`)
+</code></pre>
+<p>Once the tool is installed, <code>--backend ssh:host</code> works without <code>--bootstrap</code>.</p>
+<h3 id="--backend-k8s-for-terraform"><a class="header" href="#--backend-k8s-for-terraform"><code>--backend k8s</code> for <code>terraform</code></a></h3>
+<p>Deferred. The <code>terraform</code> tool’s k8s + ssh backends require a state-handling design that hasn’t shipped — moving the state file into a Kubernetes Secret or scp’ing it pre/post-run is fiddly enough to be a feature in its own right (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>). For now, <code>terraform</code> supports <code>local</code> and <code>docker</code> only. If the network-locality use case (running <code>terraform</code> from a customer VPC for IP-egress reasons) is blocking, file an issue.</p>
+<h3 id="mixing---on-and---backend-sshtarget"><a class="header" href="#mixing---on-and---backend-sshtarget">Mixing <code>--on</code> and <code>--backend ssh:&lt;target&gt;</code></a></h3>
+<p><code>--on &lt;target&gt;</code> is the <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> lightweight remote-exec — it runs the <em>passthrough</em> shape (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on the target by literally re-running the command via SSH. <code>--backend ssh:&lt;target&gt;</code> is the heavier-duty form — it routes through the <code>Backend</code> interface, which means file materialisation, env propagation hardening, opt-in apt-bootstrap, and the redactor are all wired in.</p>
+<p>You generally want one or the other, not both. The supported precedence is “<code>--backend ssh:&lt;target&gt;</code> wins”; passing both flags on the same invocation surfaces a warning. If you’re calling <code>roksbnkctl ibmcloud …</code>, prefer <code>--backend ssh:&lt;target&gt;</code> for the same target — you get the better cred-handling story automatically.</p>
+<h2 id="workspace-config----backend-flag-interaction"><a class="header" href="#workspace-config----backend-flag-interaction">Workspace config + <code>--backend</code> flag interaction</a></h2>
+<p>Recap of <a href="#workspace-config-configyaml">Chapter 12 §“<code>exec:</code>”</a>:</p>
+<p>The flag wins. If <code>~/.roksbnkctl/&lt;ws&gt;/config.yaml</code> says:</p>
+<pre><code class="language-yaml">exec:
+  iperf3: { backend: k8s }
+</code></pre>
+<p>…and you run <code>roksbnkctl test throughput --backend local</code>, the <code>local</code> backend runs. The flag is the <strong>per-invocation override</strong>; the workspace config is the <strong>per-workspace default</strong>.</p>
+<p>If neither is set, the per-tool default from the previous section applies (iperf3 → k8s, ibmcloud → local, terraform → local). The resolution order is exact:</p>
+<ol>
+<li><code>--backend</code> flag</li>
+<li><code>exec.&lt;tool&gt;.backend</code> in workspace config</li>
+<li>Per-tool baked-in default</li>
+</ol>
+<p>There’s no fallback chain inside this resolution — if you pass <code>--backend k8s</code> and the cluster is unreachable, the backend errors with “cluster API unreachable” (exit <code>127</code>). It does <strong>not</strong> fall through to <code>local</code>. Silent fallback hides intent and produces confusing CI results; the failure-mode discipline in <a href="#backend-failure-semantics">Chapter 17 §“Backend-failure semantics”</a> applies here too.</p>
+<h2 id="summary-table"><a class="header" href="#summary-table">Summary table</a></h2>
+<p>The decision-tree contents collapsed into one table:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>If you want to…</th><th>Backend</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td>Measure cluster bandwidth</td><td><code>k8s</code></td><td>iperf3 client + server in cluster (the default)</td></tr>
+<tr><td>Measure laptop-uplink-to-cluster bandwidth</td><td><code>local</code></td><td>deliberate; not the iperf3 default</td></tr>
+<tr><td>GSLB DNS cross-vantage compare</td><td><code>local</code> + <code>k8s</code> (<code>--gslb-compare</code>)</td><td>Sprint 5; multiple vantages</td></tr>
+<tr><td><code>ibmcloud</code> from a customer-firewalled office</td><td><code>ssh:bastion</code></td><td>with <code>--bootstrap</code> if first call on fresh Ubuntu</td></tr>
+<tr><td>Frozen-version CI for any tool</td><td><code>docker</code></td><td>image tag matches <code>roksbnkctl</code> release</td></tr>
+<tr><td>Cluster-side ad-hoc <code>ibmcloud</code> debugging</td><td><code>k8s</code></td><td>requires <code>roksbnkctl ops install</code> first</td></tr>
+<tr><td>Pre-cluster ibmcloud / terraform</td><td><code>local</code> or <code>ssh</code></td><td><code>k8s</code> requires a working cluster</td></tr>
+<tr><td><code>terraform up</code> on a clean dev machine</td><td><code>local</code> (default) or <code>docker</code></td><td>k8s + ssh deferred</td></tr>
+<tr><td>Air-gapped: laptop can’t reach IBM Cloud, bastion can</td><td><code>ssh:bastion</code></td><td>with kubeconfig propagation</td></tr>
+<tr><td>Just learning the tool</td><td><code>local</code></td><td>simplest mental model</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="cross-references-10"><a class="header" href="#cross-references-10">Cross-references</a></h2>
+<ul>
+<li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — how creds reach each backend.</li>
+<li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The <code>--on</code> flag and SSH jumphosts</a> — the lightweight remote-exec predecessor to the SSH backend.</li>
+<li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — per-backend mechanics.</li>
+<li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — the cluster-side prerequisite for <code>--backend k8s</code>.</li>
+<li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — iperf3-specific flags.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03 — pluggable execution backends</a> — the design spec.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-in-cluster-ops-pod"><a class="header" href="#the-in-cluster-ops-pod">The in-cluster ops pod</a></h1>
-<p><em>Coming in Sprint 4.</em></p>
-<p><em><code>roksbnkctl ops install/show/uninstall</code>: what gets deployed (namespace, service account, ClusterRole, RoleBinding, projected secret), the RBAC privileges granted, and the rotation/refresh story for long-running deployments.</em></p>
+<p>The k8s execution backend has two execution patterns: a <strong>long-lived ops pod</strong> for ad-hoc commands, and <strong>one-shot Jobs</strong> for throughput tests, DNS probes, and other per-invocation workloads. <a href="#k8s-backend">Chapter 17 §“K8s backend”</a> covered the <strong>interface mechanics</strong> — how <code>Backend.Run</code> dispatches into either pattern.</p>
+<p>This chapter is the reference for the <strong>pod itself</strong>: what <code>roksbnkctl ops install</code> deploys, what RBAC it grants, where credentials live, how to rotate them, and how to debug when something goes wrong.</p>
+<p>If you’ve never run <code>roksbnkctl ops install</code>, you can read this chapter front-to-back; otherwise the <a href="#operability">§ Operability</a> section near the end is the troubleshooting jump-off point.</p>
+<h2 id="what-the-ops-pod-is"><a class="header" href="#what-the-ops-pod-is">What the ops pod is</a></h2>
+<p>A long-lived pod in the <code>roksbnkctl-ops</code> namespace, running an image bundled with the tools <code>roksbnkctl</code> may want to invoke cluster-side: <code>ibmcloud</code> CLI plus <code>kubectl</code> as a fallback, with <code>oc</code> and <code>terraform</code> reserved for future iterations.</p>
+<p>The pod sits idle waiting for <code>kubectl exec</code> calls. Each <code>roksbnkctl ibmcloud --backend k8s …</code> invocation routes through <code>client-go</code>’s SPDY executor, runs the wrapped tool inside the existing pod, streams stdout/stderr back, and returns the exit code. No pod create/start latency between invocations — a session of twenty <code>ibmcloud</code> commands pays the startup cost once.</p>
+<p>Compared to the one-shot Job pattern (used for <code>iperf3</code> and the upcoming DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It’s the right shape when you want to debug interactively or run many small commands.</p>
+<h2 id="roksbnkctl-ops-install"><a class="header" href="#roksbnkctl-ops-install"><code>roksbnkctl ops install</code></a></h2>
+<p>Idempotent setup. Run once per cluster; re-run any time you want to refresh the image, rotate the API key Secret, or recover from a partial uninstall.</p>
+<pre><code class="language-bash">roksbnkctl ops install
+</code></pre>
+<p>What it does, step by step:</p>
+<h3 id="1-create-the-namespace"><a class="header" href="#1-create-the-namespace">1. Create the namespace</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: roksbnkctl-ops
+  labels:
+    app.kubernetes.io/name: roksbnkctl
+    app.kubernetes.io/component: ops-pod
+</code></pre>
+<p>The <code>roksbnkctl-ops</code> namespace is dedicated to the long-lived pod. Separate from <code>roksbnkctl-test</code> (where one-shot Jobs run) so RBAC can be scoped per namespace — see <a href="#rbac-the-clusterrole-rules">§ RBAC</a> below.</p>
+<h3 id="2-create-the-serviceaccount"><a class="header" href="#2-create-the-serviceaccount">2. Create the ServiceAccount</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+</code></pre>
+<p>The pod runs as this SA. Its projected token is auto-mounted at <code>/var/run/secrets/kubernetes.io/serviceaccount/</code>, which is what the bundled <code>kubectl</code> uses for in-cluster authentication. The IBM Cloud API key (a separate credential) reaches the pod through a Kubernetes Secret — see <a href="#credential-propagation">§ Credential propagation</a> below.</p>
+<h3 id="3-create-the-clusterrole--clusterrolebinding"><a class="header" href="#3-create-the-clusterrole--clusterrolebinding">3. Create the ClusterRole + ClusterRoleBinding</a></h3>
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: roksbnkctl-ops
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "pods/log"]
+  verbs:     ["get", "list", "watch", "create", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs:     ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs:     ["get", "list"]
+  resourceNames: ["roksbnkctl-ibm-creds"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs:     ["get", "list", "create", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs:     ["get", "list", "create", "delete"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs:     ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: roksbnkctl-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: roksbnkctl-ops
+subjects:
+- kind: ServiceAccount
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+</code></pre>
+<p>The full manifest lives at <code>internal/exec/k8s_install.yaml</code> (embedded into the binary). <a href="#rbac-the-clusterrole-rules">§ RBAC</a> walks through what each rule is for.</p>
+<h3 id="4-create-or-update-the-credential-secret"><a class="header" href="#4-create-or-update-the-credential-secret">4. Create or update the credential Secret</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Secret
+metadata:
+  name: roksbnkctl-ibm-creds
+  namespace: roksbnkctl-ops
+  annotations:
+    helm.sh/resource-policy: keep            # don't sweep on accidental destroy
+type: Opaque
+stringData:
+  IBMCLOUD_API_KEY: &lt;resolved-key-value&gt;
+</code></pre>
+<p>The key value comes from the workspace’s resolver chain (env → keychain → config-b64 → prompt) — see <a href="#credentials-and-the-resolver-chain">Chapter 14</a> for the resolution order. The Secret carries two keys (<code>IBMCLOUD_API_KEY</code> and the legacy alias <code>IC_API_KEY</code>) both populated from the same resolved value, so older <code>ibmcloud</code> CLI versions that look for the <code>IC_</code> name find it.</p>
+<p>If the Secret already exists (re-running <code>ops install</code> after a key rotation), <code>roksbnkctl</code> does a client-side Get + Update: the Secret’s <code>data</code> is overwritten with the freshly resolved value, the <code>roksbnkctl.io/rotated-at</code> annotation is stamped with the current timestamp, and the rest of the Secret’s metadata is left untouched. <code>roksbnkctl ops show</code> surfaces “last cred rotation: <timestamp>” by reading that annotation.</timestamp></p>
+<h3 id="5-create-the-pod"><a class="header" href="#5-create-the-pod">5. Create the Pod</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+  labels:
+    app: roksbnkctl-ops
+    roksbnkctl.io/managed: "true"
+spec:
+  serviceAccountName: roksbnkctl-ops
+  restartPolicy: Always
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: tools
+    image: ${OPS_IMAGE}                  # resolved from roksbnkctl's version at install time
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "infinity"]
+    envFrom:
+    - secretRef:
+        name: roksbnkctl-ibm-creds
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+    resources:
+      requests: { cpu: 50m,  memory: 64Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+</code></pre>
+<p>Three details to call out:</p>
+<ul>
+<li><strong><code>command: ["sleep", "infinity"]</code></strong> — the pod’s own command. Each <code>Backend.Run</code> invocation issues a <code>kubectl exec</code> against this idle process, which means the pod’s main process never exits as long as the pod is healthy.</li>
+<li><strong><code>securityContext</code> is set explicitly</strong> for OpenShift’s <code>restricted-v2</code> SCC. Pod-level <code>runAsNonRoot</code> + <code>seccompProfile.type: RuntimeDefault</code>; container-level <code>allowPrivilegeEscalation: false</code> + <code>capabilities.drop: [ALL]</code> + <code>runAsNonRoot</code> — the same fields the iperf3 server pod sets, for the same reason.</li>
+<li><strong><code>envFrom: secretRef</code></strong> — the API key reaches the pod’s env without ever touching the pod manifest’s argv or <code>env:</code> block. <code>kubectl describe pod roksbnkctl-ops</code> shows the secret reference name but not the value, per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 §“In-cluster pod”</a>.</li>
+</ul>
+<h3 id="6-wait-for-readiness"><a class="header" href="#6-wait-for-readiness">6. Wait for readiness</a></h3>
+<p><code>roksbnkctl ops install</code> waits for <code>Pod.Status.Phase == Running</code> and the container’s <code>Ready</code> condition before returning. Default timeout is 60 seconds; longer for clusters with slow image pulls (the ghcr.io image is ~80 MiB). Failures surface a <code>kubectl describe pod roksbnkctl-ops</code> excerpt for context.</p>
+<h2 id="roksbnkctl-ops-show"><a class="header" href="#roksbnkctl-ops-show"><code>roksbnkctl ops show</code></a></h2>
+<p>Reports current state without making any changes:</p>
+<pre><code class="language-bash">$ roksbnkctl ops show
+namespace:    roksbnkctl-ops
+pod:          roksbnkctl-ops
+phase:        Running
+ready:        true
+image:        ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v0.9.0
+rbac subject: system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops
+secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
+</code></pre>
+<p>What each line surfaces:</p>
+<ol>
+<li><strong>Pod phase + readiness</strong> — <code>Running</code> + <code>true</code> is green; anything else means the pod is unhealthy and <code>Backend.Run</code> calls will fail. The container count is exactly one (<code>tools</code>); <code>ready: true</code> is a single bool, not a <code>2/2</code>-style ratio.</li>
+<li><strong>Image</strong> — the <code>:v…</code> tag matches the <code>roksbnkctl</code> release the image was published with (resolved at install time from the binary’s version; see <a href="#dev-tag-resolution">Chapter 17 §<code>:dev</code> tag resolution</a>). Mismatched against your <code>roksbnkctl --version</code> means re-running <code>ops install</code> will pull the matching image.</li>
+<li><strong>RBAC subject</strong> — the SA the pod runs as. <code>kubectl describe clusterrole roksbnkctl-ops</code> prints the full ruleset (the ClusterRoleBinding is named the same as the role).</li>
+<li><strong>Secret line</strong> — the cred Secret’s name + the <code>roksbnkctl.io/rotated-at</code> annotation that <code>ops install</code> stamps each time the Secret is applied. If the Secret is missing entirely, the line reads <code>secret: (missing: …)</code>.</li>
+</ol>
+<p>The current output is a fixed six-line key/value block; a structured <code>--output json</code> mode is on the Sprint 5+ roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.).</p>
+<h2 id="roksbnkctl-ops-uninstall"><a class="header" href="#roksbnkctl-ops-uninstall"><code>roksbnkctl ops uninstall</code></a></h2>
+<p>Full removal. Run when decommissioning the cluster, or when you want a clean re-install. The command is a <strong>destructive-action gate</strong>: by default it prints a preview of what <em>would</em> be deleted and exits successfully; the actual deletion only runs with <code>--confirm</code>.</p>
+<pre><code class="language-bash">$ roksbnkctl ops uninstall
+Would delete (re-run with --confirm to proceed):
+  - Pod        roksbnkctl-ops/roksbnkctl-ops
+  - Secret     roksbnkctl-ops/roksbnkctl-ibm-creds
+  - ServiceAccount roksbnkctl-ops/roksbnkctl-ops
+  - ClusterRole/ClusterRoleBinding roksbnkctl-ops
+  - Namespace  roksbnkctl-ops
+  - Namespace  roksbnkctl-test
+
+$ roksbnkctl ops uninstall --confirm
+✓ deleted pod roksbnkctl-ops
+✓ deleted secret roksbnkctl-ibm-creds
+✓ deleted serviceaccount roksbnkctl-ops
+✓ deleted clusterrolebinding roksbnkctl-ops
+✓ deleted clusterrole roksbnkctl-ops
+✓ deleted namespace roksbnkctl-ops
+✓ deleted namespace roksbnkctl-test
+</code></pre>
+<p>Note that the cluster-scoped objects (ClusterRole, ClusterRoleBinding) get cleaned too — they’re not garbage-collected by namespace deletion since they live above the namespace. <code>roksbnkctl ops uninstall --confirm</code> makes this explicit so a stale <code>roksbnkctl-ops</code> ClusterRole can’t outlive a namespace removed via <code>kubectl delete ns</code>.</p>
+<p>Both managed namespaces (<code>roksbnkctl-ops</code> and <code>roksbnkctl-test</code>) are deleted. The <code>roksbnkctl-test</code> namespace is where one-shot Job pods (iperf3 client, future probes) land — by the time you’re running <code>uninstall</code> you’ve already concluded those test workloads are finished, so removing the namespace alongside the ops-pod surface keeps the cluster clean.</p>
+<p>When to run <code>uninstall</code>:</p>
+<ul>
+<li><strong>Cluster decommission</strong> — the cluster is going away, clean up cluster-scoped objects before destroying it.</li>
+<li><strong>Cred rotation when paranoid</strong> — the rotation story (next section) doesn’t require uninstall, but if you’re worried about old secrets persisting in etcd snapshots, an uninstall + re-install regenerates the Secret cleanly.</li>
+<li><strong>Image upgrade with a major manifest change</strong> — if the embedded <code>k8s_install.yaml</code> evolves (new RBAC rule, security-context tweak), <code>uninstall</code> + <code>install</code> is the cleanest way to apply.</li>
+</ul>
+<h2 id="rbac-the-clusterrole-rules"><a class="header" href="#rbac-the-clusterrole-rules">RBAC: the ClusterRole rules</a></h2>
+<p>The full ClusterRole rule set (transcribed from <code>internal/exec/k8s_install.yaml</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>API group</th><th>Resources</th><th>Verbs</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>batch</code></td><td><code>jobs</code></td><td>get, list, watch, create, delete</td><td>One-shot Job lifecycle (iperf3 client, future probes). The backend creates the Job, watches it, reads logs, deletes it.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods</code></td><td>get, list, watch</td><td>The backend lists/watches pods to find Job-spawned pods + to wait for the ops pod’s Ready state. <strong>No <code>create</code>/<code>delete</code></strong> — pods are owned by their Jobs (or by <code>ops install</code>’s user-side privilege), not by the pod’s SA.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods/log</code></td><td>get, list</td><td>Log streaming from one-shot Job pods (the bytes the wrapped tool wrote to stdout/stderr).</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods/exec</code></td><td>create, get</td><td><code>kubectl exec</code> is a <code>create</code> against the <code>pods/exec</code> subresource — the SPDY-channel verb the long-lived ops-pod path uses.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>secrets</code> (named <code>roksbnkctl-ibm-creds</code>)</td><td>get</td><td>The pod reads the cred Secret directly only if a future workflow opts to (kubelet’s projection of <code>envFrom: secretRef</code> runs as kubelet, not as this SA). The <code>resourceNames</code> filter keeps the SA from reading any other Secret in the namespace — least-privilege per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 §“In-cluster pod”</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Notably <strong>not</strong> granted:</p>
+<ul>
+<li><strong><code>pods</code> create / delete</strong> — the SA can list and watch pods but can’t create or delete them. Pod lifecycle is mediated by Jobs (which the SA does manage) and by the ops pod itself (which <code>ops install</code> creates with the user’s privilege, not the SA’s).</li>
+<li><strong><code>secrets</code> create / update / delete / list</strong> — the pod never writes Secrets, and can’t even list to discover which Secrets exist in the namespace. The install-time Secret creation is done by the user invoking <code>ops install</code> (whose kubeconfig has cluster-admin or comparable), not by the pod’s SA. Combined with the <code>resourceNames</code> filter on <code>get</code>, this is the tightest practical surface that still lets the pod consume its own cred.</li>
+<li><strong><code>services</code>, <code>deployments</code>, <code>namespaces</code></strong> — the SA can’t touch these at all. The iperf3 server fixture (when the throughput test runs) is provisioned by <code>roksbnkctl test throughput</code> running on the caller’s side using the user’s kubeconfig, not by anything inside the ops pod.</li>
+<li><strong><code>clusterroles</code>, <code>clusterrolebindings</code></strong> — the pod never modifies its own RBAC.</li>
+<li><strong><code>*</code> cluster-admin</strong> — explicitly avoided. The pod has exactly the verbs it needs and nothing else.</li>
+</ul>
+<p>This matches <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cross-backend-principles">PRD 04 §“Least privilege per backend”</a> and <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-internalexeck8sgo">PRD 03 §“K8s”</a>: the ops pod is a powerful tool but its blast radius is bounded.</p>
+<p>To audit the rules on a running cluster:</p>
+<pre><code class="language-bash">kubectl describe clusterrole roksbnkctl-ops
+kubectl auth can-i --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops \
+  '*' '*' --all-namespaces       # should print mostly "no"
+</code></pre>
+<h2 id="credential-propagation"><a class="header" href="#credential-propagation">Credential propagation</a></h2>
+<p>The <code>IBMCLOUD_API_KEY</code> reaches the wrapped tool in three hops:</p>
+<pre><code>resolver chain (env → keychain → config-b64 → prompt)
+       ↓                        on the laptop, at `roksbnkctl ops install` time
+  Kubernetes Secret roksbnkctl-ibm-creds                in roksbnkctl-ops namespace
+       ↓                        applied by `ops install` via kubectl-equivalent
+  Pod env (IBMCLOUD_API_KEY=…)                          via `envFrom: secretRef`
+       ↓                        kubelet reads Secret, sets env on container start
+  Wrapped tool (`ibmcloud iam oauth-tokens`)            reads from os.Getenv
+</code></pre>
+<p>Three properties this gives you:</p>
+<ol>
+<li><strong>The key never appears in argv.</strong> <code>kubectl describe pod roksbnkctl-ops</code> shows <code>envFrom: secretRef: name: roksbnkctl-ibm-creds</code>, not the value. <code>kubectl get pod roksbnkctl-ops -o yaml</code> shows the same.</li>
+<li><strong>The key never appears in the pod’s own logs.</strong> The wrapped tool uses the env var; the env var name (not value) is what the pod’s startup logs print.</li>
+<li><strong>The redactor is the defense-in-depth backstop.</strong> If the wrapped tool ever prints the value (e.g., <code>ibmcloud --debug</code>), the SPDY stream from the pod is wrapped through <code>internal/exec/redact.go</code> before reaching the caller’s stdout — same as the local + docker backends.</li>
+</ol>
+<p>The Secret carries two keys today — <code>IBMCLOUD_API_KEY</code> and the legacy <code>IC_API_KEY</code> alias older <code>ibmcloud</code> versions accept — both populated from the same resolved value. Names are stable; embedded in <code>internal/exec/k8s_install.yaml</code>. Future cluster-side credentials (an AWS access key, a GCP service-account JSON) will add new keys to the same Secret rather than spinning up new Secrets, simplifying RBAC.</p>
+<h2 id="rotation-rotating-the-api-key"><a class="header" href="#rotation-rotating-the-api-key">Rotation: rotating the API key</a></h2>
+<p>When the IBM Cloud API key changes (key rotation, account takeover, key compromise), you need to update the cluster-side Secret. The flow:</p>
+<pre><code class="language-bash"># 1. Update the local resolver chain — pick whichever source you populated
+#    initially (the chain order is: env &gt; keychain &gt; config-b64; see chapter 14):
+export IBMCLOUD_API_KEY=&lt;new-key&gt;             # env (one-shot)
+# or update the keychain entry directly: `keyring` / `secret-tool` / Keychain.app
+# or edit ~/.roksbnkctl/&lt;workspace&gt;/config.yaml's api_key_b64 field
+
+# 2. Re-run ops install — this re-resolves the key, updates the cluster
+#    Secret, and rolls the pod
+roksbnkctl ops install
+</code></pre>
+<p>What <code>ops install</code> does on re-run:</p>
+<ul>
+<li>The Secret <code>roksbnkctl-ibm-creds</code> is updated with the new value via a client-side Get + Update (the existing Secret’s <code>data</code> is overwritten, the <code>roksbnkctl.io/rotated-at</code> annotation is refreshed, the rest of the metadata is left alone).</li>
+<li>The pod’s env, however, <strong>is set at container-start time</strong> — kubelet reads the Secret value when the pod is created, not on every Secret update. So an updated Secret doesn’t propagate to the running pod’s env until the pod is recreated.</li>
+<li><code>ops install</code> therefore deletes and recreates the bare ops pod after the Secret update. New pod → kubelet reads the updated Secret → env contains the new value. (Re-creation takes a few seconds for the image cache hit; up to ~30 seconds on a cold cluster.)</li>
+</ul>
+<p>The ops pod is a <strong>bare Pod</strong>, not a Deployment or DaemonSet, so <code>kubectl rollout restart</code> won’t work on it (<code>rollout restart</code> only operates on controller resources). The canonical way to force a fresh pod is <code>roksbnkctl ops install</code> (idempotent — it’ll handle the delete-and-recreate). If you really want to do it by hand:</p>
+<pre><code class="language-bash">kubectl delete pod roksbnkctl-ops -n roksbnkctl-ops
+# then re-run `roksbnkctl ops install` to create the replacement;
+# the bare pod has no controller, so nothing else will recreate it.
+</code></pre>
+<p><code>roksbnkctl ops show</code> will report <code>phase: Pending</code> briefly during recreation, then <code>Running</code> + <code>ready: true</code> once kubelet finishes projecting the updated Secret.</p>
+<h2 id="operability"><a class="header" href="#operability">Operability</a></h2>
+<p>Things to know when something’s wrong.</p>
+<h3 id="where-pod-logs-go"><a class="header" href="#where-pod-logs-go">Where pod logs go</a></h3>
+<pre><code class="language-bash">roksbnkctl k logs -n roksbnkctl-ops roksbnkctl-ops
+# or
+kubectl logs -n roksbnkctl-ops roksbnkctl-ops
+</code></pre>
+<p>The pod’s main process is <code>sleep infinity</code>, so the log is mostly empty. Each <code>kubectl exec</code> invocation runs in its own ephemeral process — those processes’ stdout/stderr go back through the SPDY channel to the caller, <strong>not</strong> into the pod’s log. So <code>kubectl logs</code> is helpful for debugging pod startup (image pull failures, SCC denials, OOMKills) but not for “what did <code>ibmcloud iam oauth-tokens</code> actually print” — that’s just the caller’s stdout.</p>
+<p>For a paper trail of recent invocations, capture <code>roksbnkctl ibmcloud --backend k8s … 2&gt;&amp;1 | tee /tmp/ibmcloud.log</code> on the calling side.</p>
+<h3 id="debugging-a-stuck-ops-install"><a class="header" href="#debugging-a-stuck-ops-install">Debugging a stuck <code>ops install</code></a></h3>
+<p><code>ops install</code> waits up to 60 seconds for the pod to become Ready. If it times out:</p>
+<pre><code class="language-bash">roksbnkctl k describe -n roksbnkctl-ops pod/roksbnkctl-ops
+roksbnkctl k get -n roksbnkctl-ops events --sort-by=.lastTimestamp | tail -20
+</code></pre>
+<p>Common causes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ImagePullBackOff</code></td><td>ghcr.io rate limit, or image tag doesn’t exist</td><td>check <code>roksbnkctl --version</code>, ensure ghcr.io is reachable from the cluster</td></tr>
+<tr><td><code>CreateContainerConfigError</code> referencing the Secret</td><td>Secret was deleted between Secret apply and Pod create (race)</td><td>re-run <code>roksbnkctl ops install</code> (idempotent)</td></tr>
+<tr><td><code>RunContainerError</code> with SCC denial</td><td>the cluster’s PodSecurity admission rejected the manifest</td><td><code>kubectl get events</code> will name the missing field; usually means an OpenShift cluster expects the <code>restricted-v2</code> profile and a manifest field is wrong — file an issue with the event message</td></tr>
+<tr><td>Pod stuck in <code>Pending</code> with no Events</td><td>cluster is at capacity / out of CPU</td><td>scale the cluster or trim resources; the pod requests <code>50m</code> CPU + <code>128Mi</code> mem, very small</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cluster-api-outage-during-ops-install"><a class="header" href="#cluster-api-outage-during-ops-install">Cluster API outage during <code>ops install</code></a></h3>
+<p>If the kube-apiserver becomes unreachable mid-install (transient cloud-provider issue, kubeconfig expired, network partition), <code>ops install</code> fails fast at whichever step hit the apiserver:</p>
+<pre><code>✓ applied namespace roksbnkctl-ops
+applying secret roksbnkctl-ops/roksbnkctl-ibm-creds       ... ERROR: Get "https://...": dial tcp: i/o timeout
+</code></pre>
+<p>The install is <strong>partial</strong> at that point — earlier steps succeeded, later steps didn’t. <code>ops install</code> is idempotent, so just re-run once the apiserver is back; the steps that already completed are no-ops the second time, the steps that didn’t will run.</p>
+<p>If the apiserver is permanently gone (cluster destroyed): <code>ops uninstall</code> will fail the same way, since it also needs the apiserver. In that case the cluster-scoped objects (ClusterRole, ClusterRoleBinding) become orphans you can clean up manually if you ever rebuild the cluster, or ignore if you’re done with this cluster’s identity entirely.</p>
+<h3 id="verifying-the-install-end-to-end"><a class="header" href="#verifying-the-install-end-to-end">Verifying the install end-to-end</a></h3>
+<p>A one-liner sanity check:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend k8s iam oauth-tokens
+</code></pre>
+<p>If the SA/Secret/RBAC/Pod chain is healthy, this prints a fresh OAuth token. If it errors, the error message names which link in the chain broke (pod not found, Secret missing, exec denied, ibmcloud CLI exit non-zero).</p>
+<p><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> covers the broader “ops pod is unhappy” failure modes alongside other end-user troubleshooting.</p>
+<h2 id="cross-references-11"><a class="header" href="#cross-references-11">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-internalexeck8sgo">PRD 03 — pluggable execution backends, §“K8s”</a> — the ops-pod design rationale.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 — credential propagation, §“In-cluster pod”</a> — Secret-based propagation rules.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — where the <code>IBMCLOUD_API_KEY</code> value comes from before it lands in the Secret.</li>
+<li><a href="#k8s-backend">Chapter 17 §“K8s backend”</a> — the interface mechanics this chapter complements.</li>
+<li><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> — when <code>--backend k8s</code> is the right call.</li>
+<li><code>internal/exec/k8s_install.yaml</code> — the embedded RBAC manifests: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/k8s_install.yaml">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/k8s_install.yaml</a></li>
+<li><code>internal/cli/ops.go</code> — the <code>roksbnkctl ops install/show/uninstall</code> command implementation: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/ops.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/ops.go</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="connectivity-testing"><a class="header" href="#connectivity-testing">Connectivity testing</a></h1>
 <p><em>Coming in Sprint 5.</em></p>
@@ -3300,7 +4055,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </table>
 </div>
 <p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
-<h2 id="cross-references-10"><a class="header" href="#cross-references-10">Cross-references</a></h2>
+<h2 id="cross-references-12"><a class="header" href="#cross-references-12">Cross-references</a></h2>
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
