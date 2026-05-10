@@ -93,6 +93,82 @@ If you change anything in `internal/cred/` or `internal/exec/`, run the
 audit locally before pushing. A red audit blocks a release: a leaked
 credential in any backend is a v0.x stop-ship.
 
+### Running kind-based integration tests
+
+Sprint 4 / PRD 03 second half adds a kind-based integration tier for the
+K8s backend. The CI `k8s-backend` job in `.github/workflows/ci.yml` spins
+an ephemeral kind cluster via `helm/kind-action@v1` and runs the
+integration-tagged tests under `internal/exec` and `internal/cli`. To run
+locally:
+
+```bash
+# Spin a kind cluster (one-time per workstation; reused across runs):
+kind create cluster --name roksbnkctl-test
+
+# Point your kubeconfig at it:
+kind get kubeconfig --name roksbnkctl-test > ~/.kube/config-kind
+export KUBECONFIG=~/.kube/config-kind
+
+# Run the integration tier:
+go test -tags integration -timeout 10m ./internal/exec/... ./internal/cli/...
+# or:
+make test-k8s-integration
+```
+
+Tests skip cleanly when no cluster is reachable, so this is safe even on
+a runner without kind installed. To point at an existing kind cluster
+(or any kube cluster), set `KUBECONFIG` to its config file before running
+the tests.
+
+When you're done:
+
+```bash
+kind delete cluster --name roksbnkctl-test
+```
+
+The integration tests provision their own ops pod (a stand-in for
+`roksbnkctl ops install`) and tear it down via `t.Cleanup`. Leaks
+indicate a test bug, not a kind problem.
+
+### Running scripts/e2e-test-backends.sh locally
+
+Sprint 4 introduces `scripts/e2e-test-backends.sh` — a sibling to
+`scripts/e2e-test.sh` that exercises the four-backend matrix introduced
+in PRDs 03 + 04. It covers PRD 05 §K (docker), §L (k8s), and §M (cred
+audit).
+
+**Pre-requisites** — different per phase:
+
+- **All phases**: a workspace + cluster brought up by a prior
+  `scripts/e2e-test.sh` run (Phase D's `roksbnkctl up`). The backends
+  driver does NOT bring its own cluster up; it reuses the live one.
+- **Phase K (docker)**: a reachable Docker daemon (`docker info` must
+  succeed). The `RUN_K6=1` opt-in additionally requires `sudo
+  systemctl stop docker` privileges (it stops + restarts the host's
+  dockerd to test the no-daemon negative path).
+- **Phase L (k8s)**: a Kubernetes cluster reachable via the workspace's
+  kubeconfig. kind, ROKS, OpenShift, anything that speaks the kube API
+  works.
+
+**Running**:
+
+```bash
+# After scripts/e2e-test.sh's Phase D has brought the cluster up:
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh
+
+# Resume from a specific phase (K, L, or M):
+PHASE_FROM=L ./scripts/e2e-test-backends.sh
+
+# Inspect the plan without executing anything (great for review):
+DRY_RUN=1 ./scripts/e2e-test-backends.sh
+
+# Opt in to the destructive K6 step (stops + restarts dockerd):
+RUN_K6=1 ./scripts/e2e-test-backends.sh
+```
+
+Per-phase logs land in `/tmp/roksbnkctl-e2e-backends/<phase>-<ts>.log`
+for forensics on failure.
+
 ### Building tool images locally
 
 The PRD 03 docker backend pulls per-tool images at runtime:

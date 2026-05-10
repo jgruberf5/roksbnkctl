@@ -123,6 +123,41 @@ jobs:
         # 5m matches the existing integration job's budget.
         run: go test -tags integration -timeout 5m ./internal/exec/...
 
+  k8s-backend:
+    name: integration (k8s backend — kind)
+    needs: test
+    # Linux-only kind-based integration job for the K8s backend (Sprint 4
+    # / PRD 03 second half). Uses helm/kind-action to spin an ephemeral
+    # kind cluster, then runs the integration-tagged tests under
+    # internal/exec and internal/cli (the latter exercises `roksbnkctl
+    # ops install/show/uninstall` end-to-end).
+    #
+    # Skipped on PRs from forks for the same reasons as the `integration`
+    # job above — kind images pulled from upstream registries hit rate
+    # limits without GHCR credentials.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: helm/kind-action@v1
+        with:
+          wait: 120s
+          version: v0.24.0
+
+      - name: go test (integration tag — exec/k8s + cli/ops)
+        # Tests self-skip when no kubeconfig is reachable, so a kind
+        # bring-up failure surfaces as a yellow-skip rather than a red
+        # fail (still investigable from the kind-action logs above).
+        # 10m budget covers image pulls + ops-pod scheduling + the
+        # full ops install/show/uninstall lifecycle.
+        run: go test -tags integration -timeout 10m ./internal/exec/... ./internal/cli/...
+
   windows-build:
     name: windows build
     runs-on: windows-latest

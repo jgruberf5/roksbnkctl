@@ -122,6 +122,28 @@ Validates that `roksbnkctl` passes workspace credentials to subprocesses correct
 | H1 | `roksbnkctl ws delete e2e --force` | exits 0; `e2e` no longer in `ws list` |
 | H2 | `ls ~/.roksbnkctl/e2e 2>&1` | "No such file or directory" |
 
+## Sprint 4 — backend matrix driver
+
+Sprint 4 introduces a sibling driver — [`scripts/e2e-test-backends.sh`](../scripts/e2e-test-backends.sh) — that exercises the four-backend matrix from PRDs 03 + 04. It covers:
+
+- **Phase K** (docker backend, full coverage — K1 through K6) per [PRD 05 §K](./prd/05-E2E-TEST-PLAN.md#phase-k--docker-backend-ibmcloud--iperf3)
+- **Phase L** (k8s backend, full coverage — L0 through L7) per [PRD 05 §L](./prd/05-E2E-TEST-PLAN.md#phase-l--k8s-backend-iperf3--ops-pod)
+- **Phase M** (cred-leak audit — M1 through M7, minus M5+M6 which require the SSH e2e from PRD 05 Phase I — that lands in Sprint 6) per [PRD 05 §M](./prd/05-E2E-TEST-PLAN.md#phase-m--credential-propagation-audit)
+
+The backends driver REUSES the cluster brought up by `scripts/e2e-test.sh`'s Phase D — it does NOT bring its own cluster up. **Run order**:
+
+```bash
+# 1. Bring up the cluster + BNK via the baseline driver:
+IBMCLOUD_API_KEY=... ./scripts/e2e-test.sh                 # Phases A-H, ~3-4h
+
+# 2. (Between Phase D's apply and final teardown) — exercise the matrix:
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh        # K + L + M, ~10m
+```
+
+A combined runner `scripts/e2e-test-full.sh` that orchestrates both is scheduled for Sprint 6 (per [docs/PLAN.md](./PLAN.md) Sprint 6 deliverables).
+
+The backends driver supports the same `PHASE_FROM=` resume hook and `DRY_RUN=1` plan-rendering mode as the baseline driver. See `CONTRIBUTING.md` "Running scripts/e2e-test-backends.sh locally" for the full local-run recipe.
+
 ## Failure recovery
 
 If a phase fails:

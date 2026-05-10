@@ -32,12 +32,15 @@ func (LocalBackend) Name() string { return "local" }
 
 // Run implements Backend.
 //
-// Exit-code semantics:
+// Exit-code semantics (PRD 03 §"Backend interface", 126/127 split):
 //
 //   - argv[0] not on PATH → returns (127, error). Matches POSIX shell
-//     "command not found" convention; PRD 03 §"Backend interface"
-//     reserves 127 for backend-side connection-style failures, but
-//     "binary not on PATH" is the local-backend analog.
+//     "command not found" convention; PRD 03 reserves 127 for
+//     backend-side failed-to-start, and "binary not on PATH" is the
+//     local-backend analog (no daemon to be unreachable, no SSH to fail
+//     to connect). The 126 ("started then failed") case doesn't apply
+//     to the local backend — there's no backend-startup phase distinct
+//     from process-spawn, so we never split that direction.
 //
 //   - Child runs and exits non-zero → returns (childExit, *exec.ExitError).
 //     Caller can ignore the error (rc is the source of truth) or

@@ -1,4 +1,5 @@
 /bin/
+/roksbnkctl
 *.test
 *.out
 *.exe

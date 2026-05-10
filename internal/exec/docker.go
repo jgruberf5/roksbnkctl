@@ -46,13 +46,67 @@ type DockerBackend struct {
 }
 
 // toolImages maps argv[0] tool names to their bundled docker images.
-// Sprint 3 ships ibmcloud + iperf3; the dev tag is what the validator's
-// GH Actions workflow publishes on `tag: v*` releases. For local
-// development, users build via tools/docker/Makefile.
-var toolImages = map[string]string{
-	"ibmcloud":  "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev",
-	"iperf3":    "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:dev",
-	"terraform": "hashicorp/terraform:1.5.7",
+// Image tags are resolved from the binary's version (set by ldflags at
+// link time) — see toolImageTag below — so a tag-released binary
+// (v0.10.0) pulls v0.10.0 images, and a `dev` build pulls :dev.
+//
+// PRD 03 §"Docker (internal/exec/docker.go)" §"Tool migration plan" +
+// Sprint 3 tech-writer Issue 8 carry-over (the :dev hard-code broke
+// `go install ./cmd/roksbnkctl` on a fresh host because CI doesn't
+// publish :dev). Sprint 4 fixes this by pinning to the binary's version.
+//
+// Populated lazily via the tool-image accessor below; the var keeps
+// the same shape so existing tests using `toolImages["iperf3"]`
+// continue to work.
+var toolImages = func() map[string]string {
+	tag := toolImageTag()
+	return map[string]string{
+		"ibmcloud":  "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		"iperf3":    "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"terraform": "hashicorp/terraform:1.5.7",
+	}
+}()
+
+// toolImageTag returns the image tag the docker (and k8s) backends
+// should pull for the bundled tools. Resolution:
+//
+//   - If the binary's version package value is non-empty and not "dev",
+//     use that as the tag (e.g., "v0.10.0"). This matches the GH Actions
+//     workflow's release publish behaviour.
+//   - Otherwise fall back to ":dev" — what tools/docker/Makefile builds
+//     locally. Note: a clean `go install` on a fresh host with no local
+//     docker build will fail to pull on this path; users should either
+//     install a tagged release or run `cd tools/docker && make build-all`.
+//
+// We read the version via a package-level seam (toolImageTagFn) so the
+// CLI can wire its `Version` constant without an import cycle (the cli
+// package imports exec, not the other way around).
+func toolImageTag() string {
+	if toolImageTagFn != nil {
+		v := toolImageTagFn()
+		if v != "" && v != "dev" {
+			return v
+		}
+	}
+	return "dev"
+}
+
+// toolImageTagFn is set by the CLI layer's init() to return its
+// build-time Version. Left nil for tests that import only the exec
+// package — those get the ":dev" fallback.
+var toolImageTagFn func() string
+
+// SetToolImageTag wires the CLI's Version through to the image-tag
+// resolver. Called from internal/cli/root.go's init().
+func SetToolImageTag(fn func() string) {
+	toolImageTagFn = fn
+	// Recompute the toolImages map with the new tag.
+	tag := toolImageTag()
+	toolImages = map[string]string{
+		"ibmcloud":  "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		"iperf3":    "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"terraform": "hashicorp/terraform:1.5.7",
+	}
 }
 
 // Name implements Backend.
@@ -71,8 +125,8 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 
 	cli, err := b.dockerClient()
 	if err != nil {
-		// Match the error shape the staff prompt + docker_test.go
-		// require: "Docker daemon unreachable; ...".
+		// PRD 03 §"Backend interface": 127 == backend failed to start
+		// (daemon unreachable, equivalent of "command not found").
 		return 127, fmt.Errorf("docker daemon unreachable; is dockerd running? (%w)", err)
 	}
 
@@ -135,7 +189,11 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		HostConfig: hostCfg,
 	})
 	if err != nil {
-		return 127, fmt.Errorf("docker create: %w", err)
+		// PRD 03 §"Backend interface": 126 == backend started but the
+		// wrapped invocation couldn't spawn (daemon up + image pulled,
+		// but `containerCreate` rejected — bad spec, image arch
+		// mismatch, etc.).
+		return 126, fmt.Errorf("docker create: %w", err)
 	}
 	cid := created.ID
 
@@ -150,7 +208,9 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		Stderr: true,
 	})
 	if err != nil {
-		return 127, fmt.Errorf("docker attach: %w", err)
+		// 126: container created but the attach (which runs before
+		// we can exec the wrapped tool) errored. PRD 03 split.
+		return 126, fmt.Errorf("docker attach: %w", err)
 	}
 	defer hijack.Close()
 
@@ -193,7 +253,9 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 	})
 
 	if _, err := cli.ContainerStart(ctx, cid, dockerclient.ContainerStartOptions{}); err != nil {
-		return 127, fmt.Errorf("docker start: %w", err)
+		// 126: created, attached, but start failed (wrapped process
+		// couldn't be spawned in the container). PRD 03 split.
+		return 126, fmt.Errorf("docker start: %w", err)
 	}
 
 	// ctx cancellation triggers ContainerKill so the container
@@ -217,7 +279,9 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		rc = int(res.StatusCode)
 	case werr := <-waitC.Error:
 		<-streamDone
-		return 127, fmt.Errorf("docker wait: %w", werr)
+		// 126: backend started (container running), but Wait errored
+		// mid-flight — backend-level failure, not the tool's exit code.
+		return 126, fmt.Errorf("docker wait: %w", werr)
 	case <-ctx.Done():
 		<-streamDone
 		return 137, ctx.Err()

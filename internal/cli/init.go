@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -96,7 +97,8 @@ func runInit(_ *cobra.Command, _ []string) error {
 	dRegion, dRG, dCluster, dOCP, dWorkers, dCreate := initDefaults(cctx)
 
 	// API key — env, then keychain, then prompt; offer to save on prompt.
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, "")
+	resolver := &cred.Resolver{Workspace: cctx.WorkspaceName}
+	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
 	if err != nil {
 		return fmt.Errorf("resolving API key: %w", err)
 	}

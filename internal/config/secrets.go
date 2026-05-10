@@ -34,7 +34,16 @@ var apiKeyEnvVars = []string{
 	"TF_VAR_IC_API_KEY",
 }
 
-// ResolveAPIKey returns the IBM Cloud API key for the given workspace.
+// ResolveAPIKey is the legacy API key resolver. As of Sprint 4, all
+// production callers have migrated to cred.Resolver — this function
+// remains only as a transitional shim used by package-local tests in
+// context_test.go (which can't import cred without breaking the
+// dependency graph: cred imports config, not the other way around).
+//
+// New code MUST use cred.Resolver. This shim will be deleted once the
+// package-local tests are reorganised (e.g., moved to cred or rewritten
+// to exercise the lower-level apiKeyFromConfig/Env/Keychain helpers
+// directly).
 //
 // source overrides the resolution chain when non-empty:
 //
@@ -43,6 +52,8 @@ var apiKeyEnvVars = []string{
 //	"keychain" — keychain only
 //	"config"   — base64-decoded api_key_b64 in workspace config.yaml only
 //	"prompt"   — interactive prompt only (errors if stdin is not a TTY)
+//
+// Deprecated: Use cred.Resolver in new code.
 func ResolveAPIKey(workspace, source string) (string, error) {
 	switch source {
 	case "":

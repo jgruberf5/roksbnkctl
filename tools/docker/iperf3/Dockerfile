@@ -5,4 +5,8 @@
 # backend selection").
 FROM alpine:3.19
 RUN apk add --no-cache iperf3
+# Run as a fixed non-root uid so the pod's restricted-v2 SCC + plain-k8s
+# `runAsNonRoot: true` policies (per internal/k8s/iperf3.go) accept the
+# image. iperf3 needs no privileged ports (5201 is unprivileged).
+USER 1000
 ENTRYPOINT ["iperf3"]
