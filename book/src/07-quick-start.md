@@ -91,8 +91,7 @@ roksbnkctl up --auto
 
 → Fetching admin kubeconfig for cluster "<cluster-id>"
 ✓ Wrote /home/you/.kube/config (chmod 0600)
-→ Auto-populating targets.jumphost from terraform outputs
-✓ Wrote target "jumphost" → 169.45.91.177 (user: root, key: tf-output:jumphost_shared_key)
+✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
 ```
 
 What just happened:
