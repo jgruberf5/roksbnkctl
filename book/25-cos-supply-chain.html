@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,225 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="cos-supply-chain-management"><a class="header" href="#cos-supply-chain-management">COS supply chain management</a></h1>
-<p><em>Coming in Sprint 6.</em></p>
-<p><em><code>roksbnkctl cos instance / bucket / object</code>: managing IBM Cloud Object Storage as the BNK supply chain (FAR images, JWT licenses, schematics) and how the CLI’s multipart upload / streaming download paths handle large objects.</em></p>
+<p>BIG-IP Next for Kubernetes (BNK) pulls its runtime artefacts — the F5 Application Runtime (FAR) container images, the JWT licence used at install + renewal time, the f5-bigip-k8s-manifest Helm chart, and the schematic JSON the deployer renders — from IBM Cloud Object Storage (COS). The COS bucket is the <strong>supply chain</strong>: it’s how artefacts produced upstream (F5 build pipeline, licence-issuing service, schematic generator) reach the cluster.</p>
+<p><code>roksbnkctl cos</code> is the management surface for that supply chain. Three command levels — <code>cos instance</code>, <code>cos bucket</code>, <code>cos object</code> — cover the full CRUD on COS resources without touching the <code>ibmcloud</code> CLI; everything goes through the IBM Cloud Go SDKs (<a href="https://pkg.go.dev/github.com/IBM/go-sdk-core/v5">go-sdk-core</a>, <a href="https://pkg.go.dev/github.com/IBM/platform-services-go-sdk">platform-services-go-sdk</a>, <a href="https://pkg.go.dev/github.com/IBM/ibm-cos-sdk-go">ibm-cos-sdk-go</a>).</p>
+<h2 id="what-cos-is-in-this-stack"><a class="header" href="#what-cos-is-in-this-stack">What COS is in this stack</a></h2>
+<p>COS is IBM’s S3-compatible object store. Two layers matter here:</p>
+<ul>
+<li><strong>Instance</strong>: a service instance under <a href="https://cloud.ibm.com/docs/account?topic=account-resource-controller">Resource Controller</a>. Instances are global; they don’t pin to a region. A workspace typically uses one COS instance per environment (dev, staging, prod) and shares it across multiple buckets.</li>
+<li><strong>Bucket</strong>: an S3-style bucket with regional affinity, hosted on a COS instance. Buckets carry the storage class (<code>standard</code>, <code>vault</code>, <code>cold</code>, <code>smart</code>) and the access policy (HMAC keys, service-instance creds, public ACLs — the latter are off-limits for BNK supply-chain use).</li>
+</ul>
+<p>The BNK supply chain reads from one COS bucket per cluster’s BNK install. The bucket holds:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Object</th><th>What it is</th><th>Consumed by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f5-far-auth-key.tgz</code></td><td>FAR repository pull credentials — the F5-internal artefact key that lets FLO download FAR container images</td><td><code>flo</code> module at install time</td></tr>
+<tr><td><code>trial.jwt</code> (or production equivalent)</td><td>BNK subscription JWT — the licence the CNE Instance presents</td><td><code>flo</code> and <code>license</code> modules</td></tr>
+<tr><td><code>schematic-&lt;v&gt;.json</code></td><td>The deployer’s schematic JSON for the deployed BNK version</td><td>informational, not directly mounted into the cluster</td></tr>
+<tr><td>(optional) FAR image tarballs</td><td>Pre-pulled FAR images for air-gapped installs</td><td><code>flo</code> when running in disconnected mode</td></tr>
+</tbody>
+</table>
+</div>
+<p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable, which defaults to <code>bnk-schematics-resources</code>. The instance defaults to <code>bnk-orchestration</code>.</p>
+<h2 id="the-three-command-levels"><a class="header" href="#the-three-command-levels">The three command levels</a></h2>
+<pre><code class="language-bash">roksbnkctl cos instance {create|delete|list}
+roksbnkctl cos bucket   {create|delete|list} --instance &lt;name-or-CRN&gt;
+roksbnkctl cos object   {put|get|delete|list} --instance &lt;name-or-CRN&gt;
+</code></pre>
+<p>All three layers resolve credentials through the standard <a href="./14-credentials-resolver.html">credential resolver chain</a> — env var, OS keychain, workspace <code>api_key_b64</code>, prompt. There’s no separate “COS credential”; the IBM API key authenticates against Resource Controller (instance ops) and IAM-signed S3 requests (bucket and object ops).</p>
+<h3 id="cos-instance"><a class="header" href="#cos-instance"><code>cos instance</code></a></h3>
+<p>Manages COS service instances at the account level via <a href="https://cloud.ibm.com/apidocs/resource-controller">Resource Controller</a>.</p>
+<pre><code class="language-bash"># Create a Standard-plan instance under the workspace's resource group
+roksbnkctl cos instance create bnk-orchestration --plan standard
+
+# Override the plan by catalog UUID when roksbnkctl hasn't mapped the tier
+roksbnkctl cos instance create bnk-orchestration --plan-id &lt;uuid&gt;
+
+# List instances in the account
+roksbnkctl cos instance list
+
+# Delete an instance (default: recursive — removes bound HMAC keys, service creds)
+roksbnkctl cos instance delete bnk-orchestration
+roksbnkctl cos instance delete bnk-orchestration --no-recursive --auto
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--plan</code></td><td><code>standard</code></td><td>Friendly name (<code>standard</code>, <code>lite</code>); maps to a Resource Controller plan UUID internally.</td></tr>
+<tr><td><code>--plan-id</code></td><td>—</td><td>Catalog UUID — bypasses the friendly-name mapping. Use when IBM ships a plan tier <code>roksbnkctl</code> hasn’t seen yet.</td></tr>
+<tr><td><code>--target</code></td><td><code>global</code></td><td>COS instances are global; this is left as a flag for forward compatibility.</td></tr>
+<tr><td><code>--no-recursive</code></td><td>(off)</td><td>On delete, do NOT remove bound HMAC keys and service credentials. Hardly ever what you want.</td></tr>
+<tr><td><code>--auto</code></td><td>(off)</td><td>On delete, skip the y/N confirmation.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The resource group is read from the workspace’s <code>ibmcloud.resource_group</code> field (defaulting to <code>default</code> when unset).</p>
+<h3 id="cos-bucket"><a class="header" href="#cos-bucket"><code>cos bucket</code></a></h3>
+<p>Manages buckets within a named instance. The <code>--instance</code> flag is required for every <code>bucket</code> and <code>object</code> call — buckets aren’t globally unique, only unique within an instance.</p>
+<pre><code class="language-bash"># Create a standard-class bucket
+roksbnkctl cos bucket create bnk-schematics-resources \
+  --instance bnk-orchestration \
+  --class standard
+
+# List buckets on the instance
+roksbnkctl cos bucket list --instance bnk-orchestration
+
+# Delete (the bucket must be empty first; cos object delete --recursive isn't implemented yet)
+roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--instance</code></td><td>(required)</td><td>Instance name or CRN — the CRN starts with <code>crn:v1:</code> and is used as-is; a bare name is looked up via Resource Controller.</td></tr>
+<tr><td><code>--region</code></td><td>workspace region</td><td>The IBM Cloud region the bucket is pinned to. Override only when you’re crossing regions deliberately.</td></tr>
+<tr><td><code>--class</code></td><td><code>standard</code></td><td>Storage class: <code>standard</code> (frequently accessed), <code>vault</code> (infrequent), <code>cold</code> (archive), <code>smart</code> (auto-tiered). The BNK supply chain uses <code>standard</code> because FLO reads at install + every restart.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cos-object"><a class="header" href="#cos-object"><code>cos object</code></a></h3>
+<p>Manages objects (files) within a bucket. The key syntax is <code>&lt;bucket&gt;/&lt;key/with/slashes&gt;</code> — the parser splits on the first slash, so <code>bucket/dir/file.tgz</code> parses as bucket <code>bucket</code>, key <code>dir/file.tgz</code>.</p>
+<pre><code class="language-bash"># Upload (streaming; multipart auto-engages for large files)
+roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+  ./local/f5-far-auth-key.tgz \
+  --instance bnk-orchestration
+
+# Download (streaming)
+roksbnkctl cos object get bnk-schematics-resources/f5-far-auth-key.tgz \
+  ./downloaded.tgz \
+  --instance bnk-orchestration
+
+# Delete
+roksbnkctl cos object delete bnk-schematics-resources/old-trial.jwt \
+  --instance bnk-orchestration
+
+# List (with an optional key prefix)
+roksbnkctl cos object list bnk-schematics-resources \
+  --instance bnk-orchestration
+
+roksbnkctl cos object list bnk-schematics-resources/schematics/ \
+  --instance bnk-orchestration
+</code></pre>
+<p>The list output is a tab-separated <code>KEY SIZE MODIFIED</code> table — pipe through <code>column -t</code> for readability or <code>cut -f1</code> to extract just the keys.</p>
+<h2 id="the-bnk-supply-chain-shape"><a class="header" href="#the-bnk-supply-chain-shape">The BNK supply chain shape</a></h2>
+<p>A typical <code>bnk-schematics-resources</code> bucket after a clean install looks like:</p>
+<pre><code>$ roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+KEY                                     SIZE        MODIFIED
+f5-far-auth-key.tgz                     2412        2026-05-08T14:12:33Z
+trial.jwt                               1857        2026-05-08T14:12:34Z
+schematic-2.3.0-3.2598.3-0.0.170.json   18432       2026-05-08T14:13:01Z
+</code></pre>
+<p>Three pieces of metadata in the upstream HCL (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf"><code>terraform/variables.tf</code></a>) pin the bucket layout:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>HCL variable</th><th>Default</th><th>Object</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f5_cne_far_auth_file</code></td><td><code>f5-far-auth-key.tgz</code></td><td>FAR pull credentials</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>trial.jwt</code></td><td>Subscription JWT</td></tr>
+<tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>Schematic filename inferred from this</td></tr>
+</tbody>
+</table>
+</div>
+<p>Changing any of these in <code>terraform.tfvars</code> (or the workspace <code>bnk:</code> block, which renders into tfvars) changes which COS keys FLO will look for. The HCL doesn’t auto-discover key names — they’re literal.</p>
+<p>For air-gapped installs where the cluster can’t reach <code>repo.f5.com</code>, additional pre-pulled FAR image tarballs go in the same bucket and the <code>far_repo_url</code> variable points at a COS-backed proxy. That topology is out of scope for v1.0; the supply chain shape described here is the connected-mode happy path.</p>
+<h2 id="multipart-upload-and-streaming-download"><a class="header" href="#multipart-upload-and-streaming-download">Multipart upload and streaming download</a></h2>
+<p>FAR image tarballs run 1-5 GB. <code>cos object put</code> streams the input file into the bucket in 5 MB parts using S3-style multipart uploads:</p>
+<ul>
+<li>For files <strong>under 5 MB</strong>, a single-part <code>PutObject</code> is used (the SDK’s default).</li>
+<li>For files <strong>over 5 MB</strong>, the SDK auto-engages multipart upload — the file is split into 5 MB parts, each uploaded in parallel (up to 4 concurrent parts), and finalised with a <code>CompleteMultipartUpload</code> call.</li>
+</ul>
+<p>The split is transparent — there’s no <code>--multipart</code> flag to set. The SDK handles it under the hood. If you want to verify multipart is happening for a specific file, watch with <code>roksbnkctl --verbose cos object put …</code> and the SDK’s debug logging surfaces the part count.</p>
+<p><code>cos object get</code> is similarly streaming: the SDK pipes the body straight to the destination file without buffering it in memory. Multi-gigabyte downloads on a memory-constrained jumphost are safe.</p>
+<p>If a multipart upload is interrupted (network drop, <code>^C</code>), the partial-upload state lingers on COS until cleaned up. Today <code>roksbnkctl</code> doesn’t expose a “list and abort orphan multipart uploads” command — that’s a v1.x addition. The workaround is to use <code>ibmcloud cos list-multipart-uploads</code> directly via <a href="./17-execution-backends.html#docker-backend">Chapter 17’s docker backend</a> or the IBM Cloud console.</p>
+<h2 id="workspace-config-integration"><a class="header" href="#workspace-config-integration">Workspace config integration</a></h2>
+<p>The workspace <code>cos:</code> block is optional — if the bucket is already populated (manually, or by an external CI pipeline), the block can be omitted entirely. When set, it triggers an auto-upload at <code>roksbnkctl up</code> time so the FAR pull and licence land before FLO needs them.</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+cos:
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+  upload:
+    - source: ./local/f5-far-auth-key.tgz
+      key: f5-far-auth-key.tgz
+    - source: ./local/trial.jwt
+      key: trial.jwt
+</code></pre>
+<p>The block maps directly to <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go"><code>internal/config/workspace.go::COSCfg</code></a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name or CRN. Looked up via Resource Controller at runtime.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>Bucket name within the instance.</td></tr>
+<tr><td><code>upload</code></td><td>list of <code>{source, key}</code></td><td>Optional pre-flight uploads. <code>source</code> is a host filesystem path (relative or absolute); <code>key</code> is the destination object key in the bucket.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Pre-flight uploads run before <code>terraform apply</code>, so FLO sees the artefacts when it pulls. Idempotent: re-running <code>up</code> re-uploads, which COS treats as overwrite — safe.</p>
+<h2 id="when-the-supply-chain-matters"><a class="header" href="#when-the-supply-chain-matters">When the supply chain matters</a></h2>
+<p>Three lifecycle moments where the COS bucket is in play:</p>
+<h3 id="install-time"><a class="header" href="#install-time">Install time</a></h3>
+<p><code>roksbnkctl up</code> provisions FLO, which queries the bucket for <code>f5-far-auth-key.tgz</code> and <code>trial.jwt</code>. Missing either object → FLO fails to start → <code>terraform apply</code> retries (per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/lifecycle.go"><code>internal/cli/lifecycle.go::applyWithRetry</code></a>) for ~3 attempts before erroring. The fix is always “put the missing object in the bucket and re-run <code>up</code>”; the lifecycle retry hides transient bucket-policy propagation lag but won’t paper over a genuinely-empty bucket.</p>
+<h3 id="upgrade-time"><a class="header" href="#upgrade-time">Upgrade time</a></h3>
+<p>When <code>bnk.manifest_version</code> (or the <code>f5_bigip_k8s_manifest_version</code> HCL variable) bumps, FLO pulls a new FAR image tarball and re-renders the CNE Instance. If the new manifest version references a FAR image that isn’t already in <code>repo.f5.com</code>’s public registry (rare, but happens for pre-release builds), the bucket holds the air-gapped fallback. Standard upgrades — the connected-mode case — don’t touch the bucket; they just pull from <code>repo.f5.com</code> using the credentials in <code>f5-far-auth-key.tgz</code>.</p>
+<h3 id="licence-rotation"><a class="header" href="#licence-rotation">Licence rotation</a></h3>
+<p>When the trial expires or a production licence arrives, swap <code>trial.jwt</code> for the new file:</p>
+<pre><code class="language-bash">roksbnkctl cos object put bnk-schematics-resources/trial.jwt \
+  ./new-license.jwt \
+  --instance bnk-orchestration
+
+# Force FLO to re-read the licence (delete the CNE Instance's License resource;
+# FLO's reconciler re-creates it from the updated JWT)
+roksbnkctl k delete license -n f5-bnk --all
+</code></pre>
+<p>FLO picks up the new JWT within 60-90 seconds. No <code>roksbnkctl up</code> re-run required for licence rotation alone.</p>
+<h2 id="worked-example-upload-a-new-far-image"><a class="header" href="#worked-example-upload-a-new-far-image">Worked example: upload a new FAR image</a></h2>
+<p>End-to-end: replace the FAR auth key, push a new image tarball for air-gapped use, point the deployer at the new key.</p>
+<pre><code class="language-bash"># 1. Sanity-check the current state
+roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+
+# 2. Upload the new auth key (overwrites the existing file)
+roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+  ./new-far-auth-key.tgz \
+  --instance bnk-orchestration
+
+# 3. Verify the upload
+roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+# Expected: the f5-far-auth-key.tgz row's MODIFIED timestamp is now
+
+# 4. (optional, air-gapped only) Upload the FAR image tarball
+roksbnkctl cos object put bnk-schematics-resources/far-2.3.0-images.tgz \
+  ./far-2.3.0-images.tgz \
+  --instance bnk-orchestration
+
+# 5. Force FLO to re-read the supply chain
+roksbnkctl k delete pod -n f5-bnk -l app=flo
+# (FLO's controller restarts; the new pod re-pulls f5-far-auth-key.tgz on first reconcile)
+
+# 6. Verify FLO is healthy with the new key
+roksbnkctl logs flo
+# Expected: no "failed to pull FAR image: unauthorized" lines
+</code></pre>
+<p>The third step is the verification gate. If FLO’s logs still show auth failures after the pod restart, the new auth key was rejected by <code>repo.f5.com</code> — re-issue the key on the F5 side, not in the bucket.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./12-workspace-config.html#cos--cos-supply-chain-optional">Chapter 12 §“<code>cos:</code> — COS supply-chain (optional)”</a> — the workspace-config block this chapter operationalises.</li>
+<li><a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> — <code>f5_cne_far_auth_file</code>, <code>f5_cne_subscription_jwt_file</code>, <code>ibmcloud_cos_instance_name</code>, <code>ibmcloud_resources_cos_bucket</code> are the HCL handles.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a> — the API-key resolution that auths every <code>cos</code> call.</li>
+<li><a href="./24-day-2-ops.html">Chapter 24 — Day-2 ops</a> — <code>roksbnkctl logs flo</code> is the post-rotation verification command.</li>
+<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — bucket-policy propagation lag, missing-object failure shapes.</li>
+</ul>
 
                     </main>
 

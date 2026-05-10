@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,159 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="glossary"><a class="header" href="#glossary">Glossary</a></h1>
-<p><em>Coming in Sprint 6.</em></p>
-<p><em>Plain-English definitions of the terms used across the book — BNK, ROKS, FAR, FLO, CIS, GSLB, SCC, and the rest.</em></p>
+<p>Plain-English definitions of the terms used across the book. Project-specific concepts, IBM-Cloud-specific products, OpenShift / Kubernetes admission concepts, and the F5 BIG-IP Next networking vocabulary all live here. Entries are deliberately one or two sentences; the deep-dive lives in the linked chapter where applicable.</p>
+<h2 id="a--d"><a class="header" href="#a--d">A — D</a></h2>
+<p><strong><code>api_key_b64</code></strong>
+Base64-encoded IBM Cloud API key stored inline in the workspace <code>config.yaml</code>. <strong>Obfuscation, not encryption</strong> — anyone with file-read access decodes instantly. The field name deliberately doesn’t match the plaintext-secret rejection regex. See <a href="./14-credentials-resolver.html#source-3--workspace-api_key_b64">Chapter 14 §“Source 3”</a>.</p>
+<p><strong>Backend</strong> (<code>--backend</code>)
+The execution context for a tool dispatch. One of <code>local</code> (os/exec on the host), <code>docker</code> (containerised), <code>k8s</code> (in-cluster ops pod or Job), or <code>ssh:&lt;target&gt;</code> (a registered SSH endpoint). See <a href="./17-execution-backends.html">Chapter 17</a>.</p>
+<p><strong>BNK</strong>
+BIG-IP Next for Kubernetes. F5’s Kubernetes-native CNF deployment of BIG-IP, made up of FLO (F5 Lifecycle Operator) + CNE Instance + License + CIS. The reason this CLI exists. See <a href="./01-what-is-bnk.html">Chapter 1</a>.</p>
+<p><strong>CIS</strong>
+<em>Two unrelated CISes appear in this stack.</em> Inside the cluster, <strong>CIS</strong> is F5’s <strong>Container Ingress Services</strong> — the F5 controller that watches Kubernetes Ingress + Route resources and programs the BIG-IP data plane. At the IBM Cloud account level, <strong>CIS</strong> is <strong>Cloud Internet Services</strong> — IBM’s DNS, CDN, WAF, and DDoS-protection product. Context disambiguates; when in doubt, “F5 CIS” vs “IBM Cloud CIS”.</p>
+<p><strong>ClusterIP</strong> (k8s)
+A <code>Service</code> type that gives a Service an internal cluster IP, reachable only from inside the cluster. Used by the throughput suite’s <code>east-west</code> mode.</p>
+<p><strong>ClusterRole</strong> (k8s)
+A cluster-scoped RBAC role granting verbs on resources. The ops pod’s least-privilege ClusterRole grants <code>jobs.create</code> in <code>roksbnkctl-test</code> but not <code>pods.delete</code> in <code>default</code>.</p>
+<p><strong>CNE Instance</strong>
+A Custom Resource defined by FLO. Represents one deployed instance of the BNK data plane (TMM pods + control plane). Sizing is <code>Small</code>/<code>Medium</code>/<code>Large</code>. See <a href="./10-deploying-bnk-trials.html">Chapter 10</a>.</p>
+<p><strong>Cobra</strong>
+<a href="https://github.com/spf13/cobra"><code>github.com/spf13/cobra</code></a> — the Go CLI library <code>roksbnkctl</code> is built on. The command tree at <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/cli"><code>internal/cli/</code></a> is a cobra command tree.</p>
+<p><strong>COS</strong>
+IBM <strong>Cloud Object Storage</strong> — S3-compatible object store. The BNK supply chain bucket lives on a COS instance. See <a href="./25-cos-supply-chain.html">Chapter 25</a>.</p>
+<p><strong><code>cred resolver chain</code></strong>
+The ordered lookup for <code>IBMCLOUD_API_KEY</code>: env var → OS keychain → workspace <code>api_key_b64</code> → interactive prompt. The chain stops at the first source that yields a non-empty value. See <a href="./14-credentials-resolver.html#the-ibmcloud_api_key-resolver-chain">Chapter 14</a>.</p>
+<p><strong>CRN</strong>
+<strong>Cloud Resource Name</strong> — IBM’s globally-unique resource identifier. Starts with <code>crn:v1:</code> and encodes account, region, service, and resource ID. Most <code>roksbnkctl cos</code> commands accept either a friendly name (resolved at runtime) or a CRN.</p>
+<h2 id="e--j"><a class="header" href="#e--j">E — J</a></h2>
+<p><strong>east-west</strong>
+Network direction term: traffic between two endpoints <strong>inside</strong> the cluster (pod-to-pod, service-to-service). The throughput suite’s <code>--mode east-west</code> measures CNI fabric throughput. See <a href="./22-throughput-testing.html#--mode-east-west">Chapter 22</a>.</p>
+<p><strong>Embedded HCL</strong>
+The Terraform source tree compiled into the <code>roksbnkctl</code> binary via Go’s <code>//go:embed</code> directive. The default <code>tf_source</code> is <code>embedded</code>. Rebuilding the binary picks up HCL changes. See <a href="./31-building-from-source.html#the-embedded-hcl">Chapter 31 §“The embedded HCL”</a>.</p>
+<p><strong><code>envFrom</code></strong> (k8s)
+A Pod spec field that references a Secret or ConfigMap and projects all of its keys as environment variables into the container. The k8s backend’s ops pod uses <code>envFrom: secretRef: roksbnkctl-ibm-creds</code> to receive the API key without listing it in the manifest plaintext.</p>
+<p><strong><code>extra_hosts</code></strong>
+The workspace config’s list of additional URLs to probe under <code>roksbnkctl test connectivity</code>. In v1.0 the value is a bare <code>[]string</code> of URLs; per-host method/expected-status overrides are deferred. See <a href="./20-connectivity-testing.html">Chapter 20</a>.</p>
+<p><strong>FAR</strong>
+<strong>F5 Application Runtime</strong> — the container-image distribution of the BIG-IP Next data plane. FLO pulls FAR images from <code>repo.f5.com</code> using the auth key in the COS supply-chain bucket.</p>
+<p><strong>FLO</strong>
+<strong>F5 Lifecycle Operator</strong> — the Kubernetes operator that owns the CNE Instance + License + supporting resources. The control plane piece of BNK. (The acronym sometimes also surfaces as “F5 Logging Operator” — context disambiguates; in this book it always means Lifecycle Operator.)</p>
+<p><strong>FQDN</strong>
+Fully Qualified Domain Name — the absolute form of a DNS name ending with a trailing dot (<code>www.example.com.</code>).</p>
+<p><strong>FAR auth key</strong>
+The credential tarball (<code>f5-far-auth-key.tgz</code>) that FLO uses to pull FAR images from <code>repo.f5.com</code>. Lives in the COS supply-chain bucket. Rotated periodically; see <a href="./25-cos-supply-chain.html#licence-rotation">Chapter 25 §“Licence rotation”</a>.</p>
+<p><strong>ghcr.io</strong>
+GitHub Container Registry — where the <code>roksbnkctl-tools-*</code> images are published. The k8s backend pulls from <code>ghcr.io/jgruberf5/roksbnkctl-tools-{ibmcloud,iperf3}</code>.</p>
+<p><strong>GSLB</strong>
+<strong>Global Server Load Balancing</strong> — DNS-driven traffic management where the answer a name returns depends on the requesting resolver’s network vantage. The thing <a href="./21-dns-testing-gslb.html">Chapter 21</a> is built to validate.</p>
+<p><strong><code>--gslb-compare</code></strong>
+The DNS-probe flag that fans out across all configured backends in parallel and emits a comparison JSON with <code>gslb_divergence: true|false</code>. The signature workflow for “is the GSLB rule taking effect”. See <a href="./21-dns-testing-gslb.html#the---gslb-compare-workflow">Chapter 21 §“The –gslb-compare workflow”</a>.</p>
+<p><strong>HCL</strong>
+HashiCorp Configuration Language — the syntax of Terraform <code>.tf</code> files. The upstream HCL is bundled into the binary; see <em>Embedded HCL</em>.</p>
+<p><strong><code>ibmcloud</code></strong>
+<em>Two senses.</em> The IBM Cloud CLI binary (which <code>roksbnkctl ibmcloud …</code> passes through to or replaces, depending on the backend). And the YAML block in <code>config.yaml</code> (<code>ibmcloud:</code>) holding region, resource group, and API key source.</p>
+<p><strong><code>ImagePullBackOff</code></strong> (k8s)
+A Pod status indicating the image couldn’t be pulled from the registry. Usually a network or auth problem; sometimes a tag-doesn’t-exist problem. See <a href="./26-troubleshooting.html#symptom-imagepullbackoff-on-the-ops-pod-or-throughput-pod">Chapter 26 §“ImagePullBackOff…”</a>.</p>
+<p><strong><code>iperf3 mode</code></strong> (<code>--mode</code>)
+The throughput-suite flag selecting <code>north-south</code> (LoadBalancer Service, client outside the cluster) or <code>east-west</code> (ClusterIP Service, client inside the cluster). See <a href="./22-throughput-testing.html#the-two-modes">Chapter 22 §“The two modes”</a>.</p>
+<p><strong>JWT</strong>
+<strong>JSON Web Token</strong> — the signed-token format BNK uses for the subscription licence (<code>trial.jwt</code> in the COS supply-chain bucket).</p>
+<h2 id="k--n"><a class="header" href="#k--n">K — N</a></h2>
+<p><strong><code>k</code></strong> (<code>roksbnkctl k &lt;verb&gt;</code>)
+The internalised kubectl subtree. <code>roksbnkctl k get/apply/describe/delete/exec/logs/port-forward</code> — built on <code>k8s.io/client-go</code> directly so no host <code>kubectl</code> binary is required. See <a href="./24-day-2-ops.html">Chapter 24</a>.</p>
+<p><strong><code>kubeconfig</code></strong>
+The Kubernetes client-configuration file (clusters, contexts, credentials). Defaults to <code>~/.kube/config</code>. <code>roksbnkctl up</code> auto-fetches the admin kubeconfig post-apply.</p>
+<p><strong>LoadBalancer</strong> (k8s Service type)
+A Service type that provisions an external endpoint (a cloud LB on managed Kubernetes; an external IP on bare-metal CNI). Used by the throughput suite’s <code>north-south</code> mode and by BNK’s exposed VIPs.</p>
+<p><strong>Long-lived ops pod</strong>
+The k8s backend’s persistent execution context. Deployed by <code>roksbnkctl ops install</code>; subsequent <code>--backend k8s</code> dispatches <code>kubectl exec</code> into the same pod rather than starting a fresh Pod each call. Contrasted with the <em>one-shot Job pattern</em> used for iperf3 and DNS probes. See <a href="./19-in-cluster-ops-pod.html">Chapter 19</a>.</p>
+<p><strong>Manifest version</strong> (<code>f5_bigip_k8s_manifest_version</code>)
+The version pin on the f5-bigip-k8s-manifest Helm chart. Transitively pins both the FLO and CIS versions (both are extracted from the manifest chart). See <a href="./13-terraform-variables.html">Chapter 13</a>.</p>
+<p><strong>mdBook</strong>
+<a href="https://rust-lang.github.io/mdBook/">rust-lang/mdBook</a> — the static-site generator the book is built with. Markdown source under <code>book/src/</code>, HTML output under <code>book/book/</code>. See <a href="./31-building-from-source.html#the-book-build">Chapter 31 §“The book build”</a>.</p>
+<p><strong>miekg/dns</strong>
+<a href="https://github.com/miekg/dns">github.com/miekg/dns</a> — the Go DNS library the GSLB probe is built on. Same library CoreDNS uses; gives <code>roksbnkctl test dns</code> full record-type coverage and per-query server selection. See <a href="./21-dns-testing-gslb.html#the-roksbnkctl-test-dns-flag-surface">Chapter 21 §“The roksbnkctl test dns flag surface”</a>.</p>
+<p><strong>north-south</strong>
+Network direction term: traffic crossing the cluster boundary — from outside the cluster <em>to</em> a pod inside, or vice versa. The throughput suite’s <code>--mode north-south</code> measures inbound LoadBalancer-path throughput. See <a href="./22-throughput-testing.html#--mode-north-south">Chapter 22</a>.</p>
+<p><strong>NXDOMAIN</strong>
+DNS response code indicating “this name does not exist”. <code>roksbnkctl test dns</code> against a non-existent name exits 1 with rcode=<code>NXDOMAIN</code>.</p>
+<h2 id="o--r"><a class="header" href="#o--r">O — R</a></h2>
+<p><strong><code>--on &lt;target&gt;</code></strong>
+The persistent CLI flag dispatching an <code>ibmcloud</code>/<code>exec</code>/<code>shell</code>/<code>kubectl</code>/<code>oc</code> passthrough over SSH to a named target instead of running it locally. The other half of the SSH-client + <code>--on</code> feature alongside the <em>SSH backend</em>. See <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>.</p>
+<p><strong>OpenShift</strong>
+Red Hat’s enterprise Kubernetes distribution. ROKS = managed OpenShift on IBM Cloud.</p>
+<p><strong>Ops pod</strong>
+Shorthand for the long-lived k8s-backend execution pod deployed in the <code>roksbnkctl-ops</code> namespace by <code>roksbnkctl ops install</code>. See <a href="./19-in-cluster-ops-pod.html">Chapter 19</a>.</p>
+<p><strong><code>passthrough</code></strong>
+A command that proxies its argv to an underlying tool. <code>roksbnkctl ibmcloud …</code> passes through to the <code>ibmcloud</code> CLI; <code>roksbnkctl kubectl …</code> passes through to <code>kubectl</code>. Passthroughs run on whatever backend is selected (local by default).</p>
+<p><strong>PRD</strong>
+<strong>Product Requirements Document</strong>. The project uses numbered PRDs under <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/docs/prd"><code>docs/prd/</code></a> to coordinate larger feature work. See <a href="./32-extending-roksbnkctl.html#the-prd-process">Chapter 32 §“The PRD process”</a>.</p>
+<p><strong><code>PHASE_FROM=</code></strong>
+The env-var resume mechanism on the e2e driver scripts. <code>PHASE_FROM=L ./scripts/e2e-test-backends.sh</code> fast-forwards past phases A-K. See <a href="./23-e2e-test-plan.html#resuming-a-partial-run">Chapter 23 §“Resuming a partial run”</a>.</p>
+<p><strong>RBAC</strong>
+<strong>Role-Based Access Control</strong> — the Kubernetes authorization model. The ops pod has a least-privilege RBAC binding; see <em>ClusterRole</em>.</p>
+<p><strong><code>restricted-v2</code></strong>
+The default OpenShift <code>PodSecurity</code> policy / SCC at admission. Rejects pods that run as root, allow privilege escalation, or hold the <code>ALL</code> capability set. All <code>roksbnkctl</code>-managed pods (ops pod, iperf3 server, DNS probe Job) are written to satisfy <code>restricted-v2</code>. See <a href="./22-throughput-testing.html#the-bundled-image-and-the-runasnonroot-constraint">Chapter 22 §“The bundled image and the runAsNonRoot constraint”</a>.</p>
+<p><strong>redactor</strong>
+The output-stream wrapper at <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/redact.go"><code>internal/exec/redact.go</code></a> that masks the IBM API key value in any subprocess’s stdout/stderr before it reaches the user’s terminal or the log. The defence-in-depth net for credential leaks. See <a href="./14-credentials-resolver.html#the-redactor">Chapter 14 §“The redactor”</a>.</p>
+<p><strong>ROKS</strong>
+<strong>Red Hat OpenShift on IBM Cloud</strong> — IBM’s managed OpenShift offering. The cluster <code>roksbnkctl up</code> provisions. See <a href="./02-why-roks.html">Chapter 2</a>.</p>
+<p><strong><code>runAsNonRoot</code></strong>
+A Pod / container <code>securityContext</code> field. Required <code>true</code> by <code>restricted-v2</code>. Images that have <code>USER root</code> in the Dockerfile fail admission with this set.</p>
+<p><strong>RTT</strong>
+<strong>Round-Trip Time</strong> — measured in milliseconds for each DNS query. <code>roksbnkctl test dns -o json</code> surfaces p50/p95/p99 across the run.</p>
+<h2 id="s--z"><a class="header" href="#s--z">S — Z</a></h2>
+<p><strong>Schematic JSON</strong>
+The deployer-rendered JSON document describing a BNK deployment. Lives in the COS supply-chain bucket; not consumed at install time, kept for forensics.</p>
+<p><strong>SCC</strong>
+<strong>Security Context Constraint</strong> — OpenShift’s pod-admission policy. <code>restricted-v2</code> is the default; pods that violate it (e.g., by running as root) are rejected by the admission controller. See <a href="./22-throughput-testing.html#the-bundled-image-and-the-runasnonroot-constraint">Chapter 22</a>.</p>
+<p><strong>Secret</strong> (k8s)
+A namespaced resource holding key/value data, typically base64-encoded credentials. The k8s backend creates <code>roksbnkctl-ibm-creds</code> in the <code>roksbnkctl-ops</code> namespace at <code>ops install</code> time.</p>
+<p><strong><code>secretRef</code></strong> (k8s)
+The Pod spec form that references a Secret for environment-variable projection. Used together with <code>envFrom</code> for the ops pod’s credential injection.</p>
+<p><strong>Service</strong> (k8s sense)
+A Kubernetes resource that provides a stable endpoint for accessing one or more Pods. Types: <code>ClusterIP</code> (default), <code>NodePort</code>, <code>LoadBalancer</code>, <code>ExternalName</code>. See <em>ClusterIP</em>, <em>LoadBalancer</em>.</p>
+<p><strong>SPDY</strong>
+<strong>Speedy</strong> (protocol). The websocket-like, multiplexed-stream protocol Kubernetes uses for <code>exec</code> and <code>port-forward</code>. <code>roksbnkctl k exec</code> is a SPDY client implementation on top of <code>k8s.io/client-go</code>’s SPDY executor.</p>
+<p><strong>SSH backend</strong>
+The <code>--backend ssh:&lt;target&gt;</code> execution path. Runs the tool on a registered SSH endpoint via the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/remote/ssh.go"><code>internal/remote.Client</code></a> wrapper. See <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a>.</p>
+<p><strong>TGW</strong>
+<strong>Transit Gateway</strong> — IBM Cloud’s VPC-to-VPC connectivity service. The upstream HCL provisions a TGW between the cluster VPC and the testing-client VPC so the jumphost can reach the cluster’s internal endpoints.</p>
+<p><strong><code>tfvars</code></strong> (<code>terraform.tfvars</code>)
+Variable-value file for Terraform — assigns concrete values to the HCL’s <code>variable</code> blocks. <code>roksbnkctl</code> auto-renders one from <code>config.yaml</code>; user overrides layer on top via <code>terraform.tfvars.user</code> and <code>--var-file</code>. See <a href="./13-terraform-variables.html">Chapter 13</a>.</p>
+<p><strong><code>tf_source</code></strong>
+The workspace <code>config.yaml</code> block selecting where the Terraform source comes from: <code>embedded</code> (compiled into the binary; the default), <code>github</code> (downloaded tarball), <code>local</code> (an on-disk directory). See <a href="./12-workspace-config.html#tf_source">Chapter 12 §“tf_source:”</a>.</p>
+<p><strong>TLS</strong> (<code>--insecure</code>)
+Transport Layer Security. The <code>--insecure</code> flag on <code>roksbnkctl test connectivity</code> skips TLS certificate validation for every probe in the run (session-wide, not per-host).</p>
+<p><strong>TMM</strong>
+<strong>Traffic Management Microkernel</strong> — the BIG-IP data-plane process. BNK runs TMM as a Pod; the CNE Instance specifies how many and at what size.</p>
+<p><strong>TOFU</strong>
+<strong>Trust On First Use</strong> — the SSH-style host-key acceptance pattern. On first connection to a new SSH target, <code>roksbnkctl</code> prompts the user to verify the fingerprint; subsequent connections check against the saved fingerprint in <code>~/.roksbnkctl/known_hosts</code>. A fingerprint mismatch refuses to connect. See <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 §“Host-key handling”</a>.</p>
+<p><strong>Trusted Profile</strong>
+An IBM IAM construct that lets a Kubernetes ServiceAccount assume IBM Cloud permissions. FLO uses one to authenticate against IBM Cloud APIs without storing an API key in the cluster.</p>
+<p><strong>TTL</strong>
+<strong>Time To Live</strong> — DNS-record cache duration in seconds. <code>roksbnkctl test dns -o json</code> surfaces each answer’s TTL.</p>
+<p><strong>v1.0</strong>
+The release this book is the launch deliverable for. All E2E phases pass on a clean dev box; doctor green-by-default with terraform-only required.</p>
+<p><strong>VPE</strong>
+<strong>Virtual Private Endpoint</strong> — IBM Cloud’s private-network access point for managed services. Sometimes left dangling after a cluster destroy (see <a href="./26-troubleshooting.html#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources">Chapter 26 §“orphan IBM Cloud resources”</a>).</p>
+<p><strong>VPC</strong>
+<strong>Virtual Private Cloud</strong> — IBM Cloud’s network-isolation primitive. The cluster lives in one VPC; the testing client jumphost lives in another, connected via TGW.</p>
+<p><strong>VSI</strong>
+<strong>Virtual Server Instance</strong> — IBM Cloud’s general-purpose VM. The jumphosts are VSIs.</p>
+<p><strong>workspace</strong>
+A named slot under <code>~/.roksbnkctl/&lt;name&gt;/</code> containing one <code>config.yaml</code>, one Terraform state directory, and (usually) one kubeconfig. The kubectl-style multi-environment isolation primitive. See <a href="./06-workspaces.html">Chapter 6</a>.</p>
+<p><strong><code>ws</code> / <code>workspace</code></strong>
+The CLI subtree managing workspaces. <code>roksbnkctl ws new/use/list/delete</code>.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./01-what-is-bnk.html">Chapter 1</a> — BNK context.</li>
+<li><a href="./02-why-roks.html">Chapter 2</a> — ROKS context.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14</a> — credentials terminology.</li>
+<li><a href="./17-execution-backends.html">Chapter 17</a> — backend terminology.</li>
+<li><a href="./21-dns-testing-gslb.html">Chapter 21</a> — DNS / GSLB terminology.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22</a> — throughput / SCC terminology.</li>
+</ul>
 
                     </main>
 

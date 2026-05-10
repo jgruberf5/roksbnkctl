@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -272,6 +272,15 @@ test:
 </li>
 </ol>
 <p><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> goes deeper on the SCC story — what the four <code>securityContext</code> fields do, why each is required, and how to debug an admission failure.</p>
+<h2 id="openshift-scc-failure-mode"><a class="header" href="#openshift-scc-failure-mode">OpenShift SCC failure mode</a></h2>
+<p>If your throughput pod fails to start with one of:</p>
+<ul>
+<li><code>Forbidden: violates PodSecurity "restricted:v1.x"</code></li>
+<li><code>unable to validate against any security context constraint: ... restricted-v2</code></li>
+<li><code>runAsNonRoot is required</code></li>
+</ul>
+<p>…then either the configured image runs as root (use the bundled <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> image instead — set <code>test.throughput.image</code> in workspace config) or the cluster’s PodSecurity admission is stricter than <code>restricted-v2</code> (the manifest the k8s backend builds satisfies <code>restricted-v2</code> but not <code>privileged</code>; if your cluster requires <code>privileged</code> for the test namespace, that’s a cluster policy question outside the suite’s control).</p>
+<p><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> is the canonical source for the manifest’s <code>securityContext</code>. If you’re hand-rolling an iperf3 image for the suite, it’s the spec to match.</p>
 <h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
 <p>Default output is human-readable on stderr; <code>-o json</code> switches to JSON on stdout.</p>
 <h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
@@ -333,15 +342,6 @@ sum_sent:     2.95 Gbps     → ≫ received; &gt;50% of bytes lost or retransmi
 retransmits:  18743         → heavy
 </code></pre>
 <p>The second shape is what a saturated link or a flaky NIC looks like. The first is a healthy gigabit-class path.</p>
-<h2 id="openshift-scc-failure-mode"><a class="header" href="#openshift-scc-failure-mode">OpenShift SCC failure mode</a></h2>
-<p>If your throughput pod fails to start with one of:</p>
-<ul>
-<li><code>Forbidden: violates PodSecurity "restricted:v1.x"</code></li>
-<li><code>unable to validate against any security context constraint: ... restricted-v2</code></li>
-<li><code>runAsNonRoot is required</code></li>
-</ul>
-<p>…then either the configured image runs as root (use the bundled <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> image instead — set <code>test.throughput.image</code> in workspace config) or the cluster’s PodSecurity admission is stricter than <code>restricted-v2</code> (the manifest the k8s backend builds satisfies <code>restricted-v2</code> but not <code>privileged</code>; if your cluster requires <code>privileged</code> for the test namespace, that’s a cluster policy question outside the suite’s control).</p>
-<p><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> is the canonical source for the manifest’s <code>securityContext</code>. If you’re hand-rolling an iperf3 image for the suite, it’s the spec to match.</p>
 <h2 id="tuning-knobs-in-workspace-config"><a class="header" href="#tuning-knobs-in-workspace-config">Tuning knobs in workspace config</a></h2>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
 test:
