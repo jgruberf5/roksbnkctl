@@ -38,7 +38,7 @@ roksbnkctl logs ↔  roksbnkctl k logs
 Two verbs are **deliberately not aliased** to avoid shadowing existing top-level commands:
 
 - **`roksbnkctl apply`** is the existing top-level lifecycle verb that runs `terraform apply` against the workspace (Sprint 0/1 surface). Adding a second `apply` would shadow it and break `roksbnkctl up` / `roksbnkctl apply` muscle memory. Use `roksbnkctl k apply -f ...` explicitly for the Kubernetes-side server-side apply.
-- **`roksbnkctl exec`** runs a command on the **host** with the workspace's env loaded (Sprint 1's host-exec verb — see [Chapter 6](./06-workspaces.md)). `roksbnkctl k exec` runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.
+- **`roksbnkctl exec`** runs a command on the **host** with the workspace's env loaded (Sprint 1's host-exec verb — see [Chapter 16](./16-on-flag-ssh-jumphosts.md), specifically the "Working examples" section). `roksbnkctl k exec` runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.
 
 ## kubectl/oc passthroughs stay as escape hatches
 
@@ -279,9 +279,9 @@ make test-live
 
 …against a `KUBECONFIG` that points at a real ROKS cluster. They're **not** part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.
 
-## OpenShift extensions (Phase 2.1)
+## OpenShift extensions
 
-Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types that `kubectl` doesn't know about by default. Phase 2.1 of PRD 02 adds these via `github.com/openshift/client-go`:
+Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types — `Project`, `Route`, `ImageStream`, `BuildConfig`. **`roksbnkctl k get` discovers these natively today** via the dynamic client + RESTMapper path (the cluster advertises them through the API discovery doc; the deferred-discovery mapper picks them up):
 
 ```bash
 roksbnkctl k get projects                    # OpenShift projects (vs Kubernetes namespaces)
@@ -290,12 +290,13 @@ roksbnkctl k get imagestreams -n f5-bnk      # OpenShift ImageStreams
 roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK trials)
 ```
 
-Same verb shape (`get` / `describe` / `delete`); just expands the resource list the dynamic client recognises. Whether Phase 2.1 lands for v0.8 depends on staff agent budget — PLAN.md scopes it as "Phase 2.1 which may slip". Check `roksbnkctl k get --help` after the v0.8 cut to see whether `projects`/`routes`/`imagestreams` made it.
+Same verb shape (`get` / `describe` / `delete`); the dynamic-client + RESTMapper combination handles type discovery without needing a per-type Go-side scheme registration.
 
-If 2.1 isn't there yet, fall back to the passthrough:
+Phase 2.1 of PRD 02 adds **typed clients** via `github.com/openshift/client-go` for nicer printing and `describe` integration of these resources. PLAN.md flags this as deferrable to Sprint 5 polish. Until typed clients land, `roksbnkctl k get/describe` still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the `oc` passthrough:
 
 ```bash
-roksbnkctl oc get projects
+roksbnkctl oc get projects                   # typed-client output today
+roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 ```
 
 ## Doctor change recap
@@ -326,7 +327,7 @@ A reader migrating from `kubectl` should be able to use this section as a Rosett
 | `kubectl rollout status deploy/foo` | `roksbnkctl kubectl rollout status deploy/foo` (passthrough) |
 | `kubectl edit deployment foo` | `roksbnkctl kubectl edit deployment foo` (passthrough) |
 | `kubectl scale deployment foo --replicas=3` | `roksbnkctl kubectl scale deployment foo --replicas=3` (passthrough) |
-| `oc projects` | `roksbnkctl k get projects` (Phase 2.1) or `roksbnkctl oc projects` |
+| `oc projects` | `roksbnkctl k get projects` (works today via dynamic-client) or `roksbnkctl oc projects` for typed-client output |
 
 The general pattern: if it's `get` / `describe` / `apply` / `delete` / `logs` / `exec` / `port-forward` against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.
 

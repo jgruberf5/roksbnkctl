@@ -176,7 +176,7 @@ func checkKubeconfig() withWhy {
 	path := k8s.DefaultKubeconfigPath()
 	if path == "" {
 		c.Status = StatusWarning
-		c.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `ibmcloud ks cluster config --admin`"
+		c.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `roksbnkctl kubeconfig --download`"
 		return withWhy{Check: c, Why: "needed for cluster-side ops"}
 	}
 	c.Status = StatusOK

@@ -173,7 +173,7 @@ A subtle gotcha: `ws delete` refuses to remove the current workspace, but the en
 The fix is the **parking-lot pattern**: have a throwaway workspace that exists only to be the "current" pointer while you delete other workspaces.
 
 ```bash
-# Phase H of scripts/e2e-test.sh: tear-down + cleanup
+# End-to-end test cleanup (e2e-test.sh: Phase D destroys; Phase H runs the parking-lot dance below)
 
 # Run the destroy against "default" (still current at this point)
 roksbnkctl down --auto
