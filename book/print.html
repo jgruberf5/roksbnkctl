@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6719f835.js";
+            window.path_to_searchindex_js = "searchindex-60854cfa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -1700,20 +1700,965 @@ roksbnkctl ws delete e2e-cleanup --force
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="workspace-config-configyaml"><a class="header" href="#workspace-config-configyaml">Workspace config (config.yaml)</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>Full schema reference for the per-workspace <code>config.yaml</code> with an annotated example, every field documented, and the defaults applied when a key is omitted.</em></p>
+<p>This chapter is the field-by-field reference for the per-workspace <code>config.yaml</code>. If you’ve read <a href="#workspaces">Chapter 6 — Workspaces</a> you’ve seen the on-disk layout; this chapter zooms in on the YAML file that drives everything else (<code>init</code>, <code>up</code>, <code>down</code>, <code>cluster up</code>, the test suite, the SSH targets, the new execution backends).</p>
+<p>You don’t usually edit this file by hand. <code>roksbnkctl init</code> generates it interactively; later runs read it. But because every other knob in the tool reads from here, it’s worth knowing what every field means and what defaults apply when you leave one out.</p>
+<h2 id="file-location"><a class="header" href="#file-location">File location</a></h2>
+<p>Each workspace’s config lives at:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+</code></pre>
+<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0644</code> — readable by your user, the same trust posture as the surrounding workspace directory.</p>
+<p>There’s also a <em>global</em> <code>~/.roksbnkctl/config.yaml</code> at the top level — it holds the <code>current_workspace</code> pointer and other user-wide preferences. That’s a different file with a different schema; this chapter is about the per-workspace one.</p>
+<h2 id="when-it-gets-written"><a class="header" href="#when-it-gets-written">When it gets written</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Action</th><th>Effect on <code>config.yaml</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>roksbnkctl init</code></td><td>Creates the file from interactive prompts. Existing file? Asks before overwriting.</td></tr>
+<tr><td><code>roksbnkctl init --upgrade-tf</code></td><td>Updates <code>tf_source:</code> only; leaves every other field alone.</td></tr>
+<tr><td><code>roksbnkctl targets add &lt;name&gt; ...</code></td><td>Adds an entry under <code>targets:</code>.</td></tr>
+<tr><td><code>roksbnkctl targets remove &lt;name&gt;</code></td><td>Removes the entry.</td></tr>
+<tr><td><code>roksbnkctl up</code> (post-apply)</td><td>Auto-populates <code>targets.jumphost</code> if the upstream HCL emitted a TGW jumphost output.</td></tr>
+<tr><td>Anything else</td><td>Reads the file. Doesn’t write back.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Direct hand-editing is supported (the file is plain YAML) but discouraged for fields that have dedicated commands — adding an SSH target via <code>roksbnkctl targets add</code> keeps the schema validation in one place.</p>
+<h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
+<pre><code class="language-yaml">ibmcloud:        # IBM Cloud account + auth
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+  # api_key_b64: &lt;base64-of-api-key&gt;   # OPTIONAL fallback when keychain unavailable
+
+cluster:         # ROKS cluster identity
+  create: true
+  name: tf-openshift-cluster
+  openshift_version: "4.18"
+  workers_per_zone: 2
+
+bnk:             # BNK trial knobs (optional; falls through to upstream HCL defaults)
+  cneinstance_size: Small
+  far_repo_url: repo.f5.com
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+
+test:            # test-suite tuning (optional)
+  throughput:
+    duration: 30
+    streams: 8
+  connectivity:
+    extra_hosts:
+      - https://my.gslb.example.com
+
+tf_source:       # where the Terraform HCL comes from
+  type: embedded         # embedded | github | local
+
+targets:         # SSH targets (Sprint 1; see Chapter 15)
+  jumphost:
+    host: 169.45.91.177
+    user: ubuntu
+    key_source: tf-output:jumphost_shared_key
+
+exec:            # per-tool execution backend defaults (Sprint 3; see Chapter 17)
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+
+cos:             # optional COS supply-chain config
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+</code></pre>
+<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables.</p>
+<h2 id="ibmcloud"><a class="header" href="#ibmcloud"><code>ibmcloud:</code></a></h2>
+<pre><code class="language-yaml">ibmcloud:
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+  api_key_b64: ""
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>region</code></td><td>string</td><td>none — required</td><td>IBM Cloud region for cluster, VPC, COS. Examples: <code>ca-tor</code>, <code>us-south</code>, <code>eu-de</code>.</td></tr>
+<tr><td><code>resource_group</code></td><td>string</td><td><code>default</code></td><td>Account-level resource group all created resources land in.</td></tr>
+<tr><td><code>api_key_source</code></td><td>enum</td><td>empty (auto-resolve chain)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code>. Pin the resolver to one source; leave empty to walk the full chain. See <a href="#credentials-and-the-resolver-chain">Chapter 14</a>.</td></tr>
+<tr><td><code>api_key_b64</code></td><td>string</td><td>empty</td><td>Base64-encoded API key, <strong>obfuscation only — not encryption</strong>. The fallback when no OS keychain is available (e.g. WSL2 without libsecret). Treat the file as plaintext-credential-equivalent.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The plaintext field name <code>api_key:</code> is <strong>rejected</strong> at load time — <code>roksbnkctl</code> refuses to read a workspace config that contains it. The encoded <code>api_key_b64:</code> form is the only inline path. Full discussion in <a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a>.</p>
+<h2 id="cluster"><a class="header" href="#cluster"><code>cluster:</code></a></h2>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: tf-openshift-cluster
+  openshift_version: "4.18"
+  workers_per_zone: 2
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td>When <code>true</code>, <code>roksbnkctl cluster up</code> provisions a new ROKS cluster. When <code>false</code>, <code>cluster register &lt;name&gt;</code> adopts an existing one.</td></tr>
+<tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
+<tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code> — see <a href="#terraform-variables-terraformtfvars">Chapter 13</a> and <a href="#terraform-variable-reference">Chapter 29</a> for the full mapping.</p>
+<h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
+<pre><code class="language-yaml">bnk:
+  cneinstance_size: Small
+  far_repo_url: repo.f5.com
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>.</td></tr>
+<tr><td><code>far_repo_url</code></td><td>string</td><td>upstream HCL default (<code>repo.f5.com</code>)</td><td>The FAR Docker/Helm repo. Override only for staging/internal repos.</td></tr>
+<tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults for all three.</p>
+<h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
+<pre><code class="language-yaml">test:
+  throughput:
+    image: networkstatic/iperf3:latest
+    duration: 30
+    streams: 8
+    default_mode: north-south
+  connectivity:
+    extra_hosts:
+      - https://my.gslb.example.com
+      - https://internal.example.test
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image used by the throughput test (when running with the <code>local</code> or <code>ssh</code> backends). Sprint 4’s <code>k8s</code> backend uses the GHCR image instead.</td></tr>
+<tr><td><code>throughput.duration</code></td><td>int seconds</td><td><code>30</code></td><td>iperf3 <code>-t</code> flag.</td></tr>
+<tr><td><code>throughput.streams</code></td><td>int</td><td><code>8</code></td><td>iperf3 <code>-P</code> flag.</td></tr>
+<tr><td><code>throughput.default_mode</code></td><td>enum</td><td><code>north-south</code></td><td><code>north-south</code> | <code>east-west</code>. The connectivity vector to test by default.</td></tr>
+<tr><td><code>connectivity.extra_hosts</code></td><td>[]string</td><td>empty</td><td>Extra URLs the connectivity test probes alongside the canonical IBM/F5 endpoints.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="tf_source"><a class="header" href="#tf_source"><code>tf_source:</code></a></h2>
+<pre><code class="language-yaml">tf_source:
+  type: embedded
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>type</code></th><th>Other fields</th><th>Use case</th></tr>
+</thead>
+<tbody>
+<tr><td><code>embedded</code> (default)</td><td>none</td><td>Use the HCL bundled into the <code>roksbnkctl</code> binary via <code>go:embed</code>. The recommended path for users — install one binary, get matched CLI + Terraform together.</td></tr>
+<tr><td><code>github</code></td><td><code>repo: "owner/name"</code>, <code>ref: "v0.6.1"</code></td><td>Pull a tarball from a GitHub release. Useful for testing forks or pinning to a specific upstream tag.</td></tr>
+<tr><td><code>local</code></td><td><code>path: "/abs/path/to/tf-source"</code></td><td>Point Terraform at an on-disk directory. For active development on the HCL itself.</td></tr>
+</tbody>
+</table>
+</div>
+<p>An empty <code>type</code> is treated as <code>embedded</code> (legacy / forgot-to-set).</p>
+<p><code>roksbnkctl init --upgrade-tf</code> is the helper for bumping the source between versions without retyping the rest of the config — see “Editing by hand vs helpers” below.</p>
+<h2 id="targets--ssh-targets"><a class="header" href="#targets--ssh-targets"><code>targets:</code> — SSH targets</a></h2>
+<pre><code class="language-yaml">targets:
+  jumphost:
+    host: 169.45.91.177
+    user: ubuntu
+    key_source: tf-output:jumphost_shared_key
+  bastion:
+    host: ops.example.com
+    user: jgruber
+    key_path: ~/.ssh/id_ed25519
+</code></pre>
+<p>Each entry has <code>host</code>, <code>user</code>, optional <code>port</code> (default <code>22</code>), and exactly one of <code>key_path</code> or <code>key_source</code>. The <code>key_source</code> enum supports <code>agent</code> and <code>tf-output:&lt;name&gt;</code>.</p>
+<p>This block was introduced in Sprint 1; the deep reference is <a href="#ssh-targets">Chapter 15 — SSH targets</a>, and the user-facing prose is <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a>. This chapter just notes the schema’s place in the overall config.</p>
+<p>You don’t typically edit this block by hand. <code>roksbnkctl up</code> auto-populates <code>jumphost</code> post-apply, and <code>roksbnkctl targets add ...</code> populates the rest.</p>
+<h2 id="exec--execution-backend-defaults-new-in-sprint-3"><a class="header" href="#exec--execution-backend-defaults-new-in-sprint-3"><code>exec:</code> — execution-backend defaults (new in Sprint 3)</a></h2>
+<pre><code class="language-yaml">exec:
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+</code></pre>
+<p>Per-tool defaults for the <code>--backend</code> system. Each entry is keyed by the tool name (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>, and others as the matrix grows) and selects which execution backend that tool uses by default. Allowed backend values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>Available in</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>local</code></td><td>Sprint 3 (today)</td><td><code>os/exec</code> against the host binary. The default for <code>terraform</code> and <code>ibmcloud</code>.</td></tr>
+<tr><td><code>docker</code></td><td>Sprint 3 (today)</td><td>Runs inside a vendored container image. Frozen toolchain version, no host install.</td></tr>
+<tr><td><code>k8s</code></td><td>Sprint 4</td><td>Runs inside the cluster (long-lived ops pod or one-shot Job). Default for <code>iperf3</code>.</td></tr>
+<tr><td><code>ssh</code></td><td>Sprint 4</td><td>Runs on a registered SSH target. Format: <code>ssh:&lt;target-name&gt;</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>A <code>--backend &lt;value&gt;</code> flag on the command line overrides the workspace config for that single invocation. The flag wins; the config sets the default.</p>
+<p>The <code>iperf3</code> default is <code>k8s</code> because measuring throughput from a laptop’s internet uplink isn’t useful — you want the test to run from a network location adjacent to or inside the cluster. The <code>local</code> default is wrong for that tool, so the workspace config flips it.</p>
+<p><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> covers the full backend matrix; <a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> (lands in Sprint 4) is the decision tree.</p>
+<h2 id="cos--cos-supply-chain-optional"><a class="header" href="#cos--cos-supply-chain-optional"><code>cos:</code> — COS supply-chain (optional)</a></h2>
+<pre><code class="language-yaml">cos:
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+  upload:
+    - source: ./local/f5-far-auth-key.tgz
+      key: f5-far-auth-key.tgz
+    - source: ./local/trial.jwt
+      key: trial.jwt
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance.</td></tr>
+<tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is optional — if you’ve already populated COS by hand or via the upstream HCL’s <code>roks_cos_instance_name</code> variable, you don’t need it. <a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> covers the full workflow.</p>
+<h2 id="behaviour-when-fields-are-missing"><a class="header" href="#behaviour-when-fields-are-missing">Behaviour when fields are missing</a></h2>
+<p><code>roksbnkctl</code> falls through three layers in order: <strong>workspace config → upstream HCL default → fail</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Missing field</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud.region</code></td><td><code>roksbnkctl init</code> prompts; programmatic loads error with “region is empty”.</td></tr>
+<tr><td><code>ibmcloud.api_key_source</code></td><td>Resolver walks the full chain (env → keychain → config → prompt).</td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td>Skipped in the resolver chain.</td></tr>
+<tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
+<tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream default).</td></tr>
+<tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
+<tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
+<tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
+<tr><td><code>exec.*</code></td><td>Per-tool defaults built into the binary apply (<code>iperf3</code>→<code>k8s</code>, everything else→<code>local</code>).</td></tr>
+<tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The general rule: <strong>if you don’t write it in <code>config.yaml</code>, <code>roksbnkctl</code> doesn’t write it into <code>terraform.tfvars</code></strong>, and the upstream HCL’s <code>default = ...</code> clause takes over. The full upstream defaults are listed in <a href="#terraform-variable-reference">Chapter 29</a>.</p>
+<h2 id="how---var-file-interacts-with-configyaml"><a class="header" href="#how---var-file-interacts-with-configyaml">How <code>--var-file</code> interacts with <code>config.yaml</code></a></h2>
+<p>Both <code>roksbnkctl up</code> and <code>roksbnkctl plan/apply/destroy</code> accept the same <code>--var-file</code> flag terraform itself accepts (repeatable, later files win). The layering rule is:</p>
+<pre><code>1. config.yaml-derived terraform.tfvars        (written first by roksbnkctl)
+2. ~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user  (optional manual override)
+3. --var-file &lt;path&gt;                           (CLI; repeatable)
+</code></pre>
+<p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
+<p>The <code>terraform.tfvars.user</code> middle layer is for when you want a workspace-local override that survives across runs without modifying <code>config.yaml</code> — it’s typically used for fields the YAML schema doesn’t model (rare; the schema covers the common knobs). <a href="#terraform-variables-terraformtfvars">Chapter 13</a> goes deep on this.</p>
+<p>The <code>IBMCLOUD_API_KEY</code> is the one exception that <strong>never</strong> goes through tfvars on disk. It’s passed as a <code>TF_VAR_ibmcloud_api_key</code> env var on the terraform invocation. <code>--var-file</code> cannot supply the API key — the resolver chain in <a href="#credentials-and-the-resolver-chain">Chapter 14</a> is the only path.</p>
+<h2 id="editing-by-hand-vs-helpers"><a class="header" href="#editing-by-hand-vs-helpers">Editing by hand vs helpers</a></h2>
+<p>Several commands manage subsets of <code>config.yaml</code> so you don’t have to:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Subset</th><th>Helper</th></tr>
+</thead>
+<tbody>
+<tr><td>Whole file (interactive)</td><td><code>roksbnkctl init</code></td></tr>
+<tr><td><code>tf_source:</code> only</td><td><code>roksbnkctl init --upgrade-tf</code></td></tr>
+<tr><td><code>targets:</code> block</td><td><code>roksbnkctl targets add/remove</code></td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td><code>roksbnkctl init</code> (after entering the key, it offers to save)</td></tr>
+</tbody>
+</table>
+</div>
+<p>When you do edit by hand, the load-time validators run on next <code>roksbnkctl</code> invocation:</p>
+<ul>
+<li>The plaintext-secret heuristic rejects an <code>api_key:</code> field (it must be <code>api_key_b64:</code> to be tolerated).</li>
+<li>Workspace name validation runs on directory access (workspace names must match <code>[A-Za-z0-9][A-Za-z0-9_.-]{0,63}</code>).</li>
+<li>YAML parse errors surface a line number.</li>
+</ul>
+<p>If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you’ll know within one invocation.</p>
+<h2 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h2>
+<p>Walk through what <code>roksbnkctl init</code> writes for a typical “fresh install + new cluster” run:</p>
+<pre><code class="language-bash">$ roksbnkctl init
+Workspace name [default]: dev
+IBM Cloud region [ca-tor]:
+IBM Cloud resource group [default]:
+Enter IBM Cloud API key (input hidden):
+Save the key for future runs? [Y/n]: y
+  ✓ saved to OS keychain
+Cluster name [tf-openshift-cluster]: dev-cluster
+Workers per zone [1]: 2
+✓ Created workspace "dev"
+</code></pre>
+<p>The resulting <code>~/.roksbnkctl/dev/config.yaml</code>:</p>
+<pre><code class="language-yaml">ibmcloud:
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+cluster:
+  create: true
+  name: dev-cluster
+  workers_per_zone: 2
+tf_source:
+  type: embedded
+</code></pre>
+<p>That’s the minimum. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. You can layer on more fields by editing the file directly or by using the helpers — both are supported.</p>
+<h2 id="cross-references-5"><a class="header" href="#cross-references-5">Cross-references</a></h2>
+<ul>
+<li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — the layering between <code>config.yaml</code> and <code>terraform.tfvars</code>.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — the <code>api_key_*</code> fields and how they’re resolved.</li>
+<li><a href="#ssh-targets">Chapter 15 — SSH targets</a> — the <code>targets:</code> block.</li>
+<li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — the <code>exec:</code> block.</li>
+<li><a href="#configuration-reference">Chapter 28 — Configuration reference</a> — auto-generated complete field list (Sprint 6).</li>
+<li><a href="#terraform-variable-reference">Chapter 29 — Terraform variable reference</a> — the upstream HCL variables <code>config.yaml</code> translates to.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="terraform-variables-terraformtfvars"><a class="header" href="#terraform-variables-terraformtfvars">Terraform variables (terraform.tfvars)</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>The <code>terraform.tfvars</code> surface, the <code>--var-file</code> layering rule that lets workspace overrides win over defaults, and how <code>roksbnkctl tfvars</code> bootstraps a starter file from current workspace state.</em></p>
+<p><code>roksbnkctl</code> is a thin orchestration layer over a Terraform HCL bundle. The HCL has its own variables — well over 60 of them — declared in <code>terraform/variables.tf</code>. The workspace’s <code>config.yaml</code> covers the common knobs; for the rest, you reach into <code>terraform.tfvars</code> directly.</p>
+<p>This chapter is the surface for that lower layer: where the example file lives, how <code>roksbnkctl tfvars</code> bootstraps a starter, what <code>--var-file</code> does, the layering rule between <code>config.yaml</code>-derived tfvars and your overrides, and the one variable that <strong>never</strong> goes on disk (<code>ibmcloud_api_key</code>).</p>
+<h2 id="where-the-bundled-hcl-lives"><a class="header" href="#where-the-bundled-hcl-lives">Where the bundled HCL lives</a></h2>
+<p>The Terraform HCL is bundled into the <code>roksbnkctl</code> binary via <code>go:embed</code>. On first use of a workspace, it gets extracted to:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/state/tf-source/embedded-terraform/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── providers.tf
+├── versions.tf
+├── terraform.tfvars.example
+└── modules/
+</code></pre>
+<p>That <code>terraform.tfvars.example</code> file is the canonical reference for what’s tunable — every variable with a sensible starter value, grouped by module (ROKS cluster, cert-manager, FLO, CNEInstance, License, testing). <code>terraform/variables.tf</code> (linked at the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">GitHub canonical URL</a>) is the formal declaration with types, descriptions, and defaults.</p>
+<p>You don’t edit the example file in place. Copy or generate from it instead.</p>
+<h2 id="roksbnkctl-tfvars--bootstrap-a-starter"><a class="header" href="#roksbnkctl-tfvars--bootstrap-a-starter"><code>roksbnkctl tfvars</code> — bootstrap a starter</a></h2>
+<p>The <code>roksbnkctl tfvars</code> subcommand prints a starter <code>terraform.tfvars</code> to stdout, populated from the <strong>current workspace state</strong>:</p>
+<pre><code class="language-bash">$ roksbnkctl tfvars &gt; ~/.roksbnkctl/dev/state/terraform.tfvars.user
+</code></pre>
+<p>What gets pre-filled:</p>
+<ul>
+<li>Every field from <code>config.yaml</code> that maps to a tfvar (cluster name, region, workers, BNK fields, COS fields)</li>
+<li>The cluster’s identity from <code>cluster-outputs.json</code> if <code>cluster up</code> has already run</li>
+<li>A commented-out section for the variables you might want to tune next (jumphost profile, GSLB datacenter, license mode)</li>
+</ul>
+<p>What’s deliberately <strong>excluded</strong>:</p>
+<ul>
+<li><code>ibmcloud_api_key</code> — never on disk (see “The IBMCLOUD_API_KEY exception” below)</li>
+<li>Sensitive outputs (BIG-IP passwords, COS HMAC secrets) — left as upstream defaults</li>
+</ul>
+<p>The starter is meant to be copied into <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user</code> (the workspace-local override file) or into a <code>--var-file</code> path you keep alongside the workspace.</p>
+<h2 id="what-you-typically-edit"><a class="header" href="#what-you-typically-edit">What you typically edit</a></h2>
+<p>The variables that matter for day-to-day BNK trial work, ordered by likely-to-touch:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Default</th><th>What it controls</th></tr>
+</thead>
+<tbody>
+<tr><td><code>openshift_cluster_name</code></td><td><code>tf-openshift-cluster</code></td><td>Cluster name. Mirrors <code>config.yaml</code>’s <code>cluster.name</code>.</td></tr>
+<tr><td><code>roks_workers_per_zone</code></td><td><code>1</code></td><td>Worker nodes per AZ. <code>2</code> ⇒ 6 workers in a 3-AZ MZR region.</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>true</code></td><td>Set <code>false</code> to adopt an existing cluster. Pair with <code>roks_cluster_id_or_name</code>.</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>"4.18"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.18</code> as float otherwise.</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>Small</code></td><td><code>Small</code>/<code>Medium</code>/<code>Large</code>. CNEInstance sizing.</td></tr>
+<tr><td><code>f5_bigip_k8s_manifest_version</code></td><td>upstream pin</td><td>Pin a specific BNK manifest chart version.</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>repo.f5.com</code></td><td>FAR Docker/Helm registry. Override only for staging.</td></tr>
+<tr><td><code>flo_namespace</code></td><td><code>f5-bnk</code></td><td>Where the F5 Lifecycle Operator runs.</td></tr>
+<tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
+<tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
+<tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
+<tr><td><code>license_mode</code></td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="#terraform-variable-reference">Chapter 29 — Terraform variable reference</a> (lands in Sprint 6).</p>
+<h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
+<p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
+<pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)
+2. terraform.tfvars.user         (workspace-local override, optional)
+3. --var-file &lt;path&gt; ...         (CLI flag, repeatable, later file wins)
+</code></pre>
+<p>Later layers override earlier ones — same rule Terraform itself uses for <code>-var-file</code> chaining.</p>
+<p>Concretely:</p>
+<pre><code class="language-bash"># config.yaml says cluster.workers_per_zone: 2
+# ~/.roksbnkctl/dev/state/terraform.tfvars.user contains:
+#   roks_workers_per_zone = 4
+# Run with no flag:
+roksbnkctl up
+# → terraform sees 4 (.user wins over generated .tfvars)
+
+# Pass a CLI override:
+roksbnkctl up --var-file ./perf-test.tfvars
+# perf-test.tfvars contains: roks_workers_per_zone = 8
+# → terraform sees 8 (.var-file wins over .user)
+
+# Multiple --var-files; later wins:
+roksbnkctl up \
+  --var-file ./base.tfvars \
+  --var-file ./override.tfvars
+# → values in override.tfvars win over base.tfvars,
+#   which both win over .user, which wins over .tfvars
+</code></pre>
+<p>The <code>--var-file</code> flag matches Terraform’s own <code>--var-file</code> exactly — repeatable, paths interpreted relative to the working directory at invocation time.</p>
+<h2 id="the-ibmcloud_api_key-exception"><a class="header" href="#the-ibmcloud_api_key-exception">The <code>IBMCLOUD_API_KEY</code> exception</a></h2>
+<p>The upstream HCL declares <code>ibmcloud_api_key</code> as a <code>sensitive</code> variable. Every other tfvar can land in a file on disk; this one never does.</p>
+<p>Instead, the API key flows through the resolver chain (env → keychain → config-b64 → prompt — see <a href="#credentials-and-the-resolver-chain">Chapter 14</a>), and <code>roksbnkctl</code> exports it as <code>TF_VAR_ibmcloud_api_key</code> in the environment of the terraform-exec child process. Terraform reads the env var and injects it as if it had been declared in tfvars, but no plaintext key ever touches the filesystem.</p>
+<p>If you put <code>ibmcloud_api_key = "..."</code> in a hand-edited tfvars and run <code>terraform</code> directly (not via <code>roksbnkctl</code>), it works — Terraform itself is happy. But this is <strong>not</strong> how <code>roksbnkctl</code> runs Terraform, and putting the key in a <code>.tfvars.user</code> or <code>--var-file</code> is <strong>strongly discouraged</strong>: the file persists on disk, gets backed up, gets committed to git by accident, and gets read by other processes. The env-var path eliminates the on-disk window entirely.</p>
+<p>Other secrets in scope:</p>
+<ul>
+<li><code>bigip_password</code> — upstream HCL declares it as a regular string (not <code>sensitive</code>). If you set it in tfvars, the value lands on disk. Treat that file like a credential.</li>
+<li>COS HMAC keys — auto-generated by the <code>roks_cluster</code> module via the COS service-credentials resource; they live in <code>terraform.tfstate</code> (which is itself sensitive — <code>chmod 0600</code>, never commit, treat the workspace as a secret store).</li>
+</ul>
+<h2 id="worked-example-bigger-cluster-for-a-perf-test"><a class="header" href="#worked-example-bigger-cluster-for-a-perf-test">Worked example: bigger cluster for a perf test</a></h2>
+<p>Default workspace, default cluster. You want to bump worker count for one perf-test run, then go back.</p>
+<pre><code class="language-bash"># 1. Confirm the current value comes from config.yaml
+$ grep workers ~/.roksbnkctl/dev/config.yaml
+  workers_per_zone: 2
+
+# 2. Drop a one-off override into a file
+$ cat &gt; ~/perf-cluster.tfvars &lt;&lt;'EOF'
+roks_workers_per_zone = 6
+roks_min_worker_vcpu_count = 32
+roks_min_worker_memory_gb = 128
+EOF
+
+# 3. Plan against it (note: --var-file passes through to terraform plan)
+$ roksbnkctl plan --var-file ~/perf-cluster.tfvars
+
+# 4. Apply
+$ roksbnkctl apply --var-file ~/perf-cluster.tfvars
+
+# 5. Run the throughput test
+$ roksbnkctl test throughput
+
+# 6. Roll back: re-apply WITHOUT the var-file
+$ roksbnkctl apply
+# → terraform sees workers_per_zone=2 again from config.yaml-derived tfvars
+</code></pre>
+<p>Notice step 6 — dropping the <code>--var-file</code> flag is the rollback. Terraform compares its current state to the new desired state (from <code>config.yaml</code>) and scales the worker pool back down. No special “undo” command needed.</p>
+<p>For a more permanent override (you want this workspace to <em>always</em> run with bigger nodes), put the contents of <code>perf-cluster.tfvars</code> into <code>~/.roksbnkctl/dev/state/terraform.tfvars.user</code> instead. Then every <code>roksbnkctl up</code>/<code>apply</code> picks it up automatically without a CLI flag.</p>
+<h2 id="when-to-edit-configyaml-vs-tfvarsuser-vs---var-file"><a class="header" href="#when-to-edit-configyaml-vs-tfvarsuser-vs---var-file">When to edit <code>config.yaml</code> vs <code>.tfvars.user</code> vs <code>--var-file</code></a></h2>
+<p>A rough decision matrix:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>You want to change…</th><th>Edit…</th></tr>
+</thead>
+<tbody>
+<tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
+<tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
+<tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
+<tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The schema in <code>config.yaml</code> covers about a third of the upstream HCL variables — the ones that nearly every workspace needs to set. The other two-thirds (jumphost details, every BNK module’s full surface, the testing module’s full surface) are reachable through the lower layers.</p>
+<h2 id="cross-references-6"><a class="header" href="#cross-references-6">Cross-references</a></h2>
+<ul>
+<li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — what <code>config.yaml</code> covers vs what falls through to tfvars.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — why <code>ibmcloud_api_key</code> doesn’t go in tfvars.</li>
+<li><a href="#terraform-variable-reference">Chapter 29 — Terraform variable reference</a> — auto-generated complete reference for <code>terraform/variables.tf</code> (Sprint 6).</li>
+<li>The upstream <code>terraform/variables.tf</code> source: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf</a></li>
+<li>The upstream starter file: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="credentials-and-the-resolver-chain"><a class="header" href="#credentials-and-the-resolver-chain">Credentials and the resolver chain</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>How <code>IBMCLOUD_API_KEY</code> is resolved (env → keychain → config-b64 → prompt), how <code>kubeconfig</code> is discovered, where SSH key sources come from, and what is safe to commit to a workspace versus what must stay in your secret store.</em></p>
+<p><code>roksbnkctl</code> handles four kinds of secrets: an IBM Cloud API key, a kubeconfig, an SSH private key, and the Terraform state file. Each has a different threat model, a different lookup chain, and a different rule for “what’s safe to commit to a workspace”.</p>
+<p>This chapter is the user-facing distillation of <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 — credential propagation</a>. PRD 04 is the design surface for developers extending the credential system; this chapter is the operational surface for users who need to know “where does my key live, and how does the tool find it”.</p>
+<h2 id="the-four-secrets-in-scope"><a class="header" href="#the-four-secrets-in-scope">The four secrets in scope</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Credential</th><th>Used by</th><th>Resolved from</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>IBMCLOUD_API_KEY</strong></td><td><code>ibmcloud</code> CLI, terraform’s IBM provider, IBM SDK calls</td><td>Env → OS keychain → workspace <code>api_key_b64</code> → prompt</td></tr>
+<tr><td><strong>kubeconfig</strong></td><td><code>kubectl</code>/<code>oc</code> passthroughs, <code>roksbnkctl k get/apply/...</code>, terraform’s k8s + helm providers</td><td>Workspace <code>state/kubeconfig</code> → <code>KUBECONFIG</code> env → <code>~/.kube/config</code></td></tr>
+<tr><td><strong>SSH private key</strong></td><td>The SSH client backing <code>--on</code> and the upcoming <code>ssh</code> execution backend</td><td>Per-target: file path, ssh-agent, or <code>tf-output:&lt;name&gt;</code></td></tr>
+<tr><td><strong>Terraform state</strong></td><td>The <code>terraform-exec</code> calls inside <code>roksbnkctl up</code>/<code>apply</code>/<code>destroy</code></td><td>Workspace <code>state/terraform.tfstate</code> (filesystem only)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each has its own discovery rules. Walk them in turn.</p>
+<h2 id="the-ibmcloud_api_key-resolver-chain"><a class="header" href="#the-ibmcloud_api_key-resolver-chain">The IBMCLOUD_API_KEY resolver chain</a></h2>
+<p>The single most-used credential. Resolved by <code>internal/cred/resolver.go</code> (extracted this sprint from the formerly scattered logic in <code>internal/config/secrets.go</code>). The resolver walks four sources in order:</p>
+<pre><code>1. Environment variables (process-scoped, never persisted)
+2. OS keychain (per-user, system-managed)
+3. Workspace config api_key_b64 (per-workspace, base64 obfuscation)
+4. Interactive prompt (TTY-only)
+</code></pre>
+<p>The first source that yields a non-empty value wins. The chain stops there — the key isn’t re-fetched from a “more authoritative” source on subsequent calls.</p>
+<h3 id="source-1--environment"><a class="header" href="#source-1--environment">Source 1 — Environment</a></h3>
+<p>The resolver checks these env vars in order, returning the first non-empty value:</p>
+<pre><code>IBMCLOUD_API_KEY            # canonical
+IC_API_KEY                  # short alias
+TF_VAR_ibmcloud_api_key     # terraform passthrough form
+TF_VAR_IBMCLOUD_API_KEY     # uppercase variant some pipelines use
+TF_VAR_IC_API_KEY           # uppercase variant of the short alias
+</code></pre>
+<p>Env vars are first because they’re the <strong>most explicit</strong> path — if you’ve gone to the trouble of setting one, you’ve made a deliberate choice. Pre-existing CI pipelines, automation scripts, and <code>direnv</code> setups all live here. The resolver respects that ordering even when a keychain entry also exists.</p>
+<h3 id="source-2--os-keychain"><a class="header" href="#source-2--os-keychain">Source 2 — OS keychain</a></h3>
+<p><code>roksbnkctl</code> stores per-workspace API keys in the OS-native keychain via <a href="https://github.com/zalando/go-keyring"><code>github.com/zalando/go-keyring</code></a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>OS</th><th>Backend</th></tr>
+</thead>
+<tbody>
+<tr><td>macOS</td><td>Keychain (<code>security</code> framework)</td></tr>
+<tr><td>Linux (with libsecret)</td><td>GNOME Keyring / KWallet via Secret Service API</td></tr>
+<tr><td>Windows</td><td>Credential Manager</td></tr>
+<tr><td>Linux (no libsecret)</td><td>Falls back to source 3 (config base64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Entries are namespaced under service <code>roksbnkctl</code>, with user <code>&lt;workspace&gt;/ibmcloud_api_key</code>:</p>
+<pre><code class="language-bash"># What `roksbnkctl init` writes (no-op shown for clarity)
+$ keyring set roksbnkctl dev/ibmcloud_api_key
+</code></pre>
+<p>This is the <strong>recommended</strong> secure default. The OS handles process isolation; <code>roksbnkctl</code> only sees the value during the brief window between fetch and use.</p>
+<h3 id="source-3--workspace-api_key_b64"><a class="header" href="#source-3--workspace-api_key_b64">Source 3 — Workspace <code>api_key_b64</code></a></h3>
+<p>A base64-encoded blob in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
+<pre><code class="language-yaml">ibmcloud:
+  api_key_b64: ZW5jb2RlZC1hcGkta2V5LXZhbHVl
+</code></pre>
+<p><strong>Important framing</strong>: base64 is <strong>obfuscation</strong>, <strong>not encryption</strong>. Anyone with read access to the file can decode it instantly:</p>
+<pre><code class="language-bash">echo -n "ZW5jb2RlZC1hcGkta2V5LXZhbHVl" | base64 -d
+# → encoded-api-key-value
+</code></pre>
+<p>The encoding exists for two reasons:</p>
+<ol>
+<li><strong>Visual.</strong> A glancing <code>cat config.yaml</code> doesn’t surface the literal API key.</li>
+<li><strong>Format.</strong> API keys can contain <code>=</code> and other YAML-special characters that complicate inline storage. Base64 normalises them.</li>
+</ol>
+<p><code>api_key_b64</code> is the fallback when the OS keychain isn’t available — most commonly <strong>WSL2 without libsecret</strong>, <strong>headless Linux servers</strong>, and <strong>CI runners</strong> where bringing up a keychain daemon is more friction than it’s worth. Treat the file like a plaintext credential: <code>chmod 0600</code>, never commit, never share.</p>
+<p>The plaintext field name <code>api_key:</code> is <strong>rejected</strong> at workspace-load time:</p>
+<pre><code>$ roksbnkctl up
+error: ~/.roksbnkctl/dev/config.yaml: plaintext secret detected (offset 47):
+       workspace config.yaml must not contain credentials — use IBMCLOUD_API_KEY
+       env var or the OS keychain (see `roksbnkctl init`)
+</code></pre>
+<p>The regex catches <code>api_key</code>, <code>apikey</code>, <code>ibmcloud_api_key</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>. The <code>_b64</code> suffix is the documented escape — it’s the only inline form the loader tolerates.</p>
+<h3 id="source-4--interactive-prompt"><a class="header" href="#source-4--interactive-prompt">Source 4 — Interactive prompt</a></h3>
+<p>When sources 1-3 all come up empty AND stdin is a TTY, the resolver prompts:</p>
+<pre><code>Enter IBM Cloud API key for workspace "dev": ********
+Save the key for future runs? [Y/n]: y
+  ✓ saved to OS keychain
+</code></pre>
+<p>The key is read with echo disabled (via <code>golang.org/x/term</code>). The prompt offers to persist — by default it tries the OS keychain first, falls back to <code>api_key_b64</code> in <code>config.yaml</code> if the keychain is unavailable.</p>
+<p>If stdin <strong>isn’t</strong> a TTY (CI runner, piped input, daemon process), the resolver errors instead of hanging:</p>
+<pre><code>error: no IBM Cloud API key available and stdin is not a TTY (cannot prompt;
+       set IBMCLOUD_API_KEY or run `roksbnkctl init`)
+</code></pre>
+<h3 id="pinning-a-single-source"><a class="header" href="#pinning-a-single-source">Pinning a single source</a></h3>
+<p>The chain is the default. To force one specific source, set <code>ibmcloud.api_key_source</code> in <code>config.yaml</code>:</p>
+<pre><code class="language-yaml">ibmcloud:
+  api_key_source: keychain    # env | keychain | config | prompt
+</code></pre>
+<p>This is useful in two scenarios:</p>
+<ul>
+<li><strong>CI</strong>: <code>api_key_source: env</code> makes a missing env var a hard error rather than falling through to a (locked / non-existent) keychain.</li>
+<li><strong>Auditable single-source-of-truth</strong>: pinning to <code>keychain</code> documents that this workspace’s key lives in the OS keychain and nowhere else; reading the key from a different source becomes an error rather than a silent fallback.</li>
+</ul>
+<h2 id="kubeconfig-discovery"><a class="header" href="#kubeconfig-discovery">kubeconfig discovery</a></h2>
+<p>Different chain, different rules. <code>roksbnkctl</code> discovers the kubeconfig in this order:</p>
+<pre><code>1. Workspace-local file: ~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig
+2. KUBECONFIG environment variable
+3. ~/.kube/config
+</code></pre>
+<p>The workspace-local file is <strong>first</strong> because it’s the kubeconfig the tool itself wrote — produced by <code>cluster up</code>, fetched from IBM Cloud’s API as the cluster came online. It’s the most trusted source for the workspace’s cluster.</p>
+<p>The <code>KUBECONFIG</code> env var is second because it represents an explicit user override (a developer hopping between clusters using <code>kubectx</code> or similar).</p>
+<p><code>~/.kube/config</code> is the last-resort fallback — convenient for users who’ve already wired up their cluster’s kubeconfig system-wide but haven’t run <code>cluster up</code> yet.</p>
+<h3 id="when-the-file-is-missing"><a class="header" href="#when-the-file-is-missing">When the file is missing</a></h3>
+<p>If none of the three sources yields a kubeconfig, commands that need one error with:</p>
+<pre><code>error: no kubeconfig: workspace state/kubeconfig is missing, KUBECONFIG env
+       not set, ~/.kube/config not present. Run `roksbnkctl cluster up`,
+       `roksbnkctl cluster register &lt;name&gt;`, or set KUBECONFIG.
+</code></pre>
+<p>The remediation message tells you which path to take. <code>cluster register &lt;name&gt;</code> is the path for an existing cluster you want to adopt without re-creating it (see <a href="#registering-an-existing-cluster">Chapter 9</a>).</p>
+<h3 id="file-permissions"><a class="header" href="#file-permissions">File permissions</a></h3>
+<p>Workspace-local kubeconfigs are written <code>chmod 0600</code> (owner read/write only). They contain the cluster admin token; treat them like a credential. Don’t commit them, don’t email them, don’t <code>cat</code> them in screen-shared sessions.</p>
+<h2 id="ssh-private-keys"><a class="header" href="#ssh-private-keys">SSH private keys</a></h2>
+<p>Per-target, not per-workspace. Each entry under <code>targets:</code> in <code>config.yaml</code> declares exactly one of:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Source</th><th>Form</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>File</strong></td><td><code>key_path: ~/.ssh/id_ed25519</code></td><td>Standard OpenSSH key formats. Tilde expansion honoured.</td></tr>
+<tr><td><strong>Agent</strong></td><td><code>key_source: agent</code></td><td>Talks to ssh-agent over <code>$SSH_AUTH_SOCK</code>. Linux/macOS only in v0.7.</td></tr>
+<tr><td><strong>TF output</strong></td><td><code>key_source: tf-output:jumphost_shared_key</code></td><td>Reads from terraform state at connect time; never written to disk separately.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>tf-output:</code> form is the auto-discovered jumphost path — the upstream HCL provisions a <code>tls_private_key</code> resource per cluster create, marks it <code>sensitive</code>, and surfaces it as a terraform output. <code>roksbnkctl</code> reads the output via <code>terraform output -raw</code> at SSH-connect time, never persists it, and the key only exists in TF state plus in memory during a connect.</p>
+<p><a href="#ssh-targets">Chapter 15 — SSH targets</a> is the deep reference for the <code>targets:</code> block; this chapter just notes the credential-side framing.</p>
+<h2 id="terraform-state"><a class="header" href="#terraform-state">Terraform state</a></h2>
+<p><code>~/.roksbnkctl/&lt;workspace&gt;/state/terraform.tfstate</code> is the workspace’s terraform state file. It contains:</p>
+<ul>
+<li>IBM Cloud admin tokens (cluster admin, COS HMAC credentials)</li>
+<li>Generated TLS private keys (the jumphost shared key referenced above)</li>
+<li>Sensitive outputs (FAR auth bundles, license JWTs)</li>
+<li>Every resource attribute terraform tracks</li>
+</ul>
+<p>It is <strong>plaintext-credential-equivalent</strong>. The file mode is <code>0600</code>; the parent directory is <code>0700</code>. Backup the workspace dir intact, never commit it to git, treat compromise of the state file as compromise of every secret it contains.</p>
+<p>There is no separate “TF state credential” — the file’s filesystem ACL is the only access control. PRD 04 covers the cross-backend story for moving state into a Docker bind-mount, a Kubernetes Secret, or an SCP’d remote temp directory; today (Sprint 3) the local file is the only path.</p>
+<h2 id="whats-safe-to-commit-vs-not"><a class="header" href="#whats-safe-to-commit-vs-not">What’s safe to commit vs not</a></h2>
+<p>A short rule:</p>
+<pre><code>SAFE TO COMMIT:    nothing in ~/.roksbnkctl/&lt;workspace&gt;/
+NOT SAFE:          everything in ~/.roksbnkctl/&lt;workspace&gt;/
+</code></pre>
+<p>The longer version, by file:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Commit?</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/config.yaml</code></td><td><strong>No</strong></td><td>Even without <code>api_key_b64</code>, this file documents your cluster identity, region, COS bucket — useful inventory for an attacker.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/config.yaml</code> (with <code>api_key_b64</code>)</td><td><strong>Hard no</strong></td><td>The base64 value is plaintext-equivalent. Committing it = leaking the key.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code></td><td><strong>No</strong></td><td>Cluster admin token.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfstate</code></td><td><strong>No</strong></td><td>Every secret terraform manages, in plaintext.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code></td><td><strong>No</strong></td><td>Generated; references no secrets directly but documents resource layout.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user</code></td><td><strong>Maybe</strong></td><td>If you’ve kept secrets out (no <code>bigip_password</code>, no <code>ibmcloud_api_key</code>), it’s just config. Audit before committing.</td></tr>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/cluster-outputs.json</code></td><td><strong>No</strong></td><td>Cluster identity + COS instance name. Not directly a secret but tied to the workspace.</td></tr>
+<tr><td><code>~/.roksbnkctl/known_hosts</code></td><td><strong>Yes (if you want)</strong></td><td>Host-key fingerprints; not a secret. Same threat model as OpenSSH’s <code>~/.ssh/known_hosts</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The simplest policy: a <code>.gitignore</code> that excludes the entire <code>~/.roksbnkctl/</code> tree. If you really want to share a workspace skeleton with a colleague, send the <code>config.yaml</code> minus <code>api_key_b64</code> and let them re-run <code>roksbnkctl init</code> against their own account.</p>
+<h2 id="how-roksbnkctl-init-writes-the-api-key"><a class="header" href="#how-roksbnkctl-init-writes-the-api-key">How <code>roksbnkctl init</code> writes the API key</a></h2>
+<p>Walk through the writeable side of the resolver:</p>
+<pre><code class="language-bash">$ roksbnkctl init
+Workspace name [default]: dev
+IBM Cloud region [ca-tor]:
+Enter IBM Cloud API key (input hidden): ********
+Save the key for future runs? [Y/n]: y
+  ✓ saved to OS keychain
+</code></pre>
+<p>What just happened:</p>
+<ol>
+<li><code>init</code> prompted for the key. Input echo was off; the key never appeared on screen.</li>
+<li>The user said “save”.</li>
+<li><code>SaveAPIKeyForWorkspace</code> tried <code>SaveAPIKeyToKeychain</code> first.</li>
+<li>The OS keychain accepted the entry (Linux + libsecret in this case). The success path returned <code>"OS keychain"</code> and <code>init</code> printed the confirmation.</li>
+<li>The key was <strong>not</strong> written to <code>terraform.tfvars</code> (that’s the resolver’s job at terraform-invoke time, via the <code>TF_VAR_ibmcloud_api_key</code> env var).</li>
+</ol>
+<p>If step 4 had failed (no keychain, WSL2 without libsecret), <code>SaveAPIKeyForWorkspace</code> would have fallen through to <code>saveAPIKeyToConfig</code> — base64-encoded the key, written it into <code>config.yaml</code>’s <code>api_key_b64</code> field, returned <code>"config.yaml (base64)"</code>. <code>init</code> would have printed:</p>
+<pre><code>  ✓ saved to config.yaml (base64)
+  warning: base64 is obfuscation, not encryption — chmod 0600 the file
+</code></pre>
+<p>Both destinations work. The keychain path is the recommended default; the config-b64 path is the documented fallback.</p>
+<h2 id="backend-specific-cred-propagation-forward-look"><a class="header" href="#backend-specific-cred-propagation-forward-look">Backend-specific cred propagation (forward-look)</a></h2>
+<p>This sprint (Sprint 3) ships the <code>local</code> and <code>docker</code> execution backends. The credential-propagation rules differ per backend:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>Where creds live</th><th>Mechanism</th></tr>
+</thead>
+<tbody>
+<tr><td><code>local</code></td><td>The user’s environment</td><td><code>os/exec</code> inherits parent env</td></tr>
+<tr><td><code>docker</code></td><td>Caller’s env, propagated by reference</td><td><code>docker run --env IBMCLOUD_API_KEY</code> (no <code>=value</code>) — value inherits, never appears in <code>docker inspect</code></td></tr>
+<tr><td><code>k8s</code> (Sprint 4)</td><td>Kubernetes Secret in the <code>roksbnkctl-ops</code> namespace</td><td>Mounted into the ops pod via <code>valueFrom: secretKeyRef</code>; or IAM trusted profile (preferred)</td></tr>
+<tr><td><code>ssh</code> (Sprint 4)</td><td>Remote env or wrapper script</td><td><code>ssh -o SetEnv=IBMCLOUD_API_KEY=...</code> first; falls back to a 0700 wrapper script with <code>trap rm EXIT</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Each backend’s “where creds live” surface is summarised in <a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a>; the design rationale is in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a>.</p>
+<p>The user-facing invariant across all four: you put the key into one of the resolver chain’s sources, and <code>roksbnkctl</code> figures out the rest. You don’t have to learn four different credential APIs to use four different backends.</p>
+<h2 id="the-redactor"><a class="header" href="#the-redactor">The redactor</a></h2>
+<p><code>roksbnkctl</code> writes a fair amount to its own logs (stdout, stderr) — terraform plan output, ibmcloud CLI output, error traces. Anywhere we can plausibly print the IBM API key (because a downstream tool printed it, because an error message included it, because a debug trace dumped a struct), the redactor masks it before the bytes leave the binary.</p>
+<p>What gets redacted:</p>
+<ul>
+<li>The IBM Cloud API key value, anywhere it appears in <code>Stdout</code> or <code>Stderr</code> of an exec backend’s <code>RunOpts</code>. Replaced with <code>[REDACTED]</code>.</li>
+<li>The same value in <code>roksbnkctl</code>’s own log output (the lifecycle commands that wrap terraform-exec).</li>
+</ul>
+<p>What does <strong>not</strong> get redacted:</p>
+<ul>
+<li>Output captured by callers via <code>-o yaml</code>/<code>-o json</code> for resources that legitimately contain the key (e.g., a <code>Secret</code> returned from <code>roksbnkctl k get</code>). The redactor doesn’t know about Kubernetes resource semantics; if you <code>k get secret -o yaml</code>, you’ll see the key. (The same is true of <code>kubectl</code>.)</li>
+<li>Output from a tool you ran outside <code>roksbnkctl</code> (e.g., piping to <code>tee</code> after invoking <code>terraform</code> directly). The redactor only sees bytes that pass through the exec backend’s <code>Stdout</code>/<code>Stderr</code> writers.</li>
+<li>The terraform state file. State is on-disk; the redactor is an in-memory stream filter.</li>
+</ul>
+<p>The implementation is <code>internal/exec/redact.go</code> — a wrapping <code>io.Writer</code> with regex-based redaction. The regex matches the resolved API key value (a known string at run-time) rather than a generic “looks like an IBM API key” pattern, to avoid false positives on legitimate output.</p>
+<p>PRD 04’s acceptance criteria require that the API key never appears in <code>docker inspect</code>, <code>ps -ef</code>, <code>kubectl get pods/events -o yaml</code>, or <code>kubectl describe pod</code>. The redactor is the defence-in-depth layer; the per-backend cred-propagation rules are the primary control.</p>
+<h2 id="cross-references-7"><a class="header" href="#cross-references-7">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 — credential propagation across execution backends</a> — the full design.</li>
+<li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>ibmcloud:</code> block schema.</li>
+<li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — why <code>ibmcloud_api_key</code> doesn’t go in tfvars.</li>
+<li><a href="#ssh-targets">Chapter 15 — SSH targets</a> — the SSH key sources.</li>
+<li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — backend-specific cred mechanics.</li>
+<li><code>internal/cred/resolver.go</code> — the implementation extracted this sprint: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cred/resolver.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cred/resolver.go</a></li>
+<li><code>internal/config/secrets.go</code> — the keychain + config-b64 helpers: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/secrets.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/secrets.go</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ssh-targets"><a class="header" href="#ssh-targets">SSH targets</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>The <code>targets:</code> block in workspace config: defining named SSH targets, the <code>tf-output:&lt;name&gt;</code> key source for keys produced by Terraform, agent integration, and host-key trust-on-first-use behavior.</em></p>
+<p>This chapter is the technical reference for the <code>targets:</code> system. Its companion is <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a>, which is the user-facing prose for “how do I run a command on the jumphost”. Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the upcoming <code>ssh</code> execution backend (Sprint 4) layers on top.</p>
+<p>If you arrived here from Chapter 16 looking for “where do I learn the full surface”, you’re in the right place.</p>
+<h2 id="the-targets-block-schema"><a class="header" href="#the-targets-block-schema">The <code>targets:</code> block schema</a></h2>
+<p>Targets live under <code>targets:</code> in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
+<pre><code class="language-yaml">targets:
+  jumphost:
+    host: 169.45.91.177
+    port: 22
+    user: ubuntu
+    key_source: tf-output:jumphost_shared_key
+
+  bastion:
+    host: ops.example.com
+    user: jgruber
+    key_path: ~/.ssh/id_ed25519
+
+  prod-jump:
+    host: 10.0.0.5
+    user: ec2-user
+    key_source: agent
+</code></pre>
+<p>The Go struct backing it is <code>internal/config.TargetCfg</code>:</p>
+<pre><code class="language-go">type TargetCfg struct {
+    Host      string `yaml:"host"`
+    Port      int    `yaml:"port,omitempty"`        // default 22
+    User      string `yaml:"user"`
+    KeyPath   string `yaml:"key_path,omitempty"`    // file path
+    KeySource string `yaml:"key_source,omitempty"`  // "agent" | "tf-output:&lt;name&gt;"
+}
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td>string</td><td>yes</td><td>IP or hostname. Resolved via the standard Go resolver chain (no special DNS handling).</td></tr>
+<tr><td><code>port</code></td><td>int</td><td>no</td><td>Defaults to <code>22</code>. Only set when the remote sshd listens elsewhere.</td></tr>
+<tr><td><code>user</code></td><td>string</td><td>yes</td><td>Remote login username.</td></tr>
+<tr><td><code>key_path</code></td><td>string</td><td>one-of</td><td>File path to a PEM-encoded private key. Tilde expansion honoured.</td></tr>
+<tr><td><code>key_source</code></td><td>string</td><td>one-of</td><td><code>agent</code> or <code>tf-output:&lt;output-name&gt;</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Validation rules at load time:</p>
+<ul>
+<li>Exactly <strong>one</strong> of <code>key_path</code> or <code>key_source</code> must be set. Setting neither, or both, fails the load with a clear error.</li>
+<li>The target name (the YAML map key) must be non-empty and stable across YAML round-trips — <code>roksbnkctl targets show &lt;name&gt;</code> and <code>roksbnkctl targets remove &lt;name&gt;</code> look up by this name.</li>
+</ul>
+<p>The <code>TargetCfg</code> type lives in <code>internal/config</code> rather than <code>internal/remote</code> to avoid an import cycle: the YAML (de)serialiser needs the wire shape, and the SSH client (<code>internal/remote</code>) needs to consume it. Keeping the shape in <code>config</code> and the runtime <code>Target</code> (parsed key, dialer config, etc.) in <code>remote</code> keeps the dependency direction one-way.</p>
+<h2 id="key-sources"><a class="header" href="#key-sources">Key sources</a></h2>
+<p>The three options for telling <code>roksbnkctl</code> how to find the SSH private key for a target.</p>
+<h3 id="key_path-file"><a class="header" href="#key_path-file"><code>key_path: &lt;file&gt;</code></a></h3>
+<p>A PEM-encoded private key on disk:</p>
+<pre><code class="language-yaml">bastion:
+  host: ops.example.com
+  user: jgruber
+  key_path: ~/.ssh/id_ed25519
+</code></pre>
+<p>Standard OpenSSH formats are accepted: <code>id_rsa</code>, <code>id_ed25519</code>, <code>id_ecdsa</code>, <code>id_dsa</code> (deprecated but supported). Tilde expansion uses <code>os.UserHomeDir()</code> semantics — <code>~/</code> → user home, <code>~user/</code> is <strong>not</strong> supported (use an absolute path).</p>
+<p>The file is read at SSH-connect time, not at config-load time. A missing or unreadable file fails the connect, not the workspace load. This matters for ergonomics: you can edit a target into config.yaml referencing a key path that doesn’t exist yet, then create the key separately, without <code>roksbnkctl init</code>/<code>use</code> failing in between.</p>
+<p>Encrypted keys (passphrase-protected) are not currently supported in the SSH client — the agent path is the recommended workflow for keys that need a passphrase.</p>
+<h3 id="key_source-agent"><a class="header" href="#key_source-agent"><code>key_source: agent</code></a></h3>
+<p>Talks to ssh-agent over <code>$SSH_AUTH_SOCK</code>:</p>
+<pre><code class="language-yaml">prod-jump:
+  host: 10.0.0.5
+  user: ec2-user
+  key_source: agent
+</code></pre>
+<p>The agent presents whichever keys it currently holds; <code>roksbnkctl</code> tries each in turn against the target’s <code>authorized_keys</code> (via SSH’s standard publickey-authentication exchange). The first key the server accepts is the one that gets used.</p>
+<p>This is the right setting when:</p>
+<ul>
+<li>Your team manages keys via 1Password / hardware tokens / <code>gpg-agent</code> and you don’t want a key file on disk.</li>
+<li>You’re on a shared workstation where putting the key file in <code>~/.ssh/</code> is undesirable.</li>
+<li>You’re already using ssh-agent for everything else and want consistent behaviour.</li>
+</ul>
+<p><strong>Platform note</strong>: ssh-agent integration is <strong>Linux/macOS-only</strong> in v0.7. Windows users should use <code>key_path</code> to a file. (The Windows ssh-agent uses a named-pipe protocol that the underlying Go SSH library doesn’t yet wrap; full support is a v2 item.)</p>
+<h3 id="key_source-tf-outputoutput-name"><a class="header" href="#key_source-tf-outputoutput-name"><code>key_source: tf-output:&lt;output-name&gt;</code></a></h3>
+<p>Reads the key from the workspace’s terraform state output of that name:</p>
+<pre><code class="language-yaml">jumphost:
+  host: 169.45.91.177
+  user: ubuntu
+  key_source: tf-output:jumphost_shared_key
+</code></pre>
+<p>This is the auto-discovered jumphost path. The upstream HCL provisions a <code>tls_private_key</code> resource per cluster create, marks it <code>sensitive</code>, and surfaces it as a terraform output named <code>jumphost_shared_key</code>. <code>roksbnkctl</code> reads it via the equivalent of <code>terraform output -raw &lt;name&gt;</code> at SSH-connect time.</p>
+<p>What this gets you that <code>key_path</code> doesn’t:</p>
+<ul>
+<li><strong>No on-disk key file separate from terraform state.</strong> The key only exists in <code>terraform.tfstate</code> (which is already a sensitive workspace artefact) and in memory during the SSH handshake.</li>
+<li><strong>Auto-rotation on cluster re-create.</strong> Destroy and re-create the cluster, terraform generates a new <code>tls_private_key</code>, and the next <code>--on jumphost</code> invocation picks up the new key without any manual rewriting of the workspace config.</li>
+<li><strong>Single source of truth.</strong> The key value is in terraform state — the same place every other cluster-generated secret lives.</li>
+</ul>
+<p>The terraform output must be a string-typed PEM-encoded private key. <code>terraform output -raw &lt;name&gt;</code> returns the value regardless of the <code>sensitive</code> flag (the flag just suppresses display; the data is still readable to anyone with state access).</p>
+<h2 id="host-key-tofu-and-roksbnkctlknown_hosts"><a class="header" href="#host-key-tofu-and-roksbnkctlknown_hosts">Host-key TOFU and <code>~/.roksbnkctl/known_hosts</code></a></h2>
+<p><code>roksbnkctl</code> keeps its own <code>known_hosts</code> file at <code>~/.roksbnkctl/known_hosts</code>. <strong>It does not read or write <code>~/.ssh/known_hosts</code>.</strong> The two files are independent.</p>
+<h3 id="why-a-separate-file"><a class="header" href="#why-a-separate-file">Why a separate file</a></h3>
+<p>Three reasons:</p>
+<ol>
+<li><strong>Isolation.</strong> <code>roksbnkctl</code>’s SSH client is a different program from <code>ssh(1)</code>; mixing host-key state between the two creates surprising behaviour (deleting a key from <code>~/.ssh/known_hosts</code> doesn’t clear it from <code>roksbnkctl</code>’s view, or vice versa).</li>
+<li><strong>Audit.</strong> A <code>roksbnkctl</code>-managed file lets the tool’s behaviour be reasoned about without inspecting the user’s broader SSH state.</li>
+<li><strong>Cleanup.</strong> <code>roksbnkctl ws delete &lt;name&gt;</code> could theoretically scrub host-key entries on workspace destroy; mixing into <code>~/.ssh/known_hosts</code> would mean editing a file the tool didn’t own.</li>
+</ol>
+<p>The format matches OpenSSH’s <code>~/.ssh/known_hosts</code> exactly (so future cross-pollination is technically possible), but the filenames are deliberately separate.</p>
+<h3 id="tofu-on-first-connect"><a class="header" href="#tofu-on-first-connect">TOFU on first connect</a></h3>
+<p>The first time you connect to a target, <code>roksbnkctl</code> shows the host key fingerprint and asks whether to trust it:</p>
+<pre><code class="language-bash">$ roksbnkctl exec --on jumphost -- whoami
+Add 169.45.91.177:22's key (SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=) to ~/.roksbnkctl/known_hosts? [y/N]: y
+ubuntu
+</code></pre>
+<p>Answer <code>y</code> and the key is appended. Subsequent connects to the same <code>host:port</code> with the same server key trust silently.</p>
+<p>Answer <code>n</code> and the connect aborts with exit code 126.</p>
+<h3 id="mismatch-behaviour"><a class="header" href="#mismatch-behaviour">Mismatch behaviour</a></h3>
+<p>If the host key changes — re-provisioned VM, MITM attack, configuration drift — <code>roksbnkctl</code> refuses to connect:</p>
+<pre><code>error: host key mismatch: 169.45.91.177:22 known with SHA256:abc123... but
+       server presented SHA256:zyx987...; if the host was rebuilt, edit
+       ~/.roksbnkctl/known_hosts
+</code></pre>
+<p>Same model OpenSSH uses. The fix is the same: edit (or <code>ssh-keygen -R</code>) the file to remove the stale entry, then re-connect to re-trigger the TOFU prompt.</p>
+<p>The default <code>ssh-keygen</code> binary works against <code>~/.roksbnkctl/known_hosts</code> — pass <code>-f</code>:</p>
+<pre><code class="language-bash">ssh-keygen -R 169.45.91.177 -f ~/.roksbnkctl/known_hosts
+</code></pre>
+<h2 id="--insecure-host-key-for-ci"><a class="header" href="#--insecure-host-key-for-ci"><code>--insecure-host-key</code> for CI</a></h2>
+<p>Automation contexts can’t answer a TOFU prompt. The <code>--insecure-host-key</code> flag skips host-key verification entirely:</p>
+<pre><code class="language-bash">roksbnkctl exec --on jumphost --insecure-host-key -- whoami
+</code></pre>
+<p>This is <strong>insecure</strong> — anyone in the network path can MITM the connection — and is intended only for short-lived CI runs against ephemeral test infrastructure. Don’t use it where session content is sensitive.</p>
+<p>The flag is per-invocation, not per-target. There’s deliberately no <code>targets.&lt;name&gt;.insecure_host_key: true</code> config knob: forcing the choice into the call site keeps the security implications visible at every invocation.</p>
+<p>When to use it:</p>
+<ul>
+<li>E2E tests against a freshly-provisioned cluster jumphost where the host key is just-generated and changes per run.</li>
+<li>Pipeline runs against ephemeral test VMs that get torn down within minutes.</li>
+<li>Recovery scenarios where the known-hosts file is corrupt and you need to bootstrap.</li>
+</ul>
+<p>When <strong>not</strong> to use it:</p>
+<ul>
+<li>Production jumphosts with stable identity.</li>
+<li>Customer environments where session integrity matters.</li>
+<li>Anything where the SSH session carries secrets you can’t afford to leak to a passive attacker.</li>
+</ul>
+<h2 id="roksbnkctl-targets--full-reference"><a class="header" href="#roksbnkctl-targets--full-reference"><code>roksbnkctl targets</code> — full reference</a></h2>
+<p>Four subcommands. Chapter 16 introduces them with worked examples; here’s the complete flag surface.</p>
+<h3 id="roksbnkctl-targets-list"><a class="header" href="#roksbnkctl-targets-list"><code>roksbnkctl targets list</code></a></h3>
+<pre><code>NAME       HOST                USER     KEY
+jumphost   169.45.91.177:22    ubuntu   tf-output:jumphost_shared_key
+bastion    ops.example.com:22  jgruber  file:~/.ssh/id_ed25519
+prod-jump  10.0.0.5:22         ec2-user agent
+</code></pre>
+<p>Flags:</p>
+<ul>
+<li><code>--verbose</code> / <code>-v</code>: also prints whether the target has a known-hosts entry recorded.</li>
+<li><code>-o json</code>: machine-readable form. Schema: <code>{"targets": [{"name": ..., "host": ..., "port": ..., "user": ..., "key_source": ...}]}</code>.</li>
+</ul>
+<p>The <code>KEY</code> column shows the source descriptor — never the key material. File-backed sources are prefixed <code>file:</code> to distinguish them visually from <code>tf-output:</code> and <code>agent</code>.</p>
+<h3 id="roksbnkctl-targets-show-name"><a class="header" href="#roksbnkctl-targets-show-name"><code>roksbnkctl targets show &lt;name&gt;</code></a></h3>
+<pre><code>name:        jumphost
+host:        169.45.91.177
+port:        22
+user:        ubuntu
+key_source:  tf-output:jumphost_shared_key
+</code></pre>
+<p>Same restriction: key material itself is never printed.</p>
+<p><code>-o json</code> is supported for scripted callers.</p>
+<h3 id="roksbnkctl-targets-add-name-"><a class="header" href="#roksbnkctl-targets-add-name-"><code>roksbnkctl targets add &lt;name&gt; ...</code></a></h3>
+<p>Required flags: <code>--host</code>, <code>--user</code>, and exactly one of <code>--key-path</code> / <code>--key-source</code>.</p>
+<pre><code class="language-bash"># File-backed key
+roksbnkctl targets add bastion \
+  --host ops.example.com \
+  --user jgruber \
+  --key-path ~/.ssh/id_ed25519
+
+# ssh-agent
+roksbnkctl targets add prod-jump \
+  --host 10.0.0.5 \
+  --user ec2-user \
+  --key-source agent
+
+# Non-default port
+roksbnkctl targets add custom \
+  --host 10.0.0.5 \
+  --user root \
+  --key-path ~/.ssh/custom \
+  --port 2222
+
+# tf-output (rare; usually auto-populated by `up`)
+roksbnkctl targets add backup-jump \
+  --host 10.0.0.6 \
+  --user ubuntu \
+  --key-source tf-output:backup_jumphost_key
+</code></pre>
+<p>Refuses to add a target whose name collides with an existing entry — use <code>targets remove &lt;name&gt;</code> first, or pick a different name.</p>
+<h3 id="roksbnkctl-targets-remove-name"><a class="header" href="#roksbnkctl-targets-remove-name"><code>roksbnkctl targets remove &lt;name&gt;</code></a></h3>
+<pre><code class="language-bash">roksbnkctl targets remove bastion
+</code></pre>
+<p>Removes the entry from <code>config.yaml</code>. <strong>Does not</strong> remove the corresponding host-key line from <code>~/.roksbnkctl/known_hosts</code> — re-adding the same target later doesn’t re-trigger TOFU. This is deliberate; if you want to wipe the host key too, edit the known-hosts file by hand.</p>
+<h2 id="auto-discovery-from-terraform-outputs"><a class="header" href="#auto-discovery-from-terraform-outputs">Auto-discovery from terraform outputs</a></h2>
+<p>The single most-used target — <code>jumphost</code> — is auto-populated post-<code>roksbnkctl up</code>. The flow:</p>
+<ol>
+<li>
+<p><code>roksbnkctl up</code> runs <code>terraform apply</code> against the workspace’s HCL.</p>
+</li>
+<li>
+<p>After successful apply, <code>roksbnkctl</code> reads three outputs: <code>testing_tgw_jumphost_ip</code>, <code>testing_tgw_jumphost_user</code>, <code>jumphost_shared_key</code>.</p>
+</li>
+<li>
+<p>If <code>testing_tgw_jumphost_ip</code> is non-empty AND not the literal sentinel string <code>"TGW jumphost not created"</code> (which the upstream HCL emits when the testing module is disabled), <code>roksbnkctl</code> writes a <code>jumphost</code> target into <code>config.yaml</code>:</p>
+<pre><code class="language-yaml">targets:
+  jumphost:
+    host: &lt;testing_tgw_jumphost_ip&gt;
+    user: &lt;testing_tgw_jumphost_user || "ubuntu"&gt;
+    key_source: tf-output:jumphost_shared_key
+</code></pre>
+</li>
+<li>
+<p>A confirmation line is printed:</p>
+<pre><code>✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
+</code></pre>
+</li>
+</ol>
+<p>The auto-population is <strong>idempotent</strong> — re-running <code>up</code> against an already-jumphost-populated workspace re-writes the same fields. If you’ve manually customised the entry (changed the user, swapped to <code>key_path</code>), the auto-population overwrites your changes. There’s no merge logic; the latest <code>up</code> wins.</p>
+<p>If <code>testing_create_tgw_jumphost = false</code> in tfvars, the upstream HCL skips creating the jumphost VM and emits the sentinel output. Auto-population is then a no-op, and you’re free to create your own <code>jumphost</code> (or differently-named) entry via <code>targets add</code>.</p>
+<h3 id="inspecting-what-the-post-up-flow-saw"><a class="header" href="#inspecting-what-the-post-up-flow-saw">Inspecting what the post-<code>up</code> flow saw</a></h3>
+<p>When the auto-population doesn’t happen and you expected it to, check:</p>
+<pre><code class="language-bash">roksbnkctl tf output testing_tgw_jumphost_ip
+roksbnkctl tf output testing_tgw_jumphost_user
+roksbnkctl tf output -json jumphost_shared_key | head -c 50
+</code></pre>
+<p>(The third one returns a JSON-encoded string for a sensitive output; truncate to confirm it’s non-empty without dumping the key.)</p>
+<p>If all three are populated and the auto-write didn’t fire, that’s a bug — file an issue with the output values redacted.</p>
+<h2 id="what-sprint-4s-ssh-execution-backend-will-add"><a class="header" href="#what-sprint-4s-ssh-execution-backend-will-add">What Sprint 4’s SSH execution backend will add</a></h2>
+<p>Today (Sprint 3), the SSH client backs the <code>--on &lt;target&gt;</code> flag — one-shot remote command execution. Sprint 4’s <code>ssh</code> <strong>execution backend</strong> layers more on top, reusing the same <code>internal/remote.Client</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Sprint 4 addition</th><th>What it gives you</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>File materialisation</strong></td><td><code>RunOpts.Files</code> map gets written to <code>/tmp/roksbnkctl.&lt;rand&gt;/&lt;basename&gt;</code> on the remote, available as the working directory for the command. Cleanup via <code>trap 'rm -rf' EXIT</code> in a wrapper.</td></tr>
+<tr><td><strong>Env passing with fallback</strong></td><td>First tries <code>ssh -o SetEnv=KEY=VALUE</code> (requires remote sshd <code>AcceptEnv</code>). On failure, writes a 0700 wrapper script that exports the env and execs the command, with <code>trap 'rm -f $0' EXIT</code> to scrub.</td></tr>
+<tr><td><strong>Apt bootstrap</strong></td><td>If the remote target doesn’t have a tool (<code>iperf3</code>, <code>ibmcloud</code>) installed, the backend can <code>sudo apt-get install</code> it on demand (Ubuntu only this round).</td></tr>
+<tr><td><strong>SCP-and-cleanup for kubeconfig</strong></td><td>The backend’s recommended path for shipping a kubeconfig to the remote: SCP to a tempdir, run, <code>trap 'rm -rf' EXIT</code> to scrub.</td></tr>
+<tr><td><strong>Wrapper-script credential propagation</strong></td><td>Detailed in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 § SSH</a>. Brief on-disk window with strict cleanup.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>targets:</code> schema and the <code>roksbnkctl targets</code> commands stay exactly the same — Sprint 4 just gives the backend more it can do with each target. Anything you set up in Sprint 3 keeps working.</p>
+<p>The split between the lightweight <code>--on</code> path (Sprint 1) and the full <code>ssh</code> backend (Sprint 4) is deliberate: <code>--on</code> stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).</p>
+<h2 id="cross-references-8"><a class="header" href="#cross-references-8">Cross-references</a></h2>
+<ul>
+<li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — where <code>targets:</code> fits in the overall schema.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — the SSH-key sources from a credential-discipline perspective.</li>
+<li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a> — the user-facing prose for “how do I use this”.</li>
+<li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — where the SSH backend (Sprint 4) sits in the broader backend matrix.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01 — SSH client + –on flag</a> — the design rationale for <code>targets:</code> and the SSH client.</li>
+<li><code>internal/remote/</code> package: <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/remote">https://github.com/jgruberf5/roksbnkctl/tree/main/internal/remote</a></li>
+<li><code>internal/cli/targets.go</code>: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/targets.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/targets.go</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-on-flag-and-ssh-jumphosts"><a class="header" href="#the-on-flag-and-ssh-jumphosts">The –on flag and SSH jumphosts</a></h1>
 <p>The <code>--on &lt;target&gt;</code> flag re-runs a <code>roksbnkctl</code> passthrough command (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on a remote SSH host instead of locally. After a successful <code>roksbnkctl up</code>, a <code>jumphost</code> target is auto-populated from the upstream HCL’s terraform outputs, so the flag works with no manual configuration in the common case.</p>
@@ -1760,7 +2705,7 @@ roksbnkctl ws delete e2e-cleanup --force
 <p>The auto-registered target uses <code>user: ubuntu</code> (the upstream HCL provisions an Ubuntu cloud image whose default user is <code>ubuntu</code>).</p>
 <p>The <code>key_source: tf-output:jumphost_shared_key</code> form means the private key is <strong>read from terraform state at SSH-connect time</strong> rather than being copied into the workspace config or written to disk separately. The key only ever exists in terraform state and in memory during a connect; destroying and re-creating the cluster generates a new key, and <code>roksbnkctl</code> picks up the new one without any manual intervention.</p>
 <p>If your cluster apply produced a <code>testing_tgw_jumphost_ip</code> output of <code>"TGW jumphost not created"</code> (the upstream HCL emits this string when the testing module is disabled) the auto-population is skipped. You can still add a <code>jumphost</code> target manually with <code>roksbnkctl targets add</code> if you have a different bastion in mind.</p>
-<h2 id="key-sources"><a class="header" href="#key-sources">Key sources</a></h2>
+<h2 id="key-sources-1"><a class="header" href="#key-sources-1">Key sources</a></h2>
 <p>Three ways to tell <code>roksbnkctl</code> how to find the SSH private key:</p>
 <ol>
 <li>
@@ -1786,7 +2731,7 @@ ubuntu
 <pre><code>error: host key mismatch: 169.45.91.177:22 known with SHA256:abc123... but server presented SHA256:zyx987...; if the host was rebuilt, edit ~/.roksbnkctl/known_hosts
 </code></pre>
 <p>This is “trust on first use” (TOFU) — the same model OpenSSH uses for new hosts. Exit code is 126 on host-key rejections.</p>
-<h3 id="--insecure-host-key-for-ci"><a class="header" href="#--insecure-host-key-for-ci"><code>--insecure-host-key</code> for CI</a></h3>
+<h3 id="--insecure-host-key-for-ci-1"><a class="header" href="#--insecure-host-key-for-ci-1"><code>--insecure-host-key</code> for CI</a></h3>
 <p>In automation contexts where a TOFU prompt would block forever, pass <code>--insecure-host-key</code> to skip host-key verification entirely:</p>
 <pre><code class="language-bash">roksbnkctl exec --on jumphost --insecure-host-key -- whoami
 </code></pre>
@@ -1877,16 +2822,205 @@ roksbnkctl oc --on jumphost projects
 <li><strong><code>~/.ssh/config</code> parsing.</strong> Targets must be defined explicitly in workspace config; <code>roksbnkctl</code> does not read your existing <code>~/.ssh/config</code>.</li>
 <li><strong>Password auth.</strong> Keys + agent only. Passwords are not supported and won’t be.</li>
 <li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job in v0.9. v0.7’s <code>--on</code> does one-shot remote exec only.</li>
-<li><strong>Windows ssh-agent.</strong> The <code>key_source: agent</code> path is Linux/macOS only in v0.7; Windows users must use <code>key_path</code> to a file. Already noted in <a href="#key-sources">Key sources</a> above; called out here so a Windows reader who skipped to this section doesn’t miss it.</li>
+<li><strong>Windows ssh-agent.</strong> The <code>key_source: agent</code> path is Linux/macOS only in v0.7; Windows users must use <code>key_path</code> to a file. Already noted in <a href="#key-sources-1">Key sources</a> above; called out here so a Windows reader who skipped to this section doesn’t miss it.</li>
 </ul>
 <h2 id="cross-reference"><a class="header" href="#cross-reference">Cross-reference</a></h2>
 <p><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can’t <code>AcceptEnv</code>, and apt-bootstrap of missing tools on Ubuntu jumphosts. The <code>--on</code> flag stays as the lightweight one-shot path; <code>--backend ssh</code> is the deeper integration. The two are designed to share the same <code>internal/remote.Client</code> so what you learn here translates directly.</p>
 <p>For the design rationale, edge cases, and open questions, read <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01</a> — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="execution-backends-local-docker-k8s-ssh"><a class="header" href="#execution-backends-local-docker-k8s-ssh">Execution backends: local, docker, k8s, ssh</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>Note: Sprint 3 lands the introduction (overview of the four backends and the <code>--backend</code> flag); Sprint 4 expands the chapter with deep-dive sections on each backend’s internals.</em></p>
-<p><em>The four execution backends <code>roksbnkctl</code> supports for running tools like <code>ibmcloud</code> and <code>iperf3</code>: how each one is wired, when to pick it, and the <code>--backend</code> flag that selects between them.</em></p>
+<p><code>roksbnkctl</code> runs a handful of external tools as part of its job — <code>ibmcloud</code>, <code>terraform</code>, <code>iperf3</code>, eventually <code>dig</code>-equivalents and others. By default each tool runs as a child process on your laptop. That’s fine for some tools and wrong for others: <code>iperf3</code> from your laptop measures your laptop’s internet uplink, not the cluster’s bandwidth.</p>
+<p>The execution-backend system lets you pick <strong>where</strong> each tool runs without changing the surface command. The same <code>roksbnkctl ibmcloud ks cluster ls</code> invocation can run as a local process, inside a vendored container, inside the cluster, or on a remote SSH host — selected by a flag or a per-tool default in your workspace config.</p>
+<p>This chapter is the introduction. Sprint 3 ships the system foundations and the <code>local</code> + <code>docker</code> backends; Sprint 4 expands the chapter with deep-dive sections on the <code>k8s</code> and <code>ssh</code> backends. Look for the <code>*Coming in Sprint 4.*</code> markers below.</p>
+<h2 id="the-four-backends-at-a-glance"><a class="header" href="#the-four-backends-at-a-glance">The four backends at a glance</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>What it does</th><th>Ships in</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>local</strong></td><td><code>os/exec</code> — spawns the tool as a child process, inheriting your env and PATH</td><td>Sprint 3 (today; today’s default for everything)</td></tr>
+<tr><td><strong>docker</strong></td><td><code>docker run</code> against a vendored image (<code>ghcr.io/jgruberf5/roksbnkctl-tools-&lt;tool&gt;:&lt;v&gt;</code>); frozen toolchain version</td><td>Sprint 3 (today)</td></tr>
+<tr><td><strong>k8s</strong></td><td>Runs inside the cluster, either in a long-lived ops pod or as a one-shot Job; auth via SA token</td><td>Sprint 4</td></tr>
+<tr><td><strong>ssh</strong></td><td>Runs on a registered SSH target via the SSH client; auto-installs missing tools on Ubuntu</td><td>Sprint 4</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each backend solves a different problem:</p>
+<ul>
+<li><strong>local</strong>: fastest startup, simplest mental model, requires the host tool to exist on <code>PATH</code>.</li>
+<li><strong>docker</strong>: reproducible across dev machines, no host install needed, frozen at a known-good tool version.</li>
+<li><strong>k8s</strong>: network-correct (private IPs reachable, cluster-internal services accessible), zero host install, in-cluster identity via ServiceAccount.</li>
+<li><strong>ssh</strong>: pre-cluster ops from a known-IP bastion, customer-firewall workflows, air-gapped environments where the laptop can’t reach IBM Cloud APIs but the jumphost can.</li>
+</ul>
+<p>All four implementations conform to the same Go interface (<code>internal/exec.Backend</code>) so callers don’t branch on backend type — they just call <code>backend.Run(ctx, argv, opts)</code> and let the implementation handle the mechanics. That uniformity is what lets the same <code>roksbnkctl ibmcloud ks cluster ls</code> work across all four with no surface-level change.</p>
+<h2 id="the---backend-cli-flag"><a class="header" href="#the---backend-cli-flag">The <code>--backend</code> CLI flag</a></h2>
+<p>Override the per-tool default for a single invocation:</p>
+<pre><code class="language-bash"># Today's default (local) is implicit
+roksbnkctl ibmcloud ks cluster ls
+
+# Same command, in a vendored docker image (today)
+roksbnkctl ibmcloud --backend docker ks cluster ls
+
+# Same command, in the cluster (Sprint 4)
+roksbnkctl ibmcloud --backend k8s ks cluster ls
+
+# Same command, on a remote SSH host (Sprint 4)
+roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
+</code></pre>
+<p>Format:</p>
+<pre><code>--backend &lt;name&gt;            # local | docker | k8s
+--backend ssh:&lt;target-name&gt; # SSH backend; target name from `roksbnkctl targets list`
+</code></pre>
+<p>The flag is <strong>persistent at the root</strong> — it works for any command that runs an external tool. Commands that don’t run external tools (like <code>roksbnkctl ws list</code>) ignore it.</p>
+<p>The flag wins over the workspace-config default. If <code>config.yaml</code> says <code>iperf3: { backend: k8s }</code> and you pass <code>--backend local</code>, the local backend runs.</p>
+<h3 id="backend-failure-semantics"><a class="header" href="#backend-failure-semantics">Backend-failure semantics</a></h3>
+<p>Each backend has a different failure surface. The convention is:</p>
+<ul>
+<li><strong>Backend startup failure</strong> (Docker daemon down, k8s cluster unreachable, SSH target down) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
+<li><strong>Tool exit code</strong> (the actual <code>ibmcloud</code> / <code>terraform</code> / <code>iperf3</code> exit code) ⇒ propagated 1:1, including non-zero codes.</li>
+<li><strong>Backend-internal error</strong> during a successful run (e.g., the docker container started but failed to bind-mount the kubeconfig) ⇒ exit code <code>126</code>, with a message naming the failure mode.</li>
+</ul>
+<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (126/127).</p>
+<h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
+<p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+exec:
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+</code></pre>
+<p>The defaults shipped today (Sprint 3):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default backend</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here.</td></tr>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code> (Sprint 4) / <code>local</code> (today)</td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default lands when Sprint 4 wires the backend; today’s default falls back to <code>local</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> covers the <code>exec:</code> block schema in detail; this chapter just notes its place in the backend system.</p>
+<p><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> (Sprint 4) is the decision tree for “which backend should I pick for this tool in this scenario”.</p>
+<h2 id="whats-available-today-sprint-3"><a class="header" href="#whats-available-today-sprint-3">What’s available today (Sprint 3)</a></h2>
+<h3 id="local"><a class="header" href="#local"><code>local</code></a></h3>
+<p>The default. <code>os/exec.CommandContext(ctx, argv[0], argv[1:]...)</code>, inheriting the parent process’s environment, PATH, working directory. Identical to today’s behaviour from previous sprints — the <code>local</code> backend is mostly a refactor of existing call sites through the new <code>Backend</code> interface so everything is uniform.</p>
+<p>Scenarios where <code>local</code> is the right call:</p>
+<ul>
+<li>You have the tool installed and on PATH already.</li>
+<li>You want fastest startup (no container, no SSH handshake, no cluster API call).</li>
+<li>You’re running <code>terraform</code> against the workspace’s local state (the established workflow).</li>
+<li>You’re debugging and want the simplest mental model for “where did that output come from”.</li>
+</ul>
+<h3 id="docker"><a class="header" href="#docker"><code>docker</code></a></h3>
+<p>Runs the tool inside a vendored container image:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend docker ks cluster ls
+</code></pre>
+<p>Mechanically:</p>
+<pre><code>docker run --rm \
+  --workdir /work \
+  -v &lt;workspace-state&gt;:/work \                # for terraform state, etc.
+  -v &lt;kubeconfig-path&gt;:/root/.kube/config:ro \ # if the tool needs a kubeconfig
+  -e IBMCLOUD_API_KEY \                       # env var name only; value inherits
+  ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt; \
+  ks cluster ls
+</code></pre>
+<p>Three things to call out:</p>
+<ol>
+<li><strong>Frozen toolchain version.</strong> The image tag pins the tool’s version. Updates happen on <code>roksbnkctl</code> release, not on the host’s package manager schedule.</li>
+<li><strong>No host install.</strong> You don’t need <code>ibmcloud</code> on PATH. <code>docker</code> is the only prerequisite.</li>
+<li><strong>Credential propagation by reference.</strong> The <code>--env IBMCLOUD_API_KEY</code> form (no <code>=value</code>) inherits the value from the caller’s env. The literal string never appears in <code>docker inspect</code> or <code>ps</code> listings — that’s a <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a> acceptance criterion. See <a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> for the full propagation story.</li>
+</ol>
+<p>The vendored images live at:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Image</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt;</code> (vendored from <code>icr.io/ibm-cloud/ibmcloud-cli</code> upstream)</td></tr>
+<tr><td><code>iperf3</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> (Alpine + iperf3)</td></tr>
+<tr><td><code>terraform</code></td><td><code>hashicorp/terraform:&lt;v&gt;</code> (official upstream)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Image versions are tagged in lock-step with <code>roksbnkctl</code> releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See <a href="#building-from-source">Chapter 31 — Building from source</a> (Sprint 6) for the build pipeline details.</p>
+<p>When <code>docker</code> is the right call:</p>
+<ul>
+<li>You’re on a clean dev machine without <code>ibmcloud</code> installed and don’t want to install it.</li>
+<li>You need a frozen tool version for CI reproducibility.</li>
+<li>You’re debugging a “works on my machine” issue and want to factor out the host install variable.</li>
+</ul>
+<p>When <code>docker</code> is the <strong>wrong</strong> call:</p>
+<ul>
+<li>The tool needs network access that your laptop has but the container doesn’t (rare; default bridge networking usually preserves laptop’s egress).</li>
+<li>You’re running <code>iperf3</code> and want a network-locality benefit — <code>docker</code> doesn’t give you that vs <code>local</code>. Use <code>k8s</code> (Sprint 4) instead.</li>
+<li>You’re on Windows. Linux/macOS docker daemons are in scope; Windows Docker Desktop coverage is deferred to a future round.</li>
+</ul>
+<h2 id="coming-in-sprint-4"><a class="header" href="#coming-in-sprint-4">Coming in Sprint 4</a></h2>
+<h3 id="k8s-backend-deep-dive"><a class="header" href="#k8s-backend-deep-dive"><code>k8s</code> backend deep-dive</a></h3>
+<p><em>Coming in Sprint 4.</em></p>
+<p>The k8s backend will cover:</p>
+<ul>
+<li>The two execution patterns (long-lived ops pod vs one-shot Job).</li>
+<li><code>roksbnkctl ops install/show/uninstall</code> — managing the cluster-side ops pod, namespace, ServiceAccount, ClusterRole.</li>
+<li>Credential propagation via Kubernetes Secret (or, preferred, IAM trusted profile linking the ops pod’s SA to a per-cluster IAM identity).</li>
+<li>iperf3-specific orchestration: server-side Deployment + LoadBalancer Service, client-side Job, log-collection workflow.</li>
+</ul>
+<p>For now: the long-lived ops pod is the recommended path for <code>ibmcloud</code>-style ad-hoc commands; one-shot Jobs are the path for <code>iperf3</code> and (eventually) <code>terraform</code>. <a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> (Sprint 4) covers the deployment-time mechanics.</p>
+<h3 id="ssh-backend-deep-dive"><a class="header" href="#ssh-backend-deep-dive"><code>ssh</code> backend deep-dive</a></h3>
+<p><em>Coming in Sprint 4.</em></p>
+<p>The ssh backend will cover:</p>
+<ul>
+<li>How it builds on Sprint 1’s <code>internal/remote.Client</code> (the same SSH client backing <code>--on</code>).</li>
+<li>File materialisation: <code>RunOpts.Files</code> written to <code>/tmp/roksbnkctl.&lt;rand&gt;/</code> on the remote, cleaned up via <code>trap</code> on session exit.</li>
+<li>Env propagation via <code>ssh -o SetEnv=KEY=VALUE</code> (preferred), falling back to a 0700 wrapper script when the remote sshd doesn’t allow <code>AcceptEnv</code>.</li>
+<li>Apt-bootstrap: <code>command -v &lt;tool&gt;</code> first, <code>sudo apt-get install -y &lt;pkg&gt;</code> on missing (Ubuntu only this round).</li>
+<li>The SCP-and-cleanup pattern for shipping a kubeconfig to the remote without a persistent on-disk file.</li>
+</ul>
+<p>For now: the <code>--on jumphost ...</code> path covered in <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> is the lightweight predecessor. The same <code>targets:</code> config block drives both; Sprint 4’s backend just gives the system more it can do with each target.</p>
+<h3 id="per-backend-when-to-use-it-table"><a class="header" href="#per-backend-when-to-use-it-table">Per-backend “when to use it” table</a></h3>
+<p><em>Coming in Sprint 4.</em></p>
+<p>The full decision matrix lands in <a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a>, with concrete scenarios per (tool, backend) pair: GSLB DNS testing wants <code>local</code>+<code>k8s</code>; iperf3 throughput wants <code>k8s</code>; ibmcloud from a customer-firewalled office wants <code>ssh</code>; frozen toolchain in CI wants <code>docker</code>.</p>
+<h2 id="the-backend-interface"><a class="header" href="#the-backend-interface">The <code>Backend</code> interface</a></h2>
+<p>For the curious, the Go interface every backend conforms to:</p>
+<pre><code class="language-go">package exec
+
+type Backend interface {
+    Run(ctx context.Context, argv []string, opts RunOpts) (int, error)
+    Name() string
+}
+
+type RunOpts struct {
+    Stdin           io.Reader
+    Stdout, Stderr  io.Writer
+    Env             []string         // KEY=VALUE pairs
+    WorkDir         string           // best-effort; some backends ignore (k8s)
+    TTY             bool             // request PTY where supported
+    Files           map[string][]byte // files materialized at exec time
+    Credentials     *Credentials     // routed via PRD 04's per-backend mechanism
+}
+
+type Credentials struct {
+    KubeconfigBytes []byte
+    IBMCloudAPIKey  string
+}
+</code></pre>
+<p>All four implementations (today’s <code>local</code> + <code>docker</code>, Sprint 4’s <code>k8s</code> + <code>ssh</code>) satisfy this interface. Call sites in <code>cli/cluster.go</code>, <code>cli/test.go</code>, etc., get a <code>Backend</code> from the registry and call <code>Run(...)</code> — no branching on backend type. The uniformity is what makes the system extensible without rewriting callers each time a backend lands.</p>
+<p>The <code>Credentials</code> struct is the bridge between the resolver chain (env → keychain → config-b64 → prompt) covered in <a href="#credentials-and-the-resolver-chain">Chapter 14</a> and the per-backend propagation rules in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a>. Each backend translates the struct into the mechanism appropriate to where it runs: env vars for <code>local</code>, <code>--env KEY</code> (no <code>=value</code>) for <code>docker</code>, secretKeyRef for <code>k8s</code>, <code>SetEnv</code> or wrapper script for <code>ssh</code>.</p>
+<h2 id="cross-references-9"><a class="header" href="#cross-references-9">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03 — pluggable execution backends</a> — the design rationale and full per-backend spec.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 — credential propagation</a> — the cred-passing rules every backend implements.</li>
+<li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — how creds reach the backend in the first place.</li>
+<li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a> — the lightweight remote-exec predecessor to the SSH backend.</li>
+<li><a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend per tool</a> — the decision tree (Sprint 4).</li>
+<li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — deploy-time mechanics for the <code>k8s</code> backend (Sprint 4).</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="choosing-a-backend-per-tool"><a class="header" href="#choosing-a-backend-per-tool">Choosing a backend per tool</a></h1>
 <p><em>Coming in Sprint 4.</em></p>
@@ -2162,7 +3296,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </table>
 </div>
 <p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
-<h2 id="cross-references-5"><a class="header" href="#cross-references-5">Cross-references</a></h2>
+<h2 id="cross-references-10"><a class="header" href="#cross-references-10">Cross-references</a></h2>
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6719f835.js";
+            window.path_to_searchindex_js = "searchindex-60854cfa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,330 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="workspace-config-configyaml"><a class="header" href="#workspace-config-configyaml">Workspace config (config.yaml)</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>Full schema reference for the per-workspace <code>config.yaml</code> with an annotated example, every field documented, and the defaults applied when a key is omitted.</em></p>
+<p>This chapter is the field-by-field reference for the per-workspace <code>config.yaml</code>. If you’ve read <a href="./06-workspaces.html">Chapter 6 — Workspaces</a> you’ve seen the on-disk layout; this chapter zooms in on the YAML file that drives everything else (<code>init</code>, <code>up</code>, <code>down</code>, <code>cluster up</code>, the test suite, the SSH targets, the new execution backends).</p>
+<p>You don’t usually edit this file by hand. <code>roksbnkctl init</code> generates it interactively; later runs read it. But because every other knob in the tool reads from here, it’s worth knowing what every field means and what defaults apply when you leave one out.</p>
+<h2 id="file-location"><a class="header" href="#file-location">File location</a></h2>
+<p>Each workspace’s config lives at:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+</code></pre>
+<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0644</code> — readable by your user, the same trust posture as the surrounding workspace directory.</p>
+<p>There’s also a <em>global</em> <code>~/.roksbnkctl/config.yaml</code> at the top level — it holds the <code>current_workspace</code> pointer and other user-wide preferences. That’s a different file with a different schema; this chapter is about the per-workspace one.</p>
+<h2 id="when-it-gets-written"><a class="header" href="#when-it-gets-written">When it gets written</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Action</th><th>Effect on <code>config.yaml</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>roksbnkctl init</code></td><td>Creates the file from interactive prompts. Existing file? Asks before overwriting.</td></tr>
+<tr><td><code>roksbnkctl init --upgrade-tf</code></td><td>Updates <code>tf_source:</code> only; leaves every other field alone.</td></tr>
+<tr><td><code>roksbnkctl targets add &lt;name&gt; ...</code></td><td>Adds an entry under <code>targets:</code>.</td></tr>
+<tr><td><code>roksbnkctl targets remove &lt;name&gt;</code></td><td>Removes the entry.</td></tr>
+<tr><td><code>roksbnkctl up</code> (post-apply)</td><td>Auto-populates <code>targets.jumphost</code> if the upstream HCL emitted a TGW jumphost output.</td></tr>
+<tr><td>Anything else</td><td>Reads the file. Doesn’t write back.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Direct hand-editing is supported (the file is plain YAML) but discouraged for fields that have dedicated commands — adding an SSH target via <code>roksbnkctl targets add</code> keeps the schema validation in one place.</p>
+<h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
+<pre><code class="language-yaml">ibmcloud:        # IBM Cloud account + auth
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+  # api_key_b64: &lt;base64-of-api-key&gt;   # OPTIONAL fallback when keychain unavailable
+
+cluster:         # ROKS cluster identity
+  create: true
+  name: tf-openshift-cluster
+  openshift_version: "4.18"
+  workers_per_zone: 2
+
+bnk:             # BNK trial knobs (optional; falls through to upstream HCL defaults)
+  cneinstance_size: Small
+  far_repo_url: repo.f5.com
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+
+test:            # test-suite tuning (optional)
+  throughput:
+    duration: 30
+    streams: 8
+  connectivity:
+    extra_hosts:
+      - https://my.gslb.example.com
+
+tf_source:       # where the Terraform HCL comes from
+  type: embedded         # embedded | github | local
+
+targets:         # SSH targets (Sprint 1; see Chapter 15)
+  jumphost:
+    host: 169.45.91.177
+    user: ubuntu
+    key_source: tf-output:jumphost_shared_key
+
+exec:            # per-tool execution backend defaults (Sprint 3; see Chapter 17)
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+
+cos:             # optional COS supply-chain config
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+</code></pre>
+<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables.</p>
+<h2 id="ibmcloud"><a class="header" href="#ibmcloud"><code>ibmcloud:</code></a></h2>
+<pre><code class="language-yaml">ibmcloud:
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+  api_key_b64: ""
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>region</code></td><td>string</td><td>none — required</td><td>IBM Cloud region for cluster, VPC, COS. Examples: <code>ca-tor</code>, <code>us-south</code>, <code>eu-de</code>.</td></tr>
+<tr><td><code>resource_group</code></td><td>string</td><td><code>default</code></td><td>Account-level resource group all created resources land in.</td></tr>
+<tr><td><code>api_key_source</code></td><td>enum</td><td>empty (auto-resolve chain)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code>. Pin the resolver to one source; leave empty to walk the full chain. See <a href="./14-credentials-resolver.html">Chapter 14</a>.</td></tr>
+<tr><td><code>api_key_b64</code></td><td>string</td><td>empty</td><td>Base64-encoded API key, <strong>obfuscation only — not encryption</strong>. The fallback when no OS keychain is available (e.g. WSL2 without libsecret). Treat the file as plaintext-credential-equivalent.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The plaintext field name <code>api_key:</code> is <strong>rejected</strong> at load time — <code>roksbnkctl</code> refuses to read a workspace config that contains it. The encoded <code>api_key_b64:</code> form is the only inline path. Full discussion in <a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a>.</p>
+<h2 id="cluster"><a class="header" href="#cluster"><code>cluster:</code></a></h2>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: tf-openshift-cluster
+  openshift_version: "4.18"
+  workers_per_zone: 2
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td>When <code>true</code>, <code>roksbnkctl cluster up</code> provisions a new ROKS cluster. When <code>false</code>, <code>cluster register &lt;name&gt;</code> adopts an existing one.</td></tr>
+<tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
+<tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code> — see <a href="./13-terraform-variables.html">Chapter 13</a> and <a href="./29-terraform-variable-reference.html">Chapter 29</a> for the full mapping.</p>
+<h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
+<pre><code class="language-yaml">bnk:
+  cneinstance_size: Small
+  far_repo_url: repo.f5.com
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>.</td></tr>
+<tr><td><code>far_repo_url</code></td><td>string</td><td>upstream HCL default (<code>repo.f5.com</code>)</td><td>The FAR Docker/Helm repo. Override only for staging/internal repos.</td></tr>
+<tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults for all three.</p>
+<h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
+<pre><code class="language-yaml">test:
+  throughput:
+    image: networkstatic/iperf3:latest
+    duration: 30
+    streams: 8
+    default_mode: north-south
+  connectivity:
+    extra_hosts:
+      - https://my.gslb.example.com
+      - https://internal.example.test
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image used by the throughput test (when running with the <code>local</code> or <code>ssh</code> backends). Sprint 4’s <code>k8s</code> backend uses the GHCR image instead.</td></tr>
+<tr><td><code>throughput.duration</code></td><td>int seconds</td><td><code>30</code></td><td>iperf3 <code>-t</code> flag.</td></tr>
+<tr><td><code>throughput.streams</code></td><td>int</td><td><code>8</code></td><td>iperf3 <code>-P</code> flag.</td></tr>
+<tr><td><code>throughput.default_mode</code></td><td>enum</td><td><code>north-south</code></td><td><code>north-south</code> | <code>east-west</code>. The connectivity vector to test by default.</td></tr>
+<tr><td><code>connectivity.extra_hosts</code></td><td>[]string</td><td>empty</td><td>Extra URLs the connectivity test probes alongside the canonical IBM/F5 endpoints.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="tf_source"><a class="header" href="#tf_source"><code>tf_source:</code></a></h2>
+<pre><code class="language-yaml">tf_source:
+  type: embedded
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>type</code></th><th>Other fields</th><th>Use case</th></tr>
+</thead>
+<tbody>
+<tr><td><code>embedded</code> (default)</td><td>none</td><td>Use the HCL bundled into the <code>roksbnkctl</code> binary via <code>go:embed</code>. The recommended path for users — install one binary, get matched CLI + Terraform together.</td></tr>
+<tr><td><code>github</code></td><td><code>repo: "owner/name"</code>, <code>ref: "v0.6.1"</code></td><td>Pull a tarball from a GitHub release. Useful for testing forks or pinning to a specific upstream tag.</td></tr>
+<tr><td><code>local</code></td><td><code>path: "/abs/path/to/tf-source"</code></td><td>Point Terraform at an on-disk directory. For active development on the HCL itself.</td></tr>
+</tbody>
+</table>
+</div>
+<p>An empty <code>type</code> is treated as <code>embedded</code> (legacy / forgot-to-set).</p>
+<p><code>roksbnkctl init --upgrade-tf</code> is the helper for bumping the source between versions without retyping the rest of the config — see “Editing by hand vs helpers” below.</p>
+<h2 id="targets--ssh-targets"><a class="header" href="#targets--ssh-targets"><code>targets:</code> — SSH targets</a></h2>
+<pre><code class="language-yaml">targets:
+  jumphost:
+    host: 169.45.91.177
+    user: ubuntu
+    key_source: tf-output:jumphost_shared_key
+  bastion:
+    host: ops.example.com
+    user: jgruber
+    key_path: ~/.ssh/id_ed25519
+</code></pre>
+<p>Each entry has <code>host</code>, <code>user</code>, optional <code>port</code> (default <code>22</code>), and exactly one of <code>key_path</code> or <code>key_source</code>. The <code>key_source</code> enum supports <code>agent</code> and <code>tf-output:&lt;name&gt;</code>.</p>
+<p>This block was introduced in Sprint 1; the deep reference is <a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a>, and the user-facing prose is <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a>. This chapter just notes the schema’s place in the overall config.</p>
+<p>You don’t typically edit this block by hand. <code>roksbnkctl up</code> auto-populates <code>jumphost</code> post-apply, and <code>roksbnkctl targets add ...</code> populates the rest.</p>
+<h2 id="exec--execution-backend-defaults-new-in-sprint-3"><a class="header" href="#exec--execution-backend-defaults-new-in-sprint-3"><code>exec:</code> — execution-backend defaults (new in Sprint 3)</a></h2>
+<pre><code class="language-yaml">exec:
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+</code></pre>
+<p>Per-tool defaults for the <code>--backend</code> system. Each entry is keyed by the tool name (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>, and others as the matrix grows) and selects which execution backend that tool uses by default. Allowed backend values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Backend</th><th>Available in</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>local</code></td><td>Sprint 3 (today)</td><td><code>os/exec</code> against the host binary. The default for <code>terraform</code> and <code>ibmcloud</code>.</td></tr>
+<tr><td><code>docker</code></td><td>Sprint 3 (today)</td><td>Runs inside a vendored container image. Frozen toolchain version, no host install.</td></tr>
+<tr><td><code>k8s</code></td><td>Sprint 4</td><td>Runs inside the cluster (long-lived ops pod or one-shot Job). Default for <code>iperf3</code>.</td></tr>
+<tr><td><code>ssh</code></td><td>Sprint 4</td><td>Runs on a registered SSH target. Format: <code>ssh:&lt;target-name&gt;</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>A <code>--backend &lt;value&gt;</code> flag on the command line overrides the workspace config for that single invocation. The flag wins; the config sets the default.</p>
+<p>The <code>iperf3</code> default is <code>k8s</code> because measuring throughput from a laptop’s internet uplink isn’t useful — you want the test to run from a network location adjacent to or inside the cluster. The <code>local</code> default is wrong for that tool, so the workspace config flips it.</p>
+<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> covers the full backend matrix; <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a> (lands in Sprint 4) is the decision tree.</p>
+<h2 id="cos--cos-supply-chain-optional"><a class="header" href="#cos--cos-supply-chain-optional"><code>cos:</code> — COS supply-chain (optional)</a></h2>
+<pre><code class="language-yaml">cos:
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+  upload:
+    - source: ./local/f5-far-auth-key.tgz
+      key: f5-far-auth-key.tgz
+    - source: ./local/trial.jwt
+      key: trial.jwt
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance.</td></tr>
+<tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is optional — if you’ve already populated COS by hand or via the upstream HCL’s <code>roks_cos_instance_name</code> variable, you don’t need it. <a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> covers the full workflow.</p>
+<h2 id="behaviour-when-fields-are-missing"><a class="header" href="#behaviour-when-fields-are-missing">Behaviour when fields are missing</a></h2>
+<p><code>roksbnkctl</code> falls through three layers in order: <strong>workspace config → upstream HCL default → fail</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Missing field</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud.region</code></td><td><code>roksbnkctl init</code> prompts; programmatic loads error with “region is empty”.</td></tr>
+<tr><td><code>ibmcloud.api_key_source</code></td><td>Resolver walks the full chain (env → keychain → config → prompt).</td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td>Skipped in the resolver chain.</td></tr>
+<tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
+<tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream default).</td></tr>
+<tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
+<tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
+<tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
+<tr><td><code>exec.*</code></td><td>Per-tool defaults built into the binary apply (<code>iperf3</code>→<code>k8s</code>, everything else→<code>local</code>).</td></tr>
+<tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The general rule: <strong>if you don’t write it in <code>config.yaml</code>, <code>roksbnkctl</code> doesn’t write it into <code>terraform.tfvars</code></strong>, and the upstream HCL’s <code>default = ...</code> clause takes over. The full upstream defaults are listed in <a href="./29-terraform-variable-reference.html">Chapter 29</a>.</p>
+<h2 id="how---var-file-interacts-with-configyaml"><a class="header" href="#how---var-file-interacts-with-configyaml">How <code>--var-file</code> interacts with <code>config.yaml</code></a></h2>
+<p>Both <code>roksbnkctl up</code> and <code>roksbnkctl plan/apply/destroy</code> accept the same <code>--var-file</code> flag terraform itself accepts (repeatable, later files win). The layering rule is:</p>
+<pre><code>1. config.yaml-derived terraform.tfvars        (written first by roksbnkctl)
+2. ~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user  (optional manual override)
+3. --var-file &lt;path&gt;                           (CLI; repeatable)
+</code></pre>
+<p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
+<p>The <code>terraform.tfvars.user</code> middle layer is for when you want a workspace-local override that survives across runs without modifying <code>config.yaml</code> — it’s typically used for fields the YAML schema doesn’t model (rare; the schema covers the common knobs). <a href="./13-terraform-variables.html">Chapter 13</a> goes deep on this.</p>
+<p>The <code>IBMCLOUD_API_KEY</code> is the one exception that <strong>never</strong> goes through tfvars on disk. It’s passed as a <code>TF_VAR_ibmcloud_api_key</code> env var on the terraform invocation. <code>--var-file</code> cannot supply the API key — the resolver chain in <a href="./14-credentials-resolver.html">Chapter 14</a> is the only path.</p>
+<h2 id="editing-by-hand-vs-helpers"><a class="header" href="#editing-by-hand-vs-helpers">Editing by hand vs helpers</a></h2>
+<p>Several commands manage subsets of <code>config.yaml</code> so you don’t have to:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Subset</th><th>Helper</th></tr>
+</thead>
+<tbody>
+<tr><td>Whole file (interactive)</td><td><code>roksbnkctl init</code></td></tr>
+<tr><td><code>tf_source:</code> only</td><td><code>roksbnkctl init --upgrade-tf</code></td></tr>
+<tr><td><code>targets:</code> block</td><td><code>roksbnkctl targets add/remove</code></td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td><code>roksbnkctl init</code> (after entering the key, it offers to save)</td></tr>
+</tbody>
+</table>
+</div>
+<p>When you do edit by hand, the load-time validators run on next <code>roksbnkctl</code> invocation:</p>
+<ul>
+<li>The plaintext-secret heuristic rejects an <code>api_key:</code> field (it must be <code>api_key_b64:</code> to be tolerated).</li>
+<li>Workspace name validation runs on directory access (workspace names must match <code>[A-Za-z0-9][A-Za-z0-9_.-]{0,63}</code>).</li>
+<li>YAML parse errors surface a line number.</li>
+</ul>
+<p>If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you’ll know within one invocation.</p>
+<h2 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h2>
+<p>Walk through what <code>roksbnkctl init</code> writes for a typical “fresh install + new cluster” run:</p>
+<pre><code class="language-bash">$ roksbnkctl init
+Workspace name [default]: dev
+IBM Cloud region [ca-tor]:
+IBM Cloud resource group [default]:
+Enter IBM Cloud API key (input hidden):
+Save the key for future runs? [Y/n]: y
+  ✓ saved to OS keychain
+Cluster name [tf-openshift-cluster]: dev-cluster
+Workers per zone [1]: 2
+✓ Created workspace "dev"
+</code></pre>
+<p>The resulting <code>~/.roksbnkctl/dev/config.yaml</code>:</p>
+<pre><code class="language-yaml">ibmcloud:
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+cluster:
+  create: true
+  name: dev-cluster
+  workers_per_zone: 2
+tf_source:
+  type: embedded
+</code></pre>
+<p>That’s the minimum. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. You can layer on more fields by editing the file directly or by using the helpers — both are supported.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> — the layering between <code>config.yaml</code> and <code>terraform.tfvars</code>.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — the <code>api_key_*</code> fields and how they’re resolved.</li>
+<li><a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a> — the <code>targets:</code> block.</li>
+<li><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> — the <code>exec:</code> block.</li>
+<li><a href="./28-configuration-reference.html">Chapter 28 — Configuration reference</a> — auto-generated complete field list (Sprint 6).</li>
+<li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — the upstream HCL variables <code>config.yaml</code> translates to.</li>
+</ul>
 
                     </main>
 

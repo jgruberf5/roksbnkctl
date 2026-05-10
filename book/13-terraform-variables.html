@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6719f835.js";
+            window.path_to_searchindex_js = "searchindex-60854cfa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,151 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="terraform-variables-terraformtfvars"><a class="header" href="#terraform-variables-terraformtfvars">Terraform variables (terraform.tfvars)</a></h1>
-<p><em>Coming in Sprint 3.</em></p>
-<p><em>The <code>terraform.tfvars</code> surface, the <code>--var-file</code> layering rule that lets workspace overrides win over defaults, and how <code>roksbnkctl tfvars</code> bootstraps a starter file from current workspace state.</em></p>
+<p><code>roksbnkctl</code> is a thin orchestration layer over a Terraform HCL bundle. The HCL has its own variables — well over 60 of them — declared in <code>terraform/variables.tf</code>. The workspace’s <code>config.yaml</code> covers the common knobs; for the rest, you reach into <code>terraform.tfvars</code> directly.</p>
+<p>This chapter is the surface for that lower layer: where the example file lives, how <code>roksbnkctl tfvars</code> bootstraps a starter, what <code>--var-file</code> does, the layering rule between <code>config.yaml</code>-derived tfvars and your overrides, and the one variable that <strong>never</strong> goes on disk (<code>ibmcloud_api_key</code>).</p>
+<h2 id="where-the-bundled-hcl-lives"><a class="header" href="#where-the-bundled-hcl-lives">Where the bundled HCL lives</a></h2>
+<p>The Terraform HCL is bundled into the <code>roksbnkctl</code> binary via <code>go:embed</code>. On first use of a workspace, it gets extracted to:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/state/tf-source/embedded-terraform/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── providers.tf
+├── versions.tf
+├── terraform.tfvars.example
+└── modules/
+</code></pre>
+<p>That <code>terraform.tfvars.example</code> file is the canonical reference for what’s tunable — every variable with a sensible starter value, grouped by module (ROKS cluster, cert-manager, FLO, CNEInstance, License, testing). <code>terraform/variables.tf</code> (linked at the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">GitHub canonical URL</a>) is the formal declaration with types, descriptions, and defaults.</p>
+<p>You don’t edit the example file in place. Copy or generate from it instead.</p>
+<h2 id="roksbnkctl-tfvars--bootstrap-a-starter"><a class="header" href="#roksbnkctl-tfvars--bootstrap-a-starter"><code>roksbnkctl tfvars</code> — bootstrap a starter</a></h2>
+<p>The <code>roksbnkctl tfvars</code> subcommand prints a starter <code>terraform.tfvars</code> to stdout, populated from the <strong>current workspace state</strong>:</p>
+<pre><code class="language-bash">$ roksbnkctl tfvars &gt; ~/.roksbnkctl/dev/state/terraform.tfvars.user
+</code></pre>
+<p>What gets pre-filled:</p>
+<ul>
+<li>Every field from <code>config.yaml</code> that maps to a tfvar (cluster name, region, workers, BNK fields, COS fields)</li>
+<li>The cluster’s identity from <code>cluster-outputs.json</code> if <code>cluster up</code> has already run</li>
+<li>A commented-out section for the variables you might want to tune next (jumphost profile, GSLB datacenter, license mode)</li>
+</ul>
+<p>What’s deliberately <strong>excluded</strong>:</p>
+<ul>
+<li><code>ibmcloud_api_key</code> — never on disk (see “The IBMCLOUD_API_KEY exception” below)</li>
+<li>Sensitive outputs (BIG-IP passwords, COS HMAC secrets) — left as upstream defaults</li>
+</ul>
+<p>The starter is meant to be copied into <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user</code> (the workspace-local override file) or into a <code>--var-file</code> path you keep alongside the workspace.</p>
+<h2 id="what-you-typically-edit"><a class="header" href="#what-you-typically-edit">What you typically edit</a></h2>
+<p>The variables that matter for day-to-day BNK trial work, ordered by likely-to-touch:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Default</th><th>What it controls</th></tr>
+</thead>
+<tbody>
+<tr><td><code>openshift_cluster_name</code></td><td><code>tf-openshift-cluster</code></td><td>Cluster name. Mirrors <code>config.yaml</code>’s <code>cluster.name</code>.</td></tr>
+<tr><td><code>roks_workers_per_zone</code></td><td><code>1</code></td><td>Worker nodes per AZ. <code>2</code> ⇒ 6 workers in a 3-AZ MZR region.</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>true</code></td><td>Set <code>false</code> to adopt an existing cluster. Pair with <code>roks_cluster_id_or_name</code>.</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>"4.18"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.18</code> as float otherwise.</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>Small</code></td><td><code>Small</code>/<code>Medium</code>/<code>Large</code>. CNEInstance sizing.</td></tr>
+<tr><td><code>f5_bigip_k8s_manifest_version</code></td><td>upstream pin</td><td>Pin a specific BNK manifest chart version.</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>repo.f5.com</code></td><td>FAR Docker/Helm registry. Override only for staging.</td></tr>
+<tr><td><code>flo_namespace</code></td><td><code>f5-bnk</code></td><td>Where the F5 Lifecycle Operator runs.</td></tr>
+<tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
+<tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
+<tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
+<tr><td><code>license_mode</code></td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> (lands in Sprint 6).</p>
+<h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
+<p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
+<pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)
+2. terraform.tfvars.user         (workspace-local override, optional)
+3. --var-file &lt;path&gt; ...         (CLI flag, repeatable, later file wins)
+</code></pre>
+<p>Later layers override earlier ones — same rule Terraform itself uses for <code>-var-file</code> chaining.</p>
+<p>Concretely:</p>
+<pre><code class="language-bash"># config.yaml says cluster.workers_per_zone: 2
+# ~/.roksbnkctl/dev/state/terraform.tfvars.user contains:
+#   roks_workers_per_zone = 4
+# Run with no flag:
+roksbnkctl up
+# → terraform sees 4 (.user wins over generated .tfvars)
+
+# Pass a CLI override:
+roksbnkctl up --var-file ./perf-test.tfvars
+# perf-test.tfvars contains: roks_workers_per_zone = 8
+# → terraform sees 8 (.var-file wins over .user)
+
+# Multiple --var-files; later wins:
+roksbnkctl up \
+  --var-file ./base.tfvars \
+  --var-file ./override.tfvars
+# → values in override.tfvars win over base.tfvars,
+#   which both win over .user, which wins over .tfvars
+</code></pre>
+<p>The <code>--var-file</code> flag matches Terraform’s own <code>--var-file</code> exactly — repeatable, paths interpreted relative to the working directory at invocation time.</p>
+<h2 id="the-ibmcloud_api_key-exception"><a class="header" href="#the-ibmcloud_api_key-exception">The <code>IBMCLOUD_API_KEY</code> exception</a></h2>
+<p>The upstream HCL declares <code>ibmcloud_api_key</code> as a <code>sensitive</code> variable. Every other tfvar can land in a file on disk; this one never does.</p>
+<p>Instead, the API key flows through the resolver chain (env → keychain → config-b64 → prompt — see <a href="./14-credentials-resolver.html">Chapter 14</a>), and <code>roksbnkctl</code> exports it as <code>TF_VAR_ibmcloud_api_key</code> in the environment of the terraform-exec child process. Terraform reads the env var and injects it as if it had been declared in tfvars, but no plaintext key ever touches the filesystem.</p>
+<p>If you put <code>ibmcloud_api_key = "..."</code> in a hand-edited tfvars and run <code>terraform</code> directly (not via <code>roksbnkctl</code>), it works — Terraform itself is happy. But this is <strong>not</strong> how <code>roksbnkctl</code> runs Terraform, and putting the key in a <code>.tfvars.user</code> or <code>--var-file</code> is <strong>strongly discouraged</strong>: the file persists on disk, gets backed up, gets committed to git by accident, and gets read by other processes. The env-var path eliminates the on-disk window entirely.</p>
+<p>Other secrets in scope:</p>
+<ul>
+<li><code>bigip_password</code> — upstream HCL declares it as a regular string (not <code>sensitive</code>). If you set it in tfvars, the value lands on disk. Treat that file like a credential.</li>
+<li>COS HMAC keys — auto-generated by the <code>roks_cluster</code> module via the COS service-credentials resource; they live in <code>terraform.tfstate</code> (which is itself sensitive — <code>chmod 0600</code>, never commit, treat the workspace as a secret store).</li>
+</ul>
+<h2 id="worked-example-bigger-cluster-for-a-perf-test"><a class="header" href="#worked-example-bigger-cluster-for-a-perf-test">Worked example: bigger cluster for a perf test</a></h2>
+<p>Default workspace, default cluster. You want to bump worker count for one perf-test run, then go back.</p>
+<pre><code class="language-bash"># 1. Confirm the current value comes from config.yaml
+$ grep workers ~/.roksbnkctl/dev/config.yaml
+  workers_per_zone: 2
+
+# 2. Drop a one-off override into a file
+$ cat &gt; ~/perf-cluster.tfvars &lt;&lt;'EOF'
+roks_workers_per_zone = 6
+roks_min_worker_vcpu_count = 32
+roks_min_worker_memory_gb = 128
+EOF
+
+# 3. Plan against it (note: --var-file passes through to terraform plan)
+$ roksbnkctl plan --var-file ~/perf-cluster.tfvars
+
+# 4. Apply
+$ roksbnkctl apply --var-file ~/perf-cluster.tfvars
+
+# 5. Run the throughput test
+$ roksbnkctl test throughput
+
+# 6. Roll back: re-apply WITHOUT the var-file
+$ roksbnkctl apply
+# → terraform sees workers_per_zone=2 again from config.yaml-derived tfvars
+</code></pre>
+<p>Notice step 6 — dropping the <code>--var-file</code> flag is the rollback. Terraform compares its current state to the new desired state (from <code>config.yaml</code>) and scales the worker pool back down. No special “undo” command needed.</p>
+<p>For a more permanent override (you want this workspace to <em>always</em> run with bigger nodes), put the contents of <code>perf-cluster.tfvars</code> into <code>~/.roksbnkctl/dev/state/terraform.tfvars.user</code> instead. Then every <code>roksbnkctl up</code>/<code>apply</code> picks it up automatically without a CLI flag.</p>
+<h2 id="when-to-edit-configyaml-vs-tfvarsuser-vs---var-file"><a class="header" href="#when-to-edit-configyaml-vs-tfvarsuser-vs---var-file">When to edit <code>config.yaml</code> vs <code>.tfvars.user</code> vs <code>--var-file</code></a></h2>
+<p>A rough decision matrix:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>You want to change…</th><th>Edit…</th></tr>
+</thead>
+<tbody>
+<tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
+<tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
+<tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
+<tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The schema in <code>config.yaml</code> covers about a third of the upstream HCL variables — the ones that nearly every workspace needs to set. The other two-thirds (jumphost details, every BNK module’s full surface, the testing module’s full surface) are reachable through the lower layers.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — what <code>config.yaml</code> covers vs what falls through to tfvars.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — why <code>ibmcloud_api_key</code> doesn’t go in tfvars.</li>
+<li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — auto-generated complete reference for <code>terraform/variables.tf</code> (Sprint 6).</li>
+<li>The upstream <code>terraform/variables.tf</code> source: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf</a></li>
+<li>The upstream starter file: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example</a></li>
+</ul>
 
                     </main>
 
