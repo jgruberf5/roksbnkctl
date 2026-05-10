@@ -170,16 +170,16 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 	// 3. Persist. Source = "cluster-register" so consumers can tell
 	//    discovered-vs-created.
 	out := &config.ClusterOutputs{
-		ClusterName:       info.Name,
-		ClusterID:         info.ID,
-		Region:            info.Region,
-		ResourceGroupID:   info.ResourceGroupID,
-		VPCID:             vpc,
-		RegistryCOSCRN:    cos.CRN,
-		RegistryCOSName:   cos.Name,
-		MasterURL:         info.MasterURL,
-		OpenShiftVersion:  info.MasterKubeVersion,
-		Source:            "cluster-register",
+		ClusterName:      info.Name,
+		ClusterID:        info.ID,
+		Region:           info.Region,
+		ResourceGroupID:  info.ResourceGroupID,
+		VPCID:            vpc,
+		RegistryCOSCRN:   cos.CRN,
+		RegistryCOSName:  cos.Name,
+		MasterURL:        info.MasterURL,
+		OpenShiftVersion: info.MasterKubeVersion,
+		Source:           "cluster-register",
 	}
 	if err := config.WriteClusterOutputs(cctx.WorkspaceName, out); err != nil {
 		return fmt.Errorf("writing cluster-outputs.json: %w", err)

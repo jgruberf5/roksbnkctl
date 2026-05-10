@@ -43,7 +43,7 @@ Each phase has explicit assertions — the driver script exits non-zero on the f
 
 ### Phase C — register an existing cluster (~30 seconds)
 
-Validates that `cluster register` correctly discovers and persists the identity of a cluster bnkctl didn't itself create.
+Validates that `cluster register` correctly discovers and persists the identity of a cluster roksbnkctl didn't itself create.
 
 | Step | Command | Pass criterion |
 |---|---|---|

@@ -28,3 +28,31 @@ run: build
 
 clean:
 	rm -rf bin/
+
+.PHONY: book book-serve book-clean
+
+book:
+	mdbook build book/
+
+book-serve:
+	mdbook serve book/ --open
+
+book-clean:
+	rm -rf book/book
+
+# --- Sprint 0 staff additions ---
+# Note: `build` and `test` already exist above and are kept verbatim
+# (their existing recipes are richer than the Sprint 0 spec — build wires
+# ldflags for version stamping). See issues/issue_sprint0_staff.md for
+# the rationale.
+
+.PHONY: test-short lint pre-commit-install
+
+test-short:
+	go test -short ./...
+
+lint:
+	gofmt -d -l . && go vet ./... && (command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not on PATH; skipping")
+
+pre-commit-install:
+	ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit && echo "Pre-commit hook installed."

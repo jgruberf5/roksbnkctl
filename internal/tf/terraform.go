@@ -179,9 +179,9 @@ func (w *Workspace) HasUserTFVars() bool {
 // varFiles returns the list of -var-file paths to pass terraform.
 // Order matters: later files override earlier (terraform's spec).
 //
-//	1. auto-rendered terraform.tfvars (from config.yaml)
-//	2. terraform.tfvars.user (workspace-persistent override, if present)
-//	3. extra (--var-file flags from the CLI, in the order given)
+//  1. auto-rendered terraform.tfvars (from config.yaml)
+//  2. terraform.tfvars.user (workspace-persistent override, if present)
+//  3. extra (--var-file flags from the CLI, in the order given)
 //
 // Later layers win — a --var-file value beats both the workspace
 // override and the generated tfvars.
@@ -265,4 +265,3 @@ func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error 
 func (w *Workspace) Output(ctx context.Context) (map[string]tfexec.OutputMeta, error) {
 	return w.tf.Output(ctx)
 }
-
