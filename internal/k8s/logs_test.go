@@ -8,6 +8,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ import (
 // "default".
 func TestLogsOptions_RequiresPodName(t *testing.T) {
 	o := &LogsOptions{}
-	err := o.Run(nil)
+	err := o.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty PodName; got nil")
 	}

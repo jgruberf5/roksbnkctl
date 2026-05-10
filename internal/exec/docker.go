@@ -189,9 +189,7 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 	// list. PRD 04 §Docker forbids the =value form, so we only emit
 	// the bare name; the docker daemon picks up the value from the
 	// caller's environment at container-start time.
-	for _, name := range env {
-		cfg.Env = append(cfg.Env, name)
-	}
+	cfg.Env = append(cfg.Env, env...)
 
 	// Pull the image lazily — if it's already cached, this is a noop;
 	// if not, we surface the pull failure as a 127 so callers can
@@ -311,10 +309,10 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 // return the same client (or its cached error).
 func (b *DockerBackend) dockerClient() (*dockerclient.Client, error) {
 	b.clientOnce.Do(func() {
-		c, err := dockerclient.NewClientWithOpts(
-			dockerclient.FromEnv,
-			dockerclient.WithAPIVersionNegotiation(),
-		)
+		// Use client.New (the modern constructor); API-version negotiation
+		// is now enabled by default, so the legacy WithAPIVersionNegotiation
+		// option isn't needed.
+		c, err := dockerclient.New(dockerclient.FromEnv)
 		if err != nil {
 			b.clientErr = err
 			return

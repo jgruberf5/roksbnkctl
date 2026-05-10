@@ -11,6 +11,7 @@ package k8s
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ data:
 // TestApplyOptions_RequiresFilename: --filename / -f is mandatory.
 func TestApplyOptions_RequiresFilename(t *testing.T) {
 	o := &ApplyOptions{}
-	err := o.Run(nil)
+	err := o.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty Filename; got nil")
 	}

@@ -130,13 +130,6 @@ func init() {
 	execbackend.SetToolImageTag(func() string { return Version })
 }
 
-// unimplemented is the placeholder RunE for stubbed commands.
-// Returning an error makes CI flag any drift between command surface
-// and implementation.
-func unimplemented(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("%q not implemented yet — see docs/PRD.md", cmd.CommandPath())
-}
-
 // RootCommand returns the wired-up root cobra command for tooling that
 // needs to walk the command tree (e.g. the cobra-to-markdown reference
 // generator under tools/refgen/cobra-md). Subcommands are registered

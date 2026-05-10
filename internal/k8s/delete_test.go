@@ -9,6 +9,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 // TestDeleteOptions_RequiresArgs: missing positional args errors out.
 func TestDeleteOptions_RequiresArgs(t *testing.T) {
 	o := &DeleteOptions{}
-	err := o.Run(nil)
+	err := o.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty Args; got nil")
 	}

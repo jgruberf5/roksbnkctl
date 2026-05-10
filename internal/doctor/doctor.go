@@ -23,7 +23,6 @@ import (
 // and we keep it here so output remains byte-identical to the pre-refactor
 // behaviour. A parallel slice keyed by Check index lets us extend Check
 // later without breaking external callers.
-type why string
 
 // withWhy pairs a Check with its rendering blurb.
 type withWhy struct {
@@ -199,19 +198,6 @@ func versionLine(name string) string {
 		}
 	}
 	return ""
-}
-
-func checkKubeconfig() withWhy {
-	c := Check{Name: "kubeconfig"}
-	path := k8s.DefaultKubeconfigPath()
-	if path == "" {
-		c.Status = StatusWarning
-		c.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `roksbnkctl kubeconfig --download`"
-		return withWhy{Check: c, Why: "needed for cluster-side ops"}
-	}
-	c.Status = StatusOK
-	c.Detail = path
-	return withWhy{Check: c, Why: "needed for cluster-side ops"}
 }
 
 // checkKubeconfigInformational is the Sprint 6 green-by-default
