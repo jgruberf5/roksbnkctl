@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,142 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="doctor-checking-your-environment"><a class="header" href="#doctor-checking-your-environment">Doctor: checking your environment</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em>The <code>roksbnkctl doctor</code> environment check: what the green / yellow / red status badges mean, which checks are required vs informational, and how to fix the common failures.</em></p>
+<p><code>roksbnkctl doctor</code> is the prereq + credentials report. It runs in under five seconds, exits non-zero on any hard error, and prints a tabular report that maps one-to-one to the runtime dependencies the rest of the tool reaches for.</p>
+<p>This chapter walks every check, explains what each row’s “why we care” blurb means, covers the post-Sprint 2 changes that move kubectl and oc from “needed” to “informational”, and describes the <code>--target</code> SSH probe added in Sprint 1.</p>
+<h2 id="what-doctor-checks"><a class="header" href="#what-doctor-checks">What <code>doctor</code> checks</a></h2>
+<p>A bare <code>roksbnkctl doctor</code> runs the <strong>general</strong> checks: tooling on <code>PATH</code>, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine post-Sprint 2 looks like this:</p>
+<pre><code>roksbnkctl doctor
+✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (informational; `roksbnkctl k get/apply/...` covers the happy path natively)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (informational; `roksbnkctl k ...` covers the happy path natively)
+✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
+✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
+✓  workspace         default                                                                  (per-environment config + state)
+✓  ibmcloud api key  resolved                                                                 (auth for terraform + IBM SDK calls)
+✓  ibm cloud auth    OK (account: 1a2b3c..., user: you@example.com)                           (verifies API key works against IBM IAM)
+</code></pre>
+<p>Each row has the same shape:</p>
+<pre><code>&lt;status&gt; &lt;name&gt; &lt;detail&gt; &lt;why we care&gt;
+</code></pre>
+<ul>
+<li><strong>status</strong> is one of <code>✓</code> (green / OK), <code>⚠</code> (yellow / warning), or <code>✗</code> (red / error). <code>Skipped</code> checks render as <code>⚠</code>.</li>
+<li><strong>name</strong> is the dependency or capability being checked.</li>
+<li><strong>detail</strong> is the resolved value — usually a path, a version line, or an error message.</li>
+<li><strong>why we care</strong> is a parenthetical clause naming the <code>roksbnkctl</code> feature that depends on this row.</li>
+</ul>
+<p>The <code>BackendName</code> column on the underlying <code>Check</code> struct (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/check.go"><code>internal/doctor/check.go</code></a>) is reserved for the per-backend probes that land in Sprint 4 (PRD 03). Until then it stays empty for every general check.</p>
+<h2 id="each-check-explained"><a class="header" href="#each-check-explained">Each check explained</a></h2>
+<h3 id="terraform--required"><a class="header" href="#terraform--required"><code>terraform</code> — required</a></h3>
+<p>The only <strong>hard-required</strong> binary for the <code>roksbnkctl up</code> happy path. <code>roksbnkctl</code> shells out to <code>terraform</code> via <code>terraform-exec</code> for plan/apply/destroy; without it nothing in the cluster lifecycle works.</p>
+<p>Pass condition: a binary on <code>PATH</code>, version <code>1.5</code> or newer.</p>
+<p>Failure mode: <code>not on PATH</code>. Fix: install Terraform from <a href="https://www.terraform.io/downloads">terraform.io</a>, or your distro’s package manager, then re-run <code>doctor</code>.</p>
+<h3 id="iperf3--informational"><a class="header" href="#iperf3--informational"><code>iperf3</code> — informational</a></h3>
+<p>Used only by <code>roksbnkctl test throughput</code> in its host-iperf3 modes. After Sprint 4 lands the k8s execution backend (PRD 03), <code>iperf3</code> moves entirely in-cluster and this row goes away for the everyday user.</p>
+<p>Failure mode: <code>not on PATH</code>. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.</p>
+<h3 id="kubectl--informational-sprint-2-change"><a class="header" href="#kubectl--informational-sprint-2-change"><code>kubectl</code> — informational (Sprint 2 change)</a></h3>
+<p><strong>Before Sprint 2:</strong> <code>kubectl</code> was an optional warning when missing — useful for the <code>roksbnkctl kubectl</code> passthrough.</p>
+<p><strong>After Sprint 2:</strong> <code>kubectl</code> is informational. The everyday verbs (<code>get</code>, <code>apply</code>, <code>describe</code>, <code>delete</code>, <code>logs</code>, <code>exec</code>, <code>port-forward</code>) are now native Go via <code>client-go</code> and live under <a href="./24-day-2-ops.html"><code>roksbnkctl k</code></a>. Missing host <code>kubectl</code> no longer disables the happy path; it only disables the <code>roksbnkctl kubectl &lt;args...&gt;</code> passthrough.</p>
+<p>If <code>kubectl</code> is on <code>PATH</code>, the row is still <code>✓</code> and shows the version line. If it’s missing, the row is informational, not a warning, and the detail explains where the equivalent functionality lives.</p>
+<h3 id="oc--informational-sprint-2-change"><a class="header" href="#oc--informational-sprint-2-change"><code>oc</code> — informational (Sprint 2 change)</a></h3>
+<p>Same story as <code>kubectl</code> — Sprint 2 internalises the OpenShift-relevant verbs (Phase 2.1 adds <code>Project</code>, <code>Route</code>, <code>ImageStream</code> to <code>roksbnkctl k get</code>). Host <code>oc</code> is preserved as an escape hatch; missing <code>oc</code> no longer warns.</p>
+<h3 id="ibmcloud--optional"><a class="header" href="#ibmcloud--optional"><code>ibmcloud</code> — optional</a></h3>
+<p>Required only for the <code>roksbnkctl ibmcloud &lt;args...&gt;</code> passthrough. The cluster-lifecycle path uses IBM Go SDKs internally — <code>roksbnkctl up</code> does <strong>not</strong> shell out to <code>ibmcloud</code> — so you can skip this binary if you don’t need the passthrough.</p>
+<h3 id="kubeconfig"><a class="header" href="#kubeconfig"><code>kubeconfig</code></a></h3>
+<p>Resolves the kubeconfig path via <code>$KUBECONFIG</code> first, then <code>~/.kube/config</code>. Cluster-side commands (<code>status</code>, <code>logs</code>, every <code>k &lt;verb&gt;</code>) need it.</p>
+<p><code>roksbnkctl up</code> writes the admin kubeconfig at <code>~/.kube/config</code> (mode 0600) on a fresh apply. If you already have a multi-cluster <code>~/.kube/config</code>, point <code>$KUBECONFIG</code> at the workspace’s state directory instead:</p>
+<pre><code class="language-bash">export KUBECONFIG=~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig
+</code></pre>
+<p>Failure mode: <code>$KUBECONFIG and ~/.kube/config both missing</code>. Fix: run <code>roksbnkctl kubeconfig --download</code> to fetch the admin kubeconfig from IBM Cloud.</p>
+<h3 id="workspace"><a class="header" href="#workspace"><code>workspace</code></a></h3>
+<p>Reports the resolved workspace name and whether its <code>config.yaml</code> exists.</p>
+<ul>
+<li><code>✓ default</code> — the current workspace pointer at <code>~/.roksbnkctl/config.yaml</code> resolves and the named workspace has a populated <code>config.yaml</code>.</li>
+<li><code>⚠ "default" not initialised</code> — the directory may exist (created by <code>roksbnkctl ws new</code>) but <code>config.yaml</code> is empty. Run <code>roksbnkctl init</code> to populate.</li>
+<li><code>✗ no config context</code> — the global config can’t be loaded at all.</li>
+</ul>
+<p>The one-off <code>-w / --workspace</code> flag overrides which workspace <code>doctor</code> reports against. See <a href="./06-workspaces.html">Chapter 6 — Workspaces</a>.</p>
+<h3 id="ibmcloud-api-key"><a class="header" href="#ibmcloud-api-key"><code>ibmcloud api key</code></a></h3>
+<p>Resolves the API key via the chain documented in <a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a>: env var → OS keychain → workspace config (base64) → TTY prompt.</p>
+<p>Pass condition: the chain produces a non-empty key. The key value is <strong>never</strong> printed — only the source (“resolved”).</p>
+<p>Failure mode: <code>IBMCLOUD_API_KEY unset and no keychain entry for workspace "&lt;name&gt;"</code>. Fix: either <code>export IBMCLOUD_API_KEY=...</code> for the session, or re-run <code>roksbnkctl init</code> and accept the keychain-save prompt.</p>
+<h3 id="ibm-cloud-auth"><a class="header" href="#ibm-cloud-auth"><code>ibm cloud auth</code></a></h3>
+<p>Round-trips the resolved key against IBM IAM via the SDK (<code>Verify()</code> call). Confirms the key is not just present but actually authenticates.</p>
+<p>Pass condition: IAM accepts the key; the row reports the resolved account and user identity.</p>
+<p>Failure modes:</p>
+<ul>
+<li><code>BXNIM0415E: Provided API key could not be found</code> — the key is malformed or has been deleted in IBM Cloud.</li>
+<li><code>network is unreachable</code> / <code>i/o timeout</code> — your workstation can’t reach <code>iam.cloud.ibm.com</code>. Common in customer-firewall scenarios; route through a jumphost (<a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>) to confirm the key works from inside the customer network.</li>
+</ul>
+<h2 id="common-failures-and-how-to-fix-them"><a class="header" href="#common-failures-and-how-to-fix-them">Common failures and how to fix them</a></h2>
+<p>The chapter readers most often land on. Each row maps a real-world symptom to its fix:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+</thead>
+<tbody>
+<tr><td><code>terraform not on PATH</code></td><td>not installed</td><td>install Terraform <code>&gt;= 1.5</code>; re-run <code>doctor</code></td></tr>
+<tr><td><code>kubeconfig: $KUBECONFIG and ~/.kube/config both missing</code></td><td>never ran <code>up</code> against this workspace</td><td><code>roksbnkctl kubeconfig --download</code> or run <code>roksbnkctl up</code></td></tr>
+<tr><td><code>ibmcloud api key: ... no keychain entry</code></td><td>new shell, key not exported</td><td><code>export IBMCLOUD_API_KEY=...</code> or re-run <code>roksbnkctl init</code></td></tr>
+<tr><td><code>ibm cloud auth: BXNIM0415E</code></td><td>bad / rotated key</td><td>regenerate the key in the IBM Cloud console; update the keychain via <code>roksbnkctl init</code></td></tr>
+<tr><td><code>ibm cloud auth: i/o timeout</code></td><td>corp-firewalled workstation</td><td>use <a href="./16-on-flag-ssh-jumphosts.html"><code>--on jumphost</code></a> to test from inside the customer network</td></tr>
+<tr><td><code>workspace "foo" not initialised</code></td><td><code>ws new</code> was run but <code>init</code> was not</td><td>run <code>roksbnkctl init -w foo</code></td></tr>
+<tr><td><code>workspace: no config context</code></td><td><code>~/.roksbnkctl/config.yaml</code> corrupt</td><td>inspect the file; worst case delete it and re-run <code>init</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> covers the longer tail.</p>
+<h2 id="the---target-name-ssh-check-sprint-1"><a class="header" href="#the---target-name-ssh-check-sprint-1">The <code>--target &lt;name&gt;</code> SSH check (Sprint 1)</a></h2>
+<p>Sprint 1’s <code>--on jumphost</code> flag introduced an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
+<pre><code class="language-bash">roksbnkctl doctor --target jumphost
+</code></pre>
+<p>This adds one row per resolved target:</p>
+<pre><code>✓  ssh:jumphost      ubuntu@169.45.91.177:22 (TOFU recorded)            (verifies the target is reachable)
+</code></pre>
+<p>The probe:</p>
+<ol>
+<li>Resolves the target’s <code>host</code>, <code>user</code>, <code>port</code>, and key source from <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>.</li>
+<li>Connects via the <code>internal/remote</code> SSH client.</li>
+<li>Validates the host key against <code>~/.roksbnkctl/known_hosts</code> (TOFU prompt on first contact, unless <code>--insecure-host-key</code>).</li>
+<li>Runs a no-op command (<code>true</code>) to confirm the channel works end-to-end.</li>
+</ol>
+<p>Failure modes specific to the SSH probe:</p>
+<ul>
+<li><code>host key mismatch</code> — the target was rebuilt; edit <code>~/.roksbnkctl/known_hosts</code> to clear the entry, then re-probe.</li>
+<li><code>unable to authenticate</code> — the key source resolved but the remote rejected it. Check <code>key_path</code> / <code>key_source</code> in workspace config; if <code>key_source: agent</code>, verify <code>ssh-add -l</code> shows the right key.</li>
+<li><code>dial tcp: i/o timeout</code> — the <code>host:port</code> is unreachable. Verify with <code>nc -vz &lt;host&gt; 22</code> from a known-good network.</li>
+</ul>
+<p>Pass <code>--target all</code> to probe every target listed in the workspace’s <code>targets:</code> block. Useful in CI when you want a single command that asserts every entry is reachable.</p>
+<h2 id="reading-the-exit-code"><a class="header" href="#reading-the-exit-code">Reading the exit code</a></h2>
+<p><code>doctor</code> exits with:</p>
+<ul>
+<li><code>0</code> — all checks are green or warnings only. Warnings do not fail <code>doctor</code>. The everyday workflow can proceed.</li>
+<li>non-zero — at least one row produced an <code>✗</code> error. The first error string is also written to stderr so wrapper scripts can grep it.</li>
+</ul>
+<p>This is the contract <code>scripts/e2e-test.sh</code> and the <code>Makefile</code> rely on: a script that runs <code>roksbnkctl doctor &amp;&amp; roksbnkctl up --auto</code> will only proceed past <code>doctor</code> if the environment is genuinely ready.</p>
+<p>The “warnings don’t fail” rule is deliberate. After Sprint 2, an <code>iperf3 not on PATH</code> warning is informational — the everyday <code>up</code> / <code>test connectivity</code> flow doesn’t need it. Forcing exit-1 on every warning would be too aggressive for the common case.</p>
+<p>If you want to gate scripts strictly (e.g. CI workflows that must have iperf3 installed because they run the throughput suite), parse the output rather than relying on the exit code:</p>
+<pre><code class="language-bash">if ! roksbnkctl doctor | grep -q '^✓  iperf3'; then
+  echo "iperf3 missing — install it before running test throughput" &gt;&amp;2
+  exit 1
+fi
+</code></pre>
+<h2 id="what-doctor-is-not"><a class="header" href="#what-doctor-is-not">What <code>doctor</code> is not</a></h2>
+<p>A few deliberate non-features worth naming:</p>
+<ul>
+<li><strong>Not a fix-it tool.</strong> <code>doctor</code> reports; it never installs, never modifies workspace config, never calls IBM Cloud APIs that mutate state. The IAM verify call is read-only. If <code>doctor</code> could break things, users couldn’t run it freely — and “run <code>doctor</code>” needs to be a safe first move.</li>
+<li><strong>Not a backend probe.</strong> Per-backend availability checks (docker daemon reachable, k8s ops pod healthy, ssh target reachable) land in Sprint 4 (PRD 03) as separate <code>BackendName</code>-tagged rows. The <code>--target</code> probe is the early prototype of that pattern.</li>
+<li><strong>Not concurrent-safe.</strong> The CLI invokes <code>doctor</code> once per command; the side-channel for “why we care” blurbs in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/doctor.go"><code>internal/doctor/doctor.go</code></a> doesn’t synchronise. Don’t run two <code>doctor</code>s against the same process.</li>
+</ul>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./04-installation.html">Chapter 4 — Installation</a> introduces <code>doctor</code> as the post-install verification step.</li>
+<li><a href="./06-workspaces.html">Chapter 6 — Workspaces</a> explains the <code>workspace</code> row and the <code>-w</code> override.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a> (lands in Sprint 3) is the deep dive on the <code>ibmcloud api key</code> resolution chain.</li>
+<li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag</a> covers the <code>--target</code> probe’s underlying SSH client.</li>
+<li><a href="./24-day-2-ops.html">Chapter 24 — Day-2 ops</a> is the canonical reference for the internalised <code>k &lt;verb&gt;</code> commands that make <code>kubectl</code> / <code>oc</code> informational.</li>
+</ul>
 
                     </main>
 

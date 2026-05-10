@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,156 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em><code>roksbnkctl down</code> and <code>cluster down</code>: what each verb removes, what is intentionally left behind, and how to clean up partial-state workspaces safely.</em></p>
+<p><code>roksbnkctl down</code> and <code>roksbnkctl cluster down</code> are the destroy verbs — the inverse of <a href="./10-deploying-bnk-trials.html"><code>up</code></a> and <a href="./08-cluster-phase.html"><code>cluster up</code></a> respectively. This chapter covers what each one removes, the ordering constraint between them, what survives a destroy, the <code>--auto</code> flag for non-interactive runs, and the workspace-cleanup story.</p>
+<p>The big rule, stated up front: <strong>destroy in reverse of create</strong>. Trial first (<code>down</code>), cluster second (<code>cluster down</code>). Destroying out of order leaves orphans the upstream HCL’s resource graph can’t unwind cleanly.</p>
+<h2 id="the-two-destroys"><a class="header" href="#the-two-destroys">The two destroys</a></h2>
+<p>There are two distinct teardowns matching the two phases:</p>
+<h3 id="roksbnkctl-down--destroy-the-bnk-trial"><a class="header" href="#roksbnkctl-down--destroy-the-bnk-trial"><code>roksbnkctl down</code> — destroy the BNK trial</a></h3>
+<p>Tears down everything <code>roksbnkctl up</code> created: the <code>flo</code> Helm release, <code>cne_instance</code>, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens.</p>
+<pre><code class="language-bash">roksbnkctl down
+</code></pre>
+<p>What survives:</p>
+<ul>
+<li>The ROKS cluster itself</li>
+<li>cert-manager</li>
+<li>The registry COS instance and its bucket contents (FAR images, license artefacts)</li>
+<li>The TGW jumphost</li>
+<li>All cluster-phase Terraform state under <code>state-cluster/</code></li>
+<li>The workspace’s <code>config.yaml</code></li>
+</ul>
+<p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
+<h3 id="roksbnkctl-cluster-down--destroy-the-cluster-phase"><a class="header" href="#roksbnkctl-cluster-down--destroy-the-cluster-phase"><code>roksbnkctl cluster down</code> — destroy the cluster phase</a></h3>
+<p>Tears down the cluster + cluster-shared services: the ROKS cluster, transit gateway, registry COS instance, cert-manager Helm release, and the TGW jumphost.</p>
+<pre><code class="language-bash">roksbnkctl cluster down
+</code></pre>
+<p>What survives:</p>
+<ul>
+<li>The workspace’s <code>config.yaml</code></li>
+<li><code>~/.roksbnkctl/&lt;workspace&gt;/state/</code> (now empty of resources but the directory persists)</li>
+<li><code>~/.roksbnkctl/&lt;workspace&gt;/state-cluster/</code> Terraform state files (the cluster-side state itself is empty; the directory and <code>terraform.tfstate</code> persist)</li>
+</ul>
+<p>Roughly <strong>36 resources destroyed</strong>. The ROKS cluster destroy alone is 5-10 minutes; everything else is fast.</p>
+<p>The post-destroy cleanup deletes <code>cluster-outputs.json</code> automatically — the workspace no longer has a registered cluster.</p>
+<h2 id="order-matters-trial-first-then-cluster"><a class="header" href="#order-matters-trial-first-then-cluster">Order matters: trial first, then cluster</a></h2>
+<p>The upstream HCL’s resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live <em>in</em> the cluster, after all), and Terraform’s destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase’s resources are still there — finalisers block the destroy of the cluster’s namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.</p>
+<p><code>roksbnkctl cluster down</code> enforces this with a check: it refuses to run if the workspace’s BNK trial state still lists resources. The error is:</p>
+<pre><code>Error: workspace "default" has BNK trial state with N resources still present;
+       run `roksbnkctl down` first to destroy the trial before destroying the cluster
+</code></pre>
+<p>The check looks at <code>state/terraform.tfstate</code> — if it has any resources, <code>cluster down</code> aborts. <code>--auto</code> does <strong>not</strong> override this; the order is correctness, not preference.</p>
+<p>The clean teardown sequence:</p>
+<pre><code class="language-bash"># 1. Destroy the BNK trial
+roksbnkctl down --auto
+
+# 2. Now safe to destroy the cluster phase
+roksbnkctl cluster down --auto
+
+# 3. (Optional) Delete the workspace itself
+roksbnkctl ws delete &lt;name&gt; --force
+</code></pre>
+<p>If you <code>roksbnkctl up</code> against a registered cluster (one you didn’t <code>cluster up</code> yourself), you skip step 2 — the cluster wasn’t yours to destroy. Just <code>down</code> the trial and stop there, then optionally unregister by deleting <code>cluster-outputs.json</code>.</p>
+<h2 id="what-survives-a-destroy"><a class="header" href="#what-survives-a-destroy">What survives a destroy</a></h2>
+<p>The contract: <strong><code>roksbnkctl</code> never destroys local state without explicit consent</strong>, and never destroys cloud resources outside its Terraform state.</p>
+<p>After a successful <code>down</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Survives</th><th>Where</th></tr>
+</thead>
+<tbody>
+<tr><td>Workspace config</td><td><code>~/.roksbnkctl/&lt;name&gt;/config.yaml</code></td></tr>
+<tr><td>Workspace directory + state files</td><td><code>~/.roksbnkctl/&lt;name&gt;/</code> (empty <code>state/</code>; <code>state-cluster/</code> untouched if <code>cluster down</code> not run)</td></tr>
+<tr><td>OS keychain entry for the API key</td><td>per-workspace, named <code>roksbnkctl/&lt;name&gt;/ibmcloud_api_key</code></td></tr>
+<tr><td><code>~/.kube/config</code></td><td>left in place</td></tr>
+<tr><td>The cluster (if only trial was destroyed)</td><td>runs and bills as before</td></tr>
+<tr><td>The registry COS bucket’s contents</td><td>FAR images, JWT licenses, schematic state — survive cluster destroy too if the bucket was created outside the bundled HCL</td></tr>
+<tr><td><code>~/.roksbnkctl/known_hosts</code></td><td>SSH host keys persist; deleting a workspace does not clear them</td></tr>
+</tbody>
+</table>
+</div>
+<p>Re-running <code>up</code> against a <code>down</code>’d workspace re-creates everything from scratch. The workspace’s <code>config.yaml</code> is preserved precisely so this re-create can use the same inputs without re-prompting.</p>
+<p>The COS bucket point is worth highlighting: the bundled HCL provisions the COS instance but generally does not provision the buckets inside it (those are written by post-apply provisioners or by the BNK runtime itself). When <code>cluster down</code> destroys the COS instance, the bucket goes with it — but if the COS instance was created out-of-band (e.g. by a registered cluster’s owner) and <code>roksbnkctl</code> is just attaching, then <code>cluster down</code> doesn’t apply and the COS survives.</p>
+<h2 id="--auto-for-non-interactive-runs"><a class="header" href="#--auto-for-non-interactive-runs"><code>--auto</code> for non-interactive runs</a></h2>
+<p>Both destroy commands prompt for confirmation by default:</p>
+<pre><code>$ roksbnkctl down
+This will destroy workspace "default"'s resources.
+Continue? [y/N]: 
+</code></pre>
+<pre><code>$ roksbnkctl cluster down
+This will destroy the cluster phase for workspace "default" (ROKS + transit gateway + registry COS + cert-manager + jumphost).
+Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.
+Continue? [y/N]: 
+</code></pre>
+<p><code>--auto</code> skips the prompt — required for CI / scripted pipelines:</p>
+<pre><code class="language-bash">roksbnkctl down --auto
+roksbnkctl cluster down --auto
+</code></pre>
+<p><code>--auto</code> does <strong>not</strong> override the trial-then-cluster ordering check; that’s a correctness guard, not a confirmation prompt. If trial state is present, <code>cluster down --auto</code> still refuses.</p>
+<h2 id="like-up-transient-errors-retry"><a class="header" href="#like-up-transient-errors-retry">Like <code>up</code>, transient errors retry</a></h2>
+<p><code>down</code> doesn’t share <code>up</code>’s explicit retry-on-transient-error logic, but Terraform’s destroy is naturally idempotent: re-running <code>down</code> after a partial destroy picks up where the previous run left off. If you see a transient network error during destroy, just re-run:</p>
+<pre><code class="language-bash">roksbnkctl down --auto
+# (some resources destroyed, then transient error)
+
+roksbnkctl down --auto
+# (picks up where it left off, completes)
+</code></pre>
+<p>The same applies to <code>cluster down</code>. ROKS cluster destroy specifically can take longer than expected when the master is propagating its delete state — wait a few minutes and re-try if you see master-not-found errors.</p>
+<h2 id="cleaning-up-workspaces"><a class="header" href="#cleaning-up-workspaces">Cleaning up workspaces</a></h2>
+<p>A successful <code>down</code> leaves the workspace directory in place. You usually want to clean that up too:</p>
+<pre><code class="language-bash">roksbnkctl ws delete &lt;name&gt; --force
+</code></pre>
+<p>Two safety rails on <code>ws delete</code>:</p>
+<ul>
+<li><strong>Refuses to delete the current workspace.</strong> Use the <a href="./06-workspaces.html#the-parking-lot-pattern">parking-lot pattern</a> if you need to drop your current workspace.</li>
+<li><strong>Refuses if Terraform state still lists resources</strong> (unless <code>--force</code>). Catches the case where you forgot to run <code>down</code> first.</li>
+</ul>
+<p>The <code>--force</code> flag overrides both checks — but if you <code>ws delete --force</code> a workspace that still has provisioned cloud resources, you’ll have leaked them. There’s no auto-recovery; you’d need to find them via the IBM Cloud console and delete them by hand.</p>
+<p>The full clean-as-you-go pattern from <code>scripts/e2e-test.sh</code> Phase H:</p>
+<pre><code class="language-bash"># 1. Destroy the trial
+roksbnkctl down --auto
+
+# 2. Destroy the cluster phase
+roksbnkctl cluster down --auto
+
+# 3. Park the current-workspace pointer somewhere harmless
+roksbnkctl ws new e2e-cleanup
+roksbnkctl ws use e2e-cleanup
+
+# 4. Now the original workspace is no longer current — safe to delete
+roksbnkctl ws delete default --force
+
+# 5. (Optional) clean up the parking lot too
+roksbnkctl ws delete e2e-cleanup --force
+</code></pre>
+<p>Step 3-5 is the parking-lot pattern from <a href="./06-workspaces.html">Chapter 6</a>. It’s specifically necessary when the workspace you want to delete is currently the active one — <code>ws delete</code> refuses to remove the current workspace because that would leave a dangling <code>current_workspace</code> pointer.</p>
+<h2 id="cost-note-an-undestroyed-cluster-keeps-billing"><a class="header" href="#cost-note-an-undestroyed-cluster-keeps-billing">Cost note: an undestroyed cluster keeps billing</a></h2>
+<p>ROKS clusters bill at roughly <strong>$0.30/hour</strong> per cluster + worker pool — call it $7/day for a 2-worker cluster, plus a few cents/day for the VPC / load balancers / COS / jumphost. A forgotten cluster can rack up real cost over a weekend.</p>
+<p>To verify what’s still running in your account:</p>
+<ol>
+<li><strong>IBM Cloud console → Kubernetes → Clusters</strong> — every cluster, billing or not.</li>
+<li><strong>IBM Cloud console → VPC Infrastructure → VPCs</strong> — networks left over after a partial destroy.</li>
+<li><strong>IBM Cloud console → Resource list</strong> — exhaustive view of everything in the account, filterable by RG.</li>
+</ol>
+<p>If you find a leaked cluster from a past <code>roksbnkctl</code> run, the right move is to re-attach to it via <code>roksbnkctl cluster register &lt;name&gt;</code> and then <code>cluster down --auto</code> — <code>roksbnkctl</code> cleans up cleanly when it has the cluster in its state. Manually deleting via the console works too but leaves dangling VPCs and security groups that the bundled HCL would have cleaned up.</p>
+<p><code>roksbnkctl status</code> and <code>roksbnkctl cluster show</code> both report the cluster identity recorded in <code>cluster-outputs.json</code>, but they don’t probe for “are there other clusters in this account?” — that’s deliberately not their job. The IBM Cloud console is the canonical source of truth for what’s billing.</p>
+<h2 id="workspace-deletion--destroy"><a class="header" href="#workspace-deletion--destroy">Workspace deletion ≠ destroy</a></h2>
+<p>A subtle but important distinction. <code>roksbnkctl ws delete</code> removes the <strong>local</strong> workspace directory and the OS-keychain API key entry. It does <strong>not</strong> destroy any cloud resources. If you <code>ws delete --force</code> without first running <code>down</code> / <code>cluster down</code>, the cloud resources keep running and you’ve lost the local Terraform state that <code>roksbnkctl</code> would use to destroy them.</p>
+<p>In that scenario, recovery is:</p>
+<ol>
+<li>Find the leaked cluster in the IBM Cloud console.</li>
+<li>Recreate the workspace: <code>roksbnkctl init -w recovery</code>.</li>
+<li>Register the existing cluster: <code>roksbnkctl cluster register &lt;leaked-cluster-name&gt;</code>.</li>
+<li>Then run <code>roksbnkctl cluster down --auto</code> to destroy it cleanly.</li>
+</ol>
+<p>The Terraform state is regenerated implicitly during register + plan; the resources <code>roksbnkctl</code> would otherwise have tracked get re-discovered through the IBM SDK lookups. It’s not seamless, but it’s recoverable.</p>
+<p>The <code>ws delete</code> <code>--force</code> flag’s “still has resources” check exists exactly to prevent this scenario — don’t bypass it without thinking about the consequences.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./06-workspaces.html">Chapter 6 — Workspaces</a> — <code>ws delete</code> mechanics and the parking-lot pattern.</li>
+<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — what <code>cluster up</code> provisions and <code>cluster down</code> removes.</li>
+<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — what <code>up</code> provisions and <code>down</code> removes.</li>
+<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> (lands in Sprint 6) — recovery from partial-destroy and orphan-state scenarios.</li>
+</ul>
 
                     </main>
 

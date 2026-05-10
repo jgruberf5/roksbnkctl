@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,190 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-cluster-phase-cluster-updown"><a class="header" href="#the-cluster-phase-cluster-updown">The cluster phase (cluster up/down)</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em>The <code>roksbnkctl cluster up</code> / <code>cluster down</code> lifecycle: what the cluster phase deploys (ROKS cluster, cert-manager, jumphost), how its state is segregated under <code>state-cluster/</code>, and when you would run it independently of the BNK phase.</em></p>
+<p><code>roksbnkctl up</code> is the everyday “deploy a BNK trial” verb. Underneath, it’s actually two phases on top of each other: a <strong>cluster phase</strong> that provisions the durable ROKS cluster + cluster-shared services, and a <strong>trial phase</strong> that deploys a BNK trial onto that cluster. For workflows that want to keep the cluster around across many trials, the cluster phase is exposed as its own command pair: <code>roksbnkctl cluster up</code> / <code>roksbnkctl cluster down</code>.</p>
+<p>This chapter covers what each phase deploys, why the two state directories are separate, the <code>deploy_bnk=false</code> override that makes “cluster only” work, the <code>cluster-outputs.json</code> artefact written on success, and a worked example.</p>
+<h2 id="whats-deployed-where"><a class="header" href="#whats-deployed-where">What’s deployed where</a></h2>
+<p>The bundled HCL has roughly two halves. The cluster phase owns the durable, cluster-scoped resources:</p>
+<ul>
+<li>The ROKS cluster itself (VPC + subnets + worker pool)</li>
+<li>A transit gateway (so the test jumphost can reach cluster internals)</li>
+<li>The registry COS (Cloud Object Storage) instance — used by the BNK trial as its FAR image / license / schematic store</li>
+<li><code>cert-manager</code> (Helm release into the cluster)</li>
+<li>The TGW jumphost VM (an Ubuntu VSI in the same VPC, used by <code>--on jumphost</code>)</li>
+</ul>
+<p>The trial phase owns the BNK-specific resources:</p>
+<ul>
+<li>F5 Lifecycle Operator (<code>flo</code>) Helm release</li>
+<li><code>cne_instance</code> Kubernetes manifest</li>
+<li>BNK license + admin certs</li>
+<li>Various cluster-side bits: ServiceAccounts, RoleBindings, Secrets</li>
+</ul>
+<p>Two-phase split: cluster up provisions the first list; <code>roksbnkctl up</code> (the trial) provisions the second.</p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  cluster phase (durable, reused across many trials)     │
+│    ROKS cluster + VPC + transit gateway                 │
+│    registry COS instance                                │
+│    cert-manager (Helm)                                  │
+│    TGW jumphost                                         │
+├─────────────────────────────────────────────────────────┤
+│  trial phase (one trial — destroyed by `roksbnkctl down`)│
+│    flo (F5 Lifecycle Operator)                          │
+│    cne_instance                                         │
+│    license / admin cert / SCC bindings                  │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The split exists because ROKS clusters take 30-50 minutes to provision and roughly $0.30/hour to run. Re-creating the cluster every time you want to re-test a BNK trial is wasteful; reusing one cluster for many trials cuts iteration time from “an hour” to “a few minutes”.</p>
+<h2 id="the-two-state-directories"><a class="header" href="#the-two-state-directories">The two state directories</a></h2>
+<p>To keep cluster state and trial state from tangling, <code>roksbnkctl</code> uses <strong>separate Terraform state directories</strong>:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/
+  state/                   # BNK trial state — written by `roksbnkctl up/down`
+    terraform.tfstate
+    terraform.tfvars
+  state-cluster/           # cluster phase state — written by `roksbnkctl cluster up/down`
+    terraform.tfstate
+    cluster-phase-override.tfvars
+</code></pre>
+<p>Each phase’s commands read and write only their own state directory. Both phases use the same Terraform source (the bundled HCL) but with different effective tfvars — the trick is the <code>deploy_bnk</code> flag.</p>
+<h2 id="the-deploy_bnkfalse-override"><a class="header" href="#the-deploy_bnkfalse-override">The <code>deploy_bnk=false</code> override</a></h2>
+<p>The bundled HCL has a top-level <code>deploy_bnk</code> boolean. When <code>true</code>, the BNK trial modules (<code>flo</code>, <code>cne_instance</code>, <code>license</code>) run; when <code>false</code>, they’re skipped and Terraform only provisions the cluster-phase resources.</p>
+<p><code>roksbnkctl cluster up</code> and <code>roksbnkctl cluster down</code> <strong>force <code>deploy_bnk = false</code></strong> by writing a small auto-generated tfvars override into the cluster state directory:</p>
+<pre><code class="language-hcl"># ~/.roksbnkctl/&lt;workspace&gt;/state-cluster/cluster-phase-override.tfvars
+# Generated by roksbnkctl. Do not edit by hand.
+# Cluster-phase override: BNK trial modules (flo / cne_instance /
+# license) are skipped. cert-manager and the testing jumphost still run
+# — they're cluster-shared singletons that belong with the cluster.
+deploy_bnk = false
+</code></pre>
+<p>This file is layered onto the var-file chain <em>after</em> user-supplied <code>--var-file</code> flags so the override always wins. The user’s <code>terraform.tfvars</code> and <code>--var-file &lt;path&gt;</code> arguments still apply for everything else (region, RG, cluster name, worker count, …) — only <code>deploy_bnk</code> is forced.</p>
+<p><code>roksbnkctl up</code> doesn’t write this override file; its tfvars chain leaves <code>deploy_bnk</code> at the upstream default (<code>true</code>), so the trial modules run.</p>
+<h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
+<p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json
+</code></pre>
+<p>Sample contents:</p>
+<pre><code class="language-json">{
+  "cluster_name": "bnk-quickstart",
+  "cluster_id": "cre6h4l20jjsg4kvt3a0",
+  "region": "us-south",
+  "resource_group_id": "abc123...",
+  "vpc_id": "r006-...",
+  "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
+  "registry_cos_name": "bnk-quickstart-cos-instance",
+  "master_url": "https://c106.us-south.containers.cloud.ibm.com:31415",
+  "openshift_version": "4.14_openshift",
+  "source": "cluster-up",
+  "recorded_at": "2026-05-08T14:22:08Z"
+}
+</code></pre>
+<p>The <code>source</code> field discriminates between <code>cluster-up</code> (we created it) and <code>cluster-register</code> (we discovered an existing cluster — see <a href="./09-registering-existing-cluster.html">Chapter 9</a>). Subsequent commands read this file to learn the workspace’s cluster identity without hitting IBM APIs.</p>
+<p><code>roksbnkctl cluster down</code> deletes the file as part of its post-destroy cleanup. <code>roksbnkctl cluster show</code> pretty-prints it for human readers:</p>
+<pre><code class="language-bash">roksbnkctl cluster show
+workspace:        default
+source:           cluster-up
+recorded_at:      2026-05-08T14:22:08Z
+
+cluster_name:     bnk-quickstart
+cluster_id:       cre6h4l20jjsg4kvt3a0
+region:           us-south
+resource_group:   abc123...
+openshift:        4.14_openshift
+master_url:       https://c106.us-south.containers.cloud.ibm.com:31415
+
+vpc_id:           r006-...
+registry_cos:     bnk-quickstart-cos-instance
+registry_cos_crn: crn:v1:bluemix:public:cloud-object-storage:global:a/...
+</code></pre>
+<h2 id="worked-example-cluster-up--kubectl-get-nodes--cluster-down"><a class="header" href="#worked-example-cluster-up--kubectl-get-nodes--cluster-down">Worked example: cluster up → kubectl get nodes → cluster down</a></h2>
+<p>The cluster-only flow, end to end:</p>
+<h3 id="step-1--roksbnkctl-init"><a class="header" href="#step-1--roksbnkctl-init">Step 1 — <code>roksbnkctl init</code></a></h3>
+<p>If you don’t have a workspace yet, initialise one. This is the same <code>init</code> flow as the trial path; the cluster commands reuse the workspace’s config.</p>
+<pre><code class="language-bash">roksbnkctl init
+</code></pre>
+<h3 id="step-2--roksbnkctl-cluster-up---auto"><a class="header" href="#step-2--roksbnkctl-cluster-up---auto">Step 2 — <code>roksbnkctl cluster up --auto</code></a></h3>
+<p>Provisions the cluster phase only:</p>
+<pre><code class="language-bash">roksbnkctl cluster up --auto
+</code></pre>
+<p>Sample output (heavily abridged):</p>
+<pre><code>→ terraform plan (cluster phase: deploy_bnk=false forced)
+→ Layering user tfvars from ~/.roksbnkctl/default/state-cluster/cluster-phase-override.tfvars (overrides config.yaml-derived values)
+→ terraform init
+→ terraform apply
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Creating...
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Still creating... [10m elapsed]
+  ...
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Creation complete after 38m12s
+  module.cert_manager.helm_release.cert_manager: Creation complete after 2m11s
+  module.testing.tls_private_key.jumphost_shared_key: Creation complete after 0s
+  module.testing.ibm_is_instance.tgw_jumphost: Creation complete after 1m48s
+
+  Apply complete! Resources: 36 added, 0 changed, 0 destroyed.
+
+✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+✓ Wrote /home/you/.kube/config (chmod 0600)
+✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
+</code></pre>
+<p>Roughly 36 resources land — the cluster phase is about half the size of a full BNK trial. Time-to-ready is dominated by the ROKS cluster itself; everything else after the cluster comes up is fast.</p>
+<h3 id="step-3--verify-the-cluster-works"><a class="header" href="#step-3--verify-the-cluster-works">Step 3 — verify the cluster works</a></h3>
+<p>The post-apply admin kubeconfig is fetched automatically (unless <code>--no-kubeconfig</code>). <code>kubectl get nodes</code> confirms reachability:</p>
+<pre><code class="language-bash">kubectl get nodes
+# NAME           STATUS   ROLES           AGE   VERSION
+# 10.243.0.4     Ready    master,worker   3m    v1.28.6+5e1b9a1
+# 10.243.64.4    Ready    master,worker   3m    v1.28.6+5e1b9a1
+</code></pre>
+<p>Or, post-Sprint 2, the same thing through the internalised verb:</p>
+<pre><code class="language-bash">roksbnkctl k get nodes
+</code></pre>
+<p><code>roksbnkctl status</code> reports cluster identity + reachability:</p>
+<pre><code class="language-bash">roksbnkctl status
+Workspace:    default
+Region:       us-south
+Cluster:      bnk-quickstart  (attach existing)
+TF source:    embedded@v0.8.0
+Last apply:   2026-05-08 14:22:08 UTC  (3m ago)
+Kubeconfig:   /home/you/.kube/config
+Cluster:      2/2 nodes ready
+</code></pre>
+<h3 id="step-4--optional-deploy-a-bnk-trial-on-top"><a class="header" href="#step-4--optional-deploy-a-bnk-trial-on-top">Step 4 — (optional) deploy a BNK trial on top</a></h3>
+<p>Now that the cluster is up, <code>roksbnkctl up</code> deploys a BNK trial onto it. It reads <code>cluster-outputs.json</code> and reuses the cluster:</p>
+<pre><code class="language-bash">roksbnkctl up --auto
+</code></pre>
+<p>See <a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> for the trial-phase walkthrough. You can run <code>up</code> / <code>down</code> many times against the same cluster — each cycle is ~5 minutes rather than the ~50 minutes of a fresh-cluster run.</p>
+<h3 id="step-5--roksbnkctl-cluster-down---auto"><a class="header" href="#step-5--roksbnkctl-cluster-down---auto">Step 5 — <code>roksbnkctl cluster down --auto</code></a></h3>
+<p>Tear down the cluster phase. Refuses to run if BNK trial state still exists for the workspace — destroy those first with <code>roksbnkctl down</code>.</p>
+<pre><code class="language-bash">roksbnkctl cluster down --auto
+</code></pre>
+<p>Sample output:</p>
+<pre><code>→ terraform destroy (cluster phase)
+  module.testing.ibm_is_instance.tgw_jumphost: Destroying...
+  module.cert_manager.helm_release.cert_manager: Destroying...
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Destroying...
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Still destroying... [5m elapsed]
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Destruction complete after 8m16s
+
+  Destroy complete! Resources: 36 destroyed.
+</code></pre>
+<p>Post-destroy, <code>cluster-outputs.json</code> is deleted. The workspace directory and its <code>config.yaml</code> survive — re-running <code>cluster up</code> against the same workspace re-creates the cluster with the same name and region.</p>
+<h2 id="when-to-use-the-cluster-phase-as-its-own-command"><a class="header" href="#when-to-use-the-cluster-phase-as-its-own-command">When to use the cluster phase as its own command</a></h2>
+<p>Three scenarios where the explicit cluster phase is the right tool:</p>
+<ol>
+<li>
+<p><strong>Many BNK trial iterations on one cluster.</strong> You’re testing different <code>flo</code> versions or different <code>cne_instance</code> shapes. Run <code>cluster up</code> once, then loop <code>roksbnkctl up</code> / <code>roksbnkctl down</code> against the same cluster until you’ve covered all the trial permutations. Then <code>cluster down</code> once when you’re finished.</p>
+</li>
+<li>
+<p><strong>Pre-provisioning for a workshop or demo.</strong> You want the cluster ready and warm before the demo starts; you’ll deploy the BNK trial live in front of the audience. <code>cluster up</code> the night before; <code>roksbnkctl up</code> during the demo.</p>
+</li>
+<li>
+<p><strong>Decoupling cluster lifecycle from trial lifecycle.</strong> A long-lived cluster used by multiple team members, where one person owns the cluster phase and others own the BNK trials. Cluster-phase outputs live in <code>cluster-outputs.json</code>; trials read it. Each trial can <code>up</code>/<code>down</code> without affecting the cluster.</p>
+</li>
+</ol>
+<p>If your workflow is “create a cluster, deploy BNK on it, test, tear it all down”, just use <code>roksbnkctl up</code> / <code>roksbnkctl down</code> — they handle both phases together. The cluster commands are the escape hatch for the multi-trial-per-cluster cases.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./09-registering-existing-cluster.html">Chapter 9 — Registering an existing cluster</a> — the alternative to <code>cluster up</code> when you already have a ROKS cluster you want <code>roksbnkctl</code> to manage.</li>
+<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — what happens when <code>roksbnkctl up</code> runs on top of a registered or <code>cluster up</code>’d cluster.</li>
+<li><a href="./11-tearing-down.html">Chapter 11 — Tearing down</a> — destroy ordering and the trial-then-cluster requirement.</li>
+<li><a href="./24-day-2-ops.html">Chapter 24 — Day-2 ops</a> — <code>roksbnkctl k get</code> / <code>apply</code> / <code>logs</code> for working against the cluster after either phase.</li>
+</ul>
 
                     </main>
 

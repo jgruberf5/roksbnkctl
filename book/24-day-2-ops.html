@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,261 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="day-2-ops-status-logs-k-getapplyexec"><a class="header" href="#day-2-ops-status-logs-k-getapplyexec">Day-2 ops: status, logs, k get/apply/exec</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em>The internalized day-2 verbs: <code>roksbnkctl k get/apply/logs/exec/port-forward</code> for working against the cluster without <code>kubectl</code> on PATH, plus the <code>kubectl</code> and <code>oc</code> passthroughs that remain available as escape hatches.</em></p>
+<p>This is the chapter to read after the cluster is up and BNK is deployed and you’re now living with the result. Most day-2 work is the small stuff: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all of those into native Go via <a href="https://pkg.go.dev/k8s.io/client-go"><code>client-go</code></a> so you no longer need <code>kubectl</code> on <code>PATH</code> for the everyday workflow.</p>
+<p>The full design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a>. This chapter is the user-facing surface — the canonical “what’s the kubectl-equivalent in <code>roksbnkctl</code>?” reference.</p>
+<h2 id="why-internalise"><a class="header" href="#why-internalise">Why internalise</a></h2>
+<p>Three reasons, in order of weight:</p>
+<ol>
+<li><strong>Single binary.</strong> <code>roksbnkctl</code> is meant to be the one thing you install. After Sprint 2, the only required external prerequisite for the happy path is <code>terraform</code>. Everything else — <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>, <code>dig</code> — is either built-in or an optional escape hatch.</li>
+<li><strong>No version skew.</strong> The vendored <code>client-go</code> matches the kube API the bundled HCL targets. You can’t accidentally use <code>kubectl</code> 1.20 against a 1.28 cluster and have its print column heuristics go sideways.</li>
+<li><strong>First-class output formats.</strong> <code>cli-runtime</code> gives byte-identical <code>-o yaml</code>/<code>-o json</code>/<code>-o jsonpath</code> output to <code>kubectl</code>. The validator agent’s golden-file tests in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/k8s/golden_test.go"><code>internal/k8s/golden_test.go</code></a> assert this for representative resources.</li>
+</ol>
+<h2 id="the-k-command-tree"><a class="header" href="#the-k-command-tree">The <code>k</code> command tree</a></h2>
+<p>All internalised verbs live under <code>roksbnkctl k</code>:</p>
+<pre><code>roksbnkctl k get          # fetch resources
+roksbnkctl k describe     # human-readable detail
+roksbnkctl k apply        # server-side apply from file/dir
+roksbnkctl k delete       # delete with cascade options
+roksbnkctl k logs         # pod or component logs
+roksbnkctl k exec         # exec into a pod (SPDY)
+roksbnkctl k port-forward # forward local ports to a pod (SPDY)
+</code></pre>
+<p>Two of those have <strong>top-level shortcuts</strong> for muscle-memory convenience — the verbs you’d type a hundred times a day:</p>
+<pre><code>roksbnkctl get  ↔  roksbnkctl k get
+roksbnkctl logs ↔  roksbnkctl k logs
+</code></pre>
+<p><code>apply</code>, <code>exec</code>, <code>delete</code>, <code>describe</code>, and <code>port-forward</code> only work under the <code>k</code> prefix.</p>
+<p>Two verbs are <strong>deliberately not aliased</strong> to avoid shadowing existing top-level commands:</p>
+<ul>
+<li><strong><code>roksbnkctl apply</code></strong> is the existing top-level lifecycle verb that runs <code>terraform apply</code> against the workspace (Sprint 0/1 surface). Adding a second <code>apply</code> would shadow it and break <code>roksbnkctl up</code> / <code>roksbnkctl apply</code> muscle memory. Use <code>roksbnkctl k apply -f ...</code> explicitly for the Kubernetes-side server-side apply.</li>
+<li><strong><code>roksbnkctl exec</code></strong> runs a command on the <strong>host</strong> with the workspace’s env loaded (Sprint 1’s host-exec verb — see <a href="./06-workspaces.html">Chapter 6</a>). <code>roksbnkctl k exec</code> runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.</li>
+</ul>
+<h2 id="kubectloc-passthroughs-stay-as-escape-hatches"><a class="header" href="#kubectloc-passthroughs-stay-as-escape-hatches">kubectl/oc passthroughs stay as escape hatches</a></h2>
+<p>The existing <code>roksbnkctl kubectl &lt;args...&gt;</code> and <code>roksbnkctl oc &lt;args...&gt;</code> passthroughs are <strong>preserved</strong> post-Sprint 2. They still shell out to the host binary (with the workspace’s <code>KUBECONFIG</code> and credentials loaded) for anything outside the internalised subset.</p>
+<p>When to reach for the passthrough:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Use case</th><th>Why passthrough</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kubectl rollout</code> (status/history/undo/restart)</td><td>Out of scope for v1.0; PRD 02 explicitly defers</td></tr>
+<tr><td><code>kubectl scale</code> / <code>kubectl autoscale</code></td><td>Out of scope; passthrough is fine</td></tr>
+<tr><td><code>kubectl edit</code> / <code>kubectl patch</code></td><td>Low frequency for BNK ops; out of scope for v1.0</td></tr>
+<tr><td><code>kubectl auth can-i</code> / RBAC introspection</td><td>Out of scope; passthrough is fine</td></tr>
+<tr><td><code>kubectl drain</code> / <code>cordon</code> / <code>taint</code></td><td>Cluster admin operations; not roksbnkctl’s role</td></tr>
+<tr><td><code>kubectl run</code> / <code>kubectl create</code></td><td>Imperative resource creation; use <code>k apply -f</code> instead</td></tr>
+<tr><td><code>oc adm</code> / <code>oc image</code> / OpenShift admin verbs</td><td>Niche enough to defer; passthrough</td></tr>
+<tr><td>Niche flag combos</td><td>Anything not in the internalised verb’s flag set</td></tr>
+</tbody>
+</table>
+</div>
+<p>If <code>kubectl</code> is missing from <code>PATH</code>, the passthrough errors with:</p>
+<pre><code>Error: kubectl not on PATH; use `roksbnkctl k get/apply/...` for the in-process path,
+       or install kubectl
+</code></pre>
+<p>Same for <code>oc</code>. The doctor check (post-Sprint 2) treats both as <strong>informational</strong> rather than warnings — see <a href="./05-doctor.html">Chapter 5 — Doctor</a>.</p>
+<h2 id="worked-examples"><a class="header" href="#worked-examples">Worked examples</a></h2>
+<p>The verbs in everyday order. Every example below assumes <code>roksbnkctl k</code> and accepts the top-level alias where one exists.</p>
+<h3 id="roksbnkctl-k-get"><a class="header" href="#roksbnkctl-k-get"><code>roksbnkctl k get</code></a></h3>
+<p>The most-used verb. Resource type + optional name + optional flags:</p>
+<pre><code class="language-bash"># All pods in the default namespace
+roksbnkctl k get pods
+
+# Pods in a specific namespace
+roksbnkctl k get pods -n f5-bnk
+
+# Pods across all namespaces
+roksbnkctl k get pods -A
+
+# A specific pod by name
+roksbnkctl k get pod flo-controller-abc123 -n f5-bnk
+
+# Label selector
+roksbnkctl k get pods -A -l app.kubernetes.io/name=f5-lifecycle-operator
+
+# Cluster-scoped resources (no namespace)
+roksbnkctl k get nodes
+roksbnkctl k get storageclasses
+</code></pre>
+<p>Output formats — these match <code>kubectl</code> byte-for-byte:</p>
+<pre><code class="language-bash">roksbnkctl k get pods -n f5-bnk -o yaml
+roksbnkctl k get pods -n f5-bnk -o json
+roksbnkctl k get pods -n f5-bnk -o wide
+roksbnkctl k get pods -n f5-bnk -o name
+roksbnkctl k get pods -n f5-bnk -o jsonpath='{.items[*].metadata.name}'
+roksbnkctl k get pods -n f5-bnk -o go-template='{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}'
+</code></pre>
+<p>Plural / singular / shortname handling comes from the cluster’s <code>RESTMapper</code> via the discovery client, so <code>pod</code>, <code>pods</code>, <code>po</code> all work and pick up CRDs without a hardcoded list. <code>roksbnkctl k get cneinstances</code> (a BNK CRD) works as soon as the CRD is registered with the API server — no rebuild required.</p>
+<p>Using the top-level alias:</p>
+<pre><code class="language-bash">roksbnkctl get pods -A
+</code></pre>
+<h3 id="roksbnkctl-k-describe"><a class="header" href="#roksbnkctl-k-describe"><code>roksbnkctl k describe</code></a></h3>
+<p>Delegates to <code>k8s.io/kubectl/pkg/describe</code> — the same library <code>kubectl</code> uses internally. Output is identical to <code>kubectl describe</code>:</p>
+<pre><code class="language-bash">roksbnkctl k describe pod flo-controller-abc123 -n f5-bnk
+roksbnkctl k describe node 10.243.0.4
+roksbnkctl k describe service flo-webhook -n f5-bnk
+roksbnkctl k describe cneinstance my-instance -n f5-bnk
+</code></pre>
+<p>The describe output’s “Events” section is especially useful for debugging stuck resources — pod scheduling failures, image pull errors, finaliser hangs all surface here.</p>
+<h3 id="roksbnkctl-k-apply"><a class="header" href="#roksbnkctl-k-apply"><code>roksbnkctl k apply</code></a></h3>
+<p>Server-side apply (SSA) with field-manager <code>roksbnkctl</code>. Inputs:</p>
+<pre><code class="language-bash"># Single file
+roksbnkctl k apply -f pod.yaml
+
+# Directory of YAMLs (recurses *.yaml)
+roksbnkctl k apply -f manifests/
+
+# Kustomize base (auto-detected if kustomization.yaml is present)
+roksbnkctl k apply -f my-kustomize-base/
+
+# stdin
+cat pod.yaml | roksbnkctl k apply -f -
+
+# Apply into a specific namespace (overrides metadata.namespace if absent)
+roksbnkctl k apply -f manifests/ -n f5-bnk
+
+# Force conflicts (SSA force-conflicts=true)
+roksbnkctl k apply -f manifests/ --force
+</code></pre>
+<p>There is <strong>no</strong> top-level <code>roksbnkctl apply</code> alias for this verb — <code>roksbnkctl apply</code> is the lifecycle command that runs <code>terraform apply</code>. Always use <code>roksbnkctl k apply</code> for the Kubernetes-side apply.</p>
+<p>Differences from <code>kubectl apply</code>:</p>
+<ul>
+<li><strong>Always SSA.</strong> Field manager is <code>roksbnkctl</code>. Client-side apply is not supported.</li>
+<li><strong>Kustomize auto-detect.</strong> A directory containing <code>kustomization.yaml</code> is built via <code>sigs.k8s.io/kustomize/api</code> before applying — no <code>-k</code> flag needed.</li>
+<li><strong><code>--force</code> maps to SSA’s <code>force-conflicts=true</code>.</strong> Without it, conflicts with another field manager produce a clean error rather than silently winning.</li>
+</ul>
+<p>For a vanilla <code>kubectl apply -f</code> workflow, the behaviour is functionally identical. For workflows that depend on client-side three-way merge or specific <code>--server-side</code> flag combinations, fall back to the passthrough.</p>
+<h3 id="roksbnkctl-k-delete"><a class="header" href="#roksbnkctl-k-delete"><code>roksbnkctl k delete</code></a></h3>
+<p>Cascade-aware deletion via the dynamic client:</p>
+<pre><code class="language-bash"># Delete by name
+roksbnkctl k delete pod flo-controller-abc123 -n f5-bnk
+
+# Cascade: orphan, background (default), foreground
+roksbnkctl k delete deployment flo -n f5-bnk --cascade=foreground
+
+# Force (bypass graceful deletion; immediate)
+roksbnkctl k delete pod stuck-pod -n f5-bnk --force
+
+# Custom grace period (seconds)
+roksbnkctl k delete pod my-pod -n f5-bnk --grace-period=5
+</code></pre>
+<p>Use <code>--cascade=foreground</code> when you want to wait for owned resources (Pods owned by a Deployment, etc.) to be deleted before the parent disappears — useful for tearing down BNK trial CRs cleanly so finalisers run in order.</p>
+<h3 id="roksbnkctl-k-logs-and-roksbnkctl-logs"><a class="header" href="#roksbnkctl-k-logs-and-roksbnkctl-logs"><code>roksbnkctl k logs</code> and <code>roksbnkctl logs</code></a></h3>
+<p>Two paths, one verb. The component-aware path was introduced in Sprint 1 for BNK-specific workflows; the raw pod-name path is new in Sprint 2.</p>
+<p><strong>Component-aware</strong> (existing — by label selector):</p>
+<pre><code class="language-bash">roksbnkctl logs flo                # F5 Lifecycle Operator (label selector under the hood)
+roksbnkctl logs cis                # F5 BNK CIS controller
+roksbnkctl logs cert-manager       # cert-manager
+roksbnkctl logs cneinstance        # BIG-IP TMM data plane pods
+</code></pre>
+<p><strong>Raw pod-name</strong> (new in Sprint 2):</p>
+<pre><code class="language-bash">roksbnkctl k logs flo-controller-abc123 -n f5-bnk
+</code></pre>
+<p>Common flags (both paths):</p>
+<pre><code class="language-bash">-f, --follow              # stream live (kubectl logs -f)
+-c, --container &lt;name&gt;    # specific container in a multi-container pod
+--previous                # logs from the previous instance (after a crash)
+--since=10m               # only logs in the last 10 minutes
+--tail=100                # last N lines only
+</code></pre>
+<p>Top-level alias:</p>
+<pre><code class="language-bash">roksbnkctl logs flo -f --since=5m
+</code></pre>
+<p>If the named first arg matches one of the well-known BNK components (<code>flo</code>, <code>cis</code>, <code>cert-manager</code>, <code>cneinstance</code>), the component-aware path is used; otherwise it’s treated as a pod name. The component map lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/inspect.go"><code>internal/cli/inspect.go</code></a> and is keyed off the upstream chart’s default labels.</p>
+<h3 id="roksbnkctl-k-exec"><a class="header" href="#roksbnkctl-k-exec"><code>roksbnkctl k exec</code></a></h3>
+<p>SPDY exec into a pod. Same semantics as <code>kubectl exec</code>:</p>
+<pre><code class="language-bash"># One-shot command
+roksbnkctl k exec flo-controller-abc123 -n f5-bnk -- ls -la /
+
+# stdin attached
+roksbnkctl k exec flo-controller-abc123 -n f5-bnk -i -- cat /etc/hostname
+
+# Interactive PTY (the bash-style use)
+roksbnkctl k exec flo-controller-abc123 -n f5-bnk -i -t -- bash
+
+# Specific container in a multi-container pod
+roksbnkctl k exec flo-controller-abc123 -n f5-bnk -c sidecar -- env
+</code></pre>
+<p>The <code>-i</code> and <code>-t</code> flags map directly to <code>kubectl exec</code>’s <code>-i</code> (stdin) and <code>-t</code> (PTY). For <code>top</code> / <code>bash</code> / interactive Python sessions, pass both.</p>
+<p>There is <strong>no</strong> <code>roksbnkctl exec</code> (top-level) alias — <code>roksbnkctl exec</code> runs on the host. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md#disambiguating-roksbnkctl-exec">“Disambiguating <code>roksbnkctl exec</code>” in PRD 02</a>.</p>
+<h3 id="roksbnkctl-k-port-forward"><a class="header" href="#roksbnkctl-k-port-forward"><code>roksbnkctl k port-forward</code></a></h3>
+<p>SPDY port-forward to a pod:</p>
+<pre><code class="language-bash"># Forward localhost:8080 → pod's :80
+roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk 8080:80
+
+# Multiple ports
+roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk 8080:80 8443:443
+
+# Random local port (let the kernel pick)
+roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk :80
+</code></pre>
+<p><code>Ctrl+C</code> closes the tunnel cleanly — no orphaned local listeners. The forward survives idle (reads/writes are bidirectional); it’s torn down only on signal or pod restart.</p>
+<p>For a Service rather than a Pod, port-forward via the Service’s underlying pod or use <code>kubectl port-forward svc/&lt;name&gt;</code> through the passthrough — Service-targeted port-forwarding is currently passthrough-only.</p>
+<h2 id="output-format-compatibility"><a class="header" href="#output-format-compatibility">Output format compatibility</a></h2>
+<p>The biggest user-visible promise: <strong><code>-o yaml</code> / <code>-o json</code> / <code>-o wide</code> / <code>-o jsonpath</code> produce the same bytes as <code>kubectl</code></strong>, modulo a small set of timestamp-and-resourceVersion fields that change between calls.</p>
+<p>Concretely, the validator agent’s golden-file tests at <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/k8s/golden_test.go"><code>internal/k8s/golden_test.go</code></a> capture <code>kubectl get &lt;resource&gt; -o yaml</code> and <code>roksbnkctl k get &lt;resource&gt; -o yaml</code> against a live ROKS cluster and <code>diff</code> them, ignoring:</p>
+<ul>
+<li><code>metadata.managedFields</code> (ordering varies between callers; not user-visible)</li>
+<li><code>metadata.resourceVersion</code> (monotonic counter; changes on every read)</li>
+<li><code>metadata.creationTimestamp</code> (set server-side; not under our control)</li>
+</ul>
+<p>Anything else differing is a test failure. The covered resources for v0.8 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via <code>cli-runtime</code>’s <code>resource.Builder</code>) paths.</p>
+<p>Run them locally with:</p>
+<pre><code class="language-bash">make test-live
+</code></pre>
+<p>…against a <code>KUBECONFIG</code> that points at a real ROKS cluster. They’re <strong>not</strong> part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.</p>
+<h2 id="openshift-extensions-phase-21"><a class="header" href="#openshift-extensions-phase-21">OpenShift extensions (Phase 2.1)</a></h2>
+<p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types that <code>kubectl</code> doesn’t know about by default. Phase 2.1 of PRD 02 adds these via <code>github.com/openshift/client-go</code>:</p>
+<pre><code class="language-bash">roksbnkctl k get projects                    # OpenShift projects (vs Kubernetes namespaces)
+roksbnkctl k get routes -n f5-bnk            # OpenShift Routes (vs Ingress)
+roksbnkctl k get imagestreams -n f5-bnk      # OpenShift ImageStreams
+roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK trials)
+</code></pre>
+<p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); just expands the resource list the dynamic client recognises. Whether Phase 2.1 lands for v0.8 depends on staff agent budget — PLAN.md scopes it as “Phase 2.1 which may slip”. Check <code>roksbnkctl k get --help</code> after the v0.8 cut to see whether <code>projects</code>/<code>routes</code>/<code>imagestreams</code> made it.</p>
+<p>If 2.1 isn’t there yet, fall back to the passthrough:</p>
+<pre><code class="language-bash">roksbnkctl oc get projects
+</code></pre>
+<h2 id="doctor-change-recap"><a class="header" href="#doctor-change-recap">Doctor change recap</a></h2>
+<p>A reminder of what changed in Sprint 2’s doctor (covered in <a href="./05-doctor.html">Chapter 5</a>):</p>
+<ul>
+<li><strong><code>kubectl</code></strong> — was “needed (warning when missing)”; now <strong>informational</strong> (no warning when missing).</li>
+<li><strong><code>oc</code></strong> — same downgrade.</li>
+</ul>
+<p>A fresh dev box without <code>kubectl</code> / <code>oc</code> installed should run <code>roksbnkctl doctor</code> and see green-or-informational across the board for the everyday workflow. The host-binary requirement is gone; the binaries are nice-to-have for the passthroughs.</p>
+<h2 id="kubectl-muscle-memory-cheat-sheet"><a class="header" href="#kubectl-muscle-memory-cheat-sheet">kubectl muscle-memory cheat sheet</a></h2>
+<p>A reader migrating from <code>kubectl</code> should be able to use this section as a Rosetta Stone:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>kubectl ...</code></th><th><code>roksbnkctl ...</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>kubectl get pods</code></td><td><code>roksbnkctl get pods</code> (or <code>roksbnkctl k get pods</code>)</td></tr>
+<tr><td><code>kubectl get pods -A</code></td><td><code>roksbnkctl get pods -A</code></td></tr>
+<tr><td><code>kubectl get pods -o yaml</code></td><td><code>roksbnkctl get pods -o yaml</code></td></tr>
+<tr><td><code>kubectl describe pod &lt;name&gt;</code></td><td><code>roksbnkctl k describe pod &lt;name&gt;</code></td></tr>
+<tr><td><code>kubectl apply -f manifests/</code></td><td><code>roksbnkctl k apply -f manifests/</code></td></tr>
+<tr><td><code>kubectl apply -k overlay/</code></td><td><code>roksbnkctl k apply -f overlay/</code> (auto-detects kustomize)</td></tr>
+<tr><td><code>kubectl delete pod &lt;name&gt;</code></td><td><code>roksbnkctl k delete pod &lt;name&gt;</code></td></tr>
+<tr><td><code>kubectl logs &lt;pod&gt; -f</code></td><td><code>roksbnkctl logs &lt;pod&gt; -f</code> (or <code>roksbnkctl k logs &lt;pod&gt; -f</code>)</td></tr>
+<tr><td><code>kubectl exec -it &lt;pod&gt; -- bash</code></td><td><code>roksbnkctl k exec &lt;pod&gt; -i -t -- bash</code></td></tr>
+<tr><td><code>kubectl port-forward &lt;pod&gt; 8080:80</code></td><td><code>roksbnkctl k port-forward &lt;pod&gt; 8080:80</code></td></tr>
+<tr><td><code>kubectl rollout status deploy/foo</code></td><td><code>roksbnkctl kubectl rollout status deploy/foo</code> (passthrough)</td></tr>
+<tr><td><code>kubectl edit deployment foo</code></td><td><code>roksbnkctl kubectl edit deployment foo</code> (passthrough)</td></tr>
+<tr><td><code>kubectl scale deployment foo --replicas=3</code></td><td><code>roksbnkctl kubectl scale deployment foo --replicas=3</code> (passthrough)</td></tr>
+<tr><td><code>oc projects</code></td><td><code>roksbnkctl k get projects</code> (Phase 2.1) or <code>roksbnkctl oc projects</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./05-doctor.html">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
+<li><a href="./06-workspaces.html">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
+<li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag</a> — <code>--on</code> plus the passthroughs for customer-firewalled scenarios.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a> — the design rationale and acceptance criteria for the work in this chapter.</li>
+</ul>
 
                     </main>
 
