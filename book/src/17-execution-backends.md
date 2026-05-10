@@ -45,9 +45,10 @@ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 Format:
 
 ```
---backend <name>            # local | docker | k8s
---backend ssh:<target-name> # SSH backend; target name from `roksbnkctl targets list`
+--backend local|docker|k8s|ssh:<target>
 ```
+
+The `ssh:<target>` form pins the SSH backend to a specific named target from `roksbnkctl targets list` (registered via `roksbnkctl targets add`; see [Chapter 16](./16-on-flag-ssh-jumphosts.md)).
 
 The flag is **persistent at the root** — it works for any command that runs an external tool. Commands that don't run external tools (like `roksbnkctl ws list`) ignore it.
 
@@ -205,7 +206,9 @@ The vendored images live at:
 | `iperf3` | `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<tag>` (Alpine + iperf3) |
 | `terraform` | `hashicorp/terraform:<v>` (official upstream) |
 
-The `<tag>` in the per-tool images is **`:dev`** during the development cycle and **`:v<roksbnkctl-version>`** on tagged releases. Sprint 3 shipped a hard-coded `:dev` for `ibmcloud` + `iperf3`; that lookup map landed unchanged this sprint because the `:dev` tag is what `tools/docker/Makefile` produces locally and what the `.github/workflows/build-tools-images.yml` workflow publishes on every push to `main`. On a `git tag v1.0.0` release the same workflow re-tags the image as `:v1.0.0` and pushes both. The default in `internal/exec/docker.go::toolImages` flips to the version-tagged form at release-tag time.
+The `<tag>` for the vendored per-tool images (`ibmcloud`, `iperf3`) is resolved at runtime by `internal/exec/docker.go::toolImageTag()`. It reads the binary's `internal/version.Version` (set via ldflags at build time): a release-built binary like `v0.10.0` pulls `:v0.10.0`; a dev build (`Version == "dev"`) pulls `:dev`. Sprint 4 landed this version-pinning in place of Sprint 3's hard-coded `:dev` so a `go install` of a tagged release pulls a matching tagged image rather than a `:dev` that may not exist for the published binary. The `terraform` row is the exception — it points at the upstream `hashicorp/terraform` image and stays pinned to a specific version (currently `1.5.7`) regardless of `roksbnkctl`'s own version.
+
+The `:dev` tag is still the local-development idiom: `cd tools/docker && make build-all` builds and tags every tools image as `:dev` locally; a dev-build `roksbnkctl` finds them via the local docker cache without a ghcr.io round-trip.
 
 If you're cutting a custom tools image and want `roksbnkctl` to pick it up, the simplest path is `docker tag your-image ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev` locally — the docker backend pulls the local-cached version first.
 
@@ -248,17 +251,17 @@ The split mirrors the two latency budgets. Long-lived pods amortise the pod-star
 
 #### Long-lived ops pod pattern
 
-The pod is named `ops` in the `roksbnkctl-ops` namespace. `roksbnkctl ops install` deploys it (see [Chapter 19](./19-in-cluster-ops-pod.md) for the full lifecycle). The image bundles `ibmcloud` CLI plus `kubectl` as backup; future iterations may add `oc`, `terraform`, etc.
+The pod is named `roksbnkctl-ops` in the `roksbnkctl-ops` namespace. `roksbnkctl ops install` deploys it (see [Chapter 19](./19-in-cluster-ops-pod.md) for the full lifecycle). The image bundles `ibmcloud` CLI plus `kubectl` as backup; future iterations may add `oc`, `terraform`, etc. The container inside the pod is named `tools`.
 
 `Backend.Run(ctx, argv, opts)` for the ops-pod path is essentially:
 
 ```go
 exec, _ := remotecommand.NewSPDYExecutor(restConfig, "POST",
     clientset.CoreV1().RESTClient().Post().
-        Resource("pods").Namespace("roksbnkctl-ops").Name("ops").
+        Resource("pods").Namespace("roksbnkctl-ops").Name("roksbnkctl-ops").
         SubResource("exec").
         VersionedParams(&corev1.PodExecOptions{
-            Container: "ops",
+            Container: "tools",
             Command:   argv,
             Stdin:     opts.Stdin != nil,
             Stdout:    true,
@@ -320,14 +323,16 @@ The `roksbnkctl-test` namespace is a fresh namespace dedicated to one-shot test 
 
 #### iperf3 server side
 
-Worth calling out because it's the asymmetric piece. The `iperf3` test deploys a **server** Deployment + LoadBalancer Service into `roksbnkctl-test`, then runs the **client** as the one-shot Job described above:
+Worth calling out because it's the asymmetric piece. The `iperf3` test deploys a **server** bare Pod + Service into `roksbnkctl-test`, then runs the **client** as the one-shot Job described above:
 
 | Side | Resource | Lifetime |
 |---|---|---|
-| Server | `roksbnkctl-iperf3-server` Deployment + LoadBalancer Service | torn down after the client Job completes |
+| Server | `roksbnkctl-iperf3` bare Pod + Service (`LoadBalancer` for `--mode north-south`; `ClusterIP` for `--mode east-west`) | torn down after the client Job completes |
 | Client | one-shot Job | `ttlSecondsAfterFinished: 60` |
 
-The client Job's argv is `iperf3 -c <server-cluster-ip-or-lb> -J`. The `-J` JSON flows back via log streaming, parsed in `internal/test/throughput.go`, surfaced as `roksbnkctl test throughput` JSON output. See [Chapter 22 — Throughput testing](./22-throughput-testing.md) for the user-facing flag surface.
+The bare-Pod (rather than Deployment) shape is intentional — the iperf3 server is single-shot, scoped to one test, torn down on completion; the controller-managed replica machinery a Deployment provides is unused and would only confuse the cleanup story. Service type is driven by `--mode`: `north-south` measures laptop-to-cluster bandwidth and needs a publicly reachable endpoint (`LoadBalancer`); `east-west` measures node-to-pod and stays in-cluster (`ClusterIP`). See [Chapter 22 — Throughput testing](./22-throughput-testing.md) for the user-facing flag surface.
+
+The client Job's argv is `iperf3 -c <server-cluster-ip-or-lb> -J`. The `-J` JSON flows back via log streaming, parsed in `internal/test/throughput.go`, surfaced as `roksbnkctl test throughput` JSON output.
 
 The server pod's `securityContext` is set to satisfy OpenShift's `restricted-v2` SCC: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `seccompProfile.type: RuntimeDefault`, `capabilities.drop: [ALL]`. iperf3 listens on port 5201 (unprivileged) so no root is needed. The Sprint 3 cluster baseline tripped the SCC by missing one or more of these fields; the manifest the k8s backend emits this sprint sets all four.
 
@@ -388,13 +393,15 @@ Exit `0` → tool present, proceed. Non-zero → tool missing. What happens next
 
 The opt-in default reflects [PRD 03 open question §"`--bootstrap` opt-in for SSH"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#open-questions): silent `sudo apt-get` on a remote host is the kind of surprise that erodes operator trust, especially when the remote is shared between teams. Make the user say "yes, install for me".
 
-Bootstrap failure modes (all surface as exit `126` — backend mid-run failure — with a remediation message):
+Bootstrap failure modes split between the two backend-failure exit codes per [§"Backend-failure semantics"](#backend-failure-semantics): `127` when we never got going (couldn't reach the repo, no apt mapping, tool missing without `--bootstrap`); `126` when we got partway in and then something broke (sudo / OS-detect / install).
 
-| Failure | What you see |
-|---|---|
-| `sudo` requires a password (NOPASSWD not configured) | `sudo: a password is required` → "the SSH user needs passwordless sudo for `apt-get install`. Configure `<user> ALL=(ALL) NOPASSWD: /usr/bin/apt-get` in /etc/sudoers, or pre-install <pkg> manually." |
-| Non-Ubuntu OS (`/etc/os-release` doesn't say `ID=ubuntu`) | "auto-install only supports Ubuntu. Pre-install `<pkg>` on the target (RHEL: `yum install <pkg>`)." |
-| Network unreachable from target (apt-get can't reach the repo) | "target can't reach the package repo. Check the target's egress policy or pre-install `<pkg>` manually." Exit `127` (we never got going). |
+| Failure | Exit | What you see |
+|---|---|---|
+| `--bootstrap` not set and tool missing | `127` | "tool `<name>` not found on ssh target `<target>`; re-run with --bootstrap to install via apt-get, or pre-install on the target manually" |
+| `sudo` requires a password (NOPASSWD not configured) | `126` | `sudo: a password is required` → "the SSH user needs passwordless sudo for `apt-get install`. Configure `<user> ALL=(ALL) NOPASSWD: /usr/bin/apt-get` in /etc/sudoers, or pre-install <pkg> manually." |
+| Non-Ubuntu OS (`lsb_release -is` doesn't return `Ubuntu`) | `126` | "auto-install only supports Ubuntu. Pre-install `<pkg>` on the target (RHEL: `yum install <pkg>`)." |
+| Network unreachable from target (apt-get can't reach the repo) | `127` | "target can't reach the package repo. Check the target's egress policy or pre-install `<pkg>` manually." |
+| No apt mapping for the requested tool | `126` | "no bootstrap recipe known for tool `<name>`; the SSH backend only auto-installs `ibmcloud` + `iperf3` today" |
 
 #### File materialisation
 

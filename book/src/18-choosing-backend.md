@@ -100,9 +100,12 @@ That's a deliberately different measurement — useful when you suspect office W
 
 ### "I'm doing GSLB DNS validation"
 
-Use **both** `local` and `k8s`. F5 BIG-IP Next's GSLB returns different answers depending on the requesting resolver's IP — geographic affinity, datacenter routing, health-check state. To validate that the GSLB is actually doing this, query from multiple network vantage points and compare:
+Use **both** `local` and `k8s`. F5 BIG-IP Next's GSLB returns different answers depending on the requesting resolver's IP — geographic affinity, datacenter routing, health-check state. To validate that the GSLB is actually doing this, query from multiple network vantage points and compare.
+
+The full multi-vantage probe is a **Sprint 5 deliverable**; today (Sprint 4) `roksbnkctl test dns` is the simpler single-vantage workspace probe. The shape below is what the Sprint 5 expanded surface will look like — the flags (`--target`, `--type`, `--server`, `--gslb-compare`) don't exist on `roksbnkctl test dns` yet:
 
 ```bash
+# Sprint 5+ — the flags below don't exist on `roksbnkctl test dns` today
 roksbnkctl test dns \
   --target www.example.com \
   --type A \
@@ -110,9 +113,9 @@ roksbnkctl test dns \
   --gslb-compare
 ```
 
-`--gslb-compare` fans out to every configured backend (`local` for your office IP, `k8s` for the cluster's egress IP, `ssh:<region-bastion>` for a bastion in another region) and emits a single comparison JSON. Different answers across vantages are **expected** in a healthy GSLB; identical answers might mean the GSLB rules aren't taking effect.
+When it lands, `--gslb-compare` will fan out to every configured backend (`local` for your office IP, `k8s` for the cluster's egress IP, `ssh:<region-bastion>` for a bastion in another region) and emit a single comparison JSON. Different answers across vantages are **expected** in a healthy GSLB; identical answers might mean the GSLB rules aren't taking effect.
 
-The DNS probe lands in Sprint 5; [Chapter 21 — DNS testing for GSLB](./21-dns-testing-gslb.md) is the chapter to read once it ships.
+[Chapter 21 — DNS testing for GSLB](./21-dns-testing-gslb.md) is the chapter to read once the probe ships.
 
 ### "I need to run `ibmcloud` from a customer-firewalled office"
 
