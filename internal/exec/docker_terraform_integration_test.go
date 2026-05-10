@@ -85,17 +85,20 @@ func TestIntegrationTerraform_DockerBindMount_RoundTrip(t *testing.T) {
 		t.Fatalf("ResolveBackend: %v", err)
 	}
 
-	tfImage := toolImages["terraform"]
-	if tfImage == "" {
-		t.Fatal("toolImages[\"terraform\"] empty")
-	}
+	// The terraform image has `ENTRYPOINT ["terraform"]`, so it can't run
+	// arbitrary shell commands. The bind-mount round-trip test is
+	// image-agnostic — what we're actually asserting is the docker
+	// backend's `--user $(id -u):$(id -g)` + HostMounts plumbing. Use
+	// busybox (no entrypoint, `/bin/sh` available, also pre-loaded into
+	// the kind cluster for the k8s integration job).
+	const probeImage = "busybox:1.36"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	// Use a shell argv against the terraform image's busybox-shaped
-	// /bin/sh to write the marker. The terraform image ships sh.
-	// argv[0] is the literal image, argv[1:] is the in-container cmd.
+	// Use a shell argv to write the marker file. argv[0] is the literal
+	// image (test-fallback path in resolveDockerImageAndArgv), argv[1:]
+	// is the in-container cmd.
 	// Staff's surface (Sprint 5): RunOpts.HostMounts + RunOpts.RunAsUser.
 	// Mirror what internal/cli/lifecycle.go's terraform docker dispatch
 	// builds:
@@ -104,7 +107,7 @@ func TestIntegrationTerraform_DockerBindMount_RoundTrip(t *testing.T) {
 	u, _ := user.Current()
 	runAsUser := u.Uid + ":" + u.Gid
 	rc, err := b.Run(ctx,
-		[]string{tfImage, "/bin/sh", "-c", "echo round-trip > " + markerInside},
+		[]string{probeImage, "/bin/sh", "-c", "echo round-trip > " + markerInside},
 		RunOpts{
 			Stdout:  os.Stderr,
 			Stderr:  os.Stderr,

@@ -111,8 +111,11 @@ func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	// Pin the busybox tag — CI pre-loads busybox:1.36 into the kind cluster
+	// via `kind load docker-image` so the kubelet doesn't need to pull
+	// from Docker Hub (slow + rate-limited on cold runners).
 	rc, err := b.Run(ctx,
-		[]string{"busybox", "echo", "hello-from-job"},
+		[]string{"busybox:1.36", "echo", "hello-from-job"},
 		RunOpts{
 			Stdout: &noopBuilder{&stdout},
 			Stderr: &noopBuilder{&stderr},
