@@ -248,7 +248,118 @@ The `restricted-v2` SCC failure we hit in E2E was because the pod manifest didn'
 
 State handling for non-local backends is the trickiest part of terraform support. Phase 3.0 ships **local + docker** for terraform; **k8s + ssh** deferred to 3.x once state-handling is solid.
 
-## Implementation tasks
+#### DNS probe (GSLB-aware)
+
+| Field | Value |
+|---|---|
+| **Default backends** | `local` **and** `k8s` (run both, surface both answers — see GSLB note) |
+| **Supported** | `local`, `k8s`, `ssh` (docker available but rarely useful — no network-locality benefit over local) |
+| **Library** | [`github.com/miekg/dns`](https://github.com/miekg/dns) — the reference Go DNS implementation (used by CoreDNS), MIT licensed. Replaces `dig` as a host prerequisite. |
+| **Why miekg/dns over std lib `net`** | std `net.Resolver` only exposes a fixed record-type set (A/AAAA/CNAME/MX/NS/SRV/TXT) and can't easily target a specific server per query; miekg/dns gives full protocol surface, per-query custom server, and exposes RTT directly for latency measurement |
+| **K8s shape** | one-shot Job in `roksbnkctl-test` namespace; runs the embedded probe (no separate image needed — the `roksbnkctl` binary itself runs in `dns-probe` mode); emits JSON output to its log |
+| **SSH shape** | execute the `roksbnkctl` binary on the SSH target (or scp it first if missing); same JSON output |
+| **Local shape** | runs the probe in-process; no external dependencies |
+
+**GSLB use case** — the primary motivator. F5 BIG-IP Next's GSLB returns different answers depending on the requesting resolver's IP (geographic affinity, datacenter routing, health-check state). To validate GSLB is working, you have to query the same name from multiple network vantage points and compare:
+
+- From **local** (your laptop): see the answer your office IP gets
+- From **k8s** (in-cluster): see the answer the cluster's worker nodes get when they egress
+- From **ssh** (a customer bastion in another region): see the answer that bastion's IP gets
+
+The DNS probe runs all three (or any subset) in parallel and emits a comparison report. Different answers across vantage points are **expected** in a healthy GSLB; identical answers might indicate the GSLB rules aren't taking effect.
+
+**CLI surface**:
+
+```bash
+# Single-vantage probe with full control
+roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server 8.8.8.8 \
+  --backend local
+
+# GSLB comparison probe (default — runs across all configured vantage points)
+roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.f5.example.com \
+  --gslb-compare      # implied when both `local` and `k8s` are configured backends
+
+# Latency measurement (built in to every probe)
+roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server 8.8.8.8 \
+  --iterations 10 \
+  -o json
+# JSON includes: rtt_ms (per query), rtt_p50/p95/p99 across iterations,
+# answer_set (all RRs returned), authoritative flag, truncated flag.
+```
+
+**Record types supported**: A, AAAA, CNAME, MX, NS, TXT, SRV, SOA, PTR, CAA, DS, DNSKEY, ANY. Anything `miekg/dns` exposes via its `dns.Type` enum — basically all of them.
+
+**Server resolution**:
+- `--server <ip>` or `--server <hostname>:<port>` — explicit IP/hostname
+- `--server system` — use the host's `/etc/resolv.conf` resolvers (today's behavior)
+- `--server cluster` — use the cluster's CoreDNS (k8s backend only — resolves via the pod's `/etc/resolv.conf` which CoreDNS owns)
+- `--server <name-from-config>` — named resolver in workspace config:
+  ```yaml
+  test:
+    dns:
+      resolvers:
+        google:    "8.8.8.8:53"
+        cloudflare:"1.1.1.1:53"
+        gslb-vip:  "169.45.91.5:53"
+      default_target: "www.example.com"
+  ```
+
+**JSON output schema** (`-o json`, schema `roksbnkctl.dns.v1`):
+
+```json
+{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "vantages": [
+    {
+      "backend": "local",
+      "server": "8.8.8.8:53",
+      "iterations": 10,
+      "rtt_ms": { "p50": 12.4, "p95": 18.1, "p99": 22.7 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 60, "rdata": "169.45.91.10" }
+      ],
+      "rcode": "NOERROR",
+      "authoritative": false,
+      "truncated": false,
+      "edns_client_subnet": null
+    },
+    {
+      "backend": "k8s",
+      "server": "8.8.8.8:53",
+      "rtt_ms": { "p50": 8.2, "p95": 11.0, "p99": 14.3 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 60, "rdata": "10.20.30.40" }
+      ],
+      "rcode": "NOERROR"
+    }
+  ],
+  "gslb_divergence": true,
+  "gslb_divergence_summary": "answers differ between local (169.45.91.10) and k8s (10.20.30.40) — GSLB returning location-specific records as expected"
+}
+```
+
+The `gslb_divergence` bool is true when the answer sets differ across vantages — useful for CI assertions (`exit 0` if divergence is expected; flip to `--require-divergence` to fail when GSLB silently returns identical answers everywhere).
+
+**Latency measurement**:
+- Per-query RTT extracted from `miekg/dns`'s response handler (its `Exchange()` returns `time.Duration`)
+- `--iterations N` runs N queries against the same server, reports p50/p95/p99
+- Useful for detecting GSLB health-check flapping or anycast routing changes
+- For k8s/ssh backends: measured **inside** the remote vantage point, so it reflects the actual resolver-to-resolver path, not the laptop-to-cluster transit
+
+**Why no `docker` backend**: a Docker container running locally has the same network identity as the local host (default bridge networking) — no GSLB-relevant network-locality difference. Skipping by design; `--backend docker` errors with "DNS probe doesn't benefit from docker; use local instead."
+
+
 
 1. **`internal/exec/Backend` interface** + `RunOpts` + `Credentials` structs in a new package
 2. **`internal/exec/local.go`** — refactor existing `os/exec` callsites in `cli/cluster.go` (passthroughs) to dispatch through this
@@ -264,7 +375,13 @@ State handling for non-local backends is the trickiest part of terraform support
 9. **`--backend` CLI flag** parsed at root, scoped per subcommand
 10. **Doctor extensions**: `roksbnkctl doctor --backend k8s` checks SA + Secret + image pull; `--backend docker` checks daemon reachable; `--backend ssh` checks target connectivity
 11. **iperf3 SCC fix**: rebuild the pod manifest `internal/test/throughput.go` with proper `securityContext` so `restricted-v2` SCC accepts it
-12. **Logging**: every backend prefixes its stderr lines with `[<backend>] ` so users can tell where output is coming from in mixed-mode runs
+12. **DNS probe internalization**:
+    - Add `github.com/miekg/dns` dep
+    - `internal/test/dns.go` — replace today's `net.Resolver` impl with a miekg-based `Probe` struct supporting `--server`, `--type`, `--iterations`, RTT capture
+    - `cli/test.go` — extend `dns` subcommand with the new flags; add `--gslb-compare` multi-vantage mode that fans out to all configured backends and emits the comparison JSON
+    - `internal/exec/k8s.go` — add a `dns-probe` Job mode that execs `roksbnkctl` itself in-cluster (single binary, no separate image) with the probe args
+    - Workspace config schema: add `test.dns.resolvers` map and `test.dns.default_target`
+13. **Logging**: every backend prefixes its stderr lines with `[<backend>] ` so users can tell where output is coming from in mixed-mode runs
 
 ## Acceptance criteria
 
@@ -274,6 +391,8 @@ State handling for non-local backends is the trickiest part of terraform support
 - `roksbnkctl up --backend docker` runs terraform inside `hashicorp/terraform:<v>` against the bundled TF source; state file persisted to `~/.roksbnkctl/<ws>/state/` via bind mount
 - Backend selection from workspace config + flag override are both honored; flag wins
 - iperf3 throughput test no longer hits SCC/PodSecurity warnings on OpenShift
+- `roksbnkctl test dns --target gslb.example.com --type A --server 8.8.8.8` runs without `dig` installed and reports per-query RTT plus p50/p95/p99 across `--iterations`
+- `roksbnkctl test dns --gslb-compare ...` runs the same probe from `local` + `k8s` (and `ssh:<target>` if configured), emits a single comparison JSON; `gslb_divergence: true` when answers differ across vantages
 - Doctor reports per-backend availability accurately
 
 ## Open questions

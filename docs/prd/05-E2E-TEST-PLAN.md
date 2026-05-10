@@ -18,6 +18,7 @@ The existing `scripts/e2e-test.sh` (Phases A-H, see `docs/E2E_TEST.md`) becomes 
 | **J** | Kubectl internalization (no host kubectl on PATH) | [02](./02-KUBECTL-INTERNAL.md) |
 | **K** | Docker backend (ibmcloud + iperf3) | [03 § Docker](./03-EXECUTION-BACKENDS.md) |
 | **L** | K8s backend (iperf3 + ops pod) | [03 § K8s](./03-EXECUTION-BACKENDS.md) |
+| **L-DNS** | DNS probe (miekg/dns); per-server / per-type / latency; GSLB cross-vantage comparison | [03 § DNS probe](./03-EXECUTION-BACKENDS.md) |
 | **M** | Cred propagation audit (no leak in docker inspect, ps, kube events, ssh wrappers) | [04](./04-CREDENTIALS.md) |
 | **N** | Mixed-mode lifecycle: kubectl native + terraform local + ibmcloud SSH + iperf3 k8s | all of the above |
 
@@ -92,6 +93,24 @@ diff <(kubectl get nodes -o yaml) <(roksbnkctl k get nodes -o yaml) | grep -v "m
 | L5 | (RBAC check) `kubectl auth can-i delete pods --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops -n default` | returns `no` (least-privilege RBAC) |
 | L6 | (RBAC check) `kubectl auth can-i create jobs --as=...:roksbnkctl-ops -n roksbnkctl-test` | returns `yes` (granted by ClusterRole) |
 | L7 | `roksbnkctl ops uninstall` (cleanup before Phase D's down) | exits 0; namespace + Secret + RBAC removed |
+
+## Phase L-DNS — DNS probe (GSLB-aware) across backends
+
+**Prereqs**: Phase D cluster up; `roksbnkctl ops install` from L0 still in place. `dig` removed from PATH (or never installed) to confirm internalization.
+
+| Step | Command | Pass criterion |
+|---|---|---|
+| LD0 | `which dig` | not found (or, if installed, the test still runs without invoking it) |
+| LD1 | `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --backend local` | exits 0; JSON output schema=`roksbnkctl.dns.v1`; `answers[].rdata` is a v4 IP; `rtt_ms.p50` populated |
+| LD2 | `roksbnkctl test dns --target www.cloudflare.com --type AAAA --server 8.8.8.8 --backend local` | exits 0; answers contain v6 records |
+| LD3 | `roksbnkctl test dns --target nonexistent-zzz.example.invalid --type A --server 8.8.8.8 --backend local` | exits 1; rcode=`NXDOMAIN`; clear error |
+| LD4 | `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --iterations 10 --backend local -o json` | output includes `rtt_ms.p50/p95/p99` from 10 samples |
+| LD5 | `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --backend k8s` | exits 0; probe runs as a Job in `roksbnkctl-test`, reuses the roksbnkctl binary in-cluster; Job auto-deleted after; `rtt_ms` reflects in-cluster→8.8.8.8 path |
+| LD6 | `roksbnkctl test dns --target www.cloudflare.com --type A --server cluster --backend k8s` | exits 0; uses cluster CoreDNS (`/etc/resolv.conf` inside the pod); answers reflect cluster's view |
+| LD7 | (GSLB comparison happy path) `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --gslb-compare -o json` | runs `local` + `k8s` vantages in parallel; `gslb_divergence: false` (Cloudflare anycast usually returns the same record from both); `vantages[]` has 2 entries with both RTTs |
+| LD8 | (GSLB comparison divergence) Use a name that's geo-resolved (e.g., `www.google.com`) where local and cluster IPs hit different DCs: `... --gslb-compare ...` | `gslb_divergence: true`; summary explains divergence |
+| LD9 | (SSH vantage, if jumphost configured) `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --backend ssh:jumphost` | binary exists on jumphost (auto-scp'd if missing); probe runs on jumphost; RTT measured remote→8.8.8.8 |
+| LD10 | (negative — docker rejected by design) `roksbnkctl test dns --backend docker --target ...` | exits non-zero; clear "DNS probe doesn't benefit from docker; use local" error |
 
 ## Phase M — credential propagation audit
 
