@@ -6,9 +6,30 @@ on:
     paths:
       - 'book/**'
       - '.github/workflows/book.yml'
+  pull_request:
+    paths:
+      - 'book/**'
+      - '.github/workflows/book.yml'
 
 jobs:
+  validate:
+    # Build + link-check on every PR; doesn't deploy.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: 'latest'
+      - name: Test (link check + code-block validation)
+        run: mdbook test book/
+      - name: Build (catches malformed markdown)
+        run: mdbook build book/
+
   build-deploy:
+    # Deploy on push to main only.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
