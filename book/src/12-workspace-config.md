@@ -253,7 +253,7 @@ The block is optional — if you've already populated COS by hand or via the ups
 | `bnk.*` | Field is omitted from the generated `terraform.tfvars` and the upstream HCL default applies. |
 | `tf_source` | Treated as `type: embedded` (legacy default). |
 | `targets.*` | Block absent ⇒ `roksbnkctl --on jumphost` errors with "no target named jumphost"; auto-populated by `up`. |
-| `exec.*` | Per-tool defaults built into the binary apply (`iperf3`→`k8s`, everything else→`local`). |
+| `exec.*` | Defaults to `local` for every tool today (Sprint 3). PRD 03's design intent is `iperf3`→`k8s` once the k8s backend lands in Sprint 4 — the per-tool default map will switch over then. Override per-tool via this block, or per-invocation via `--backend`. |
 | `cos.*` | No pre-flight uploads; the COS instance/bucket are read from the upstream HCL's tfvars instead. |
 
 The general rule: **if you don't write it in `config.yaml`, `roksbnkctl` doesn't write it into `terraform.tfvars`**, and the upstream HCL's `default = ...` clause takes over. The full upstream defaults are listed in [Chapter 29](./29-terraform-variable-reference.md).

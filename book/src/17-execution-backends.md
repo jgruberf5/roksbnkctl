@@ -57,11 +57,13 @@ The flag wins over the workspace-config default. If `config.yaml` says `iperf3: 
 
 Each backend has a different failure surface. The convention is:
 
-- **Backend startup failure** (Docker daemon down, k8s cluster unreachable, SSH target down) ⇒ exit code `127`, with a message naming the cause. **No silent fallback to `local`.** Silent fallback hides intent and produces confusing test results.
+- **Backend-side failure of any kind** (Docker daemon down, image pull failed, container create/start error, binary not on PATH for `local`) ⇒ exit code `127`, with a message naming the cause. **No silent fallback to `local`.** Silent fallback hides intent and produces confusing test results.
 - **Tool exit code** (the actual `ibmcloud` / `terraform` / `iperf3` exit code) ⇒ propagated 1:1, including non-zero codes.
-- **Backend-internal error** during a successful run (e.g., the docker container started but failed to bind-mount the kubeconfig) ⇒ exit code `126`, with a message naming the failure mode.
+- **Context cancellation / timeout** ⇒ exit code `137` (the conventional SIGKILL-on-signal code).
 
-This way, your CI script can tell "the tool said X failed" (typical exit codes) from "the backend itself broke" (126/127).
+PRD 03 reserves both `126` and `127` for backend-specific failures with a finer-grained split (`126` for "backend started but mid-run failure", `127` for "backend startup failure"). Sprint 3's `local` + `docker` implementations collapse to `127` for both cases; the split lands in Sprint 4 if the use cases that motivated PRD 03's distinction surface in practice.
+
+This way, your CI script can tell "the tool said X failed" (typical exit codes) from "the backend itself broke" (`127`) from "we ran out of time" (`137`).
 
 ## Per-tool defaults from `exec:`
 
@@ -108,17 +110,17 @@ Runs the tool inside a vendored container image:
 roksbnkctl ibmcloud --backend docker ks cluster ls
 ```
 
-Mechanically:
+Mechanically (Sprint 3's `ibmcloud` passthrough shape):
 
 ```
 docker run --rm \
-  --workdir /work \
-  -v <workspace-state>:/work \                # for terraform state, etc.
   -v <kubeconfig-path>:/root/.kube/config:ro \ # if the tool needs a kubeconfig
-  -e IBMCLOUD_API_KEY \                       # env var name only; value inherits
+  -e IBMCLOUD_API_KEY \                        # env var name only; value inherits
   ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:<v> \
   ks cluster ls
 ```
+
+There's no workspace-wide bind-mount: each invocation's mount set comes from `RunOpts.Files` (per-file `/work/<basename>` mounts), the kubeconfig (single-file at `/root/.kube/config`), and any explicit working dir from `RunOpts.WorkDir`. Sprint 3's `ibmcloud` passthrough sets none of those except the kubeconfig and `IBMCLOUD_API_KEY`.
 
 Three things to call out:
 

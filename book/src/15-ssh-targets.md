@@ -94,7 +94,7 @@ This is the right setting when:
 - You're on a shared workstation where putting the key file in `~/.ssh/` is undesirable.
 - You're already using ssh-agent for everything else and want consistent behaviour.
 
-**Platform note**: ssh-agent integration is **Linux/macOS-only** in v0.7. Windows users should use `key_path` to a file. (The Windows ssh-agent uses a named-pipe protocol that the underlying Go SSH library doesn't yet wrap; full support is a v2 item.)
+**Platform note**: ssh-agent integration is **Linux/macOS-only**. Windows users should use `key_path` to a file. The restriction is structural to the Go SSH library, which doesn't wrap the Windows ssh-agent named-pipe protocol — see [`golang.org/x/crypto/ssh/agent`](https://pkg.go.dev/golang.org/x/crypto/ssh/agent) and upstream tracking issues for status; full Windows support is a v2 item.
 
 ### `key_source: tf-output:<output-name>`
 
