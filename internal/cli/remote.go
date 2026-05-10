@@ -33,8 +33,8 @@ func rejectOnFlag(cmdName string) error {
 // KUBECONFIG, etc.) that workspaceEnv() would have applied locally. The
 // remote sshd's AcceptEnv config decides which actually pass through;
 // users who hit "ibmcloud not logged in" on the remote should configure
-// AcceptEnv on the jumphost (documented in book/src/ssh.md, owned by
-// the architect agent).
+// AcceptEnv on the jumphost (see chapter 16, "Behaviour details" in
+// book/src/16-on-flag-ssh-jumphosts.md).
 //
 // On success this function does NOT return — it calls os.Exit. The
 // remote-side exit code is the only useful thing for scripts and CI.

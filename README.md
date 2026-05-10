@@ -32,25 +32,26 @@ roksbnkctl/
 - **Workspaces** — kubectl-style per-environment config + state bundles under `~/.roksbnkctl/<name>/`. Switch with `roksbnkctl ws use`, override one-off with `-w`.
 - **Cross-platform single binary** — Linux, macOS, Windows. No Docker dependency. ~25 MB statically linked.
 - **No `ibmcloud` CLI dependency** — IBM Go SDKs (platform-services / container-services / cos) cover everything internally.
+- **`--on jumphost` (v0.7)** — run any passthrough (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) against an auto-discovered SSH jumphost. Useful for customer-firewalled or air-gapped environments where the laptop can't reach IBM Cloud APIs directly. Embedded SSH client; no host `ssh` binary needed. See [chapter 16](https://jgruberf5.github.io/roksbnkctl/book/16-on-flag-ssh-jumphosts.html).
 
 ---
 
 ## Quick start (build from source today; pre-built binaries soon)
 
-> **Build requires Go 1.23 or newer.** If you don't have a recent Go on PATH, use the [Docker-based build](#build-with-docker-no-go-installation-required) — same result, no host Go needed.
+> **Build requires Go 1.25 or newer.** If you don't have a recent Go on PATH, use the [Docker-based build](#build-with-docker-no-go-installation-required) — same result, no host Go needed.
 
 ```bash
 git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
-# Path A — native build (requires Go 1.23+):
-go version       # confirm: go version go1.23.x or newer
+# Path A — native build (requires Go 1.25+):
+go version       # confirm: go version go1.25.x or newer
 make build
 
 # Path B — Docker build (no host Go installation required):
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 export PATH="$PWD/bin:$PATH"
 
@@ -93,7 +94,7 @@ git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 ./bin/roksbnkctl install                 # → ~/.local/bin/roksbnkctl
 
 # 2. Sanity-check prereqs (terraform / iperf3 / IBM creds / kubeconfig)
@@ -471,7 +472,7 @@ roksbnkctl up --var-file /tmp/no-key.tfvars
 
 ### Requirements
 
-- **Go 1.23 or newer** is mandatory. The module declares `go 1.23` in `go.mod`; `go-version-file: go.mod` is what CI reads. Builds fail loudly on older versions — the IBM and k8s SDKs both pull language features added in 1.23. Confirm with `go version`.
+- **Go 1.25 or newer** is mandatory. The module declares `go 1.25` in `go.mod`; `go-version-file: go.mod` is what CI reads. Builds fail loudly on older versions — the IBM and k8s SDKs both pull language features added in 1.25. Confirm with `go version`.
   - **No Go installed (or have an older version)?** Skip to [Build with Docker](#build-with-docker-no-go-installation-required) — produces the same binary without touching the host Go install.
   - Need to upgrade? Pre-built Go installers: [go.dev/dl](https://go.dev/dl/). On macOS: `brew install go`. On Linux: distro package or the tarball from go.dev.
 - **terraform** on `PATH` (>= 1.5) — required at runtime for `up` / `plan` / `apply` / `down`.
@@ -482,7 +483,7 @@ roksbnkctl up --var-file /tmp/no-key.tfvars
 
 ### Build with Docker (no Go installation required)
 
-This is the recommended path if your host doesn't have Go 1.23+. Uses the official `golang:1.23-alpine` image; produces a binary in `./bin/`.
+This is the recommended path if your host doesn't have Go 1.25+. Uses the official `golang:1.25-alpine` image; produces a binary in `./bin/`.
 
 ```bash
 git clone https://github.com/jgruberf5/roksbnkctl.git
@@ -490,7 +491,7 @@ cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl --help
 ```
@@ -503,7 +504,7 @@ Anatomy of the docker invocation:
 | `-w /work` | Container working directory matches the mount. |
 | `--user "$(id -u):$(id -g)"` | Output binary is owned by your host user, not root. |
 | `-e HOME=/tmp` | Go writes its module cache under `$HOME`; `/tmp` is writable by any user. Without this, `go mod tidy` fails on a writable-`/root` permission error. |
-| `golang:1.23-alpine` | Pinned major version; matches `go.mod`'s minimum. |
+| `golang:1.25-alpine` | Pinned major version; matches `go.mod`'s minimum. |
 
 #### Cross-compile via Docker
 
@@ -514,13 +515,13 @@ Set `GOOS` / `GOARCH` env vars in the same `docker run` to produce binaries for 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 
 # Full sweep (mirror of what goreleaser produces for tagged releases)
 for os in linux darwin windows; do
@@ -529,7 +530,7 @@ for os in linux darwin windows; do
     docker run --rm -v "$PWD:/work" -w /work \
       --user "$(id -u):$(id -g)" -e HOME=/tmp \
       -e GOOS=$os -e GOARCH=$arch \
-      golang:1.23-alpine sh -c "go build -o bin/roksbnkctl_${os}_${arch}${ext} ./cmd/roksbnkctl"
+      golang:1.25-alpine sh -c "go build -o bin/roksbnkctl_${os}_${arch}${ext} ./cmd/roksbnkctl"
   done
 done
 ```
@@ -538,7 +539,7 @@ Each binary is statically linked (Alpine + `CGO_ENABLED=0` is the default for cr
 
 ### Build natively
 
-If `go version` reports `1.23` or newer:
+If `go version` reports `1.25` or newer:
 
 ```bash
 git clone https://github.com/jgruberf5/roksbnkctl.git
@@ -601,7 +602,7 @@ Same Docker pattern works for tests:
 ```bash
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go test -race ./...'
+  golang:1.25-alpine sh -c 'go test -race ./...'
 ```
 
 ### Troubleshooting `make build`
@@ -609,13 +610,13 @@ docker run --rm -v "$PWD:/work" -w /work \
 If `make build` fails, check in this order:
 
 ```bash
-go version                # need 1.23+; "command not found" → use the Docker path
+go version                # need 1.25+; "command not found" → use the Docker path
 make --version            # missing on Windows + minimal Linux; install or use the docker `go build` directly
 git rev-parse --short HEAD   # the Makefile pulls COMMIT from this; failure is benign (defaults to "none")
 go env GOPROXY            # if behind a corporate proxy, set GOPROXY accordingly before `go mod tidy`
 ```
 
-The most common failure on a fresh clone is **Go too old** — `go: module requires Go 1.23` is unambiguous; install a newer Go or use the Docker path.
+The most common failure on a fresh clone is **Go too old** — `go: module requires Go 1.25` is unambiguous; install a newer Go or use the Docker path.
 
 ---
 

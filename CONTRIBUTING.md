@@ -19,6 +19,24 @@ The long-running end-to-end test (`scripts/e2e-test.sh`) is documented
 separately below — it provisions real cloud resources and is **never**
 run in PR CI.
 
+### Running integration tests
+
+`internal/remote/integration_test.go` spins up a real `openssh-server`
+container via `testcontainers-go` and exercises the SSH client end-to-end.
+Gated behind a build tag so unit tests stay fast:
+
+```bash
+make test-integration              # equivalent to:
+go test -tags integration -timeout 5m ./internal/remote/...
+```
+
+Requires Docker (the container is launched dynamically). CI runs this
+on Linux only (`integration` job in `.github/workflows/ci.yml`); macOS
+GitHub runners don't ship Docker so the job is skipped there. Run
+locally before pushing SSH-related changes — the integration tests
+catch real bugs the unit suite can't (the Sprint 1 ctx-cancel fix in
+`internal/remote/ssh.go` was found this way).
+
 ## Pre-commit hook
 
 `scripts/pre-commit.sh` runs three checks against the working tree:

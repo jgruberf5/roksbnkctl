@@ -4,7 +4,7 @@ The `--on <target>` flag re-runs a `roksbnkctl` passthrough command (`exec`, `sh
 
 This chapter covers when to reach for `--on`, the `targets:` workspace config block, the auto-population behaviour, the `roksbnkctl targets` command tree for managing your own targets, and how host-key trust is established.
 
-The full design rationale for this feature lives in [PRD 01](../../docs/prd/01-SSH-AND-ON-FLAG.md). This chapter is the user-facing distillation.
+The full design rationale for this feature lives in [PRD 01](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md). This chapter is the user-facing distillation.
 
 ## Why this exists
 
@@ -24,7 +24,7 @@ Targets are stored in your workspace config at `~/.roksbnkctl/<workspace>/config
 targets:
   jumphost:                                # auto-populated after `roksbnkctl up`
     host: 169.45.91.177
-    user: root
+    user: ubuntu
     key_source: tf-output:jumphost_shared_key
     port: 22                               # default; can be omitted
 
@@ -53,8 +53,10 @@ The upstream HCL provisions a small testing jumphost as part of every cluster ap
 After a successful `roksbnkctl up`, `roksbnkctl` reads both outputs and writes a `jumphost` target into your workspace config:
 
 ```
-✓ Wrote target "jumphost" → 169.45.91.177 (user: root, key: tf-output:jumphost_shared_key)
+✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
 ```
+
+The auto-registered target uses `user: ubuntu` (the upstream HCL provisions an Ubuntu cloud image whose default user is `ubuntu`).
 
 The `key_source: tf-output:jumphost_shared_key` form means the private key is **read from terraform state at SSH-connect time** rather than being copied into the workspace config or written to disk separately. The key only ever exists in terraform state and in memory during a connect; destroying and re-creating the cluster generates a new key, and `roksbnkctl` picks up the new one without any manual intervention.
 
@@ -74,16 +76,12 @@ Exactly one of `key_path` or `key_source` must be set per target. `roksbnkctl ta
 
 ## Host-key TOFU on first connect
 
-The first time you connect to a target, `roksbnkctl` shows the target's host key fingerprint and asks whether to trust it:
+The first time you connect to a target, `roksbnkctl` shows the host key fingerprint and asks whether to trust it. The prompt is a single line:
 
 ```bash
 $ roksbnkctl exec --on jumphost -- whoami
-roksbnkctl: connecting to 169.45.91.177:22 ...
-The authenticity of host '169.45.91.177:22' can't be established.
-ED25519 key fingerprint is SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=.
-Add this key to ~/.roksbnkctl/known_hosts? [y/N]: y
-✓ Recorded host key for 169.45.91.177:22
-root
+Add 169.45.91.177:22's key (SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=) to ~/.roksbnkctl/known_hosts? [y/N]: y
+ubuntu
 ```
 
 Answer `y` and the key is appended to `~/.roksbnkctl/known_hosts` (the same format as OpenSSH's `~/.ssh/known_hosts`). Subsequent connects trust silently.
@@ -93,16 +91,10 @@ Answer `n` and the connect fails with a clear "host key not trusted" error.
 If the host key changes between runs — which would happen on a re-provisioned VM, or could happen as a man-in-the-middle attack — `roksbnkctl` refuses to connect:
 
 ```
-roksbnkctl: error: host key for 169.45.91.177:22 has changed.
-  recorded: SHA256:abc123...
-  presented: SHA256:zyx987...
-This may be a man-in-the-middle attack. To re-trust:
-  roksbnkctl targets show jumphost   # inspect the recorded key
-  edit ~/.roksbnkctl/known_hosts and remove the line for 169.45.91.177
-exit code: 126
+error: host key mismatch: 169.45.91.177:22 known with SHA256:abc123... but server presented SHA256:zyx987...; if the host was rebuilt, edit ~/.roksbnkctl/known_hosts
 ```
 
-This is "trust on first use" (TOFU) — the same model OpenSSH uses for new hosts.
+This is "trust on first use" (TOFU) — the same model OpenSSH uses for new hosts. Exit code is 126 on host-key rejections.
 
 ### `--insecure-host-key` for CI
 
@@ -130,11 +122,11 @@ roksbnkctl targets remove <name>
 ```
 roksbnkctl targets list
 NAME       HOST                USER     KEY
-jumphost   169.45.91.177:22    root     tf-output:jumphost_shared_key
-bastion    ops.example.com:22  jgruber  ~/.ssh/id_ed25519
+jumphost   169.45.91.177:22    ubuntu   tf-output:jumphost_shared_key
+bastion    ops.example.com:22  jgruber  file:~/.ssh/id_ed25519
 ```
 
-Prints every target in the current workspace's config. The `KEY` column shows the key source — never the key material itself.
+Prints every target in the current workspace's config. The `KEY` column shows the key source — never the key material itself. File-backed keys are prefixed with `file:` so they're visually distinct from `tf-output:` and `agent` sources.
 
 ### `targets show <name>`
 
@@ -143,13 +135,11 @@ roksbnkctl targets show jumphost
 name:        jumphost
 host:        169.45.91.177
 port:        22
-user:        root
+user:        ubuntu
 key_source:  tf-output:jumphost_shared_key
-host_key:    ED25519 SHA256:abc123def456...
-last_seen:   2026-05-08T14:22:08Z
 ```
 
-Prints the full record plus the recorded host-key fingerprint from `~/.roksbnkctl/known_hosts`. Useful for confirming what you're trusting before running a command.
+Prints the full record. Note that the key material itself is never printed — only the source descriptor (file path, ssh-agent, or terraform-output name).
 
 ### `targets add <name> ...`
 
@@ -190,7 +180,7 @@ The everyday verbs:
 ```bash
 # Run an arbitrary command on the jumphost
 roksbnkctl exec --on jumphost -- whoami
-# → root
+# → ubuntu
 
 roksbnkctl exec --on jumphost -- uname -a
 # → Linux jumphost-vm 5.15.0-... #... SMP ... x86_64 GNU/Linux
@@ -215,7 +205,7 @@ Behaviour details worth knowing:
 
 - **Streaming I/O.** stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (`oc adm top nodes`, `ibmcloud ks cluster get` on a slow API call) work normally.
 - **Exit code propagation.** The remote command's exit code is the local exit code. A failing remote command produces a non-zero `roksbnkctl` exit; a succeeding remote command produces `0`. CI scripts can rely on this.
-- **TTY auto-detection.** `roksbnkctl shell --on` auto-allocates a PTY. For other verbs, pass `--tty` if you need a PTY (e.g. for `top` or any command that checks `isatty()`).
+- **TTY auto-detection.** `roksbnkctl shell --on` auto-allocates a PTY. Other verbs (`exec`, `kubectl`, `oc`, `ibmcloud`) run without a PTY in v0.7; if you need a PTY for `top` or another `isatty()`-sensitive command, fall back to `roksbnkctl shell --on jumphost` and run the command from the interactive shell.
 - **Environment passthrough.** `IBMCLOUD_API_KEY`, `IBMCLOUD_REGION`, and `KUBECONFIG` are propagated to the remote session via SSH `SetEnv`, so `ibmcloud iam oauth-tokens` on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept `AcceptEnv IBMCLOUD_*` etc. for this to work; the upstream HCL's jumphost is already configured for it.
 
 ## What `--on` doesn't do (yet)
@@ -227,9 +217,10 @@ A few things deliberately deferred to later phases:
 - **`~/.ssh/config` parsing.** Targets must be defined explicitly in workspace config; `roksbnkctl` does not read your existing `~/.ssh/config`.
 - **Password auth.** Keys + agent only. Passwords are not supported and won't be.
 - **SCP / SFTP.** File transfer is the SSH execution backend's job in v0.9. v0.7's `--on` does one-shot remote exec only.
+- **Windows ssh-agent.** The `key_source: agent` path is Linux/macOS only in v0.7; Windows users must use `key_path` to a file. Already noted in [Key sources](#key-sources) above; called out here so a Windows reader who skipped to this section doesn't miss it.
 
 ## Cross-reference
 
 [Chapter 17 — Execution backends](./17-execution-backends.md) (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can't `AcceptEnv`, and apt-bootstrap of missing tools on Ubuntu jumphosts. The `--on` flag stays as the lightweight one-shot path; `--backend ssh` is the deeper integration. The two are designed to share the same `internal/remote.Client` so what you learn here translates directly.
 
-For the design rationale, edge cases, and open questions, read [PRD 01](../../docs/prd/01-SSH-AND-ON-FLAG.md) — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.
+For the design rationale, edge cases, and open questions, read [PRD 01](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md) — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.

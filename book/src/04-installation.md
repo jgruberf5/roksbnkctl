@@ -8,14 +8,14 @@ A tagged release with pre-built binaries, a `brew` tap, and an `install.sh` one-
 
 - **Linux or macOS** for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.
 - **Git** to clone the repository.
-- **Go 1.23 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build below.
+- **Go 1.25 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build below.
 - **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`. This is the only required external prerequisite for the v0.7 happy path; everything else (`ibmcloud`, `kubectl`, `oc`, `iperf3`) is optional and only needed for the corresponding passthrough or test command.
 
 You do not need Docker installed to *use* `roksbnkctl`. Docker is only used here as a convenience for building the binary without touching your host Go install.
 
-## Path A — native build (requires Go 1.23+)
+## Path A — native build (requires Go 1.25+)
 
-If `go version` reports `1.23` or newer, this is the simplest path:
+If `go version` reports `1.25` or newer, this is the simplest path:
 
 ```bash
 git clone https://github.com/jgruberf5/roksbnkctl.git
@@ -40,11 +40,11 @@ make tidy       # go mod tidy
 make clean      # rm -rf bin/
 ```
 
-If `make build` fails, the most likely cause is **Go too old**. The module declares `go 1.23` in `go.mod`; older versions error out with `go: module requires Go 1.23`. Either upgrade Go or fall back to the Docker path below.
+If `make build` fails, the most likely cause is **Go too old**. The module declares `go 1.25.0` in `go.mod` (forced by transitive deps from the SSH/integration test layers); older versions error out with `go: module requires Go 1.25`. Either upgrade Go or fall back to the Docker path below.
 
 ## Path B — Docker-based build (no host Go required)
 
-This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official `golang:1.23-alpine` image has everything needed; the build artefact lands in `./bin/` owned by your host user.
+This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official `golang:1.25-alpine` image has everything needed (Sprint 1 bumped the minimum Go version from 1.23 to 1.25 because of `testcontainers-go` and `gliderlabs/ssh` transitive dependencies); the build artefact lands in `./bin/` owned by your host user.
 
 ```bash
 git clone https://github.com/jgruberf5/roksbnkctl.git
@@ -52,7 +52,7 @@ cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl install
 ```
@@ -65,7 +65,7 @@ Anatomy of the docker invocation:
 | `-w /work` | Container working directory matches the mount. |
 | `--user "$(id -u):$(id -g)"` | Output binary is owned by your host user, not root. |
 | `-e HOME=/tmp` | Go writes its module cache under `$HOME`; `/tmp` is writable by any user. Without this, `go mod tidy` fails on a writable-`/root` permission error. |
-| `golang:1.23-alpine` | Pinned major version; matches `go.mod`'s minimum. |
+| `golang:1.25-alpine` | Pinned major version; matches `go.mod`'s minimum. |
 
 ### Cross-compile via Docker
 
@@ -76,13 +76,13 @@ Set `GOOS` / `GOARCH` env vars in the same `docker run` to produce binaries for 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64 (compile-only; not tested at runtime)
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.23-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy && go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 ```
 
 Each binary is statically linked (Alpine + `CGO_ENABLED=0` is the cross-compile default) so the produced file has no runtime library dependencies.
@@ -121,10 +121,10 @@ On zsh, swap `~/.bashrc` for `~/.zshrc`.
 
 Two quick checks: version (proves the binary runs) and `doctor` (proves the runtime environment is set up for actual work).
 
-### `roksbnkctl --version`
+### `roksbnkctl version`
 
 ```bash
-roksbnkctl --version
+roksbnkctl version
 ```
 
 Sample output:
@@ -141,24 +141,21 @@ The version string is populated via `-ldflags` at build time; `make build VERSIO
 roksbnkctl doctor
 ```
 
-`doctor` runs an eight-check prereq + credentials report. Sample output on a healthy machine:
+`doctor` runs the prereq + credentials report. Sample output on a healthy machine looks like this (yours will differ depending on which optional binaries you have installed and whether you've initialised a workspace):
 
 ```
-roksbnkctl doctor
-  ✓ terraform on PATH (terraform 1.7.5)
-  ✓ kubectl on PATH (v1.29.2)        [optional — passthrough only]
-  ✓ oc on PATH (4.14.10)             [optional — passthrough only]
-  ⚠ ibmcloud on PATH                  not installed (optional)
-  ✓ iperf3 on PATH (3.16)             [for test throughput]
-  ✓ kubeconfig present                ~/.kube/config
-  ✓ workspace initialised             default
-  ✓ IBMCLOUD_API_KEY resolves          via OS keychain
-  ✓ IBM Cloud auth                    OK (account: ...)
-
-8 checks, 7 passed, 1 warning, 0 failed.
+✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (optional; `roksbnkctl kubectl` passthrough)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (optional; `roksbnkctl oc` passthrough)
+✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
+✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
+✓  workspace         default                                                                  (per-environment config + state)
+✓  ibmcloud api key  resolved via OS keychain                                                 (auth for terraform + IBM SDK calls)
+✓  ibm cloud auth    OK (account: Main F5 Account)                                            (verifies API key works against IBM IAM)
 ```
 
-Failures are red `✗` and exit non-zero; warnings are yellow `⚠` and don't fail the run. `terraform` is the only check that's hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. [Chapter 5](./05-doctor.md) walks through what each check is verifying and how to fix common failures.
+Each row is `<status> <name> <detail> <why we care>`. Failures are red `✗` and exit non-zero; warnings are yellow `⚠` and don't fail the run. `terraform` is the only check that's hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. [Chapter 5](./05-doctor.md) walks through what each check is verifying and how to fix common failures.
 
 ## OS support matrix
 
