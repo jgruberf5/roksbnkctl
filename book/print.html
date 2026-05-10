@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d269bfbc.js";
+            window.path_to_searchindex_js = "searchindex-c83df32a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -382,7 +382,7 @@ roksbnkctl test        # connectivity + DNS + throughput against the deployment
 <p>This is the v0.7 surface. The roadmap to v1.0 has a few significant pieces still to land. Brief preview so you know what to expect:</p>
 <ul>
 <li><strong>v0.8 — kubectl internalisation.</strong> <code>roksbnkctl k get/apply/logs/exec/port-forward</code> becomes a first-class verb that talks to the cluster directly via <code>client-go</code>, with no host <code>kubectl</code> binary required. The <code>kubectl</code> passthrough remains as an escape hatch for advanced flags. After v0.8, the only required prereq on PATH is <code>terraform</code>.</li>
-<li><strong>v0.9 — four execution backends.</strong> Every external tool (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>) becomes selectable across <code>local | docker | k8s | ssh</code> backends via <code>--backend</code>. You’ll be able to run iperf3 entirely in-cluster without installing it on the host, run ibmcloud in a Docker container with a pinned version, or proxy any tool through a jumphost. <a href="#execution-backends-local-docker-k8s-ssh">Chapter 17</a> covers the design.</li>
+<li><strong>v0.9 — four execution backends.</strong> Every external tool (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>) becomes selectable across <code>local | docker | k8s | ssh</code> backends via <code>--backend</code>. You’ll be able to run iperf3 entirely in-cluster without installing it on the host, run ibmcloud in a Docker container with a pinned version, or proxy any tool through a jumphost. <a href="#execution-backends-local-docker-k8s-ssh">Chapter 17</a> covers the user-facing surface; the design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03</a>.</li>
 <li><strong>v0.9 — GSLB-aware DNS testing.</strong> The DNS probe becomes <a href="https://github.com/miekg/dns">miekg/dns</a>-based with multi-vantage support, so you can verify that BNK’s GSLB is returning different answers from different network locations.</li>
 <li><strong>v1.0 — book launched, full E2E test plan green, dogfood feedback integrated.</strong> The <code>https://jgruberf5.github.io/roksbnkctl/book/</code> site (this book) ships with all 32 chapters polished, every code example verified, diagrams in place.</li>
 </ul>
@@ -401,12 +401,12 @@ roksbnkctl test        # connectivity + DNS + throughput against the deployment
 <ul>
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
 <li><strong>Git</strong> to clone the repository.</li>
-<li><strong>Go 1.23 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build below.</li>
+<li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build below.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>. This is the only required external prerequisite for the v0.7 happy path; everything else (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>) is optional and only needed for the corresponding passthrough or test command.</li>
 </ul>
 <p>You do not need Docker installed to <em>use</em> <code>roksbnkctl</code>. Docker is only used here as a convenience for building the binary without touching your host Go install.</p>
-<h2 id="path-a--native-build-requires-go-123"><a class="header" href="#path-a--native-build-requires-go-123">Path A — native build (requires Go 1.23+)</a></h2>
-<p>If <code>go version</code> reports <code>1.23</code> or newer, this is the simplest path:</p>
+<h2 id="path-a--native-build-requires-go-125"><a class="header" href="#path-a--native-build-requires-go-125">Path A — native build (requires Go 1.25+)</a></h2>
+<p>If <code>go version</code> reports <code>1.25</code> or newer, this is the simplest path:</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
@@ -424,15 +424,15 @@ make vet        # go vet ./...
 make tidy       # go mod tidy
 make clean      # rm -rf bin/
 </code></pre>
-<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.23</code> in <code>go.mod</code>; older versions error out with <code>go: module requires Go 1.23</code>. Either upgrade Go or fall back to the Docker path below.</p>
+<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.25.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.25</code>. Either upgrade Go or fall back to the Docker path below.</p>
 <h2 id="path-b--docker-based-build-no-host-go-required"><a class="header" href="#path-b--docker-based-build-no-host-go-required">Path B — Docker-based build (no host Go required)</a></h2>
-<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.23-alpine</code> image has everything needed; the build artefact lands in <code>./bin/</code> owned by your host user.</p>
+<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.25-alpine</code> image has everything needed (Sprint 1 bumped the minimum Go version from 1.23 to 1.25 because of <code>testcontainers-go</code> and <code>gliderlabs/ssh</code> transitive dependencies); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl install
 </code></pre>
@@ -447,7 +447,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 <tr><td><code>-w /work</code></td><td>Container working directory matches the mount.</td></tr>
 <tr><td><code>--user "$(id -u):$(id -g)"</code></td><td>Output binary is owned by your host user, not root.</td></tr>
 <tr><td><code>-e HOME=/tmp</code></td><td>Go writes its module cache under <code>$HOME</code>; <code>/tmp</code> is writable by any user. Without this, <code>go mod tidy</code> fails on a writable-<code>/root</code> permission error.</td></tr>
-<tr><td><code>golang:1.23-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
+<tr><td><code>golang:1.25-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
 </tbody>
 </table>
 </div>
@@ -457,13 +457,13 @@ docker run --rm -v "$PWD:/work" -w /work \
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64 (compile-only; not tested at runtime)
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 </code></pre>
 <p>Each binary is statically linked (Alpine + <code>CGO_ENABLED=0</code> is the cross-compile default) so the produced file has no runtime library dependencies.</p>
 <h2 id="the-install-subcommand"><a class="header" href="#the-install-subcommand">The <code>install</code> subcommand</a></h2>
@@ -487,8 +487,8 @@ exec $SHELL -l
 <p>On zsh, swap <code>~/.bashrc</code> for <code>~/.zshrc</code>.</p>
 <h2 id="verifying-the-install"><a class="header" href="#verifying-the-install">Verifying the install</a></h2>
 <p>Two quick checks: version (proves the binary runs) and <code>doctor</code> (proves the runtime environment is set up for actual work).</p>
-<h3 id="roksbnkctl---version"><a class="header" href="#roksbnkctl---version"><code>roksbnkctl --version</code></a></h3>
-<pre><code class="language-bash">roksbnkctl --version
+<h3 id="roksbnkctl-version"><a class="header" href="#roksbnkctl-version"><code>roksbnkctl version</code></a></h3>
+<pre><code class="language-bash">roksbnkctl version
 </code></pre>
 <p>Sample output:</p>
 <pre><code>roksbnkctl v0.7.0 (commit abc1234, built 2026-05-08T14:22:08Z)
@@ -497,21 +497,18 @@ exec $SHELL -l
 <h3 id="roksbnkctl-doctor"><a class="header" href="#roksbnkctl-doctor"><code>roksbnkctl doctor</code></a></h3>
 <pre><code class="language-bash">roksbnkctl doctor
 </code></pre>
-<p><code>doctor</code> runs an eight-check prereq + credentials report. Sample output on a healthy machine:</p>
-<pre><code>roksbnkctl doctor
-  ✓ terraform on PATH (terraform 1.7.5)
-  ✓ kubectl on PATH (v1.29.2)        [optional — passthrough only]
-  ✓ oc on PATH (4.14.10)             [optional — passthrough only]
-  ⚠ ibmcloud on PATH                  not installed (optional)
-  ✓ iperf3 on PATH (3.16)             [for test throughput]
-  ✓ kubeconfig present                ~/.kube/config
-  ✓ workspace initialised             default
-  ✓ IBMCLOUD_API_KEY resolves          via OS keychain
-  ✓ IBM Cloud auth                    OK (account: ...)
-
-8 checks, 7 passed, 1 warning, 0 failed.
+<p><code>doctor</code> runs the prereq + credentials report. Sample output on a healthy machine looks like this (yours will differ depending on which optional binaries you have installed and whether you’ve initialised a workspace):</p>
+<pre><code>✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (optional; `roksbnkctl kubectl` passthrough)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (optional; `roksbnkctl oc` passthrough)
+✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
+✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
+✓  workspace         default                                                                  (per-environment config + state)
+✓  ibmcloud api key  resolved via OS keychain                                                 (auth for terraform + IBM SDK calls)
+✓  ibm cloud auth    OK (account: Main F5 Account)                                            (verifies API key works against IBM IAM)
 </code></pre>
-<p>Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> is the only check that’s hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. <a href="#doctor-checking-your-environment">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
+<p>Each row is <code>&lt;status&gt; &lt;name&gt; &lt;detail&gt; &lt;why we care&gt;</code>. Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> is the only check that’s hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. <a href="#doctor-checking-your-environment">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
 <h2 id="os-support-matrix"><a class="header" href="#os-support-matrix">OS support matrix</a></h2>
 <div class="table-wrapper">
 <table>
@@ -623,8 +620,7 @@ exec $SHELL -l
 
 → Fetching admin kubeconfig for cluster "&lt;cluster-id&gt;"
 ✓ Wrote /home/you/.kube/config (chmod 0600)
-→ Auto-populating targets.jumphost from terraform outputs
-✓ Wrote target "jumphost" → 169.45.91.177 (user: root, key: tf-output:jumphost_shared_key)
+✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
 </code></pre>
 <p>What just happened:</p>
 <ul>
@@ -761,7 +757,7 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 <h1 id="the-on-flag-and-ssh-jumphosts"><a class="header" href="#the-on-flag-and-ssh-jumphosts">The –on flag and SSH jumphosts</a></h1>
 <p>The <code>--on &lt;target&gt;</code> flag re-runs a <code>roksbnkctl</code> passthrough command (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on a remote SSH host instead of locally. After a successful <code>roksbnkctl up</code>, a <code>jumphost</code> target is auto-populated from the upstream HCL’s terraform outputs, so the flag works with no manual configuration in the common case.</p>
 <p>This chapter covers when to reach for <code>--on</code>, the <code>targets:</code> workspace config block, the auto-population behaviour, the <code>roksbnkctl targets</code> command tree for managing your own targets, and how host-key trust is established.</p>
-<p>The full design rationale for this feature lives in <a href="../../docs/prd/01-SSH-AND-ON-FLAG.html">PRD 01</a>. This chapter is the user-facing distillation.</p>
+<p>The full design rationale for this feature lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01</a>. This chapter is the user-facing distillation.</p>
 <h2 id="why-this-exists"><a class="header" href="#why-this-exists">Why this exists</a></h2>
 <p>There are a handful of scenarios where running a command from your laptop is the wrong answer:</p>
 <ul>
@@ -775,7 +771,7 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 <pre><code class="language-yaml">targets:
   jumphost:                                # auto-populated after `roksbnkctl up`
     host: 169.45.91.177
-    user: root
+    user: ubuntu
     key_source: tf-output:jumphost_shared_key
     port: 22                               # default; can be omitted
 
@@ -798,8 +794,9 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 <li><code>jumphost_shared_key</code> — the private key (PEM) the jumphost was provisioned with, marked <code>sensitive</code> in the HCL.</li>
 </ul>
 <p>After a successful <code>roksbnkctl up</code>, <code>roksbnkctl</code> reads both outputs and writes a <code>jumphost</code> target into your workspace config:</p>
-<pre><code>✓ Wrote target "jumphost" → 169.45.91.177 (user: root, key: tf-output:jumphost_shared_key)
+<pre><code>✓ Auto-registered target jumphost (169.45.91.177); use `roksbnkctl --on jumphost ...`
 </code></pre>
+<p>The auto-registered target uses <code>user: ubuntu</code> (the upstream HCL provisions an Ubuntu cloud image whose default user is <code>ubuntu</code>).</p>
 <p>The <code>key_source: tf-output:jumphost_shared_key</code> form means the private key is <strong>read from terraform state at SSH-connect time</strong> rather than being copied into the workspace config or written to disk separately. The key only ever exists in terraform state and in memory during a connect; destroying and re-creating the cluster generates a new key, and <code>roksbnkctl</code> picks up the new one without any manual intervention.</p>
 <p>If your cluster apply produced a <code>testing_tgw_jumphost_ip</code> output of <code>"TGW jumphost not created"</code> (the upstream HCL emits this string when the testing module is disabled) the auto-population is skipped. You can still add a <code>jumphost</code> target manually with <code>roksbnkctl targets add</code> if you have a different bastion in mind.</p>
 <h2 id="key-sources"><a class="header" href="#key-sources">Key sources</a></h2>
@@ -817,27 +814,17 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 </ol>
 <p>Exactly one of <code>key_path</code> or <code>key_source</code> must be set per target. <code>roksbnkctl targets show &lt;name&gt;</code> will tell you which is in use without printing the key material.</p>
 <h2 id="host-key-tofu-on-first-connect"><a class="header" href="#host-key-tofu-on-first-connect">Host-key TOFU on first connect</a></h2>
-<p>The first time you connect to a target, <code>roksbnkctl</code> shows the target’s host key fingerprint and asks whether to trust it:</p>
+<p>The first time you connect to a target, <code>roksbnkctl</code> shows the host key fingerprint and asks whether to trust it. The prompt is a single line:</p>
 <pre><code class="language-bash">$ roksbnkctl exec --on jumphost -- whoami
-roksbnkctl: connecting to 169.45.91.177:22 ...
-The authenticity of host '169.45.91.177:22' can't be established.
-ED25519 key fingerprint is SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=.
-Add this key to ~/.roksbnkctl/known_hosts? [y/N]: y
-✓ Recorded host key for 169.45.91.177:22
-root
+Add 169.45.91.177:22's key (SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=) to ~/.roksbnkctl/known_hosts? [y/N]: y
+ubuntu
 </code></pre>
 <p>Answer <code>y</code> and the key is appended to <code>~/.roksbnkctl/known_hosts</code> (the same format as OpenSSH’s <code>~/.ssh/known_hosts</code>). Subsequent connects trust silently.</p>
 <p>Answer <code>n</code> and the connect fails with a clear “host key not trusted” error.</p>
 <p>If the host key changes between runs — which would happen on a re-provisioned VM, or could happen as a man-in-the-middle attack — <code>roksbnkctl</code> refuses to connect:</p>
-<pre><code>roksbnkctl: error: host key for 169.45.91.177:22 has changed.
-  recorded: SHA256:abc123...
-  presented: SHA256:zyx987...
-This may be a man-in-the-middle attack. To re-trust:
-  roksbnkctl targets show jumphost   # inspect the recorded key
-  edit ~/.roksbnkctl/known_hosts and remove the line for 169.45.91.177
-exit code: 126
+<pre><code>error: host key mismatch: 169.45.91.177:22 known with SHA256:abc123... but server presented SHA256:zyx987...; if the host was rebuilt, edit ~/.roksbnkctl/known_hosts
 </code></pre>
-<p>This is “trust on first use” (TOFU) — the same model OpenSSH uses for new hosts.</p>
+<p>This is “trust on first use” (TOFU) — the same model OpenSSH uses for new hosts. Exit code is 126 on host-key rejections.</p>
 <h3 id="--insecure-host-key-for-ci"><a class="header" href="#--insecure-host-key-for-ci"><code>--insecure-host-key</code> for CI</a></h3>
 <p>In automation contexts where a TOFU prompt would block forever, pass <code>--insecure-host-key</code> to skip host-key verification entirely:</p>
 <pre><code class="language-bash">roksbnkctl exec --on jumphost --insecure-host-key -- whoami
@@ -853,21 +840,19 @@ roksbnkctl targets remove &lt;name&gt;
 <h3 id="targets-list"><a class="header" href="#targets-list"><code>targets list</code></a></h3>
 <pre><code>roksbnkctl targets list
 NAME       HOST                USER     KEY
-jumphost   169.45.91.177:22    root     tf-output:jumphost_shared_key
-bastion    ops.example.com:22  jgruber  ~/.ssh/id_ed25519
+jumphost   169.45.91.177:22    ubuntu   tf-output:jumphost_shared_key
+bastion    ops.example.com:22  jgruber  file:~/.ssh/id_ed25519
 </code></pre>
-<p>Prints every target in the current workspace’s config. The <code>KEY</code> column shows the key source — never the key material itself.</p>
+<p>Prints every target in the current workspace’s config. The <code>KEY</code> column shows the key source — never the key material itself. File-backed keys are prefixed with <code>file:</code> so they’re visually distinct from <code>tf-output:</code> and <code>agent</code> sources.</p>
 <h3 id="targets-show-name"><a class="header" href="#targets-show-name"><code>targets show &lt;name&gt;</code></a></h3>
 <pre><code>roksbnkctl targets show jumphost
 name:        jumphost
 host:        169.45.91.177
 port:        22
-user:        root
+user:        ubuntu
 key_source:  tf-output:jumphost_shared_key
-host_key:    ED25519 SHA256:abc123def456...
-last_seen:   2026-05-08T14:22:08Z
 </code></pre>
-<p>Prints the full record plus the recorded host-key fingerprint from <code>~/.roksbnkctl/known_hosts</code>. Useful for confirming what you’re trusting before running a command.</p>
+<p>Prints the full record. Note that the key material itself is never printed — only the source descriptor (file path, ssh-agent, or terraform-output name).</p>
 <h3 id="targets-add-name-"><a class="header" href="#targets-add-name-"><code>targets add &lt;name&gt; ...</code></a></h3>
 <pre><code class="language-bash">roksbnkctl targets add bastion \
   --host ops.example.com \
@@ -896,7 +881,7 @@ roksbnkctl targets add custom \
 <p>The everyday verbs:</p>
 <pre><code class="language-bash"># Run an arbitrary command on the jumphost
 roksbnkctl exec --on jumphost -- whoami
-# → root
+# → ubuntu
 
 roksbnkctl exec --on jumphost -- uname -a
 # → Linux jumphost-vm 5.15.0-... #... SMP ... x86_64 GNU/Linux
@@ -920,7 +905,7 @@ roksbnkctl oc --on jumphost projects
 <ul>
 <li><strong>Streaming I/O.</strong> stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (<code>oc adm top nodes</code>, <code>ibmcloud ks cluster get</code> on a slow API call) work normally.</li>
 <li><strong>Exit code propagation.</strong> The remote command’s exit code is the local exit code. A failing remote command produces a non-zero <code>roksbnkctl</code> exit; a succeeding remote command produces <code>0</code>. CI scripts can rely on this.</li>
-<li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. For other verbs, pass <code>--tty</code> if you need a PTY (e.g. for <code>top</code> or any command that checks <code>isatty()</code>).</li>
+<li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. Other verbs (<code>exec</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) run without a PTY in v0.7; if you need a PTY for <code>top</code> or another <code>isatty()</code>-sensitive command, fall back to <code>roksbnkctl shell --on jumphost</code> and run the command from the interactive shell.</li>
 <li><strong>Environment passthrough.</strong> <code>IBMCLOUD_API_KEY</code>, <code>IBMCLOUD_REGION</code>, and <code>KUBECONFIG</code> are propagated to the remote session via SSH <code>SetEnv</code>, so <code>ibmcloud iam oauth-tokens</code> on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept <code>AcceptEnv IBMCLOUD_*</code> etc. for this to work; the upstream HCL’s jumphost is already configured for it.</li>
 </ul>
 <h2 id="what---on-doesnt-do-yet"><a class="header" href="#what---on-doesnt-do-yet">What <code>--on</code> doesn’t do (yet)</a></h2>
@@ -931,10 +916,11 @@ roksbnkctl oc --on jumphost projects
 <li><strong><code>~/.ssh/config</code> parsing.</strong> Targets must be defined explicitly in workspace config; <code>roksbnkctl</code> does not read your existing <code>~/.ssh/config</code>.</li>
 <li><strong>Password auth.</strong> Keys + agent only. Passwords are not supported and won’t be.</li>
 <li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job in v0.9. v0.7’s <code>--on</code> does one-shot remote exec only.</li>
+<li><strong>Windows ssh-agent.</strong> The <code>key_source: agent</code> path is Linux/macOS only in v0.7; Windows users must use <code>key_path</code> to a file. Already noted in <a href="#key-sources">Key sources</a> above; called out here so a Windows reader who skipped to this section doesn’t miss it.</li>
 </ul>
 <h2 id="cross-reference"><a class="header" href="#cross-reference">Cross-reference</a></h2>
 <p><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can’t <code>AcceptEnv</code>, and apt-bootstrap of missing tools on Ubuntu jumphosts. The <code>--on</code> flag stays as the lightweight one-shot path; <code>--backend ssh</code> is the deeper integration. The two are designed to share the same <code>internal/remote.Client</code> so what you learn here translates directly.</p>
-<p>For the design rationale, edge cases, and open questions, read <a href="../../docs/prd/01-SSH-AND-ON-FLAG.html">PRD 01</a> — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.</p>
+<p>For the design rationale, edge cases, and open questions, read <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01</a> — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="execution-backends-local-docker-k8s-ssh"><a class="header" href="#execution-backends-local-docker-k8s-ssh">Execution backends: local, docker, k8s, ssh</a></h1>
 <p><em>Coming in Sprint 3.</em></p>

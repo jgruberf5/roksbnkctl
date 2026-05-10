@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d269bfbc.js";
+            window.path_to_searchindex_js = "searchindex-c83df32a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -241,7 +241,7 @@ roksbnkctl test        # connectivity + DNS + throughput against the deployment
 <p>This is the v0.7 surface. The roadmap to v1.0 has a few significant pieces still to land. Brief preview so you know what to expect:</p>
 <ul>
 <li><strong>v0.8 — kubectl internalisation.</strong> <code>roksbnkctl k get/apply/logs/exec/port-forward</code> becomes a first-class verb that talks to the cluster directly via <code>client-go</code>, with no host <code>kubectl</code> binary required. The <code>kubectl</code> passthrough remains as an escape hatch for advanced flags. After v0.8, the only required prereq on PATH is <code>terraform</code>.</li>
-<li><strong>v0.9 — four execution backends.</strong> Every external tool (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>) becomes selectable across <code>local | docker | k8s | ssh</code> backends via <code>--backend</code>. You’ll be able to run iperf3 entirely in-cluster without installing it on the host, run ibmcloud in a Docker container with a pinned version, or proxy any tool through a jumphost. <a href="./17-execution-backends.html">Chapter 17</a> covers the design.</li>
+<li><strong>v0.9 — four execution backends.</strong> Every external tool (<code>ibmcloud</code>, <code>iperf3</code>, <code>terraform</code>) becomes selectable across <code>local | docker | k8s | ssh</code> backends via <code>--backend</code>. You’ll be able to run iperf3 entirely in-cluster without installing it on the host, run ibmcloud in a Docker container with a pinned version, or proxy any tool through a jumphost. <a href="./17-execution-backends.html">Chapter 17</a> covers the user-facing surface; the design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03</a>.</li>
 <li><strong>v0.9 — GSLB-aware DNS testing.</strong> The DNS probe becomes <a href="https://github.com/miekg/dns">miekg/dns</a>-based with multi-vantage support, so you can verify that BNK’s GSLB is returning different answers from different network locations.</li>
 <li><strong>v1.0 — book launched, full E2E test plan green, dogfood feedback integrated.</strong> The <code>https://jgruberf5.github.io/roksbnkctl/book/</code> site (this book) ships with all 32 chapters polished, every code example verified, diagrams in place.</li>
 </ul>

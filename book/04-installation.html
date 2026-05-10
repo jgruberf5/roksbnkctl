@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d269bfbc.js";
+            window.path_to_searchindex_js = "searchindex-c83df32a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -184,12 +184,12 @@
 <ul>
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
 <li><strong>Git</strong> to clone the repository.</li>
-<li><strong>Go 1.23 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build below.</li>
+<li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build below.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>. This is the only required external prerequisite for the v0.7 happy path; everything else (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>) is optional and only needed for the corresponding passthrough or test command.</li>
 </ul>
 <p>You do not need Docker installed to <em>use</em> <code>roksbnkctl</code>. Docker is only used here as a convenience for building the binary without touching your host Go install.</p>
-<h2 id="path-a--native-build-requires-go-123"><a class="header" href="#path-a--native-build-requires-go-123">Path A — native build (requires Go 1.23+)</a></h2>
-<p>If <code>go version</code> reports <code>1.23</code> or newer, this is the simplest path:</p>
+<h2 id="path-a--native-build-requires-go-125"><a class="header" href="#path-a--native-build-requires-go-125">Path A — native build (requires Go 1.25+)</a></h2>
+<p>If <code>go version</code> reports <code>1.25</code> or newer, this is the simplest path:</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
@@ -207,15 +207,15 @@ make vet        # go vet ./...
 make tidy       # go mod tidy
 make clean      # rm -rf bin/
 </code></pre>
-<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.23</code> in <code>go.mod</code>; older versions error out with <code>go: module requires Go 1.23</code>. Either upgrade Go or fall back to the Docker path below.</p>
+<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.25.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.25</code>. Either upgrade Go or fall back to the Docker path below.</p>
 <h2 id="path-b--docker-based-build-no-host-go-required"><a class="header" href="#path-b--docker-based-build-no-host-go-required">Path B — Docker-based build (no host Go required)</a></h2>
-<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.23-alpine</code> image has everything needed; the build artefact lands in <code>./bin/</code> owned by your host user.</p>
+<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.25-alpine</code> image has everything needed (Sprint 1 bumped the minimum Go version from 1.23 to 1.25 because of <code>testcontainers-go</code> and <code>gliderlabs/ssh</code> transitive dependencies); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl install
 </code></pre>
@@ -230,7 +230,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 <tr><td><code>-w /work</code></td><td>Container working directory matches the mount.</td></tr>
 <tr><td><code>--user "$(id -u):$(id -g)"</code></td><td>Output binary is owned by your host user, not root.</td></tr>
 <tr><td><code>-e HOME=/tmp</code></td><td>Go writes its module cache under <code>$HOME</code>; <code>/tmp</code> is writable by any user. Without this, <code>go mod tidy</code> fails on a writable-<code>/root</code> permission error.</td></tr>
-<tr><td><code>golang:1.23-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
+<tr><td><code>golang:1.25-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
 </tbody>
 </table>
 </div>
@@ -240,13 +240,13 @@ docker run --rm -v "$PWD:/work" -w /work \
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64 (compile-only; not tested at runtime)
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.23-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 </code></pre>
 <p>Each binary is statically linked (Alpine + <code>CGO_ENABLED=0</code> is the cross-compile default) so the produced file has no runtime library dependencies.</p>
 <h2 id="the-install-subcommand"><a class="header" href="#the-install-subcommand">The <code>install</code> subcommand</a></h2>
@@ -270,8 +270,8 @@ exec $SHELL -l
 <p>On zsh, swap <code>~/.bashrc</code> for <code>~/.zshrc</code>.</p>
 <h2 id="verifying-the-install"><a class="header" href="#verifying-the-install">Verifying the install</a></h2>
 <p>Two quick checks: version (proves the binary runs) and <code>doctor</code> (proves the runtime environment is set up for actual work).</p>
-<h3 id="roksbnkctl---version"><a class="header" href="#roksbnkctl---version"><code>roksbnkctl --version</code></a></h3>
-<pre><code class="language-bash">roksbnkctl --version
+<h3 id="roksbnkctl-version"><a class="header" href="#roksbnkctl-version"><code>roksbnkctl version</code></a></h3>
+<pre><code class="language-bash">roksbnkctl version
 </code></pre>
 <p>Sample output:</p>
 <pre><code>roksbnkctl v0.7.0 (commit abc1234, built 2026-05-08T14:22:08Z)
@@ -280,21 +280,18 @@ exec $SHELL -l
 <h3 id="roksbnkctl-doctor"><a class="header" href="#roksbnkctl-doctor"><code>roksbnkctl doctor</code></a></h3>
 <pre><code class="language-bash">roksbnkctl doctor
 </code></pre>
-<p><code>doctor</code> runs an eight-check prereq + credentials report. Sample output on a healthy machine:</p>
-<pre><code>roksbnkctl doctor
-  ✓ terraform on PATH (terraform 1.7.5)
-  ✓ kubectl on PATH (v1.29.2)        [optional — passthrough only]
-  ✓ oc on PATH (4.14.10)             [optional — passthrough only]
-  ⚠ ibmcloud on PATH                  not installed (optional)
-  ✓ iperf3 on PATH (3.16)             [for test throughput]
-  ✓ kubeconfig present                ~/.kube/config
-  ✓ workspace initialised             default
-  ✓ IBMCLOUD_API_KEY resolves          via OS keychain
-  ✓ IBM Cloud auth                    OK (account: ...)
-
-8 checks, 7 passed, 1 warning, 0 failed.
+<p><code>doctor</code> runs the prereq + credentials report. Sample output on a healthy machine looks like this (yours will differ depending on which optional binaries you have installed and whether you’ve initialised a workspace):</p>
+<pre><code>✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (optional; `roksbnkctl kubectl` passthrough)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (optional; `roksbnkctl oc` passthrough)
+✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
+✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
+✓  workspace         default                                                                  (per-environment config + state)
+✓  ibmcloud api key  resolved via OS keychain                                                 (auth for terraform + IBM SDK calls)
+✓  ibm cloud auth    OK (account: Main F5 Account)                                            (verifies API key works against IBM IAM)
 </code></pre>
-<p>Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> is the only check that’s hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. <a href="./05-doctor.html">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
+<p>Each row is <code>&lt;status&gt; &lt;name&gt; &lt;detail&gt; &lt;why we care&gt;</code>. Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> is the only check that’s hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. <a href="./05-doctor.html">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
 <h2 id="os-support-matrix"><a class="header" href="#os-support-matrix">OS support matrix</a></h2>
 <div class="table-wrapper">
 <table>
