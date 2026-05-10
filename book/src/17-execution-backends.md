@@ -79,11 +79,12 @@ exec:
 
 The defaults shipped today:
 
-| Tool | Default backend | Why |
-|---|---|---|
-| `terraform` | `local` | The terraform-exec local path is the established workflow. State handling is simplest here. |
-| `ibmcloud` | `local` | Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via `--backend ssh:jumphost` or `docker`. |
-| `iperf3` | `k8s` | Throughput from a laptop's uplink isn't the cluster's bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi. |
+| Tool | Default backend | Supported backends | Why |
+|---|---|---|---|
+| `terraform` | `local` | `local`, `docker` | The terraform-exec local path is the established workflow. State handling is simplest here. v0.9 adds `docker` (frozen `hashicorp/terraform:1.5.7`, bind-mount state) — see [§ terraform via docker](#terraform-via-docker). `k8s` and `ssh` deferred to v1.x. |
+| `ibmcloud` | `local` | `local`, `docker`, `k8s`, `ssh:<target>` | Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via `--backend ssh:jumphost` or `docker`. |
+| `iperf3` | `k8s` | `local`, `k8s`, `ssh:<target>` | Throughput from a laptop's uplink isn't the cluster's bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi. |
+| `dns` | `local` | `local`, `k8s`, `ssh:<target>` | Single-vantage by default; `--gslb-compare` fans out across configured vantages for GSLB validation. See [Chapter 21](./21-dns-testing-gslb.md). |
 
 [Chapter 12 — Workspace config](./12-workspace-config.md) covers the `exec:` block schema in detail; this chapter just notes its place in the backend system.
 
@@ -224,6 +225,81 @@ Combined with the daemon's own watchdog on the container, the worst case is a fe
 #### Image build pipeline
 
 Image versions are tagged in lock-step with `roksbnkctl` releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See [Chapter 31 — Building from source](./31-building-from-source.md) for the build pipeline details.
+
+#### terraform via docker
+
+Sprint 5 adds `terraform` to the docker backend's tool list. The shape is similar to `ibmcloud` (`docker run` against a vendored image, single-file mounts for sensitive data, no creds in argv) but with two terraform-specific concerns: state persistence across runs, and host-user UID alignment so state files written inside the container stay readable on the host.
+
+##### State persistence via bind-mount
+
+Terraform's local state file lives at `terraform.tfstate` in the working directory. For the docker backend that working directory has to be a host-side path bind-mounted into the container, not a container-internal path that disappears on `--rm`. The docker backend bind-mounts the workspace's state directory into the container:
+
+```
+docker run --rm \
+  -v ~/.roksbnkctl/<workspace>/state:/work \
+  --workdir /work \
+  --user $(id -u):$(id -g) \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+```
+
+Concretely:
+
+- **Host source**: `~/.roksbnkctl/<workspace>/state/` — the same directory the local terraform backend writes state to today, so switching between `--backend local` and `--backend docker` against the same workspace doesn't fork state.
+- **Container target**: `/work` — set as `WorkingDir` so terraform commands run from there without an explicit `cd`.
+- **The HCL itself** is **not** bind-mounted from the workspace's state dir. The HCL ships embedded in the `roksbnkctl` binary (the default `tf_source.type: embedded`) or is otherwise resolved before backend dispatch; the bind-mounted directory holds **state only** (`terraform.tfstate`, `terraform.tfstate.backup`, the `.terraform/` cache dir). The HCL is materialised into the bind-mount alongside state at run time and removed on container exit.
+
+The bind-mount is read-write — terraform needs to write `terraform.tfstate` and rotate `terraform.tfstate.backup`. Combined with `--rm`, the file lifecycle is: container creates state, container exits, `--rm` removes the container, state files persist on the host. Subsequent runs (re-mounted at the same host path) pick up where the prior run left off.
+
+##### Image: `hashicorp/terraform:1.5.7`
+
+The image is the official upstream `hashicorp/terraform` published by HashiCorp on Docker Hub, pinned to a literal version in `internal/exec/docker.go`'s `toolImages` map (currently `1.5.7`). The pin is intentional — the embedded HCL has been validated against this terraform version, and the docker backend's whole point is reproducibility. Bumping the pin is a deliberate change to the binary and lands as a release.
+
+The vendored per-tool images (`ibmcloud`, `iperf3`) get their tag from the `roksbnkctl` binary's own version (see [§ `:dev` tag resolution](#dev-tag-resolution) above). Terraform is the exception — the binary's version doesn't follow upstream terraform's release cadence, so the pin stays literal.
+
+##### The UID/GID alignment gotcha
+
+Linux Docker containers run as root by default. With a root-owned container writing into a bind-mount, the resulting host files end up owned by root — and any subsequent local-backend `terraform apply` (or even a `cat ~/.roksbnkctl/<ws>/state/terraform.tfstate`) hits permission errors. The docker backend works around this by passing `--user $(id -u):$(id -g)` explicitly:
+
+```bash
+docker run --rm \
+  --user 1000:1000 \                                     # host's caller-uid:caller-gid
+  -v ~/.roksbnkctl/dev-tor/state:/work \
+  --workdir /work \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+```
+
+The container process runs as the host user, so files written into the bind-mount are owned by the host user — same as a local-backend `terraform apply` would have produced. Switching backends mid-debug doesn't strand state files behind a permission wall.
+
+The UID/GID values are read from the host process at run time (Go's `os.Getuid()` / `os.Getgid()`). On macOS this is mostly cosmetic — Docker Desktop's VM normalises ownership on the host bind-mount automatically — but it's required for clean Linux behaviour, so the backend always passes the flag.
+
+##### Supported commands
+
+The terraform docker backend honours `--backend docker` for the four lifecycle commands:
+
+```bash
+roksbnkctl up      --backend docker  [--var-file <path>] [--auto-approve]
+roksbnkctl plan    --backend docker  [--var-file <path>]
+roksbnkctl apply   --backend docker  [--var-file <path>] [--auto-approve]
+roksbnkctl destroy --backend docker  [--var-file <path>] [--auto-approve]
+```
+
+Flags that the local terraform backend honours (`--var-file`, `--auto-approve`, plus the `-w/--workspace` selector) plumb through to the docker backend identically — the backend's job is to spawn `hashicorp/terraform:1.5.7` with the right argv; it doesn't filter or rewrite the lifecycle commands' flags.
+
+`roksbnkctl up --backend docker` is the apply-with-auto-approve shorthand the existing local lifecycle uses; `--backend docker` switches the spawn target without changing the command shape.
+
+##### Deferred: k8s and ssh terraform backends
+
+`--backend k8s` and `--backend ssh:<target>` for terraform are **not** in v0.9. The blocker is state-handling: the local backend keeps state on the host filesystem, the docker backend bind-mounts the same path, but `k8s` (run terraform in a one-shot Job) and `ssh:<target>` (run terraform on a remote host) need a story for shipping state between the run vantage and the canonical workspace state dir. Designs under consideration include a versioned ConfigMap/Secret pair for k8s and an scp-pre-and-post atomic move for ssh; both are deferred to v1.x once the trade-offs have settled.
+
+[PRD 03 §"State concerns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform) is the design spec; trying `--backend k8s` against terraform on v0.9 errors at parse time:
+
+```
+$ roksbnkctl up --backend k8s
+error: terraform doesn't support backend `k8s` in v0.9 (state-handling design
+       open; tracked in PRD 03 § State concerns); supported: local, docker
+```
 
 #### When to use it
 

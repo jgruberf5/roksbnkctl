@@ -77,6 +77,37 @@ type RunOpts struct {
 	// DockerArgs, etc.) and wrap stdout/stderr through NewRedactor as
 	// defense-in-depth.
 	Credentials *Credentials
+
+	// HostMounts lists additional bind-mounts the docker backend
+	// projects from the host filesystem into the container. Sprint 5
+	// terraform integration uses this to mount the workspace state
+	// directory at `/state` so the in-container `terraform init/plan/
+	// apply/destroy` operates on the same .tfstate file the local
+	// backend writes. Other backends ignore HostMounts (the local
+	// backend has no need; ssh / k8s would need scp / projected-volume
+	// shapes that aren't worth the v1 complexity).
+	//
+	// PRD 03 §"terraform" + chapter 17 §"terraform docker subsection".
+	HostMounts []HostMount
+
+	// RunAsUser pins the container's UID:GID. Set for the terraform
+	// docker path so the state file is written with the host user's
+	// ownership (otherwise terraform-in-container runs as root and
+	// produces root-owned state files the host user can't edit).
+	//
+	// Format: "uid:gid" or just "uid". Empty defers to the image's
+	// default user. Backends that don't honor a runtime UID (k8s,
+	// ssh, local) ignore the field.
+	RunAsUser string
+}
+
+// HostMount is one host → container bind-mount. Used by the docker
+// backend's terraform path; future backends may grow analogous
+// shapes (k8s projected-volume, ssh staged-file).
+type HostMount struct {
+	HostPath      string // absolute path on the host
+	ContainerPath string // absolute path inside the container
+	ReadOnly      bool   // true → read-only mount
 }
 
 // ResolveBackend looks up a backend by spec. Spec forms:

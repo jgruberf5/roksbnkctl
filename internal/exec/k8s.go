@@ -186,17 +186,23 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 		return k8sExitFailedToStart, fmt.Errorf("ops pod %s/%s not Ready (phase=%s)", K8sOpsNamespace, K8sOpsPodName, pod.Status.Phase)
 	}
 
-	// Build the exec request. The ibmcloud image's entrypoint is
-	// `ibmcloud`, so we don't double up on argv[0] when argv[0] ==
-	// "ibmcloud" — the wrapped tool's image picks the binary. For
-	// other argv shapes (a future "kubectl" wrapper or an ad-hoc
-	// debug shell) we exec the literal argv inside the container.
+	// Build the exec request. PodExecOptions.Command is exec'd
+	// **directly** inside the running container's filesystem; the
+	// image's ENTRYPOINT does NOT prepend (that only applies at
+	// container start, and the ops pod's `command:` already overrides
+	// it to `sleep infinity` per k8s_install.yaml). So argv flows
+	// through verbatim — `["ibmcloud", "iam", "oauth-tokens"]` runs
+	// `ibmcloud iam oauth-tokens` in the pod, no entrypoint double-up.
 	//
-	// Today: the ops pod's image is the ibmcloud-tools image whose
-	// entrypoint is `ibmcloud`. For ibmcloud passthrough the caller's
-	// argv is ["ibmcloud", ...rest]; the entrypoint already covers
-	// the first token. For other tools we'd need a per-tool ops pod
-	// or a no-entrypoint image — flagged in the README.
+	// Sprint 4 validator Issue 7 carry-over (interim resolution):
+	// the original concern was that argv[0] would double up against
+	// the image's ENTRYPOINT. Verified that exec doesn't prepend
+	// ENTRYPOINT, so this is a no-op risk for the long-lived path.
+	// For the one-shot Job path (runAsJob), where Container.Command
+	// DOES override Docker ENTRYPOINT, we use the
+	// `jobToolCmdOverride` map for tools (like `roksbnkctl`) that
+	// need to bypass the bundled tools-image's `ibmcloud`
+	// entrypoint. See `buildJobSpecWithArgs` for the Args plumbing.
 	cmd := argv
 
 	req := cs.CoreV1().RESTClient().Post().
@@ -258,12 +264,33 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	return k8sExitStartedThenFailed, fmt.Errorf("k8s exec stream: %w", streamErr)
 }
 
+// jobToolCmdOverride lets a tool with a baked-in image ENTRYPOINT
+// bypass the entrypoint and exec a different binary directly. Used by
+// the dns-probe path where argv[0]="roksbnkctl" needs to land on
+// `/usr/local/bin/roksbnkctl` rather than the image's `ibmcloud`
+// entrypoint.
+//
+// Sprint 4 validator Issue 7 carry-over (alternative path): instead of
+// dropping the ENTRYPOINT in the Dockerfile (validator-territory
+// change deferred), each tool that needs it declares its full Command
+// here; runAsJob picks it up and sets `Container.Command` (overriding
+// the image's ENTRYPOINT) plus `Container.Args` from argv[1:].
+//
+// Tools NOT in this map keep the existing Sprint 4 behaviour
+// (`Container.Command = argv[1:]`, image's ENTRYPOINT picks the
+// binary), so `iperf3` and `ibmcloud` are unchanged user-visibly.
+var jobToolCmdOverride = map[string][]string{
+	"roksbnkctl": {"/usr/local/bin/roksbnkctl"},
+}
+
 // runAsJob spawns a one-shot Job in roksbnkctl-test, materialises Files
 // + creds via projected Secret(s), waits for Running, streams logs,
 // then waits for completion + cleanup.
 //
 // argv[0] picks the per-tool image (mirrors DockerBackend.toolImages);
-// argv[1:] is the in-container command.
+// argv[1:] is the in-container command, EXCEPT for tools listed in
+// jobToolCmdOverride which get a full `Command + Args` shape that
+// bypasses the image's ENTRYPOINT.
 func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv []string, opts RunOpts) (int, error) {
 	tool := argv[0]
 	image, ok := toolImages[tool]
@@ -304,7 +331,20 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 		filesSecretCreated = true
 	}
 
-	job := buildJobSpec(jobName, image, argv[1:], opts, filesSecretCreated, filesSecretName)
+	// Cmd + Args translation: for entrypoint-bypass tools, prepend
+	// the override's argv as Command (overrides image's ENTRYPOINT)
+	// and pass argv[1:] as Args. Otherwise keep the legacy shape
+	// (Command = argv[1:]; image's ENTRYPOINT picks the binary).
+	var cmdArgv []string
+	var argsArgv []string
+	if override, hasOverride := jobToolCmdOverride[tool]; hasOverride {
+		cmdArgv = append([]string(nil), override...)
+		argsArgv = argv[1:]
+	} else {
+		cmdArgv = argv[1:]
+	}
+
+	job := buildJobSpecWithArgs(jobName, image, cmdArgv, argsArgv, opts, filesSecretCreated, filesSecretName)
 
 	created, err := cs.BatchV1().Jobs(K8sTestNamespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
@@ -385,7 +425,27 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 // from RunOpts.Credentials (via opts.Credentials.EnvVars()). The shape
 // matches the docker / local backends — the cred is materialised by the
 // caller, not pre-staged in a cluster-wide Secret.
+//
+// buildJobSpec is preserved for the legacy single-argv shape (image
+// ENTRYPOINT picks the binary; cmd is argv[1:]). The Sprint 5 shim
+// `buildJobSpecWithArgs` adds an explicit args slice for tools like
+// `roksbnkctl` that need to bypass the image's ENTRYPOINT.
 func buildJobSpec(jobName, image string, cmd []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
+	return buildJobSpecWithArgs(jobName, image, cmd, nil, opts, hasFilesSecret, filesSecretName)
+}
+
+// buildJobSpecWithArgs is buildJobSpec extended for the entrypoint-
+// bypass shape. When `args` is non-nil, the rendered container has
+// `Command=cmd, Args=args`; this overrides the image's Docker
+// ENTRYPOINT and runs `cmd[0] cmd[1:] ...args` instead. For tools that
+// keep the legacy "image ENTRYPOINT picks the binary" shape, pass
+// args=nil.
+//
+// Sprint 4 validator Issue 7 carry-over: the dns-probe Job sets
+// `cmd=["/usr/local/bin/roksbnkctl"]` + `args=["test","dns",...]` so
+// the tools image's `ibmcloud` ENTRYPOINT doesn't override the binary
+// the dns probe wants to run. PRD 03 §"DNS probe" §"K8s shape".
+func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
 	envVars := buildJobEnv(opts)
 	var volumes []corev1.Volume
 	var mounts []corev1.VolumeMount
@@ -439,6 +499,7 @@ func buildJobSpec(jobName, image string, cmd []string, opts RunOpts, hasFilesSec
 						Name:       "tool",
 						Image:      image,
 						Command:    cmd,
+						Args:       args,
 						Env:        envVars,
 						WorkingDir: workDir,
 						SecurityContext: &corev1.SecurityContext{

@@ -76,6 +76,60 @@ func SetSSHTargetResolver(fn func(workspace, name string) (*remote.Target, map[s
 	sshTargetResolver = fn
 }
 
+// remoteClient is the minimum subset of *remote.Client surface that
+// SSHBackend invokes. Extracting it as an interface lets tests inject
+// a fake client that captures wrapper-script content + simulates
+// bootstrap-failure modes (sudo failure, non-Ubuntu, repo
+// unreachable) without dialing a live sshd.
+//
+// Sprint 4 validator Issue 3 carry-over: the production *remote.Client
+// satisfies this surface natively (its Run + Close signatures match);
+// tests replace `sshClientFactory` with a mock that captures the
+// argv + stdin streams that the SSHBackend's wrapper-script path
+// emits.
+type remoteClient interface {
+	Run(ctx context.Context, argv []string, opts remote.RunOpts) (int, error)
+	Close() error
+}
+
+// sshClientFactory is the package-level seam for swapping the
+// `remote.Connect` constructor. Production = nil → default falls
+// through to remote.Connect; tests assign a func returning a mock
+// remoteClient.
+//
+// Mirrors the existing Sprint 4 SetSSHTargetResolver pattern (PRD 03
+// §"SSH" §"open questions" + resolved_sprint4_validator.md Issue 3).
+var sshClientFactory func(ctx context.Context, target *remote.Target) (remoteClient, error)
+
+// SetSSHClientFactory wires a custom remote.Client constructor for
+// tests. Production callers leave the factory unset; the SSHBackend
+// falls through to remote.Connect.
+//
+// Test usage:
+//
+//	exec.SetSSHClientFactory(func(_ context.Context, _ *remote.Target) (remoteClient, error) {
+//	    return &fakeRemoteClient{...}, nil
+//	})
+//	defer exec.SetSSHClientFactory(nil)
+//	// ... exercise the backend; assert against the fake's captures ...
+func SetSSHClientFactory(fn func(ctx context.Context, target *remote.Target) (remoteClient, error)) {
+	sshClientFactory = fn
+}
+
+// connectViaFactory dispatches to either the test factory (when set)
+// or the production remote.Connect path. Returns the remoteClient
+// interface so the rest of SSHBackend.Run can stay shape-agnostic.
+func connectViaFactory(ctx context.Context, t *remote.Target) (remoteClient, error) {
+	if sshClientFactory != nil {
+		return sshClientFactory(ctx, t)
+	}
+	c, err := remote.Connect(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // SSHBackend wraps internal/remote.Client with the surface PRD 03 specifies:
 // pre-flight tool check + apt bootstrap, file materialization in a
 // per-run tempdir on the remote, env propagation via SetEnv with a
@@ -116,7 +170,7 @@ func (b *SSHBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int,
 		return sshExitFailedToStart, fmt.Errorf("ssh target %q: %w", target, err)
 	}
 
-	client, err := remote.Connect(ctx, t)
+	client, err := connectViaFactory(ctx, t)
 	if err != nil {
 		return sshExitFailedToStart, fmt.Errorf("ssh connect %s: %w", t.Name, err)
 	}
@@ -239,7 +293,7 @@ func defaultSSHTargetResolver(workspace, name string) (*remote.Target, map[strin
 // ensureTool checks whether `tool` is on the remote PATH; if not, runs
 // the apt-bootstrap path when --bootstrap is opted in. Returns
 // (exitCode, error) following the PRD 03 split.
-func (b *SSHBackend) ensureTool(ctx context.Context, client *remote.Client, tool string) (int, error) {
+func (b *SSHBackend) ensureTool(ctx context.Context, client remoteClient, tool string) (int, error) {
 	rc, _ := client.Run(ctx, []string{"sh", "-c", "command -v " + shellSingleQuote(tool)}, remote.RunOpts{
 		Stdout: io.Discard, Stderr: io.Discard,
 	})
@@ -300,7 +354,7 @@ func (b *SSHBackend) ensureTool(ctx context.Context, client *remote.Client, tool
 // makeRemoteTempdir creates `/tmp/roksbnkctl.<random>` on the remote
 // and returns the path. Uses `mktemp -d` so we don't fight with
 // concurrent invocations.
-func (b *SSHBackend) makeRemoteTempdir(ctx context.Context, client *remote.Client) (string, error) {
+func (b *SSHBackend) makeRemoteTempdir(ctx context.Context, client remoteClient) (string, error) {
 	var out bytes.Buffer
 	rc, err := client.Run(ctx, []string{"mktemp", "-d", "/tmp/roksbnkctl.XXXXXXXX"}, remote.RunOpts{
 		Stdout: &out, Stderr: io.Discard,
@@ -323,7 +377,7 @@ func (b *SSHBackend) makeRemoteTempdir(ctx context.Context, client *remote.Clien
 // writeFiles writes each Files entry into the remote tempdir. Uses a
 // shell heredoc-via-base64 round-trip so binary content survives intact
 // (heredoc plain-text would break on quoting; base64 sidesteps that).
-func (b *SSHBackend) writeFiles(ctx context.Context, client *remote.Client, tempdir string, files map[string][]byte) error {
+func (b *SSHBackend) writeFiles(ctx context.Context, client remoteClient, tempdir string, files map[string][]byte) error {
 	for name, content := range files {
 		base := lastPathComponent(name)
 		if base == "" || base == "." || base == ".." {
@@ -355,7 +409,7 @@ func (b *SSHBackend) writeFiles(ctx context.Context, client *remote.Client, temp
 // PRD 04 §"SSH" — the AcceptEnv-restricted-by-default behaviour means
 // most hosts silently drop our env; the canary detects that without
 // surfacing real secrets.
-func (b *SSHBackend) canarySetEnvCheck(ctx context.Context, client *remote.Client, name, value string, env []string) (bool, error) {
+func (b *SSHBackend) canarySetEnvCheck(ctx context.Context, client remoteClient, name, value string, env []string) (bool, error) {
 	var out bytes.Buffer
 	rc, err := client.Run(ctx, []string{"printenv", name}, remote.RunOpts{
 		Stdout: &out,
@@ -376,7 +430,7 @@ func (b *SSHBackend) canarySetEnvCheck(ctx context.Context, client *remote.Clien
 // runViaWrapper writes a wrapper script + .env file under tempdir,
 // then execs the wrapper. The wrapper sources the .env silently
 // (no `set -x`), traps EXIT for cleanup, and execs argv.
-func (b *SSHBackend) runViaWrapper(ctx context.Context, client *remote.Client, tempdir string, argv []string, env []string, opts RunOpts, stdout, stderr io.Writer) (int, error) {
+func (b *SSHBackend) runViaWrapper(ctx context.Context, client remoteClient, tempdir string, argv []string, env []string, opts RunOpts, stdout, stderr io.Writer) (int, error) {
 	// Write .env file (one KEY=VALUE per line).
 	envFile := tempdir + "/.env"
 	envContent := strings.Builder{}

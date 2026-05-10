@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
+	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
@@ -109,6 +111,9 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("up"); err != nil {
 		return err
 	}
+	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
+		return runTerraformLifecycleDocker(cmd, spec, "up")
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -151,6 +156,9 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("plan"); err != nil {
 		return err
 	}
+	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
+		return runTerraformLifecycleDocker(cmd, spec, "plan")
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -168,6 +176,9 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 func runApply(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("apply"); err != nil {
 		return err
+	}
+	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
+		return runTerraformLifecycleDocker(cmd, spec, "apply")
 	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
@@ -189,6 +200,9 @@ func runApply(cmd *cobra.Command, _ []string) error {
 func runDown(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("down"); err != nil {
 		return err
+	}
+	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
+		return runTerraformLifecycleDocker(cmd, spec, "destroy")
 	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
@@ -427,6 +441,296 @@ func applyWithRetry(ctx context.Context, tfws *tf.Workspace, varFiles []string) 
 		}
 	}
 	return err
+}
+
+// terraformBackendSpec resolves the execution backend for terraform.
+// Mirrors `resolveBackendSpecWith` for the exec passthrough commands
+// but lives here because the lifecycle commands don't go through the
+// same dispatch shape (they use terraform-exec on the host by default,
+// not exec.Backend).
+//
+// Returns the spec ("local" | "docker") and a bool reporting whether
+// the user explicitly opted into a non-default backend (so the caller
+// can short-circuit only when it matters).
+//
+// PRD 03 §"terraform" + PLAN.md Sprint 5 row 8: terraform supports
+// `local` and `docker` in v0.9; `k8s` and `ssh` are deferred to v1.x
+// (state-handling design is open). Errors clearly when the user picks
+// a deferred backend.
+func terraformBackendSpec() (string, bool) {
+	cctx, _ := config.New(flagWorkspace)
+	spec := flagBackend
+	if spec == "" && cctx != nil && cctx.Workspace != nil {
+		if entry, ok := cctx.Workspace.Exec["terraform"]; ok && entry.Backend != "" {
+			spec = entry.Backend
+		}
+	}
+	if spec == "" {
+		spec = "local"
+	}
+	return spec, spec != "local"
+}
+
+// runTerraformLifecycleDocker runs the named lifecycle phase
+// ("plan" | "apply" | "destroy" | "up") through the docker backend.
+// `up` is a composite — it runs plan, prompts (unless --auto), then
+// runs apply.
+//
+// The flow:
+//
+//  1. Open the terraform Workspace (fetches embedded source, writes
+//     auto-rendered terraform.tfvars, writes the backend override
+//     pointing at the per-workspace state file). This re-uses the
+//     local-backend's preparation helpers — the docker backend only
+//     overrides the *execution*, not the workspace prep.
+//  2. Resolve the IBM Cloud API key via the Resolver, ensure
+//     TF_VAR_ibmcloud_api_key is in the host process env (the
+//     credential bare-name passthrough in docker.go propagates it
+//     into the container).
+//  3. Build the docker run argv: `terraform <subcmd> <flags>`. The
+//     state dir is bind-mounted at /state read-write; WorkDir is
+//     /state/tf-source/embedded-terraform; UID/GID is the host user
+//     so the state file ends up host-user-owned.
+//  4. Dispatch via exec.ResolveBackend("docker") + Run.
+//
+// PRD 03 §"terraform" + chapter 17 §"terraform docker subsection" +
+// chapter 31 §"embedded-terraform layout".
+func runTerraformLifecycleDocker(cmd *cobra.Command, spec, phase string) error {
+	switch spec {
+	case "docker":
+		// supported
+	case "k8s":
+		return errors.New("terraform --backend k8s is deferred to v1.x; see PRD 03 §\"State concerns\". For now, use --backend local (host) or --backend docker (containerised)")
+	default:
+		if strings.HasPrefix(spec, "ssh:") {
+			return errors.New("terraform --backend ssh:<target> is deferred to v1.x; see PRD 03 §\"State concerns\". For now, use --backend local (host) or --backend docker (containerised)")
+		}
+		return fmt.Errorf("unsupported --backend %q for terraform (want local | docker)", spec)
+	}
+
+	// Step 1+2: open the workspace (prep state dir, fetch source,
+	// write tfvars + backend override) and resolve creds. This calls
+	// `tf.Open` which performs the side-effect of os.Setenv'ing
+	// TF_VAR_ibmcloud_api_key on the host process — that's the
+	// channel the docker backend's bare-name env passthrough uses.
+	cctx, tfws, err := openTF(cmd.Context(), true)
+	if err != nil {
+		return err
+	}
+	if err := writeAndInit(cmd.Context(), tfws, cctx.Workspace); err != nil {
+		return fmt.Errorf("preparing terraform workspace: %w", err)
+	}
+
+	// Resolve the credential explicitly so the docker dispatch can
+	// stamp it on RunOpts.Credentials (in addition to the os.Setenv
+	// path tf.Open already did).
+	resolver := &cred.Resolver{
+		Workspace:      cctx.WorkspaceName,
+		NonInteractive: true,
+		Source:         cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("resolving IBM Cloud API key: %w", err)
+	}
+
+	// Map the lifecycle phase to one or more terraform subcommands.
+	// `up` is a composite (plan + confirm + apply); `plan`/`apply`/
+	// `destroy` are single-shot.
+	switch phase {
+	case "plan":
+		return dockerTerraform(cmd.Context(), cctx, tfws, apiKey, []string{"plan"})
+	case "apply":
+		return dockerTerraform(cmd.Context(), cctx, tfws, apiKey, []string{"apply", "-auto-approve"})
+	case "destroy":
+		if !flagAuto {
+			fmt.Fprintf(os.Stderr, "This will destroy workspace %q's resources.\n", cctx.WorkspaceName)
+			if !promptYesNo("Continue?", false) {
+				return errors.New("aborted")
+			}
+		}
+		return dockerTerraform(cmd.Context(), cctx, tfws, apiKey, []string{"destroy", "-auto-approve"})
+	case "up":
+		fmt.Fprintln(os.Stderr, "→ terraform plan (docker)")
+		if err := dockerTerraform(cmd.Context(), cctx, tfws, apiKey, []string{"plan"}); err != nil {
+			return err
+		}
+		if !flagAuto && !promptYesNo("Apply this plan?", false) {
+			return errors.New("aborted")
+		}
+		fmt.Fprintln(os.Stderr, "→ terraform apply (docker)")
+		if err := dockerTerraform(cmd.Context(), cctx, tfws, apiKey, []string{"apply", "-auto-approve"}); err != nil {
+			return err
+		}
+		// Post-apply convenience hooks. Output() is read via host
+		// terraform-exec; the state file landed at the same path
+		// regardless of who wrote it, so this works the same as the
+		// local path.
+		tryAutoKubeconfig(cmd.Context(), cctx, tfws)
+		tryAutoJumphost(cmd.Context(), cctx, tfws)
+		return nil
+	default:
+		return fmt.Errorf("internal: unknown terraform phase %q", phase)
+	}
+}
+
+// dockerTerraform dispatches one `terraform <subcmd>` invocation
+// through the docker backend with the workspace state bind-mount and
+// host-user UID/GID.
+//
+// The tfvars chain (auto-rendered + optional terraform.tfvars.user +
+// --var-file) is layered identically to the local-backend path — the
+// auto-rendered file is in stateDir (/state in the container) so we
+// reference it via /state/terraform.tfvars.
+func dockerTerraform(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, apiKey string, subcmd []string) error {
+	be, err := execbackend.ResolveBackend("docker")
+	if err != nil {
+		return err
+	}
+
+	// Workspace state path layout (matches `tf.Open` + tf.Workspace):
+	//
+	//   stateDir/
+	//     terraform.tfvars              (auto-rendered)
+	//     tf-source/
+	//       embedded-terraform/         (the .tf files)
+	//         roksbnkctl_backend_override.tf
+	//
+	// `dockerTerraformExec` recomputes the container source dir from
+	// the workspace; here we only need the var-file argv assembled.
+
+	// Var-file argv, expressed as paths inside the container. Order
+	// matches the local-backend's varFiles helper:
+	//   1. auto-rendered terraform.tfvars (in state dir)
+	//   2. terraform.tfvars.user (workspace-persistent override)
+	//   3. extra --var-file flags
+	args := append([]string(nil), subcmd...)
+	args = append(args, "-var-file=/state/terraform.tfvars")
+	if tfws.HasUserTFVars() {
+		// terraform.tfvars.user lives outside stateDir (the workspace
+		// dir), so we bind-mount its parent and reference it.
+		args = append(args, "-var-file=/state/terraform.tfvars.user")
+	}
+	for _, vf := range flagVarFiles {
+		// User-supplied --var-file paths are already on the host
+		// filesystem; project them via the container fixture mount
+		// (we'd need to bind-mount each parent, complicating things).
+		// For v0.9 require absolute paths and surface a clearer error
+		// — full pass-through arrives in a v1.x polish pass.
+		if !filepath.IsAbs(vf) {
+			return fmt.Errorf("--var-file %q must be absolute when --backend docker (paths are projected into the container at the same location); use absolute paths or run with --backend local", vf)
+		}
+		args = append(args, "-var-file="+vf)
+	}
+
+	// Subcommand-specific flag tweaks. `init` runs once at the start
+	// of every dispatch (terraform requires .terraform/ to be set up
+	// before plan/apply); we shell-pre-`init` here rather than ask
+	// users to run two commands.
+	//
+	// Init is its own docker invocation — keeps the args simple.
+	if err := dockerTerraformInit(ctx, be, cctx, tfws, apiKey); err != nil {
+		return fmt.Errorf("terraform init: %w", err)
+	}
+
+	return dockerTerraformExec(ctx, be, cctx, tfws, apiKey, args)
+}
+
+// dockerTerraformInit runs `terraform init -reconfigure` via the
+// docker backend. Split out because every plan/apply/destroy needs
+// the .terraform/ directory provisioned first, and the init args
+// don't take -var-file.
+func dockerTerraformInit(ctx context.Context, be execbackend.Backend, cctx *config.Context, tfws *tf.Workspace, apiKey string) error {
+	return dockerTerraformExec(ctx, be, cctx, tfws, apiKey, []string{"init", "-reconfigure"})
+}
+
+// dockerTerraformExec is the low-level docker dispatch for a
+// terraform subcommand. Mounts the workspace state dir at /state RW,
+// pins the container UID/GID to the host user (so state files are
+// host-owned), and ensures TF_VAR_ibmcloud_api_key is set in the
+// process env for the cred bare-name passthrough.
+func dockerTerraformExec(ctx context.Context, be execbackend.Backend, cctx *config.Context, tfws *tf.Workspace, apiKey string, subargv []string) error {
+	uid, gid := hostUIDGID()
+	runAsUser := ""
+	if uid != "" {
+		runAsUser = uid
+		if gid != "" {
+			runAsUser += ":" + gid
+		}
+	}
+
+	stateDir := tfws.StateDir()
+	srcRel := strings.TrimPrefix(tfws.SourceDir(), stateDir)
+	srcRel = strings.TrimPrefix(srcRel, string(os.PathSeparator))
+	containerSrcDir := filepath.ToSlash(filepath.Join("/state", srcRel))
+
+	hostMounts := []execbackend.HostMount{{
+		HostPath:      stateDir,
+		ContainerPath: "/state",
+		ReadOnly:      false,
+	}}
+	// Project terraform.tfvars.user (lives in the workspace dir, one
+	// level above stateDir) so the in-container -var-file path resolves.
+	if tfws.HasUserTFVars() {
+		userPath := tfws.UserTFVarsPath()
+		hostMounts = append(hostMounts, execbackend.HostMount{
+			HostPath:      userPath,
+			ContainerPath: "/state/terraform.tfvars.user",
+			ReadOnly:      true,
+		})
+	}
+	// Pass any user-supplied --var-file as bind mounts at the same
+	// absolute path inside the container so their existing absolute
+	// paths in -var-file=<path> resolve unchanged.
+	for _, vf := range flagVarFiles {
+		if !filepath.IsAbs(vf) {
+			continue // dockerTerraform validated these earlier
+		}
+		hostMounts = append(hostMounts, execbackend.HostMount{
+			HostPath:      vf,
+			ContainerPath: vf,
+			ReadOnly:      true,
+		})
+	}
+
+	creds := &execbackend.Credentials{
+		IBMCloudAPIKey: apiKey,
+	}
+
+	argv := append([]string{"terraform"}, subargv...)
+	rc, err := be.Run(ctx, argv, execbackend.RunOpts{
+		Stdin:       os.Stdin,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		WorkDir:     containerSrcDir,
+		HostMounts:  hostMounts,
+		RunAsUser:   runAsUser,
+		Credentials: creds,
+		Env: []string{
+			"TF_DATA_DIR=/state/terraform",
+			"TF_IN_AUTOMATION=1",
+		},
+	})
+	if err != nil && rc == 0 {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("terraform %s exited %d (docker backend)", subargv[0], rc)
+	}
+	return nil
+}
+
+// hostUIDGID returns the current process's UID + GID as strings, or
+// ("","") on platforms where it isn't meaningful (Windows). The
+// docker backend uses these to set the container's `--user`, so
+// terraform-in-container writes the state file with host-user
+// ownership. On Linux/macOS we expect both to be populated.
+func hostUIDGID() (string, string) {
+	u, err := user.Current()
+	if err != nil {
+		return "", ""
+	}
+	return u.Uid, u.Gid
 }
 
 // looksTransient reports whether an apply error matches one of the

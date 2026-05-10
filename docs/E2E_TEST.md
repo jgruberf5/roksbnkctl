@@ -162,3 +162,113 @@ This loop repeats until a full pass with zero failed assertions.
 - `roksbnkctl install` — would overwrite the running binary; tested manually.
 - `roksbnkctl self update` — requires a published GitHub release.
 - BNK-on-existing-cluster path (cluster persists across multiple BNK trial workspaces) — that requires upstream HCL changes (gating cert_manager + testing modules behind a `deploy_cluster_services` variable) that aren't yet in this repo.
+
+## v0.9 release checklist
+
+Sprint 5 is the **v0.9 release gate**. Before tagging `v0.9` and cutting
+the GitHub release, the integrator runs the following manual checklist
+against a real BNK-deployed cluster. The automated phases above (A-H)
+plus Phases K, L, L-DNS, M from `scripts/e2e-test-backends.sh` cover
+most of the v0.9 surface; the items below are the ones that genuinely
+require a human at the helm.
+
+### 1. Full backend-matrix e2e against a live cluster
+
+```bash
+# Prereq: scripts/e2e-test.sh's Phase D has brought a cluster up.
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh
+```
+
+All phases must pass: K (docker), L (k8s), **L-DNS** (new in Sprint 5),
+M (cred audit). Yellow ⊘ skips for LD9 (SSH vantage — Sprint 6 scope)
+and any cluster-unreachable steps are acceptable; red ✗ failures are
+release blockers.
+
+### 2. Manual GSLB validation
+
+The automated Phase L-DNS step LD8 doesn't assert `gslb_divergence:
+true` — anycast can produce identical answers from local vs in-cluster
+vantages by chance. The manual check pins the divergence behaviour
+against a known-divergent target:
+
+```bash
+roksbnkctl test dns \
+  --target <real-F5-BIG-IP-Next-GSLB-record> \
+  --type A \
+  --server <gslb-vip>:53 \
+  --gslb-compare \
+  -o json
+```
+
+Pass criterion: `gslb_divergence: true` AND the
+`gslb_divergence_summary` field clearly explains the location-specific
+records returned. If the test BNK deployment has no GSLB records
+configured, fall back to a strong-DC-affinity public name (e.g.,
+`www.amazon.com` via Route 53 latency-based routing) — note in the
+release log that the integrator validated against the fallback target
+rather than F5 BIG-IP Next.
+
+### 3. Terraform docker-backend full lifecycle
+
+```bash
+# Fresh workspace; full plan→apply→destroy cycle entirely in container:
+roksbnkctl init -w docker-tf-test --auto
+roksbnkctl up --auto -w docker-tf-test \
+  --backend docker \
+  --var-file ~/bnkfun/terraform.tfvars
+
+# State file must land in ~/.roksbnkctl/docker-tf-test/state/
+# with the host user's UID (not root). Verify:
+ls -la ~/.roksbnkctl/docker-tf-test/state/
+
+roksbnkctl down --auto -w docker-tf-test \
+  --backend docker \
+  --var-file ~/bnkfun/terraform.tfvars
+```
+
+Pass criteria:
+- `terraform init/plan/apply` all run inside `hashicorp/terraform:<v>`
+  (verifiable via `docker ps` during apply)
+- `.tfstate` written to the host bind-mount, owned by the running user
+  (NOT root)
+- `roksbnkctl down --backend docker` cleanly removes everything
+
+### 4. Cred audit across all four backends
+
+Run a known-secret IBM Cloud API key through each backend and audit the
+inspection surfaces for the value. Phase M's automated checks cover
+most of these; the manual check adds `~/.roksbnkctl/<ws>/state/*.log`
+sweep for any roksbnkctl-internal log files that aren't yet covered:
+
+```bash
+# After Phases I-N have run with IBMCLOUD_API_KEY=<known-value>:
+grep -RF "$IBMCLOUD_API_KEY" ~/.roksbnkctl/ 2>/dev/null
+# Allowed: matches in *.tfstate (terraform legitimately stores the
+# input variable). Forbidden: matches in any *.log file.
+```
+
+### 5. Doctor green on a stock dev box
+
+```bash
+# On a fresh dev box with only `terraform` installed (no kubectl, no
+# oc, no ibmcloud, no iperf3, no dig):
+roksbnkctl doctor
+```
+
+Pass criterion: `roksbnkctl doctor` exits 0; missing host tools surface
+as informational notes (not warnings or errors), with the per-backend
+section explaining which tools are needed for which backend.
+
+### 6. Tag and release
+
+Once items 1-5 are green:
+
+```bash
+git tag v0.9
+git push origin v0.9
+# GitHub Actions builds the binary + tools images + cuts the release.
+```
+
+The book under `book/src/` ships matched to the tag — sprint 5's
+chapters 20/21/22 plus the chapter 17 terraform-docker subsection
+must all be in `main` before the tag.

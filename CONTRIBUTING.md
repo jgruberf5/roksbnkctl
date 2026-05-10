@@ -169,6 +169,72 @@ RUN_K6=1 ./scripts/e2e-test-backends.sh
 Per-phase logs land in `/tmp/roksbnkctl-e2e-backends/<phase>-<ts>.log`
 for forensics on failure.
 
+### Running DNS probe unit tests
+
+Sprint 5 (PRD 03 §"DNS probe") replaces the old `net.Resolver`-based DNS
+probe with a [miekg/dns](https://github.com/miekg/dns)-based
+implementation. The unit tests spin up an in-process miekg `dns.Server`
+on a loopback ephemeral port — no external network required, no `dig`
+prerequisite.
+
+```bash
+# Unit tier (in-process miekg/dns mock server):
+go test -tags dnsprobe -run Probe ./internal/test/...
+
+# Integration tier (against 8.8.8.8 + a local stub in parallel):
+go test -tags 'integration dnsprobe' -timeout 5m -run IntegrationProbe ./internal/test/...
+```
+
+The integration tier's `8.8.8.8` test self-skips when the test host
+has no external network reachability (corporate firewalls, air-gapped
+runners) — the local-stub test in the same file always runs.
+
+The `dnsprobe` build tag keeps the new tests gated until the staff
+agent's miekg-based `Probe` API lands in `internal/test/dns.go`. Once
+the integrator merges the staff + validator commits, the tag drops
+and the tests become part of the default `go test ./...` suite.
+
+### Testing GSLB scenarios manually
+
+The `--gslb-compare` flow is the v0.9 release-gate manual checklist
+item. To validate it against a real F5 BIG-IP Next GSLB record:
+
+```bash
+# Bring up a cluster + ops pod (Sprint 4 lifecycle):
+roksbnkctl up --auto -w demo --var-file ~/bnkfun/terraform.tfvars
+roksbnkctl ops install -w demo
+
+# Probe a GSLB-managed name from local + k8s vantages:
+roksbnkctl test dns \
+  --target gslb-managed.example.com \
+  --type A \
+  --server <gslb-vip>:53 \
+  --gslb-compare \
+  -o json
+
+# Expected: gslb_divergence=true when local and k8s land on different
+# F5 BIG-IP Next datacenters; gslb_divergence=false when both vantages
+# happen to share the same datacenter routing.
+
+# To force a CI-friendly assertion that GSLB is actually doing
+# something (no silent identical-answer regression), add:
+roksbnkctl test dns ... --gslb-compare --require-divergence
+# exits non-zero when gslb_divergence is false
+```
+
+For local development without a GSLB, point `--server` at any anycast
+resolver (8.8.8.8, 1.1.1.1) and probe a geo-resolved name like
+`www.google.com` — divergence is sometimes visible just from the
+different anycast paths local-laptop vs in-cluster takes.
+
+A note on LD8 (Phase L-DNS step 8) target choice: `www.google.com` is
+the documented exemplar, but anycast can produce identical answers by
+chance. The integrator's manual v0.9 sign-off should use a known-
+divergent target — either an F5 BIG-IP Next GSLB record from Phase D's
+deployment, or a name with strong DC-affinity DNS like
+`www.amazon.com` (Route 53 latency-based routing) — to assert
+`gslb_divergence: true` deterministically.
+
 ### Building tool images locally
 
 The PRD 03 docker backend pulls per-tool images at runtime:

@@ -245,11 +245,22 @@ var errBadHostKey = errBadHostKeyT{}
 
 // — tests — //
 
-// TestSSHBackend_NoSecretInArgv asserts PRD 04 cross-backend principle #2:
-// the cred value must NEVER appear in the remote command line.
+// TestSSHBackend_NoSecretInArgv pins the PRD 04 §"SSH" security
+// invariant: the cred value must NEVER appear in the remote command
+// line (visible to anyone running `ps -ef` on the SSH target). The
+// cred reaches the remote process either via SetEnv (preferred path
+// when the sshd's AcceptEnv allows it) or via the wrapper-script
+// fallback that sources a per-run .env file.
 //
-// We script the fake sshd to scan every recorded session's cmd line for
-// the secret and assert it never matches.
+// PRD 04 cross-backend principle #2: never put credentials in argv.
+//
+// We script the fake sshd to scan every recorded session's cmd line
+// for the secret and assert it never matches. Regression here is a
+// SECURITY VIOLATION (cred visible in `ps` on the remote target;
+// archived in /var/log/audit if auditd is on).
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over): expanded
+// docstring citing the PRD invariant.
 func TestSSHBackend_NoSecretInArgv(t *testing.T) {
 	b := resolveSSH(t)
 

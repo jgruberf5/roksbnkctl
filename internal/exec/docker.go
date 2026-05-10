@@ -61,9 +61,10 @@ type DockerBackend struct {
 var toolImages = func() map[string]string {
 	tag := toolImageTag()
 	return map[string]string{
-		"ibmcloud":  "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
-		"iperf3":    "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
-		"terraform": "hashicorp/terraform:1.5.7",
+		"ibmcloud":   "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		"iperf3":     "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"terraform":  "hashicorp/terraform:1.5.7",
+		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
 	}
 }()
 
@@ -103,9 +104,10 @@ func SetToolImageTag(fn func() string) {
 	// Recompute the toolImages map with the new tag.
 	tag := toolImageTag()
 	toolImages = map[string]string{
-		"ibmcloud":  "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
-		"iperf3":    "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
-		"terraform": "hashicorp/terraform:1.5.7",
+		"ibmcloud":   "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		"iperf3":     "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"terraform":  "hashicorp/terraform:1.5.7",
+		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
 	}
 }
 
@@ -152,6 +154,19 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		return 0, err
 	}
 
+	// Append caller-supplied HostMounts (Sprint 5 terraform path).
+	// PRD 03 §"terraform" §"Docker container": the workspace state
+	// directory bind-mounts at /state read-write so terraform's local
+	// backend persists state across runs.
+	for _, hm := range opts.HostMounts {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   hm.HostPath,
+			Target:   hm.ContainerPath,
+			ReadOnly: hm.ReadOnly,
+		})
+	}
+
 	// Container config.
 	cfg := &container.Config{
 		Image:        image,
@@ -164,6 +179,7 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		StdinOnce:    opts.Stdin != nil,
 		Tty:          opts.TTY,
 		WorkingDir:   opts.WorkDir,
+		User:         opts.RunAsUser,
 	}
 	hostCfg := &container.HostConfig{
 		AutoRemove: true,
@@ -390,7 +406,13 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 			// caller's responsibility (the os.Environ() of the
 			// roksbnkctl process is what the daemon sees through the
 			// docker API).
-			envNames = append(envNames, "IBMCLOUD_API_KEY", "IC_API_KEY")
+			//
+			// TF_VAR_ibmcloud_api_key is included for the terraform
+			// docker backend (Sprint 5; PRD 03 §"terraform"): the
+			// terraform image reads it as the `ibmcloud_api_key`
+			// variable. Same bare-name pattern as IBMCLOUD_API_KEY so
+			// `docker inspect` never sees the value.
+			envNames = append(envNames, "IBMCLOUD_API_KEY", "IC_API_KEY", "TF_VAR_ibmcloud_api_key")
 			// Make sure IC_API_KEY is set in our env if only IBMCLOUD_API_KEY is.
 			if os.Getenv("IC_API_KEY") == "" {
 				_ = os.Setenv("IC_API_KEY", opts.Credentials.IBMCloudAPIKey)
@@ -402,6 +424,10 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 			if os.Getenv("IBMCLOUD_API_KEY") == "" {
 				_ = os.Setenv("IBMCLOUD_API_KEY", opts.Credentials.IBMCloudAPIKey)
 				cleanupFns = append(cleanupFns, func() { _ = os.Unsetenv("IBMCLOUD_API_KEY") })
+			}
+			if os.Getenv("TF_VAR_ibmcloud_api_key") == "" {
+				_ = os.Setenv("TF_VAR_ibmcloud_api_key", opts.Credentials.IBMCloudAPIKey)
+				cleanupFns = append(cleanupFns, func() { _ = os.Unsetenv("TF_VAR_ibmcloud_api_key") })
 			}
 		}
 		if len(opts.Credentials.KubeconfigBytes) > 0 {

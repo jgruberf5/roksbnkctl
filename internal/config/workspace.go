@@ -98,6 +98,27 @@ type BNKCfg struct {
 type TestCfg struct {
 	Throughput   ThroughputCfg   `yaml:"throughput,omitempty"`
 	Connectivity ConnectivityCfg `yaml:"connectivity,omitempty"`
+	DNS          DNSCfg          `yaml:"dns,omitempty"`
+}
+
+// DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe
+// (GSLB-aware)" §"Server resolution"). The map's keys are the names
+// users pass to `--server <name>` and the values are concrete
+// "<ip>[:<port>]" strings the miekg/dns client dials. DefaultTarget is
+// used when --target isn't passed on the command line.
+//
+// Example:
+//
+//	test:
+//	  dns:
+//	    resolvers:
+//	      google:     "8.8.8.8:53"
+//	      cloudflare: "1.1.1.1:53"
+//	      gslb-vip:   "169.45.91.5:53"
+//	    default_target: "www.example.com"
+type DNSCfg struct {
+	Resolvers     map[string]string `yaml:"resolvers,omitempty"`
+	DefaultTarget string            `yaml:"default_target,omitempty"`
 }
 
 type ThroughputCfg struct {

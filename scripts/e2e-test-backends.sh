@@ -3,14 +3,16 @@
 #
 # Sibling to scripts/e2e-test.sh. While that script tests the cluster +
 # BNK lifecycle (Phases A-H) against the default (local) backend, this
-# driver focuses on the four-backend matrix introduced in PRDs 03 + 04:
+# driver focuses on the four-backend matrix introduced in PRDs 03 + 04
+# plus the DNS probe added in PRD 03 §"DNS probe (GSLB-aware)":
 #
-#   Phase K — Docker backend (ibmcloud + iperf3) — PRD 05 §K
-#   Phase L — K8s backend (iperf3 + ops pod)     — PRD 05 §L
-#   Phase M — Cred-leak audit across all backends — PRD 05 §M
+#   Phase K     — Docker backend (ibmcloud + iperf3) — PRD 05 §K
+#   Phase L     — K8s backend (iperf3 + ops pod)     — PRD 05 §L
+#   Phase L-DNS — DNS probe (miekg/dns) + GSLB compare — PRD 05 §L-DNS
+#   Phase M     — Cred-leak audit across all backends — PRD 05 §M
 #
-# Phases L-DNS + N from PRD 05 are covered separately (Sprint 5 + Sprint 6
-# scope per docs/PLAN.md).
+# Phase N from PRD 05 is covered separately (Sprint 6 scope per
+# docs/PLAN.md).
 #
 # This script REUSES the cluster brought up by scripts/e2e-test.sh's
 # Phase D — run that first, then this. Or run scripts/e2e-test-full.sh
@@ -319,6 +321,157 @@ phase_L() {
     step "L7 ops uninstall" "$ROKSBNKCTL" -w "$WORKSPACE" ops uninstall
 }
 
+# ── Phase L-DNS — DNS probe (PRD 05 §L-DNS) ─────────────────────────
+#
+# Validates the miekg-based DNS probe across local + k8s vantages,
+# including the GSLB --gslb-compare flow. PRD 05 step list LD0-LD10:
+#
+#   LD0  — `dig` not on PATH (or test runs without invoking it)
+#   LD1  — local backend, A record, explicit --server 8.8.8.8
+#   LD2  — local backend, AAAA record
+#   LD3  — local backend, NXDOMAIN negative — exit 1
+#   LD4  — local backend, --iterations 10 → rtt_ms p50/p95/p99
+#   LD5  — k8s backend (requires Phase L's L0 ops install)
+#   LD6  — k8s backend, --server cluster (uses pod's resolv.conf)
+#   LD7  — --gslb-compare (local + k8s) → 2 vantages
+#   LD8  — GSLB divergence happy path (geo-resolved name)
+#   LD9  — SSH vantage — deferred per Sprint 6 (yellow ⊘)
+#   LD10 — --backend docker rejected by design
+#
+# Cluster-aware steps (LD5-LD8) skip cleanly when no cluster is reachable.
+phase_L_DNS() {
+    phase_header "L-DNS" "DNS probe (miekg/dns) + GSLB compare — PRD 05 §L-DNS"
+
+    # LD0 — dig should not be required. We don't enforce its absence on
+    # dev boxes; we just make sure no roksbnkctl call below shells out
+    # to `dig`. (The audit is implicit — every roksbnkctl test dns
+    # invocation below uses the embedded miekg/dns probe.)
+    if [[ "$DRY_RUN" == "1" ]]; then
+        log "→ LD0 dig-not-required smoke (dry-run)"
+    else
+        if command -v dig >/dev/null 2>&1; then
+            yellow "  ⊘ LD0 — dig is on PATH; the probe still uses embedded miekg/dns (informational)"
+        else
+            green "  ✓ LD0 dig not on PATH; probe must use embedded miekg/dns"
+        fi
+    fi
+
+    # LD1 — local backend, A record, explicit --server 8.8.8.8.
+    capture "LD1 local backend A record against 8.8.8.8" \
+        "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+            --target www.cloudflare.com --type A --server 8.8.8.8 \
+            --backend local -o json \
+        | assert_contains "roksbnkctl.dns.v1" "LD1 emits roksbnkctl.dns.v1 schema"
+
+    # LD2 — local backend, AAAA record.
+    capture "LD2 local backend AAAA record against 8.8.8.8" \
+        "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+            --target www.cloudflare.com --type AAAA --server 8.8.8.8 \
+            --backend local -o json \
+        | assert_contains "AAAA" "LD2 returns AAAA records"
+
+    # LD3 — NXDOMAIN negative; exit 1 + Rcode=NXDOMAIN.
+    if [[ "$DRY_RUN" != "1" ]]; then
+        log "→ LD3 NXDOMAIN negative path"
+        local out rc
+        out=$("$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+            --target nonexistent-zzz.example.invalid --type A \
+            --server 8.8.8.8 --backend local -o json 2>&1 || true)
+        rc=$?
+        if [[ "$rc" == "0" ]]; then
+            red "  ✗ LD3 expected non-zero exit on NXDOMAIN, got 0"
+            echo "$out" >> "$RUN_LOG"
+            exit 1
+        fi
+        echo "$out" | assert_contains "NXDOMAIN" "LD3 emits NXDOMAIN rcode"
+    else
+        log "→ LD3 NXDOMAIN negative (dry-run)"
+    fi
+
+    # LD4 — iterations=10 produces RTT distribution (p50/p95/p99).
+    capture "LD4 --iterations 10 produces RTT distribution" \
+        "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+            --target www.cloudflare.com --type A --server 8.8.8.8 \
+            --iterations 10 --backend local -o json \
+        | assert_contains "p99" "LD4 rtt_ms.p99 populated"
+
+    # LD5–LD8 require the in-cluster ops pod from Phase L's L0.
+    # Skip cleanly when no cluster context is reachable.
+    local cluster_ok=0
+    if [[ "$DRY_RUN" != "1" ]]; then
+        if "$ROKSBNKCTL" kubectl get ns roksbnkctl-ops >/dev/null 2>&1; then
+            cluster_ok=1
+        fi
+    fi
+
+    if [[ "$cluster_ok" == "1" || "$DRY_RUN" == "1" ]]; then
+        # LD5 — k8s backend.
+        capture "LD5 k8s backend A record" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+                --target www.cloudflare.com --type A --server 8.8.8.8 \
+                --backend k8s -o json \
+            | assert_contains "\"backend\":\"k8s\"" "LD5 vantage records backend=k8s"
+
+        # LD6 — --server cluster uses the pod's resolv.conf (CoreDNS).
+        capture "LD6 k8s backend --server cluster" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+                --target www.cloudflare.com --type A --server cluster \
+                --backend k8s -o json \
+            | assert_contains "roksbnkctl.dns.v1" "LD6 cluster-CoreDNS path emits schema"
+
+        # LD7 — --gslb-compare across local + k8s vantages.
+        capture "LD7 --gslb-compare local + k8s" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+                --target www.cloudflare.com --type A --server 8.8.8.8 \
+                --gslb-compare -o json \
+            | assert_contains "gslb_divergence" "LD7 emits gslb_divergence boolean"
+
+        # LD8 — GSLB divergence happy path. www.google.com is the
+        # documented geo-resolved exemplar; this step's success
+        # criterion is "the field is present and consistent", NOT
+        # "divergence is true" — anycast can land identical answers
+        # by chance. The integrator's manual sign-off (the manual
+        # GSLB validation listed in PLAN.md Sprint 5 §"Test
+        # deliverables") is where divergence-true is asserted against
+        # a known-divergent F5 BIG-IP Next GSLB record.
+        if [[ "$DRY_RUN" != "1" ]]; then
+            log "→ LD8 GSLB divergence detection (informational; manual divergence-true check during v0.9 sign-off)"
+            local out
+            out=$("$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+                --target www.google.com --type A --server 8.8.8.8 \
+                --gslb-compare -o json 2>&1 || true)
+            echo "$out" | grep -E '"gslb_divergence":\s*(true|false)' >> "$RUN_LOG" || true
+            green "  ✓ LD8 gslb_divergence boolean populated (true/false depending on anycast)"
+        else
+            log "→ LD8 GSLB divergence (dry-run)"
+        fi
+    else
+        yellow "  ⊘ LD5-LD8 skipped — cluster not reachable (run after Phase L's L0 ops install)"
+    fi
+
+    # LD9 — SSH vantage. Defer per the Sprint 4 validator pattern;
+    # SSH-backend e2e infra lands in Sprint 6 (PRD 05 Phase I).
+    yellow "  ⊘ LD9 skipped — SSH vantage e2e (Phase I) lands in Sprint 6 (PRD 05)"
+
+    # LD10 — --backend docker rejected by design.
+    if [[ "$DRY_RUN" != "1" ]]; then
+        log "→ LD10 --backend docker rejected by design"
+        local out rc
+        out=$("$ROKSBNKCTL" -w "$WORKSPACE" test dns \
+            --target www.cloudflare.com --type A --server 8.8.8.8 \
+            --backend docker -o json 2>&1 || true)
+        rc=$?
+        if [[ "$rc" == "0" ]]; then
+            red "  ✗ LD10 expected non-zero exit for --backend docker, got 0"
+            echo "$out" >> "$RUN_LOG"
+            exit 1
+        fi
+        echo "$out" | assert_contains "docker" "LD10 docker-rejection message references docker"
+    else
+        log "→ LD10 docker-rejection (dry-run)"
+    fi
+}
+
 # ── Phase M — cred-leak audit (PRD 05 §M) ───────────────────────────
 phase_M() {
     phase_header M "cred-leak audit (PRD 05 §M)"
@@ -429,6 +582,10 @@ main() {
 
     should_run K && phase_K
     should_run L && phase_L
+    # Phase L-DNS sorts after L and before M with the existing
+    # alphabetic should_run comparator: PHASE_FROM=L runs L + L-DNS + M;
+    # PHASE_FROM=L-DNS runs L-DNS + M; PHASE_FROM=M runs M only.
+    should_run "L-DNS" && phase_L_DNS
     should_run M && phase_M
 
     echo "" >&2

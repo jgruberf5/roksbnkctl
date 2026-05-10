@@ -331,74 +331,95 @@ func TestK8sBackend_Run_LongLived_PodNotReady_Fails(t *testing.T) {
 	}
 }
 
-// TestK8sBackend_Run_Job_CreatesJobAndSecret_TTL exercises the Job path
-// against the fake clientset: confirms a Job is created, the per-Job files
-// Secret exists when Files is set, and ttlSecondsAfterFinished=60 is
-// stamped on the Job.
+// runJobAndAwaitCreate runs K8sBackend.Run in a goroutine and polls the
+// fake clientset until a Job lands. Returns the captured Job (first
+// match) plus cleanup/synchronisation primitives so callers can pin the
+// rest of the assertion they care about, then ctx-cancel + drain.
 //
-// We can't fully run the Job to completion in a fake clientset (there's
-// no scheduler / no kubelet), so the test launches the run in a
-// goroutine, ctx-cancels after the create races land, then re-reads the
-// state to assert the spec. This pattern is good for covering the
-// translation layer; full lifecycle coverage lives in
-// k8s_integration_test.go.
-func TestK8sBackend_Run_Job_CreatesJobAndSecret_TTL(t *testing.T) {
-	resolveK8s(t)
-
-	// Pre-create the test namespace so the fake clientset doesn't reject
-	// the Job/Secret create with a NotFound on namespace lookup. (Fake
-	// clientsets are lenient by default, but matching real-cluster shape
-	// keeps the test honest.)
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: K8sTestNamespace}}
-	b, cs := newFakeBackend(t, ns)
-
+// The split-test pattern (one invariant per Test*) is the Sprint 5
+// polish ask from Sprint 4 tech-writer Issue 14.
+func runJobAndAwaitCreate(t *testing.T, b *K8sBackend, cs *fake.Clientset, argv []string, opts RunOpts, pollDeadline time.Duration) (*batchv1.Job, context.CancelFunc, chan struct{}) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// argv[0] uses a valid k8s-label tool name (no colons) so the Job
-		// name + label selectors are valid. Sprint 4 staff's runAsJob
-		// uses argv[0] verbatim in the Job name; image strings with `:`
-		// would fail label validation. Tracked in
-		// issues/issue_sprint4_validator.md as a roadmap item.
-		_, _ = b.Run(ctx,
-			[]string{"iperf3", "-V"},
-			RunOpts{
-				Stdout: io.Discard,
-				Stderr: io.Discard,
-				Files: map[string][]byte{
-					"kubeconfig": []byte("apiVersion: v1\nkind: Config\n"),
-				},
-			})
+		_, _ = b.Run(ctx, argv, opts)
 	}()
 
-	// Poll until a Job appears (or ctx times out).
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	var jobs *batchv1.JobList
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		j, err := cs.BatchV1().Jobs(K8sTestNamespace).List(context.Background(), metav1.ListOptions{})
 		if err == nil && len(j.Items) > 0 {
-			jobs = j
-			break
+			job := j.Items[0]
+			return &job, cancel, done
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if jobs == nil || len(jobs.Items) == 0 {
-		t.Fatal("expected at least one Job to be created against the fake clientset")
-	}
-	job := jobs.Items[0]
+	cancel()
+	<-done
+	t.Fatal("expected at least one Job to be created against the fake clientset within the poll window")
+	return nil, cancel, done
+}
+
+// TestK8sBackend_Run_Job_CreatesJob pins the first single invariant
+// from the original combined test: a Job is created in K8sTestNamespace
+// with a roksbnkctl- prefix.
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over): split out
+// from TestK8sBackend_Run_Job_CreatesJobAndSecret_TTL so a green/red
+// failure points to exactly which invariant regressed.
+func TestK8sBackend_Run_Job_CreatesJob(t *testing.T) {
+	resolveK8s(t)
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: K8sTestNamespace}}
+	b, cs := newFakeBackend(t, ns)
+
+	job, cancel, done := runJobAndAwaitCreate(t, b, cs,
+		[]string{"iperf3", "-V"},
+		RunOpts{Stdout: io.Discard, Stderr: io.Discard,
+			Files: map[string][]byte{"kubeconfig": []byte("apiVersion: v1\nkind: Config\n")}},
+		1500*time.Millisecond)
+
 	if !strings.HasPrefix(job.Name, "roksbnkctl-") {
 		t.Errorf("Job name should start with roksbnkctl-: got %q", job.Name)
 	}
-	if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 60 {
-		t.Errorf("TTLSecondsAfterFinished: got %v, want *60", job.Spec.TTLSecondsAfterFinished)
+	if job.Namespace != K8sTestNamespace {
+		t.Errorf("Job Namespace: got %q, want %q", job.Namespace, K8sTestNamespace)
 	}
 
-	// Files set → per-Job Secret should exist.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("Run() didn't return after ctx cancel within 2s")
+	}
+}
+
+// TestK8sBackend_Run_Job_CreatesFilesSecret pins the per-Job files
+// Secret invariant: when RunOpts.Files is set, a corresponding Secret
+// in K8sTestNamespace carries the file content. The Secret name's
+// owner-ref to the Job is a downstream cleanup invariant covered by
+// the integration tier; this test just confirms the Secret exists with
+// the right Data.
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over).
+func TestK8sBackend_Run_Job_CreatesFilesSecret(t *testing.T) {
+	resolveK8s(t)
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: K8sTestNamespace}}
+	b, cs := newFakeBackend(t, ns)
+
+	_, cancel, done := runJobAndAwaitCreate(t, b, cs,
+		[]string{"iperf3", "-V"},
+		RunOpts{Stdout: io.Discard, Stderr: io.Discard,
+			Files: map[string][]byte{"kubeconfig": []byte("apiVersion: v1\nkind: Config\n")}},
+		1500*time.Millisecond)
+
 	secrets, err := cs.CoreV1().Secrets(K8sTestNamespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
+		cancel()
+		<-done
 		t.Fatalf("listing secrets: %v", err)
 	}
 	if len(secrets.Items) == 0 {
@@ -408,6 +429,35 @@ func TestK8sBackend_Run_Job_CreatesJobAndSecret_TTL(t *testing.T) {
 		if s.Data == nil || len(s.Data["kubeconfig"]) == 0 {
 			t.Errorf("Secret missing 'kubeconfig' data: %+v", s.Data)
 		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("Run() didn't return after ctx cancel within 2s")
+	}
+}
+
+// TestK8sBackend_Run_Job_SetsTTL pins the TTL invariant —
+// `ttlSecondsAfterFinished=60` is stamped on every Job the backend
+// creates (PRD 03 §"K8s shape": "Auto-delete on completion
+// (`ttlSecondsAfterFinished: 60`)").
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over).
+func TestK8sBackend_Run_Job_SetsTTL(t *testing.T) {
+	resolveK8s(t)
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: K8sTestNamespace}}
+	b, cs := newFakeBackend(t, ns)
+
+	job, cancel, done := runJobAndAwaitCreate(t, b, cs,
+		[]string{"iperf3", "-V"},
+		RunOpts{Stdout: io.Discard, Stderr: io.Discard},
+		1500*time.Millisecond)
+
+	if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 60 {
+		t.Errorf("TTLSecondsAfterFinished: got %v, want *60 (PRD 03 §K8s shape)", job.Spec.TTLSecondsAfterFinished)
 	}
 
 	cancel()
@@ -464,9 +514,20 @@ func TestK8sBackend_Run_Job_CtxCancel_DeletesJob(t *testing.T) {
 	t.Error("expected Job to be deleted after ctx cancel, but it persists in the fake clientset")
 }
 
-// TestK8sBackend_NoCredValueInArgv asserts: PRD 04 cross-backend principle
-// #2 — argv passed to Run must NEVER contain the IBMCloudAPIKey value,
-// regardless of which path (long-lived or Job) executes.
+// TestK8sBackend_NoCredValueInArgv pins the PRD 04 §"In-cluster pod"
+// security invariant: the IBM Cloud API key value MUST appear only in
+// the Secret's data field (base64), never in argv, never in container
+// env values, never in pod metadata annotations or labels. A regression
+// here is a cred-leak vulnerability — see audit_test.go for the
+// cross-surface audit (TestCredAudit_K8s_NoLeakInJobSpec is the
+// build-spec sibling of this Run-time-pinned test).
+//
+// PRD 04 cross-backend principle #2: argv passed to Run must NEVER
+// contain the IBMCloudAPIKey value, regardless of which path
+// (long-lived or Job) executes.
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over): expanded
+// docstring citing the PRD invariant; the assertion surface is unchanged.
 func TestK8sBackend_NoCredValueInArgv(t *testing.T) {
 	resolveK8s(t)
 

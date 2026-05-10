@@ -6,12 +6,19 @@ name: Build tools images
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-iperf3
 #
-# Triggered on tag pushes (e.g. v0.9-rc1) and on manual dispatch — never on
-# every PR. Tags published: the exact ref name + `latest`.
+# Triggered on tag pushes (e.g. v0.9-rc1), on push to `main` (publishes a
+# `:dev` tag so `go install ./cmd/roksbnkctl@main` works on a fresh host
+# without a local `tools/docker/Makefile build` step), and on manual
+# dispatch — never on every PR.
+#
+# Sprint 4 staff Issue 2 + Sprint 5 validator scope (validator owns
+# CI workflow files). Tag → `:<tagname>` + `:latest`. Main-push →
+# `:dev`. Workflow dispatch → both `:dev` and the input ref name.
 
 on:
   push:
     tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -35,10 +42,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v5
+      # Tag-push: publish :<tagname> + :latest. The first matrix job
+      # also publishes :latest; the workflow doesn't dedupe across
+      # matrix runs because each tools-* image has its own :latest.
+      - name: Build and push (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v5
         with:
           context: tools/docker/${{ matrix.image }}
           push: true
           tags: |
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:${{ github.ref_name }}
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:latest
+
+      # Main-push: publish :dev. internal/exec/docker.go's toolImageTag()
+      # falls back to ":dev" for binaries that report Version=="dev"
+      # (i.e., a `go install ./cmd/roksbnkctl@main` build); having :dev
+      # in GHCR closes the gap so the docker backend doesn't fail to
+      # pull on a fresh dev box.
+      - name: Build and push (main → :dev)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/build-push-action@v5
+        with:
+          context: tools/docker/${{ matrix.image }}
+          push: true
+          tags: |
+            ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:dev
+
+      # workflow_dispatch: build + push both forms so a manual run from
+      # any branch can publish a :dev tag for testing.
+      - name: Build and push (workflow_dispatch → :dev)
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v5
+        with:
+          context: tools/docker/${{ matrix.image }}
+          push: true
+          tags: |
+            ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:dev

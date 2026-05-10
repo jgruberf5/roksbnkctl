@@ -55,12 +55,19 @@ func (c *argvCapture) Run(ctx context.Context, argv []string, opts RunOpts) (int
 	return c.inner.Run(ctx, argv, opts)
 }
 
-// TestCredAudit_NoLeakInArgv is the security-spine test PRD 04 calls for at
-// the unit-test tier.
+// TestCredAudit_NoLeakInArgv pins PRD 04 cross-backend principle #2 at
+// the unit-test tier — the security-spine test PRD 04 §"Acceptance
+// criteria" item 5 calls for. The wrapped Backend's argv must NEVER
+// contain the secret string, regardless of how the cred is propagated
+// (env, mount, file, etc.).
 //
-// The wrapped Backend's argv must NEVER contain the secret string regardless
-// of how the cred is propagated (env, mount, file, etc.). PRD 04
-// cross-backend principle #2.
+// A regression here is a SECURITY VIOLATION (cred visible in `ps -ef`
+// on the host running the wrapped tool). The cross-backend siblings
+// — TestCredAudit_K8s_NoLeakInJobSpec, TestCredAudit_SSH_NoLeakInArgvOrWrapper —
+// extend the same invariant to the k8s + ssh backends.
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over): expanded
+// docstring citing the PRD invariant + cross-references.
 func TestCredAudit_NoLeakInArgv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("local backend test uses sh -c")
@@ -93,10 +100,18 @@ func TestCredAudit_NoLeakInArgv(t *testing.T) {
 	}
 }
 
-// TestCredAudit_NoLeakInProcessEnv asserts that after Backend.Run returns,
-// the parent process's os.Environ() does NOT include any new IBMCLOUD_API_KEY
-// entries the backend might have set. (Some primitive impls set os.Setenv
-// to propagate; that's a leak — the env should be passed only to the child.)
+// TestCredAudit_NoLeakInProcessEnv pins the PRD 04 §"Local exec"
+// invariant that the local backend MUST NOT mutate the parent's
+// os.Environ() to propagate creds — Backend.Run passes the cred to the
+// child process via cmd.Env (a per-child slice), never via os.Setenv.
+//
+// A regression here leaks the cred into anything else the parent
+// roksbnkctl process spawns later in its lifetime (e.g., the next
+// Backend.Run call against a different backend), defeating the
+// per-child isolation PRD 04 §"In-process surface" specifies.
+//
+// Sprint 5 polish (Sprint 4 tech-writer Issue 14 carry-over): expanded
+// docstring citing the PRD invariant.
 func TestCredAudit_NoLeakInProcessEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh -c true")
