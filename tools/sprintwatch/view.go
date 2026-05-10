@@ -164,7 +164,11 @@ func (m Model) renderCard(sp Sprint, selected bool) string {
 		badge = stWarn.Render(fmt.Sprintf("⏳ IN PROGRESS  (%d open)", hardOpen))
 	}
 
-	header := stHead.Render(fmt.Sprintf("Sprint %d", sp.Number)) + "   " + badge
+	header := stHead.Render(fmt.Sprintf("Sprint %d", sp.Number))
+	if sp.Theme != "" {
+		header += stDim.Render(" — " + sp.Theme)
+	}
+	header += "   " + badge
 	b.WriteString(header + "\n")
 
 	var roleParts []string
@@ -276,7 +280,12 @@ func humanRemaining(days float64) string {
 
 func (m Model) renderDetail(sp Sprint) string {
 	var b strings.Builder
-	b.WriteString(stHead.Render(fmt.Sprintf("Sprint %d — issue detail", sp.Number)) + "\n\n")
+	title := fmt.Sprintf("Sprint %d — issue detail", sp.Number)
+	b.WriteString(stHead.Render(title))
+	if sp.Theme != "" {
+		b.WriteString(stDim.Render("   (" + sp.Theme + ")"))
+	}
+	b.WriteString("\n\n")
 
 	for _, n := range sp.RoleNames() {
 		r := sp.Roles[n]

@@ -59,17 +59,28 @@ Before drafting any prompt, read these in order:
 Write to disk:
 
 ```
+prompts/sprint<N>/README.md          ← sidecar with the parseable theme (see below)
 prompts/sprint<N>/architect.md
 prompts/sprint<N>/staff.md
 prompts/sprint<N>/validator.md
 prompts/sprint<N>/tech-writer.md
 ```
 
-Each prompt should be self-contained — an agent runs with no memory of this conversation. State the project location (`/mnt/d/project/roksbnkctl/`), point at the PRD it should read, list coordination notes about the other agents, give numbered tasks with concrete target paths.
+The `README.md` sidecar is a one-source-of-truth manifest for the sprint. It must contain a `**Theme:** <text>` line — copied verbatim from the heading of that sprint's section in `docs/PLAN.md` (minus the calendar `(week N)` suffix, if any). Tools like `tools/sprintwatch` parse this line to label the sprint in dashboards.
+
+```markdown
+# Sprint <N>
+
+**Theme:** <copy from `## Sprint N — <theme>` in docs/PLAN.md>
+
+_Drafted from `docs/PLAN.md` Sprint <N> section._
+```
+
+The four role prompts should be self-contained — an agent runs with no memory of this conversation. State the project location (`/mnt/d/project/roksbnkctl/`), point at the PRD it should read, list coordination notes about the other agents, give numbered tasks with concrete target paths.
 
 The four prompts together should partition the sprint's deliverables with **no overlap and no gaps**. Shared files (Makefile, CONTRIBUTING.md, README.md) need explicit append-only or section-ownership notes so agents don't clobber each other.
 
-**Commit these four files first**, in their own commit ("`prompts/sprint<N>: draft agent prompts ahead of dispatch`"), so the dispatch is reproducible even if the integration goes sideways.
+**Commit these five files first** (the four role prompts plus the `README.md` sidecar), in their own commit ("`prompts/sprint<N>: draft agent prompts ahead of dispatch`"), so the dispatch is reproducible even if the integration goes sideways.
 
 ### 2. Dispatch architect + staff + validator in parallel
 
@@ -146,6 +157,7 @@ A short pre-flight before drafting prompts:
 - [ ] Sprint N's PRD has been read end-to-end (not just skimmed)
 - [ ] Sprint N's PLAN.md section has been read, including the testing pyramid additions table
 - [ ] All open issues from sprints < N have been triaged: rolled into Sprint N's task list, deferred to a later sprint with a note, or closed as won't-fix
+- [ ] `prompts/sprint<N>/README.md` exists with a `**Theme:** <text>` line copied from PLAN.md
 - [ ] The four prompts are mutually exclusive (no overlapping deliverables) and collectively exhaustive (no scope gaps vs. PLAN.md Sprint N)
 - [ ] Coordination notes in each prompt name the other three agents and their owned files
 - [ ] Each prompt's "verification before reporting done" block includes the relevant sprint-specific checks (e.g. byte-equivalent doctor output for Sprint 0, byte-equivalent `kubectl get -o yaml` for Sprint 2)

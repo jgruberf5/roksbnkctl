@@ -25,6 +25,29 @@ type Workspace struct {
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
+
+	// Exec is the per-tool execution-backend config block introduced
+	// in Sprint 3 (PRD 03). Maps a tool name (`ibmcloud`, `iperf3`,
+	// `terraform`) to its preferred backend (`local`, `docker`,
+	// `k8s`, or `ssh:<target>`). Per-invocation `--backend` flag wins
+	// over the workspace config; missing entries default to `local`.
+	//
+	// Example:
+	//
+	//   exec:
+	//     ibmcloud:  { backend: docker }
+	//     iperf3:    { backend: k8s }
+	//     terraform: { backend: local }
+	Exec map[string]ExecToolCfg `yaml:"exec,omitempty"`
+}
+
+// ExecToolCfg is one entry under workspace.Exec — the chosen backend
+// for a given tool.
+type ExecToolCfg struct {
+	// Backend is the execution-backend spec: "local" | "docker" |
+	// "k8s" | "ssh:<target>". Empty string defaults to "local" at
+	// resolution time.
+	Backend string `yaml:"backend"`
 }
 
 // TargetCfg is the on-disk shape of one entry under `targets:` in the

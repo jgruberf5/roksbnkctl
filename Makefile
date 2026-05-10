@@ -46,10 +46,20 @@ book-clean:
 # ldflags for version stamping). See issues/issue_sprint0_staff.md for
 # the rationale.
 
-.PHONY: test-short test-integration test-live lint pre-commit-install
+.PHONY: test-short test-integration test-live test-cred-audit lint pre-commit-install
 
 test-short:
 	go test -short ./...
+
+# test-cred-audit runs the security-spine regression suite from
+# `internal/exec/audit_test.go` (Sprint 3 / PRD 04 §"Acceptance criteria"
+# item 5). Quick: < 5s on a clean tree. Run before tagging a release —
+# a leaked credential in any backend is a stop-ship.
+#
+# Run -v to see exactly which audit cases fired:
+#   make test-cred-audit ARGS="-v"
+test-cred-audit:
+	go test -run CredAudit $(ARGS) ./...
 
 # test-integration runs the testcontainers-go-backed suites (currently
 # only internal/remote/integration_test.go — adds an sshd container to

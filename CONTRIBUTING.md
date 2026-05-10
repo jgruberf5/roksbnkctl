@@ -67,6 +67,56 @@ locally before tagging `v0.8` (the M2 milestone) — byte-equivalence is
 part of PRD 02's acceptance criteria, and a regression in the
 `cli-runtime` printer chain wouldn't be caught by the fast unit suite.
 
+### Running cred-audit tests
+
+Sprint 3 (PRD 04) introduces a security-spine regression test that runs
+each backend with a known-secret IBM Cloud API key and asserts the value
+never appears in any inspection surface — `os.Environ()`, the argv passed
+to `Backend.Run`, the captured stdout/stderr, and (for the docker backend)
+`docker inspect` output. PRD 04 §"Acceptance criteria" item 5 requires
+this; the implementation lives in `internal/exec/audit_test.go`.
+
+```bash
+go test -run CredAudit ./...           # every TestCredAudit_* in the tree
+make test-cred-audit                   # convenience wrapper for the same
+```
+
+A new make target `test-cred-audit` wraps the `go test -run CredAudit`
+invocation so the audit can be run as a single quick check before tagging
+a release. The unit-tier audit doesn't require a docker daemon; the
+docker-side leak check (`TestIntegration_DockerBackend_NoLeakInInspect` in
+`internal/exec/docker_integration_test.go`) is gated behind the
+`integration` build tag and runs in CI's `docker-backend` job — see
+`.github/workflows/ci.yml`.
+
+If you change anything in `internal/cred/` or `internal/exec/`, run the
+audit locally before pushing. A red audit blocks a release: a leaked
+credential in any backend is a v0.x stop-ship.
+
+### Building tool images locally
+
+The PRD 03 docker backend pulls per-tool images at runtime:
+
+- `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud` — Ubuntu base + `ibmcloud-cli` + `container-service` plugin
+- `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3` — Alpine base + `iperf3`
+
+Released images are built and pushed by
+`.github/workflows/tools-images.yml` on every `v*` tag push. For local
+development against the docker backend (without waiting on a tag), build
+the images yourself via the `tools/docker/Makefile`:
+
+```bash
+cd tools/docker
+make build-ibmcloud                    # ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev
+make build-iperf3                      # ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:dev
+make build-all                         # both
+make clean                             # remove the local images
+```
+
+The default tag is `dev`, which matches what `internal/exec/docker.go`
+looks up at runtime when no override is configured. Override via
+`TAG=...` if you want to test against a specific version locally.
+
 ## Pre-commit hook
 
 `scripts/pre-commit.sh` runs three checks against the working tree:

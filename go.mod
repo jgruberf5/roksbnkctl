@@ -9,6 +9,8 @@ require (
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/hashicorp/terraform-exec v0.21.0
 	github.com/joho/godotenv v1.5.1
+	github.com/moby/moby/api v1.54.1
+	github.com/moby/moby/client v0.4.0
 	github.com/spf13/cobra v1.8.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/zalando/go-keyring v0.2.5
@@ -93,8 +95,6 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/api v1.54.1 // indirect
-	github.com/moby/moby/client v0.4.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/spdystream v0.2.0 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect

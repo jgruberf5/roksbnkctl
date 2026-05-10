@@ -1,7 +1,42 @@
 # syntax=docker/dockerfile:1
-# roksbnkctl-tools-ibmcloud — bundled ibmcloud-cli + ks plugin + relevant
-# plugins. Used by the docker execution backend (see PRD 03,
-# docs/prd/03-EXECUTION-BACKENDS.md). Implemented in Sprint 3.
+# roksbnkctl-tools-ibmcloud — bundled ibmcloud-cli + ks plugin. Used by
+# the docker execution backend (PRD 03, docs/prd/03-EXECUTION-BACKENDS.md).
+#
+# Build via tools/docker/Makefile:
+#
+#	cd tools/docker && make build-ibmcloud
+#
+# The dev tag (`:dev`) is what the CI workflow publishes on `tag: v*`
+# events; `latest` and `vX.Y.Z` follow on releases.
+#
+# Install method: IBM's own install.sh hosted at
+# clis.cloud.ibm.com/install/linux. The script picks the right tarball
+# for the runtime arch (linux64 / ppc64le / s390x / arm64), drops
+# `ibmcloud` on PATH, and runs the post-install steps the manual
+# tarball install requires.
 FROM ubuntu:22.04
-RUN echo "TODO Sprint 3: install ibmcloud-cli + ks plugin from IBM apt repo" \
-    && exit 1
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    IBMCLOUD_VERSION_CHECK=false
+
+# Install ibmcloud CLI + the ks (container-service) and observe-service
+# plugins. The CLI installer pulls the latest stable build; pin via tag
+# tooling at release time (the GH Actions workflow publishes :dev / :v*
+# tags so users get reproducible image versions per roksbnkctl release).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        jq \
+ && curl -fsSL https://clis.cloud.ibm.com/install/linux | sh \
+ && ibmcloud --version \
+ && ibmcloud config --check-version=false \
+ && ibmcloud plugin install -f container-service \
+ && apt-get purge -y --auto-remove curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Default to `ibmcloud` as the entrypoint so callers can `docker run
+# IMAGE ks cluster ls` without repeating the binary name. Backends that
+# want a different shape can override the entrypoint per-invocation.
+ENTRYPOINT ["ibmcloud"]

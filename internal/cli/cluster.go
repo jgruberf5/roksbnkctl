@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
+	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -152,6 +154,41 @@ func extractOnFlag(args []string) (string, []string) {
 	return on, out
 }
 
+// extractBackendFlag is the Sprint-3 sibling of extractOnFlag. Same
+// rationale: the passthrough commands disable cobra's flag parsing so
+// downstream tool flags (e.g. `roksbnkctl ibmcloud --debug ks cluster
+// ls`) reach the wrapped binary verbatim. Side-effect: the persistent
+// `--backend` flag is also swallowed into args when placed AFTER the
+// subcommand name, so we extract it manually.
+//
+// `--backend` placed BEFORE the subcommand name (e.g. `roksbnkctl
+// --backend docker ibmcloud ks cluster ls`) hits cobra's persistent
+// flag path normally — extractBackendFlag returns "" in that case
+// and the runtime falls through to the flagBackend value cobra
+// already set.
+func extractBackendFlag(args []string) (string, []string) {
+	out := make([]string, 0, len(args))
+	be := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--backend":
+			if i+1 < len(args) {
+				be = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--backend="):
+			be = strings.TrimPrefix(a, "--backend=")
+		default:
+			out = append(out, a)
+		}
+	}
+	if len(out) > 0 && out[0] == "--" {
+		out = out[1:]
+	}
+	return be, out
+}
+
 func runKubeconfig(cmd *cobra.Command, _ []string) error {
 	if flagKubeconfigDownload {
 		return runKubeconfigDownload(cmd)
@@ -239,7 +276,15 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 	if on == "" {
 		on = flagOn
 	}
-	_, env, err := workspaceEnv()
+	// Pull --backend out of argv too; same DisableFlagParsing rationale
+	// as extractOnFlag. flagBackend (the persistent flag value cobra
+	// set when --backend appeared BEFORE the subcommand) wins over the
+	// extracted form for backwards-compat with the cobra path.
+	be, argv := extractBackendFlag(argv)
+	if be == "" {
+		be = flagBackend
+	}
+	cctx, env, err := workspaceEnv()
 	if err != nil {
 		return err
 	}
@@ -248,16 +293,119 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 		// dance; the remote sshd / target manages its own state. Pass
 		// IBMCLOUD_API_KEY via env so the remote `ibmcloud` CLI does
 		// non-interactive apikey login on first call.
+		//
+		// PRD 03 + PLAN.md note: --on (Sprint 1's SSH dispatch) and
+		// --backend (Sprint 3's backend selector) are independent
+		// flags in v0.8; --on takes the legacy SSH path here. Sprint
+		// 4 folds the two together under a real `ssh` backend.
 		return dispatchRemote(cmd.Context(), on, append([]string{"ibmcloud"}, argv...), env, false)
 	}
-	bin, err := exec.LookPath("ibmcloud")
-	if err != nil {
-		return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
+
+	// Resolve the execution backend for ibmcloud. Per PLAN.md Sprint 3
+	// §"Workspace config exec: block + --backend CLI flag":
+	//
+	//   1. --backend flag (if set) wins.
+	//   2. Workspace exec.<tool>.backend (if set).
+	//   3. Default "local".
+	backendSpec := resolveBackendSpecWith(cctx, "ibmcloud", be)
+	if backendSpec == "local" || backendSpec == "" {
+		// Fast path — byte-identical to pre-Sprint-3 behaviour.
+		bin, err := exec.LookPath("ibmcloud")
+		if err != nil {
+			return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
+		}
+		if err := ensureIBMCloudLoggedIn(bin, env); err != nil {
+			return err
+		}
+		return runWithEnv(bin, argv, env)
 	}
-	if err := ensureIBMCloudLoggedIn(bin, env); err != nil {
+
+	// Non-local backend (docker today; k8s/ssh in Sprint 4) — dispatch
+	// through the exec.Backend interface.
+	return dispatchBackend(cmd.Context(), backendSpec, "ibmcloud", argv, cctx, env)
+}
+
+// resolveBackendSpecWith picks the execution backend for tool. Order:
+//
+//  1. flagOverride (the explicit per-invocation flag — caller passes
+//     either flagBackend or the extractBackendFlag result, whichever
+//     is non-empty)
+//  2. workspace's exec.<tool>.backend
+//  3. "local" default
+//
+// Returns the spec string ("local", "docker", "k8s", "ssh:<target>")
+// — the caller passes it into exec.ResolveBackend.
+func resolveBackendSpecWith(cctx *config.Context, tool, flagOverride string) string {
+	if flagOverride != "" {
+		return flagOverride
+	}
+	if cctx != nil && cctx.Workspace != nil {
+		if entry, ok := cctx.Workspace.Exec[tool]; ok && entry.Backend != "" {
+			return entry.Backend
+		}
+	}
+	return "local"
+}
+
+// dispatchBackend resolves the named backend spec, builds Credentials
+// for the wrapped tool, and runs argv through exec.Backend.Run. Used
+// for the non-local execution paths in Sprint 3 (`--backend docker`)
+// and Sprint 4's k8s + ssh.
+//
+// argv[0] is the tool name (e.g. "ibmcloud") which the docker backend
+// uses to look up the per-tool image; for the local backend (which
+// reaches here only on explicit --backend=local) argv[0] is the
+// binary on PATH.
+func dispatchBackend(ctx context.Context, spec, tool string, argv []string, cctx *config.Context, env []string) error {
+	backend, err := execbackend.ResolveBackend(spec)
+	if err != nil {
 		return err
 	}
-	return runWithEnv(bin, argv, env)
+
+	// Build Credentials. Sprint 3 only wires IBM Cloud API key; the
+	// kubeconfig wiring is reserved for the k8s/ssh backends in
+	// Sprint 4 (docker rarely needs cluster-side kubeconfig in the
+	// ibmcloud-passthrough use case — `ibmcloud ks cluster ls` etc.
+	// don't read kubeconfig).
+	creds := &execbackend.Credentials{}
+	if cctx != nil && cctx.Workspace != nil {
+		resolver := &cred.Resolver{
+			Workspace:      cctx.WorkspaceName,
+			NonInteractive: true, // backends shouldn't prompt mid-run
+			Source:         cctx.Workspace.IBMCloud.APIKeySource,
+		}
+		key, kerr := resolver.IBMCloudAPIKey(ctx)
+		if kerr != nil {
+			return fmt.Errorf("resolving IBM Cloud API key: %w", kerr)
+		}
+		creds.IBMCloudAPIKey = key
+	}
+
+	// Filter env: don't double-feed IBMCLOUD_API_KEY — the
+	// Credentials path owns that value. Other workspace env entries
+	// (KUBECONFIG, IBMCLOUD_REGION, etc.) flow through.
+	var filteredEnv []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "IBMCLOUD_API_KEY=") || strings.HasPrefix(kv, "IC_API_KEY=") {
+			continue
+		}
+		filteredEnv = append(filteredEnv, kv)
+	}
+
+	rc, err := backend.Run(ctx, append([]string{tool}, argv...), execbackend.RunOpts{
+		Stdin:       os.Stdin,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		Env:         filteredEnv,
+		Credentials: creds,
+	})
+	if err != nil && rc == 0 {
+		return err
+	}
+	if rc != 0 {
+		os.Exit(rc)
+	}
+	return nil
 }
 
 // ensureIBMCloudLoggedIn establishes a valid ibmcloud session before

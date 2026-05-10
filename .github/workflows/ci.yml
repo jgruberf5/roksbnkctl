@@ -98,6 +98,31 @@ jobs:
         # only after measuring.
         run: go test -tags integration -timeout 5m ./internal/remote/...
 
+  docker-backend:
+    name: integration (docker backend)
+    needs: test
+    # Linux-only mirror of the existing integration job, scoped to the
+    # docker backend tests under `internal/exec/`. Sprint 3 / PRD 03
+    # introduces `internal/exec/docker_integration_test.go` which spins
+    # short-lived busybox containers via the docker backend and asserts
+    # the cred-no-leak invariant from PRD 04. Skipped on PRs from forks
+    # for the same reasons as the `integration` job above.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test (integration tag — exec/docker)
+        # The tests inside this package self-skip when `docker info`
+        # fails, so the job is safe even on a runner without a daemon.
+        # 5m matches the existing integration job's budget.
+        run: go test -tags integration -timeout 5m ./internal/exec/...
+
   windows-build:
     name: windows build
     runs-on: windows-latest

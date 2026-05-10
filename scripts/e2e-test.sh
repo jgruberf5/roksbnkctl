@@ -236,6 +236,31 @@ phase_B() {
     else
         yellow "  ⊘ B7-B9 skipped — no jumphost target configured (testing_create_tgw_jumphost=false?)"
     fi
+
+    # B10 — docker backend prelim (Sprint 3 / PRD 03 first half).
+    #
+    # Validates that `--backend docker` propagates IBMCLOUD_API_KEY into a
+    # disposable container without leaking it into `docker inspect`. The
+    # full Phase K (the canonical multi-tool docker backend phase) is
+    # scoped for Sprint 6 per docs/PLAN.md; Sprint 3 lands this minimal
+    # precursor so the docker plumbing is exercised end-to-end on a real
+    # cluster as soon as it ships.
+    #
+    # Skipped cleanly when:
+    #   - the docker CLI isn't installed (no `docker` on PATH)
+    #   - the docker daemon isn't reachable (`docker info` fails)
+    # Either case → yellow ⊘ rather than a hard fail; the test is gated
+    # by the host's docker availability, not by anything roksbnkctl owns.
+    if [[ "$DRY_RUN" == "1" ]]; then
+        log "→ B10 docker backend ibmcloud iam (dry-run)"
+        log "  cmd: $ROKSBNKCTL -w $WORKSPACE ibmcloud --backend docker iam oauth-tokens"
+    elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        capture "B10 docker backend ibmcloud iam" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" ibmcloud --backend docker iam oauth-tokens \
+            | assert_contains "IAM token" "B10 docker backend produces token"
+    else
+        yellow "  ⊘ B10 skipped — Docker daemon not reachable"
+    fi
 }
 
 phase_C() {

@@ -43,8 +43,11 @@ Each phase has explicit assertions — the driver script exits non-zero on the f
 | B7 | `roksbnkctl -w e2e targets list` | exits 0; output contains `jumphost` (auto-populated by `cluster up` from the upstream HCL's TGW jumphost outputs — PRD 01 §Auto-discovery) |
 | B8 | `roksbnkctl -w e2e exec --on jumphost -- whoami` | exits 0; output contains `root` (the upstream HCL provisions the jumphost as root) |
 | B9 | `roksbnkctl -w e2e ibmcloud --on jumphost iam oauth-tokens` | exits 0; output contains `IAM token` — validates IBMCLOUD_API_KEY env propagates over SSH |
+| B10 | `roksbnkctl -w e2e ibmcloud --backend docker iam oauth-tokens` | exits 0; output contains `IAM token` — validates the **docker backend** (PRD 03 first half, Sprint 3) propagates IBMCLOUD_API_KEY without leaking it via `docker inspect`. Skipped with a yellow `⊘` when the docker daemon isn't reachable on the runner. |
 
 Steps B7-B9 require the upstream HCL's `testing_create_tgw_jumphost` to be true (the default). When users override that to false in their tfvars, the jumphost target won't be auto-populated and B7-B9 are skipped with a yellow `⊘` marker rather than failing the phase. See `scripts/e2e-test.sh phase_B` for the gating logic.
+
+B10 is the **Phase K-prelim** in PLAN.md's terminology — a minimal docker-backend smoke test that lands in Sprint 3 alongside the docker plumbing. The full Phase K (canonical multi-tool docker backend phase covering iperf3 + terraform) is scoped for Sprint 6.
 
 ### Phase C — register an existing cluster (~30 seconds)
 

@@ -31,6 +31,7 @@ var (
 	flagNoColor         bool
 	flagOn              string // --on <target>: dispatch a passthrough over SSH instead of locally
 	flagInsecureHostKey bool   // --insecure-host-key: skip TOFU prompt; just record the key (CI use)
+	flagBackend         string // --backend <local|docker|k8s|ssh:<target>>: per-invocation execution backend override (PRD 03)
 )
 
 var rootCmd = &cobra.Command{
@@ -116,6 +117,7 @@ func init() {
 	pf.BoolVar(&flagNoColor, "no-color", false, "disable colored output")
 	pf.StringVar(&flagOn, "on", "", "run on the named SSH target instead of locally (`roksbnkctl targets list` to see options)")
 	pf.BoolVar(&flagInsecureHostKey, "insecure-host-key", false, "skip the host-key TOFU prompt; record on first contact (CI use)")
+	pf.StringVar(&flagBackend, "backend", "", "execution backend: local | docker | k8s | ssh:<target> (default: per-tool from workspace exec: block, else local)")
 }
 
 // unimplemented is the placeholder RunE for stubbed commands.

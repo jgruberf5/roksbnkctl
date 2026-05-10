@@ -30,6 +30,7 @@ type Role struct {
 
 type Sprint struct {
 	Number int
+	Theme  string
 	Roles  map[string]*Role
 }
 
@@ -95,6 +96,7 @@ var (
 	sprintDirRE = regexp.MustCompile(`^sprint(\d+)$`)
 	sevRE       = regexp.MustCompile(`(?i)^\s*\*\*Severity\*\*\s*:\s*(.+?)\s*$`)
 	statRE      = regexp.MustCompile(`(?i)^\s*\*\*Status\*\*\s*:\s*(.+?)\s*$`)
+	themeRE     = regexp.MustCompile(`(?i)^\s*\*\*Theme:?\*\*:?\s*(.+?)\s*$`)
 )
 
 func LoadSprints(root string) ([]Sprint, error) {
@@ -147,6 +149,7 @@ func LoadSprints(root string) ([]Sprint, error) {
 	var sprints []Sprint
 	for _, k := range keys {
 		sp := Sprint{Number: k.n, Roles: map[string]*Role{}}
+		sp.Theme = readTheme(filepath.Join(promptsDir, fmt.Sprintf("sprint%d", k.n), "README.md"))
 		for _, role := range k.roles {
 			r := &Role{Name: role}
 			issuePath := filepath.Join(root, "issues", fmt.Sprintf("issue_sprint%d_%s.md", k.n, role))
@@ -171,6 +174,24 @@ func LoadSprints(root string) ([]Sprint, error) {
 		sprints = append(sprints, sp)
 	}
 	return sprints, nil
+}
+
+// readTheme extracts the `**Theme:** <text>` line from a sprint sidecar
+// README. Returns "" if the file is absent or the line is missing — sprints
+// without a theme just render without one.
+func readTheme(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if m := themeRE.FindStringSubmatch(sc.Text()); m != nil {
+			return strings.TrimSpace(m[1])
+		}
+	}
+	return ""
 }
 
 func parseIssueFile(r *Role, path string) error {
