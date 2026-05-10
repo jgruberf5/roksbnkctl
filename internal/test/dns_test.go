@@ -540,6 +540,209 @@ func TestProbe_ConcurrentIterations(t *testing.T) {
 	}
 }
 
+// — truncated flag — //
+
+// startMockDNSServerDualStack spins both a UDP-listening and a
+// TCP-listening miekg/dns.Server on the same loopback port, using the
+// same HandlerFunc for each. Returns the shared addr "<host>:<port>".
+// Both servers are stopped via t.Cleanup.
+//
+// Used by TestProbe_TruncatedFlag below: the Probe issues an initial
+// UDP query, observes TC=1 in the response, and retries the SAME
+// iteration over TCP per RFC 1035 §4.2.2. To make Truncated=true stick
+// through to the final DNSProbeResult, the TCP server must ALSO return
+// TC=1 — i.e. the answer set is too large to fit even over TCP. Then
+// lastResp.Truncated is true and the result projects it through.
+func startMockDNSServerDualStack(t *testing.T, handler dns.HandlerFunc) string {
+	t.Helper()
+
+	// Bind UDP first to claim an ephemeral port, then bind TCP on the
+	// same port. We need the same port so the Probe's TCP retry hits a
+	// listener — its second `Exchange` call uses the same server addr
+	// the UDP attempt used.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	udpAddr := pc.LocalAddr().(*net.UDPAddr)
+	tcpLis, err := net.Listen("tcp", udpAddr.String())
+	if err != nil {
+		_ = pc.Close()
+		t.Fatalf("listen tcp on %s: %v", udpAddr.String(), err)
+	}
+
+	udpSrv := &dns.Server{PacketConn: pc, Net: "udp", Handler: handler}
+	tcpSrv := &dns.Server{Listener: tcpLis, Net: "tcp", Handler: handler}
+
+	udpReady := make(chan struct{})
+	tcpReady := make(chan struct{})
+	udpSrv.NotifyStartedFunc = func() { close(udpReady) }
+	tcpSrv.NotifyStartedFunc = func() { close(tcpReady) }
+
+	udpDone := make(chan error, 1)
+	tcpDone := make(chan error, 1)
+	go func() { udpDone <- udpSrv.ActivateAndServe() }()
+	go func() { tcpDone <- tcpSrv.ActivateAndServe() }()
+
+	for i, ch := range []chan struct{}{udpReady, tcpReady} {
+		select {
+		case <-ch:
+		case <-time.After(2 * time.Second):
+			_ = udpSrv.Shutdown()
+			_ = tcpSrv.Shutdown()
+			t.Fatalf("dual-stack mock dns server didn't start within 2s (proto %d)", i)
+		}
+	}
+
+	t.Cleanup(func() {
+		_ = udpSrv.Shutdown()
+		_ = tcpSrv.Shutdown()
+		select {
+		case <-udpDone:
+		case <-time.After(time.Second):
+		}
+		select {
+		case <-tcpDone:
+		case <-time.After(time.Second):
+		}
+	})
+	return udpAddr.String()
+}
+
+// TestProbe_TruncatedFlag asserts the documented PRD 03 §"Truncated +
+// authoritative flags" surface: when the response carries TC=1, the
+// DNSProbeResult.Truncated field reports true.
+//
+// The Probe correctly retries truncated UDP responses over TCP (per
+// RFC 1035 §4.2.2). To make Truncated=true *stick* through to the
+// final result, this test stands up BOTH a UDP listener and a TCP
+// listener on the same port — each returns TC=1 + an empty Answers
+// list. The retry happens, but the TCP response is *also* truncated,
+// so lastResp.Truncated remains true and projects into the result.
+//
+// This is the TCP-only path proposed in Sprint 5 validator Issue 4
+// resolution — the alternative ("TCP-only mock server") would still
+// need to satisfy the UDP-first dispatch in Probe.Run; a dual-stack
+// mock keeps the UDP query path live while exercising the truncated
+// retry sticking through to the surfaced flag.
+func TestProbe_TruncatedFlag(t *testing.T) {
+	handler := func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		// Tell the client the answer didn't fit. No records in the
+		// Answer section — this is the "even TCP couldn't fit it"
+		// edge case the test is pinning. Real-world this happens
+		// with very large DNSKEY / RRSIG bundles; here it's the
+		// minimal repro for the projection through to the result.
+		m.Truncated = true
+		_ = w.WriteMsg(m)
+	}
+
+	addr := startMockDNSServerDualStack(t, handler)
+
+	p := &Probe{
+		Target:     "example.com.",
+		Type:       dns.TypeA,
+		Server:     addr,
+		Iterations: 1,
+		Timeout:    2 * time.Second,
+	}
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Probe.Run: %v", err)
+	}
+	if !result.Truncated {
+		t.Errorf("Truncated: got false, want true (TC=1 in both UDP + TCP responses)")
+	}
+}
+
+// TestProbe_EDNSClientSubnet_Echoed pins the Sprint 6 ECS surfacing
+// (PRD 03 §"DNS probe" — `edns_client_subnet` field). A mock server
+// answers every query with an OPT record carrying an ECS option;
+// Probe.Run extracts the option into DNSProbeResult.EDNSClientSubnet.
+//
+// The field is `omitempty` on the JSON, so non-ECS-aware servers
+// produce a nil field that doesn't appear in the output. The
+// negative case is covered by every other test in this file (none of
+// the other mock servers emit OPT records).
+func TestProbe_EDNSClientSubnet_Echoed(t *testing.T) {
+	handler := func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Answer = []dns.RR{mustRR(t, "example.com. 60 IN A 192.0.2.10")}
+
+		// Build an OPT record carrying an ECS option mirroring the
+		// shape an RFC 7871-aware resolver would echo back.
+		opt := new(dns.OPT)
+		opt.Hdr.Name = "."
+		opt.Hdr.Rrtype = dns.TypeOPT
+		ecs := new(dns.EDNS0_SUBNET)
+		ecs.Code = dns.EDNS0SUBNET
+		ecs.Family = 1 // IPv4
+		ecs.SourceNetmask = 24
+		ecs.SourceScope = 24
+		ecs.Address = net.ParseIP("203.0.113.0").To4()
+		opt.Option = append(opt.Option, ecs)
+		m.Extra = append(m.Extra, opt)
+
+		_ = w.WriteMsg(m)
+	}
+	srv := startMockDNSServer(t, handler)
+
+	p := &Probe{
+		Target:     "example.com.",
+		Type:       dns.TypeA,
+		Server:     srv.addr,
+		Iterations: 1,
+		Timeout:    2 * time.Second,
+	}
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Probe.Run: %v", err)
+	}
+	if result.EDNSClientSubnet == nil {
+		t.Fatalf("EDNSClientSubnet is nil; expected ECS option to be surfaced")
+	}
+	got := result.EDNSClientSubnet
+	if got.Family != 1 {
+		t.Errorf("Family: got %d, want 1 (IPv4)", got.Family)
+	}
+	if got.SourceNetmask != 24 {
+		t.Errorf("SourceNetmask: got %d, want 24", got.SourceNetmask)
+	}
+	if got.ScopeNetmask != 24 {
+		t.Errorf("ScopeNetmask: got %d, want 24", got.ScopeNetmask)
+	}
+	if got.Address != "203.0.113.0" {
+		t.Errorf("Address: got %q, want 203.0.113.0", got.Address)
+	}
+}
+
+// TestProbe_EDNSClientSubnet_AbsentWhenNoOPT pins the negative side:
+// a response without an OPT/ECS option leaves EDNSClientSubnet nil so
+// the JSON omits the field (`omitempty`).
+func TestProbe_EDNSClientSubnet_AbsentWhenNoOPT(t *testing.T) {
+	handler := answerHandler(map[uint16][]dns.RR{
+		dns.TypeA: {mustRR(t, "example.com. 60 IN A 192.0.2.1")},
+	})
+	srv := startMockDNSServer(t, handler)
+
+	p := &Probe{
+		Target:     "example.com.",
+		Type:       dns.TypeA,
+		Server:     srv.addr,
+		Iterations: 1,
+		Timeout:    2 * time.Second,
+	}
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Probe.Run: %v", err)
+	}
+	if result.EDNSClientSubnet != nil {
+		t.Errorf("EDNSClientSubnet: got %+v, want nil (no ECS in response)", result.EDNSClientSubnet)
+	}
+}
+
 // — small helpers — //
 
 func mustRR(t *testing.T, rr string) dns.RR {

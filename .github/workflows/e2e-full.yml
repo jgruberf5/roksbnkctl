@@ -1,0 +1,122 @@
+name: Full E2E
+
+# Manual-trigger workflow for the combined A-H + I-N + L-DNS e2e
+# driver. Per docs/PLAN.md Sprint 6 §"Risks":
+#
+#   > 5 hours is too long for a PR check. Solution: gate v1.0 release
+#   > branch on full e2e; PR checks run only the unit + integration tiers.
+#
+# Triggers:
+#   - workflow_dispatch — manual run from the Actions tab; the
+#     integrator's v1.0 sign-off path. Accepts a cluster region + a
+#     teardown-on-success flag.
+#   - push to release/** — the release-branch gate. Every push to a
+#     release/<v> branch runs the full e2e; merge to main only after
+#     a green run.
+#
+# NOT triggered on PR / push to main / push to feature branches — the
+# fast unit + integration tiers in ci.yml cover those.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_region:
+        description: 'IBM Cloud region for the test cluster (us-south, ca-tor, eu-de, ...)'
+        required: true
+        default: 'us-south'
+      teardown_on_success:
+        description: 'Tear down the cluster after a green run (false leaves it up for inspection)'
+        required: false
+        default: 'true'
+        type: boolean
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: read
+
+jobs:
+  full-e2e:
+    name: Full E2E (A-H + I-N + L-DNS)
+    runs-on: ubuntu-latest
+    # 6h timeout covers cluster up (~70min) + backends matrix (~30min) +
+    # tests (~30min) + final teardown (~70min) with budget for retries.
+    # Match docs/PLAN.md Sprint 6 §"Risks" envelope.
+    timeout-minutes: 360
+    # Skip when secrets aren't available (forked-PR safety, matching the
+    # Sprint 3 docker-backend / Sprint 4 k8s-backend job's pattern).
+    # The check is on github.repository to ensure same-repo
+    # workflow_dispatch + release-branch pushes still run.
+    if: github.repository == 'jgruberf5/roksbnkctl'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Track go.mod's `go` directive — same as ci.yml. The
+          # testcontainers-go transitive otel deps require Go 1.25+.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Build roksbnkctl
+        run: go build -o roksbnkctl ./cmd/roksbnkctl
+
+      - name: Render runtime config
+        # Render a minimal terraform.tfvars from the workflow inputs so
+        # the driver picks up the region from the dispatch input. The
+        # full tfvars set is in repo secrets (IBMCLOUD_API_KEY +
+        # E2E_TFVARS_CONTENT) — the workflow assembles the file at
+        # job-time so the secret never lands in the working tree.
+        run: |
+          mkdir -p "$HOME/bnkfun"
+          : > "$HOME/bnkfun/terraform.tfvars"
+          cat <<EOF >> "$HOME/bnkfun/terraform.tfvars"
+          ibmcloud_api_key = "${IBMCLOUD_API_KEY}"
+          region           = "${CLUSTER_REGION:-us-south}"
+          EOF
+          if [ -n "${E2E_TFVARS_CONTENT}" ]; then
+            printf '%s\n' "${E2E_TFVARS_CONTENT}" >> "$HOME/bnkfun/terraform.tfvars"
+          fi
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+          CLUSTER_REGION: ${{ github.event.inputs.cluster_region }}
+          E2E_TFVARS_CONTENT: ${{ secrets.E2E_TFVARS_CONTENT }}
+
+      - name: Run full e2e
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+          # Optional SSH-target env-keys (Sprint 6 Phase I + M5/M6 + N3).
+          # When unset (the default for the github-hosted runner case),
+          # the Phase I + M5/M6 + N3 steps yellow-skip cleanly — they
+          # don't fail the run. The integrator's manual v1.0 sign-off
+          # run sets these against purpose-built SSH targets.
+          ROKSBNKCTL_E2E_SSH_TARGET: ${{ secrets.E2E_SSH_TARGET }}
+          ROKSBNKCTL_E2E_SSH_NON_UBUNTU: ${{ secrets.E2E_SSH_NON_UBUNTU }}
+          ROKSBNKCTL_E2E_SSH_NO_NOPASSWD: ${{ secrets.E2E_SSH_NO_NOPASSWD }}
+          ROKSBNKCTL: ${{ github.workspace }}/roksbnkctl
+          # workflow_dispatch boolean inputs render as the strings
+          # "true"/"false" in github.event.inputs; release-branch
+          # pushes don't provide the input so the env-var is empty —
+          # default to "true" (teardown-on-success) in that path.
+          TEARDOWN_INPUT: ${{ github.event.inputs.teardown_on_success || 'true' }}
+        run: |
+          if [ "${TEARDOWN_INPUT:-true}" = "true" ]; then
+            ./scripts/e2e-test-full.sh --teardown
+          else
+            ./scripts/e2e-test-full.sh --no-teardown
+          fi
+
+      - name: Upload e2e logs
+        # Run even on failure so the integrator can investigate.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-full-logs-${{ github.run_id }}
+          path: /tmp/roksbnkctl-e2e*/
+          retention-days: 14

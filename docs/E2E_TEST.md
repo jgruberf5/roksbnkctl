@@ -124,25 +124,132 @@ Validates that `roksbnkctl` passes workspace credentials to subprocesses correct
 
 ## Sprint 4 — backend matrix driver
 
-Sprint 4 introduces a sibling driver — [`scripts/e2e-test-backends.sh`](../scripts/e2e-test-backends.sh) — that exercises the four-backend matrix from PRDs 03 + 04. It covers:
+Sprint 4 introduces a sibling driver — [`scripts/e2e-test-backends.sh`](../scripts/e2e-test-backends.sh) — that exercises the four-backend matrix from PRDs 03 + 04. Sprint 6 expanded the coverage to all PRD 05 phases:
 
+- **Phase I** (SSH backend, full coverage — I0 through I11) per [PRD 05 §I](./prd/05-E2E-TEST-PLAN.md#phase-i--ssh-backend--on-jumphost) (Sprint 6)
 - **Phase K** (docker backend, full coverage — K1 through K6) per [PRD 05 §K](./prd/05-E2E-TEST-PLAN.md#phase-k--docker-backend-ibmcloud--iperf3)
 - **Phase L** (k8s backend, full coverage — L0 through L7) per [PRD 05 §L](./prd/05-E2E-TEST-PLAN.md#phase-l--k8s-backend-iperf3--ops-pod)
-- **Phase M** (cred-leak audit — M1 through M7, minus M5+M6 which require the SSH e2e from PRD 05 Phase I — that lands in Sprint 6) per [PRD 05 §M](./prd/05-E2E-TEST-PLAN.md#phase-m--credential-propagation-audit)
+- **Phase L-DNS** (DNS probe + GSLB compare — LD0 through LD10) per [PRD 05 §L-DNS](./prd/05-E2E-TEST-PLAN.md#phase-l-dns--dns-probe-gslb-aware-across-backends) (Sprint 5)
+- **Phase M** (cred-leak audit — M1 through M7, full coverage including M5+M6) per [PRD 05 §M](./prd/05-E2E-TEST-PLAN.md#phase-m--credential-propagation-audit) (Sprint 6 closed M5+M6)
+- **Phase N** (mixed-mode lifecycle — N1 through N6) per [PRD 05 §N](./prd/05-E2E-TEST-PLAN.md#phase-n--mixed-mode-lifecycle) (Sprint 6)
 
-The backends driver REUSES the cluster brought up by `scripts/e2e-test.sh`'s Phase D — it does NOT bring its own cluster up. **Run order**:
+The backends driver REUSES the cluster brought up by `scripts/e2e-test.sh`'s Phase D for I + K + L + L-DNS + M (with the exception of Phase N's N1 which provisions its own state to validate cross-backend lifecycle). **Run order**:
 
 ```bash
 # 1. Bring up the cluster + BNK via the baseline driver:
 IBMCLOUD_API_KEY=... ./scripts/e2e-test.sh                 # Phases A-H, ~3-4h
 
 # 2. (Between Phase D's apply and final teardown) — exercise the matrix:
-IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh        # K + L + M, ~10m
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh        # I + K + L + L-DNS + M + N
 ```
 
-A combined runner `scripts/e2e-test-full.sh` that orchestrates both is scheduled for Sprint 6 (per [docs/PLAN.md](./PLAN.md) Sprint 6 deliverables).
+Or use the **combined runner** introduced in Sprint 6 — see [§"Full e2e (e2e-test-full.sh)"](#full-e2e-e2e-test-fullsh) below for one-button coverage.
 
 The backends driver supports the same `PHASE_FROM=` resume hook and `DRY_RUN=1` plan-rendering mode as the baseline driver. See `CONTRIBUTING.md` "Running scripts/e2e-test-backends.sh locally" for the full local-run recipe.
+
+## Full e2e (`scripts/e2e-test-full.sh`)
+
+Sprint 6 lands [`scripts/e2e-test-full.sh`](../scripts/e2e-test-full.sh) — the "one button" full-coverage runner that chains the baseline driver (Phases A-H) and the backends driver (Phases I + K + L + L-DNS + M + N) against the same workspace + cluster.
+
+### When to use
+
+- **Release-branch gate**: a `release/<v>` branch push runs this workflow automatically via [`.github/workflows/e2e-full.yml`](../.github/workflows/e2e-full.yml). Merge to `main` only after a green run.
+- **Manual `v1.0` (and later) sign-off**: the integrator triggers `Full E2E` from the Actions tab before tagging a release.
+- **Pre-merge feature-branch shake-out** for sweeping changes (a new backend, a kubeconfig-routing refactor, a major HCL update) — too long for PR-gated CI, useful for high-risk merges.
+
+NOT for every PR — 4-6 hour wall time exceeds the PR check budget.
+
+### Running
+
+```bash
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-full.sh                     # full pass (cluster stays up)
+IBMCLOUD_API_KEY=... ./scripts/e2e-test-full.sh --teardown          # green run tears down at end
+IBMCLOUD_API_KEY=... PHASE_FROM=D ./scripts/e2e-test-full.sh        # resume baseline at D
+IBMCLOUD_API_KEY=... PHASE_FROM=I ./scripts/e2e-test-full.sh        # SKIP baseline; backends only (cluster assumed up)
+IBMCLOUD_API_KEY=... DRY_RUN=1 ./scripts/e2e-test-full.sh           # plan-only walkthrough
+```
+
+### Env vars
+
+The combined runner picks up every env var the child drivers honour, plus the Phase I + M5/M6 + N3 SSH-target keys introduced in Sprint 6:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `IBMCLOUD_API_KEY` | (from tfvars) | IBM Cloud IAM credential — required |
+| `TFVARS` | `~/bnkfun/terraform.tfvars` | terraform inputs |
+| `WORKSPACE` | `e2e` | workspace name; `~/.roksbnkctl/<ws>/` |
+| `ROKSBNKCTL` | `roksbnkctl` (on PATH) | absolute path to the binary if not installed |
+| `PHASE_FROM` | `A` | resume hook (A-H = baseline, I/K/L/L-DNS/M/N = backends) |
+| `DRY_RUN` | `0` | plan-only (no live cloud calls) |
+| `ROKSBNKCTL_E2E_SSH_TARGET` | (unset) | name of an SSH target in the workspace config; enables Phase I + M5/M6 + N3 |
+| `ROKSBNKCTL_E2E_SSH_NON_UBUNTU` | (unset) | purpose-built non-Ubuntu SSH target for Phase I7 |
+| `ROKSBNKCTL_E2E_SSH_NO_NOPASSWD` | (unset) | purpose-built sudo-password-required SSH target for Phase I8 |
+| `ROKSBNKCTL_E2E_INIT_BACKEND` | `local` (or `docker` if no terraform) | initial backend for Phase N1 |
+
+### Cost + duration
+
+| Phase | Wall time | Cloud spend (USD) |
+|---|---|---|
+| A-H baseline (cluster up + BNK + tests + down) | ~3-4h | ~$5-8 |
+| Phase I (SSH backend, against pre-existing target) | ~2-5m | $0 (no new resources) |
+| Phase K (docker backend) | ~3-5m | $0 |
+| Phase L (k8s backend) | ~5-10m | $0 |
+| Phase L-DNS | ~1-3m | $0 |
+| Phase M (cred audit) | ~1m | $0 |
+| Phase N (mixed-mode; second up/down cycle) | ~70-90m | ~$3-5 |
+| **Total** | **~4-6h** | **~$8-13** |
+
+Cluster spend is bursty: most of the budget is the ROKS cluster apply + LBs during Phase D's up and Phase N's up. Phase N adds a second up/down cycle to validate cross-backend state portability — skip Phase N (set `PHASE_FROM=...` to stop before N) if cost is a concern and the integrator has manually verified the mixed-mode invariant.
+
+### Phase I + Phase M + Phase N coverage notes
+
+#### Phase I — SSH backend
+
+Exercises the SSH backend introduced in Sprints 1 + 4. Requires `ROKSBNKCTL_E2E_SSH_TARGET=<name>` pointing at a target listed in the workspace's `targets:` block. Typically this is the `jumphost` target auto-populated by `cluster up` (the upstream HCL provisions a TGW jumphost when `testing_create_tgw_jumphost=true`, the default).
+
+Step matrix (skip-clean rules in parentheses):
+
+| Step | What it asserts | Skip-clean trigger |
+|---|---|---|
+| I0 | `targets show <name>` exits 0 | (none — no target means the whole phase skips) |
+| I1 | Sprint 1 `--on <name>` SSH path produces an IAM token | — |
+| I2 | Sprint 4 `--backend ssh:<name>` SSH path produces an IAM token | — |
+| I3 | `--bootstrap iperf3 -v` apt-installs iperf3 on the target (idempotent) | yellow ⊘ on non-Ubuntu / sudo-NOPASSWD-required target |
+| I4 | `env` on remote does NOT contain the API key VALUE (wrapper-script isolation) | — |
+| I5 | `/tmp/roksbnkctl.*` empty on remote after the run (trap-on-EXIT cleaned up) | red ✗ if leaked |
+| I6 | SetEnv silent-drop fallback (sshd AcceptEnv-disabled) | informational |
+| I7 | non-Ubuntu --bootstrap rejection | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_NON_UBUNTU` set |
+| I8 | sudo-password-required rejection | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_NO_NOPASSWD` set |
+| I9 | repo-unreachable failure | yellow ⊘ — manual (mutates remote network) |
+| I10 | Ctrl-C / SIGINT cleanup within 5s | — |
+| I11 | `doctor --backend ssh:<name>` green | — |
+
+#### Phase M — cred-leak audit (full)
+
+Sprint 4 landed M1-M4 + M7 against the docker + k8s backends. Sprint 6 closes M5 + M6 against the SSH backend (gated on the same `ROKSBNKCTL_E2E_SSH_TARGET`):
+
+| Step | What it asserts | Skip-clean trigger |
+|---|---|---|
+| M1 | `docker history` no API key in ENV layers | (skip if no docker) |
+| M2 | `docker inspect` no API key in `Config.Env` | (skip if no docker) |
+| M3 | `kubectl get events -n roksbnkctl-ops` no API key | — |
+| M4 | ops pod logs no API key (redactor masks) | yellow ⊘ if ops pod uninstalled |
+| M5 | SSH `/tmp/roksbnkctl.*` empty (cred audit lens) | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_TARGET` set |
+| M6 | `/var/log/auth.log` no API key value; `Accepted publickey` lines present | yellow ⊘ on sudo-no-read |
+| M7 | workspace `*.log` files no API key (state files allowed) | — |
+
+#### Phase N — mixed-mode lifecycle
+
+Validates that a cluster brought up via one backend can be inspected + torn down via *another* backend — the .tfstate is portable, the kubeconfig is portable, and the API key resolves consistently across backends.
+
+| Step | What it asserts | Skip-clean trigger |
+|---|---|---|
+| N1 | `up --backend <init>` succeeds (default `local`, override via `ROKSBNKCTL_E2E_INIT_BACKEND`) | — |
+| N2 | `test throughput --backend k8s` against the cluster from N1 | yellow ⊘ if no kube context |
+| N3 | `ibmcloud --backend ssh:<target> ks cluster ls` sees the N1 cluster | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_TARGET` set |
+| N4 | `test dns --backend k8s --gslb-compare` multi-vantage probe | yellow ⊘ if no kube context |
+| N5 | `down --backend <other>` tears down (cross-backend state-file compat) | — |
+| N6 | post-teardown: `cluster-outputs.json` removed; no orphan resources | — |
 
 ## Failure recovery
 
@@ -163,26 +270,47 @@ This loop repeats until a full pass with zero failed assertions.
 - `roksbnkctl self update` — requires a published GitHub release.
 - BNK-on-existing-cluster path (cluster persists across multiple BNK trial workspaces) — that requires upstream HCL changes (gating cert_manager + testing modules behind a `deploy_cluster_services` variable) that aren't yet in this repo.
 
-## v0.9 release checklist
+## Per-release checklist
 
-Sprint 5 is the **v0.9 release gate**. Before tagging `v0.9` and cutting
-the GitHub release, the integrator runs the following manual checklist
-against a real BNK-deployed cluster. The automated phases above (A-H)
-plus Phases K, L, L-DNS, M from `scripts/e2e-test-backends.sh` cover
-most of the v0.9 surface; the items below are the ones that genuinely
-require a human at the helm.
+> **History:** v0.9 was the first release to use this checklist (Sprint 5).
+> Sprint 6 promoted it from a v0.9-only doc to the **permanent per-release
+> gate** — every release tag (v1.0 onward) runs the same items.
+
+Before tagging any `vX.Y` release, the integrator runs the following
+manual checklist against a real BNK-deployed cluster. The automated
+phases above (A-H) plus Phases I + K + L + L-DNS + M + N from
+`scripts/e2e-test-backends.sh` cover most of the surface; the items
+below are the ones that genuinely require a human at the helm.
 
 ### 1. Full backend-matrix e2e against a live cluster
 
 ```bash
-# Prereq: scripts/e2e-test.sh's Phase D has brought a cluster up.
-IBMCLOUD_API_KEY=... ./scripts/e2e-test-backends.sh
+# One-button: runs A-H + I-N + L-DNS against the same cluster
+# (Sprint 6 combined runner — see §"Full e2e (e2e-test-full.sh)" above):
+IBMCLOUD_API_KEY=... \
+ROKSBNKCTL_E2E_SSH_TARGET=jumphost \
+./scripts/e2e-test-full.sh --teardown
 ```
 
-All phases must pass: K (docker), L (k8s), **L-DNS** (new in Sprint 5),
-M (cred audit). Yellow ⊘ skips for LD9 (SSH vantage — Sprint 6 scope)
-and any cluster-unreachable steps are acceptable; red ✗ failures are
-release blockers.
+All phases must pass: I (SSH backend), K (docker), L (k8s), L-DNS, M
+(cred audit, incl. M5/M6 SSH-side), N (mixed-mode). Yellow ⊘ skips
+for purpose-built-target-only steps (I7, I8, I9) are acceptable; red
+✗ failures are release blockers.
+
+For backwards compatibility with the v0.9 dispatch pattern, the
+chained-by-hand recipe still works:
+
+```bash
+# Step 1: baseline driver A-H (brings up a cluster, runs A-G in the
+# idle window, tears down at H).
+IBMCLOUD_API_KEY=... ./scripts/e2e-test.sh
+
+# Step 2: backends driver I + K + L + L-DNS + M + N (runs against
+# the same workspace; Phase N's N1 brings up its own cluster).
+IBMCLOUD_API_KEY=... \
+ROKSBNKCTL_E2E_SSH_TARGET=jumphost \
+./scripts/e2e-test-backends.sh
+```
 
 ### 2. Manual GSLB validation
 
@@ -259,16 +387,28 @@ Pass criterion: `roksbnkctl doctor` exits 0; missing host tools surface
 as informational notes (not warnings or errors), with the per-backend
 section explaining which tools are needed for which backend.
 
+**Sprint 6 refactor (v0.10):** `internal/doctor/doctor.go::runWithWhy`
+now hard-fails only on missing `terraform`. `kubectl`, `oc`, `ibmcloud`,
+`iperf3`, and `dig` are rendered as informational `✓` rows with a
+detail line naming the internalised path (`--backend docker` /
+`--backend k8s` / miekg-dns probe / client-go). Pre-`up` doctor runs
+also render an absent kubeconfig as informational rather than a
+warning, since the kubeconfig is auto-populated by `roksbnkctl up`'s
+post-apply hook.
+
 ### 6. Tag and release
 
 Once items 1-5 are green:
 
 ```bash
-git tag v0.9
-git push origin v0.9
+# Replace vX.Y with the actual release version:
+git tag vX.Y
+git push origin vX.Y
 # GitHub Actions builds the binary + tools images + cuts the release.
 ```
 
-The book under `book/src/` ships matched to the tag — sprint 5's
-chapters 20/21/22 plus the chapter 17 terraform-docker subsection
-must all be in `main` before the tag.
+The book under `book/src/` ships matched to the tag — every chapter
+referenced from `book/src/SUMMARY.md` must be in `main` before the tag.
+The `Full E2E` GitHub workflow (`.github/workflows/e2e-full.yml`)
+runs on every push to a `release/<v>` branch and is the canonical
+gate for whether a release branch is mergeable to `main`.

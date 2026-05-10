@@ -130,6 +130,71 @@ The integration tests provision their own ops pod (a stand-in for
 `roksbnkctl ops install`) and tear it down via `t.Cleanup`. Leaks
 indicate a test bug, not a kind problem.
 
+### Running the full e2e
+
+Sprint 6 introduces [`scripts/e2e-test-full.sh`](./scripts/e2e-test-full.sh)
+— the one-button runner that chains the baseline driver (Phases A-H)
+and the backends driver (Phases I + K + L + L-DNS + M + N) against the
+same workspace + cluster. The same script is wired into the manual-
+trigger CI workflow at [`.github/workflows/e2e-full.yml`](./.github/workflows/e2e-full.yml).
+
+**Cost & duration**: ~4-6 hours wall time, ~$8-13 of IBM Cloud spend
+(cluster + LBs + COS, doubled because Phase N spins a second up/down
+cycle to validate cross-backend state portability).
+
+**Cluster behaviour on success**: with `--teardown` the cluster is
+torn down after a green run; without it (the default) the cluster is
+left up so the integrator can inspect / re-run / kick off a manual
+GSLB check.
+
+**Cluster behaviour on failure**: the cluster is *always* left up on
+failure so the integrator can inspect the live state before either
+re-running or manually tearing down.
+
+**Required env vars**:
+
+```bash
+IBMCLOUD_API_KEY=...                        # required
+./scripts/e2e-test-full.sh                  # full pass; cluster stays up on success
+```
+
+**Optional env vars** (Sprint 6 SSH-target-specific):
+
+```bash
+ROKSBNKCTL_E2E_SSH_TARGET=jumphost          # enables Phase I + M5/M6 + N3
+ROKSBNKCTL_E2E_SSH_NON_UBUNTU=name          # enables Phase I7 (non-Ubuntu detection)
+ROKSBNKCTL_E2E_SSH_NO_NOPASSWD=name         # enables Phase I8 (sudo-password-required)
+ROKSBNKCTL_E2E_INIT_BACKEND=docker          # initial backend for Phase N1 (default: local)
+```
+
+See `docs/E2E_TEST.md` §"Full e2e (e2e-test-full.sh)" for the env-var
+table + per-phase coverage notes.
+
+### Adding a new e2e phase
+
+E2E phases follow the PRD 05 → `scripts/e2e-test-backends.sh` workflow:
+
+1. **PRD update**: extend `docs/prd/05-E2E-TEST-PLAN.md` with the
+   new phase's step matrix (table-driven: step ID → command → pass
+   criterion). The PRD is the source of truth for what the phase
+   asserts; the driver script is the implementation.
+2. **Driver implementation**: add `phase_<letter>()` to
+   `scripts/e2e-test-backends.sh`, mirroring the shape of the existing
+   `phase_K` / `phase_L` / `phase_M` functions. Use the helper
+   functions (`step`, `capture`, `assert_contains`,
+   `assert_not_contains`) — they handle DRY_RUN gating, logging, and
+   colour output uniformly.
+3. **Skip rules**: every step that depends on an external resource
+   (cluster, SSH target, docker daemon) MUST skip-cleanly with a
+   yellow `⊘` rather than failing the phase when the resource is
+   missing. Use `[[ -n "$ENV_VAR" && ... ]]` gates around each block.
+4. **Dispatch**: add `should_run X && phase_X` to `main()`. Update
+   the `PHASE_FROM` default in the config block if your phase needs
+   to run before the current default's sort position.
+5. **Documentation**: update `docs/E2E_TEST.md` §"Sprint 4 — backend
+   matrix driver" to reference the new phase, and the per-phase
+   coverage table under §"Full e2e (e2e-test-full.sh)".
+
 ### Running scripts/e2e-test-backends.sh locally
 
 Sprint 4 introduces `scripts/e2e-test-backends.sh` — a sibling to

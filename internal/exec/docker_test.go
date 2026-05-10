@@ -137,6 +137,115 @@ func TestCredentials_DockerArgs_CleanupRemovesTempfile(t *testing.T) {
 	// audit_test.go verifies the no-leak invariant end-to-end.
 }
 
+// TestResolveDockerImageAndArgv covers the four shapes resolveDockerImageAndArgv
+// distinguishes after the Sprint 6 Dockerfile-ENTRYPOINT drop:
+//
+//  1. tool with an explicit dockerImageBinary entry (ibmcloud,
+//     roksbnkctl) — the binary is prepended to the Cmd slice so the
+//     container has something to run even though the image has no
+//     ENTRYPOINT.
+//  2. tool without a dockerImageBinary entry (iperf3, terraform) —
+//     argv[1:] flows through verbatim; the image's own ENTRYPOINT
+//     picks the binary.
+//  3. literal image ref (no toolImages match) — argv[0] is the image,
+//     argv[1:] is the cmd (test/integration path).
+//  4. multi-arg passthrough — ensures argv[1:]'s order is preserved.
+func TestResolveDockerImageAndArgv(t *testing.T) {
+	tests := []struct {
+		name    string
+		argv    []string
+		wantImg string // prefix only (we don't lock the per-binary tag)
+		wantCmd []string
+	}{
+		{
+			name:    "ibmcloud prepends binary",
+			argv:    []string{"ibmcloud", "iam", "oauth-tokens"},
+			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:",
+			wantCmd: []string{"ibmcloud", "iam", "oauth-tokens"},
+		},
+		{
+			name:    "roksbnkctl prepends absolute binary path",
+			argv:    []string{"roksbnkctl", "test", "dns", "--target=example.com"},
+			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:",
+			wantCmd: []string{"/usr/local/bin/roksbnkctl", "test", "dns", "--target=example.com"},
+		},
+		{
+			name:    "iperf3 keeps legacy shape (image ENTRYPOINT picks the binary)",
+			argv:    []string{"iperf3", "-s", "-D"},
+			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:",
+			wantCmd: []string{"-s", "-D"},
+		},
+		{
+			name:    "terraform keeps legacy shape (upstream image ENTRYPOINT)",
+			argv:    []string{"terraform", "version"},
+			wantImg: "hashicorp/terraform:",
+			wantCmd: []string{"version"},
+		},
+		{
+			name:    "literal image ref passes through",
+			argv:    []string{"busybox:latest", "echo", "hi"},
+			wantImg: "busybox:latest",
+			wantCmd: []string{"echo", "hi"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotImg, gotCmd := resolveDockerImageAndArgv(tc.argv)
+			if !strings.HasPrefix(gotImg, tc.wantImg) {
+				t.Errorf("image: got %q, want prefix %q", gotImg, tc.wantImg)
+			}
+			if len(gotCmd) != len(tc.wantCmd) {
+				t.Fatalf("cmd: got %v (len %d), want %v (len %d)", gotCmd, len(gotCmd), tc.wantCmd, len(tc.wantCmd))
+			}
+			for i := range gotCmd {
+				if gotCmd[i] != tc.wantCmd[i] {
+					t.Errorf("cmd[%d]: got %q, want %q", i, gotCmd[i], tc.wantCmd[i])
+				}
+			}
+		})
+	}
+}
+
+// TestDockerImageBinary_MirrorsK8sOverrides pins the cross-backend
+// invariance contract — `dockerImageBinary` (in docker.go) and
+// `jobToolCmdOverride` (in k8s.go) MUST list the same tool→binary
+// mappings so the same `--backend docker` and `--backend k8s` argv
+// produces semantically-identical execution.
+//
+// A future tool added to one map without the other is a latent bug
+// (works on docker, broken on k8s, or vice versa) — this test catches
+// it at unit-test time.
+func TestDockerImageBinary_MirrorsK8sOverrides(t *testing.T) {
+	if len(dockerImageBinary) != len(jobToolCmdOverride) {
+		t.Fatalf("dockerImageBinary (%v) and jobToolCmdOverride (%v) must list the same tools; diverged",
+			keysOf(dockerImageBinary), keysOf(jobToolCmdOverride))
+	}
+	for tool, dockerBin := range dockerImageBinary {
+		k8sBin, ok := jobToolCmdOverride[tool]
+		if !ok {
+			t.Errorf("tool %q in dockerImageBinary but not in jobToolCmdOverride", tool)
+			continue
+		}
+		if len(dockerBin) != len(k8sBin) {
+			t.Errorf("tool %q: docker binary %v differs from k8s override %v", tool, dockerBin, k8sBin)
+			continue
+		}
+		for i := range dockerBin {
+			if dockerBin[i] != k8sBin[i] {
+				t.Errorf("tool %q [%d]: docker %q vs k8s %q", tool, i, dockerBin[i], k8sBin[i])
+			}
+		}
+	}
+}
+
+func keysOf(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 // TestDockerBackend_DaemonUnreachableErrorClear asserts the docker backend
 // returns a clear error (and rc=127 per staff prompt) when the docker daemon
 // isn't reachable. Skipped when docker IS available.

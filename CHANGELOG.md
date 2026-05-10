@@ -75,7 +75,6 @@ See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). High-
 - terraform `--backend k8s` and `--backend ssh:<target>` (state-handling design open; v1.x)
 - SSH backend `apt-get` bootstrap on RHEL/CentOS/Alpine (Ubuntu-only in v0.9)
 - Native Windows Docker Desktop UID/GID handling for terraform-via-docker
-- DNS probe `edns_client_subnet` field surfacing (PRD 03 specs it; not emitted in v0.9)
 
 ### Documentation
 
@@ -83,6 +82,29 @@ The book at <https://jgruberf5.github.io/roksbnkctl/book/> covers the v0.9 surfa
 
 Per-PRD design rationale (cred propagation, execution backends, kubectl internalisation, etc.) lives under [`docs/prd/`](docs/prd/).
 
+## Unreleased — Sprint 6 (v1.0 prep)
+
+Sprint 6 lands the testing build-out + reference chapter coverage that gates the **`v1.0`** tag. Tagged separately at end of Sprint 7 (book launch + polish).
+
+### Added
+
+- **Full e2e Phases I + M + N** — `scripts/e2e-test-backends.sh` expanded with Phase I (SSH backend, 12 steps I0-I11), full Phase M (cred audit including the SSH-side M5/M6 steps), and Phase N (mixed-mode lifecycle N1-N6). LD9 (SSH vantage for DNS probe) wired alongside.
+- **`scripts/e2e-test-full.sh`** — combined A-H + I-N + L-DNS runner (~4-6 hour wall time); designed for release branches + manual-trigger CI.
+- **`.github/workflows/e2e-full.yml`** — manual-trigger + release-branch CI workflow for the combined runner.
+- **`TestProbe_TruncatedFlag`** — dual-stack UDP+TCP mock server pins the TC=1 projection through the TCP retry path (closes Sprint 5 validator Issue 4).
+- **`tools/refgen/cobra-md`** + **`tools/refgen/tfvars-md`** — Go-based auto-generators for chapters 27 (Command reference) and 29 (Terraform variable reference). Re-run on every CLI / variables.tf change.
+- **`MIGRATING.md`** — top-level migration guide for users coming from v0.6.x `bnkctl` or from manual BNK deployments.
+- **`internal/cred/resolver_invariance_test.go`** — pins the cred-resolver contract across all four backends (Phase N Go-side contract).
+- **`internal/doctor/doctor_test.go`** — pins the green-by-default contract.
+- **EDNS Client Subnet surfacing** — `DNSProbeResult.EDNSClientSubnet` is populated from the resolver's RFC 7871 echo (when present); `omitempty` so non-ECS resolvers don't pollute the JSON.
+- **Book chapters 23, 25, 26, 28, 30, 31, 32** — hand-written reference / troubleshooting / glossary; chapters 27 and 29 auto-generated.
+
+### Changed
+
+- **`roksbnkctl doctor`** is now **green-by-default on a stock dev box with only `terraform` installed**. The historical checks for `kubectl`, `oc`, `ibmcloud`, `iperf3`, and `dig` are now **informational** rather than warnings/errors — the binary has internalised those surfaces (chapter 2 / chapter 17 for backends; chapter 21 for DNS).
+- **`tools/docker/ibmcloud/Dockerfile`** dropped `ENTRYPOINT ["ibmcloud"]`. The docker backend's dispatch layer now prepends the tool binary name explicitly via a new `dockerImageBinary` map; the k8s `jobToolCmdOverride` map mirrors it. Sprint 5's `jobToolCmdOverride` shim for `roksbnkctl` self-exec dns-probe is now unnecessary — the cross-backend invariant is pinned in `TestDockerImageBinary_MirrorsK8sOverrides`.
+- **Chapter 22** reordered to surface the bundled-image / SCC story before sample output (Sprint 5 tech-writer Issue 14 carry-over).
+
 ## Unreleased (v1.x)
 
-Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next milestone is **M4 / v1.0** — the E2E test plan (Phases I-N + L-DNS) passing on a fresh dev box with the full reference + troubleshooting + contributing chapters of the book published.
+Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next milestone is **M4 / v1.0** — Sprint 7 polishes the book, lands the dogfooding feedback loop, and cuts the v1.0 tag.

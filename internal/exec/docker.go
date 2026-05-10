@@ -462,14 +462,56 @@ func buildContainerEnv(env []string) []string {
 	return out
 }
 
+// dockerImageBinary maps argv[0] tool names to the in-container binary
+// they invoke when the image has no ENTRYPOINT. Used by
+// resolveDockerImageAndArgv to prepend the binary name explicitly to
+// the container's `Cmd` slice. Entries here mirror tools whose images
+// no longer carry an ENTRYPOINT line (e.g., the bundled tools-ibmcloud
+// image after Sprint 6's Dockerfile change).
+//
+// Tools NOT in this map keep the legacy shape — argv[1:] is passed
+// verbatim as the container Cmd, relying on the image's own ENTRYPOINT
+// to pick the binary (`iperf3`, `terraform`).
+//
+// Why a per-tool map instead of "always prepend argv[0]"? Because
+// `iperf3` and `terraform` images still carry their own ENTRYPOINT
+// directives (the upstream `hashicorp/terraform` image and our own
+// `tools/docker/iperf3/Dockerfile`); prepending the binary name in
+// those cases would double-invoke (`iperf3 iperf3 --version`).
+//
+// The ibmcloud image's `roksbnkctl` alias maps to `/usr/local/bin/
+// roksbnkctl` so a `--backend docker` invocation of roksbnkctl-as-tool
+// (the dns-probe re-exec path, etc.) lands on the right binary.
+var dockerImageBinary = map[string][]string{
+	"ibmcloud":   {"ibmcloud"},
+	"roksbnkctl": {"/usr/local/bin/roksbnkctl"},
+}
+
 // resolveDockerImageAndArgv picks the docker image and the in-container
-// argv from the caller's argv. If argv[0] is a known tool, its image is
-// looked up and argv[1:] is passed verbatim (the image's ENTRYPOINT
-// handles the rest). Otherwise argv[0] is treated as a literal image
-// reference and argv[1:] is the in-container command — useful for
-// tests and ad-hoc shapes.
+// argv from the caller's argv.
+//
+//   - If argv[0] is a known tool with an entry in dockerImageBinary,
+//     its image is looked up AND the in-container Cmd is prepended
+//     with the tool's binary name (so the image can have no
+//     ENTRYPOINT and still run the right binary).
+//   - If argv[0] is a known tool WITHOUT an entry in dockerImageBinary
+//     (iperf3, terraform), its image is looked up and argv[1:] is
+//     passed verbatim — the image's own ENTRYPOINT picks the binary.
+//   - Otherwise argv[0] is treated as a literal image reference and
+//     argv[1:] is the in-container command — useful for tests and
+//     ad-hoc shapes.
+//
+// Sprint 6 — Dockerfile ENTRYPOINT drop landed for the bundled
+// tools-ibmcloud image; this function adapts the dispatch
+// accordingly. PRD 03 §"Docker (internal/exec/docker.go)".
 func resolveDockerImageAndArgv(argv []string) (image string, cmdArgv []string) {
 	if img, ok := toolImages[argv[0]]; ok {
+		if bin, hasBin := dockerImageBinary[argv[0]]; hasBin {
+			cmd := make([]string, 0, len(bin)+len(argv)-1)
+			cmd = append(cmd, bin...)
+			cmd = append(cmd, argv[1:]...)
+			return img, cmd
+		}
 		return img, argv[1:]
 	}
 	return argv[0], argv[1:]

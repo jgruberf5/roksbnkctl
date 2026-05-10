@@ -59,16 +59,24 @@ var flagDoctorBackend string
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check prerequisites and report missing pieces",
-	Long: `Verifies the host has what roksbnkctl needs:
-  - terraform on PATH (required)
-  - iperf3 / kubectl / oc / ibmcloud on PATH (optional but recommended)
-  - kubeconfig is reachable
-  - the workspace is initialised
-  - the IBM Cloud API key resolves and authenticates
+	Long: `Verifies the host has what roksbnkctl needs.
+
+Required (hard fail on missing):
+  - terraform on PATH (the local backend's workhorse for ` + "`roksbnkctl up`" + `)
+
+Informational (the binary internalises each surface; missing → no warning):
+  - kubectl / oc — internalised via client-go (` + "`roksbnkctl k *`" + `)
+  - ibmcloud     — bundled image, run via --backend docker / --backend ssh:<target>
+  - iperf3       — bundled image, run via --backend k8s
+  - dig          — DNS probe internalised via miekg/dns
+
+A stock dev box with only ` + "`terraform`" + ` installed should produce exit 0
+and zero warnings.
 
 Pass --target <name> to additionally probe an SSH target (runs whoami).
+Pass --backend k8s | ssh:<target> for per-backend prereq checks.
 
-Exits non-zero on failures (warnings don't block).`,
+Exits non-zero only when a required check fails (warnings don't block).`,
 	RunE: runDoctor,
 }
 

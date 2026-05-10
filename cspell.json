@@ -114,7 +114,19 @@
     "passwordless",
     "lsb",
     "EDNS",
-    "edns"
+    "edns",
+    "multipart",
+    "streaming",
+    "cobra-cli",
+    "dogfood",
+    "dogfooded",
+    "dogfooding",
+    "truncated",
+    "Truncated",
+    "rerun",
+    "Reentrant",
+    "preflight",
+    "workspace_dispatch"
   ],
   "ignorePaths": [
     "book/book/**",

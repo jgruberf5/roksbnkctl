@@ -264,22 +264,36 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	return k8sExitStartedThenFailed, fmt.Errorf("k8s exec stream: %w", streamErr)
 }
 
-// jobToolCmdOverride lets a tool with a baked-in image ENTRYPOINT
-// bypass the entrypoint and exec a different binary directly. Used by
-// the dns-probe path where argv[0]="roksbnkctl" needs to land on
-// `/usr/local/bin/roksbnkctl` rather than the image's `ibmcloud`
-// entrypoint.
+// jobToolCmdOverride declares the in-container binary `runAsJob` should
+// exec when argv[0] is a known tool name. Entries here mirror the
+// docker backend's `dockerImageBinary` map (see `internal/exec/docker.go`)
+// so the k8s Job path and the docker container path resolve the same
+// tool→binary mapping.
 //
-// Sprint 4 validator Issue 7 carry-over (alternative path): instead of
-// dropping the ENTRYPOINT in the Dockerfile (validator-territory
-// change deferred), each tool that needs it declares its full Command
-// here; runAsJob picks it up and sets `Container.Command` (overriding
-// the image's ENTRYPOINT) plus `Container.Args` from argv[1:].
+// Two situations make an entry necessary:
 //
-// Tools NOT in this map keep the existing Sprint 4 behaviour
+//  1. The tool's image has NO ENTRYPOINT (e.g. the bundled tools-
+//     ibmcloud image post-Sprint 6 — see `issues/resolved_sprint5_staff.md`
+//     Issue 1). Without an override, `Container.Command = argv[1:]`
+//     would run with no binary name and the kube node would surface
+//     ErrPullBackOff-shaped failures pointing at a nonexistent
+//     command.
+//  2. The tool's image HAS an ENTRYPOINT but the caller wants a
+//     different binary inside the same image (e.g. roksbnkctl is
+//     bundled into the tools-ibmcloud image; the dns-probe re-exec
+//     path needs `roksbnkctl`, not whatever the image's ENTRYPOINT
+//     used to be).
+//
+// runAsJob picks the entry up, sets `Container.Command` to the
+// override, and `Container.Args` to argv[1:].
+//
+// Tools NOT in this map keep the legacy shape
 // (`Container.Command = argv[1:]`, image's ENTRYPOINT picks the
-// binary), so `iperf3` and `ibmcloud` are unchanged user-visibly.
+// binary) — `iperf3` (image's ENTRYPOINT="iperf3") and `terraform`
+// (upstream `hashicorp/terraform` image's ENTRYPOINT="terraform")
+// continue to work without an entry.
 var jobToolCmdOverride = map[string][]string{
+	"ibmcloud":   {"ibmcloud"},
 	"roksbnkctl": {"/usr/local/bin/roksbnkctl"},
 }
 

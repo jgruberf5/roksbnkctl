@@ -136,3 +136,15 @@ func init() {
 func unimplemented(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("%q not implemented yet — see docs/PRD.md", cmd.CommandPath())
 }
+
+// RootCommand returns the wired-up root cobra command for tooling that
+// needs to walk the command tree (e.g. the cobra-to-markdown reference
+// generator under tools/refgen/cobra-md). Subcommands are registered
+// via package-level init() funcs, so the tree is fully assembled before
+// any caller imports this package.
+//
+// Callers MUST NOT mutate the returned command — it's the same instance
+// Execute() runs.
+func RootCommand() *cobra.Command {
+	return rootCmd
+}

@@ -55,16 +55,39 @@ type Probe struct {
 // embedded in a comparison still carries the same schema string —
 // callers can union the documents safely).
 type DNSProbeResult struct {
-	Schema        string          `json:"schema"`
-	Backend       string          `json:"backend"`
-	Server        string          `json:"server"`
-	Iterations    int             `json:"iterations"`
-	RTTMs         RTTDistribution `json:"rtt_ms"`
-	Answers       []DNSAnswer     `json:"answers"`
-	Rcode         string          `json:"rcode"`
-	Authoritative bool            `json:"authoritative"`
-	Truncated     bool            `json:"truncated"`
-	Err           string          `json:"error,omitempty"`
+	Schema           string            `json:"schema"`
+	Backend          string            `json:"backend"`
+	Server           string            `json:"server"`
+	Iterations       int               `json:"iterations"`
+	RTTMs            RTTDistribution   `json:"rtt_ms"`
+	Answers          []DNSAnswer       `json:"answers"`
+	Rcode            string            `json:"rcode"`
+	Authoritative    bool              `json:"authoritative"`
+	Truncated        bool              `json:"truncated"`
+	EDNSClientSubnet *EDNSClientSubnet `json:"edns_client_subnet,omitempty"`
+	Err              string            `json:"error,omitempty"`
+}
+
+// EDNSClientSubnet captures an RFC 7871 EDNS Client Subnet (ECS)
+// option echoed back by the resolver in the response's OPT record.
+// Surfaces only when the response carries an ECS option; absent
+// otherwise (the field is `omitempty` on the JSON, so most probes
+// won't render it at all).
+//
+// GSLB resolvers that consider the client subnet for DC selection
+// (e.g. F5 BIG-IP Next GSLB with the ECS extension enabled) echo the
+// computed scope back so the recursive resolver can cache the answer
+// per-subnet. Surfacing the option here lets users verify the GSLB
+// is acting on the subnet they expect without dropping into `dig
+// +subnet=`.
+//
+// Sprint 6 — Priority 5b. PRD 03 §"DNS probe" reserves the field;
+// v0.10 implements it.
+type EDNSClientSubnet struct {
+	Family        int    `json:"family"`         // 1 = IPv4, 2 = IPv6 (RFC 7871 §6)
+	SourceNetmask uint8  `json:"source_netmask"` // bits the client sent
+	ScopeNetmask  uint8  `json:"scope_netmask"`  // bits the server's answer is valid for
+	Address       string `json:"address"`        // dotted-quad / colon-hex form
 }
 
 // RTTDistribution captures p50/p95/p99 query latency in milliseconds.
@@ -198,9 +221,45 @@ func (p *Probe) Run(ctx context.Context) (*DNSProbeResult, error) {
 		result.Authoritative = lastResp.Authoritative
 		result.Truncated = lastResp.Truncated
 		result.Answers = answersFromMsg(lastResp)
+		result.EDNSClientSubnet = extractEDNSClientSubnet(lastResp)
 	}
 	result.RTTMs = computeRTT(rtts)
 	return result, nil
+}
+
+// extractEDNSClientSubnet returns the ECS (RFC 7871) option from msg
+// if present, or nil. Walks the additional section's OPT record's
+// Option slice; bails on the first ECS hit. Returns nil for any
+// response that lacks an OPT record or whose OPT carries no ECS
+// option (the common case for non-GSLB / non-anycast queries).
+//
+// Sprint 6 — Priority 5b: PRD 03 §"DNS probe" reserves the
+// `edns_client_subnet` field; this helper surfaces it.
+func extractEDNSClientSubnet(msg *dns.Msg) *EDNSClientSubnet {
+	if msg == nil {
+		return nil
+	}
+	opt := msg.IsEdns0()
+	if opt == nil {
+		return nil
+	}
+	for _, e := range opt.Option {
+		ecs, ok := e.(*dns.EDNS0_SUBNET)
+		if !ok {
+			continue
+		}
+		addr := ""
+		if ecs.Address != nil {
+			addr = ecs.Address.String()
+		}
+		return &EDNSClientSubnet{
+			Family:        int(ecs.Family),
+			SourceNetmask: ecs.SourceNetmask,
+			ScopeNetmask:  ecs.SourceScope,
+			Address:       addr,
+		}
+	}
+	return nil
 }
 
 // resolveServerAddr maps the user-facing --server value to a concrete

@@ -117,6 +117,18 @@ Two things follow:
 
 [Chapter 17 §"iperf3 server side"](./17-execution-backends.md#iperf3-server-side) goes deeper on the SCC story — what the four `securityContext` fields do, why each is required, and how to debug an admission failure.
 
+## OpenShift SCC failure mode
+
+If your throughput pod fails to start with one of:
+
+- `Forbidden: violates PodSecurity "restricted:v1.x"`
+- `unable to validate against any security context constraint: ... restricted-v2`
+- `runAsNonRoot is required`
+
+…then either the configured image runs as root (use the bundled `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<v>` image instead — set `test.throughput.image` in workspace config) or the cluster's PodSecurity admission is stricter than `restricted-v2` (the manifest the k8s backend builds satisfies `restricted-v2` but not `privileged`; if your cluster requires `privileged` for the test namespace, that's a cluster policy question outside the suite's control).
+
+[Chapter 17 §"iperf3 server side"](./17-execution-backends.md#iperf3-server-side) is the canonical source for the manifest's `securityContext`. If you're hand-rolling an iperf3 image for the suite, it's the spec to match.
+
 ## Reading the output
 
 Default output is human-readable on stderr; `-o json` switches to JSON on stdout.
@@ -190,18 +202,6 @@ retransmits:  18743         → heavy
 ```
 
 The second shape is what a saturated link or a flaky NIC looks like. The first is a healthy gigabit-class path.
-
-## OpenShift SCC failure mode
-
-If your throughput pod fails to start with one of:
-
-- `Forbidden: violates PodSecurity "restricted:v1.x"`
-- `unable to validate against any security context constraint: ... restricted-v2`
-- `runAsNonRoot is required`
-
-…then either the configured image runs as root (use the bundled `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<v>` image instead — set `test.throughput.image` in workspace config) or the cluster's PodSecurity admission is stricter than `restricted-v2` (the manifest the k8s backend builds satisfies `restricted-v2` but not `privileged`; if your cluster requires `privileged` for the test namespace, that's a cluster policy question outside the suite's control).
-
-[Chapter 17 §"iperf3 server side"](./17-execution-backends.md#iperf3-server-side) is the canonical source for the manifest's `securityContext`. If you're hand-rolling an iperf3 image for the suite, it's the spec to match.
 
 ## Tuning knobs in workspace config
 

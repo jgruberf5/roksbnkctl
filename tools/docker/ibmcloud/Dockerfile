@@ -39,7 +39,13 @@ RUN apt-get update \
  && apt-get purge -y --auto-remove curl \
  && rm -rf /var/lib/apt/lists/*
 
-# Default to `ibmcloud` as the entrypoint so callers can `docker run
-# IMAGE ks cluster ls` without repeating the binary name. Backends that
-# want a different shape can override the entrypoint per-invocation.
-ENTRYPOINT ["ibmcloud"]
+# No ENTRYPOINT — Sprint 6 (PLAN.md row §"Code/config deliverables" +
+# `issues/resolved_sprint5_staff.md` Issue 1). The image carries
+# BOTH `ibmcloud` and `roksbnkctl` (self-exec via the docker backend),
+# so a single ENTRYPOINT can't service both callers without per-tool
+# argv juggling. The docker backend's `resolveDockerImageAndArgv`
+# (`internal/exec/docker.go`) now prepends the tool binary explicitly
+# in the `Cmd` slice; the k8s backend's `jobToolCmdOverride` map is
+# correspondingly trimmed (the `roksbnkctl` entry is removed; ibmcloud
+# never needed an override there because `runOnOpsPod`'s `kubectl exec`
+# doesn't see the image's ENTRYPOINT at exec time).

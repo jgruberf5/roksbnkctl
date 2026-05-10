@@ -61,22 +61,49 @@ var lastWhys []string
 
 // runWithWhy is the actual check-list builder. Split out so we can
 // unit-test it without poking the lastWhys side-channel.
+//
+// Sprint 6 refresh (PLAN.md §"Gate to Sprint 7" line 481 — "Doctor
+// green-by-default on a stock dev box"): only `terraform` is a
+// REQUIRED host install. Every other previously-required-or-warned
+// tool (kubectl, oc, ibmcloud, iperf3, dig) is now INFORMATIONAL —
+// the binary internalises each surface:
+//
+//   - kubectl + oc: internalised via client-go in `roksbnkctl k *`
+//     (PRD 02, Sprint 2).
+//   - ibmcloud: bundled image runnable via `--backend docker` or
+//     `--backend ssh:<target>` (PRD 03, Sprint 3/4).
+//   - iperf3: bundled image runnable via `--backend k8s` (PRD 03,
+//     Sprint 4).
+//   - dig: miekg/dns probe library compiled into the binary (PRD 03
+//     §"DNS probe", Sprint 5).
+//
+// A stock dev box with `terraform` installed and nothing else now
+// produces zero warnings and exit 0 from `roksbnkctl doctor`. Backend-
+// conditional checks (`doctor --backend k8s`) still surface their
+// own failures separately.
 func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	var out []withWhy
 
-	// Required + optional tooling.
-	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up`"))
-	out = append(out, checkBinary("iperf3", false, "needed for `roksbnkctl test throughput`"))
-	// kubectl + oc are now informational only — Sprint 2 internalised
-	// the get/apply/logs/exec/port-forward/describe/delete subset via
-	// client-go (PRD 02). Missing host kubectl no longer warns; the
-	// passthrough commands still work if they're installed.
-	out = append(out, checkBinaryInformational("kubectl", "internalised in roksbnkctl k *; passthrough still works if installed"))
-	out = append(out, checkBinaryInformational("oc", "internalised in roksbnkctl k *; passthrough still works if installed"))
-	out = append(out, checkBinary("ibmcloud", false, "optional; `roksbnkctl ibmcloud` passthrough"))
+	// REQUIRED: terraform is the workhorse for `roksbnkctl up`; the
+	// binary embeds the HCL but doesn't (yet) ship a terraform-go
+	// runtime — `--backend docker` runs upstream `hashicorp/terraform`
+	// in a container, but the local backend still needs a host
+	// install. This is the ONE hard fail for the general doctor.
+	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up` (local backend); `--backend docker` runs containerised but the local path needs a host install"))
 
-	// Kubeconfig: warn if missing, since throughput/status/etc need it.
-	out = append(out, checkKubeconfig())
+	// INFORMATIONAL: every other tool. Missing surfaces as StatusOK
+	// with a "(internalised; …)" detail explaining the alternative.
+	// Present surfaces as StatusOK with the path/version.
+	out = append(out, checkBinaryInformational("kubectl", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
+	out = append(out, checkBinaryInformational("oc", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
+	out = append(out, checkBinaryInformational("ibmcloud", "bundled image runnable via `--backend docker` or `--backend ssh:<target>`; host install used only for the default `--backend local` passthrough"))
+	out = append(out, checkBinaryInformational("iperf3", "bundled image runnable via `--backend k8s`; host install used only for `--backend local` north-south tests"))
+	out = append(out, checkBinaryInformational("dig", "DNS probe internalised via miekg/dns (`roksbnkctl test dns`); host install no longer required"))
+
+	// Kubeconfig: informational. Many doctor invocations happen
+	// pre-`up`, before any cluster exists; surfacing a missing
+	// kubeconfig as a warning produces noise on a fresh dev box.
+	out = append(out, checkKubeconfigInformational())
 
 	// Workspace + creds.
 	if cctx == nil {
@@ -154,6 +181,8 @@ func versionLine(name string) string {
 		args = []string{"version", "--client=true"}
 	case "ibmcloud":
 		args = []string{"--version"}
+	case "dig":
+		args = []string{"-v"}
 	default:
 		return ""
 	}
@@ -178,6 +207,28 @@ func checkKubeconfig() withWhy {
 	if path == "" {
 		c.Status = StatusWarning
 		c.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `roksbnkctl kubeconfig --download`"
+		return withWhy{Check: c, Why: "needed for cluster-side ops"}
+	}
+	c.Status = StatusOK
+	c.Detail = path
+	return withWhy{Check: c, Why: "needed for cluster-side ops"}
+}
+
+// checkKubeconfigInformational is the Sprint 6 green-by-default
+// variant. A doctor run BEFORE `roksbnkctl up` happens on a host that
+// hasn't yet downloaded a kubeconfig — surfacing that as a warning is
+// noise. Render the absence as informational with a one-line nudge at
+// how to populate it (`roksbnkctl up` does this automatically post-
+// apply; `roksbnkctl kubeconfig --download` is the manual path).
+//
+// PLAN.md §"Gate to Sprint 7": stock dev box should produce exit 0 +
+// zero warnings.
+func checkKubeconfigInformational() withWhy {
+	c := Check{Name: "kubeconfig"}
+	path := k8s.DefaultKubeconfigPath()
+	if path == "" {
+		c.Status = StatusOK
+		c.Detail = "not yet downloaded (auto-populated by `roksbnkctl up`; manual: `roksbnkctl kubeconfig --download`)"
 		return withWhy{Check: c, Why: "needed for cluster-side ops"}
 	}
 	c.Status = StatusOK

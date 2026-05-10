@@ -286,7 +286,7 @@ The comparison document embeds the per-vantage shape unchanged inside `vantages[
 | `gslb_divergence` | bool | True when the answer sets across `vantages[]` differ. |
 | `gslb_divergence_summary` | string | Present only when `gslb_divergence: true`. Human-readable explanation naming the diverging vantages and answers. |
 
-Both schemas are stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to `.v2`. PRD 03 calls out an `edns_client_subnet` field reserved for v1.x; v0.9 doesn't emit it.
+Both schemas are stable starting at v0.9 — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to `.v2`. v0.10 added an optional `edns_client_subnet` object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don't, in which case the field is omitted from the JSON via `omitempty`. Sub-fields are `family` (1 = IPv4, 2 = IPv6), `source_netmask`, `scope_netmask`, and `address`. Useful for confirming the GSLB actually saw your client's geographic scope rather than the resolver's IP.
 
 ## RTT measurement and `--iterations`
 
