@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9cf99b24.js";
+            window.path_to_searchindex_js = "searchindex-d269bfbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,69 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="why-roks-red-hat-openshift-on-ibm-cloud"><a class="header" href="#why-roks-red-hat-openshift-on-ibm-cloud">Why ROKS (Red Hat OpenShift on IBM Cloud)</a></h1>
-<p><em>Coming in Sprint 1.</em></p>
-<p><em>Why this book targets IBM Cloud’s managed OpenShift offering specifically: what ROKS gives you over self-managed OpenShift, and how it shapes the deployment surface that <code>roksbnkctl</code> automates.</em></p>
+<p>This book and the <code>roksbnkctl</code> tool target <strong>ROKS</strong> — IBM Cloud’s managed Red Hat OpenShift offering — specifically. Other Kubernetes flavours can run BNK, and most of the patterns you’ll learn here translate, but the bundled Terraform that <code>roksbnkctl</code> ships only knows how to provision a ROKS cluster.</p>
+<p>This chapter explains the rationale behind that choice. If you’re already using ROKS, you can skim this. If you’re evaluating whether ROKS is the right substrate for your BNK trial, read in full.</p>
+<h2 id="what-roks-is"><a class="header" href="#what-roks-is">What ROKS is</a></h2>
+<p><strong>ROKS</strong> is short for <strong>R</strong>ed Hat <strong>O</strong>penShift on IBM Cloud. It’s IBM Cloud’s managed-OpenShift service: you ask IBM for a cluster, IBM provisions the masters, etcd, the OpenShift control plane, and a pool of worker nodes; you get a kubeconfig and start deploying.</p>
+<p>ROKS clusters are <strong>real OpenShift</strong>. They run the same Operator Lifecycle Manager (OLM), the same <code>oc</code> CLI, the same SecurityContextConstraints (SCC) model, the same routes-and-services machinery you’d find on any OpenShift install. The only thing IBM has done differently is take responsibility for keeping the control plane and the underlying infrastructure healthy.</p>
+<h2 id="what-ibm-manages-what-you-manage"><a class="header" href="#what-ibm-manages-what-you-manage">What IBM manages, what you manage</a></h2>
+<p>The boundary between “IBM’s responsibility” and “your responsibility” is the principal value proposition of any managed Kubernetes service. For ROKS the line falls roughly here:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Concern</th><th>Owner</th></tr>
+</thead>
+<tbody>
+<tr><td>Master nodes (API server, scheduler, controllers)</td><td>IBM</td></tr>
+<tr><td>etcd (persistence + backups)</td><td>IBM</td></tr>
+<tr><td>OpenShift control plane (OLM, ingress operator, image registry)</td><td>IBM</td></tr>
+<tr><td>OpenShift version upgrades for the control plane</td><td>IBM (you opt in to a major-version bump)</td></tr>
+<tr><td>Worker node provisioning (VPC VSIs, subnets, security groups)</td><td>IBM, on your behalf via the cluster API</td></tr>
+<tr><td>Worker node OS patching and CVE remediation</td><td>IBM</td></tr>
+<tr><td>Worker pool sizing and lifecycle (<code>workers create/delete</code>)</td><td>You</td></tr>
+<tr><td>Pod workloads running on the cluster</td><td>You</td></tr>
+<tr><td>Application-level RBAC, network policy, TLS, service accounts</td><td>You</td></tr>
+<tr><td>BNK install + configuration</td><td>You — this is what <code>roksbnkctl</code> automates</td></tr>
+</tbody>
+</table>
+</div>
+<p>The thing to internalise: with ROKS you do <strong>not</strong> rack hardware, install RHEL, run <code>openshift-install</code>, manage etcd backups, or chase CVE patches across a worker fleet. IBM does all of that. You start at “I have an OpenShift cluster” and go from there.</p>
+<h2 id="why-managed-openshift-over-self-managed-for-bnk-evaluation"><a class="header" href="#why-managed-openshift-over-self-managed-for-bnk-evaluation">Why managed-OpenShift over self-managed for BNK evaluation</a></h2>
+<p>If you want to <strong>evaluate BNK quickly</strong>, the calculus is straightforward. Self-managed OpenShift is a multi-week lift before you have a cluster:</p>
+<ul>
+<li>Provision the underlying VMs (OpenStack / vSphere / bare metal).</li>
+<li>Run <code>openshift-install</code> and debug whatever doesn’t go right.</li>
+<li>Configure DNS, load balancers, container registry mirrors.</li>
+<li>Stand up monitoring + logging + cert-manager.</li>
+<li>Now you can start thinking about BNK.</li>
+</ul>
+<p>ROKS compresses that to one Terraform <code>apply</code> of <code>~50</code> minutes. You get back a kubeconfig that authenticates against a real OpenShift cluster, with cert-manager already installable via OLM, and a worker pool of the size and zone topology you specified. From there, the BNK install is the same set of CRDs and Helm charts it would be on any OpenShift cluster.</p>
+<p>For a sales-engineering demo or a customer proof-of-concept, “I have a cluster in 50 minutes” beats “I have a cluster in 2 weeks” every time. That trade-off is the reason this book exists in this shape.</p>
+<h2 id="why-openshift-not-just-any-kubernetes-for-bnk"><a class="header" href="#why-openshift-not-just-any-kubernetes-for-bnk">Why OpenShift (not just any Kubernetes) for BNK</a></h2>
+<p>BNK runs on conformant Kubernetes generally, but it integrates more cleanly with OpenShift specifically because:</p>
+<ul>
+<li><strong>Operator-driven install</strong> — BNK is shipped as a set of operators. OpenShift has Operator Lifecycle Manager (OLM) as a first-class citizen, so the install pattern is familiar to OpenShift admins.</li>
+<li><strong>SecurityContextConstraints (SCC)</strong> — TMM pods need elevated capabilities (notably <code>NET_ADMIN</code>, raw socket access, hugepages). OpenShift’s SCC model formalises that grant; on upstream Kubernetes you’d be configuring PodSecurityAdmission policies by hand.</li>
+<li><strong>Routes</strong> — OpenShift’s <code>Route</code> CRD predates and is more capable than <code>Ingress</code>. BNK can act as an alternate Route implementation, slotting into existing OpenShift application architectures without forcing teams to migrate.</li>
+<li><strong>Image streams + the internal registry</strong> — useful for the BNK supply chain (FAR images, license bundles) which can be mirrored once and consumed by many installs.</li>
+</ul>
+<p>If you’re already an OpenShift shop, BNK fits naturally. If you’re not, BNK still works but you’ll need to translate this book’s OpenShift-specific examples (SCCs, <code>oc adm policy</code>, <code>Route</code>) to your platform’s equivalents.</p>
+<h2 id="whats-out-of-scope-for-this-book"><a class="header" href="#whats-out-of-scope-for-this-book">What’s out of scope for this book</a></h2>
+<p>A short list of Kubernetes flavours this book does <strong>not</strong> cover:</p>
+<ul>
+<li><strong>EKS / AKS / GKE</strong> — BNK runs on these, but <code>roksbnkctl up</code> won’t provision them. You’d use cloud-specific tooling, then deploy BNK on top with the standard Helm charts F5 publishes.</li>
+<li><strong>Self-managed OpenShift</strong> on bare metal or VMs — same: no <code>roksbnkctl up</code>. You’d use <code>openshift-install</code>, then deploy BNK.</li>
+<li><strong>K3s, RKE2, microk8s</strong> — BNK’s not formally supported on these for production; useful for local dev work but outside this book’s scope.</li>
+</ul>
+<p>The patterns from later chapters — workspaces, the <code>--on</code> flag, the connectivity / DNS / throughput tests — would still be useful on any of these, but the lifecycle commands (<code>init</code>, <code>up</code>, <code>down</code>, <code>cluster register</code>) assume ROKS.</p>
+<h2 id="what-you-need-before-continuing"><a class="header" href="#what-you-need-before-continuing">What you need before continuing</a></h2>
+<p>To follow this book end-to-end you need:</p>
+<ul>
+<li>An <strong>IBM Cloud account</strong> with billing enabled. The free tier won’t provision a worker pool; you’ll need a Pay-As-You-Go or Subscription account.</li>
+<li>An <strong>IBM Cloud API key</strong> with permission to create ROKS clusters in the target account.</li>
+<li>A <strong>resource group</strong> to scope cluster resources to. The default <code>Default</code> group works fine for a single-user evaluation; production deployments tend to use a dedicated group per environment.</li>
+</ul>
+<p>The next chapters walk through installation and the quick-start path. By the end of <a href="./07-quick-start.html">Chapter 7</a> you’ll have a deployed BNK trial on a fresh ROKS cluster.</p>
 
                     </main>
 

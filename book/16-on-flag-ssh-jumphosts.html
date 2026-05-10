@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9cf99b24.js";
+            window.path_to_searchindex_js = "searchindex-d269bfbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,182 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-on-flag-and-ssh-jumphosts"><a class="header" href="#the-on-flag-and-ssh-jumphosts">The –on flag and SSH jumphosts</a></h1>
-<p><em>Coming in Sprint 1.</em></p>
-<p><em>The persistent <code>--on &lt;target&gt;</code> flag that re-runs any <code>roksbnkctl</code> passthrough verb (kubectl, oc, ibmcloud, exec, shell) on a remote SSH host. Auto-population of <code>targets.jumphost</code> after <code>cluster up</code> from Terraform outputs.</em></p>
+<p>The <code>--on &lt;target&gt;</code> flag re-runs a <code>roksbnkctl</code> passthrough command (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on a remote SSH host instead of locally. After a successful <code>roksbnkctl up</code>, a <code>jumphost</code> target is auto-populated from the upstream HCL’s terraform outputs, so the flag works with no manual configuration in the common case.</p>
+<p>This chapter covers when to reach for <code>--on</code>, the <code>targets:</code> workspace config block, the auto-population behaviour, the <code>roksbnkctl targets</code> command tree for managing your own targets, and how host-key trust is established.</p>
+<p>The full design rationale for this feature lives in <a href="../../docs/prd/01-SSH-AND-ON-FLAG.html">PRD 01</a>. This chapter is the user-facing distillation.</p>
+<h2 id="why-this-exists"><a class="header" href="#why-this-exists">Why this exists</a></h2>
+<p>There are a handful of scenarios where running a command from your laptop is the wrong answer:</p>
+<ul>
+<li><strong>Customer-firewall scenarios.</strong> Your customer’s network policy lets the corporate jumphost reach <code>*.cloud.ibm.com</code> but blocks your laptop’s egress to anything except web traffic. <code>ibmcloud iam oauth-tokens</code> works from the jumphost; from your laptop it times out.</li>
+<li><strong>Air-gapped environments.</strong> The cluster lives in a VPC with no public ingress, accessible only via a bastion VM. The cluster API server isn’t reachable from your laptop at all; you need to be inside the network to talk to it.</li>
+<li><strong>Pre-cluster operations.</strong> You want to run <code>ibmcloud</code> commands against the IBM Cloud API but your workstation doesn’t have <code>ibmcloud</code> installed and you’d rather not install it. The jumphost has it; route through there.</li>
+</ul>
+<p><code>--on</code> makes those scenarios one flag rather than “ssh to the jumphost, install your tools there, copy your kubeconfig over manually”. The SSH client is built into <code>roksbnkctl</code> (using <code>golang.org/x/crypto/ssh</code>); no host <code>ssh</code> binary is required.</p>
+<h2 id="the-targets-workspace-config-block"><a class="header" href="#the-targets-workspace-config-block">The <code>targets:</code> workspace config block</a></h2>
+<p>Targets are stored in your workspace config at <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> under a <code>targets:</code> key:</p>
+<pre><code class="language-yaml">targets:
+  jumphost:                                # auto-populated after `roksbnkctl up`
+    host: 169.45.91.177
+    user: root
+    key_source: tf-output:jumphost_shared_key
+    port: 22                               # default; can be omitted
+
+  bastion:                                 # user-defined
+    host: ops.example.com
+    user: jgruber
+    key_path: ~/.ssh/id_ed25519
+
+  prod-jump:
+    host: 10.0.0.5
+    user: ec2-user
+    key_source: agent                      # use ssh-agent
+</code></pre>
+<p>Each entry has at minimum <code>host</code> and <code>user</code>. Port defaults to <code>22</code>. Key resolution is determined by exactly one of <code>key_path</code> or <code>key_source</code> — see “Key sources” below.</p>
+<p>You don’t typically edit this file by hand. The auto-discovery flow populates <code>jumphost</code> for you, and <code>roksbnkctl targets add ...</code> populates other entries.</p>
+<h2 id="auto-discovery-from-roksbnkctl-up"><a class="header" href="#auto-discovery-from-roksbnkctl-up">Auto-discovery from <code>roksbnkctl up</code></a></h2>
+<p>The upstream HCL provisions a small testing jumphost as part of every cluster apply. Two terraform outputs surface it:</p>
+<ul>
+<li><code>testing_tgw_jumphost_ip</code> — the public IP of the jumphost VM.</li>
+<li><code>jumphost_shared_key</code> — the private key (PEM) the jumphost was provisioned with, marked <code>sensitive</code> in the HCL.</li>
+</ul>
+<p>After a successful <code>roksbnkctl up</code>, <code>roksbnkctl</code> reads both outputs and writes a <code>jumphost</code> target into your workspace config:</p>
+<pre><code>✓ Wrote target "jumphost" → 169.45.91.177 (user: root, key: tf-output:jumphost_shared_key)
+</code></pre>
+<p>The <code>key_source: tf-output:jumphost_shared_key</code> form means the private key is <strong>read from terraform state at SSH-connect time</strong> rather than being copied into the workspace config or written to disk separately. The key only ever exists in terraform state and in memory during a connect; destroying and re-creating the cluster generates a new key, and <code>roksbnkctl</code> picks up the new one without any manual intervention.</p>
+<p>If your cluster apply produced a <code>testing_tgw_jumphost_ip</code> output of <code>"TGW jumphost not created"</code> (the upstream HCL emits this string when the testing module is disabled) the auto-population is skipped. You can still add a <code>jumphost</code> target manually with <code>roksbnkctl targets add</code> if you have a different bastion in mind.</p>
+<h2 id="key-sources"><a class="header" href="#key-sources">Key sources</a></h2>
+<p>Three ways to tell <code>roksbnkctl</code> how to find the SSH private key:</p>
+<ol>
+<li>
+<p><strong><code>key_path: &lt;path&gt;</code></strong> — a file on disk. Standard OpenSSH key formats are accepted (<code>~/.ssh/id_ed25519</code>, <code>~/.ssh/id_rsa</code>, etc.). Tilde expansion is honoured.</p>
+</li>
+<li>
+<p><strong><code>key_source: agent</code></strong> — talk to the user’s <code>ssh-agent</code> over the socket pointed at by <code>$SSH_AUTH_SOCK</code>. The agent presents whichever keys it currently holds; <code>roksbnkctl</code> tries each in turn against the target’s <code>authorized_keys</code>. This is the right setting if your team already manages keys via 1Password / hardware tokens / <code>gpg-agent</code> and you don’t want a key file on disk. <strong>Note</strong>: ssh-agent integration is Linux/macOS-only in v0.7; Windows users should use <code>key_path</code> instead.</p>
+</li>
+<li>
+<p><strong><code>key_source: tf-output:&lt;output-name&gt;</code></strong> — read the key from the workspace’s terraform state output of that name. Used by the auto-discovered <code>jumphost</code> target. The terraform output must be a string-typed PEM-encoded private key; sensitive outputs work fine because <code>terraform output -raw &lt;name&gt;</code> returns the value regardless of the sensitive flag.</p>
+</li>
+</ol>
+<p>Exactly one of <code>key_path</code> or <code>key_source</code> must be set per target. <code>roksbnkctl targets show &lt;name&gt;</code> will tell you which is in use without printing the key material.</p>
+<h2 id="host-key-tofu-on-first-connect"><a class="header" href="#host-key-tofu-on-first-connect">Host-key TOFU on first connect</a></h2>
+<p>The first time you connect to a target, <code>roksbnkctl</code> shows the target’s host key fingerprint and asks whether to trust it:</p>
+<pre><code class="language-bash">$ roksbnkctl exec --on jumphost -- whoami
+roksbnkctl: connecting to 169.45.91.177:22 ...
+The authenticity of host '169.45.91.177:22' can't be established.
+ED25519 key fingerprint is SHA256:abc123def456ghi789jkl0mnopqrstuvwxyz/+=.
+Add this key to ~/.roksbnkctl/known_hosts? [y/N]: y
+✓ Recorded host key for 169.45.91.177:22
+root
+</code></pre>
+<p>Answer <code>y</code> and the key is appended to <code>~/.roksbnkctl/known_hosts</code> (the same format as OpenSSH’s <code>~/.ssh/known_hosts</code>). Subsequent connects trust silently.</p>
+<p>Answer <code>n</code> and the connect fails with a clear “host key not trusted” error.</p>
+<p>If the host key changes between runs — which would happen on a re-provisioned VM, or could happen as a man-in-the-middle attack — <code>roksbnkctl</code> refuses to connect:</p>
+<pre><code>roksbnkctl: error: host key for 169.45.91.177:22 has changed.
+  recorded: SHA256:abc123...
+  presented: SHA256:zyx987...
+This may be a man-in-the-middle attack. To re-trust:
+  roksbnkctl targets show jumphost   # inspect the recorded key
+  edit ~/.roksbnkctl/known_hosts and remove the line for 169.45.91.177
+exit code: 126
+</code></pre>
+<p>This is “trust on first use” (TOFU) — the same model OpenSSH uses for new hosts.</p>
+<h3 id="--insecure-host-key-for-ci"><a class="header" href="#--insecure-host-key-for-ci"><code>--insecure-host-key</code> for CI</a></h3>
+<p>In automation contexts where a TOFU prompt would block forever, pass <code>--insecure-host-key</code> to skip host-key verification entirely:</p>
+<pre><code class="language-bash">roksbnkctl exec --on jumphost --insecure-host-key -- whoami
+</code></pre>
+<p>This is <strong>insecure</strong> — anyone in the network path can MITM the connection — and is intended only for short-lived CI runs against ephemeral test infrastructure. Don’t use it in any context where the SSH session matters for security.</p>
+<h2 id="the-roksbnkctl-targets-command-tree"><a class="header" href="#the-roksbnkctl-targets-command-tree">The <code>roksbnkctl targets</code> command tree</a></h2>
+<p>Four subcommands for managing target entries:</p>
+<pre><code class="language-bash">roksbnkctl targets list
+roksbnkctl targets show &lt;name&gt;
+roksbnkctl targets add &lt;name&gt; --host ... --user ... --key-path ...
+roksbnkctl targets remove &lt;name&gt;
+</code></pre>
+<h3 id="targets-list"><a class="header" href="#targets-list"><code>targets list</code></a></h3>
+<pre><code>roksbnkctl targets list
+NAME       HOST                USER     KEY
+jumphost   169.45.91.177:22    root     tf-output:jumphost_shared_key
+bastion    ops.example.com:22  jgruber  ~/.ssh/id_ed25519
+</code></pre>
+<p>Prints every target in the current workspace’s config. The <code>KEY</code> column shows the key source — never the key material itself.</p>
+<h3 id="targets-show-name"><a class="header" href="#targets-show-name"><code>targets show &lt;name&gt;</code></a></h3>
+<pre><code>roksbnkctl targets show jumphost
+name:        jumphost
+host:        169.45.91.177
+port:        22
+user:        root
+key_source:  tf-output:jumphost_shared_key
+host_key:    ED25519 SHA256:abc123def456...
+last_seen:   2026-05-08T14:22:08Z
+</code></pre>
+<p>Prints the full record plus the recorded host-key fingerprint from <code>~/.roksbnkctl/known_hosts</code>. Useful for confirming what you’re trusting before running a command.</p>
+<h3 id="targets-add-name-"><a class="header" href="#targets-add-name-"><code>targets add &lt;name&gt; ...</code></a></h3>
+<pre><code class="language-bash">roksbnkctl targets add bastion \
+  --host ops.example.com \
+  --user jgruber \
+  --key-path ~/.ssh/id_ed25519
+
+# or with ssh-agent:
+roksbnkctl targets add prod-jump \
+  --host 10.0.0.5 \
+  --user ec2-user \
+  --key-source agent
+
+# or with a non-default port:
+roksbnkctl targets add custom \
+  --host 10.0.0.5 \
+  --user root \
+  --key-path ~/.ssh/custom \
+  --port 2222
+</code></pre>
+<p>Writes the new target into <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>. Refuses if a target of that name already exists (use <code>targets remove</code> first).</p>
+<h3 id="targets-remove-name"><a class="header" href="#targets-remove-name"><code>targets remove &lt;name&gt;</code></a></h3>
+<pre><code class="language-bash">roksbnkctl targets remove bastion
+</code></pre>
+<p>Removes the entry from <code>config.yaml</code>. Does not remove the corresponding line from <code>~/.roksbnkctl/known_hosts</code> — the host key stays recorded so re-adding the same target later doesn’t re-trigger a TOFU prompt.</p>
+<h2 id="working-examples"><a class="header" href="#working-examples">Working examples</a></h2>
+<p>The everyday verbs:</p>
+<pre><code class="language-bash"># Run an arbitrary command on the jumphost
+roksbnkctl exec --on jumphost -- whoami
+# → root
+
+roksbnkctl exec --on jumphost -- uname -a
+# → Linux jumphost-vm 5.15.0-... #... SMP ... x86_64 GNU/Linux
+
+# Interactive PTY shell
+roksbnkctl shell --on jumphost
+# → drops you into the jumphost's default shell as the configured user
+# → exit returns you to your local prompt
+
+# ibmcloud passthrough — runs `ibmcloud ks cluster ls` on the jumphost
+# (handy when your laptop's network can't reach IBM Cloud APIs)
+roksbnkctl ibmcloud --on jumphost ks cluster ls
+
+# kubectl passthrough — same pattern
+roksbnkctl kubectl --on jumphost get pods -A
+
+# oc passthrough
+roksbnkctl oc --on jumphost projects
+</code></pre>
+<p>Behaviour details worth knowing:</p>
+<ul>
+<li><strong>Streaming I/O.</strong> stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (<code>oc adm top nodes</code>, <code>ibmcloud ks cluster get</code> on a slow API call) work normally.</li>
+<li><strong>Exit code propagation.</strong> The remote command’s exit code is the local exit code. A failing remote command produces a non-zero <code>roksbnkctl</code> exit; a succeeding remote command produces <code>0</code>. CI scripts can rely on this.</li>
+<li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. For other verbs, pass <code>--tty</code> if you need a PTY (e.g. for <code>top</code> or any command that checks <code>isatty()</code>).</li>
+<li><strong>Environment passthrough.</strong> <code>IBMCLOUD_API_KEY</code>, <code>IBMCLOUD_REGION</code>, and <code>KUBECONFIG</code> are propagated to the remote session via SSH <code>SetEnv</code>, so <code>ibmcloud iam oauth-tokens</code> on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept <code>AcceptEnv IBMCLOUD_*</code> etc. for this to work; the upstream HCL’s jumphost is already configured for it.</li>
+</ul>
+<h2 id="what---on-doesnt-do-yet"><a class="header" href="#what---on-doesnt-do-yet">What <code>--on</code> doesn’t do (yet)</a></h2>
+<p>A few things deliberately deferred to later phases:</p>
+<ul>
+<li><strong>Lifecycle commands</strong> (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>) reject <code>--on</code> with a clear error in v0.7. Running terraform on a remote host has different state-handling considerations and is the job of v0.9’s SSH execution backend (<a href="./17-execution-backends.html">Chapter 17</a>).</li>
+<li><strong>ProxyJump / multi-hop SSH.</strong> If your jumphost itself is reached through another bastion, that’s not directly supported in v0.7. The upstream HCL’s jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don’t need multi-hop in practice.</li>
+<li><strong><code>~/.ssh/config</code> parsing.</strong> Targets must be defined explicitly in workspace config; <code>roksbnkctl</code> does not read your existing <code>~/.ssh/config</code>.</li>
+<li><strong>Password auth.</strong> Keys + agent only. Passwords are not supported and won’t be.</li>
+<li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job in v0.9. v0.7’s <code>--on</code> does one-shot remote exec only.</li>
+</ul>
+<h2 id="cross-reference"><a class="header" href="#cross-reference">Cross-reference</a></h2>
+<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can’t <code>AcceptEnv</code>, and apt-bootstrap of missing tools on Ubuntu jumphosts. The <code>--on</code> flag stays as the lightweight one-shot path; <code>--backend ssh</code> is the deeper integration. The two are designed to share the same <code>internal/remote.Client</code> so what you learn here translates directly.</p>
+<p>For the design rationale, edge cases, and open questions, read <a href="../../docs/prd/01-SSH-AND-ON-FLAG.html">PRD 01</a> — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.</p>
 
                     </main>
 
