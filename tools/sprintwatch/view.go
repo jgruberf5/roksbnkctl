@@ -225,7 +225,7 @@ func (m Model) renderCard(sp Sprint, selected bool) string {
 
 	if sp.IsComplete() {
 		if t, ok := ClosedAt(snaps); ok {
-			b.WriteString(stOK.Render(fmt.Sprintf("Closed:      %s\n", t.Format("2006-01-02"))))
+			b.WriteString(fmt.Sprintf("Closed:      %s\n", stOK.Render(t.Format("2006-01-02"))))
 		}
 	} else if len(snaps) > 0 {
 		eta, vel, ok := ETA(snaps)

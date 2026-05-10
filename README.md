@@ -683,6 +683,34 @@ roksbnkctl/
 
 ---
 
+## Watching development progress
+
+Development happens in numbered **sprints** worked in parallel by four agent roles (`architect`, `staff`, `tech-writer`, `validator`). Each role writes its findings into [`issues/issue_sprint<N>_<role>.md`](issues/) during the sprint and the integrator records closures in `issues/resolved_sprint<N>_<role>.md`. See [`issues/README.md`](issues/README.md) for the file format and [`docs/PLAN.md`](docs/PLAN.md) for the seven-sprint roadmap.
+
+`tools/sprintwatch/` is a small terminal dashboard that reads those files and shows live progress — per-sprint completion status, per-role ✓/✗/? indicators, severity-tagged bug counts, an ASCII burn-down sparkline reconstructed from `git log` history, and an ETA projection for sprints still in flight.
+
+```bash
+# Run from anywhere inside the repo (auto-detects via git rev-parse)
+cd tools/sprintwatch && go build && ./sprintwatch
+
+# One-shot snapshot for non-interactive use (cron, CI logs, etc.)
+./sprintwatch --once
+
+# Point at a different checkout
+./sprintwatch --path /path/to/another/clone
+
+# Or run it in a container, mounting the repo read-only
+cd tools/sprintwatch
+docker build -t sprintwatch .
+docker run -it --rm -v "$PWD/../..:/repo:ro" sprintwatch
+```
+
+Inside the TUI: `↑/↓` selects a sprint card, `enter` toggles a per-issue detail view (every issue listed with severity, ✓/⏸/✗ status, title), `r` forces a reload, `q` quits. The dashboard auto-refreshes every two seconds, so as agents land commits the cards update in place.
+
+The tool is entirely additive — it has its own `go.mod` so it doesn't pull bubbletea/lipgloss into the main `roksbnkctl` build. Feel free to delete `tools/sprintwatch/` if you don't want it.
+
+---
+
 ## What this is *not*
 
 - Not a Terraform authoring tool. Terraform lives in its own repo and is the source of truth for the deployment shape.
