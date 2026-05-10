@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58e0a648.js";
+            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,300 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-in-cluster-ops-pod"><a class="header" href="#the-in-cluster-ops-pod">The in-cluster ops pod</a></h1>
-<p><em>Coming in Sprint 4.</em></p>
-<p><em><code>roksbnkctl ops install/show/uninstall</code>: what gets deployed (namespace, service account, ClusterRole, RoleBinding, projected secret), the RBAC privileges granted, and the rotation/refresh story for long-running deployments.</em></p>
+<p>The k8s execution backend has two execution patterns: a <strong>long-lived ops pod</strong> for ad-hoc commands, and <strong>one-shot Jobs</strong> for throughput tests, DNS probes, and other per-invocation workloads. <a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> covered the <strong>interface mechanics</strong> — how <code>Backend.Run</code> dispatches into either pattern.</p>
+<p>This chapter is the reference for the <strong>pod itself</strong>: what <code>roksbnkctl ops install</code> deploys, what RBAC it grants, where credentials live, how to rotate them, and how to debug when something goes wrong.</p>
+<p>If you’ve never run <code>roksbnkctl ops install</code>, you can read this chapter front-to-back; otherwise the <a href="#operability">§ Operability</a> section near the end is the troubleshooting jump-off point.</p>
+<h2 id="what-the-ops-pod-is"><a class="header" href="#what-the-ops-pod-is">What the ops pod is</a></h2>
+<p>A long-lived pod in the <code>roksbnkctl-ops</code> namespace, running an image bundled with the tools <code>roksbnkctl</code> may want to invoke cluster-side: <code>ibmcloud</code> CLI plus <code>kubectl</code> as a fallback, with <code>oc</code> and <code>terraform</code> reserved for future iterations.</p>
+<p>The pod sits idle waiting for <code>kubectl exec</code> calls. Each <code>roksbnkctl ibmcloud --backend k8s …</code> invocation routes through <code>client-go</code>’s SPDY executor, runs the wrapped tool inside the existing pod, streams stdout/stderr back, and returns the exit code. No pod create/start latency between invocations — a session of twenty <code>ibmcloud</code> commands pays the startup cost once.</p>
+<p>Compared to the one-shot Job pattern (used for <code>iperf3</code> and the upcoming DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It’s the right shape when you want to debug interactively or run many small commands.</p>
+<h2 id="roksbnkctl-ops-install"><a class="header" href="#roksbnkctl-ops-install"><code>roksbnkctl ops install</code></a></h2>
+<p>Idempotent setup. Run once per cluster; re-run any time you want to refresh the image, rotate the API key Secret, or recover from a partial uninstall.</p>
+<pre><code class="language-bash">roksbnkctl ops install
+</code></pre>
+<p>What it does, step by step:</p>
+<h3 id="1-create-the-namespace"><a class="header" href="#1-create-the-namespace">1. Create the namespace</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: roksbnkctl-ops
+  labels:
+    app.kubernetes.io/name: roksbnkctl
+    app.kubernetes.io/component: ops-pod
+</code></pre>
+<p>The <code>roksbnkctl-ops</code> namespace is dedicated to the long-lived pod. Separate from <code>roksbnkctl-test</code> (where one-shot Jobs run) so RBAC can be scoped per namespace — see <a href="#rbac-the-clusterrole-rules">§ RBAC</a> below.</p>
+<h3 id="2-create-the-serviceaccount"><a class="header" href="#2-create-the-serviceaccount">2. Create the ServiceAccount</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+</code></pre>
+<p>The pod runs as this SA. Its projected token is auto-mounted at <code>/var/run/secrets/kubernetes.io/serviceaccount/</code>, which is what the bundled <code>kubectl</code> uses for in-cluster authentication. The IBM Cloud API key (a separate credential) reaches the pod through a Kubernetes Secret — see <a href="#credential-propagation">§ Credential propagation</a> below.</p>
+<h3 id="3-create-the-clusterrole--clusterrolebinding"><a class="header" href="#3-create-the-clusterrole--clusterrolebinding">3. Create the ClusterRole + ClusterRoleBinding</a></h3>
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: roksbnkctl-ops
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "pods/log"]
+  verbs:     ["get", "list", "watch", "create", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs:     ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs:     ["get", "list"]
+  resourceNames: ["roksbnkctl-ibm-creds"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs:     ["get", "list", "create", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs:     ["get", "list", "create", "delete"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs:     ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: roksbnkctl-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: roksbnkctl-ops
+subjects:
+- kind: ServiceAccount
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+</code></pre>
+<p>The full manifest lives at <code>internal/exec/k8s_install.yaml</code> (embedded into the binary). <a href="#rbac-the-clusterrole-rules">§ RBAC</a> walks through what each rule is for.</p>
+<h3 id="4-create-or-update-the-credential-secret"><a class="header" href="#4-create-or-update-the-credential-secret">4. Create or update the credential Secret</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Secret
+metadata:
+  name: roksbnkctl-ibm-creds
+  namespace: roksbnkctl-ops
+  annotations:
+    helm.sh/resource-policy: keep            # don't sweep on accidental destroy
+type: Opaque
+stringData:
+  IBMCLOUD_API_KEY: &lt;resolved-key-value&gt;
+</code></pre>
+<p>The key value comes from the workspace’s resolver chain (env → keychain → config-b64 → prompt) — see <a href="./14-credentials-resolver.html">Chapter 14</a> for the resolution order. The Secret carries two keys (<code>IBMCLOUD_API_KEY</code> and the legacy alias <code>IC_API_KEY</code>) both populated from the same resolved value, so older <code>ibmcloud</code> CLI versions that look for the <code>IC_</code> name find it.</p>
+<p>If the Secret already exists (re-running <code>ops install</code> after a key rotation), <code>roksbnkctl</code> does a client-side Get + Update: the Secret’s <code>data</code> is overwritten with the freshly resolved value, the <code>roksbnkctl.io/rotated-at</code> annotation is stamped with the current timestamp, and the rest of the Secret’s metadata is left untouched. <code>roksbnkctl ops show</code> surfaces “last cred rotation: <timestamp>” by reading that annotation.</timestamp></p>
+<h3 id="5-create-the-pod"><a class="header" href="#5-create-the-pod">5. Create the Pod</a></h3>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+  labels:
+    app: roksbnkctl-ops
+    roksbnkctl.io/managed: "true"
+spec:
+  serviceAccountName: roksbnkctl-ops
+  restartPolicy: Always
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: tools
+    image: ${OPS_IMAGE}                  # resolved from roksbnkctl's version at install time
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "infinity"]
+    envFrom:
+    - secretRef:
+        name: roksbnkctl-ibm-creds
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+    resources:
+      requests: { cpu: 50m,  memory: 64Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+</code></pre>
+<p>Three details to call out:</p>
+<ul>
+<li><strong><code>command: ["sleep", "infinity"]</code></strong> — the pod’s own command. Each <code>Backend.Run</code> invocation issues a <code>kubectl exec</code> against this idle process, which means the pod’s main process never exits as long as the pod is healthy.</li>
+<li><strong><code>securityContext</code> is set explicitly</strong> for OpenShift’s <code>restricted-v2</code> SCC. Pod-level <code>runAsNonRoot</code> + <code>seccompProfile.type: RuntimeDefault</code>; container-level <code>allowPrivilegeEscalation: false</code> + <code>capabilities.drop: [ALL]</code> + <code>runAsNonRoot</code> — the same fields the iperf3 server pod sets, for the same reason.</li>
+<li><strong><code>envFrom: secretRef</code></strong> — the API key reaches the pod’s env without ever touching the pod manifest’s argv or <code>env:</code> block. <code>kubectl describe pod roksbnkctl-ops</code> shows the secret reference name but not the value, per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 §“In-cluster pod”</a>.</li>
+</ul>
+<h3 id="6-wait-for-readiness"><a class="header" href="#6-wait-for-readiness">6. Wait for readiness</a></h3>
+<p><code>roksbnkctl ops install</code> waits for <code>Pod.Status.Phase == Running</code> and the container’s <code>Ready</code> condition before returning. Default timeout is 60 seconds; longer for clusters with slow image pulls (the ghcr.io image is ~80 MiB). Failures surface a <code>kubectl describe pod roksbnkctl-ops</code> excerpt for context.</p>
+<h2 id="roksbnkctl-ops-show"><a class="header" href="#roksbnkctl-ops-show"><code>roksbnkctl ops show</code></a></h2>
+<p>Reports current state without making any changes:</p>
+<pre><code class="language-bash">$ roksbnkctl ops show
+namespace:    roksbnkctl-ops
+pod:          roksbnkctl-ops
+phase:        Running
+ready:        true
+image:        ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v0.9.0
+rbac subject: system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops
+secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
+</code></pre>
+<p>What each line surfaces:</p>
+<ol>
+<li><strong>Pod phase + readiness</strong> — <code>Running</code> + <code>true</code> is green; anything else means the pod is unhealthy and <code>Backend.Run</code> calls will fail. The container count is exactly one (<code>tools</code>); <code>ready: true</code> is a single bool, not a <code>2/2</code>-style ratio.</li>
+<li><strong>Image</strong> — the <code>:v…</code> tag matches the <code>roksbnkctl</code> release the image was published with (resolved at install time from the binary’s version; see <a href="./17-execution-backends.html#dev-tag-resolution">Chapter 17 §<code>:dev</code> tag resolution</a>). Mismatched against your <code>roksbnkctl --version</code> means re-running <code>ops install</code> will pull the matching image.</li>
+<li><strong>RBAC subject</strong> — the SA the pod runs as. <code>kubectl describe clusterrole roksbnkctl-ops</code> prints the full ruleset (the ClusterRoleBinding is named the same as the role).</li>
+<li><strong>Secret line</strong> — the cred Secret’s name + the <code>roksbnkctl.io/rotated-at</code> annotation that <code>ops install</code> stamps each time the Secret is applied. If the Secret is missing entirely, the line reads <code>secret: (missing: …)</code>.</li>
+</ol>
+<p>The current output is a fixed six-line key/value block; a structured <code>--output json</code> mode is on the Sprint 5+ roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.).</p>
+<h2 id="roksbnkctl-ops-uninstall"><a class="header" href="#roksbnkctl-ops-uninstall"><code>roksbnkctl ops uninstall</code></a></h2>
+<p>Full removal. Run when decommissioning the cluster, or when you want a clean re-install. The command is a <strong>destructive-action gate</strong>: by default it prints a preview of what <em>would</em> be deleted and exits successfully; the actual deletion only runs with <code>--confirm</code>.</p>
+<pre><code class="language-bash">$ roksbnkctl ops uninstall
+Would delete (re-run with --confirm to proceed):
+  - Pod        roksbnkctl-ops/roksbnkctl-ops
+  - Secret     roksbnkctl-ops/roksbnkctl-ibm-creds
+  - ServiceAccount roksbnkctl-ops/roksbnkctl-ops
+  - ClusterRole/ClusterRoleBinding roksbnkctl-ops
+  - Namespace  roksbnkctl-ops
+  - Namespace  roksbnkctl-test
+
+$ roksbnkctl ops uninstall --confirm
+✓ deleted pod roksbnkctl-ops
+✓ deleted secret roksbnkctl-ibm-creds
+✓ deleted serviceaccount roksbnkctl-ops
+✓ deleted clusterrolebinding roksbnkctl-ops
+✓ deleted clusterrole roksbnkctl-ops
+✓ deleted namespace roksbnkctl-ops
+✓ deleted namespace roksbnkctl-test
+</code></pre>
+<p>Note that the cluster-scoped objects (ClusterRole, ClusterRoleBinding) get cleaned too — they’re not garbage-collected by namespace deletion since they live above the namespace. <code>roksbnkctl ops uninstall --confirm</code> makes this explicit so a stale <code>roksbnkctl-ops</code> ClusterRole can’t outlive a namespace removed via <code>kubectl delete ns</code>.</p>
+<p>Both managed namespaces (<code>roksbnkctl-ops</code> and <code>roksbnkctl-test</code>) are deleted. The <code>roksbnkctl-test</code> namespace is where one-shot Job pods (iperf3 client, future probes) land — by the time you’re running <code>uninstall</code> you’ve already concluded those test workloads are finished, so removing the namespace alongside the ops-pod surface keeps the cluster clean.</p>
+<p>When to run <code>uninstall</code>:</p>
+<ul>
+<li><strong>Cluster decommission</strong> — the cluster is going away, clean up cluster-scoped objects before destroying it.</li>
+<li><strong>Cred rotation when paranoid</strong> — the rotation story (next section) doesn’t require uninstall, but if you’re worried about old secrets persisting in etcd snapshots, an uninstall + re-install regenerates the Secret cleanly.</li>
+<li><strong>Image upgrade with a major manifest change</strong> — if the embedded <code>k8s_install.yaml</code> evolves (new RBAC rule, security-context tweak), <code>uninstall</code> + <code>install</code> is the cleanest way to apply.</li>
+</ul>
+<h2 id="rbac-the-clusterrole-rules"><a class="header" href="#rbac-the-clusterrole-rules">RBAC: the ClusterRole rules</a></h2>
+<p>The full ClusterRole rule set (transcribed from <code>internal/exec/k8s_install.yaml</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>API group</th><th>Resources</th><th>Verbs</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>batch</code></td><td><code>jobs</code></td><td>get, list, watch, create, delete</td><td>One-shot Job lifecycle (iperf3 client, future probes). The backend creates the Job, watches it, reads logs, deletes it.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods</code></td><td>get, list, watch</td><td>The backend lists/watches pods to find Job-spawned pods + to wait for the ops pod’s Ready state. <strong>No <code>create</code>/<code>delete</code></strong> — pods are owned by their Jobs (or by <code>ops install</code>’s user-side privilege), not by the pod’s SA.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods/log</code></td><td>get, list</td><td>Log streaming from one-shot Job pods (the bytes the wrapped tool wrote to stdout/stderr).</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>pods/exec</code></td><td>create, get</td><td><code>kubectl exec</code> is a <code>create</code> against the <code>pods/exec</code> subresource — the SPDY-channel verb the long-lived ops-pod path uses.</td></tr>
+<tr><td><code>""</code> (core)</td><td><code>secrets</code> (named <code>roksbnkctl-ibm-creds</code>)</td><td>get</td><td>The pod reads the cred Secret directly only if a future workflow opts to (kubelet’s projection of <code>envFrom: secretRef</code> runs as kubelet, not as this SA). The <code>resourceNames</code> filter keeps the SA from reading any other Secret in the namespace — least-privilege per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 §“In-cluster pod”</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Notably <strong>not</strong> granted:</p>
+<ul>
+<li><strong><code>pods</code> create / delete</strong> — the SA can list and watch pods but can’t create or delete them. Pod lifecycle is mediated by Jobs (which the SA does manage) and by the ops pod itself (which <code>ops install</code> creates with the user’s privilege, not the SA’s).</li>
+<li><strong><code>secrets</code> create / update / delete / list</strong> — the pod never writes Secrets, and can’t even list to discover which Secrets exist in the namespace. The install-time Secret creation is done by the user invoking <code>ops install</code> (whose kubeconfig has cluster-admin or comparable), not by the pod’s SA. Combined with the <code>resourceNames</code> filter on <code>get</code>, this is the tightest practical surface that still lets the pod consume its own cred.</li>
+<li><strong><code>services</code>, <code>deployments</code>, <code>namespaces</code></strong> — the SA can’t touch these at all. The iperf3 server fixture (when the throughput test runs) is provisioned by <code>roksbnkctl test throughput</code> running on the caller’s side using the user’s kubeconfig, not by anything inside the ops pod.</li>
+<li><strong><code>clusterroles</code>, <code>clusterrolebindings</code></strong> — the pod never modifies its own RBAC.</li>
+<li><strong><code>*</code> cluster-admin</strong> — explicitly avoided. The pod has exactly the verbs it needs and nothing else.</li>
+</ul>
+<p>This matches <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cross-backend-principles">PRD 04 §“Least privilege per backend”</a> and <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-internalexeck8sgo">PRD 03 §“K8s”</a>: the ops pod is a powerful tool but its blast radius is bounded.</p>
+<p>To audit the rules on a running cluster:</p>
+<pre><code class="language-bash">kubectl describe clusterrole roksbnkctl-ops
+kubectl auth can-i --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops \
+  '*' '*' --all-namespaces       # should print mostly "no"
+</code></pre>
+<h2 id="credential-propagation"><a class="header" href="#credential-propagation">Credential propagation</a></h2>
+<p>The <code>IBMCLOUD_API_KEY</code> reaches the wrapped tool in three hops:</p>
+<pre><code>resolver chain (env → keychain → config-b64 → prompt)
+       ↓                        on the laptop, at `roksbnkctl ops install` time
+  Kubernetes Secret roksbnkctl-ibm-creds                in roksbnkctl-ops namespace
+       ↓                        applied by `ops install` via kubectl-equivalent
+  Pod env (IBMCLOUD_API_KEY=…)                          via `envFrom: secretRef`
+       ↓                        kubelet reads Secret, sets env on container start
+  Wrapped tool (`ibmcloud iam oauth-tokens`)            reads from os.Getenv
+</code></pre>
+<p>Three properties this gives you:</p>
+<ol>
+<li><strong>The key never appears in argv.</strong> <code>kubectl describe pod roksbnkctl-ops</code> shows <code>envFrom: secretRef: name: roksbnkctl-ibm-creds</code>, not the value. <code>kubectl get pod roksbnkctl-ops -o yaml</code> shows the same.</li>
+<li><strong>The key never appears in the pod’s own logs.</strong> The wrapped tool uses the env var; the env var name (not value) is what the pod’s startup logs print.</li>
+<li><strong>The redactor is the defense-in-depth backstop.</strong> If the wrapped tool ever prints the value (e.g., <code>ibmcloud --debug</code>), the SPDY stream from the pod is wrapped through <code>internal/exec/redact.go</code> before reaching the caller’s stdout — same as the local + docker backends.</li>
+</ol>
+<p>The Secret carries two keys today — <code>IBMCLOUD_API_KEY</code> and the legacy <code>IC_API_KEY</code> alias older <code>ibmcloud</code> versions accept — both populated from the same resolved value. Names are stable; embedded in <code>internal/exec/k8s_install.yaml</code>. Future cluster-side credentials (an AWS access key, a GCP service-account JSON) will add new keys to the same Secret rather than spinning up new Secrets, simplifying RBAC.</p>
+<h2 id="rotation-rotating-the-api-key"><a class="header" href="#rotation-rotating-the-api-key">Rotation: rotating the API key</a></h2>
+<p>When the IBM Cloud API key changes (key rotation, account takeover, key compromise), you need to update the cluster-side Secret. The flow:</p>
+<pre><code class="language-bash"># 1. Update the local resolver chain — pick whichever source you populated
+#    initially (the chain order is: env &gt; keychain &gt; config-b64; see chapter 14):
+export IBMCLOUD_API_KEY=&lt;new-key&gt;             # env (one-shot)
+# or update the keychain entry directly: `keyring` / `secret-tool` / Keychain.app
+# or edit ~/.roksbnkctl/&lt;workspace&gt;/config.yaml's api_key_b64 field
+
+# 2. Re-run ops install — this re-resolves the key, updates the cluster
+#    Secret, and rolls the pod
+roksbnkctl ops install
+</code></pre>
+<p>What <code>ops install</code> does on re-run:</p>
+<ul>
+<li>The Secret <code>roksbnkctl-ibm-creds</code> is updated with the new value via a client-side Get + Update (the existing Secret’s <code>data</code> is overwritten, the <code>roksbnkctl.io/rotated-at</code> annotation is refreshed, the rest of the metadata is left alone).</li>
+<li>The pod’s env, however, <strong>is set at container-start time</strong> — kubelet reads the Secret value when the pod is created, not on every Secret update. So an updated Secret doesn’t propagate to the running pod’s env until the pod is recreated.</li>
+<li><code>ops install</code> therefore deletes and recreates the bare ops pod after the Secret update. New pod → kubelet reads the updated Secret → env contains the new value. (Re-creation takes a few seconds for the image cache hit; up to ~30 seconds on a cold cluster.)</li>
+</ul>
+<p>The ops pod is a <strong>bare Pod</strong>, not a Deployment or DaemonSet, so <code>kubectl rollout restart</code> won’t work on it (<code>rollout restart</code> only operates on controller resources). The canonical way to force a fresh pod is <code>roksbnkctl ops install</code> (idempotent — it’ll handle the delete-and-recreate). If you really want to do it by hand:</p>
+<pre><code class="language-bash">kubectl delete pod roksbnkctl-ops -n roksbnkctl-ops
+# then re-run `roksbnkctl ops install` to create the replacement;
+# the bare pod has no controller, so nothing else will recreate it.
+</code></pre>
+<p><code>roksbnkctl ops show</code> will report <code>phase: Pending</code> briefly during recreation, then <code>Running</code> + <code>ready: true</code> once kubelet finishes projecting the updated Secret.</p>
+<h2 id="operability"><a class="header" href="#operability">Operability</a></h2>
+<p>Things to know when something’s wrong.</p>
+<h3 id="where-pod-logs-go"><a class="header" href="#where-pod-logs-go">Where pod logs go</a></h3>
+<pre><code class="language-bash">roksbnkctl k logs -n roksbnkctl-ops roksbnkctl-ops
+# or
+kubectl logs -n roksbnkctl-ops roksbnkctl-ops
+</code></pre>
+<p>The pod’s main process is <code>sleep infinity</code>, so the log is mostly empty. Each <code>kubectl exec</code> invocation runs in its own ephemeral process — those processes’ stdout/stderr go back through the SPDY channel to the caller, <strong>not</strong> into the pod’s log. So <code>kubectl logs</code> is helpful for debugging pod startup (image pull failures, SCC denials, OOMKills) but not for “what did <code>ibmcloud iam oauth-tokens</code> actually print” — that’s just the caller’s stdout.</p>
+<p>For a paper trail of recent invocations, capture <code>roksbnkctl ibmcloud --backend k8s … 2&gt;&amp;1 | tee /tmp/ibmcloud.log</code> on the calling side.</p>
+<h3 id="debugging-a-stuck-ops-install"><a class="header" href="#debugging-a-stuck-ops-install">Debugging a stuck <code>ops install</code></a></h3>
+<p><code>ops install</code> waits up to 60 seconds for the pod to become Ready. If it times out:</p>
+<pre><code class="language-bash">roksbnkctl k describe -n roksbnkctl-ops pod/roksbnkctl-ops
+roksbnkctl k get -n roksbnkctl-ops events --sort-by=.lastTimestamp | tail -20
+</code></pre>
+<p>Common causes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ImagePullBackOff</code></td><td>ghcr.io rate limit, or image tag doesn’t exist</td><td>check <code>roksbnkctl --version</code>, ensure ghcr.io is reachable from the cluster</td></tr>
+<tr><td><code>CreateContainerConfigError</code> referencing the Secret</td><td>Secret was deleted between Secret apply and Pod create (race)</td><td>re-run <code>roksbnkctl ops install</code> (idempotent)</td></tr>
+<tr><td><code>RunContainerError</code> with SCC denial</td><td>the cluster’s PodSecurity admission rejected the manifest</td><td><code>kubectl get events</code> will name the missing field; usually means an OpenShift cluster expects the <code>restricted-v2</code> profile and a manifest field is wrong — file an issue with the event message</td></tr>
+<tr><td>Pod stuck in <code>Pending</code> with no Events</td><td>cluster is at capacity / out of CPU</td><td>scale the cluster or trim resources; the pod requests <code>50m</code> CPU + <code>128Mi</code> mem, very small</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cluster-api-outage-during-ops-install"><a class="header" href="#cluster-api-outage-during-ops-install">Cluster API outage during <code>ops install</code></a></h3>
+<p>If the kube-apiserver becomes unreachable mid-install (transient cloud-provider issue, kubeconfig expired, network partition), <code>ops install</code> fails fast at whichever step hit the apiserver:</p>
+<pre><code>✓ applied namespace roksbnkctl-ops
+applying secret roksbnkctl-ops/roksbnkctl-ibm-creds       ... ERROR: Get "https://...": dial tcp: i/o timeout
+</code></pre>
+<p>The install is <strong>partial</strong> at that point — earlier steps succeeded, later steps didn’t. <code>ops install</code> is idempotent, so just re-run once the apiserver is back; the steps that already completed are no-ops the second time, the steps that didn’t will run.</p>
+<p>If the apiserver is permanently gone (cluster destroyed): <code>ops uninstall</code> will fail the same way, since it also needs the apiserver. In that case the cluster-scoped objects (ClusterRole, ClusterRoleBinding) become orphans you can clean up manually if you ever rebuild the cluster, or ignore if you’re done with this cluster’s identity entirely.</p>
+<h3 id="verifying-the-install-end-to-end"><a class="header" href="#verifying-the-install-end-to-end">Verifying the install end-to-end</a></h3>
+<p>A one-liner sanity check:</p>
+<pre><code class="language-bash">roksbnkctl ibmcloud --backend k8s iam oauth-tokens
+</code></pre>
+<p>If the SA/Secret/RBAC/Pod chain is healthy, this prints a fresh OAuth token. If it errors, the error message names which link in the chain broke (pod not found, Secret missing, exec denied, ibmcloud CLI exit non-zero).</p>
+<p><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> covers the broader “ops pod is unhappy” failure modes alongside other end-user troubleshooting.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-internalexeck8sgo">PRD 03 — pluggable execution backends, §“K8s”</a> — the ops-pod design rationale.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 — credential propagation, §“In-cluster pod”</a> — Secret-based propagation rules.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — where the <code>IBMCLOUD_API_KEY</code> value comes from before it lands in the Secret.</li>
+<li><a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> — the interface mechanics this chapter complements.</li>
+<li><a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a> — when <code>--backend k8s</code> is the right call.</li>
+<li><code>internal/exec/k8s_install.yaml</code> — the embedded RBAC manifests: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/k8s_install.yaml">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/k8s_install.yaml</a></li>
+<li><code>internal/cli/ops.go</code> — the <code>roksbnkctl ops install/show/uninstall</code> command implementation: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/ops.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/ops.go</a></li>
+</ul>
 
                     </main>
 
