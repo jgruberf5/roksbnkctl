@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-71da58cb.js";
+            window.path_to_searchindex_js = "searchindex-6719f835.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -548,8 +548,8 @@ exec $SHELL -l
 <pre><code>roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
-✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (informational; `roksbnkctl k get/apply/...` covers the happy path natively)
-✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (informational; `roksbnkctl k ...` covers the happy path natively)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
@@ -626,7 +626,7 @@ exec $SHELL -l
 </tbody>
 </table>
 </div>
-<p>If a fix isn’t here, <a href="#troubleshooting">Chapter 26 — Troubleshooting</a> covers the longer tail.</p>
+<p>If a fix isn’t here, <a href="#troubleshooting">Chapter 26 — Troubleshooting</a> (lands in Sprint 6) covers the longer tail.</p>
 <h2 id="the---target-name-ssh-check-sprint-1"><a class="header" href="#the---target-name-ssh-check-sprint-1">The <code>--target &lt;name&gt;</code> SSH check (Sprint 1)</a></h2>
 <p>Sprint 1’s <code>--on jumphost</code> flag introduced an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
 <pre><code class="language-bash">roksbnkctl doctor --target jumphost
@@ -800,7 +800,7 @@ roksbnkctl -w default k get pods -A
 <h2 id="the-parking-lot-pattern"><a class="header" href="#the-parking-lot-pattern">The parking-lot pattern</a></h2>
 <p>A subtle gotcha: <code>ws delete</code> refuses to remove the current workspace, but the end-to-end test suite needs to clean itself up after running against the <code>default</code> workspace.</p>
 <p>The fix is the <strong>parking-lot pattern</strong>: have a throwaway workspace that exists only to be the “current” pointer while you delete other workspaces.</p>
-<pre><code class="language-bash"># Phase H of scripts/e2e-test.sh: tear-down + cleanup
+<pre><code class="language-bash"># End-to-end test cleanup (e2e-test.sh: Phase D destroys; Phase H runs the parking-lot dance below)
 
 # Run the destroy against "default" (still current at this point)
 roksbnkctl down --auto
@@ -1583,11 +1583,8 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <p>The post-destroy cleanup deletes <code>cluster-outputs.json</code> automatically — the workspace no longer has a registered cluster.</p>
 <h2 id="order-matters-trial-first-then-cluster"><a class="header" href="#order-matters-trial-first-then-cluster">Order matters: trial first, then cluster</a></h2>
 <p>The upstream HCL’s resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live <em>in</em> the cluster, after all), and Terraform’s destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase’s resources are still there — finalisers block the destroy of the cluster’s namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.</p>
-<p><code>roksbnkctl cluster down</code> enforces this with a check: it refuses to run if the workspace’s BNK trial state still lists resources. The error is:</p>
-<pre><code>Error: workspace "default" has BNK trial state with N resources still present;
-       run `roksbnkctl down` first to destroy the trial before destroying the cluster
-</code></pre>
-<p>The check looks at <code>state/terraform.tfstate</code> — if it has any resources, <code>cluster down</code> aborts. <code>--auto</code> does <strong>not</strong> override this; the order is correctness, not preference.</p>
+<p><code>roksbnkctl cluster down</code> warns about this when run interactively — without <code>--auto</code> it prints a stderr line (“Any BNK trial state on top of this cluster will be orphaned — run <code>roksbnkctl down</code> first if needed.”) and prompts <code>Continue? [y/N]</code>. With <code>--auto</code> the warning and prompt are skipped and the destroy proceeds; correctness becomes the user’s responsibility. v0.8 does not yet inspect <code>state/terraform.tfstate</code> to refuse on a non-empty trial — that hard guard is tracked as a future improvement.</p>
+<p>So in practice, <strong>always run <code>down</code> before <code>cluster down</code></strong>, and do not skip the warning when running interactively.</p>
 <p>The clean teardown sequence:</p>
 <pre><code class="language-bash"># 1. Destroy the BNK trial
 roksbnkctl down --auto
@@ -1655,7 +1652,7 @@ roksbnkctl down --auto
 <li><strong>Refuses if Terraform state still lists resources</strong> (unless <code>--force</code>). Catches the case where you forgot to run <code>down</code> first.</li>
 </ul>
 <p>The <code>--force</code> flag overrides both checks — but if you <code>ws delete --force</code> a workspace that still has provisioned cloud resources, you’ll have leaked them. There’s no auto-recovery; you’d need to find them via the IBM Cloud console and delete them by hand.</p>
-<p>The full clean-as-you-go pattern from <code>scripts/e2e-test.sh</code> Phase H:</p>
+<p>The full clean-as-you-go pattern from <code>scripts/e2e-test.sh</code> (Phase D destroys; Phase H parks and deletes):</p>
 <pre><code class="language-bash"># 1. Destroy the trial
 roksbnkctl down --auto
 
@@ -1943,7 +1940,7 @@ roksbnkctl logs ↔  roksbnkctl k logs
 <p>Two verbs are <strong>deliberately not aliased</strong> to avoid shadowing existing top-level commands:</p>
 <ul>
 <li><strong><code>roksbnkctl apply</code></strong> is the existing top-level lifecycle verb that runs <code>terraform apply</code> against the workspace (Sprint 0/1 surface). Adding a second <code>apply</code> would shadow it and break <code>roksbnkctl up</code> / <code>roksbnkctl apply</code> muscle memory. Use <code>roksbnkctl k apply -f ...</code> explicitly for the Kubernetes-side server-side apply.</li>
-<li><strong><code>roksbnkctl exec</code></strong> runs a command on the <strong>host</strong> with the workspace’s env loaded (Sprint 1’s host-exec verb — see <a href="#workspaces">Chapter 6</a>). <code>roksbnkctl k exec</code> runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.</li>
+<li><strong><code>roksbnkctl exec</code></strong> runs a command on the <strong>host</strong> with the workspace’s env loaded (Sprint 1’s host-exec verb — see <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a>, specifically the “Working examples” section). <code>roksbnkctl k exec</code> runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.</li>
 </ul>
 <h2 id="kubectloc-passthroughs-stay-as-escape-hatches"><a class="header" href="#kubectloc-passthroughs-stay-as-escape-hatches">kubectl/oc passthroughs stay as escape hatches</a></h2>
 <p>The existing <code>roksbnkctl kubectl &lt;args...&gt;</code> and <code>roksbnkctl oc &lt;args...&gt;</code> passthroughs are <strong>preserved</strong> post-Sprint 2. They still shell out to the host binary (with the workspace’s <code>KUBECONFIG</code> and credentials loaded) for anything outside the internalised subset.</p>
@@ -2120,16 +2117,17 @@ roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk :80
 <pre><code class="language-bash">make test-live
 </code></pre>
 <p>…against a <code>KUBECONFIG</code> that points at a real ROKS cluster. They’re <strong>not</strong> part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.</p>
-<h2 id="openshift-extensions-phase-21"><a class="header" href="#openshift-extensions-phase-21">OpenShift extensions (Phase 2.1)</a></h2>
-<p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types that <code>kubectl</code> doesn’t know about by default. Phase 2.1 of PRD 02 adds these via <code>github.com/openshift/client-go</code>:</p>
+<h2 id="openshift-extensions"><a class="header" href="#openshift-extensions">OpenShift extensions</a></h2>
+<p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types — <code>Project</code>, <code>Route</code>, <code>ImageStream</code>, <code>BuildConfig</code>. <strong><code>roksbnkctl k get</code> discovers these natively today</strong> via the dynamic client + RESTMapper path (the cluster advertises them through the API discovery doc; the deferred-discovery mapper picks them up):</p>
 <pre><code class="language-bash">roksbnkctl k get projects                    # OpenShift projects (vs Kubernetes namespaces)
 roksbnkctl k get routes -n f5-bnk            # OpenShift Routes (vs Ingress)
 roksbnkctl k get imagestreams -n f5-bnk      # OpenShift ImageStreams
 roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK trials)
 </code></pre>
-<p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); just expands the resource list the dynamic client recognises. Whether Phase 2.1 lands for v0.8 depends on staff agent budget — PLAN.md scopes it as “Phase 2.1 which may slip”. Check <code>roksbnkctl k get --help</code> after the v0.8 cut to see whether <code>projects</code>/<code>routes</code>/<code>imagestreams</code> made it.</p>
-<p>If 2.1 isn’t there yet, fall back to the passthrough:</p>
-<pre><code class="language-bash">roksbnkctl oc get projects
+<p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); the dynamic-client + RESTMapper combination handles type discovery without needing a per-type Go-side scheme registration.</p>
+<p>Phase 2.1 of PRD 02 adds <strong>typed clients</strong> via <code>github.com/openshift/client-go</code> for nicer printing and <code>describe</code> integration of these resources. PLAN.md flags this as deferrable to Sprint 5 polish. Until typed clients land, <code>roksbnkctl k get/describe</code> still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the <code>oc</code> passthrough:</p>
+<pre><code class="language-bash">roksbnkctl oc get projects                   # typed-client output today
+roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </code></pre>
 <h2 id="doctor-change-recap"><a class="header" href="#doctor-change-recap">Doctor change recap</a></h2>
 <p>A reminder of what changed in Sprint 2’s doctor (covered in <a href="#doctor-checking-your-environment">Chapter 5</a>):</p>
@@ -2159,7 +2157,7 @@ roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK
 <tr><td><code>kubectl rollout status deploy/foo</code></td><td><code>roksbnkctl kubectl rollout status deploy/foo</code> (passthrough)</td></tr>
 <tr><td><code>kubectl edit deployment foo</code></td><td><code>roksbnkctl kubectl edit deployment foo</code> (passthrough)</td></tr>
 <tr><td><code>kubectl scale deployment foo --replicas=3</code></td><td><code>roksbnkctl kubectl scale deployment foo --replicas=3</code> (passthrough)</td></tr>
-<tr><td><code>oc projects</code></td><td><code>roksbnkctl k get projects</code> (Phase 2.1) or <code>roksbnkctl oc projects</code></td></tr>
+<tr><td><code>oc projects</code></td><td><code>roksbnkctl k get projects</code> (works today via dynamic-client) or <code>roksbnkctl oc projects</code> for typed-client output</td></tr>
 </tbody>
 </table>
 </div>

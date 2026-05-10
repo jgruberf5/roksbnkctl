@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-71da58cb.js";
+            window.path_to_searchindex_js = "searchindex-6719f835.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -205,7 +205,7 @@ roksbnkctl logs ↔  roksbnkctl k logs
 <p>Two verbs are <strong>deliberately not aliased</strong> to avoid shadowing existing top-level commands:</p>
 <ul>
 <li><strong><code>roksbnkctl apply</code></strong> is the existing top-level lifecycle verb that runs <code>terraform apply</code> against the workspace (Sprint 0/1 surface). Adding a second <code>apply</code> would shadow it and break <code>roksbnkctl up</code> / <code>roksbnkctl apply</code> muscle memory. Use <code>roksbnkctl k apply -f ...</code> explicitly for the Kubernetes-side server-side apply.</li>
-<li><strong><code>roksbnkctl exec</code></strong> runs a command on the <strong>host</strong> with the workspace’s env loaded (Sprint 1’s host-exec verb — see <a href="./06-workspaces.html">Chapter 6</a>). <code>roksbnkctl k exec</code> runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.</li>
+<li><strong><code>roksbnkctl exec</code></strong> runs a command on the <strong>host</strong> with the workspace’s env loaded (Sprint 1’s host-exec verb — see <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>, specifically the “Working examples” section). <code>roksbnkctl k exec</code> runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.</li>
 </ul>
 <h2 id="kubectloc-passthroughs-stay-as-escape-hatches"><a class="header" href="#kubectloc-passthroughs-stay-as-escape-hatches">kubectl/oc passthroughs stay as escape hatches</a></h2>
 <p>The existing <code>roksbnkctl kubectl &lt;args...&gt;</code> and <code>roksbnkctl oc &lt;args...&gt;</code> passthroughs are <strong>preserved</strong> post-Sprint 2. They still shell out to the host binary (with the workspace’s <code>KUBECONFIG</code> and credentials loaded) for anything outside the internalised subset.</p>
@@ -382,16 +382,17 @@ roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk :80
 <pre><code class="language-bash">make test-live
 </code></pre>
 <p>…against a <code>KUBECONFIG</code> that points at a real ROKS cluster. They’re <strong>not</strong> part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.</p>
-<h2 id="openshift-extensions-phase-21"><a class="header" href="#openshift-extensions-phase-21">OpenShift extensions (Phase 2.1)</a></h2>
-<p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types that <code>kubectl</code> doesn’t know about by default. Phase 2.1 of PRD 02 adds these via <code>github.com/openshift/client-go</code>:</p>
+<h2 id="openshift-extensions"><a class="header" href="#openshift-extensions">OpenShift extensions</a></h2>
+<p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types — <code>Project</code>, <code>Route</code>, <code>ImageStream</code>, <code>BuildConfig</code>. <strong><code>roksbnkctl k get</code> discovers these natively today</strong> via the dynamic client + RESTMapper path (the cluster advertises them through the API discovery doc; the deferred-discovery mapper picks them up):</p>
 <pre><code class="language-bash">roksbnkctl k get projects                    # OpenShift projects (vs Kubernetes namespaces)
 roksbnkctl k get routes -n f5-bnk            # OpenShift Routes (vs Ingress)
 roksbnkctl k get imagestreams -n f5-bnk      # OpenShift ImageStreams
 roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK trials)
 </code></pre>
-<p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); just expands the resource list the dynamic client recognises. Whether Phase 2.1 lands for v0.8 depends on staff agent budget — PLAN.md scopes it as “Phase 2.1 which may slip”. Check <code>roksbnkctl k get --help</code> after the v0.8 cut to see whether <code>projects</code>/<code>routes</code>/<code>imagestreams</code> made it.</p>
-<p>If 2.1 isn’t there yet, fall back to the passthrough:</p>
-<pre><code class="language-bash">roksbnkctl oc get projects
+<p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); the dynamic-client + RESTMapper combination handles type discovery without needing a per-type Go-side scheme registration.</p>
+<p>Phase 2.1 of PRD 02 adds <strong>typed clients</strong> via <code>github.com/openshift/client-go</code> for nicer printing and <code>describe</code> integration of these resources. PLAN.md flags this as deferrable to Sprint 5 polish. Until typed clients land, <code>roksbnkctl k get/describe</code> still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the <code>oc</code> passthrough:</p>
+<pre><code class="language-bash">roksbnkctl oc get projects                   # typed-client output today
+roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </code></pre>
 <h2 id="doctor-change-recap"><a class="header" href="#doctor-change-recap">Doctor change recap</a></h2>
 <p>A reminder of what changed in Sprint 2’s doctor (covered in <a href="./05-doctor.html">Chapter 5</a>):</p>
@@ -421,7 +422,7 @@ roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK
 <tr><td><code>kubectl rollout status deploy/foo</code></td><td><code>roksbnkctl kubectl rollout status deploy/foo</code> (passthrough)</td></tr>
 <tr><td><code>kubectl edit deployment foo</code></td><td><code>roksbnkctl kubectl edit deployment foo</code> (passthrough)</td></tr>
 <tr><td><code>kubectl scale deployment foo --replicas=3</code></td><td><code>roksbnkctl kubectl scale deployment foo --replicas=3</code> (passthrough)</td></tr>
-<tr><td><code>oc projects</code></td><td><code>roksbnkctl k get projects</code> (Phase 2.1) or <code>roksbnkctl oc projects</code></td></tr>
+<tr><td><code>oc projects</code></td><td><code>roksbnkctl k get projects</code> (works today via dynamic-client) or <code>roksbnkctl oc projects</code> for typed-client output</td></tr>
 </tbody>
 </table>
 </div>
