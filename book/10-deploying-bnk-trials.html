@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,165 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="deploying-bnk-trials-on-top"><a class="header" href="#deploying-bnk-trials-on-top">Deploying BNK trials on top</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em><code>roksbnkctl up</code> once a cluster is in place: the 77 Terraform-managed resources that make up a BNK trial, how the COS supply chain feeds the install, and what to expect during a clean apply.</em></p>
+<p><code>roksbnkctl up</code> is the verb that deploys a <strong>BNK trial</strong> — F5’s Lifecycle Operator, the CNE Instance, license bundles, and the cluster-side glue that makes them work — onto a ROKS cluster that already exists. “Already exists” means either provisioned by <a href="./08-cluster-phase.html"><code>cluster up</code></a> or <a href="./09-registering-existing-cluster.html">registered</a> from a pre-existing cluster.</p>
+<p>This chapter is the deeper-than-quick-start view of <code>up</code>: what each module does, the ~77-resource shape of a clean apply, the token-rotation observation when you re-run <code>up</code> against an existing cluster, and how to read the Terraform plan output that scrolls past on every run.</p>
+<p><a href="./07-quick-start.html">Chapter 7 — Quick start</a> shows the happy path end-to-end with sample output. This chapter goes deeper.</p>
+<h2 id="what-deploying-bnk-means"><a class="header" href="#what-deploying-bnk-means">What “deploying BNK” means</a></h2>
+<p>A BNK trial is a deliberately small set of Kubernetes resources that share state with a cluster-shared cert-manager and a cluster-scoped registry COS. The components that <code>roksbnkctl up</code> is responsible for landing:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Component</th><th>What it is</th><th>Module in the bundled HCL</th></tr>
+</thead>
+<tbody>
+<tr><td><strong><code>flo</code></strong></td><td>F5 Lifecycle Operator — the controller that watches CNE Instance CRs and reconciles them into running BIG-IP Next pods</td><td><code>module.flo</code> (Helm release)</td></tr>
+<tr><td><strong><code>cne_instance</code></strong></td><td>The CR that declares “I want a BIG-IP Next data plane here” — drives <code>flo</code> to provision the TMM pods</td><td><code>module.cne_instance</code> (Kubernetes manifest)</td></tr>
+<tr><td><strong><code>license</code></strong></td><td>JWT licenses + activation tokens that gate BNK’s runtime — sourced from the registry COS</td><td><code>module.license</code> (Helm release + null_resources)</td></tr>
+<tr><td><strong><code>cluster-side bits</code></strong></td><td>ServiceAccounts, RoleBindings, SCC bindings, Secrets that flo / cne_instance / license need at runtime</td><td>scattered across the modules above</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>up</code> does <strong>not</strong> own the cluster, cert-manager, the registry COS, or the jumphost — those are cluster-phase resources. See <a href="./08-cluster-phase.html">Chapter 8</a> for the split.</p>
+<h2 id="the-77-resource-shape"><a class="header" href="#the-77-resource-shape">The 77-resource shape</a></h2>
+<p>A clean <code>roksbnkctl up</code> against a fresh cluster lands roughly <strong>77 resources</strong> when the cluster phase is bundled in (i.e. <code>cluster up</code> and <code>up</code> were one combined run). Against a pre-existing cluster (<code>cluster up</code> then <code>up</code>), the trial-only count is smaller — roughly the difference, ~41 resources.</p>
+<p>The number isn’t load-bearing; it shifts a few resources up or down between upstream HCL releases as the chart adds/removes null_resources and Secrets. Treat “77” as a sanity-check tag, not a contract.</p>
+<p>A representative breakdown:</p>
+<pre><code>Cluster phase (~36 resources, owned by `cluster up`)
+  ROKS cluster + worker pools          ~5
+  VPC + subnets + security groups       ~6
+  Transit gateway + connections          ~4
+  Registry COS instance + bucket          ~3
+  cert-manager Helm release               ~2
+  TGW jumphost VSI + cloud-init         ~16
+
+Trial phase (~41 resources, owned by `roksbnkctl up`)
+  flo Helm release                       ~5
+  cne_instance manifest + finalisers     ~4
+  license Helm release                  ~10
+  Cluster-side SAs / RoleBindings / SCC ~10
+  null_resources for token bootstrap    ~12
+</code></pre>
+<p>The null_resources at the bottom of the list are interesting — they’re the ones that re-run on every apply (more on that below).</p>
+<h2 id="apply-timing"><a class="header" href="#apply-timing">Apply timing</a></h2>
+<p>A clean <code>up</code> against a fresh cluster takes ~50 minutes:</p>
+<ul>
+<li>ROKS cluster provisioning: 30-40 min (the bulk of the wait)</li>
+<li>cert-manager + flo Helm install: ~5 min</li>
+<li>cne_instance reconcile: 1-2 min</li>
+<li>license bootstrap (token generation + activation): 2-3 min</li>
+<li>Cluster-side bits + finalisers: 2-3 min</li>
+</ul>
+<p>Against a pre-existing cluster (already-up’d or registered), the trial-only run is <strong>5-10 minutes</strong>. Most of that is Helm waiting for <code>flo</code> to stabilise and the license module’s null_resources running.</p>
+<h2 id="the-token-rotation-observation"><a class="header" href="#the-token-rotation-observation">The token-rotation observation</a></h2>
+<p>If you re-run <code>roksbnkctl up</code> against an already-deployed BNK trial, you’ll see ~41 resources <code>re-create</code> or <code>update in-place</code> even though “nothing changed”. This is expected.</p>
+<p>The <code>license</code> module rotates <strong>admin certificate tokens</strong> between runs — the JWT used to authenticate against the BNK control plane is short-lived and re-minted on each apply. A token rotation cascades into ~12 null_resources that exist solely to inject the new token into Helm-managed Secrets:</p>
+<pre><code>module.license.null_resource.cncf_admin_cert_token: Refreshing state... [id=8746234876]
+module.license.null_resource.cncf_admin_cert_token: Destroying... [id=8746234876]
+module.license.null_resource.cncf_admin_cert_token: Destruction complete after 0s
+module.license.null_resource.cncf_admin_cert_token: Creating...
+module.license.null_resource.cncf_admin_cert_token: Creation complete after 12s [id=9183746183]
+</code></pre>
+<p>That’s why the count of “destroyed + created” can hit ~41 even when no infrastructure-meaningful changes have been made.</p>
+<p>The rotation is harmless — running pods aren’t restarted, traffic isn’t interrupted. The new token replaces the old in the relevant Secret; flo notices and updates its in-memory cache. From the BNK trial’s runtime perspective, the second <code>up</code> is a no-op.</p>
+<p>If you want to skip the rotation cycle and just check “would this plan change anything significant?”, use <code>roksbnkctl plan</code> rather than <code>up</code> — it shows the plan without applying.</p>
+<h2 id="reading-the-terraform-plan-output"><a class="header" href="#reading-the-terraform-plan-output">Reading the Terraform plan output</a></h2>
+<p><code>roksbnkctl up</code> runs <code>terraform plan</code> first and prints its output. The plan summary at the end is the most useful part:</p>
+<pre><code>Plan: 77 to add, 0 to change, 0 to destroy.
+</code></pre>
+<p>Or, post-rotation:</p>
+<pre><code>Plan: 12 to add, 0 to change, 12 to destroy.
+</code></pre>
+<p>The body of the plan shows individual resource changes with one of three markers:</p>
+<ul>
+<li><strong><code>+ create</code></strong> — a new resource. Lines are green in a TTY.</li>
+<li><strong><code>&lt;= read</code></strong> — a data source the plan read but did not change. Common for <code>data "ibm_resource_group"</code> and similar lookups; effectively informational.</li>
+<li><strong><code># destroy</code></strong> — an in-progress destroy of an existing resource. Followed by a <code>+ create</code> if it’s being replaced (the null_resource rotation case).</li>
+<li><strong><code>~ update in-place</code></strong> — a resource whose attributes are being mutated without re-creation.</li>
+</ul>
+<p>The <code>&lt;=</code> data sources are the ones that look like:</p>
+<pre><code class="language-hcl">data "ibm_resource_group" "default" {
+  name = "Default"
+  id   = "abc123..." (will be read)
+}
+</code></pre>
+<p>These are read-only — Terraform is just resolving the resource group’s ID at plan time so downstream modules can reference it. They show up in every plan, including no-op plans.</p>
+<p><code># destroy</code> lines without a corresponding <code>+ create</code> — i.e. resources actually leaving — should make you stop and read carefully. On a re-run of <code>up</code>, this generally means an upstream HCL change removed a resource. It’s rare but not zero.</p>
+<h2 id="when-up-doesnt-apply-no-op-runs"><a class="header" href="#when-up-doesnt-apply-no-op-runs">When <code>up</code> doesn’t apply (no-op runs)</a></h2>
+<p>If the plan reports zero changes, <code>up</code> skips apply and prints:</p>
+<pre><code>✓ no changes
+</code></pre>
+<p>But it still does two best-effort post-actions:</p>
+<ol>
+<li><strong>Fetch the kubeconfig</strong> (unless <code>--no-kubeconfig</code>). Useful when the cluster exists but you’ve never grabbed the admin kubeconfig on this workstation.</li>
+<li><strong>Auto-register the <code>jumphost</code> target.</strong> Reads <code>testing_tgw_jumphost_ip</code> and <code>jumphost_shared_key</code> from Terraform outputs and writes a <code>targets:jumphost</code> entry in workspace config. Re-runs are idempotent.</li>
+</ol>
+<p>So <code>roksbnkctl up</code> against an unchanged cluster is a useful “re-establish my workstation’s view of this workspace” verb — it can’t hurt anything (no apply runs), and it freshens local artefacts.</p>
+<h2 id="the---auto---no-kubeconfig---var-file-flags"><a class="header" href="#the---auto---no-kubeconfig---var-file-flags">The <code>--auto</code>, <code>--no-kubeconfig</code>, <code>--var-file</code> flags</a></h2>
+<pre><code class="language-bash">roksbnkctl up [--auto] [--no-kubeconfig] [--var-file &lt;path&gt;]...
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td>Skip the “Apply this plan? [y/N]” prompt. Required for non-interactive runs (CI, scripted pipelines).</td></tr>
+<tr><td><code>--no-kubeconfig</code></td><td>Skip the post-apply kubeconfig fetch. Useful when you’ve already got a kubeconfig and don’t want it overwritten.</td></tr>
+<tr><td><code>--var-file &lt;path&gt;</code></td><td>Layer extra Terraform var-files onto the chain (repeatable; later wins). Lets you parameterise without editing config.yaml.</td></tr>
+<tr><td><code>--tf-source &lt;ref&gt;</code></td><td>Override the pinned TF source for this run only. Skip the embedded HCL and use a path or URL instead. Mostly for dev.</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>--var-file</code> is the canonical way to stage a non-default deploy. For example, deploying a BNK trial with a non-default <code>cne_instance.replicas</code>:</p>
+<pre><code class="language-bash">echo 'cne_replicas = 3' &gt; ./more-replicas.tfvars
+roksbnkctl up --auto --var-file ./more-replicas.tfvars
+</code></pre>
+<p>The var-file chain is, in order:</p>
+<ol>
+<li>The auto-generated <code>terraform.tfvars</code> (rendered from <code>config.yaml</code>).</li>
+<li><code>~/.roksbnkctl/&lt;workspace&gt;/state/terraform.tfvars.user</code> if present.</li>
+<li>Each <code>--var-file</code> flag, left-to-right.</li>
+</ol>
+<p>Later wins on conflict — same as Terraform’s own ordering.</p>
+<h2 id="apply-retries-on-transient-errors"><a class="header" href="#apply-retries-on-transient-errors">Apply retries on transient errors</a></h2>
+<p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>cne_instance</code>, <code>license</code>, and <code>cert-manager</code> modules all curl the master directly; on a fresh cluster, they sometimes race propagation and fail with <code>exit status 7</code> (curl couldn’t connect) or <code>Connection refused</code>.</p>
+<p><code>roksbnkctl up</code> has built-in retry: up to 3 apply attempts, with a 60-second sleep between attempts, on any of these heuristic patterns:</p>
+<ul>
+<li><code>exit status 7</code> (curl couldn’t connect)</li>
+<li><code>Connection refused</code> / <code>connection refused</code></li>
+<li><code>i/o timeout</code></li>
+<li><code>no route to host</code></li>
+<li><code>network is unreachable</code></li>
+<li><code>no such host</code></li>
+<li><code>TLS handshake timeout</code></li>
+<li><code>failed to dial</code></li>
+<li><code>to download the config doesn't exist</code></li>
+</ul>
+<p>If your apply hits one of these, you’ll see:</p>
+<pre><code>→ apply attempt 1 hit a transient-looking failure; waiting 60s and retrying...
+</code></pre>
+<p>Terraform’s idempotence means already-created resources are skipped on the retry; only the failed null_resources / data sources re-execute. After 3 attempts, <code>up</code> gives up:</p>
+<pre><code>✗ apply still failing after 3 attempts — giving up
+</code></pre>
+<p>At that point, fix the underlying cause (usually wait longer or re-run manually) and try again. The retry is for transient races, not persistent failures.</p>
+<h2 id="what-happens-on-success"><a class="header" href="#what-happens-on-success">What happens on success</a></h2>
+<p>A successful <code>up</code> does five things in order:</p>
+<ol>
+<li><strong>Apply complete.</strong> <code>Apply complete! Resources: 77 added, 0 changed, 0 destroyed.</code></li>
+<li><strong>Fetch the admin kubeconfig</strong> from IBM Cloud’s container service API. Written to <code>$KUBECONFIG</code> (or <code>~/.kube/config</code>) at mode 0600.</li>
+<li><strong>Auto-register the <code>jumphost</code> target</strong> in workspace config (so <code>--on jumphost</code> works without manual config — see <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>).</li>
+<li><strong>Stamp <code>terraform.tfstate</code>’s mtime.</strong> <code>roksbnkctl status</code> reads this as “last apply” timestamp.</li>
+<li><strong>Exit 0.</strong></li>
+</ol>
+<p>The kubeconfig fetch and jumphost registration are best-effort: they log warnings on failure but don’t fail the parent command. <code>up</code> succeeded if Terraform succeeded; the post-apply niceties are conveniences.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./07-quick-start.html">Chapter 7 — Quick start</a> — happy-path walkthrough end-to-end.</li>
+<li><a href="./11-tearing-down.html">Chapter 11 — Tearing down</a> — <code>roksbnkctl down</code> to undo a trial.</li>
+<li><a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> (lands in Sprint 3) — full reference for what you can override via <code>--var-file</code>.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — once BNK is deployed, validating its data plane.</li>
+<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.</li>
+</ul>
 
                     </main>
 

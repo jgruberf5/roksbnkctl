@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c83df32a.js";
+            window.path_to_searchindex_js = "searchindex-71da58cb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,180 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="registering-an-existing-cluster"><a class="header" href="#registering-an-existing-cluster">Registering an existing cluster</a></h1>
-<p><em>Coming in Sprint 2.</em></p>
-<p><em><code>roksbnkctl cluster register &lt;name&gt;</code>: how to wire <code>roksbnkctl</code> up to a ROKS cluster you already operate, how COS instance discovery works, and when this is the right choice over <code>cluster up</code>.</em></p>
+<p><code>roksbnkctl cluster register &lt;name&gt;</code> wires <code>roksbnkctl</code> up to a ROKS cluster that already exists in your IBM Cloud account — one you didn’t provision via <a href="./08-cluster-phase.html"><code>cluster up</code></a>. After a successful register, the workspace behaves exactly as if you’d done <code>cluster up</code>: <code>roksbnkctl up</code> deploys BNK trials onto the registered cluster, <code>roksbnkctl down</code> tears those trials down, <code>roksbnkctl status</code> reports the cluster’s identity, and so on.</p>
+<p>This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the <code>cluster-outputs.json</code> write, and a worked example.</p>
+<h2 id="when-to-use-this"><a class="header" href="#when-to-use-this">When to use this</a></h2>
+<p><code>cluster register</code> is the answer when <strong>all</strong> of these are true:</p>
+<ul>
+<li>A ROKS cluster already exists in the IBM Cloud account.</li>
+<li>You have IAM access to the cluster’s VPC + container service.</li>
+<li>You want <code>roksbnkctl</code> to deploy BNK trials onto that cluster.</li>
+<li>You don’t want <code>roksbnkctl</code> to own the cluster’s lifecycle (it shouldn’t be <code>terraform destroy</code>-able from your workstation).</li>
+</ul>
+<p>Common scenarios:</p>
+<ol>
+<li>
+<p><strong>Your team operates the ROKS cluster centrally.</strong> A platform team provisioned the cluster via their own Terraform / Pulumi / IBM Cloud Schematics; you just want to deploy BNK trials onto it. Register it; deploy trials; tear them back down. The cluster itself stays under the platform team’s ownership.</p>
+</li>
+<li>
+<p><strong>You’re attaching to an existing demo cluster.</strong> A workshop hosts a shared cluster that participants attach to. Each participant registers it in their own workspace and deploys their own trial — trials are isolated by namespace under the same cluster.</p>
+</li>
+<li>
+<p><strong>You provisioned the cluster manually for testing.</strong> You created a one-off cluster via <code>ibmcloud ks cluster create vpc-gen2 ...</code> and want to move forward with <code>roksbnkctl</code> rather than re-creating it.</p>
+</li>
+</ol>
+<p>If none of those apply — i.e. you want <code>roksbnkctl</code> to own cluster lifecycle end-to-end — use <code>cluster up</code> instead. Register and <code>cluster up</code> are mutually exclusive per workspace; the second one wins.</p>
+<h2 id="required-input-vs-auto-discovery"><a class="header" href="#required-input-vs-auto-discovery">Required input vs auto-discovery</a></h2>
+<p><code>cluster register</code> takes one positional argument (the cluster name or ID) and one optional flag (<code>--registry-cos-name</code>).</p>
+<pre><code class="language-bash">roksbnkctl cluster register &lt;cluster-name-or-id&gt; [--registry-cos-name &lt;cos-instance-name&gt;]
+</code></pre>
+<p>Everything else is <strong>auto-discovered</strong> via the IBM SDK:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cluster_id</code></td><td><code>ibmcloud ks cluster get &lt;name&gt;</code> (resolved by name → ID)</td></tr>
+<tr><td><code>region</code></td><td>from the cluster lookup</td></tr>
+<tr><td><code>resource_group_id</code></td><td>from the cluster lookup</td></tr>
+<tr><td><code>vpc_id</code></td><td>from the cluster’s <code>provider.vpcs[0].id</code></td></tr>
+<tr><td><code>master_url</code></td><td>from the cluster lookup</td></tr>
+<tr><td><code>openshift_version</code></td><td>from the cluster’s <code>masterKubeVersion</code></td></tr>
+<tr><td><code>registry_cos_crn</code></td><td>discovered via the registry COS instance lookup (see below)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The cluster lookup goes through the same container-service endpoint <code>ibmcloud ks cluster get</code> uses — no host <code>ibmcloud</code> install required. If the named cluster doesn’t exist in the account, the call returns a clear <code>no cluster named &lt;foo&gt;</code> error rather than a 404 stack trace.</p>
+<p>A <strong>vpc-gen2</strong> cluster is required. Classic infrastructure clusters return successfully but their <code>vpc_id</code> is empty, and <code>cluster register</code> refuses to write a record without one:</p>
+<pre><code>Error: cluster "old-classic" has no VPC — roksbnkctl only supports vpc-gen2 clusters
+</code></pre>
+<h2 id="the-cos-naming-convention"><a class="header" href="#the-cos-naming-convention">The COS naming convention</a></h2>
+<p><code>roksbnkctl up</code> needs a Cloud Object Storage instance to act as the registry for FAR images, JWT licenses, and schematic state. <code>cluster register</code> verifies that this COS instance exists at registration time so a later <code>up</code> doesn’t fail mid-apply with a missing-instance error.</p>
+<h3 id="default-convention"><a class="header" href="#default-convention">Default convention</a></h3>
+<p>The bundled HCL falls back to <strong><code>&lt;cluster-name&gt;-cos</code></strong> if the user’s tfvars don’t override <code>roks_cos_instance_name</code>. So <code>cluster register</code> defaults to looking up <code>&lt;cluster-name&gt;-cos</code>:</p>
+<pre><code class="language-bash"># Cluster name: "canada-roks" → expects COS instance "canada-roks-cos"
+roksbnkctl cluster register canada-roks
+</code></pre>
+<h3 id="override-with---registry-cos-name"><a class="header" href="#override-with---registry-cos-name">Override with <code>--registry-cos-name</code></a></h3>
+<p>If your team set <code>roks_cos_instance_name</code> to something else in their tfvars (or named the COS instance via the IBM Cloud console with a different convention), pass <code>--registry-cos-name &lt;name&gt;</code>:</p>
+<pre><code class="language-bash">roksbnkctl cluster register canada-roks \
+  --registry-cos-name canada-roks-bnk-registry
+</code></pre>
+<p>The instance name is <strong>case-sensitive</strong> and must match exactly — <code>Canada-ROKS-COS</code> and <code>canada-roks-cos</code> are different instances.</p>
+<h3 id="what-if-the-cos-doesnt-exist-yet"><a class="header" href="#what-if-the-cos-doesnt-exist-yet">What if the COS doesn’t exist yet?</a></h3>
+<p><code>cluster register</code> errors out:</p>
+<pre><code>Error: registry COS instance "canada-roks-cos" not found in account: ...
+  Either run `roksbnkctl cluster up` to create it, or pass --registry-cos-name &lt;name&gt;
+  if your tfvars uses a different roks_cos_instance_name
+</code></pre>
+<p>You have two options:</p>
+<ol>
+<li>
+<p><strong>Create the COS instance</strong> in the IBM Cloud console with the conventional name (<code>&lt;cluster&gt;-cos</code>), then re-run register. The instance can be empty — <code>roksbnkctl up</code> will populate it with the bucket structure it needs on its first apply.</p>
+</li>
+<li>
+<p><strong>Use a different name</strong> that already exists in the account, via <code>--registry-cos-name &lt;name&gt;</code>.</p>
+</li>
+</ol>
+<p>Either way, <code>cluster register</code> won’t write <code>cluster-outputs.json</code> until both the cluster and its registry COS instance exist.</p>
+<h2 id="the-cluster-outputsjson-write"><a class="header" href="#the-cluster-outputsjson-write">The <code>cluster-outputs.json</code> write</a></h2>
+<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look identical except for one field:</p>
+<pre><code class="language-json">{
+  "cluster_name": "canada-roks",
+  "cluster_id": "cre6h4l20jjsg4kvt3a0",
+  "region": "ca-tor",
+  "resource_group_id": "abc123...",
+  "vpc_id": "r038-...",
+  "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
+  "registry_cos_name": "canada-roks-cos",
+  "master_url": "https://c106.ca-tor.containers.cloud.ibm.com:31415",
+  "openshift_version": "4.14_openshift",
+  "source": "cluster-register",
+  "recorded_at": "2026-05-08T14:22:08Z"
+}
+</code></pre>
+<p>The <code>source</code> field is <code>cluster-register</code> (vs <code>cluster-up</code> for self-provisioned clusters). Downstream commands that care about provenance — for example, a future <code>roksbnkctl cluster down</code> would refuse to destroy a <code>cluster-register</code>-sourced cluster — read this field. Subnet IDs (<code>subnet_ids</code>) and transit gateway ID (<code>transit_gateway_id</code>) are left blank for registered clusters; the bundled HCL doesn’t need them when <code>roksbnkctl up</code> runs against a pre-existing cluster.</p>
+<h2 id="worked-example-register-canada-roks"><a class="header" href="#worked-example-register-canada-roks">Worked example: register canada-roks</a></h2>
+<p>The full flow for attaching to a hypothetical <code>canada-roks</code> cluster.</p>
+<h3 id="step-1--create-or-pick-a-workspace"><a class="header" href="#step-1--create-or-pick-a-workspace">Step 1 — create or pick a workspace</a></h3>
+<pre><code class="language-bash">roksbnkctl ws new canada
+roksbnkctl init -w canada
+# (interactive — fill in region as ca-tor; cluster.name = canada-roks)
+</code></pre>
+<p>You can also run <code>cluster register</code> against the current workspace; the <code>-w</code> is just for clarity.</p>
+<h3 id="step-2--cluster-register"><a class="header" href="#step-2--cluster-register">Step 2 — <code>cluster register</code></a></h3>
+<pre><code class="language-bash">roksbnkctl -w canada cluster register canada-roks
+</code></pre>
+<p>Sample output:</p>
+<pre><code>→ Looking up cluster "canada-roks"
+✓ Cluster canada-roks (cre6h4l20jjsg4kvt3a0) — state: normal, masters: 4.14_openshift
+✓ VPC r038-... (resource group prod-rg)
+→ Verifying registry COS instance "canada-roks-cos"
+✓ COS instance canada-roks-cos (abc-123-def-...)
+✓ Wrote ~/.roksbnkctl/canada/cluster-outputs.json
+</code></pre>
+<p>If the COS naming was non-conventional:</p>
+<pre><code class="language-bash">roksbnkctl -w canada cluster register canada-roks \
+  --registry-cos-name canada-bnk-registry
+</code></pre>
+<h3 id="step-3--verify-with-cluster-show"><a class="header" href="#step-3--verify-with-cluster-show">Step 3 — verify with <code>cluster show</code></a></h3>
+<pre><code class="language-bash">roksbnkctl -w canada cluster show
+workspace:        canada
+source:           cluster-register
+recorded_at:      2026-05-08T14:22:08Z
+
+cluster_name:     canada-roks
+cluster_id:       cre6h4l20jjsg4kvt3a0
+region:           ca-tor
+resource_group:   abc123...
+openshift:        4.14_openshift
+master_url:       https://c106.ca-tor.containers.cloud.ibm.com:31415
+
+vpc_id:           r038-...
+registry_cos:     canada-roks-cos
+registry_cos_crn: crn:v1:bluemix:public:cloud-object-storage:global:a/...
+</code></pre>
+<h3 id="step-4--fetch-the-kubeconfig"><a class="header" href="#step-4--fetch-the-kubeconfig">Step 4 — fetch the kubeconfig</a></h3>
+<p><code>cluster register</code> does <strong>not</strong> automatically download the kubeconfig — it’s a metadata-only operation. Grab it explicitly:</p>
+<pre><code class="language-bash">roksbnkctl -w canada kubeconfig --download
+# → Fetching admin kubeconfig for "canada-roks"
+# ✓ Wrote /home/you/.kube/config (12345 bytes)
+</code></pre>
+<h3 id="step-5--use-the-cluster-as-if-youd-done-cluster-up"><a class="header" href="#step-5--use-the-cluster-as-if-youd-done-cluster-up">Step 5 — use the cluster as if you’d done <code>cluster up</code></a></h3>
+<p>From here, the workflow is identical to a self-provisioned cluster:</p>
+<pre><code class="language-bash"># Verify reachability
+roksbnkctl -w canada k get nodes
+
+# Deploy a BNK trial onto it
+roksbnkctl -w canada up --auto
+
+# Tear the trial back down (cluster survives)
+roksbnkctl -w canada down --auto
+</code></pre>
+<p><code>roksbnkctl up</code> reads <code>cluster-outputs.json</code> and uses the cluster identity directly — no need to re-state cluster name/region/RG in the trial’s tfvars.</p>
+<h2 id="when-register-isnt-enough"><a class="header" href="#when-register-isnt-enough">When register isn’t enough</a></h2>
+<p>Some scenarios where <code>cluster register</code> won’t get you over the line:</p>
+<ul>
+<li><strong>The cluster is in a different IBM Cloud account.</strong> API keys are account-scoped; you’d need a key for the cluster’s account. <code>cluster register</code> doesn’t cross account boundaries.</li>
+<li><strong>The cluster is private (no public master endpoint).</strong> <code>roksbnkctl up</code> needs to apply Helm charts and Kubernetes manifests against the master. If the master is only reachable from inside a VPN, route the apply through <code>--on jumphost</code> (Sprint 1) or wait for the SSH execution backend in Sprint 4.</li>
+<li><strong>The cluster is a classic-infrastructure ROKS</strong> (not vpc-gen2). Registration refuses; classic clusters aren’t supported.</li>
+<li><strong>The cluster’s worker pool is too small.</strong> BNK trials need at least 2 workers with adequate CPU/memory. The upstream HCL provisions appropriately-sized workers; an existing cluster might not.</li>
+</ul>
+<p>For the first three, the cluster simply isn’t a candidate. For the last one, the apply may run but <code>flo</code> / <code>cne_instance</code> will fail to schedule — scale the worker pool first.</p>
+<h2 id="re-registering-and-unregistering"><a class="header" href="#re-registering-and-unregistering">Re-registering and unregistering</a></h2>
+<p>To <strong>re-register</strong> with new data (e.g. you renamed the COS instance, or the master URL changed), just run <code>cluster register</code> again — it overwrites <code>cluster-outputs.json</code> in place.</p>
+<p>To <strong>unregister</strong> without destroying anything, delete the file directly:</p>
+<pre><code class="language-bash">rm ~/.roksbnkctl/canada/cluster-outputs.json
+</code></pre>
+<p>The workspace’s <code>config.yaml</code> and <code>state/</code> survive; only the cluster identity record is removed. The next <code>roksbnkctl up</code> will fail with <code>workspace has no cluster-outputs.json</code> until you either re-register or run <code>cluster up</code>.</p>
+<p>There’s deliberately <strong>no</strong> <code>roksbnkctl cluster unregister</code> command. Deleting the JSON is a single-file operation that doesn’t deserve its own subcommand, and the absence of one nudges users toward “destroy the trial first, then deal with the cluster identity” rather than “unregister without thinking about the consequences”.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — the alternative when you want <code>roksbnkctl</code> to provision the cluster.</li>
+<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — what <code>roksbnkctl up</code> does on top of a registered (or <code>cluster up</code>’d) cluster.</li>
+<li><a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> (lands in Sprint 6) — the COS instance and bucket layout that <code>--registry-cos-name</code> points at.</li>
+</ul>
 
                     </main>
 
