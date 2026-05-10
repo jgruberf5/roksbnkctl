@@ -6,34 +6,62 @@ Execution plan synthesizing the six PRDs in [`docs/prd/`](./prd/) into sequenced
 
 | Milestone | Tag | Outcome |
 |---|---|---|
-| **M1** | `v0.7` | `--on jumphost` works; user can drive `roksbnkctl ibmcloud`/`exec`/`shell` over SSH against an auto-discovered jumphost |
-| **M2** | `v0.8` | `kubectl` no longer required on host for the happy path; native `roksbnkctl k get/apply/logs/exec` |
-| **M3** | `v0.9` | `--backend docker|k8s|ssh` works for ibmcloud, iperf3, terraform; DNS probe internalized + GSLB-aware |
-| **M4** | `v1.0` | All E2E Phases A-H plus I-N + L-DNS pass on a clean dev host (no kubectl/oc/iperf3/dig installed); credential audit clean |
+| **M1** | `v0.7` | `--on jumphost` works; user can drive `roksbnkctl ibmcloud`/`exec`/`shell` over SSH against an auto-discovered jumphost. Book infra live with first 4 chapters drafted. |
+| **M2** | `v0.8` | `kubectl` no longer required on host for the happy path; native `roksbnkctl k get/apply/logs/exec`. Book at ~10 chapters. |
+| **M3** | `v0.9` | `--backend docker|k8s|ssh` works for ibmcloud, iperf3, terraform; DNS probe internalized + GSLB-aware. Book at ~22 chapters covering the full feature surface. |
+| **M4** | `v1.0` | All E2E Phases A-H plus I-N + L-DNS pass on a clean dev host (no kubectl/oc/iperf3/dig installed); credential audit clean. **Web book published at `https://jgruberf5.github.io/roksbnkctl/book/`** — *Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl* — fully cross-linked, dogfooded, with diagrams. |
 
-Estimated calendar time: **~12 weeks** (six 2-week sprints) for a single focused engineer. Doubling that for "real-world with reviews, distractions, and integration debt" puts the M4 target around **6 months out**.
+Estimated calendar time: **~14 weeks** (seven 2-week sprints) for a single focused engineer. Doubling that for "real-world with reviews, distractions, and integration debt" puts the M4 target around **7 months out**.
+
+### About the book
+
+The book — **_Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl_** — is the canonical user-facing documentation surface, complementing the in-tree README/PRDs (which are repo-internal). It's built with [**mdBook**](https://rust-lang.github.io/mdBook/) (markdown source under `book/src/`, static-site output to `book/book/`, deployed via GitHub Actions to GitHub Pages). Key reasons for mdBook:
+
+- Lightweight: just markdown + a tiny TOML config; no React build chain
+- Linear-narrative book shape (sidebar TOC, prev/next, search) — fits a tutorial+reference hybrid
+- Easy local preview: `mdbook serve` watches and rebuilds
+- Battle-tested by Rust's own books, Kubernetes sub-projects, gitoxide, many others
+- Themable later if F5 branding is wanted
+
+Chapters land **incrementally per sprint** — each sprint's developer writes the chapter for what they just built, while the why is fresh. The final sprint is dedicated polish + diagrams + dogfooding + launch.
 
 ## Phase overview — sequencing decisions
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │ Sprint 0 (week 0)        Foundations: CI matrix, dev shortcuts    │
+│                          Book infra: mdBook setup + skeleton +    │
+│                          GitHub Pages workflow                    │
 ├───────────────────────────────────────────────────────────────────┤
 │ Sprint 1 (weeks 1-2)     PRD 01 — SSH client + --on flag          │
+│                          Book chapters: Concepts, Install,        │
+│                          Quick Start, Remote execution            │
 │   ↓                                                               │
 │ Sprint 2 (weeks 3-4)     PRD 02 — kubectl internalization         │
+│                          Book chapters: Internal kubectl, Day-2   │
 │   ↓                                                               │
 │ Sprint 3 (weeks 5-6)     PRD 04 — cred abstraction (informs 3)    │
 │                          PRD 03 — local + docker backends         │
+│                          Book chapters: Credentials, Backends     │
+│                          (intro), Workspace config                │
 │   ↓                                                               │
 │ Sprint 4 (weeks 7-8)     PRD 03 — k8s + ssh backends              │
 │                          Tool migration: iperf3, ibmcloud         │
+│                          Book chapters: K8s + SSH backends,       │
+│                          Choosing a backend, Ops pod              │
 │   ↓                                                               │
 │ Sprint 5 (weeks 9-10)    PRD 03 — DNS probe (miekg/dns + GSLB)    │
 │                          Tool migration: terraform (docker only)  │
+│                          Book chapters: DNS testing for GSLB,     │
+│                          Throughput, Connectivity                 │
 │   ↓                                                               │
 │ Sprint 6 (weeks 11-12)   PRD 05 — E2E Phases I-N + L-DNS          │
-│                          Hardening, doctor refresh, v1.0 cut      │
+│                          Hardening, doctor refresh                │
+│                          Book chapters: E2E test plan, Reference, │
+│                          Troubleshooting, Contributing            │
+│   ↓                                                               │
+│ Sprint 7 (weeks 13-14)   Book launch: dogfood, polish, diagrams,  │
+│                          cross-link, gh-pages publish, v1.0 cut   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,11 +72,11 @@ Estimated calendar time: **~12 weeks** (six 2-week sprints) for a single focused
 - DNS probe (Sprint 5) reuses the K8s backend's Job pattern from Sprint 4
 - E2E phases (Sprint 6) gate the v1.0 release
 
-## Sprint 0 — foundations (week 0)
+## Sprint 0 — foundations + book infra (week 0)
 
 ### Goal
 
-Set up the developer workflow and CI matrix so the next 12 weeks of changes can land safely.
+Set up the developer workflow + CI matrix + book authoring pipeline so the next 14 weeks of changes can land safely *and* doc updates accompany every feature.
 
 ### Code deliverables
 
@@ -59,18 +87,91 @@ Set up the developer workflow and CI matrix so the next 12 weeks of changes can 
 | Tool image build skeleton | `tools/docker/Makefile` + GitHub Actions workflow that *can* build images on tag — pushed only when tools/docker/* changes |
 | Doctor v2 sketch | Refactor `roksbnkctl doctor` so it can grow per-backend checks without rewriting; introduce `Check{Name, Status, Detail}` struct |
 
+### Documentation deliverables (book infrastructure)
+
+| Item | Detail |
+|---|---|
+| `book/` directory | mdBook source tree at the repo root |
+| `book/book.toml` | Book config: title = *Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl*, authors, language, `output.html.git-repository-url`, search enabled, syntax highlighting, sidebar style |
+| `book/src/SUMMARY.md` | Full chapter outline (see "Book outline" section below) — each chapter file created as a stub with title + 2-3 line "coming in Sprint X" placeholder |
+| `book/src/preface.md` | Introduction + "how to read this book" |
+| `.github/workflows/book.yml` | On push to main: install mdbook, run `mdbook build book/`, deploy `book/book/` to `gh-pages` branch via `peaceiris/actions-gh-pages` |
+| `Makefile` targets | `make book` (build), `make book-serve` (preview at localhost:3000), `make book-clean` |
+| README link | Top-of-README badge linking to `https://jgruberf5.github.io/roksbnkctl/book/` |
+| CONTRIBUTING.md | "How to add a chapter" section: edit `SUMMARY.md`, drop a markdown file in `book/src/`, link from a feature PR |
+
 ### Test deliverables
 
 - Existing `go test ./...` baseline runs in CI (already green from the rename + e2e work)
 - Existing `scripts/e2e-test.sh` documented in CONTRIBUTING.md as the long-running smoke test
+- Book CI: `mdbook test book/` runs on every PR — fails on broken internal links, malformed code blocks
+- Spell check via `cspell` or similar on `book/src/**/*.md` (warning, not gate)
 
 ### Gate to Sprint 1
 
 - All existing tests still green; CI matrix runs on PRs; doctor refactor merged
+- Book builds locally and via CI; first deploy lands at the GitHub Pages URL (even if every chapter is a "coming in Sprint X" stub)
 
 ### Risks
 
 - CI matrix may surface platform-specific bugs (path handling, socket types) — budget half a day for surprises
+- mdBook's GitHub Pages deploy needs `gh-pages` branch + Pages source set in repo settings — one-time admin task; document in CONTRIBUTING
+
+### Book outline (the full SUMMARY.md target)
+
+The chapter map for `book/src/SUMMARY.md`. Each chapter is a separate markdown file. Chapters land per the "Documentation deliverables" sections in Sprints 1-6 below.
+
+```
+PART I — CONCEPTS
+  1. What is BIG-IP Next for Kubernetes (BNK)
+  2. Why ROKS (Red Hat OpenShift on IBM Cloud)
+  3. What roksbnkctl does (and doesn't do)
+
+PART II — GETTING STARTED
+  4. Installation
+  5. Doctor: checking your environment
+  6. Workspaces
+  7. Quick start: from API key to deployed BNK
+
+PART III — CLUSTER LIFECYCLE
+  8. The cluster phase (cluster up/down)
+  9. Registering an existing cluster
+  10. Deploying BNK trials on top
+  11. Tearing down
+
+PART IV — CONFIGURATION
+  12. Workspace config (config.yaml)
+  13. Terraform variables (terraform.tfvars)
+  14. Credentials and the resolver chain
+  15. SSH targets
+
+PART V — REMOTE EXECUTION
+  16. The --on flag and SSH jumphosts
+  17. Execution backends: local, docker, k8s, ssh
+  18. Choosing a backend per tool
+  19. The in-cluster ops pod
+
+PART VI — TESTING
+  20. Connectivity testing
+  21. DNS testing for GSLB
+  22. Throughput testing
+  23. The E2E test plan
+
+PART VII — OPERATIONS
+  24. Day-2 ops: status, logs, k get/apply/exec
+  25. COS supply chain management
+  26. Troubleshooting
+
+PART VIII — REFERENCE
+  27. Command reference
+  28. Configuration reference
+  29. Terraform variable reference
+  30. Glossary
+
+PART IX — CONTRIBUTING
+  31. Building from source
+  32. Extending roksbnkctl
+```
 
 ---
 
@@ -99,11 +200,21 @@ Ship M1 (`v0.7`): users can run `roksbnkctl ibmcloud --on jumphost ks cluster ls
 - **Integration test** (`internal/remote/integration_test.go`, `// +build integration`): connects to an `sshd` container via `testcontainers-go`, runs `whoami`, asserts output. Run with `-tags=integration`.
 - **E2E patch**: extend `scripts/e2e-test.sh` Phase B (post cluster up) with three steps: `roksbnkctl exec --on jumphost -- whoami`, `roksbnkctl targets list`, `roksbnkctl ibmcloud --on jumphost iam oauth-tokens`. Reuses the existing cluster.
 
+### Documentation deliverables
+
+- **Chapter 1: What is BIG-IP Next for Kubernetes (BNK)** — context-setting; what BNK does, why someone would deploy it
+- **Chapter 2: Why ROKS** — IBM Cloud's managed OpenShift; what it gives you over self-managed
+- **Chapter 3: What roksbnkctl does (and doesn't do)** — the tool's scope, the explicit non-goals (not a generic IBM Cloud CLI, not a Kubernetes CLI), the relationship to bundled HCL
+- **Chapter 4: Installation** — single-binary install via curl, apt repo, or `go install`; OS support matrix
+- **Chapter 7: Quick start** — the 3-command happy path (`init` → `up` → `test` → `down`) with sample output
+- **Chapter 16: The --on flag and SSH jumphosts** — primary feature delivered this sprint; targets config, key sources, host key handling, auto-discovery from TF outputs
+
 ### Gate to Sprint 2
 
 - M1 merged + tagged `v0.7`
 - Unit + integration tests green
 - E2E (run manually): jumphost steps pass on a real ROKS cluster
+- Six chapters above are published (not stubs); book renders cleanly on GH Pages
 
 ### Risks
 
@@ -140,11 +251,22 @@ Ship M2 (`v0.8`): `roksbnkctl get/apply/logs/exec/port-forward` works without `k
 - **Golden-file tests** against a live cluster: `roksbnkctl k get nodes -o yaml` byte-compared to `kubectl get nodes -o yaml`, ignoring `managedFields/resourceVersion/creationTimestamp`. Run only with `-tags=live`.
 - **E2E patch**: existing `scripts/e2e-test.sh` Phase D — replace `roksbnkctl kubectl get pods -n f5-bnk` (D3) with `roksbnkctl k get pods -n f5-bnk`. Add a new D-internal step that `mv kubectl kubectl.hidden`'s the binary, runs `roksbnkctl k get nodes`, restores.
 
+### Documentation deliverables
+
+- **Chapter 5: Doctor** — environment check; what the green/yellow/red status means; how to fix common failures
+- **Chapter 6: Workspaces** — kubectl-style multi-environment isolation; new/use/list/delete; the parking-lot pattern from e2e
+- **Chapter 8: The cluster phase** — `cluster up`/`down`; what's deployed (cluster + cert-manager + jumphost); the `state-cluster/` state dir
+- **Chapter 9: Registering an existing cluster** — `cluster register <name>`; how COS instance name discovery works; when you'd use this vs `cluster up`
+- **Chapter 10: Deploying BNK trials** — `roksbnkctl up`; what the 77 resources are
+- **Chapter 11: Tearing down** — `down`; `cluster down`; what gets cleaned vs what stays
+- **Chapter 24: Day-2 ops** — `roksbnkctl k get/apply/logs/exec/port-forward` (the new internalized verbs); kubectl/oc passthroughs as escape hatches
+
 ### Gate to Sprint 3
 
 - M2 merged + tagged `v0.8`
 - E2E with kubectl PATH-stripped passes on a live cluster
 - Byte-equivalence test passes for `get -o yaml` on Node, Pod, Service, ConfigMap
+- Seven chapters above published; book TOC reflects the new structure
 
 ### Risks
 
@@ -188,11 +310,20 @@ Land the cred abstraction (informs all backends) and ship `local` + `docker` bac
 - **Cred audit unit test**: assert that `os.Environ()` after a backend run does not contain `IBMCLOUD_API_KEY`; assert that container args don't contain key value
 - **E2E patch**: add a Phase K-prelim to `e2e-test.sh` that exercises `--backend docker` for `ibmcloud iam oauth-tokens`
 
+### Documentation deliverables
+
+- **Chapter 12: Workspace config (config.yaml)** — full schema reference with annotated example; what every field does; defaults
+- **Chapter 13: Terraform variables** — the `terraform.tfvars` surface, the `--var-file` layering rule, when to use `roksbnkctl tfvars` to bootstrap
+- **Chapter 14: Credentials and the resolver chain** — how `IBMCLOUD_API_KEY` resolves (env → keychain → config-b64 → prompt); `kubeconfig` discovery; SSH key sources; what's safe to commit vs not (PRD 04 distilled for users)
+- **Chapter 15: SSH targets** — companion to Chapter 16 (which already exists from Sprint 1); deeper on `tf-output:` key sources, agent integration, host-key TOFU
+- **Chapter 17 (intro):** Execution backends — high-level: what the four backends are, why each exists; the `--backend` flag; per-tool defaults
+
 ### Gate to Sprint 4
 
 - Cred audit test green: API key value never appears in any inspectable surface (logs, argv, container metadata)
 - Docker backend produces output identical to local backend for `ibmcloud ks cluster ls`
 - Doctor's `--backend docker` check accurate
+- Five chapters published; book TOC has 18+ chapters live
 
 ### Risks
 
@@ -231,11 +362,18 @@ Round out the four-backend matrix; migrate iperf3 (default `k8s`) and ibmcloud (
 - **Integration**: k8s backend against `kind` cluster in CI — apply ops install, run a no-op probe, assert pod ran + cleaned up
 - **E2E**: extend `scripts/e2e-test-backends.sh` (new file) with PRD 05 Phases K (docker), L (k8s) full coverage. Reuses cluster from baseline e2e Phase D.
 
+### Documentation deliverables
+
+- **Chapter 17 (full):** Execution backends — extends the Sprint 3 intro with the full per-backend deep-dive: local exec details, docker run shape + recommended args, the in-cluster pod orchestration, SSH backend with apt-bootstrap. Each backend gets a "when to use it" table.
+- **Chapter 18: Choosing a backend per tool** — decision tree: GSLB DNS testing? local + k8s. iperf3 throughput? k8s default. ibmcloud from a customer-firewalled office? ssh. Frozen toolchain version in CI? docker.
+- **Chapter 19: The in-cluster ops pod** — `roksbnkctl ops install/show/uninstall`; what gets deployed (namespace, SA, ClusterRole, RoleBinding, Secret); RBAC privileges granted; rotation/refresh story
+
 ### Gate to Sprint 5
 
 - M3-prelim: `roksbnkctl test throughput --backend k8s` runs entirely in cluster, no host iperf3 required
 - `roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls` works on fresh Ubuntu jumphost (auto-installs ibmcloud CLI)
 - Phase K + Phase L from PRD 05 pass on a live cluster
+- Three chapters published; book has all execution-backend material covered
 
 ### Risks
 
@@ -278,11 +416,19 @@ Ship the GSLB-aware DNS probe (Phase 3 sub-feature) and finish the long-tail pol
 - **E2E**: write Phase L-DNS in `scripts/e2e-test-backends.sh` per PRD 05 — record-type variation, GSLB cross-vantage compare, latency stats, NXDOMAIN negative
 - **Manual**: real GSLB validation against the F5 BIG-IP Next deployment from Phase D — confirm `gslb_divergence` is true when probing from local vs k8s
 
+### Documentation deliverables
+
+- **Chapter 20: Connectivity testing** — `roksbnkctl test connectivity`; the `extra_hosts` config; what a pass/fail looks like; insecure-TLS option
+- **Chapter 21: DNS testing for GSLB** — flagship chapter; the GSLB problem statement, why per-vantage probing matters, `--server`/`--type`/`--iterations` flags, `--gslb-compare` workflow, JSON schema, sample F5 BIG-IP Next GSLB scenarios with expected divergence
+- **Chapter 22: Throughput testing** — iperf3 internalized via the k8s backend; the LoadBalancer-vs-ClusterIP modes; when host iperf3 install is still useful (north-south from outside cluster)
+- Update **Chapter 17** with terraform docker-backend section (added in this sprint's code work)
+
 ### Gate to Sprint 6
 
 - M3 merged + tagged `v0.9`
 - Phase L-DNS passes including the GSLB divergence detection
 - terraform `--backend docker` runs a real `up` cycle end-to-end against `hashicorp/terraform:1.5.7` (or current pin)
+- Three chapters published; testing section of book complete; total ~22 chapters live
 
 ### Risks
 
@@ -292,11 +438,11 @@ Ship the GSLB-aware DNS probe (Phase 3 sub-feature) and finish the long-tail pol
 
 ---
 
-## Sprint 6 — E2E test plan build-out + v1.0
+## Sprint 6 — E2E test plan build-out + reference docs
 
 ### Goal
 
-Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host with no host install of kubectl/oc/iperf3/dig. Credential audit clean.
+Land all E2E phases passing on a clean dev host with no host install of kubectl/oc/iperf3/dig. Land the reference + troubleshooting + contributing chapters of the book. Sprint 7 cuts the v1.0 tag after dogfood + polish.
 
 ### Code / config deliverables
 
@@ -307,8 +453,7 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 | 3 | Phase M (cred audit) implementation — automated checks of `docker inspect`, `kubectl get events`, ssh tempfile cleanup | new |
 | 4 | Phase N (mixed-mode lifecycle) wiring | new |
 | 5 | Doctor refresh: green-by-default on a stock dev box (`terraform` only required) | edit |
-| 6 | README rewrite: install instructions reflecting "terraform only" prereq | edit |
-| 7 | Migration notes for users coming from v0.6.x or earlier | new |
+| 6 | Migration notes from v0.6.x or earlier (in book + as a top-level MIGRATING.md) | new |
 
 ### Test deliverables (this sprint *is* the testing sprint)
 
@@ -317,20 +462,80 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 - Cred-leak audit (Phase M) clean: API key never appears in any inspectable surface across all backends
 - `scripts/e2e-test-full.sh` tagged in CI as a manual-trigger workflow (too long for every PR; run on release branch + on demand)
 
-### Gate to v1.0 release
+### Documentation deliverables
 
-- Tag `v1.0` only when:
-  - All E2E phases pass on a clean test host
-  - All previous sprints' acceptance criteria still hold (no regressions)
-  - README + docs accurately reflect the final shipped surface
-  - Cred audit clean
-  - At least one external user has run a full lifecycle on their own IBM Cloud account and reported success (dogfooding gate)
+- **Chapter 23: The E2E test plan** — user-facing version of PRD 05 ("here's how the E2E suite is structured, here's how to run it locally, here's what each phase validates"); links to PRD 05 for design rationale
+- **Chapter 25: COS supply chain management** — `roksbnkctl cos instance/bucket/object`; the BNK supply chain (FAR images, JWT licenses, schematics)
+- **Chapter 26: Troubleshooting** — common failure modes from real deployments: terraform-exec retries, ROKS cluster propagation lag, kubeconfig fetch 404s, OpenShift SCC violations on test pods, cluster-down → workspace-delete current-workspace gotcha. Each entry: symptom → root cause → fix.
+- **Chapter 27: Command reference** — exhaustive `--help` rendered into the book; auto-generated from cobra via `cobra-cli` or a small Go program
+- **Chapter 28: Configuration reference** — every field of `config.yaml` with type, default, allowed values
+- **Chapter 29: Terraform variable reference** — every variable in `terraform/variables.tf` with default + description (auto-generated from HCL)
+- **Chapter 30: Glossary** — BNK, ROKS, FAR, FLO, CIS, GSLB, SCC, etc.
+- **Chapter 31: Building from source** — Go version, cross-compile, the `tools/docker/` images, `mdbook serve` for docs
+- **Chapter 32: Extending roksbnkctl** — adding a new backend, adding a new test suite, the PRD process
+
+### Gate to Sprint 7
+
+- All E2E phases pass on a clean test host
+- All previous sprints' acceptance criteria still hold (no regressions)
+- Doctor green-by-default on a stock dev box
+- All 32 chapters drafted (some still rough — Sprint 7 polishes)
 
 ### Risks
 
 - **E2E flakiness**: ROKS cluster apply takes 30-50 min; transient API errors during apply add another 5-15 min; throughput tests depend on outbound network. Mitigation: PRD 05 already designs each step to be re-runnable (`PHASE_FROM=`); add jitter+retry to the assertion phases that hit external APIs.
 - **Cluster cost**: a full e2e run costs ~$5-10 of IBM cloud spend (cluster + LBs + COS). Document this in CONTRIBUTING.md so contributors don't get surprised.
 - **Slow CI**: 5 hours is too long for a PR check. Solution: gate v1.0 release branch on full e2e; PR checks run only the unit + integration tiers.
+- **Chapter 27/29 auto-generation**: cobra-to-markdown and HCL-to-markdown converters need writing. Budget half a day each; have manual fallback if generators are flaky.
+
+---
+
+## Sprint 7 — book launch + v1.0 cut (weeks 13-14)
+
+### Goal
+
+Ship M4 (`v1.0`): the binary AND the book published together as a coherent v1.0 release.
+
+### Code / config deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | README rewrite for v1.0 — terraform-only prereq, link to the book as the canonical learning path | edit |
+| 2 | `roksbnkctl --version` includes the book URL | edit |
+| 3 | Release notes (CHANGELOG.md): v0.7 → v1.0 summary | new |
+| 4 | GitHub release artifacts: signed binaries for Linux + macOS, checksums.txt, the published book PDF (mdbook can output PDF via mdbook-pdf or a print stylesheet) | new |
+| 5 | `goreleaser.yml` finalized for v1.0 — multi-platform binaries, GitHub release, optional Homebrew formula stub | edit |
+
+### Documentation deliverables (book launch)
+
+| Order | Item | Detail |
+|---|---|---|
+| 1 | **Polish pass** on every chapter | consistent voice, working code examples (every `roksbnkctl ...` snippet test-run in a fresh workspace), TOC cross-links, no "coming in Sprint X" placeholders left |
+| 2 | **Diagrams** | architecture diagram (cluster + BNK + ops pod + jumphost); execution-backend matrix diagram; lifecycle flow (init → up → test → down); GSLB cross-vantage diagram. Authored in Mermaid (renders in mdBook) so they're version-controlled. |
+| 3 | **Foreword / preface** | what motivated the tool; who this book is for; how to read it (linear vs reference) |
+| 4 | **Worked example walkthroughs** in each Part — concrete end-to-end scenarios users can copy-paste |
+| 5 | **Internal cross-linking review** — every "see Chapter X" reference resolves; the Reference part backlinks to relevant Concepts chapters |
+| 6 | **Search index** — verify mdBook search finds the right chapters for queries like "GSLB", "kubeconfig", "jumphost" |
+| 7 | **Dogfooding loop** — at least one external user reads the book and runs the full quick-start workflow against their own IBM Cloud account; feedback integrated |
+| 8 | **Launch announcement** prep — README + book preface point at the published URL; a `book/src/CHANGES.md` lists what landed for v1.0 |
+
+### Gate to v1.0 release
+
+Tag `v1.0` only when **all** of the following hold:
+
+- All E2E phases (A-H + I-N + L-DNS) pass on a clean test host
+- All previous sprints' acceptance criteria still hold (no regressions)
+- Cred audit clean (Phase M)
+- Doctor green-by-default on a stock dev box (terraform only required)
+- Book published at `https://jgruberf5.github.io/roksbnkctl/book/`, all 32+ chapters complete, dogfooded by ≥1 external user, no "coming in Sprint X" placeholders, all code examples verified
+- Release artifacts (binaries, checksums, optional PDF book) attached to the GitHub release
+- README links to the book; book links back to the repo
+
+### Risks
+
+- **Dogfood feedback** may surface real gaps that take >1 sprint to address. Mitigation: scope an early Sprint 7 "preview" deploy to a friendly user (week 13) so feedback has time to land before the v1.0 tag (week 14).
+- **PDF generation** via mdbook-pdf can be flaky on complex layouts. Mitigation: PDF is a "nice to have"; HTML book is the canonical surface. Skip PDF if it blocks v1.0.
+- **mdBook themes / branding** — F5 may want the book themed with corporate styling. Default mdBook theme for v1.0; theming deferred to v1.1.
 
 ---
 
@@ -364,6 +569,20 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 | 4 | backend argv builders | kind cluster | Phases K + L |
 | 5 | miekg with stub server | DNS probe vs 8.8.8.8 | Phase L-DNS |
 | 6 | new fixtures as needed | new audit checks | Phases I + J + M + N + assembly |
+| 7 | (regression sweeps only) | (regression sweeps only) | full A-H + I-N + L-DNS for the v1.0 gate; dogfood scenarios |
+
+### Per-sprint book chapters (cumulative)
+
+| Sprint | Chapters added (cumulative count) |
+|---|---|
+| 0 | book skeleton (32 stubs); 0 published |
+| 1 | 1, 2, 3, 4, 7, 16 → **6 published** |
+| 2 | 5, 6, 8, 9, 10, 11, 24 → **13 published** |
+| 3 | 12, 13, 14, 15, 17 (intro) → **18 published** |
+| 4 | 17 (full), 18, 19 → **21 published** |
+| 5 | 20, 21, 22 → **24 published** |
+| 6 | 23, 25, 26, 27, 28, 29, 30, 31, 32 → **33 published** (Chapter 17 also revised) |
+| 7 | (polish only — diagrams, cross-links, foreword) → **all chapters launch-ready** |
 
 ### Continuous gates
 
@@ -383,6 +602,10 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 | E2E flakiness from external network | 6 | medium | retry + jitter on external probes; clear "test infra unstable" vs "real failure" classification |
 | ROKS cluster cost in CI | 6 | low | document in CONTRIBUTING; full e2e is manual-trigger only |
 | Windows compatibility | all | low | set "Linux + macOS first" expectation; degraded TTY support documented |
+| Book chapter drift behind code | 1-6 | medium | each feature PR must include the corresponding chapter update; PR template asks for it; book CI fails on broken xrefs |
+| Auto-generated reference chapters (Ch 27, 29) flaky | 6 | low | manual fallback ready; auto-gen is a nice-to-have, not blocking |
+| Dogfood feedback surfaces gap close to v1.0 cut | 7 | medium | early dogfood deploy in week 13; week 14 reserved for integrating findings; willing to slip v1.0 by 1-2 weeks rather than ship with known doc gaps |
+| mdbook-pdf flaky on layouts | 7 | low | PDF is optional; HTML book is canonical |
 
 ## Definition of done — per release
 
@@ -391,6 +614,7 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 - Sprint 0 + 1 complete
 - `--on jumphost` validated against a live cluster
 - README documents `targets:` config block + `roksbnkctl targets` commands
+- Book infrastructure live; 6 chapters published (Concepts intro + Install + Quick start + Remote execution)
 
 ### v0.8 (M2)
 
@@ -398,6 +622,7 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 - `roksbnkctl k get/apply/logs/exec/port-forward` covers BNK-relevant operations
 - Doctor downgrades kubectl/oc to informational
 - Byte-equivalence test green for representative resources
+- Book at 13 chapters covering Concepts + Getting Started + Cluster Lifecycle + early Operations
 
 ### v0.9 (M3)
 
@@ -405,18 +630,28 @@ Ship M4 (`v1.0`): all E2E phases (A-H + I-N + L-DNS) pass on a clean dev host wi
 - Four backends working for at least ibmcloud + iperf3
 - DNS probe internalized; GSLB divergence detection works
 - Cred audit (unit + integration tier) clean
+- Book at 24 chapters covering everything user-facing through testing
 
 ### v1.0 (M4)
 
-- Sprint 6 complete
+- Sprints 6 + 7 complete
 - All E2E Phases A-H + I-N + L-DNS pass on a clean host
 - README rewritten for terraform-only-prereq install
 - Tagged release with binaries for Linux + macOS (Windows compile-only)
 - At least one external user has done a full lifecycle dogfood
+- **Book launched** at `https://jgruberf5.github.io/roksbnkctl/book/`:
+  - All 32+ chapters complete and polished (no placeholders)
+  - Mermaid diagrams in place (architecture, lifecycle, GSLB, backend matrix)
+  - Every code example test-verified in a fresh workspace
+  - Search works for canonical queries (GSLB, jumphost, kubeconfig, …)
+  - Dogfood feedback integrated
+  - Optional PDF artifact attached to the GitHub release
 
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
+
+### Code
 
 - terraform `--backend k8s` and `--backend ssh` (state-handling work — v1.1)
 - OpenShift CRDs in `roksbnkctl k get` (`Project`, `Route`, etc. — v1.1 — tracked in PRD 02 § Phase 2.1)
@@ -427,3 +662,11 @@ These came up during the PRDs but aren't blocking v1.0:
 - Long-running ops pod with kubeconfig refresh on token rotation (v1.1 — PRD 04 open question)
 - DNS probe `--require-divergence` CI assertion mode (v1.1)
 - Bash completion for `roksbnkctl k <verb> <resource-name>` with live API lookups (v1.1)
+
+### Book
+
+- F5 corporate theming (v1.1 if branding requested)
+- Translated editions (v2)
+- Video walkthroughs / screen recordings embedded in chapters (v1.1)
+- Per-chapter "try it now" interactive sandbox (v2)
+- Versioned book — keeping a `v0.9/`, `v1.0/`, `v1.1/` URL path so older releases' docs stay accessible (v1.1; book is single-version for v1.0)
