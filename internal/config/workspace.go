@@ -135,15 +135,15 @@ type ConnectivityCfg struct {
 // TFSourceCfg picks where Terraform's source tree comes from. Type
 // drives which other fields apply:
 //
-//	embedded — uses the HCL bundled into the roksbnkctl binary via
-//	           go:embed. No other fields needed. This is the default
-//	           and what most users want; install one binary, get
-//	           CLI + matched TF together.
-//	github   — downloads a tarball release from a GitHub repo. Repo
-//	           ("owner/name") and Ref (release tag) required. For
-//	           testing forks or pinning to a specific upstream tag.
-//	local    — points Terraform at a directory on disk. Path required.
-//	           For active development on the HCL itself.
+//   - embedded — uses the HCL bundled into the roksbnkctl binary via
+//     Go's embed directive. No other fields needed. This is the
+//     default and what most users want; install one binary, get
+//     CLI + matched TF together.
+//   - github — downloads a tarball release from a GitHub repo. Repo
+//     ("owner/name") and Ref (release tag) required. For testing
+//     forks or pinning to a specific upstream tag.
+//   - local — points Terraform at a directory on disk. Path required.
+//     For active development on the HCL itself.
 //
 // An empty Type (legacy / forgot-to-set) is treated as embedded.
 type TFSourceCfg struct {

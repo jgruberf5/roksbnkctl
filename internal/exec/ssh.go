@@ -310,8 +310,12 @@ func (b *SSHBackend) ensureTool(ctx context.Context, client remoteClient, tool s
 	}
 
 	// Detect Ubuntu — PRD 03 only supports Ubuntu auto-install in v1.
+	// The exit code is intentionally ignored: `lsb_release -is` may not
+	// be installed on minimal images (the `|| true` shell-side fallback
+	// keeps the command's exit at 0); we read the empty stdout in that
+	// case and surface the "non-Ubuntu" message via the EqualFold below.
 	var osIDOut bytes.Buffer
-	rc, _ = client.Run(ctx, []string{"sh", "-c", "lsb_release -is 2>/dev/null || true"}, remote.RunOpts{
+	_, _ = client.Run(ctx, []string{"sh", "-c", "lsb_release -is 2>/dev/null || true"}, remote.RunOpts{
 		Stdout: &osIDOut, Stderr: io.Discard,
 	})
 	osID := strings.TrimSpace(osIDOut.String())

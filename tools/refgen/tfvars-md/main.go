@@ -99,13 +99,6 @@ func run(w io.Writer) error {
 var variableBlockRe = regexp.MustCompile(`(?m)^variable\s+"([^"]+)"\s*\{`)
 
 // fieldRe matches a single key = value line inside a variable block.
-// value can be a quoted string, a number, a bool, a function call, a
-// list/object literal, etc. We capture from `=` to end-of-line (with
-// multi-line list/object continuation handled separately below).
-//
-//nolint:unused // future extension hook
-var fieldRe = regexp.MustCompile(`(?m)^\s+(\w+)\s*=\s*(.*)$`)
-
 // parseFile reads a terraform variables.tf file and returns its
 // parsed blocks. Returns an empty slice (not nil) when the file has
 // no variables — keeps downstream rendering branchless.

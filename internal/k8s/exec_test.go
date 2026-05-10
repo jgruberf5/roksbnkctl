@@ -8,6 +8,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ import (
 // TestExecOptions_RequiresPod: missing PodName errors out.
 func TestExecOptions_RequiresPod(t *testing.T) {
 	o := &ExecOptions{Command: []string{"ls"}}
-	err := o.Run(nil)
+	err := o.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty PodName; got nil")
 	}
@@ -28,7 +29,7 @@ func TestExecOptions_RequiresPod(t *testing.T) {
 // (matches kubectl: `kubectl exec foo` without `--` is a usage error).
 func TestExecOptions_RequiresCommand(t *testing.T) {
 	o := &ExecOptions{PodName: "p"}
-	err := o.Run(nil)
+	err := o.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error for empty Command; got nil")
 	}
