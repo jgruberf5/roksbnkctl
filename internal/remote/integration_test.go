@@ -108,16 +108,7 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 			"SUDO_ACCESS":     "false",
 			"PUBLIC_KEY":      authorizedKey,
 		},
-		// linuxserver/openssh-server briefly binds 2222 during s6-overlay
-		// init before sshd is actually accepting handshakes — a wait on
-		// "port listening" alone races and produces "connection reset by
-		// peer" on the next test's Connect. The container's final
-		// readiness signal is the sshd "Server listening" line; gate on
-		// that as well so Connect always lands on a live daemon.
-		WaitingFor: wait.ForAll(
-			wait.ForListeningPort("2222/tcp"),
-			wait.ForLog("Server listening on :: port 2222").WithStartupTimeout(90*time.Second),
-		).WithStartupTimeoutDefault(90 * time.Second),
+		WaitingFor: wait.ForListeningPort("2222/tcp").WithStartupTimeout(60 * time.Second),
 	}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
@@ -144,6 +135,14 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 		t.Fatalf("mapped port: %v", err)
 	}
 
+	// linuxserver/openssh-server's s6-overlay binds 2222 a moment before
+	// sshd is actually accepting handshakes — wait.ForListeningPort
+	// returns happy on the first bind, but the next handshake hits a
+	// "connection reset by peer" closing socket. Probe the daemon with a
+	// real ssh.Dial here and retry until the handshake completes (or the
+	// budget expires) so test bodies see a live sshd.
+	waitForSSHReady(ctx, t, host, int(mapped.Num()), user, signer)
+
 	return &sshFixture{
 		container: c,
 		host:      host,
@@ -152,6 +151,37 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 		signer:    signer,
 		keyPath:   keyFile,
 	}
+}
+
+// waitForSSHReady polls the mapped port with a real SSH handshake until
+// one succeeds. Tolerates the transient "reset by peer" / "EOF" /
+// "handshake failed" errors that the linuxserver/openssh-server image
+// emits during s6-overlay init. 30s budget covers a cold container; a
+// healthy daemon answers in <1s.
+func waitForSSHReady(ctx context.Context, t *testing.T, host string, port int, user string, signer ssh.Signer) {
+	t.Helper()
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         3 * time.Second,
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			t.Fatalf("ssh readiness probe: ctx done: %v", ctx.Err())
+		}
+		conn, err := ssh.Dial("tcp", addr, cfg)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("ssh daemon not ready at %s within 30s: %v", addr, lastErr)
 }
 
 // target builds the *Target struct (per staff's targets.go shape) the SSH
