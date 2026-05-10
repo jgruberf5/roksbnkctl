@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
+            window.path_to_searchindex_js = "searchindex-9c10052e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,203 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="throughput-testing"><a class="header" href="#throughput-testing">Throughput testing</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em>iperf3 throughput testing internalized via the k8s backend: LoadBalancer vs ClusterIP modes, when a host iperf3 install is still useful (north-south from outside the cluster), and how to interpret the JSON results.</em></p>
+<p><code>roksbnkctl test throughput</code> measures TCP bandwidth between an iperf3 client and an iperf3 server, with at least one side running adjacent to (or inside) the cluster so the number reflects something useful — cluster fabric, the inbound path through a LoadBalancer, the outbound path from a jumphost.</p>
+<p>The heavy lifting (server pod lifecycle, OpenShift SCC compliance, in-cluster client Job, log streaming) lives in <a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a>. This chapter is the user-facing flag surface, the mode selection, and the output-interpretation guide.</p>
+<h2 id="what-the-suite-measures"><a class="header" href="#what-the-suite-measures">What the suite measures</a></h2>
+<p>Plain TCP throughput, plus jitter and retransmits, between two endpoints both running iperf3:</p>
+<ul>
+<li>The <strong>server</strong> runs in the cluster — a single bare Pod plus a Service, deployed in the <code>roksbnkctl-test</code> namespace. Service type is <code>ClusterIP</code> for east-west, <code>LoadBalancer</code> for north-south. See <a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> for the manifest details.</li>
+<li>The <strong>client</strong> runs wherever you point the backend — by default in the cluster as a one-shot Job, alternatively on your laptop or on a registered SSH target.</li>
+<li>Output is iperf3’s native <code>-J</code> JSON, parsed and surfaced as <code>roksbnkctl test throughput</code> JSON.</li>
+</ul>
+<p>The suite is appropriate for “is the cluster fabric healthy”, “is the BNK data path delivering the bandwidth I expect from outside”, and “is this jumphost the bottleneck between my office and the cluster”. It is not a precision benchmark — TCP throughput is sensitive to MTU, NIC offloads, kernel tunables, and the iperf3 server’s own resource limits, none of which the suite tries to control.</p>
+<h2 id="the-two-modes"><a class="header" href="#the-two-modes">The two modes</a></h2>
+<p>Mode is selected by <code>--mode</code>. The default is <code>north-south</code>.</p>
+<pre><code class="language-bash">roksbnkctl test throughput --mode north-south   # default
+roksbnkctl test throughput --mode east-west
+</code></pre>
+<h3 id="--mode-north-south"><a class="header" href="#--mode-north-south"><code>--mode north-south</code></a></h3>
+<p>Measures the <strong>inbound path</strong> from outside the cluster to a Pod inside it. The server’s Service is a <code>LoadBalancer</code>, so the cluster provisions an external endpoint (an IBM Cloud LB on ROKS, an external IP / hostname on bare-metal k8s). The client connects to that endpoint.</p>
+<p>Use cases:</p>
+<ul>
+<li>“Is the BNK ingress path delivering the bandwidth I expect”</li>
+<li>“Is my office Wi-Fi or my home connection the bottleneck”</li>
+<li>“Is the cluster’s egress capacity what the cloud provider promised”</li>
+</ul>
+<p>Combine with <code>--backend local</code> (run the client on your laptop) when you specifically want to measure the laptop-to-cluster path. Combine with <code>--backend ssh:&lt;jumphost&gt;</code> when you want a known-stable measurement vantage from a jumphost in a known IP block — useful when laptop Wi-Fi is suspect.</p>
+<h3 id="--mode-east-west"><a class="header" href="#--mode-east-west"><code>--mode east-west</code></a></h3>
+<p>Measures the <strong>intra-cluster fabric</strong> — Pod-to-Pod or host-to-Pod. The server’s Service is <code>ClusterIP</code>, reachable only from inside the cluster. The default <code>--backend k8s</code> runs the client adjacent to the server (a one-shot Job in the same namespace), so the number reflects the CNI’s pod-to-pod throughput.</p>
+<p>Use cases:</p>
+<ul>
+<li>“Is the cluster’s network plugin healthy”</li>
+<li>“Are the worker nodes hitting the link rate the underlying fabric promises”</li>
+<li>“Has the BNK CIS deployment regressed cluster-internal throughput”</li>
+</ul>
+<p>Today’s east-west still allows <code>--backend local</code> (the client runs on the host and reaches the ClusterIP via NodePort-equivalent access if the kubeconfig is the same one a <code>kubectl port-forward</code> would use), but the number is a host-to-cluster-via-NodePort hybrid in that case rather than a true pod-to-pod measurement. True pod-to-pod east-west — both sides scheduled to specific pods, optionally pinned to different nodes via <code>--cross-node</code> — is the v1.x refinement; today the in-cluster Job client gets you most of the way there.</p>
+<h2 id="per-tool-default-backend"><a class="header" href="#per-tool-default-backend">Per-tool default backend</a></h2>
+<p>The default backend for <code>iperf3</code> is <strong><code>k8s</code></strong>. From the per-tool defaults table in <a href="./18-choosing-backend.html#per-tool-default-backends">Chapter 18 §“Per-tool default backends”</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default backend</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. Default to running adjacent to the cluster so the number reflects fabric, not Wi-Fi.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The default holds whether or not you’ve set <code>exec.iperf3.backend</code> in workspace config. To override per-invocation:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --backend local                  # client on laptop
+roksbnkctl test throughput --backend ssh:jumphost           # client on jumphost
+roksbnkctl test throughput --backend k8s                    # default; explicit
+</code></pre>
+<p><code>--backend docker</code> is <strong>rejected</strong> by the throughput suite. A Docker container running locally has the same network identity as the host (default bridge networking), so the client’s view of the network is identical to <code>--backend local</code>. The CLI errors at parse time:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: --backend docker isn't supported for iperf3 — docker shares the host
+       network namespace by default and gives no network-locality benefit over
+       local. Use --backend local or --backend k8s instead
+</code></pre>
+<p><a href="./18-choosing-backend.html#i-want-to-measure-cluster-bandwidth">Chapter 18 §“Throughput testing”</a> is the decision-tree row that walks through the (mode, backend) matrix.</p>
+<p>When <code>local</code> or <code>ssh:&lt;target&gt;</code> makes sense:</p>
+<ul>
+<li><strong><code>local</code></strong>: you’re deliberately measuring laptop-to-cluster bandwidth (north-south from your seat). Typical use is debugging “the dashboard feels slow from my desk” — you want to confirm the office uplink, not the cluster fabric, is the bottleneck.</li>
+<li><strong><code>ssh:&lt;target&gt;</code></strong>: you have a registered SSH target with a known IP (often a customer jumphost in a specific datacenter) and want a bandwidth measurement from that vantage. The SSH backend ensures <code>iperf3</code> is on the target (auto-installs via <code>apt</code> with <code>--bootstrap</code> on Ubuntu; see <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a>).</li>
+</ul>
+<h2 id="the-bundled-image-and-the-runasnonroot-constraint"><a class="header" href="#the-bundled-image-and-the-runasnonroot-constraint">The bundled image and the <code>runAsNonRoot</code> constraint</a></h2>
+<p>The iperf3 server pod’s <code>securityContext</code> is set to satisfy OpenShift’s <code>restricted-v2</code> SCC:</p>
+<pre><code class="language-yaml">securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containers:
+- name: iperf3
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+</code></pre>
+<p>iperf3 listens on port 5201 (unprivileged) so root isn’t needed. The bundled image at <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> declares <code>USER 1000</code> in its Dockerfile, matching the pod’s <code>runAsUser: 1000</code>.</p>
+<p>Two things follow:</p>
+<ol>
+<li>
+<p><strong>Stock images that run as root will fail admission.</strong> The default in workspace config is <code>networkstatic/iperf3:latest</code>, which runs as root. On OpenShift / on any cluster with <code>restricted-v2</code> PodSecurity admission, that image will fail with <code>forbidden: violates PodSecurity "restricted:v1.x"</code>. The fix is to switch to the bundled image:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+</code></pre>
+<p>The bundled image is the <code>--backend k8s</code> default for the <strong>client</strong> Job regardless; the workspace override only affects the server pod’s image. Keep them in sync to avoid version skew during a debug session.</p>
+</li>
+<li>
+<p><strong>A custom workspace-overridden image must respect <code>runAsNonRoot</code>.</strong> If you point <code>test.throughput.image</code> at your own iperf3 image, that image must not require root to start. iperf3 itself doesn’t need privilege; if your image does, drop the <code>USER root</code> line and rebuild.</p>
+</li>
+</ol>
+<p><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> goes deeper on the SCC story — what the four <code>securityContext</code> fields do, why each is required, and how to debug an admission failure.</p>
+<h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
+<p>Default output is human-readable on stderr; <code>-o json</code> switches to JSON on stdout.</p>
+<h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
+<pre><code>$ roksbnkctl test throughput
+→ Deploying iperf3 fixture
+→ Waiting for iperf3 server pod ready
+→ Waiting for LoadBalancer endpoint (can take 30–90s on IBM Cloud)
+✓ iperf3 endpoint: 169.45.91.10:5201
+running throughput ...
+  PASS  iperf3 north-south → 169.45.91.10:5201 (k8s)  3.41 Gbps received, 0% retransmits in 30s
+throughput PASS (1/1 passed)
+✓ iperf3 fixture removed
+</code></pre>
+<h3 id="json"><a class="header" href="#json">JSON</a></h3>
+<p>iperf3’s <code>-J</code> output is rich (sender, receiver, per-stream stats, CPU usage). The roksbnkctl wrapper preserves the iperf3 JSON in the probe’s <code>detail</code> field so all of iperf3’s data survives, while the suite-level shell follows the <code>roksbnkctl.v1</code> schema:</p>
+<pre><code class="language-bash">roksbnkctl test throughput -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "throughput",
+  "timestamp": "2026-05-10T14:32:01Z",
+  "duration_ms": 31420,
+  "overall": "pass",
+  "results": [
+    {
+      "suite": "throughput",
+      "name": "iperf3 north-south → 169.45.91.10:5201 (k8s)",
+      "status": "pass",
+      "duration_ms": 30015,
+      "detail": "{ ...full iperf3 -J JSON, including sum_received, sum_sent... }"
+    }
+  ]
+}
+</code></pre>
+<p>The fields you’ll most often want from the embedded iperf3 JSON, in order of usefulness:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>What it tells you</th></tr>
+</thead>
+<tbody>
+<tr><td><code>end.sum_received.bits_per_second</code></td><td>The throughput number you should report. iperf3 measures both sender and receiver and the receiver number is the right one to quote — it accounts for retransmits and any path losses.</td></tr>
+<tr><td><code>end.sum_sent.bits_per_second</code></td><td>Sender-side throughput. If sent ≫ received, packets were dropped on the path. If sent ≈ received, the path is healthy.</td></tr>
+<tr><td><code>end.sum_sent.retransmits</code></td><td>TCP retransmits over the run. A handful is normal; double-digit-percent of streams indicates congestion or a bad NIC.</td></tr>
+<tr><td><code>end.streams[].sender.jitter_ms</code></td><td>Per-stream jitter. Useful for diagnosing variable-latency paths.</td></tr>
+<tr><td><code>end.cpu_utilization_percent.host_total</code></td><td>Whether the client CPU was the bottleneck. &gt;80% suggests the iperf3 client maxed out CPU before the network did — increase <code>--streams</code> to spread load, or run on a beefier client.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Example interpretation:</p>
+<pre><code>sum_received: 3.41 Gbps     → headline number
+sum_sent:     3.42 Gbps     → very close, healthy path
+retransmits:  127           → normal-low
+</code></pre>
+<p>vs</p>
+<pre><code>sum_received: 1.21 Gbps     → headline number
+sum_sent:     2.95 Gbps     → ≫ received; &gt;50% of bytes lost or retransmitted
+retransmits:  18743         → heavy
+</code></pre>
+<p>The second shape is what a saturated link or a flaky NIC looks like. The first is a healthy gigabit-class path.</p>
+<h2 id="openshift-scc-failure-mode"><a class="header" href="#openshift-scc-failure-mode">OpenShift SCC failure mode</a></h2>
+<p>If your throughput pod fails to start with one of:</p>
+<ul>
+<li><code>Forbidden: violates PodSecurity "restricted:v1.x"</code></li>
+<li><code>unable to validate against any security context constraint: ... restricted-v2</code></li>
+<li><code>runAsNonRoot is required</code></li>
+</ul>
+<p>…then either the configured image runs as root (use the bundled <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> image instead — set <code>test.throughput.image</code> in workspace config) or the cluster’s PodSecurity admission is stricter than <code>restricted-v2</code> (the manifest the k8s backend builds satisfies <code>restricted-v2</code> but not <code>privileged</code>; if your cluster requires <code>privileged</code> for the test namespace, that’s a cluster policy question outside the suite’s control).</p>
+<p><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> is the canonical source for the manifest’s <code>securityContext</code>. If you’re hand-rolling an iperf3 image for the suite, it’s the spec to match.</p>
+<h2 id="tuning-knobs-in-workspace-config"><a class="header" href="#tuning-knobs-in-workspace-config">Tuning knobs in workspace config</a></h2>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+    duration: 30        # iperf3 -t flag, seconds
+    streams: 8          # iperf3 -P flag, parallel streams
+    default_mode: north-south
+</code></pre>
+<p>The defaults (30s, 8 streams, north-south) are a reasonable starting point for “is the BNK data path healthy”. For deeper diagnosis:</p>
+<ul>
+<li>Bump <code>duration</code> to 60-90s if the path is variable and you want a stable average.</li>
+<li>Bump <code>streams</code> to 16 or 32 if the path’s bandwidth-delay product is high (long-haul links benefit from more parallelism).</li>
+<li>Drop <code>streams</code> to 1 if you’re specifically testing single-flow throughput (e.g., reproducing a customer’s “single-stream upload feels slow” complaint).</li>
+</ul>
+<p><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> lists the full schema.</p>
+<h2 id="cleanup-and---keep"><a class="header" href="#cleanup-and---keep">Cleanup and <code>--keep</code></a></h2>
+<p>By default the suite tears down the iperf3 server pod and Service after the client run completes. If a test fails and you want to poke at the fixture (kubectl exec into the server, hand-run <code>iperf3 -c</code> from a third location, etc.), pass <code>--keep</code>:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --keep
+# ... fixture stays up; debug to your heart's content ...
+kubectl delete -n roksbnkctl-test pod/roksbnkctl-iperf3 svc/roksbnkctl-iperf3
+</code></pre>
+<p>The fixture is in the <code>roksbnkctl-test</code> namespace (same namespace the k8s backend uses for one-shot Jobs). It’s a bare Pod plus a Service; nothing else lingers when you delete the two resources.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> — server-side mechanics (manifest, SCC, log streaming, exit-code extraction).</li>
+<li><a href="./17-execution-backends.html#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> — the asymmetric server-pod-plus-client-Job shape.</li>
+<li><a href="./18-choosing-backend.html#i-want-to-measure-cluster-bandwidth">Chapter 18 §“I want to measure cluster bandwidth”</a> — the decision-tree entry that picks <code>(mode, backend)</code> for your scenario.</li>
+<li><a href="./12-workspace-config.html#test">Chapter 12 §“test:”</a> — workspace-config schema for <code>test.throughput.*</code>.</li>
+<li><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> — the simpler “does HTTP work” companion suite.</li>
+<li><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> — the DNS validation companion.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#iperf3">PRD 03 §“iperf3”</a> — the design spec.</li>
+</ul>
 
                     </main>
 

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
+            window.path_to_searchindex_js = "searchindex-9c10052e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -2899,12 +2899,13 @@ exec:
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Tool</th><th>Default backend</th><th>Why</th></tr>
+<tr><th>Tool</th><th>Default backend</th><th>Supported backends</th><th>Why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>terraform</code></td><td><code>local</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here.</td></tr>
-<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
-<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi.</td></tr>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here. v0.9 adds <code>docker</code> (frozen <code>hashicorp/terraform:1.5.7</code>, bind-mount state) — see <a href="#terraform-via-docker">§ terraform via docker</a>. <code>k8s</code> and <code>ssh</code> deferred to v1.x.</td></tr>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi.</td></tr>
+<tr><td><code>dns</code></td><td><code>local</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Single-vantage by default; <code>--gslb-compare</code> fans out across configured vantages for GSLB validation. See <a href="#dns-testing-for-gslb">Chapter 21</a>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -3018,6 +3019,55 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 <p>Combined with the daemon’s own watchdog on the container, the worst case is a few seconds of “container is dying” between Ctrl-C and the container disappearing. We haven’t seen leaked containers in dev or CI.</p>
 <h4 id="image-build-pipeline"><a class="header" href="#image-build-pipeline">Image build pipeline</a></h4>
 <p>Image versions are tagged in lock-step with <code>roksbnkctl</code> releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See <a href="#building-from-source">Chapter 31 — Building from source</a> for the build pipeline details.</p>
+<h4 id="terraform-via-docker"><a class="header" href="#terraform-via-docker">terraform via docker</a></h4>
+<p>Sprint 5 adds <code>terraform</code> to the docker backend’s tool list. The shape is similar to <code>ibmcloud</code> (<code>docker run</code> against a vendored image, single-file mounts for sensitive data, no creds in argv) but with two terraform-specific concerns: state persistence across runs, and host-user UID alignment so state files written inside the container stay readable on the host.</p>
+<h5 id="state-persistence-via-bind-mount"><a class="header" href="#state-persistence-via-bind-mount">State persistence via bind-mount</a></h5>
+<p>Terraform’s local state file lives at <code>terraform.tfstate</code> in the working directory. For the docker backend the working directory has to be a host-side path bind-mounted into the container, not a container-internal path that disappears on <code>--rm</code>. The docker backend bind-mounts the workspace’s state directory into the container:</p>
+<pre><code>docker run --rm \
+  -v ~/.roksbnkctl/&lt;workspace&gt;/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
+  --user $(id -u):$(id -g) \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+</code></pre>
+<p>Concretely:</p>
+<ul>
+<li><strong>Host source</strong>: <code>~/.roksbnkctl/&lt;workspace&gt;/state/</code> — the same directory the local terraform backend writes state to today, so switching between <code>--backend local</code> and <code>--backend docker</code> against the same workspace doesn’t fork state.</li>
+<li><strong>Container target</strong>: <code>/state</code> — the bind-mount root inside the container.</li>
+<li><strong>Container working directory</strong>: <code>/state/tf-source/&lt;source&gt;/</code> (e.g., <code>/state/tf-source/embedded-terraform/</code> for the default embedded source) — the same path the local backend resolves to, so terraform sees the same <code>main.tf</code> either way.</li>
+<li><strong>The HCL is bind-mounted alongside state.</strong> The embedded HCL is materialised at run time into <code>~/.roksbnkctl/&lt;workspace&gt;/state/tf-source/&lt;source&gt;/</code> (chapter 31 covers the embedded-source layout); since <code>state/</code> is the bind-mount root, both <code>terraform.tfstate</code> and the HCL tree land inside the container together. There’s no separate HCL projection.</li>
+</ul>
+<p>The bind-mount is read-write — terraform needs to write <code>terraform.tfstate</code>, rotate <code>terraform.tfstate.backup</code>, and populate the <code>.terraform/</code> cache. Combined with <code>--rm</code>, the file lifecycle is: container creates state, container exits, <code>--rm</code> removes the container, state files persist on the host. Subsequent runs (re-mounted at the same host path) pick up where the prior run left off.</p>
+<h5 id="image-hashicorpterraform157"><a class="header" href="#image-hashicorpterraform157">Image: <code>hashicorp/terraform:1.5.7</code></a></h5>
+<p>The image is the official upstream <code>hashicorp/terraform</code> published by HashiCorp on Docker Hub, pinned to a literal version in <code>internal/exec/docker.go</code>’s <code>toolImages</code> map (currently <code>1.5.7</code>). The pin is intentional — the embedded HCL has been validated against this terraform version, and the docker backend’s whole point is reproducibility. Bumping the pin is a deliberate change to the binary and lands as a release.</p>
+<p>The vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) get their tag from the <code>roksbnkctl</code> binary’s own version (see <a href="#dev-tag-resolution">§ <code>:dev</code> tag resolution</a> above). Terraform is the exception — the binary’s version doesn’t follow upstream terraform’s release cadence, so the pin stays literal.</p>
+<h5 id="the-uidgid-alignment-gotcha"><a class="header" href="#the-uidgid-alignment-gotcha">The UID/GID alignment gotcha</a></h5>
+<p>Linux Docker containers run as root by default. With a root-owned container writing into a bind-mount, the resulting host files end up owned by root — and any subsequent local-backend <code>terraform apply</code> (or even a <code>cat ~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfstate</code>) hits permission errors. The docker backend works around this by passing <code>--user $(id -u):$(id -g)</code> explicitly:</p>
+<pre><code class="language-bash">docker run --rm \
+  --user 1000:1000 \                                     # host's caller-uid:caller-gid
+  -v ~/.roksbnkctl/dev-tor/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+</code></pre>
+<p>The container process runs as the host user, so files written into the bind-mount are owned by the host user — same as a local-backend <code>terraform apply</code> would have produced. Switching backends mid-debug doesn’t strand state files behind a permission wall.</p>
+<p>The UID/GID values are read from the host process at run time (Go’s <code>os.Getuid()</code> / <code>os.Getgid()</code>). On macOS this is mostly cosmetic — Docker Desktop’s VM normalises ownership on the host bind-mount automatically — but it’s required for clean Linux behaviour, so the backend always passes the flag.</p>
+<h5 id="supported-commands"><a class="header" href="#supported-commands">Supported commands</a></h5>
+<p>The terraform docker backend honours <code>--backend docker</code> for the four lifecycle commands:</p>
+<pre><code class="language-bash">roksbnkctl up      --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+roksbnkctl plan    --backend docker  [--var-file &lt;path&gt;]
+roksbnkctl apply   --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+roksbnkctl destroy --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+</code></pre>
+<p>Flags that the local terraform backend honours (<code>--var-file</code>, <code>--auto-approve</code>, plus the <code>-w/--workspace</code> selector) plumb through to the docker backend identically — the backend’s job is to spawn <code>hashicorp/terraform:1.5.7</code> with the right argv; it doesn’t filter or rewrite the lifecycle commands’ flags.</p>
+<p><code>roksbnkctl up --backend docker</code> is the apply-with-auto-approve shorthand the existing local lifecycle uses; <code>--backend docker</code> switches the spawn target without changing the command shape.</p>
+<h5 id="deferred-k8s-and-ssh-terraform-backends"><a class="header" href="#deferred-k8s-and-ssh-terraform-backends">Deferred: k8s and ssh terraform backends</a></h5>
+<p><code>--backend k8s</code> and <code>--backend ssh:&lt;target&gt;</code> for terraform are <strong>not</strong> in v0.9. The blocker is state-handling: the local backend keeps state on the host filesystem, the docker backend bind-mounts the same path, but <code>k8s</code> (run terraform in a one-shot Job) and <code>ssh:&lt;target&gt;</code> (run terraform on a remote host) need a story for shipping state between the run vantage and the canonical workspace state dir. Designs under consideration include a versioned ConfigMap/Secret pair for k8s and an scp-pre-and-post atomic move for ssh; both are deferred to v1.x once the trade-offs have settled.</p>
+<p><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> is the design spec; trying <code>--backend k8s</code> against terraform on v0.9 errors at parse time:</p>
+<pre><code>$ roksbnkctl up --backend k8s
+error: terraform doesn't support backend `k8s` in v0.9 (state-handling design
+       open; tracked in PRD 03 § State concerns); supported: local, docker
+</code></pre>
 <h4 id="when-to-use-it-1"><a class="header" href="#when-to-use-it-1">When to use it</a></h4>
 <ul>
 <li>You’re on a clean dev machine without <code>ibmcloud</code> installed and don’t want to install it.</li>
@@ -3790,16 +3840,727 @@ applying secret roksbnkctl-ops/roksbnkctl-ibm-creds       ... ERROR: Get "https:
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="connectivity-testing"><a class="header" href="#connectivity-testing">Connectivity testing</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em><code>roksbnkctl test connectivity</code>: the <code>extra_hosts</code> config, what a pass / fail looks like, and the insecure-TLS option for self-signed dev environments.</em></p>
+<p><code>roksbnkctl test connectivity</code> answers one question: <em>can my workspace reach the HTTP/HTTPS endpoints I care about right now?</em></p>
+<p>It’s the simplest of the three test suites — no cluster fixtures, no remote vantage, no JSON parsing harness. Each configured URL gets one HTTP <code>GET</code>, the suite reports pass/fail, and the runner exits <code>0</code> if every probe passed.</p>
+<p>Use it as the first sanity check after <code>roksbnkctl up</code>, as a CI smoke step against a known-good fixture set, or as the “is it me or is it the network” baseline before reaching for <code>curl -v</code> or <code>openssl s_client</code>.</p>
+<h2 id="what-the-connectivity-suite-does"><a class="header" href="#what-the-connectivity-suite-does">What the connectivity suite does</a></h2>
+<p>For each configured URL the runner:</p>
+<ol>
+<li>Adds an <code>https://</code> scheme if you didn’t write one.</li>
+<li>Issues a single <code>GET</code> with a 10-second timeout and the user-agent <code>roksbnkctl/test</code>.</li>
+<li>Records the HTTP status code, the wall-clock duration, and (for HTTPS) the negotiated TLS version.</li>
+<li>Marks the probe <strong>pass</strong> if the status code is in <code>[200, 400)</code> (any 2xx or 3xx); <strong>fail</strong> for anything else, any TLS error, any DNS error, any timeout.</li>
+<li>Aggregates the per-URL results into a suite result; the suite passes only when every URL passed.</li>
+</ol>
+<p>That’s it. No retries, no expected-body matching, no configurable status assertions, no L4 reachability — those are deliberate non-goals (see <a href="#when-connectivity-is-the-wrong-tool">§ When connectivity is the wrong tool</a> below).</p>
+<h2 id="configuring-extra_hosts"><a class="header" href="#configuring-extra_hosts">Configuring <code>extra_hosts</code></a></h2>
+<p>The list of URLs to probe lives in your workspace config under <code>test.connectivity.extra_hosts</code>:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  connectivity:
+    extra_hosts:
+      - https://my-bnk-cis-controller.example.com
+      - https://bigip-next-admin.example.com:8443
+      - https://gslb.example.com
+      - my-bare-host.example.com    # scheme defaults to https://
+</code></pre>
+<p>The schema is intentionally minimal — <code>extra_hosts</code> is a <code>[]string</code> of URLs (or bare hostnames; <code>https://</code> is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.</p>
+<p>There’s no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than “does HTTP work” — a particular status code, a custom header, a body match — <code>curl</code> is the right tool, not <code>roksbnkctl test connectivity</code>. We may revisit a richer schema in a future release; the v0.9 surface holds the YAML simple on purpose.</p>
+<p><a href="#test">Chapter 12 — Workspace config</a> covers the full <code>test:</code> block; this chapter expands the <code>connectivity</code> slice.</p>
+<h3 id="what-extra_hosts-typically-holds"><a class="header" href="#what-extra_hosts-typically-holds">What <code>extra_hosts</code> typically holds</a></h3>
+<p>Three classes of URL show up most often in a real workspace:</p>
+<ul>
+<li><strong>The BNK CIS controller</strong> — confirms the data-plane front-end is reachable and is returning a sane status code.</li>
+<li><strong>The F5 BIG-IP Next admin endpoint</strong> — confirms the management plane is reachable from your seat (often <code>:8443</code> rather than <code>:443</code>).</li>
+<li><strong>The GSLB VIP that fronts the application</strong> — confirms the routed name actually serves a 2xx; pair with <a href="#dns-testing-for-gslb"><code>roksbnkctl test dns</code></a> for the GSLB-aware DNS-side validation.</li>
+</ul>
+<p>What doesn’t belong in <code>extra_hosts</code>: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than “got a 2xx or 3xx”. Those are <code>curl</code> jobs, not connectivity-suite jobs.</p>
+<h2 id="the---insecure-flag"><a class="header" href="#the---insecure-flag">The <code>--insecure</code> flag</a></h2>
+<p>Self-signed certs are common in pre-production BNK deployments — the F5 BIG-IP Next admin endpoint, the CIS controller, an internal GSLB VIP that hasn’t yet been re-fronted with a public CA cert. By default Go’s TLS stack rejects them and the probe fails with <code>x509: certificate signed by unknown authority</code>.</p>
+<p>Pass <code>--insecure</code> to skip certificate verification for the run:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity --insecure
+</code></pre>
+<p>What <code>--insecure</code> does:</p>
+<ul>
+<li>Sets <code>tls.Config.InsecureSkipVerify = true</code> on the HTTP client used by the connectivity suite.</li>
+<li>Applies for the duration of one invocation only.</li>
+<li>Affects every URL probed in that run.</li>
+</ul>
+<p>What <code>--insecure</code> does <strong>not</strong> do:</p>
+<ul>
+<li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
+<li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
+<li>It is not persisted. Setting it in one invocation does not affect the next.</li>
+<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v0.9 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
+</ul>
+<p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
+<h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
+<p>Default output is human-readable on stderr; pass <code>-o json</code> for machine-readable on stdout.</p>
+<h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
+<pre><code class="language-bash">$ roksbnkctl test connectivity
+running connectivity ...
+  PASS  https://my-bnk-cis-controller.example.com  200 OK in 142ms
+  PASS  https://bigip-next-admin.example.com:8443  302 Found in 88ms
+  FAIL  https://gslb.example.com                   Get "...": dial tcp: i/o timeout
+connectivity FAIL (2/3 passed)
+$ echo $?
+1
+</code></pre>
+<p>A 3xx redirect counts as pass — the runner doesn’t follow redirects, but the redirect itself is a successful HTTP response, which is what the suite measures. If you specifically need the final 200 after a redirect chain, <code>curl -L</code> is the tool.</p>
+<h3 id="json"><a class="header" href="#json">JSON</a></h3>
+<pre><code class="language-bash">$ roksbnkctl test connectivity -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "connectivity",
+  "timestamp": "2026-05-10T14:32:01.123Z",
+  "duration_ms": 235,
+  "overall": "fail",
+  "results": [
+    {
+      "suite": "connectivity",
+      "name": "https://my-bnk-cis-controller.example.com",
+      "status": "pass",
+      "detail": "200 OK in 142ms",
+      "duration_ms": 142,
+      "extra": { "status_code": 200, "tls_version": "TLS 1.3" }
+    },
+    {
+      "suite": "connectivity",
+      "name": "https://gslb.example.com",
+      "status": "fail",
+      "detail": "Get \"https://gslb.example.com\": dial tcp: i/o timeout",
+      "duration_ms": 10003
+    }
+  ]
+}
+</code></pre>
+<p>Exit code follows the same rules as the human-readable form: <code>0</code> on <code>overall: pass</code>, <code>1</code> on <code>overall: fail</code>. CI runners can branch on the exit code; richer assertions (e.g., “I tolerate one fail out of five”) need to consume the JSON.</p>
+<h2 id="running-connectivity-inside-roksbnkctl-test-all"><a class="header" href="#running-connectivity-inside-roksbnkctl-test-all">Running connectivity inside <code>roksbnkctl test all</code></a></h2>
+<p>Connectivity is one of the suites the bare <code>roksbnkctl test</code> (or <code>roksbnkctl test all</code>) command dispatches. The runner walks every configured suite, prints per-suite summaries on stderr, and exits non-zero if any suite failed:</p>
+<pre><code class="language-bash">$ roksbnkctl test
+running connectivity ...
+  PASS  https://bnk-cis.dev-tor.example.com  200 OK in 174ms
+running dns ...
+  PASS  bnk-cis.dev-tor.example.com  resolved 1 address(es)
+connectivity PASS (1/1 passed)
+dns          PASS (1/1 passed)
+
+PASS overall (2/2 suites passed)
+</code></pre>
+<p>In <code>-o json</code> mode, <code>roksbnkctl test all</code> emits an <code>all</code>-shape envelope with one <code>suites[]</code> entry per suite. CI assertions can pin to either the suite-level overall or to a specific probe’s status:</p>
+<pre><code class="language-bash">roksbnkctl test all -o json | jq -e '.suites[] | select(.suite=="connectivity") | .overall == "pass"'
+</code></pre>
+<p>The bare <code>roksbnkctl test</code> defaults to the <code>all</code> suite. To run connectivity in isolation:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity            # explicit suite
+roksbnkctl test connectivity --insecure # session-wide TLS skip
+</code></pre>
+<h2 id="exit-codes-and-ci-integration"><a class="header" href="#exit-codes-and-ci-integration">Exit codes and CI integration</a></h2>
+<pre><code>exit 0  →  every probe passed (every URL returned 2xx or 3xx)
+exit 1  →  any probe failed (non-2xx/3xx, TLS error, DNS error, timeout)
+</code></pre>
+<p>There’s no third “infra error” exit code from the connectivity suite specifically — the suite is straight Go HTTP, no external tooling, no backend dispatch. If <code>roksbnkctl test connectivity</code> exits non-zero, the cause is in the response from one of your configured URLs.</p>
+<p>For a CI step that tolerates a known-flaky endpoint while still failing on the others, consume the JSON instead of relying on the exit code:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity -o json \
+  | jq -e '[.results[] | select(.name | test("flaky-staging.example") | not) | .status] | all(. == "pass")'
+</code></pre>
+<h2 id="worked-example-probing-a-bnk-deployment"><a class="header" href="#worked-example-probing-a-bnk-deployment">Worked example: probing a BNK deployment</a></h2>
+<p>A typical post-<code>up</code> config for a BNK trial — cover the data-plane VIP, the admin endpoint, and the GSLB front:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/dev-tor/config.yaml
+test:
+  connectivity:
+    extra_hosts:
+      - https://bnk-cis.dev-tor.bnkfun.example.com         # BNK CIS controller (data plane)
+      - https://bigip-next-admin.dev-tor.bnkfun.example.com:8443  # F5 BIG-IP Next admin
+      - https://gslb-vip.dev-tor.bnkfun.example.com        # the GSLB front
+</code></pre>
+<p>Then:</p>
+<pre><code class="language-bash">$ roksbnkctl test connectivity --insecure
+running connectivity ...
+  PASS  https://bnk-cis.dev-tor.bnkfun.example.com               200 OK in 174ms
+  PASS  https://bigip-next-admin.dev-tor.bnkfun.example.com:8443 302 Found in 91ms
+  PASS  https://gslb-vip.dev-tor.bnkfun.example.com              200 OK in 211ms
+connectivity PASS (3/3 passed)
+</code></pre>
+<p><code>--insecure</code> is needed here because BNK’s admin endpoint and the GSLB VIP are fronted by a self-signed cert in dev. Once the trial moves to a production cert chain, drop the flag — the strict path is what you want for staging and prod.</p>
+<h2 id="when-connectivity-is-the-wrong-tool"><a class="header" href="#when-connectivity-is-the-wrong-tool">When connectivity is the wrong tool</a></h2>
+<p><code>roksbnkctl test connectivity</code> is “does HTTP work”. For anything finer-grained, reach for the right tool:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>Use this instead</th></tr>
+</thead>
+<tbody>
+<tr><td>You want to see the full TLS handshake, the cert chain, the SNI resolution, the negotiated cipher</td><td><code>openssl s_client -connect host:port -servername host</code></td></tr>
+<tr><td>You want headers, redirect-following, body matching, a specific status assertion</td><td><code>curl -v -L --fail-with-body &lt;url&gt;</code></td></tr>
+<tr><td>You want to confirm L4 reachability on a specific port, no HTTP layer</td><td><code>nc -vz host port</code> (or <code>bash -c 'echo &gt; /dev/tcp/host/port'</code>)</td></tr>
+<tr><td>You want to confirm DNS resolution from a specific resolver, especially across vantages for GSLB</td><td><a href="#dns-testing-for-gslb"><code>roksbnkctl test dns</code></a></td></tr>
+<tr><td>You want to see what answer a name returns from inside the cluster vs from your laptop</td><td><a href="#the---gslb-compare-workflow"><code>roksbnkctl test dns --gslb-compare</code></a></td></tr>
+<tr><td>You want to measure bandwidth between two endpoints</td><td><a href="#throughput-testing"><code>roksbnkctl test throughput</code></a></td></tr>
+</tbody>
+</table>
+</div>
+<p>The connectivity suite is intentionally a thin probe. When the answer to “is it broken” is “yes” and you need to know why, the suite has done its job — it’s flagged the URL — and the next step is one of the tools above.</p>
+<h2 id="cross-references-12"><a class="header" href="#cross-references-12">Cross-references</a></h2>
+<ul>
+<li><a href="#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
+<li><a href="#dns-testing-for-gslb">Chapter 21 — DNS testing for GSLB</a> — when “the URL fails” actually means “the name doesn’t resolve from this vantage”.</li>
+<li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
+<li><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="dns-testing-for-gslb"><a class="header" href="#dns-testing-for-gslb">DNS testing for GSLB</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em>The flagship testing chapter. The GSLB problem statement, why per-vantage probing matters, the <code>--server</code> / <code>--type</code> / <code>--iterations</code> flags, the <code>--gslb-compare</code> workflow, the JSON output schema, and worked F5 BIG-IP Next GSLB scenarios with expected divergence.</em></p>
+<p><code>roksbnkctl test dns</code> is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the <em>answer</em> a name returns isn’t a single global truth but a function of <em>who’s asking from where</em>.</p>
+<p>This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you “the URL works”; throughput testing tells you “the path is fast”. Both assume the name resolved. When the GSLB is the thing under test, “the name resolved” is <em>itself</em> the question — and the answer changes depending on the network vantage of whoever’s asking.</p>
+<p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what <code>v0.9</code> ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<h2 id="the-gslb-problem"><a class="header" href="#the-gslb-problem">The GSLB problem</a></h2>
+<p>F5 BIG-IP Next’s GSLB (Global Server Load Balancing) returns different DNS answers depending on the requesting resolver’s IP address. The discrimination is a feature, not a bug — that’s the whole point of GSLB:</p>
+<ul>
+<li><strong>Geographic affinity</strong>: a user in the US gets a US datacenter IP; a user in the EU gets an EU datacenter IP. The dispatch rule is per-region.</li>
+<li><strong>Datacenter routing</strong>: a request from a known partner CIDR gets a private VIP; a request from the public internet gets a public VIP.</li>
+<li><strong>Health-check state</strong>: when the primary pool member goes unhealthy, GSLB starts handing out the secondary pool member’s IP — but only after the resolver’s TTL on the prior answer expires.</li>
+<li><strong>Anycast vs unicast</strong>: a name fronted by an anycast resolver fleet may return the same answer everywhere; the same name fronted by GSLB returns a per-region answer.</li>
+</ul>
+<p>Validating GSLB means validating that the <em>right</em> answer comes back from the <em>right</em> vantage. From your laptop in Toronto, you should see the US datacenter IP. From a workload running in the EU, you should see the EU datacenter IP. From an east-Asia bastion, you should see whatever your GSLB rule says east-Asia gets.</p>
+<p>The standard <code>dig www.example.com</code> from your laptop only ever tells you what your laptop’s resolver, talking to its configured upstream, gets back. That’s one vantage. To validate GSLB you need <em>several</em>, and you need to be able to compare the answers.</p>
+<h2 id="why-per-vantage-probing-matters"><a class="header" href="#why-per-vantage-probing-matters">Why per-vantage probing matters</a></h2>
+<p>A concrete worked example. Suppose your GSLB rule says:</p>
+<blockquote>
+<p>“Users in the US get the IP for <code>dc1.example.com</code> (<code>169.45.91.10</code>). Users in the EU get the IP for <code>dc2.example.com</code> (<code>52.123.45.67</code>).”</p>
+</blockquote>
+<p>You run from your laptop in the US:</p>
+<pre><code class="language-bash">$ dig +short www.example.com
+169.45.91.10
+</code></pre>
+<p>That confirms the US rule. But it tells you nothing about the EU rule. To verify the EU rule you’d have to actually be in the EU — or, more practically, run the query <em>from</em> a network vantage that the GSLB will treat as EU.</p>
+<p><code>roksbnkctl test dns</code> makes that vantage selection a flag:</p>
+<pre><code class="language-bash"># From the laptop (your home / office / coffee-shop IP)
+roksbnkctl test dns --target www.example.com --type A --backend local
+
+# From inside the cluster (the cluster's egress IP — often a different region)
+roksbnkctl test dns --target www.example.com --type A --backend k8s
+
+# From a registered SSH target in the EU
+roksbnkctl test dns --target www.example.com --type A --backend ssh:eu-bastion
+</code></pre>
+<p>The <code>--gslb-compare</code> flag fans out across the configured backends in parallel and emits a single JSON report that calls out whether the answers diverged across vantages — exactly the assertion you need for “is the GSLB rule taking effect”.</p>
+<h2 id="the-roksbnkctl-test-dns-flag-surface"><a class="header" href="#the-roksbnkctl-test-dns-flag-surface">The <code>roksbnkctl test dns</code> flag surface</a></h2>
+<pre><code class="language-bash">roksbnkctl test dns \
+  [--target &lt;name&gt;] \
+  [--type &lt;record-type&gt;] \
+  [--server &lt;server-spec&gt;] \
+  [--iterations &lt;N&gt;] \
+  [--backend &lt;local|k8s|ssh:&lt;target&gt;&gt;] \
+  [--gslb-compare] \
+  [-o json]
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--target</code></td><td>the workspace’s <code>test.dns.default_target</code> if set, otherwise required</td><td>The DNS name to query. FQDN preferred (the trailing dot is added if missing).</td></tr>
+<tr><td><code>--type</code></td><td><code>A</code></td><td>Any record type the underlying <a href="https://github.com/miekg/dns"><code>miekg/dns</code></a> library accepts via <a href="https://pkg.go.dev/github.com/miekg/dns#StringToType"><code>dns.StringToType</code></a>. Common picks: <code>A</code>, <code>AAAA</code>, <code>CNAME</code>, <code>MX</code>, <code>NS</code>, <code>TXT</code>, <code>SRV</code>, <code>SOA</code>, <code>PTR</code>, <code>CAA</code>, <code>DS</code>, <code>DNSKEY</code>, <code>ANY</code>. The full table also includes <code>HTTPS</code>, <code>SVCB</code>, <code>TLSA</code>, <code>SSHFP</code>, <code>URI</code>, <code>NAPTR</code>, <code>RRSIG</code>, <code>NSEC</code>/<code>NSEC3</code>, <code>LOC</code>, etc.</td></tr>
+<tr><td><code>--server</code></td><td><code>system</code></td><td>Where to send the query. Literal IP, <code>host:port</code>, the keyword <code>system</code> (use the host’s <code>/etc/resolv.conf</code>), the keyword <code>cluster</code> (use the cluster’s CoreDNS — <code>--backend k8s</code> only), or a name from the workspace’s <code>test.dns.resolvers</code> map.</td></tr>
+<tr><td><code>--iterations</code></td><td><code>1</code></td><td>How many queries to send to the same server. The runner reports per-query RTT plus p50/p95/p99 across the run.</td></tr>
+<tr><td><code>--backend</code></td><td>per-tool default (see <a href="#backend-selection-for-the-probe">§ Backend selection</a>)</td><td><code>local</code>, <code>k8s</code>, or <code>ssh:&lt;target&gt;</code>. Docker is rejected — see <a href="#why---backend-docker-is-rejected">§ Why <code>--backend docker</code> is rejected</a>.</td></tr>
+<tr><td><code>--gslb-compare</code></td><td>off</td><td>Fan out across all configured vantages and emit a comparison JSON. See <a href="#the---gslb-compare-workflow">§ The <code>--gslb-compare</code> workflow</a>.</td></tr>
+<tr><td><code>-o json</code></td><td>text</td><td>Switch from human-readable text on stderr to JSON on stdout. Two schemas: <code>roksbnkctl.dns.v1.vantage</code> for single-vantage runs (a flat document), <code>roksbnkctl.dns.v1</code> for <code>--gslb-compare</code> (wraps one or more vantages plus a <code>gslb_divergence</code> boolean).</td></tr>
+</tbody>
+</table>
+</div>
+<p>The probe library is <code>github.com/miekg/dns</code> — the same DNS implementation CoreDNS uses. Replacing the standard library’s <code>net.Resolver</code> got us three things we couldn’t get otherwise:</p>
+<ul>
+<li><strong>Full record-type surface</strong>: <code>net.Resolver</code> only exposes a fixed subset; GSLB validation often needs <code>CAA</code> (cert provisioning), <code>DS</code>/<code>DNSKEY</code> (DNSSEC), or <code>SOA</code> (authority chain) which <code>net.Resolver</code> doesn’t.</li>
+<li><strong>Per-query server selection</strong>: standard library hides the upstream resolver behind whatever <code>/etc/resolv.conf</code> says; we need to be able to point at a specific GSLB VIP for the query.</li>
+<li><strong>Per-query RTT measurement</strong>: <code>miekg/dns</code>’s <code>Exchange()</code> returns <code>time.Duration</code> directly. No timing-overhead fudging from running queries serially through the resolver chain.</li>
+</ul>
+<p>When <code>--backend k8s</code> is selected, the probe self-execs as a one-shot Job in the <code>roksbnkctl-test</code> namespace — no separate image. <code>roksbnkctl</code> is its own probe runner; the Job’s pod runs <code>roksbnkctl test dns ...</code> with <code>--backend local</code> from the cluster’s network vantage. See <a href="#k8s-backend">Chapter 17 §“K8s backend”</a> for the Job mechanics.</p>
+<h2 id="server-resolution"><a class="header" href="#server-resolution">Server resolution</a></h2>
+<p><code>--server</code> accepts five forms:</p>
+<h3 id="literal-ip-or-hostport"><a class="header" href="#literal-ip-or-hostport">Literal IP or <code>host:port</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server 8.8.8.8
+roksbnkctl test dns --target www.example.com --type A --server 8.8.8.8:53
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com:53
+</code></pre>
+<p>Bare hosts default to port 53. IPv6 literals must be bracketed: <code>[2001:4860:4860::8888]:53</code>.</p>
+<h3 id="system"><a class="header" href="#system"><code>system</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server system
+</code></pre>
+<p>Reads <code>/etc/resolv.conf</code> from the host running the probe (so for <code>--backend local</code> that’s your laptop; for <code>--backend k8s</code> that’s the Pod’s <code>/etc/resolv.conf</code>, which CoreDNS owns; for <code>--backend ssh:&lt;target&gt;</code> that’s the target’s <code>/etc/resolv.conf</code>). This is the default if <code>--server</code> is omitted entirely.</p>
+<h3 id="cluster-1"><a class="header" href="#cluster-1"><code>cluster</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server cluster --backend k8s
+</code></pre>
+<p>Identical to <code>system</code> when running with <code>--backend k8s</code> (CoreDNS is what the Pod’s <code>/etc/resolv.conf</code> points at). Allowed only with <code>--backend k8s</code> — using <code>--server cluster</code> from a <code>local</code> or <code>ssh</code> vantage errors at parse time, since “cluster CoreDNS” isn’t a meaningful concept from outside.</p>
+<h3 id="named-resolver-from-workspace-config"><a class="header" href="#named-resolver-from-workspace-config">Named resolver from workspace config</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server gslb-vip
+</code></pre>
+<p>Looks up <code>gslb-vip</code> in <code>test.dns.resolvers</code> (see next section). Useful for checking the same name against several different upstream resolvers without remembering each IP.</p>
+<h2 id="workspace-config-testdns"><a class="header" href="#workspace-config-testdns">Workspace config: <code>test.dns</code></a></h2>
+<p>Two new keys land this sprint under the existing <code>test:</code> block:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  dns:
+    default_target: www.example.com
+    resolvers:
+      google:     "8.8.8.8:53"
+      cloudflare: "1.1.1.1:53"
+      gslb-vip:   "169.45.91.5:53"
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dns.default_target</code></td><td>string</td><td>empty</td><td>The name <code>roksbnkctl test dns</code> queries when <code>--target</code> isn’t passed. Lets you keep the per-workspace canonical name out of every CLI invocation.</td></tr>
+<tr><td><code>dns.resolvers</code></td><td>map[string]string</td><td>empty</td><td>Named resolvers usable as <code>--server &lt;name&gt;</code>. Values are <code>&lt;host&gt;:&lt;port&gt;</code> (port required; mirrors the <code>--server</code> literal-IP form).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Both are optional. With neither set, <code>--target</code> is required on every invocation and <code>--server</code> only accepts literal IPs / <code>system</code> / <code>cluster</code>.</p>
+<p><a href="#test">Chapter 12 §“test:”</a> is the full workspace-config reference; this is the GSLB-relevant subset.</p>
+<h2 id="backend-selection-for-the-probe"><a class="header" href="#backend-selection-for-the-probe">Backend selection for the probe</a></h2>
+<p>The probe runs from one network vantage at a time per <code>--backend</code>:</p>
+<ul>
+<li><strong><code>--backend local</code></strong>: in-process. Runs in the <code>roksbnkctl</code> binary itself, so the network vantage is your laptop’s. No cluster prereq, no SSH prereq.</li>
+<li><strong><code>--backend k8s</code></strong>: a one-shot Job in <code>roksbnkctl-test</code>. The Job’s pod runs the bundled tools image <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;tag&gt;</code> — the same image the in-cluster ops pod uses, which carries both <code>ibmcloud</code> and <code>roksbnkctl</code> on PATH. (If a Job fails to pull, <code>kubectl describe pod</code> will name the <code>roksbnkctl-tools-ibmcloud</code> image — there is no separate <code>roksbnkctl-cli</code> image to look for.) The Job’s command is <code>roksbnkctl test dns --target ... --type ... --server ... --backend local -o json</code>; the stdout is collected via the k8s backend’s log-stream path. Vantage is the cluster’s egress IP.</li>
+<li><strong><code>--backend ssh:&lt;target&gt;</code></strong>: scps the <code>roksbnkctl</code> binary onto the target if it’s missing (or skips if it’s already there, marker-file gated), then runs the same <code>roksbnkctl test dns ... --backend local -o json</code> over SSH. The vantage is the target’s IP.</li>
+<li><strong><code>--backend docker</code></strong>: rejected — see below.</li>
+</ul>
+<p>The default backend per <code>roksbnkctl</code> invocation (when <code>--backend</code> is omitted and there’s no <code>exec.dns.backend</code> in workspace config) is <code>local</code>. To run GSLB cross-vantage you generally pass <code>--gslb-compare</code>, which fans out instead of picking a single vantage.</p>
+<p><a href="#k8s-backend">Chapter 17 §“K8s backend”</a> has the one-shot-Job mechanics; <a href="#ssh-backend">Chapter 17 §“SSH backend”</a> has the file-materialisation and bootstrap story. Both apply to the DNS probe verbatim.</p>
+<h2 id="the---gslb-compare-workflow"><a class="header" href="#the---gslb-compare-workflow">The <code>--gslb-compare</code> workflow</a></h2>
+<p>Pass <code>--gslb-compare</code> to fan out across all configured vantages in parallel and emit a single comparison JSON:</p>
+<pre><code class="language-bash">roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.example.com \
+  --gslb-compare \
+  -o json
+</code></pre>
+<p>What happens:</p>
+<ol>
+<li>The runner enumerates configured vantages: <code>local</code> always; <code>k8s</code> when a kubeconfig is reachable on the host (the probe runs as a one-shot Job in <code>roksbnkctl-test</code> — the long-lived ops pod isn’t required); plus every entry in the workspace’s <code>targets:</code> block, each as <code>ssh:&lt;name&gt;</code>.</li>
+<li>Each vantage runs the probe in sequence (one at a time; the run completes when the slowest vantage returns). The query (target, type, server) is identical; only the backend differs. Worst-case wall time with three vantages and the default 2-second per-query timeout is ~6 seconds.</li>
+<li>Per-vantage results are collected with their full RTT distribution and answer set.</li>
+<li>The runner compares the answer sets across vantages. If they differ, <code>gslb_divergence</code> is set to <code>true</code> in the output and a human-readable summary names the diverging vantages.</li>
+<li>The output is a single <code>roksbnkctl.dns.v1</code> JSON document wrapping one <code>vantages[]</code> entry per backend.</li>
+</ol>
+<p><code>gslb_divergence: true</code> is <strong>not</strong> a failure signal — for a healthy GSLB it’s the <em>expected</em> outcome. The exit code is <code>0</code> whenever every per-vantage probe succeeded (got an answer, even if the answers differ). The exit code is <code>1</code> when any per-vantage probe failed (NXDOMAIN, SERVFAIL, timeout).</p>
+<h2 id="json-output-schema"><a class="header" href="#json-output-schema">JSON output schema</a></h2>
+<p>There are <strong>two distinct JSON shapes</strong> depending on whether <code>--gslb-compare</code> was passed. Both are versioned, both pin against <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe”</a>, and both can be consumed by CI:</p>
+<ul>
+<li><strong><code>roksbnkctl.dns.v1.vantage</code></strong> — single-vantage probe. A flat document describing one vantage’s result.</li>
+<li><strong><code>roksbnkctl.dns.v1</code></strong> — multi-vantage <code>--gslb-compare</code>. Wraps an array of per-vantage entries plus a <code>gslb_divergence</code> boolean.</li>
+</ul>
+<h3 id="single-vantage-output-roksbnkctldnsv1vantage"><a class="header" href="#single-vantage-output-roksbnkctldnsv1vantage">Single-vantage output (<code>roksbnkctl.dns.v1.vantage</code>)</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
+  --iterations 10 --backend local -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1.vantage",
+  "backend": "local",
+  "server": "8.8.8.8:53",
+  "iterations": 10,
+  "rtt_ms": { "p50": 12.4, "p95": 18.1, "p99": 22.7 },
+  "answers": [
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.132.229" },
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.133.229" }
+  ],
+  "rcode": "NOERROR",
+  "authoritative": false,
+  "truncated": false
+}
+</code></pre>
+<p>This is the per-vantage shape — no <code>target</code> / <code>type</code> wrapper at the top level (the caller already knows what they queried), no <code>vantages[]</code> array, no <code>gslb_divergence</code> field.</p>
+<h3 id="multi-vantage-output-roksbnkctldnsv1-divergence-detected"><a class="header" href="#multi-vantage-output-roksbnkctldnsv1-divergence-detected">Multi-vantage output (<code>roksbnkctl.dns.v1</code>, divergence detected)</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "vantages": [
+    {
+      "schema": "roksbnkctl.dns.v1.vantage",
+      "backend": "local",
+      "server": "169.45.91.5:53",
+      "iterations": 1,
+      "rtt_ms": { "p50": 14.2, "p95": 14.2, "p99": 14.2 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "169.45.91.10" }
+      ],
+      "rcode": "NOERROR",
+      "authoritative": true,
+      "truncated": false
+    },
+    {
+      "schema": "roksbnkctl.dns.v1.vantage",
+      "backend": "k8s",
+      "server": "169.45.91.5:53",
+      "iterations": 1,
+      "rtt_ms": { "p50": 8.7, "p95": 8.7, "p99": 8.7 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "10.20.30.40" }
+      ],
+      "rcode": "NOERROR",
+      "authoritative": true,
+      "truncated": false
+    }
+  ],
+  "gslb_divergence": true,
+  "gslb_divergence_summary": "answers differ between local (169.45.91.10) and k8s (10.20.30.40) — GSLB returning location-specific records as expected"
+}
+</code></pre>
+<p>The comparison document embeds the per-vantage shape unchanged inside <code>vantages[]</code> — each entry still carries <code>"schema": "roksbnkctl.dns.v1.vantage"</code> so a downstream parser can validate per-vantage entries against the same schema independent of whether they came in standalone or as part of a comparison.</p>
+<h3 id="schema-field-reference"><a class="header" href="#schema-field-reference">Schema field reference</a></h3>
+<p><strong>Per-vantage shape</strong> (<code>roksbnkctl.dns.v1.vantage</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Type</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>schema</code></td><td>string</td><td>Always <code>roksbnkctl.dns.v1.vantage</code>.</td></tr>
+<tr><td><code>backend</code></td><td>string</td><td><code>local</code>, <code>k8s</code>, or <code>ssh:&lt;target&gt;</code>.</td></tr>
+<tr><td><code>server</code></td><td>string</td><td>The resolver address actually used (literal, system-resolvconf result, or named-resolver lookup).</td></tr>
+<tr><td><code>iterations</code></td><td>int</td><td>How many queries went to that vantage. Mirrors <code>--iterations</code>.</td></tr>
+<tr><td><code>rtt_ms</code></td><td>object</td><td><code>{ p50, p95, p99 }</code> across the iterations. Single-iteration runs report the same number for all three.</td></tr>
+<tr><td><code>answers[]</code></td><td>array</td><td>The RRs returned. <code>name</code> is the FQDN, <code>type</code> is the record type, <code>ttl</code> is from the response, <code>rdata</code> is the RR’s data (IP for A/AAAA, target for CNAME, etc.).</td></tr>
+<tr><td><code>rcode</code></td><td>string</td><td>The DNS response code: <code>NOERROR</code>, <code>NXDOMAIN</code>, <code>SERVFAIL</code>, <code>REFUSED</code>, <code>TIMEOUT</code>.</td></tr>
+<tr><td><code>authoritative</code></td><td>bool</td><td>Whether the AA flag was set in the response.</td></tr>
+<tr><td><code>truncated</code></td><td>bool</td><td>Whether the TC flag was set. (The probe automatically retries truncated UDP responses over TCP; the field reflects the final response.)</td></tr>
+<tr><td><code>error</code></td><td>string</td><td>Present only when the probe could not get a usable response. Carries the underlying Go error string.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Comparison shape</strong> (<code>roksbnkctl.dns.v1</code>, emitted by <code>--gslb-compare</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Type</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>schema</code></td><td>string</td><td>Always <code>roksbnkctl.dns.v1</code>.</td></tr>
+<tr><td><code>target</code></td><td>string</td><td>The queried name, normalised to FQDN (trailing dot included).</td></tr>
+<tr><td><code>type</code></td><td>string</td><td>The record type queried.</td></tr>
+<tr><td><code>vantages[]</code></td><td>array</td><td>One per-vantage entry (each conforms to <code>roksbnkctl.dns.v1.vantage</code>).</td></tr>
+<tr><td><code>gslb_divergence</code></td><td>bool</td><td>True when the answer sets across <code>vantages[]</code> differ.</td></tr>
+<tr><td><code>gslb_divergence_summary</code></td><td>string</td><td>Present only when <code>gslb_divergence: true</code>. Human-readable explanation naming the diverging vantages and answers.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Both schemas are stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to <code>.v2</code>. PRD 03 calls out an <code>edns_client_subnet</code> field reserved for v1.x; v0.9 doesn’t emit it.</p>
+<h2 id="rtt-measurement-and---iterations"><a class="header" href="#rtt-measurement-and---iterations">RTT measurement and <code>--iterations</code></a></h2>
+<p>Per-query RTT is captured directly from <code>miekg/dns</code>’s <code>Exchange()</code>, which returns the round-trip duration without the runner having to wrap a stopwatch around the call. That keeps the timing honest — no scheduling jitter from a goroutine yield between <code>time.Now()</code> and the actual UDP send.</p>
+<p><code>--iterations N</code> runs the same query against the same server N times serially and reports p50/p95/p99 across the samples. Use cases:</p>
+<ul>
+<li><strong>Detecting health-check flapping</strong>: if a GSLB pool member is on the edge of its health threshold, the answer can flip back and forth across iterations. A single query catches one snapshot; ten iterations show the ratio.</li>
+<li><strong>Detecting anycast routing changes</strong>: when an anycast resolver changes which BGP path serves your AS, RTT can jump 30-100ms. p99 catches the worst case; p50 stays steady.</li>
+<li><strong>Establishing a baseline before a change</strong>: run with <code>--iterations 30</code> before a GSLB rule change, again after, and compare distributions.</li>
+</ul>
+<p>For <code>--backend k8s</code> and <code>--backend ssh:&lt;target&gt;</code>, RTT is measured <strong>inside</strong> the remote vantage. The number reflects the resolver-to-resolver path from that vantage, not the laptop-to-cluster (or laptop-to-jumphost) transit. That’s the correct measurement: when you ask “how slow is the GSLB from inside the cluster”, you mean cluster-side latency, not how long it took your laptop to wait for the SSH-tunnelled answer.</p>
+<h2 id="sample-f5-big-ip-next-gslb-scenarios"><a class="header" href="#sample-f5-big-ip-next-gslb-scenarios">Sample F5 BIG-IP Next GSLB scenarios</a></h2>
+<p>Three concrete scenarios you’ll hit when validating a real BNK deployment.</p>
+<h3 id="scenario-1-geographic-affinity-working-as-expected"><a class="header" href="#scenario-1-geographic-affinity-working-as-expected">Scenario 1: Geographic affinity working as expected</a></h3>
+<p>You’ve configured a GSLB rule that returns <code>dc1</code> (<code>169.45.91.10</code>) for US queries and <code>dc2</code> (<code>52.123.45.67</code>) for EU queries. You’re in the US, your jumphost is in <code>eu-de</code> (Frankfurt).</p>
+<pre><code class="language-bash">roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.example.com \
+  --gslb-compare \
+  -o json
+</code></pre>
+<p>Expected output:</p>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "vantages": [
+    { "backend": "local",            "answers": [{ "rdata": "169.45.91.10" }], "rcode": "NOERROR" },
+    { "backend": "ssh:eu-jumphost",  "answers": [{ "rdata": "52.123.45.67" }], "rcode": "NOERROR" }
+  ],
+  "gslb_divergence": true,
+  "gslb_divergence_summary": "answers differ between local (169.45.91.10) and ssh:eu-jumphost (52.123.45.67) — GSLB returning location-specific records as expected"
+}
+</code></pre>
+<p><code>gslb_divergence: true</code> is the assertion you wanted. There are two ways to key CI on it:</p>
+<pre><code class="language-bash"># Option A: parse the JSON yourself
+roksbnkctl test dns ... --gslb-compare -o json | jq -e '.gslb_divergence == true'
+
+# Option B: built-in --require-divergence flag (the binary returns
+# non-zero exit when --gslb-compare finds NO divergence)
+roksbnkctl test dns ... --gslb-compare --require-divergence
+</code></pre>
+<p>Both forms produce a non-zero exit when <code>gslb_divergence</code> is <code>false</code> — the <code>--require-divergence</code> flag is the same assertion baked into the binary so CI scripts don’t need a <code>jq</code> dependency. Pick whichever fits your pipeline.</p>
+<p>If <code>gslb_divergence</code> flips to <code>false</code>, something has changed — the GSLB rule was disabled, the geographic dispatch broke, or the jumphost moved out of the EU range. Surface that as a CI failure.</p>
+<h3 id="scenario-2-health-check-driven-failover"><a class="header" href="#scenario-2-health-check-driven-failover">Scenario 2: Health-check-driven failover</a></h3>
+<p>A BNK pool member backing <code>www.example.com</code> has an active health check. You want to verify that GSLB stops returning that member’s IP when the health check fails.</p>
+<p>Steps:</p>
+<pre><code class="language-bash"># 1. Baseline: while the member is healthy, both vantages return its IP
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json &gt; /tmp/before.json
+
+# 2. Take the member offline (BNK admin UI / API; outside roksbnkctl's surface)
+# 3. Wait for the GSLB's TTL to expire (in this example, 30 seconds)
+sleep 35
+
+# 4. Probe again
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json &gt; /tmp/after.json
+
+# 5. Diff the answer sets
+diff &lt;(jq '.vantages[].answers' /tmp/before.json) &lt;(jq '.vantages[].answers' /tmp/after.json)
+</code></pre>
+<p>You expect the IP in <code>vantages[].answers[].rdata</code> to change from the failed member’s IP to the secondary’s IP across both vantages — and to do so on roughly the same TTL boundary across vantages. If one vantage flips and the other doesn’t, the GSLB’s health-check propagation is asymmetric — useful diagnostic data.</p>
+<h3 id="scenario-3-anycast-vs-unicast-detection"><a class="header" href="#scenario-3-anycast-vs-unicast-detection">Scenario 3: Anycast vs unicast detection</a></h3>
+<p>You suspect a name is fronted by a public anycast resolver fleet (Cloudflare’s <code>1.1.1.1</code>, Google’s <code>8.8.8.8</code>) rather than a real GSLB. Anycast returns the same answer everywhere; GSLB returns per-region answers.</p>
+<pre><code class="language-bash">roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
+  --gslb-compare -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.cloudflare.com",
+  "vantages": [
+    { "backend": "local", "answers": [{ "rdata": "104.16.132.229" }] },
+    { "backend": "k8s",   "answers": [{ "rdata": "104.16.132.229" }] }
+  ],
+  "gslb_divergence": false
+}
+</code></pre>
+<p><code>gslb_divergence: false</code> despite probing from two vantages → the answer is anycast, not GSLB-dispatched. Useful when handing off to a customer who’s claiming “the GSLB isn’t routing me right” — you can prove the name they’re querying isn’t actually under GSLB control.</p>
+<h2 id="why---backend-docker-is-rejected"><a class="header" href="#why---backend-docker-is-rejected">Why <code>--backend docker</code> is rejected</a></h2>
+<p>A Docker container running locally on the user’s laptop has the same network identity as the host (default bridge networking). The container’s egress NATs out via the host’s interface, so a DNS query from inside the container reaches the upstream resolver from the host’s IP.</p>
+<p>For GSLB validation, that means <code>--backend docker</code> would give an answer identical to <code>--backend local</code>. No new vantage. The CLI rejects the combination at parse time:</p>
+<pre><code>$ roksbnkctl test dns --backend docker --target www.example.com --type A
+error: DNS probe doesn't benefit from --backend docker (same network identity
+       as --backend local, no GSLB-relevant vantage difference). Use --backend
+       local, --backend k8s, or --backend ssh:&lt;target&gt; instead.
+</code></pre>
+<p>This is by design and called out in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe”</a>. If you want frozen-toolchain DNS testing for CI reproducibility, the <code>roksbnkctl</code> binary itself is already a single static binary — pinning it to a specific version pins the probe.</p>
+<h2 id="integration-with-extra_hosts"><a class="header" href="#integration-with-extra_hosts">Integration with <code>extra_hosts</code></a></h2>
+<p>If you’ve configured <code>connectivity.extra_hosts</code> for your workspace and want a quick “does each of those names resolve” check:</p>
+<pre><code class="language-bash">roksbnkctl test dns
+</code></pre>
+<p>With no <code>--target</code> and no <code>--gslb-compare</code>, the runner falls back to today’s behaviour: probe each host in <code>connectivity.extra_hosts</code>, single-vantage, single-iteration, with the host’s <code>system</code> resolver. This is the same shape as the connectivity suite’s reachability probe — no GSLB awareness, no per-server selection — and is the right tool for “did I typo a hostname in my config” rather than “is the GSLB doing what I configured”.</p>
+<p>For real GSLB validation you almost always want <code>--gslb-compare</code> plus an explicit <code>--target</code> and <code>--server</code>. The <code>extra_hosts</code> fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.</p>
+<p><a href="#connectivity-testing">Chapter 20 — Connectivity testing</a> covers <code>connectivity.extra_hosts</code> in full.</p>
+<h2 id="cross-references-13"><a class="header" href="#cross-references-13">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a> — design rationale, the full schema spec, the rejected-by-design list.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md#phase-l-dns--dns-probe-gslb-aware-across-backends">PRD 05 §“Phase L-DNS”</a> — the end-to-end test sequence that validates each row of this chapter against a live cluster.</li>
+<li><a href="#test">Chapter 12 §“test:”</a> — workspace-config schema, including <code>test.dns.resolvers</code> and <code>test.dns.default_target</code>.</li>
+<li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — how <code>roksbnkctl</code> itself reaches the cluster / SSH target the probe runs on.</li>
+<li><a href="#k8s-backend">Chapter 17 §“K8s backend”</a> — the one-shot-Job mechanics the probe reuses for <code>--backend k8s</code>.</li>
+<li><a href="#ssh-backend">Chapter 17 §“SSH backend”</a> — file materialisation and bootstrap for <code>--backend ssh:&lt;target&gt;</code>.</li>
+<li><a href="#im-doing-gslb-dns-validation">Chapter 18 §“I’m doing GSLB DNS validation”</a> — the decision-tree row that picks backends for a GSLB scenario.</li>
+<li><a href="#connectivity-testing">Chapter 20 — Connectivity testing</a> — the simpler “does HTTP work” companion suite.</li>
+<li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
+<li><a href="https://github.com/miekg/dns"><code>miekg/dns</code> upstream</a> — the underlying DNS library, used by CoreDNS and a long list of other reference implementations.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="throughput-testing"><a class="header" href="#throughput-testing">Throughput testing</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em>iperf3 throughput testing internalized via the k8s backend: LoadBalancer vs ClusterIP modes, when a host iperf3 install is still useful (north-south from outside the cluster), and how to interpret the JSON results.</em></p>
+<p><code>roksbnkctl test throughput</code> measures TCP bandwidth between an iperf3 client and an iperf3 server, with at least one side running adjacent to (or inside) the cluster so the number reflects something useful — cluster fabric, the inbound path through a LoadBalancer, the outbound path from a jumphost.</p>
+<p>The heavy lifting (server pod lifecycle, OpenShift SCC compliance, in-cluster client Job, log streaming) lives in <a href="#k8s-backend">Chapter 17 §“K8s backend”</a>. This chapter is the user-facing flag surface, the mode selection, and the output-interpretation guide.</p>
+<h2 id="what-the-suite-measures"><a class="header" href="#what-the-suite-measures">What the suite measures</a></h2>
+<p>Plain TCP throughput, plus jitter and retransmits, between two endpoints both running iperf3:</p>
+<ul>
+<li>The <strong>server</strong> runs in the cluster — a single bare Pod plus a Service, deployed in the <code>roksbnkctl-test</code> namespace. Service type is <code>ClusterIP</code> for east-west, <code>LoadBalancer</code> for north-south. See <a href="#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> for the manifest details.</li>
+<li>The <strong>client</strong> runs wherever you point the backend — by default in the cluster as a one-shot Job, alternatively on your laptop or on a registered SSH target.</li>
+<li>Output is iperf3’s native <code>-J</code> JSON, parsed and surfaced as <code>roksbnkctl test throughput</code> JSON.</li>
+</ul>
+<p>The suite is appropriate for “is the cluster fabric healthy”, “is the BNK data path delivering the bandwidth I expect from outside”, and “is this jumphost the bottleneck between my office and the cluster”. It is not a precision benchmark — TCP throughput is sensitive to MTU, NIC offloads, kernel tunables, and the iperf3 server’s own resource limits, none of which the suite tries to control.</p>
+<h2 id="the-two-modes"><a class="header" href="#the-two-modes">The two modes</a></h2>
+<p>Mode is selected by <code>--mode</code>. The default is <code>north-south</code>.</p>
+<pre><code class="language-bash">roksbnkctl test throughput --mode north-south   # default
+roksbnkctl test throughput --mode east-west
+</code></pre>
+<h3 id="--mode-north-south"><a class="header" href="#--mode-north-south"><code>--mode north-south</code></a></h3>
+<p>Measures the <strong>inbound path</strong> from outside the cluster to a Pod inside it. The server’s Service is a <code>LoadBalancer</code>, so the cluster provisions an external endpoint (an IBM Cloud LB on ROKS, an external IP / hostname on bare-metal k8s). The client connects to that endpoint.</p>
+<p>Use cases:</p>
+<ul>
+<li>“Is the BNK ingress path delivering the bandwidth I expect”</li>
+<li>“Is my office Wi-Fi or my home connection the bottleneck”</li>
+<li>“Is the cluster’s egress capacity what the cloud provider promised”</li>
+</ul>
+<p>Combine with <code>--backend local</code> (run the client on your laptop) when you specifically want to measure the laptop-to-cluster path. Combine with <code>--backend ssh:&lt;jumphost&gt;</code> when you want a known-stable measurement vantage from a jumphost in a known IP block — useful when laptop Wi-Fi is suspect.</p>
+<h3 id="--mode-east-west"><a class="header" href="#--mode-east-west"><code>--mode east-west</code></a></h3>
+<p>Measures the <strong>intra-cluster fabric</strong> — Pod-to-Pod or host-to-Pod. The server’s Service is <code>ClusterIP</code>, reachable only from inside the cluster. The default <code>--backend k8s</code> runs the client adjacent to the server (a one-shot Job in the same namespace), so the number reflects the CNI’s pod-to-pod throughput.</p>
+<p>Use cases:</p>
+<ul>
+<li>“Is the cluster’s network plugin healthy”</li>
+<li>“Are the worker nodes hitting the link rate the underlying fabric promises”</li>
+<li>“Has the BNK CIS deployment regressed cluster-internal throughput”</li>
+</ul>
+<p>Today’s east-west still allows <code>--backend local</code> (the client runs on the host and reaches the ClusterIP via NodePort-equivalent access if the kubeconfig is the same one a <code>kubectl port-forward</code> would use), but the number is a host-to-cluster-via-NodePort hybrid in that case rather than a true pod-to-pod measurement. True pod-to-pod east-west — both sides scheduled to specific pods, optionally pinned to different nodes via <code>--cross-node</code> — is the v1.x refinement; today the in-cluster Job client gets you most of the way there.</p>
+<h2 id="per-tool-default-backend"><a class="header" href="#per-tool-default-backend">Per-tool default backend</a></h2>
+<p>The default backend for <code>iperf3</code> is <strong><code>k8s</code></strong>. From the per-tool defaults table in <a href="#per-tool-default-backends">Chapter 18 §“Per-tool default backends”</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default backend</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. Default to running adjacent to the cluster so the number reflects fabric, not Wi-Fi.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The default holds whether or not you’ve set <code>exec.iperf3.backend</code> in workspace config. To override per-invocation:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --backend local                  # client on laptop
+roksbnkctl test throughput --backend ssh:jumphost           # client on jumphost
+roksbnkctl test throughput --backend k8s                    # default; explicit
+</code></pre>
+<p><code>--backend docker</code> is <strong>rejected</strong> by the throughput suite. A Docker container running locally has the same network identity as the host (default bridge networking), so the client’s view of the network is identical to <code>--backend local</code>. The CLI errors at parse time:</p>
+<pre><code>$ roksbnkctl test throughput --backend docker
+error: --backend docker isn't supported for iperf3 — docker shares the host
+       network namespace by default and gives no network-locality benefit over
+       local. Use --backend local or --backend k8s instead
+</code></pre>
+<p><a href="#i-want-to-measure-cluster-bandwidth">Chapter 18 §“Throughput testing”</a> is the decision-tree row that walks through the (mode, backend) matrix.</p>
+<p>When <code>local</code> or <code>ssh:&lt;target&gt;</code> makes sense:</p>
+<ul>
+<li><strong><code>local</code></strong>: you’re deliberately measuring laptop-to-cluster bandwidth (north-south from your seat). Typical use is debugging “the dashboard feels slow from my desk” — you want to confirm the office uplink, not the cluster fabric, is the bottleneck.</li>
+<li><strong><code>ssh:&lt;target&gt;</code></strong>: you have a registered SSH target with a known IP (often a customer jumphost in a specific datacenter) and want a bandwidth measurement from that vantage. The SSH backend ensures <code>iperf3</code> is on the target (auto-installs via <code>apt</code> with <code>--bootstrap</code> on Ubuntu; see <a href="#ssh-backend">Chapter 17 §“SSH backend”</a>).</li>
+</ul>
+<h2 id="the-bundled-image-and-the-runasnonroot-constraint"><a class="header" href="#the-bundled-image-and-the-runasnonroot-constraint">The bundled image and the <code>runAsNonRoot</code> constraint</a></h2>
+<p>The iperf3 server pod’s <code>securityContext</code> is set to satisfy OpenShift’s <code>restricted-v2</code> SCC:</p>
+<pre><code class="language-yaml">securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containers:
+- name: iperf3
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+</code></pre>
+<p>iperf3 listens on port 5201 (unprivileged) so root isn’t needed. The bundled image at <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> declares <code>USER 1000</code> in its Dockerfile, matching the pod’s <code>runAsUser: 1000</code>.</p>
+<p>Two things follow:</p>
+<ol>
+<li>
+<p><strong>Stock images that run as root will fail admission.</strong> The default in workspace config is <code>networkstatic/iperf3:latest</code>, which runs as root. On OpenShift / on any cluster with <code>restricted-v2</code> PodSecurity admission, that image will fail with <code>forbidden: violates PodSecurity "restricted:v1.x"</code>. The fix is to switch to the bundled image:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+</code></pre>
+<p>The bundled image is the <code>--backend k8s</code> default for the <strong>client</strong> Job regardless; the workspace override only affects the server pod’s image. Keep them in sync to avoid version skew during a debug session.</p>
+</li>
+<li>
+<p><strong>A custom workspace-overridden image must respect <code>runAsNonRoot</code>.</strong> If you point <code>test.throughput.image</code> at your own iperf3 image, that image must not require root to start. iperf3 itself doesn’t need privilege; if your image does, drop the <code>USER root</code> line and rebuild.</p>
+</li>
+</ol>
+<p><a href="#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> goes deeper on the SCC story — what the four <code>securityContext</code> fields do, why each is required, and how to debug an admission failure.</p>
+<h2 id="reading-the-output-1"><a class="header" href="#reading-the-output-1">Reading the output</a></h2>
+<p>Default output is human-readable on stderr; <code>-o json</code> switches to JSON on stdout.</p>
+<h3 id="human-readable-1"><a class="header" href="#human-readable-1">Human-readable</a></h3>
+<pre><code>$ roksbnkctl test throughput
+→ Deploying iperf3 fixture
+→ Waiting for iperf3 server pod ready
+→ Waiting for LoadBalancer endpoint (can take 30–90s on IBM Cloud)
+✓ iperf3 endpoint: 169.45.91.10:5201
+running throughput ...
+  PASS  iperf3 north-south → 169.45.91.10:5201 (k8s)  3.41 Gbps received, 0% retransmits in 30s
+throughput PASS (1/1 passed)
+✓ iperf3 fixture removed
+</code></pre>
+<h3 id="json-1"><a class="header" href="#json-1">JSON</a></h3>
+<p>iperf3’s <code>-J</code> output is rich (sender, receiver, per-stream stats, CPU usage). The roksbnkctl wrapper preserves the iperf3 JSON in the probe’s <code>detail</code> field so all of iperf3’s data survives, while the suite-level shell follows the <code>roksbnkctl.v1</code> schema:</p>
+<pre><code class="language-bash">roksbnkctl test throughput -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "throughput",
+  "timestamp": "2026-05-10T14:32:01Z",
+  "duration_ms": 31420,
+  "overall": "pass",
+  "results": [
+    {
+      "suite": "throughput",
+      "name": "iperf3 north-south → 169.45.91.10:5201 (k8s)",
+      "status": "pass",
+      "duration_ms": 30015,
+      "detail": "{ ...full iperf3 -J JSON, including sum_received, sum_sent... }"
+    }
+  ]
+}
+</code></pre>
+<p>The fields you’ll most often want from the embedded iperf3 JSON, in order of usefulness:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>What it tells you</th></tr>
+</thead>
+<tbody>
+<tr><td><code>end.sum_received.bits_per_second</code></td><td>The throughput number you should report. iperf3 measures both sender and receiver and the receiver number is the right one to quote — it accounts for retransmits and any path losses.</td></tr>
+<tr><td><code>end.sum_sent.bits_per_second</code></td><td>Sender-side throughput. If sent ≫ received, packets were dropped on the path. If sent ≈ received, the path is healthy.</td></tr>
+<tr><td><code>end.sum_sent.retransmits</code></td><td>TCP retransmits over the run. A handful is normal; double-digit-percent of streams indicates congestion or a bad NIC.</td></tr>
+<tr><td><code>end.streams[].sender.jitter_ms</code></td><td>Per-stream jitter. Useful for diagnosing variable-latency paths.</td></tr>
+<tr><td><code>end.cpu_utilization_percent.host_total</code></td><td>Whether the client CPU was the bottleneck. &gt;80% suggests the iperf3 client maxed out CPU before the network did — increase <code>--streams</code> to spread load, or run on a beefier client.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Example interpretation:</p>
+<pre><code>sum_received: 3.41 Gbps     → headline number
+sum_sent:     3.42 Gbps     → very close, healthy path
+retransmits:  127           → normal-low
+</code></pre>
+<p>vs</p>
+<pre><code>sum_received: 1.21 Gbps     → headline number
+sum_sent:     2.95 Gbps     → ≫ received; &gt;50% of bytes lost or retransmitted
+retransmits:  18743         → heavy
+</code></pre>
+<p>The second shape is what a saturated link or a flaky NIC looks like. The first is a healthy gigabit-class path.</p>
+<h2 id="openshift-scc-failure-mode"><a class="header" href="#openshift-scc-failure-mode">OpenShift SCC failure mode</a></h2>
+<p>If your throughput pod fails to start with one of:</p>
+<ul>
+<li><code>Forbidden: violates PodSecurity "restricted:v1.x"</code></li>
+<li><code>unable to validate against any security context constraint: ... restricted-v2</code></li>
+<li><code>runAsNonRoot is required</code></li>
+</ul>
+<p>…then either the configured image runs as root (use the bundled <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> image instead — set <code>test.throughput.image</code> in workspace config) or the cluster’s PodSecurity admission is stricter than <code>restricted-v2</code> (the manifest the k8s backend builds satisfies <code>restricted-v2</code> but not <code>privileged</code>; if your cluster requires <code>privileged</code> for the test namespace, that’s a cluster policy question outside the suite’s control).</p>
+<p><a href="#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> is the canonical source for the manifest’s <code>securityContext</code>. If you’re hand-rolling an iperf3 image for the suite, it’s the spec to match.</p>
+<h2 id="tuning-knobs-in-workspace-config"><a class="header" href="#tuning-knobs-in-workspace-config">Tuning knobs in workspace config</a></h2>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+    duration: 30        # iperf3 -t flag, seconds
+    streams: 8          # iperf3 -P flag, parallel streams
+    default_mode: north-south
+</code></pre>
+<p>The defaults (30s, 8 streams, north-south) are a reasonable starting point for “is the BNK data path healthy”. For deeper diagnosis:</p>
+<ul>
+<li>Bump <code>duration</code> to 60-90s if the path is variable and you want a stable average.</li>
+<li>Bump <code>streams</code> to 16 or 32 if the path’s bandwidth-delay product is high (long-haul links benefit from more parallelism).</li>
+<li>Drop <code>streams</code> to 1 if you’re specifically testing single-flow throughput (e.g., reproducing a customer’s “single-stream upload feels slow” complaint).</li>
+</ul>
+<p><a href="#test">Chapter 12 — Workspace config</a> lists the full schema.</p>
+<h2 id="cleanup-and---keep"><a class="header" href="#cleanup-and---keep">Cleanup and <code>--keep</code></a></h2>
+<p>By default the suite tears down the iperf3 server pod and Service after the client run completes. If a test fails and you want to poke at the fixture (kubectl exec into the server, hand-run <code>iperf3 -c</code> from a third location, etc.), pass <code>--keep</code>:</p>
+<pre><code class="language-bash">roksbnkctl test throughput --keep
+# ... fixture stays up; debug to your heart's content ...
+kubectl delete -n roksbnkctl-test pod/roksbnkctl-iperf3 svc/roksbnkctl-iperf3
+</code></pre>
+<p>The fixture is in the <code>roksbnkctl-test</code> namespace (same namespace the k8s backend uses for one-shot Jobs). It’s a bare Pod plus a Service; nothing else lingers when you delete the two resources.</p>
+<h2 id="cross-references-14"><a class="header" href="#cross-references-14">Cross-references</a></h2>
+<ul>
+<li><a href="#k8s-backend">Chapter 17 §“K8s backend”</a> — server-side mechanics (manifest, SCC, log streaming, exit-code extraction).</li>
+<li><a href="#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> — the asymmetric server-pod-plus-client-Job shape.</li>
+<li><a href="#i-want-to-measure-cluster-bandwidth">Chapter 18 §“I want to measure cluster bandwidth”</a> — the decision-tree entry that picks <code>(mode, backend)</code> for your scenario.</li>
+<li><a href="#test">Chapter 12 §“test:”</a> — workspace-config schema for <code>test.throughput.*</code>.</li>
+<li><a href="#connectivity-testing">Chapter 20 — Connectivity testing</a> — the simpler “does HTTP work” companion suite.</li>
+<li><a href="#dns-testing-for-gslb">Chapter 21 — DNS testing for GSLB</a> — the DNS validation companion.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#iperf3">PRD 03 §“iperf3”</a> — the design spec.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-e2e-test-plan"><a class="header" href="#the-e2e-test-plan">The E2E test plan</a></h1>
 <p><em>Coming in Sprint 6.</em></p>
@@ -4055,7 +4816,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </table>
 </div>
 <p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
-<h2 id="cross-references-12"><a class="header" href="#cross-references-12">Cross-references</a></h2>
+<h2 id="cross-references-15"><a class="header" href="#cross-references-15">Cross-references</a></h2>
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
