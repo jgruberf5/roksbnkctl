@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,163 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h1>
-<p><em>Coming in Sprint 6.</em></p>
-<p><em>Go toolchain version, cross-compile recipes, the <code>tools/docker/</code> images, and how to preview the book locally with <code>mdbook serve</code>.</em></p>
+<p>This chapter is for contributors and operators who want to build <code>roksbnkctl</code> themselves — whether to test an unreleased change, to verify a release artefact, or to embed a custom HCL fork into the binary.</p>
+<p>For users who just want to <em>install</em> the binary, <a href="./04-installation.html">Chapter 4 — Installation</a> is the right page. This chapter is the build-side companion.</p>
+<h2 id="go-version-requirement"><a class="header" href="#go-version-requirement">Go version requirement</a></h2>
+<p>The minimum Go version is the one pinned in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/go.mod"><code>go.mod</code></a>:</p>
+<pre><code>go 1.25.0
+</code></pre>
+<p>We pin to a recent toolchain for two reasons:</p>
+<ol>
+<li>The IBM Cloud Go SDKs (<code>go-sdk-core/v5</code>, <code>platform-services-go-sdk</code>, <code>ibm-cos-sdk-go</code>) and <code>k8s.io/client-go</code> v0.30+ both make liberal use of Go’s modern generics — pre-1.21 toolchains won’t build.</li>
+<li>Several dependencies (<code>miekg/dns</code>, <code>docker/docker</code>) test on the current and previous minor only; we follow upstream.</li>
+</ol>
+<p>Install Go via your package manager (<code>brew install go</code>, <code>apt-get install golang-1.25</code>, etc.) or from <a href="https://go.dev/dl/">go.dev/dl</a>. Verify with <code>go version</code>.</p>
+<h2 id="quick-build"><a class="header" href="#quick-build">Quick build</a></h2>
+<p>The shortest path from a fresh clone to a working binary:</p>
+<pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
+cd roksbnkctl
+go build -o roksbnkctl ./cmd/roksbnkctl
+./roksbnkctl --version
+</code></pre>
+<p><code>go build</code> produces a static binary in the working directory. Cross-compilation to a different OS/arch needs <code>GOOS</code> / <code>GOARCH</code> set:</p>
+<pre><code class="language-bash">GOOS=linux   GOARCH=amd64 go build -o roksbnkctl-linux-amd64   ./cmd/roksbnkctl
+GOOS=darwin  GOARCH=arm64 go build -o roksbnkctl-darwin-arm64  ./cmd/roksbnkctl
+GOOS=windows GOARCH=amd64 go build -o roksbnkctl.exe          ./cmd/roksbnkctl
+</code></pre>
+<p>A full multi-platform build is easier through goreleaser:</p>
+<pre><code class="language-bash">goreleaser release --snapshot --clean
+# Output lands in dist/
+</code></pre>
+<p>The <code>--snapshot --clean</code> flags produce a local build without trying to publish to GitHub. The release shape is described in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.goreleaser.yml"><code>.goreleaser.yml</code></a> — Linux + macOS × amd64 + arm64, plus a Windows compile-only check.</p>
+<h2 id="build-via-the-makefile"><a class="header" href="#build-via-the-makefile">Build via the Makefile</a></h2>
+<p>The repo’s <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/Makefile"><code>Makefile</code></a> wraps the common build steps and stamps version metadata into the binary:</p>
+<pre><code class="language-bash">make build              # builds bin/roksbnkctl with -ldflags version stamping
+make test               # go test ./...
+make vet                # go vet ./...
+make tidy               # go mod tidy
+make test-short         # go test -short ./...
+make test-integration   # testcontainers-go-backed integration tests (needs Docker)
+make test-cred-audit    # the security-spine regression suite
+make lint               # gofmt + vet + staticcheck (if installed)
+</code></pre>
+<p>The version stamp comes from three ldflags variables baked into <code>internal/cli</code>:</p>
+<pre><code class="language-go">var (
+    Version   = "dev"
+    Commit    = "none"
+    BuildDate = "unknown"
+)
+</code></pre>
+<p><code>make build</code> passes <code>-X github.com/jgruberf5/roksbnkctl/internal/cli.Version=$VERSION</code> (and the others) so <code>roksbnkctl --version</code> reports the actual git-rev and build timestamp rather than the placeholders. Set <code>VERSION</code> explicitly when stamping a release:</p>
+<pre><code class="language-bash">VERSION=v1.0.0 make build
+</code></pre>
+<h2 id="the-embedded-hcl"><a class="header" href="#the-embedded-hcl">The embedded HCL</a></h2>
+<p>The Terraform source tree at <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/terraform"><code>terraform/</code></a> is compiled into the binary via Go’s <a href="https://pkg.go.dev/embed"><code>//go:embed</code></a> directive. The embed declaration lives at the repo root in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/embedded.go"><code>embedded.go</code></a> (and is wired through <code>internal/tf/</code> to be served as the <code>tf_source: embedded</code> provider).</p>
+<p>Two implications:</p>
+<ol>
+<li><strong>Rebuilding the binary picks up HCL changes.</strong> If you’re hacking on the HCL, <code>make build</code> produces a binary that ships your changes embedded. No separate “deploy the HCL” step.</li>
+<li><strong>The HCL is read-only at runtime.</strong> The binary extracts it to a temporary directory on first use; the extracted copy is what terraform operates on. The original embedded source is immutable.</li>
+</ol>
+<p>For users who want to <em>not</em> use the embedded HCL, the <code>tf_source: github</code> or <code>tf_source: local</code> options in the workspace config bypass it entirely. See <a href="./12-workspace-config.html#tf_source">Chapter 12 §“tf_source:”</a>.</p>
+<h2 id="the-bundled-tools-images"><a class="header" href="#the-bundled-tools-images">The bundled tools images</a></h2>
+<p>The <code>tools/docker/</code> directory holds Dockerfiles for the images the <code>docker</code> and <code>k8s</code> backends use:</p>
+<pre><code>tools/docker/
+├── Makefile
+├── ibmcloud/
+│   └── Dockerfile      # roksbnkctl-tools-ibmcloud
+└── iperf3/
+    └── Dockerfile      # roksbnkctl-tools-iperf3
+</code></pre>
+<p><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/tools/docker/Makefile"><code>tools/docker/Makefile</code></a> builds both images locally as <code>:dev</code>:</p>
+<pre><code class="language-bash">cd tools/docker
+make ibmcloud           # builds roksbnkctl-tools-ibmcloud:dev
+make iperf3             # builds roksbnkctl-tools-iperf3:dev
+make all                # both
+</code></pre>
+<p>The <code>:dev</code> tag is what a from-source <code>roksbnkctl</code> resolves to when the binary’s <code>Version</code> is <code>dev</code>. A tag-released binary (<code>v1.0.0</code>) resolves to <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0</code> instead — the resolver logic lives in <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/exec"><code>internal/exec/</code></a> (<code>SetToolImageTag</code> is wired in <code>internal/cli/root.go::init</code>). See <a href="./17-execution-backends.html#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a>.</p>
+<p>The GitHub Actions workflow <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml"><code>tools-images.yml</code></a> builds and pushes the published images on a tag push or when <code>tools/docker/**</code> changes.</p>
+<h2 id="the-book-build"><a class="header" href="#the-book-build">The book build</a></h2>
+<p>The book is built with <a href="https://rust-lang.github.io/mdBook/">mdBook</a>. Install:</p>
+<pre><code class="language-bash">cargo install mdbook
+# or
+brew install mdbook
+</code></pre>
+<p>The book source lives under <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/book/src"><code>book/src/</code></a> with <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/book/book.toml"><code>book.toml</code></a> as the config. Common operations:</p>
+<pre><code class="language-bash">make book-serve         # mdbook serve book/ --open
+                        # opens http://localhost:3000 with live-reload
+make book               # mdbook build book/
+                        # static HTML at book/book/
+make book-clean         # rm -rf book/book
+</code></pre>
+<p>The published site at <code>https://jgruberf5.github.io/roksbnkctl/book/</code> is built and deployed by <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/book.yml"><code>.github/workflows/book.yml</code></a> on every push to <code>main</code>. The workflow runs <code>mdbook build book/</code> and pushes the output to the <code>gh-pages</code> branch via <code>peaceiris/actions-gh-pages</code>.</p>
+<p>For PR-time verification, <code>.github/workflows/spellcheck.yml</code> runs <code>cspell</code> on <code>book/src/**/*.md</code> — a warning, not a gate, but worth eyeballing the output before merging.</p>
+<h2 id="the-auto-generated-chapters"><a class="header" href="#the-auto-generated-chapters">The auto-generated chapters</a></h2>
+<p>Two reference chapters are generated rather than hand-written. The generators live under <code>tools/refgen/</code>:</p>
+<pre><code class="language-bash"># Chapter 27 — command reference (walks the cobra command tree)
+go run ./tools/refgen/cobra-md &gt; book/src/27-command-reference.md
+
+# Chapter 29 — terraform variable reference (parses terraform/variables.tf)
+go run ./tools/refgen/tfvars-md &gt; book/src/29-terraform-variable-reference.md
+</code></pre>
+<p>When to re-run:</p>
+<ul>
+<li><strong>Chapter 27</strong>: any change to the cobra command tree under <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/cli"><code>internal/cli/</code></a> or <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/cmd/roksbnkctl"><code>cmd/roksbnkctl/</code></a> — new commands, renamed flags, edited <code>Long:</code> / <code>Example:</code> strings.</li>
+<li><strong>Chapter 29</strong>: any change to <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf"><code>terraform/variables.tf</code></a> or any submodule <code>variables.tf</code> referenced from the root — new variables, default-value changes, edited descriptions.</li>
+</ul>
+<p>Both generators emit deterministic output — the same input HCL or cobra tree always produces the same markdown — so you can commit the rendered output to source control without worrying about spurious diff churn.</p>
+<h2 id="cross-compile-matrix"><a class="header" href="#cross-compile-matrix">Cross-compile matrix</a></h2>
+<p><code>goreleaser</code> covers the canonical matrix:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>OS</th><th>Architecture</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr><td>Linux</td><td>amd64</td><td>Fully supported</td></tr>
+<tr><td>Linux</td><td>arm64</td><td>Fully supported</td></tr>
+<tr><td>macOS</td><td>amd64 (Intel)</td><td>Fully supported</td></tr>
+<tr><td>macOS</td><td>arm64 (Apple Silicon)</td><td>Fully supported</td></tr>
+<tr><td>Windows</td><td>amd64</td><td>Compile-only; SSH TTY support degraded</td></tr>
+<tr><td>Windows</td><td>arm64</td><td>Compile-only; same caveat</td></tr>
+<tr><td>FreeBSD</td><td>amd64</td><td>Not tested</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Windows caveat is real: <code>golang.org/x/crypto/ssh</code>’s PTY allocation isn’t complete on Windows, so <code>roksbnkctl shell --on jumphost</code> falls back to a non-TTY shell. The other commands (exec, ibmcloud, kubectl) work fine on Windows.</p>
+<p>Output from <code>goreleaser release --snapshot --clean</code> lands in <code>dist/</code>:</p>
+<pre><code>dist/
+├── roksbnkctl_linux_amd64_v1/
+│   └── roksbnkctl
+├── roksbnkctl_linux_arm64/
+│   └── roksbnkctl
+├── roksbnkctl_darwin_amd64_v1/
+│   └── roksbnkctl
+├── roksbnkctl_darwin_arm64/
+│   └── roksbnkctl
+└── ...
+</code></pre>
+<p>Each archive bundles the binary plus <code>LICENSE</code>, <code>README.md</code>, and the rendered <code>book/book/</code> directory (when the snapshot is built from a tagged commit).</p>
+<h2 id="release-process"><a class="header" href="#release-process">Release process</a></h2>
+<p>Tagged releases are cut on the <code>main</code> branch:</p>
+<pre><code class="language-bash"># Update CHANGELOG.md with the release notes
+git tag -a v1.0.0 -m "v1.0.0 — book launch + full E2E coverage"
+git push origin v1.0.0
+</code></pre>
+<p>The push triggers <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/release.yml"><code>release.yml</code></a>, which runs <code>goreleaser release</code> to:</p>
+<ol>
+<li>Cross-compile the binary for the supported OS/arch matrix.</li>
+<li>Build the matching tools images and push to <code>ghcr.io/jgruberf5/roksbnkctl-tools-*:&lt;tag&gt;</code>.</li>
+<li>Attach the binaries, checksums (<code>checksums.txt</code>), and the rendered book PDF (if mdbook-pdf is configured) to the GitHub release.</li>
+<li>Generate release notes from the CHANGELOG and the commits since the previous tag.</li>
+</ol>
+<p>The release-gate criteria — what has to hold before tagging — are documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md">PLAN.md §“v1.0 (M4)”</a>. The most important: full E2E green for 3 consecutive nights on the release branch.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./04-installation.html">Chapter 4 — Installation</a> — for users who just want the binary, not the source.</li>
+<li><a href="./17-execution-backends.html#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a> — how a from-source binary picks tool images.</li>
+<li><a href="./32-extending-roksbnkctl.html">Chapter 32 — Extending roksbnkctl</a> — once you’ve built, what to actually hack on.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> — the release-gate policy.</li>
+</ul>
 
                     </main>
 

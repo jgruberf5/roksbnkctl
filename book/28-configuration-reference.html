@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,333 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="configuration-reference"><a class="header" href="#configuration-reference">Configuration reference</a></h1>
-<p><em>Coming in Sprint 6.</em></p>
-<p><em>Every field of the workspace <code>config.yaml</code> with type, default, and allowed values. Companion to Chapter 12 — Chapter 12 teaches, this chapter is a lookup table.</em></p>
+<p>Field-by-field schema reference for the workspace <code>config.yaml</code>. Source of truth is the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go"><code>Workspace</code> struct</a> in <code>internal/config/workspace.go</code>; this chapter is the human-readable rendering of those tags.</p>
+<p><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> is the <em>teaching</em> chapter; this one is the <em>lookup</em> chapter. Use chapter 12 to learn the shape, use this one to look up the type of a specific field.</p>
+<h2 id="file-location-and-lifecycle"><a class="header" href="#file-location-and-lifecycle">File location and lifecycle</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Property</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Path</td><td><code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code></td></tr>
+<tr><td>Default workspace</td><td><code>default</code> (auto-created on first run)</td></tr>
+<tr><td>Overridable home</td><td><code>ROKSBNKCTL_HOME</code> env var (defaults to <code>~/.roksbnkctl/</code>)</td></tr>
+<tr><td>Mode</td><td><code>0644</code></td></tr>
+<tr><td>Created by</td><td><code>roksbnkctl init</code></td></tr>
+<tr><td>Updated by</td><td><code>roksbnkctl init --upgrade-tf</code>, <code>roksbnkctl init --refresh-kubeconfig</code>, hand-editing</td></tr>
+</tbody>
+</table>
+</div>
+<p>The file is hand-editable; YAML is parsed with <a href="https://pkg.go.dev/gopkg.in/yaml.v3"><code>gopkg.in/yaml.v3</code></a> so anchors and aliases work but are not idiomatic for this file. Plaintext credentials in any of the regex-matched secret fields (<code>api_key</code>, <code>apikey</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>) are rejected at load time — the file fails to parse with a clear error. Base64-encoded credentials in <code>ibmcloud.api_key_b64</code> are allowed (the field name doesn’t match the rejection regex). See <a href="./14-credentials-resolver.html">Chapter 14</a>.</p>
+<h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
+<pre><code class="language-yaml">ibmcloud:        # required
+cluster:         # required
+bnk:             # optional; populates upstream HCL bnk variables
+test:            # optional; populates test.* settings
+tf_source:       # required (defaults to embedded if omitted)
+cos:             # optional; supply-chain auto-upload
+targets:         # optional; populated automatically by up's post-apply hook
+exec:            # optional; per-tool default-backend map
+</code></pre>
+<p>The order of the top-level keys in the file doesn’t matter; YAML is a mapping. The order shown above is the canonical render order produced by <code>roksbnkctl init</code>.</p>
+<h2 id="ibmcloud-block"><a class="header" href="#ibmcloud-block"><code>ibmcloud:</code> block</a></h2>
+<pre><code class="language-yaml">ibmcloud:
+  region: ca-tor
+  resource_group: default
+  api_key_source: keychain
+  api_key_b64: &lt;base64&gt;
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>region</code></td><td>string</td><td>— (prompted by <code>init</code>)</td><td>any IBM Cloud region: <code>us-south</code>, <code>us-east</code>, <code>ca-tor</code>, <code>eu-de</code>, <code>eu-gb</code>, <code>jp-tok</code>, <code>au-syd</code>, etc.</td><td>The IBM Cloud region for all cluster + COS resources. Crosses module boundaries — must match the upstream HCL’s <code>ibmcloud_cluster_region</code>.</td></tr>
+<tr><td><code>resource_group</code></td><td>string</td><td><code>default</code></td><td>any RG name in the account</td><td>The resource group cluster + COS resources are provisioned into.</td></tr>
+<tr><td><code>api_key_source</code></td><td>string</td><td>(resolver chain runs)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code></td><td>Pins the resolver to a single source rather than walking the chain. Set explicitly when you want predictable behaviour in CI. See <a href="./14-credentials-resolver.html#pinning-a-single-source">Chapter 14 §“Pinning a single source”</a>.</td></tr>
+<tr><td><code>api_key_b64</code></td><td>string</td><td>—</td><td>base64-encoded API key</td><td><strong>Obfuscation, not encryption</strong> — anyone with file-read access decodes instantly. For single-user dev only; never commit. The field name deliberately doesn’t match the plaintext-secret rejection regex.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="cluster-block"><a class="header" href="#cluster-block"><code>cluster:</code> block</a></h2>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: tf-openshift-cluster
+  openshift_version: "4.18"
+  workers_per_zone: 1
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td><code>true</code> | <code>false</code></td><td><code>true</code> provisions a new ROKS cluster; <code>false</code> attaches to an existing one (set <code>name</code> to the existing cluster’s name or ID).</td></tr>
+<tr><td><code>name</code></td><td>string</td><td>— (prompted by <code>init</code>)</td><td>RFC 1123 DNS label</td><td>The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.18</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
+<tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="bnk-block"><a class="header" href="#bnk-block"><code>bnk:</code> block</a></h2>
+<pre><code class="language-yaml">bnk:
+  cneinstance_size: Small
+  far_repo_url: repo.f5.com
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code></td><td>Sizing for the deployed CNE Instance. Renders into the upstream HCL <code>cneinstance_deployment_size</code> variable.</td></tr>
+<tr><td><code>far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>URL of a Docker-compatible image registry</td><td>The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror.</td></tr>
+<tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
+</tbody>
+</table>
+</div>
+<p>All three fields are optional; omitting renders the HCL’s own defaults. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> for the upstream defaults.</p>
+<h2 id="test-block"><a class="header" href="#test-block"><code>test:</code> block</a></h2>
+<pre><code class="language-yaml">test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+    duration: 30
+    streams: 8
+    default_mode: north-south
+  connectivity:
+    extra_hosts:
+      - https://www.example.com/healthz
+      - https://internal.bnk.local/status
+  dns:
+    resolvers:
+      google: "8.8.8.8:53"
+      cloudflare: "1.1.1.1:53"
+      gslb-vip: "169.45.91.5:53"
+    default_target: www.example.com
+</code></pre>
+<h3 id="testthroughput"><a class="header" href="#testthroughput"><code>test.throughput</code></a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>any iperf3 Docker image</td><td>The image used for both server pod and client Job. The default runs as root and fails on OpenShift’s <code>restricted-v2</code>; use the bundled image <code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;v&gt;</code> for SCC-clean installs. See <a href="./22-throughput-testing.html#the-bundled-image-and-the-runasnonroot-constraint">Chapter 22</a>.</td></tr>
+<tr><td><code>duration</code></td><td>integer</td><td><code>30</code></td><td>1-300 (seconds)</td><td>The iperf3 <code>-t</code> flag — test duration in seconds.</td></tr>
+<tr><td><code>streams</code></td><td>integer</td><td><code>8</code></td><td>1-128</td><td>The iperf3 <code>-P</code> flag — parallel TCP streams.</td></tr>
+<tr><td><code>default_mode</code></td><td>string</td><td><code>north-south</code></td><td><code>north-south</code> | <code>east-west</code></td><td>Default <code>--mode</code> when not passed on the command line.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="testconnectivity"><a class="header" href="#testconnectivity"><code>test.connectivity</code></a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>extra_hosts</code></td><td>list of string</td><td>(empty)</td><td>URLs</td><td>Each URL is probed via HTTP GET; pass criterion is a 2xx response. The v0.9 shape is a bare list — no per-host method, expected-status, or TLS-trust override. Use <code>--insecure</code> (session-wide) for self-signed certs. See <a href="./20-connectivity-testing.html">Chapter 20 §“Configuring extra_hosts”</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="testdns"><a class="header" href="#testdns"><code>test.dns</code></a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>resolvers</code></td><td>map[string]string</td><td>(empty)</td><td>name → <code>&lt;ip&gt;[:&lt;port&gt;]</code></td><td>Friendly-name aliases for <code>--server &lt;name&gt;</code>. Lets workspace config push GSLB VIP addresses out of the command line.</td></tr>
+<tr><td><code>default_target</code></td><td>string</td><td>(empty)</td><td>DNS name</td><td>Default <code>--target</code> when not passed on the command line. Useful for “always probe this name”.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="tf_source-block"><a class="header" href="#tf_source-block"><code>tf_source:</code> block</a></h2>
+<pre><code class="language-yaml">tf_source:
+  type: embedded         # or: github | local
+  repo: jgruberf5/roksbnkctl-tf
+  ref: v1.0.0
+  path: /path/to/checkout
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>type</code></td><td>string</td><td><code>embedded</code></td><td><code>embedded</code> | <code>github</code> | <code>local</code></td><td>Where the Terraform source comes from. <code>embedded</code> uses the HCL bundled into the binary at compile time via <code>//go:embed</code>. <code>github</code> downloads a tarball from a GitHub release. <code>local</code> points at a directory on disk.</td></tr>
+<tr><td><code>repo</code></td><td>string</td><td>—</td><td><code>owner/name</code> form</td><td>Required for <code>type: github</code>. The GitHub repo holding the HCL.</td></tr>
+<tr><td><code>ref</code></td><td>string</td><td>—</td><td>a tag, branch, or SHA</td><td>Required for <code>type: github</code>. The release tag or git ref to fetch.</td></tr>
+<tr><td><code>path</code></td><td>string</td><td>—</td><td>absolute or relative directory</td><td>Required for <code>type: local</code>. The on-disk directory containing <code>main.tf</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Most users want <code>embedded</code> (the default). The <code>github</code> mode is for testing forks or pinning to an upstream tag that’s newer than the bundled one. The <code>local</code> mode is for active development on the HCL itself.</p>
+<h2 id="cos-block"><a class="header" href="#cos-block"><code>cos:</code> block</a></h2>
+<pre><code class="language-yaml">cos:
+  instance: bnk-orchestration
+  bucket: bnk-schematics-resources
+  upload:
+    - source: ./local/f5-far-auth-key.tgz
+      key: f5-far-auth-key.tgz
+    - source: ./local/trial.jwt
+      key: trial.jwt
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>instance</code></td><td>string</td><td>—</td><td>COS instance name or CRN</td><td>The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>—</td><td>S3 bucket name</td><td>The bucket within the instance.</td></tr>
+<tr><td><code>upload</code></td><td>list of <code>{source, key}</code></td><td>(empty)</td><td>host path → bucket key</td><td>Pre-flight uploads run before <code>roksbnkctl up</code>. Idempotent — re-running overwrites the bucket objects.</td></tr>
+</tbody>
+</table>
+</div>
+<p>See <a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> for the full surface.</p>
+<h2 id="targets-block"><a class="header" href="#targets-block"><code>targets:</code> block</a></h2>
+<pre><code class="language-yaml">targets:
+  jumphost:
+    host: 169.45.91.10
+    port: 22
+    user: ubuntu
+    key_path: /path/to/private/key.pem      # one of key_path
+    key_source: tf-output:jumphost_shared_key  # ...or key_source
+</code></pre>
+<p>The top-level value is a map; the key is the target name (<code>jumphost</code>, <code>eu-bastion</code>, etc.). Each entry:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td>string</td><td>—</td><td>hostname or IP</td><td>The SSH endpoint. IPv6 literals must be unbracketed (the SSH client brackets internally).</td></tr>
+<tr><td><code>port</code></td><td>integer</td><td><code>22</code></td><td>1-65535</td><td>SSH port.</td></tr>
+<tr><td><code>user</code></td><td>string</td><td>—</td><td>a username on the target</td><td>Typically <code>ubuntu</code> for HCL-provisioned jumphosts (cloud-init writes the user); <code>root</code> for direct-IBM-Cloud Linux VSIs.</td></tr>
+<tr><td><code>key_path</code></td><td>string</td><td>—</td><td>a path to a PEM file</td><td>One of <code>key_path</code> or <code>key_source</code> is required. Path to the PEM-encoded private key.</td></tr>
+<tr><td><code>key_source</code></td><td>string</td><td>—</td><td><code>agent</code> | <code>tf-output:&lt;output-name&gt;</code></td><td>The other “key source” form. <code>agent</code> uses ssh-agent; <code>tf-output:&lt;name&gt;</code> reads the named terraform output as the PEM.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Auto-populated by <code>roksbnkctl up</code> post-apply for the upstream HCL’s TGW jumphost when <code>testing_create_tgw_jumphost = true</code>. See <a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a> and <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag</a>.</p>
+<h2 id="exec-block"><a class="header" href="#exec-block"><code>exec:</code> block</a></h2>
+<pre><code class="language-yaml">exec:
+  ibmcloud:  { backend: local }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+</code></pre>
+<p>Top-level value is a map keyed by tool name. Each entry has one field:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>backend</code></td><td>string</td><td><code>local</code></td><td><code>local</code> | <code>docker</code> | <code>k8s</code> | <code>ssh:&lt;target&gt;</code></td><td>The default execution backend for this tool. A <code>--backend &lt;value&gt;</code> flag on the command line overrides the workspace config for that single invocation.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The per-tool defaults at v1.0:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Default backend</th><th>Supported backends</th></tr>
+</thead>
+<tbody>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code> (k8s and ssh deferred to v1.x)</td></tr>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code> (docker rejected)</td></tr>
+<tr><td><code>dns</code></td><td><code>local</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code> (docker rejected)</td></tr>
+</tbody>
+</table>
+</div>
+<p>See <a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> and <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a>.</p>
+<h2 id="field-by-field-reference-table"><a class="header" href="#field-by-field-reference-table">Field-by-field reference table</a></h2>
+<p>Sorted by top-level block. Lookup-friendly. Every field that appears in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go"><code>internal/config/workspace.go</code></a>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud.region</code></td><td>string</td><td>(prompted)</td><td>IBM Cloud region (<code>ca-tor</code>, <code>us-south</code>, …).</td></tr>
+<tr><td><code>ibmcloud.resource_group</code></td><td>string</td><td><code>default</code></td><td>Resource group name.</td></tr>
+<tr><td><code>ibmcloud.api_key_source</code></td><td>string</td><td>(chain)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code>.</td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td>string</td><td>(empty)</td><td>Base64-encoded API key. Obfuscation only.</td></tr>
+<tr><td><code>cluster.create</code></td><td>bool</td><td><code>true</code></td><td>Provision new vs attach existing.</td></tr>
+<tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
+<tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
+<tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
+<tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
+<tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
+<tr><td><code>test.throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image.</td></tr>
+<tr><td><code>test.throughput.duration</code></td><td>integer</td><td><code>30</code></td><td>iperf3 <code>-t</code> (seconds).</td></tr>
+<tr><td><code>test.throughput.streams</code></td><td>integer</td><td><code>8</code></td><td>iperf3 <code>-P</code> (parallel streams).</td></tr>
+<tr><td><code>test.throughput.default_mode</code></td><td>string</td><td><code>north-south</code></td><td>Default mode.</td></tr>
+<tr><td><code>test.connectivity.extra_hosts</code></td><td>[]string</td><td>(empty)</td><td>URLs to probe.</td></tr>
+<tr><td><code>test.dns.resolvers</code></td><td>map[string]string</td><td>(empty)</td><td>Name → <code>&lt;ip&gt;[:&lt;port&gt;]</code>.</td></tr>
+<tr><td><code>test.dns.default_target</code></td><td>string</td><td>(empty)</td><td>Default <code>--target</code> value.</td></tr>
+<tr><td><code>tf_source.type</code></td><td>string</td><td><code>embedded</code></td><td><code>embedded</code> | <code>github</code> | <code>local</code>.</td></tr>
+<tr><td><code>tf_source.repo</code></td><td>string</td><td>(empty)</td><td>GitHub <code>owner/name</code>; required for <code>github</code>.</td></tr>
+<tr><td><code>tf_source.ref</code></td><td>string</td><td>(empty)</td><td>Git ref; required for <code>github</code>.</td></tr>
+<tr><td><code>tf_source.path</code></td><td>string</td><td>(empty)</td><td>Local directory; required for <code>local</code>.</td></tr>
+<tr><td><code>cos.instance</code></td><td>string</td><td>(empty)</td><td>COS instance name or CRN.</td></tr>
+<tr><td><code>cos.bucket</code></td><td>string</td><td>(empty)</td><td>Bucket name.</td></tr>
+<tr><td><code>cos.upload[].source</code></td><td>string</td><td>—</td><td>Local file path.</td></tr>
+<tr><td><code>cos.upload[].key</code></td><td>string</td><td>—</td><td>Bucket key.</td></tr>
+<tr><td><code>targets.&lt;name&gt;.host</code></td><td>string</td><td>—</td><td>SSH host.</td></tr>
+<tr><td><code>targets.&lt;name&gt;.port</code></td><td>integer</td><td><code>22</code></td><td>SSH port.</td></tr>
+<tr><td><code>targets.&lt;name&gt;.user</code></td><td>string</td><td>—</td><td>SSH user.</td></tr>
+<tr><td><code>targets.&lt;name&gt;.key_path</code></td><td>string</td><td>(empty)</td><td>PEM file path.</td></tr>
+<tr><td><code>targets.&lt;name&gt;.key_source</code></td><td>string</td><td>(empty)</td><td><code>agent</code> | <code>tf-output:&lt;name&gt;</code>.</td></tr>
+<tr><td><code>exec.&lt;tool&gt;.backend</code></td><td>string</td><td><code>local</code> (varies by tool)</td><td><code>local</code> | <code>docker</code> | <code>k8s</code> | <code>ssh:&lt;target&gt;</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="behaviour-when-fields-are-missing"><a class="header" href="#behaviour-when-fields-are-missing">Behaviour when fields are missing</a></h2>
+<p><code>roksbnkctl</code> falls through three layers: <strong>workspace config → upstream HCL default → fail</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Missing field</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud.region</code></td><td><code>roksbnkctl init</code> prompts; programmatic loads error with “region is empty”.</td></tr>
+<tr><td><code>ibmcloud.resource_group</code></td><td>Defaults to <code>default</code>.</td></tr>
+<tr><td><code>ibmcloud.api_key_source</code></td><td>Resolver walks the full chain (env → keychain → config → prompt).</td></tr>
+<tr><td><code>ibmcloud.api_key_b64</code></td><td>Skipped in the resolver chain.</td></tr>
+<tr><td><code>cluster.create</code></td><td>Defaults to <code>true</code>.</td></tr>
+<tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
+<tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream HCL default).</td></tr>
+<tr><td><code>bnk.*</code></td><td>Each field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
+<tr><td><code>test.throughput.*</code></td><td>Coded defaults (30s, 8 streams, <code>networkstatic/iperf3:latest</code>) apply.</td></tr>
+<tr><td><code>test.connectivity.extra_hosts</code></td><td>Connectivity probe runs with built-in URLs only.</td></tr>
+<tr><td><code>test.dns.resolvers</code></td><td><code>--server</code> requires a literal IP or <code>host:port</code>.</td></tr>
+<tr><td><code>test.dns.default_target</code></td><td><code>--target</code> becomes required on the command line.</td></tr>
+<tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
+<tr><td><code>cos</code></td><td>Block omitted ⇒ no pre-flight uploads; FLO reads whatever’s already in the configured bucket.</td></tr>
+<tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code> when terraform provisions a jumphost.</td></tr>
+<tr><td><code>exec.*</code></td><td>Each tool falls back to its built-in default (typically <code>local</code>; <code>iperf3</code> is <code>k8s</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="how---var-file-interacts-with-configyaml"><a class="header" href="#how---var-file-interacts-with-configyaml">How <code>--var-file</code> interacts with <code>config.yaml</code></a></h2>
+<p><code>roksbnkctl up --var-file &lt;file&gt;</code> layers user-supplied tfvars <strong>after</strong> the auto-rendered tfvars derived from <code>config.yaml</code>. Later wins, terraform-style. Multiple <code>--var-file</code> flags are accepted and stack in command-line order.</p>
+<p>The auto-render path: <code>config.yaml</code> → typed <code>Workspace</code> struct → key/value tfvars → <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code>. The user’s <code>--var-file</code> is appended to the terraform invocation as an additional <code>-var-file=&lt;path&gt;</code> argument. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> for the layering rules.</p>
+<p>A workspace-persistent override file is <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> — when present, it’s auto-layered after the rendered tfvars and before any explicit <code>--var-file</code>. Useful for “always pass this <code>bigip_password</code> value when applying this workspace” without putting it in <code>config.yaml</code> (where the plaintext-secret rejection would reject it).</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — the teaching counterpart to this lookup.</li>
+<li><a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> — how <code>config.yaml</code> fields render into tfvars.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — the <code>ibmcloud.api_key_*</code> semantics.</li>
+<li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — the upstream HCL variable surface that <code>bnk.*</code> and <code>cluster.*</code> populate.</li>
+</ul>
 
                     </main>
 

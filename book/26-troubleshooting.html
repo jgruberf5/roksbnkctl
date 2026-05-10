@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,181 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
-<p><em>Coming in Sprint 6.</em></p>
-<p><em>Common failure modes from real deployments, organized as symptom → root cause → fix: terraform-exec retries, ROKS cluster propagation lag, kubeconfig fetch 404s, OpenShift SCC violations on test pods, and the <code>cluster down</code> → <code>workspace delete</code> current-workspace gotcha.</em></p>
+<p>Common failure modes you’ll hit when running <code>roksbnkctl</code> against real IBM Cloud accounts, organised as <strong>symptom → root cause → fix</strong>. The entries here are mined from the issue logs accumulated over Sprints 0-5 plus the failure shapes documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md">PRD 05 §“Risks”</a>.</p>
+<p>Use the page as a lookup table. If your symptom isn’t here, <a href="./23-e2e-test-plan.html">Chapter 23 — The E2E test plan</a> lists what every phase asserts; reverse-engineering from the assertions can narrow your diagnosis. For deeper-than-here debugging, the per-phase log files under <code>/tmp/roksbnkctl-e2e-backends/</code> are the first stop.</p>
+<h2 id="install-and-init"><a class="header" href="#install-and-init">Install and init</a></h2>
+<h3 id="symptom-roksbnkctl-init-errors-with-plaintext-secret-detected"><a class="header" href="#symptom-roksbnkctl-init-errors-with-plaintext-secret-detected">Symptom: <code>roksbnkctl init</code> errors with <code>plaintext secret detected</code></a></h3>
+<p><strong>Root cause</strong>: an existing <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> has a credential value sitting in a field whose name matches the rejection regex (<code>api_key</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>). The rejection is a deliberate safety net — see <a href="./14-credentials-resolver.html#whats-safe-to-commit-vs-not">Chapter 14 §“What’s safe to commit vs not”</a>.</p>
+<p><strong>Fix</strong>: move the credential into <code>IBMCLOUD_API_KEY</code> (env var) or the OS keychain (<code>roksbnkctl init</code> writes it via <a href="https://pkg.go.dev/github.com/zalando/go-keyring"><code>zalando/go-keyring</code></a>). For a single-user dev box, the supported plaintext-on-disk channel is <code>ibmcloud.api_key_b64</code> — base64-encoded, which doesn’t trip the regex.</p>
+<h3 id="symptom-roksbnkctl-init-interactive-prompts-loop-forever-asking-for-the-api-key"><a class="header" href="#symptom-roksbnkctl-init-interactive-prompts-loop-forever-asking-for-the-api-key">Symptom: <code>roksbnkctl init</code> interactive prompts loop forever asking for the API key</a></h3>
+<p><strong>Root cause</strong>: you’re running under CI / a non-TTY shell and <code>roksbnkctl</code> can’t read stdin. The interactive prompt fallback is the last step in the <a href="./14-credentials-resolver.html#the-ibmcloud_api_key-resolver-chain">credential resolver chain</a> and it doesn’t gracefully skip when stdin is closed.</p>
+<p><strong>Fix</strong>: set <code>IBMCLOUD_API_KEY</code> in the env, or pre-populate the keychain entry. For batch / CI runs, the documented invocation is:</p>
+<pre><code class="language-bash">IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init --auto -w my-workspace
+</code></pre>
+<h3 id="symptom-doctor-reports-terraform-not-found-on-a-fresh-dev-box"><a class="header" href="#symptom-doctor-reports-terraform-not-found-on-a-fresh-dev-box">Symptom: doctor reports <code>terraform: not found</code> on a fresh dev box</a></h3>
+<p><strong>Root cause</strong>: <code>terraform</code> is the only strictly-required host tool for v1.0 (everything else is internalised). Doctor checks PATH; if your shell session hasn’t sourced the install location it’ll miss.</p>
+<p><strong>Fix</strong>: install terraform via your package manager (<code>brew install terraform</code>, <code>apt-get install terraform</code>, etc.) and re-source the shell, or set the <code>TERRAFORM_BIN</code> env var pointing at the binary explicitly.</p>
+<h2 id="roksbnkctl-up-lifecycle"><a class="header" href="#roksbnkctl-up-lifecycle"><code>roksbnkctl up</code> lifecycle</a></h2>
+<h3 id="symptom-terraform-apply-errors-timeout-while-waiting-for-state-to-become-normal"><a class="header" href="#symptom-terraform-apply-errors-timeout-while-waiting-for-state-to-become-normal">Symptom: <code>terraform apply</code> errors <code>timeout while waiting for state to become 'normal'</code></a></h3>
+<p><strong>Root cause</strong>: IBM Cloud’s control plane is occasionally 5-15 minutes slow propagating cluster state — a known transient. The cluster <em>was</em> created; the API just hasn’t caught up to reporting it as Ready.</p>
+<p><strong>Fix</strong>: <code>roksbnkctl up</code> retries the apply automatically up to 3 attempts with a 60-second sleep between (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/lifecycle.go"><code>applyWithRetry</code> in <code>internal/cli/lifecycle.go</code></a>). If all three retries fail, just re-run <code>roksbnkctl up</code> manually — terraform’s state is durable, and the second attempt skips every resource that’s already provisioned.</p>
+<h3 id="symptom-roksbnkctl-up-returns-success-but-roksbnkctl-k-get-nodes-says-no-resources-found"><a class="header" href="#symptom-roksbnkctl-up-returns-success-but-roksbnkctl-k-get-nodes-says-no-resources-found">Symptom: <code>roksbnkctl up</code> returns success but <code>roksbnkctl k get nodes</code> says <code>No resources found</code></a></h3>
+<p><strong>Root cause</strong>: the ROKS cluster’s worker nodes take 5-10 minutes to provision <em>after</em> the cluster’s master endpoint returns Ready. Terraform considers the cluster “applied” as soon as the master is up; the workers come up asynchronously.</p>
+<p><strong>Fix</strong>: wait 5-10 minutes and re-run. If you want a deterministic gate, watch the IBM Cloud console’s cluster page until the worker count matches <code>workers_per_zone × zones</code>, then proceed. There’s no <code>roksbnkctl wait</code> command in v1.0 — that’s a v1.x addition.</p>
+<h3 id="symptom-roksbnkctl-up-post-apply-hook-fails-fetching-the-admin-kubeconfig-with-a-404"><a class="header" href="#symptom-roksbnkctl-up-post-apply-hook-fails-fetching-the-admin-kubeconfig-with-a-404">Symptom: <code>roksbnkctl up</code> post-apply hook fails fetching the admin kubeconfig with a 404</a></h3>
+<p><strong>Root cause</strong>: the IBM Cloud kubeconfig API (<a href="https://cloud.ibm.com/docs/openshift?topic=openshift-cs_cli_install"><code>/global/v2/applications/kubeconfig</code></a>) returns 404 for ~30-60 seconds after the cluster create call returns. The cluster exists but the kubeconfig endpoint hasn’t materialised.</p>
+<p><strong>Fix</strong>: the binary retries with exponential backoff and usually succeeds within a minute. If it still 404s after the retry budget, run <code>roksbnkctl kubeconfig --download -w &lt;workspace&gt;</code> to retry just the fetch without re-applying.</p>
+<h3 id="symptom-error-inappropriate-value-for-attribute-kubeconfig_dir-directory-does-not-exist"><a class="header" href="#symptom-error-inappropriate-value-for-attribute-kubeconfig_dir-directory-does-not-exist">Symptom: <code>Error: Inappropriate value for attribute "kubeconfig_dir": directory does not exist</code></a></h3>
+<p><strong>Root cause</strong>: the upstream HCL’s IBM provider doesn’t <code>MkdirAll</code> for the kubeconfig output directory; it expects the parent dir to exist already. The variable’s default (<code>/work/.bnk/scratch/kubeconfig</code>) is the in-container path; on a direct-on-host run it’s a path that doesn’t exist.</p>
+<p><strong>Fix</strong>: <code>roksbnkctl</code> writes a workspace-scoped override (<code>kubeconfig_dir = ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code>) and creates the dir at apply time. If you’re hand-rolling terraform without <code>roksbnkctl up</code>, <code>mkdir -p ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code> first.</p>
+<h3 id="symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes"><a class="header" href="#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes">Symptom: <code>terraform destroy</code> leaves orphan IBM Cloud resources (LBs, security groups, VPEs)</a></h3>
+<p><strong>Root cause</strong>: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster’s ID.</p>
+<p><strong>Fix</strong>: run <code>roksbnkctl ibmcloud is load-balancers | grep &lt;cluster-name&gt;</code> (and similar for <code>vpc-endpoint-gateways</code>, <code>security-groups</code>) and <code>ibmcloud is load-balancer-delete</code> each orphan by ID. A future <code>roksbnkctl cluster destroy --sweep-orphans</code> will automate this — for now, manual.</p>
+<h2 id="workspaces"><a class="header" href="#workspaces">Workspaces</a></h2>
+<h3 id="symptom-roksbnkctl-ws-delete-name-succeeds-but-subsequent-commands-still-use-the-deleted-workspace"><a class="header" href="#symptom-roksbnkctl-ws-delete-name-succeeds-but-subsequent-commands-still-use-the-deleted-workspace">Symptom: <code>roksbnkctl ws delete &lt;name&gt;</code> succeeds but subsequent commands still use the deleted workspace</a></h3>
+<p><strong>Root cause</strong>: workspace context is set by the <code>--workspace</code>/<code>-w</code> flag (or the persistent value the active shell remembers from the last <code>roksbnkctl ws use</code>); deleting the workspace directory doesn’t reset that context, so subsequent commands try to operate on a non-existent workspace dir.</p>
+<p><strong>Fix</strong>: switch to another workspace <strong>before</strong> deleting the current one:</p>
+<pre><code class="language-bash">roksbnkctl ws use default
+roksbnkctl ws delete my-old-workspace
+</code></pre>
+<p>The parking-lot pattern is the recommended flow: keep a <code>default</code> workspace as the always-safe destination after deletes. Documented in <a href="./06-workspaces.html">Chapter 6 — Workspaces</a>.</p>
+<h3 id="symptom-workspace-name-has-terraform-managed-resources-pass---force-to-delete-anyway"><a class="header" href="#symptom-workspace-name-has-terraform-managed-resources-pass---force-to-delete-anyway">Symptom: <code>workspace "&lt;name&gt;" has terraform-managed resources; pass --force to delete anyway</code></a></h3>
+<p><strong>Root cause</strong>: the workspace’s <code>terraform.tfstate</code> is non-empty — live infrastructure exists. <code>roksbnkctl ws delete</code> refuses to orphan the resources by removing the state file out from under them.</p>
+<p><strong>Fix</strong>: run <code>roksbnkctl down -w &lt;name&gt; --auto</code> first to destroy the resources, then <code>roksbnkctl ws delete &lt;name&gt;</code> (no <code>--force</code> needed once state is empty). If you genuinely want to abandon the infra and clean up by hand later, <code>roksbnkctl ws delete --force</code> skips the check.</p>
+<h2 id="backends"><a class="header" href="#backends">Backends</a></h2>
+<h3 id="symptom---backend-docker-errors-with-cannot-connect-to-the-docker-daemon"><a class="header" href="#symptom---backend-docker-errors-with-cannot-connect-to-the-docker-daemon">Symptom: <code>--backend docker</code> errors with <code>Cannot connect to the Docker daemon</code></a></h3>
+<p><strong>Root cause</strong>: dockerd isn’t running, or your user isn’t in the <code>docker</code> group, or you’re on a system that needs a separate rootless-docker socket path.</p>
+<p><strong>Fix</strong>:</p>
+<ul>
+<li>Linux with system docker: <code>sudo systemctl start docker</code>; add yourself to the <code>docker</code> group (<code>sudo usermod -aG docker $USER</code>) and log out + back in.</li>
+<li>Linux with rootless docker: <code>systemctl --user start docker</code>; set <code>DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock</code>.</li>
+<li>macOS / Windows: launch Docker Desktop / Rancher Desktop.</li>
+</ul>
+<p>Verify with <code>docker info | head -1</code> — if that fails, <code>roksbnkctl --backend docker</code> will too.</p>
+<h3 id="symptom---backend-k8s-errors-with-ops-pod-not-found-in-roksbnkctl-ops-namespace"><a class="header" href="#symptom---backend-k8s-errors-with-ops-pod-not-found-in-roksbnkctl-ops-namespace">Symptom: <code>--backend k8s</code> errors with <code>ops pod not found in roksbnkctl-ops namespace</code></a></h3>
+<p><strong>Root cause</strong>: you haven’t run <code>roksbnkctl ops install</code> against the target cluster. The k8s backend dispatches into a long-lived ops pod that has to be provisioned first.</p>
+<p><strong>Fix</strong>:</p>
+<pre><code class="language-bash">roksbnkctl ops install
+</code></pre>
+<p>Verify with <code>roksbnkctl k get pod -n roksbnkctl-ops</code> — the pod should be Running. See <a href="./19-in-cluster-ops-pod.html">Chapter 19</a> for the install model.</p>
+<h3 id="symptom---backend-sshtarget-errors-with-tool-not-found-iperf3--run-with---bootstrap-to-apt-install"><a class="header" href="#symptom---backend-sshtarget-errors-with-tool-not-found-iperf3--run-with---bootstrap-to-apt-install">Symptom: <code>--backend ssh:&lt;target&gt;</code> errors with <code>tool not found: iperf3 — run with --bootstrap to apt-install</code></a></h3>
+<p><strong>Root cause</strong>: the SSH target doesn’t have the tool installed, and <code>roksbnkctl</code> doesn’t auto-install without explicit opt-in (because apt-installing on a production jumphost without consent is rude).</p>
+<p><strong>Fix</strong>: pass <code>--bootstrap</code> once per fresh target:</p>
+<pre><code class="language-bash">roksbnkctl --backend ssh:jumphost --bootstrap test throughput
+</code></pre>
+<p>The bootstrap step runs <code>apt-get install -y &lt;tool&gt;</code> (or the equivalent for ibmcloud — adding the IBM apt repo first). Subsequent calls skip the install check and run normally. See <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a> for the bootstrap mechanism.</p>
+<h3 id="symptom---backend-sshjumphost-errors-host-key-mismatch-for-jumphost-got-sha256-known_hosts-has-sha256"><a class="header" href="#symptom---backend-sshjumphost-errors-host-key-mismatch-for-jumphost-got-sha256-known_hosts-has-sha256">Symptom: <code>--backend ssh:jumphost</code> errors <code>host key mismatch for jumphost (got SHA256:..., known_hosts has SHA256:...)</code></a></h3>
+<p><strong>Root cause</strong>: the jumphost was re-provisioned (terraform destroy + apply) and now has a fresh host key, but <code>~/.roksbnkctl/known_hosts</code> still has the old fingerprint. TOFU refuses to silently accept the change — that’s the threat model the prompt exists to defend against.</p>
+<p><strong>Fix</strong>: if you know the re-provision is legitimate, delete the stale entry:</p>
+<pre><code class="language-bash">ssh-keygen -R '&lt;jumphost-ip&gt;' -f ~/.roksbnkctl/known_hosts
+# Or for the whole roksbnkctl known_hosts:
+rm ~/.roksbnkctl/known_hosts
+</code></pre>
+<p>The next <code>roksbnkctl --on jumphost</code> call will TOFU-prompt with the new fingerprint. For CI use the <code>--insecure-host-key</code> flag, which records the key on first contact without prompting.</p>
+<h2 id="openshift-and-podsecurity"><a class="header" href="#openshift-and-podsecurity">OpenShift and PodSecurity</a></h2>
+<h3 id="symptom-throughput-test-pod-fails-admission-violates-podsecurity-restrictedv1x-runasnonroot--true"><a class="header" href="#symptom-throughput-test-pod-fails-admission-violates-podsecurity-restrictedv1x-runasnonroot--true">Symptom: throughput test pod fails admission: <code>violates PodSecurity "restricted:v1.x": runAsNonRoot != true</code></a></h3>
+<p><strong>Root cause</strong>: the throughput suite’s default iperf3 image is <code>networkstatic/iperf3:latest</code> which runs as root. OpenShift’s <code>restricted-v2</code> SCC rejects root pods.</p>
+<p><strong>Fix</strong>: set the workspace config to use the bundled image, which is built <code>USER 1000</code>:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  throughput:
+    image: ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:v0.9.0
+</code></pre>
+<p><a href="./22-throughput-testing.html#the-bundled-image-and-the-runasnonroot-constraint">Chapter 22 §“The bundled image and the <code>runAsNonRoot</code> constraint”</a> is the full backstory. The same chapter’s §“OpenShift SCC failure mode” lists the three error-message variants OpenShift produces.</p>
+<h3 id="symptom-roksbnkctl-ops-install-errors-serviceaccount-roksbnkctl-ops-forbidden-violates-podsecuritypolicy"><a class="header" href="#symptom-roksbnkctl-ops-install-errors-serviceaccount-roksbnkctl-ops-forbidden-violates-podsecuritypolicy">Symptom: <code>roksbnkctl ops install</code> errors <code>ServiceAccount "roksbnkctl-ops" forbidden: violates PodSecurityPolicy</code></a></h3>
+<p><strong>Root cause</strong>: rare — the cluster is running PodSecurityPolicy (the deprecated predecessor to PodSecurity admission) and the ops pod’s ServiceAccount doesn’t have the SCC binding it needs.</p>
+<p><strong>Fix</strong>: the ops manifest assumes <code>restricted-v2</code> is acceptable. If your cluster forces <code>privileged</code>, that’s a cluster-policy question outside <code>roksbnkctl</code>’s control — talk to your cluster admin about granting <code>restricted-v2</code> to the <code>roksbnkctl-ops</code> namespace.</p>
+<h3 id="symptom-imagepullbackoff-on-the-ops-pod-or-throughput-pod"><a class="header" href="#symptom-imagepullbackoff-on-the-ops-pod-or-throughput-pod">Symptom: <code>ImagePullBackOff</code> on the ops pod or throughput pod</a></h3>
+<p><strong>Root cause</strong>: most commonly, the cluster can’t reach the image registry. Three sub-causes:</p>
+<ol>
+<li>The cluster’s egress NAT doesn’t route to <code>ghcr.io</code> (the image host for <code>roksbnkctl-tools-*</code>).</li>
+<li>The image tag doesn’t exist for the version you’re running (e.g., you built <code>roksbnkctl</code> from <code>main</code> at a commit between releases, and <code>:dev</code> isn’t published).</li>
+<li>ghcr.io itself is rate-limiting unauthenticated pulls (rare; usually only an issue for shared CI hosts hitting ghcr.io en masse).</li>
+</ol>
+<p><strong>Fix</strong>:</p>
+<ul>
+<li>Check egress with <code>roksbnkctl k exec &lt;ops-pod&gt; -- curl -sI https://ghcr.io</code> — if that hangs, you have a network path issue, not a roksbnkctl issue.</li>
+<li>Check the tag with <code>docker manifest inspect ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;version&gt;</code> — if 404, pin to a tagged release version in workspace config rather than running from <code>main</code> head.</li>
+<li>For rate-limit issues, pre-pull images to a local registry mirror and override the workspace <code>test.throughput.image</code> to point there.</li>
+</ul>
+<h2 id="dns"><a class="header" href="#dns">DNS</a></h2>
+<h3 id="symptom-roksbnkctl-test-dns-returns-nxdomain-against-an-internal-gslb-record-that-you-know-exists"><a class="header" href="#symptom-roksbnkctl-test-dns-returns-nxdomain-against-an-internal-gslb-record-that-you-know-exists">Symptom: <code>roksbnkctl test dns</code> returns NXDOMAIN against an internal GSLB record that you know exists</a></h3>
+<p><strong>Root cause</strong>: your laptop’s resolver chain doesn’t have a route to the internal GSLB VIP. The default <code>--server system</code> uses your <code>/etc/resolv.conf</code>, which resolves against your office or ISP resolver — neither of which knows about the cluster-private GSLB.</p>
+<p><strong>Fix</strong>: query the GSLB VIP explicitly, or query from inside the cluster:</p>
+<pre><code class="language-bash"># Query the GSLB VIP directly
+roksbnkctl test dns --target www.example.com --type A --server 169.45.91.5
+
+# Or run the probe from inside the cluster (the cluster's resolvers reach the GSLB)
+roksbnkctl test dns --target www.example.com --type A --backend k8s --server cluster
+</code></pre>
+<p><a href="./21-dns-testing-gslb.html#server-resolution">Chapter 21 §“Server resolution”</a> is the full <code>--server</code> reference.</p>
+<h3 id="symptom---gslb-compare-always-reports-gslb_divergence-false-against-a-target-you-expect-to-diverge"><a class="header" href="#symptom---gslb-compare-always-reports-gslb_divergence-false-against-a-target-you-expect-to-diverge">Symptom: <code>--gslb-compare</code> always reports <code>gslb_divergence: false</code> against a target you expect to diverge</a></h3>
+<p><strong>Root cause</strong>: the chosen target’s GSLB rule isn’t differentiating your <code>local</code> vantage (laptop) from your <code>k8s</code> vantage (cluster). Two common shapes:</p>
+<ol>
+<li>The name is fronted by an anycast resolver fleet (Cloudflare, Google Public DNS) — same answer everywhere by design.</li>
+<li>Your laptop and your cluster are both in the same geographic region from GSLB’s perspective (both in North America hitting the same datacenter).</li>
+</ol>
+<p><strong>Fix</strong>: pick a target known to be geo-resolved (<code>www.google.com</code> is the canonical “different IPs from different regions” example), or add an SSH-based vantage (<code>--backend ssh:eu-bastion</code>) to bring in a third region. <a href="./21-dns-testing-gslb.html#the-gslb-compare-workflow">Chapter 21 §“GSLB cross-vantage compare”</a> covers the multi-vantage workflow.</p>
+<h3 id="symptom-roksbnkctl-test-dns---backend-docker-errors-dns-probe-doesnt-benefit-from-docker"><a class="header" href="#symptom-roksbnkctl-test-dns---backend-docker-errors-dns-probe-doesnt-benefit-from-docker">Symptom: <code>roksbnkctl test dns --backend docker</code> errors <code>DNS probe doesn't benefit from docker</code></a></h3>
+<p><strong>Root cause</strong>: design choice. Docker containers share the host’s network namespace by default, so a docker-backend probe has the same network identity as a <code>--backend local</code> probe — no GSLB-relevant vantage difference.</p>
+<p><strong>Fix</strong>: use <code>--backend local</code>, <code>--backend k8s</code>, or <code>--backend ssh:&lt;target&gt;</code> instead.</p>
+<h2 id="cluster-registration"><a class="header" href="#cluster-registration">Cluster registration</a></h2>
+<h3 id="symptom-roksbnkctl-cluster-register-name-errors-cluster-not-found"><a class="header" href="#symptom-roksbnkctl-cluster-register-name-errors-cluster-not-found">Symptom: <code>roksbnkctl cluster register &lt;name&gt;</code> errors <code>cluster not found</code></a></h3>
+<p><strong>Root cause</strong>: the cluster name doesn’t exist in the workspace’s resource group, or the API key doesn’t have visibility into the resource group.</p>
+<p><strong>Fix</strong>: verify the name with <code>roksbnkctl ibmcloud ks cluster ls --output json | jq '.[].name'</code>, and verify the resource-group scope in workspace config matches where the cluster lives. If the cluster is in a different resource group, set <code>ibmcloud.resource_group</code> in the workspace config to that group.</p>
+<h3 id="symptom-register-succeeds-but-roksbnkctl-k-get-nodes-immediately-errors-unauthorized"><a class="header" href="#symptom-register-succeeds-but-roksbnkctl-k-get-nodes-immediately-errors-unauthorized">Symptom: <code>register</code> succeeds but <code>roksbnkctl k get nodes</code> immediately errors <code>Unauthorized</code></a></h3>
+<p><strong>Root cause</strong>: the kubeconfig was fetched but the auth token has already expired, or the IAM-based token that the kubeconfig embeds doesn’t match the API key that’s currently in env. Common after a 1-hour idle window.</p>
+<p><strong>Fix</strong>:</p>
+<pre><code class="language-bash">roksbnkctl kubeconfig --download --cluster &lt;name&gt;
+</code></pre>
+<p>The token refresh is automatic on every <code>up</code>/<code>apply</code>, but <code>register</code> against a cluster you didn’t just provision sometimes lands you with a stale token in the kubeconfig.</p>
+<h2 id="cos-supply-chain"><a class="header" href="#cos-supply-chain">COS supply chain</a></h2>
+<h3 id="symptom-flo-fails-to-start-with-failed-to-pull-far-image-403-forbidden"><a class="header" href="#symptom-flo-fails-to-start-with-failed-to-pull-far-image-403-forbidden">Symptom: FLO fails to start with <code>failed to pull FAR image: 403 Forbidden</code></a></h3>
+<p><strong>Root cause</strong>: the <code>f5-far-auth-key.tgz</code> object in the bucket has stale credentials (the F5-side pull key was rotated, but the bucket still has the old one).</p>
+<p><strong>Fix</strong>: re-issue the key on the F5 side and upload to COS:</p>
+<pre><code class="language-bash">roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+  ./new-f5-far-auth-key.tgz \
+  --instance bnk-orchestration
+
+# Restart FLO so it re-reads
+roksbnkctl k delete pod -n f5-bnk -l app=flo
+</code></pre>
+<p>See <a href="./25-cos-supply-chain.html#worked-example-upload-a-new-far-image">Chapter 25 §“Worked example”</a> for the full flow.</p>
+<h3 id="symptom-cos-object-put-for-a-3-gb-file-errors-midway-with-requesttimeout"><a class="header" href="#symptom-cos-object-put-for-a-3-gb-file-errors-midway-with-requesttimeout">Symptom: <code>cos object put</code> for a 3 GB file errors midway with <code>RequestTimeout</code></a></h3>
+<p><strong>Root cause</strong>: the multipart upload SDK encountered a transient COS HTTP timeout on one of the part uploads. Multipart uploads aren’t currently resumed from the failure point — they restart from zero.</p>
+<p><strong>Fix</strong>: re-run the <code>cos object put</code>. If it fails reproducibly on the same part, the underlying network is the problem (your egress link is saturated, or COS is having a regional outage — check the IBM Cloud status page).</p>
+<h3 id="symptom-cos-bucket-delete-errors-bucket-not-empty"><a class="header" href="#symptom-cos-bucket-delete-errors-bucket-not-empty">Symptom: <code>cos bucket delete</code> errors <code>Bucket not empty</code></a></h3>
+<p><strong>Root cause</strong>: COS requires buckets to be empty before delete; there’s no <code>--recursive</code> flag on bucket delete today.</p>
+<p><strong>Fix</strong>: list and delete each object, then delete the bucket:</p>
+<pre><code class="language-bash">roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration | \
+  awk 'NR&gt;1 {print $1}' | \
+  xargs -I{} roksbnkctl cos object delete "bnk-schematics-resources/{}" --instance bnk-orchestration
+
+roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+</code></pre>
+<p>Don’t forget to abort any pending multipart uploads first — they don’t appear in the standard object list but they do prevent bucket deletion. The workaround for now is <code>ibmcloud cos list-multipart-uploads</code> followed by <code>ibmcloud cos abort-multipart-upload</code> until v1.x lands a native command.</p>
+<h2 id="networking"><a class="header" href="#networking">Networking</a></h2>
+<h3 id="symptom-roksbnkctl-test-connectivity-reports-get-https-dial-tcp-io-timeout-for-an-internal-only-url"><a class="header" href="#symptom-roksbnkctl-test-connectivity-reports-get-https-dial-tcp-io-timeout-for-an-internal-only-url">Symptom: <code>roksbnkctl test connectivity</code> reports <code>Get "https://...": dial tcp: i/o timeout</code> for an internal-only URL</a></h3>
+<p><strong>Root cause</strong>: connectivity probes run from <code>--backend local</code> by default. From your laptop, internal-only URLs (cluster-private VIPs, internal GSLB names) aren’t reachable.</p>
+<p><strong>Fix</strong>: route the probe through the cluster’s network — either via <code>--backend k8s</code> (when it lands for the connectivity suite — currently k8s-backend is iperf3 + DNS only; connectivity stays local for v1.0) or via an SSH target inside the cluster’s VPC (<code>--backend ssh:cluster-jumphost</code>).</p>
+<h3 id="symptom-roksbnkctl-test-connectivity-fails-with-x509-certificate-signed-by-unknown-authority-against-a-self-signed-internal-endpoint"><a class="header" href="#symptom-roksbnkctl-test-connectivity-fails-with-x509-certificate-signed-by-unknown-authority-against-a-self-signed-internal-endpoint">Symptom: <code>roksbnkctl test connectivity</code> fails with <code>x509: certificate signed by unknown authority</code> against a self-signed internal endpoint</a></h3>
+<p><strong>Root cause</strong>: the URL’s TLS cert isn’t in the host’s trust store.</p>
+<p><strong>Fix</strong>: pass <code>--insecure</code> (session-wide; skips TLS validation for every probe in the run). The flag is deliberately session-wide rather than per-host — see <a href="./20-connectivity-testing.html">Chapter 20 §“Mixed TLS-trust posture”</a>. For mixed trust posture across multiple internal endpoints, run two separate <code>test connectivity</code> invocations, one per trust group.</p>
+<h2 id="ci-specific"><a class="header" href="#ci-specific">CI-specific</a></h2>
+<h3 id="symptom-nightly-e2e-run-fails-on-phase-d-with-error-provider-configuration-is-missing"><a class="header" href="#symptom-nightly-e2e-run-fails-on-phase-d-with-error-provider-configuration-is-missing">Symptom: nightly e2e run fails on phase D with <code>Error: Provider configuration is missing</code></a></h3>
+<p><strong>Root cause</strong>: a <code>terraform init</code> cache invalidation under <code>~/.roksbnkctl/&lt;ws&gt;/state/.terraform/</code> left a partial provider download. Happens after a CI worker is recycled mid-init.</p>
+<p><strong>Fix</strong>: <code>rm -rf ~/.roksbnkctl/&lt;ws&gt;/state/.terraform/</code> then re-run <code>roksbnkctl up</code>. Terraform-init re-downloads the providers cleanly. For CI workers that get recycled often, add a pre-step that purges <code>.terraform/</code> before each run.</p>
+<h3 id="symptom-cred-audit-phase-m-reports-ibmcloud_api_key-found-in-docker-inspect-output"><a class="header" href="#symptom-cred-audit-phase-m-reports-ibmcloud_api_key-found-in-docker-inspect-output">Symptom: cred audit (phase M) reports <code>IBMCLOUD_API_KEY found in docker inspect output</code></a></h3>
+<p><strong>Root cause</strong>: real stop-ship — credentials leaked into a docker container’s runtime env. Check <code>internal/exec/docker.go::buildEnvArgv</code> for any code path that passes the credential by value (<code>-e IBMCLOUD_API_KEY=&lt;value&gt;</code>) rather than by reference (<code>-e IBMCLOUD_API_KEY</code> — let docker pull from the caller’s env).</p>
+<p><strong>Fix</strong>: file an issue immediately, do not tag a release until this is green. Phase M is the v1.0 release gate; a leak here means the redactor or the cred-passing logic regressed. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a> for the threat model.</p>
+<h2 id="getting-more-help"><a class="header" href="#getting-more-help">Getting more help</a></h2>
+<p>When the symptom isn’t on this page:</p>
+<ol>
+<li>Re-run with <code>--verbose</code> (<code>-v</code>) — the verbose output usually surfaces the root cause directly.</li>
+<li>Check <code>/tmp/roksbnkctl-e2e-backends/&lt;phase&gt;-&lt;ts&gt;.log</code> for the per-phase trail.</li>
+<li>Cross-reference <a href="./23-e2e-test-plan.html">Chapter 23 — The E2E test plan</a> — the phase-by-phase pass criteria usually narrow down where the breakage lives.</li>
+<li>File an issue on <a href="https://github.com/jgruberf5/roksbnkctl/issues">github.com/jgruberf5/roksbnkctl</a> with the verbose output, the <code>roksbnkctl --version</code> stamp, and the per-phase log if there is one.</li>
+</ol>
 
                     </main>
 

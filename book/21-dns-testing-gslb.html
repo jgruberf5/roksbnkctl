@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9c10052e.js";
+            window.path_to_searchindex_js = "searchindex-7102f972.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -421,7 +421,7 @@ test:
 </tbody>
 </table>
 </div>
-<p>Both schemas are stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to <code>.v2</code>. PRD 03 calls out an <code>edns_client_subnet</code> field reserved for v1.x; v0.9 doesn’t emit it.</p>
+<p>Both schemas are stable starting at v0.9 — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to <code>.v2</code>. v0.10 added an optional <code>edns_client_subnet</code> object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don’t, in which case the field is omitted from the JSON via <code>omitempty</code>. Sub-fields are <code>family</code> (1 = IPv4, 2 = IPv6), <code>source_netmask</code>, <code>scope_netmask</code>, and <code>address</code>. Useful for confirming the GSLB actually saw your client’s geographic scope rather than the resolver’s IP.</p>
 <h2 id="rtt-measurement-and---iterations"><a class="header" href="#rtt-measurement-and---iterations">RTT measurement and <code>--iterations</code></a></h2>
 <p>Per-query RTT is captured directly from <code>miekg/dns</code>’s <code>Exchange()</code>, which returns the round-trip duration without the runner having to wrap a stopwatch around the call. That keeps the timing honest — no scheduling jitter from a goroutine yield between <code>time.Now()</code> and the actual UDP send.</p>
 <p><code>--iterations N</code> runs the same query against the same server N times serially and reports p50/p95/p99 across the samples. Use cases:</p>
