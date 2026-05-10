@@ -65,12 +65,12 @@ roksbnkctl test dns \
 | Flag | Default | Notes |
 |---|---|---|
 | `--target` | the workspace's `test.dns.default_target` if set, otherwise required | The DNS name to query. FQDN preferred (the trailing dot is added if missing). |
-| `--type` | `A` | Any record type the underlying [`miekg/dns`](https://github.com/miekg/dns) library exposes via its `dns.Type` enum: `A`, `AAAA`, `CNAME`, `MX`, `NS`, `TXT`, `SRV`, `SOA`, `PTR`, `CAA`, `DS`, `DNSKEY`, `ANY`, etc. |
+| `--type` | `A` | Any record type the underlying [`miekg/dns`](https://github.com/miekg/dns) library accepts via [`dns.StringToType`](https://pkg.go.dev/github.com/miekg/dns#StringToType). Common picks: `A`, `AAAA`, `CNAME`, `MX`, `NS`, `TXT`, `SRV`, `SOA`, `PTR`, `CAA`, `DS`, `DNSKEY`, `ANY`. The full table also includes `HTTPS`, `SVCB`, `TLSA`, `SSHFP`, `URI`, `NAPTR`, `RRSIG`, `NSEC`/`NSEC3`, `LOC`, etc. |
 | `--server` | `system` | Where to send the query. Literal IP, `host:port`, the keyword `system` (use the host's `/etc/resolv.conf`), the keyword `cluster` (use the cluster's CoreDNS — `--backend k8s` only), or a name from the workspace's `test.dns.resolvers` map. |
 | `--iterations` | `1` | How many queries to send to the same server. The runner reports per-query RTT plus p50/p95/p99 across the run. |
 | `--backend` | per-tool default (see [§ Backend selection](#backend-selection-for-the-probe)) | `local`, `k8s`, or `ssh:<target>`. Docker is rejected — see [§ Why `--backend docker` is rejected](#why---backend-docker-is-rejected). |
 | `--gslb-compare` | off | Fan out across all configured vantages and emit a comparison JSON. See [§ The `--gslb-compare` workflow](#the---gslb-compare-workflow). |
-| `-o json` | text | Switch from human-readable text on stderr to the `roksbnkctl.dns.v1` schema on stdout. |
+| `-o json` | text | Switch from human-readable text on stderr to JSON on stdout. Two schemas: `roksbnkctl.dns.v1.vantage` for single-vantage runs (a flat document), `roksbnkctl.dns.v1` for `--gslb-compare` (wraps one or more vantages plus a `gslb_divergence` boolean). |
 
 The probe library is `github.com/miekg/dns` — the same DNS implementation CoreDNS uses. Replacing the standard library's `net.Resolver` got us three things we couldn't get otherwise:
 
@@ -147,7 +147,7 @@ Both are optional. With neither set, `--target` is required on every invocation 
 The probe runs from one network vantage at a time per `--backend`:
 
 - **`--backend local`**: in-process. Runs in the `roksbnkctl` binary itself, so the network vantage is your laptop's. No cluster prereq, no SSH prereq.
-- **`--backend k8s`**: a one-shot Job in `roksbnkctl-test`. The pod's image is the `roksbnkctl` binary itself (the same `:dev` / `:v0.9.x` tag the Docker backend would pull); the Job's command is `roksbnkctl test dns --target ... --type ... --server ... --backend local -o json`, and the Job's stdout is collected via the k8s backend's log-stream path. The vantage is the cluster's egress IP.
+- **`--backend k8s`**: a one-shot Job in `roksbnkctl-test`. The Job's pod runs the bundled tools image `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:<tag>` — the same image the in-cluster ops pod uses, which carries both `ibmcloud` and `roksbnkctl` on PATH. (If a Job fails to pull, `kubectl describe pod` will name the `roksbnkctl-tools-ibmcloud` image — there is no separate `roksbnkctl-cli` image to look for.) The Job's command is `roksbnkctl test dns --target ... --type ... --server ... --backend local -o json`; the stdout is collected via the k8s backend's log-stream path. Vantage is the cluster's egress IP.
 - **`--backend ssh:<target>`**: scps the `roksbnkctl` binary onto the target if it's missing (or skips if it's already there, marker-file gated), then runs the same `roksbnkctl test dns ... --backend local -o json` over SSH. The vantage is the target's IP.
 - **`--backend docker`**: rejected — see below.
 
@@ -170,19 +170,22 @@ roksbnkctl test dns \
 
 What happens:
 
-1. The runner enumerates configured vantages. By default that's `local` plus `k8s` (when an ops-installed cluster is reachable) plus any `ssh:<target>` entries the workspace config marks as a probe vantage.
-2. Each vantage runs the probe in parallel. The query (target, type, server) is identical; only the backend differs.
+1. The runner enumerates configured vantages: `local` always; `k8s` when a kubeconfig is reachable on the host (the probe runs as a one-shot Job in `roksbnkctl-test` — the long-lived ops pod isn't required); plus every entry in the workspace's `targets:` block, each as `ssh:<name>`.
+2. Each vantage runs the probe in sequence (one at a time; the run completes when the slowest vantage returns). The query (target, type, server) is identical; only the backend differs. Worst-case wall time with three vantages and the default 2-second per-query timeout is ~6 seconds.
 3. Per-vantage results are collected with their full RTT distribution and answer set.
 4. The runner compares the answer sets across vantages. If they differ, `gslb_divergence` is set to `true` in the output and a human-readable summary names the diverging vantages.
-5. The output is a single `roksbnkctl.dns.v1` JSON document with one `vantages[]` entry per backend.
+5. The output is a single `roksbnkctl.dns.v1` JSON document wrapping one `vantages[]` entry per backend.
 
 `gslb_divergence: true` is **not** a failure signal — for a healthy GSLB it's the *expected* outcome. The exit code is `0` whenever every per-vantage probe succeeded (got an answer, even if the answers differ). The exit code is `1` when any per-vantage probe failed (NXDOMAIN, SERVFAIL, timeout).
 
 ## JSON output schema
 
-The schema is `roksbnkctl.dns.v1`, defined verbatim in [PRD 03 §"DNS probe"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware). Single-vantage and multi-vantage runs share the schema — multi-vantage adds entries to `vantages[]` and populates `gslb_divergence`.
+There are **two distinct JSON shapes** depending on whether `--gslb-compare` was passed. Both are versioned, both pin against [PRD 03 §"DNS probe"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware), and both can be consumed by CI:
 
-### Single-vantage output
+- **`roksbnkctl.dns.v1.vantage`** — single-vantage probe. A flat document describing one vantage's result.
+- **`roksbnkctl.dns.v1`** — multi-vantage `--gslb-compare`. Wraps an array of per-vantage entries plus a `gslb_divergence` boolean.
+
+### Single-vantage output (`roksbnkctl.dns.v1.vantage`)
 
 ```bash
 roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
@@ -191,30 +194,24 @@ roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
 
 ```json
 {
-  "schema": "roksbnkctl.dns.v1",
-  "target": "www.cloudflare.com",
-  "type": "A",
-  "vantages": [
-    {
-      "backend": "local",
-      "server": "8.8.8.8:53",
-      "iterations": 10,
-      "rtt_ms": { "p50": 12.4, "p95": 18.1, "p99": 22.7 },
-      "answers": [
-        { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.132.229" },
-        { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.133.229" }
-      ],
-      "rcode": "NOERROR",
-      "authoritative": false,
-      "truncated": false,
-      "edns_client_subnet": null
-    }
+  "schema": "roksbnkctl.dns.v1.vantage",
+  "backend": "local",
+  "server": "8.8.8.8:53",
+  "iterations": 10,
+  "rtt_ms": { "p50": 12.4, "p95": 18.1, "p99": 22.7 },
+  "answers": [
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.132.229" },
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.133.229" }
   ],
-  "gslb_divergence": false
+  "rcode": "NOERROR",
+  "authoritative": false,
+  "truncated": false
 }
 ```
 
-### Multi-vantage output (divergence detected)
+This is the per-vantage shape — no `target` / `type` wrapper at the top level (the caller already knows what they queried), no `vantages[]` array, no `gslb_divergence` field.
+
+### Multi-vantage output (`roksbnkctl.dns.v1`, divergence detected)
 
 ```bash
 roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
@@ -228,6 +225,7 @@ roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.
   "type": "A",
   "vantages": [
     {
+      "schema": "roksbnkctl.dns.v1.vantage",
       "backend": "local",
       "server": "169.45.91.5:53",
       "iterations": 1,
@@ -236,9 +234,11 @@ roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.
         { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "169.45.91.10" }
       ],
       "rcode": "NOERROR",
-      "authoritative": true
+      "authoritative": true,
+      "truncated": false
     },
     {
+      "schema": "roksbnkctl.dns.v1.vantage",
       "backend": "k8s",
       "server": "169.45.91.5:53",
       "iterations": 1,
@@ -247,7 +247,8 @@ roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.
         { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "10.20.30.40" }
       ],
       "rcode": "NOERROR",
-      "authoritative": true
+      "authoritative": true,
+      "truncated": false
     }
   ],
   "gslb_divergence": true,
@@ -255,27 +256,37 @@ roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.
 }
 ```
 
+The comparison document embeds the per-vantage shape unchanged inside `vantages[]` — each entry still carries `"schema": "roksbnkctl.dns.v1.vantage"` so a downstream parser can validate per-vantage entries against the same schema independent of whether they came in standalone or as part of a comparison.
+
 ### Schema field reference
+
+**Per-vantage shape** (`roksbnkctl.dns.v1.vantage`):
 
 | Path | Type | Meaning |
 |---|---|---|
-| `schema` | string | Always `roksbnkctl.dns.v1`. Pin against this when consuming the JSON in CI. |
+| `schema` | string | Always `roksbnkctl.dns.v1.vantage`. |
+| `backend` | string | `local`, `k8s`, or `ssh:<target>`. |
+| `server` | string | The resolver address actually used (literal, system-resolvconf result, or named-resolver lookup). |
+| `iterations` | int | How many queries went to that vantage. Mirrors `--iterations`. |
+| `rtt_ms` | object | `{ p50, p95, p99 }` across the iterations. Single-iteration runs report the same number for all three. |
+| `answers[]` | array | The RRs returned. `name` is the FQDN, `type` is the record type, `ttl` is from the response, `rdata` is the RR's data (IP for A/AAAA, target for CNAME, etc.). |
+| `rcode` | string | The DNS response code: `NOERROR`, `NXDOMAIN`, `SERVFAIL`, `REFUSED`, `TIMEOUT`. |
+| `authoritative` | bool | Whether the AA flag was set in the response. |
+| `truncated` | bool | Whether the TC flag was set. (The probe automatically retries truncated UDP responses over TCP; the field reflects the final response.) |
+| `error` | string | Present only when the probe could not get a usable response. Carries the underlying Go error string. |
+
+**Comparison shape** (`roksbnkctl.dns.v1`, emitted by `--gslb-compare`):
+
+| Path | Type | Meaning |
+|---|---|---|
+| `schema` | string | Always `roksbnkctl.dns.v1`. |
 | `target` | string | The queried name, normalised to FQDN (trailing dot included). |
 | `type` | string | The record type queried. |
-| `vantages[]` | array | One entry per backend the probe ran from. |
-| `vantages[].backend` | string | `local`, `k8s`, or `ssh:<target>`. |
-| `vantages[].server` | string | The resolver address actually used (literals, system-resolvconf result, or named-resolver lookup). |
-| `vantages[].iterations` | int | How many queries went to that vantage. Mirrors `--iterations`. |
-| `vantages[].rtt_ms` | object | `{ p50, p95, p99 }` across the iterations. Single-iteration runs report the same number for all three. |
-| `vantages[].answers[]` | array | The RRs returned. `name` is the FQDN, `type` is the record type, `ttl` is from the response, `rdata` is the RR's data (IP for A/AAAA, target for CNAME, etc.). |
-| `vantages[].rcode` | string | The DNS response code: `NOERROR`, `NXDOMAIN`, `SERVFAIL`, `REFUSED`, etc. |
-| `vantages[].authoritative` | bool | Whether the AA flag was set in the response. |
-| `vantages[].truncated` | bool | Whether the TC flag was set. |
-| `vantages[].edns_client_subnet` | object \| null | If the response carries an EDNS Client Subnet option, the subnet the resolver claimed; otherwise `null`. |
-| `gslb_divergence` | bool | True when the answer sets in `vantages[]` differ. Single-vantage runs always report `false`. |
+| `vantages[]` | array | One per-vantage entry (each conforms to `roksbnkctl.dns.v1.vantage`). |
+| `gslb_divergence` | bool | True when the answer sets across `vantages[]` differ. |
 | `gslb_divergence_summary` | string | Present only when `gslb_divergence: true`. Human-readable explanation naming the diverging vantages and answers. |
 
-The schema is stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to `roksbnkctl.dns.v2`.
+Both schemas are stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to `.v2`. PRD 03 calls out an `edns_client_subnet` field reserved for v1.x; v0.9 doesn't emit it.
 
 ## RTT measurement and `--iterations`
 

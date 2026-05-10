@@ -252,7 +252,7 @@ State handling for non-local backends is the trickiest part of terraform support
 
 | Field | Value |
 |---|---|
-| **Default backends** | `local` **and** `k8s` (run both, surface both answers — see GSLB note) |
+| **Default backend** | `local` (single-vantage). Multi-vantage opt-in via `--gslb-compare`, which fans out across `local` + `k8s` (when a kubeconfig is reachable) + every registered SSH target. v0.9 chose opt-in over "run both always" to keep the default fast and side-effect-free; revisit per user feedback in v1.x. |
 | **Supported** | `local`, `k8s`, `ssh` (docker available but rarely useful — no network-locality benefit over local) |
 | **Library** | [`github.com/miekg/dns`](https://github.com/miekg/dns) — the reference Go DNS implementation (used by CoreDNS), MIT licensed. Replaces `dig` as a host prerequisite. |
 | **Why miekg/dns over std lib `net`** | std `net.Resolver` only exposes a fixed record-type set (A/AAAA/CNAME/MX/NS/SRV/TXT) and can't easily target a specific server per query; miekg/dns gives full protocol surface, per-query custom server, and exposes RTT directly for latency measurement |

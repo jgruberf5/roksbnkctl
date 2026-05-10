@@ -27,13 +27,9 @@ package exec
 //       - Tool missing with --bootstrap → apt-get spawn observed in
 //         the captured argv list
 //
-// Build tag: gated behind `-tags sshseam` until staff lands the
-// SetSSHClientFactory seam (Sprint 4 validator Issue 3 carry-over).
-// The integrator drops the tag once the seam lands.
-//
 // Run with:
 //
-//	go test -tags sshseam -run SSHWrapper ./internal/exec/...
+//	go test -run SSHWrapper ./internal/exec/...
 
 import (
 	"context"
