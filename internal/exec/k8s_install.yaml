@@ -80,11 +80,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create", "get"]
-  # Secret read in roksbnkctl-ops only (so the ops pod / Jobs can mount
-  # the cred Secret). No cluster-wide secret access.
+  # Secret read in roksbnkctl-ops only, scoped to the one cred Secret.
+  # `resourceNames` keeps the SA from reading other Secrets in the
+  # namespace. PRD 04 §"In-cluster pod" least-privilege.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
+    resourceNames: ["roksbnkctl-ibm-creds"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

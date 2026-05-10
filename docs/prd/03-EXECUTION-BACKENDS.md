@@ -395,13 +395,15 @@ The `gslb_divergence` bool is true when the answer sets differ across vantages �
 - `roksbnkctl test dns --gslb-compare ...` runs the same probe from `local` + `k8s` (and `ssh:<target>` if configured), emits a single comparison JSON; `gslb_divergence: true` when answers differ across vantages
 - Doctor reports per-backend availability accurately
 
-## Open questions
+## Resolved in Sprint 4
 
-- **Long-lived ops pod vs per-call Job for k8s backend**: defaulting to long-lived (faster, ad-hoc shell capable, slightly more management surface). Job-only mode for ephemeral CI runs?
-- **Image versioning**: tie tool image versions to `roksbnkctl` release version, or independent? Tying simplifies reproducibility; independent allows tool patches without a roksbnkctl release.
-- **`--bootstrap` opt-in for SSH**: should auto-install of missing tools require `--bootstrap` to opt in, to avoid surprise `sudo apt-get` invocations? **Recommendation: yes, opt-in by default**, with a clear "missing tool, run with --bootstrap to install" error.
-- **Backend startup failures**: Docker daemon down, cluster unreachable, ssh target unreachable — fall back to `local` (with warning) or hard error? **Recommendation: hard error**, since silent fallback hides intent.
-- **`--backend ssh` without `:target`**: assume `jumphost` if it's the only target? Or require explicit? **Require explicit.**
+The Sprint 4 implementation pass closed the following PRD-3 open questions; landing notes preserved for future readers.
+
+- **Long-lived ops pod vs per-call Job for k8s backend**: **both, dispatched on `RunOpts.LongLivedExec`**. Long-lived ops pod (`roksbnkctl-ops/roksbnkctl-ops`) for ad-hoc `ibmcloud` and future interactive shells; one-shot Jobs in `roksbnkctl-test` for iperf3 client + future probes. See [Chapter 17 §K8s backend](https://github.com/jgruberf5/roksbnkctl/blob/main/book/src/17-execution-backends.md#k8s-backend).
+- **Image versioning**: **tied to `roksbnkctl` release version**. `internal/exec/docker.go::toolImageTag()` reads the binary's `internal/version.Version`; tag-built binaries pull matching tag-built images; dev builds pull `:dev`. `terraform` is the exception (upstream image, pinned to a literal version).
+- **`--bootstrap` opt-in for SSH**: **opt-in**, as recommended. `internal/exec/ssh.go::ensureTool` errors `127` + "rerun with --bootstrap" when the tool is missing and the flag is not set.
+- **Backend startup failures**: **hard error**, as recommended. Local fallback was rejected.
+- **`--backend ssh` without `:target`**: **explicit**, as recommended. `internal/exec/ssh.go::resolveTarget` errors with "no target specified" rather than guessing.
 
 ## Related work
 
