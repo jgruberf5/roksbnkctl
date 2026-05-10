@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
+            window.path_to_searchindex_js = "searchindex-9c10052e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,357 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="dns-testing-for-gslb"><a class="header" href="#dns-testing-for-gslb">DNS testing for GSLB</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em>The flagship testing chapter. The GSLB problem statement, why per-vantage probing matters, the <code>--server</code> / <code>--type</code> / <code>--iterations</code> flags, the <code>--gslb-compare</code> workflow, the JSON output schema, and worked F5 BIG-IP Next GSLB scenarios with expected divergence.</em></p>
+<p><code>roksbnkctl test dns</code> is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the <em>answer</em> a name returns isn’t a single global truth but a function of <em>who’s asking from where</em>.</p>
+<p>This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you “the URL works”; throughput testing tells you “the path is fast”. Both assume the name resolved. When the GSLB is the thing under test, “the name resolved” is <em>itself</em> the question — and the answer changes depending on the network vantage of whoever’s asking.</p>
+<p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what <code>v0.9</code> ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<h2 id="the-gslb-problem"><a class="header" href="#the-gslb-problem">The GSLB problem</a></h2>
+<p>F5 BIG-IP Next’s GSLB (Global Server Load Balancing) returns different DNS answers depending on the requesting resolver’s IP address. The discrimination is a feature, not a bug — that’s the whole point of GSLB:</p>
+<ul>
+<li><strong>Geographic affinity</strong>: a user in the US gets a US datacenter IP; a user in the EU gets an EU datacenter IP. The dispatch rule is per-region.</li>
+<li><strong>Datacenter routing</strong>: a request from a known partner CIDR gets a private VIP; a request from the public internet gets a public VIP.</li>
+<li><strong>Health-check state</strong>: when the primary pool member goes unhealthy, GSLB starts handing out the secondary pool member’s IP — but only after the resolver’s TTL on the prior answer expires.</li>
+<li><strong>Anycast vs unicast</strong>: a name fronted by an anycast resolver fleet may return the same answer everywhere; the same name fronted by GSLB returns a per-region answer.</li>
+</ul>
+<p>Validating GSLB means validating that the <em>right</em> answer comes back from the <em>right</em> vantage. From your laptop in Toronto, you should see the US datacenter IP. From a workload running in the EU, you should see the EU datacenter IP. From an east-Asia bastion, you should see whatever your GSLB rule says east-Asia gets.</p>
+<p>The standard <code>dig www.example.com</code> from your laptop only ever tells you what your laptop’s resolver, talking to its configured upstream, gets back. That’s one vantage. To validate GSLB you need <em>several</em>, and you need to be able to compare the answers.</p>
+<h2 id="why-per-vantage-probing-matters"><a class="header" href="#why-per-vantage-probing-matters">Why per-vantage probing matters</a></h2>
+<p>A concrete worked example. Suppose your GSLB rule says:</p>
+<blockquote>
+<p>“Users in the US get the IP for <code>dc1.example.com</code> (<code>169.45.91.10</code>). Users in the EU get the IP for <code>dc2.example.com</code> (<code>52.123.45.67</code>).”</p>
+</blockquote>
+<p>You run from your laptop in the US:</p>
+<pre><code class="language-bash">$ dig +short www.example.com
+169.45.91.10
+</code></pre>
+<p>That confirms the US rule. But it tells you nothing about the EU rule. To verify the EU rule you’d have to actually be in the EU — or, more practically, run the query <em>from</em> a network vantage that the GSLB will treat as EU.</p>
+<p><code>roksbnkctl test dns</code> makes that vantage selection a flag:</p>
+<pre><code class="language-bash"># From the laptop (your home / office / coffee-shop IP)
+roksbnkctl test dns --target www.example.com --type A --backend local
+
+# From inside the cluster (the cluster's egress IP — often a different region)
+roksbnkctl test dns --target www.example.com --type A --backend k8s
+
+# From a registered SSH target in the EU
+roksbnkctl test dns --target www.example.com --type A --backend ssh:eu-bastion
+</code></pre>
+<p>The <code>--gslb-compare</code> flag fans out across the configured backends in parallel and emits a single JSON report that calls out whether the answers diverged across vantages — exactly the assertion you need for “is the GSLB rule taking effect”.</p>
+<h2 id="the-roksbnkctl-test-dns-flag-surface"><a class="header" href="#the-roksbnkctl-test-dns-flag-surface">The <code>roksbnkctl test dns</code> flag surface</a></h2>
+<pre><code class="language-bash">roksbnkctl test dns \
+  [--target &lt;name&gt;] \
+  [--type &lt;record-type&gt;] \
+  [--server &lt;server-spec&gt;] \
+  [--iterations &lt;N&gt;] \
+  [--backend &lt;local|k8s|ssh:&lt;target&gt;&gt;] \
+  [--gslb-compare] \
+  [-o json]
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--target</code></td><td>the workspace’s <code>test.dns.default_target</code> if set, otherwise required</td><td>The DNS name to query. FQDN preferred (the trailing dot is added if missing).</td></tr>
+<tr><td><code>--type</code></td><td><code>A</code></td><td>Any record type the underlying <a href="https://github.com/miekg/dns"><code>miekg/dns</code></a> library accepts via <a href="https://pkg.go.dev/github.com/miekg/dns#StringToType"><code>dns.StringToType</code></a>. Common picks: <code>A</code>, <code>AAAA</code>, <code>CNAME</code>, <code>MX</code>, <code>NS</code>, <code>TXT</code>, <code>SRV</code>, <code>SOA</code>, <code>PTR</code>, <code>CAA</code>, <code>DS</code>, <code>DNSKEY</code>, <code>ANY</code>. The full table also includes <code>HTTPS</code>, <code>SVCB</code>, <code>TLSA</code>, <code>SSHFP</code>, <code>URI</code>, <code>NAPTR</code>, <code>RRSIG</code>, <code>NSEC</code>/<code>NSEC3</code>, <code>LOC</code>, etc.</td></tr>
+<tr><td><code>--server</code></td><td><code>system</code></td><td>Where to send the query. Literal IP, <code>host:port</code>, the keyword <code>system</code> (use the host’s <code>/etc/resolv.conf</code>), the keyword <code>cluster</code> (use the cluster’s CoreDNS — <code>--backend k8s</code> only), or a name from the workspace’s <code>test.dns.resolvers</code> map.</td></tr>
+<tr><td><code>--iterations</code></td><td><code>1</code></td><td>How many queries to send to the same server. The runner reports per-query RTT plus p50/p95/p99 across the run.</td></tr>
+<tr><td><code>--backend</code></td><td>per-tool default (see <a href="#backend-selection-for-the-probe">§ Backend selection</a>)</td><td><code>local</code>, <code>k8s</code>, or <code>ssh:&lt;target&gt;</code>. Docker is rejected — see <a href="#why---backend-docker-is-rejected">§ Why <code>--backend docker</code> is rejected</a>.</td></tr>
+<tr><td><code>--gslb-compare</code></td><td>off</td><td>Fan out across all configured vantages and emit a comparison JSON. See <a href="#the---gslb-compare-workflow">§ The <code>--gslb-compare</code> workflow</a>.</td></tr>
+<tr><td><code>-o json</code></td><td>text</td><td>Switch from human-readable text on stderr to JSON on stdout. Two schemas: <code>roksbnkctl.dns.v1.vantage</code> for single-vantage runs (a flat document), <code>roksbnkctl.dns.v1</code> for <code>--gslb-compare</code> (wraps one or more vantages plus a <code>gslb_divergence</code> boolean).</td></tr>
+</tbody>
+</table>
+</div>
+<p>The probe library is <code>github.com/miekg/dns</code> — the same DNS implementation CoreDNS uses. Replacing the standard library’s <code>net.Resolver</code> got us three things we couldn’t get otherwise:</p>
+<ul>
+<li><strong>Full record-type surface</strong>: <code>net.Resolver</code> only exposes a fixed subset; GSLB validation often needs <code>CAA</code> (cert provisioning), <code>DS</code>/<code>DNSKEY</code> (DNSSEC), or <code>SOA</code> (authority chain) which <code>net.Resolver</code> doesn’t.</li>
+<li><strong>Per-query server selection</strong>: standard library hides the upstream resolver behind whatever <code>/etc/resolv.conf</code> says; we need to be able to point at a specific GSLB VIP for the query.</li>
+<li><strong>Per-query RTT measurement</strong>: <code>miekg/dns</code>’s <code>Exchange()</code> returns <code>time.Duration</code> directly. No timing-overhead fudging from running queries serially through the resolver chain.</li>
+</ul>
+<p>When <code>--backend k8s</code> is selected, the probe self-execs as a one-shot Job in the <code>roksbnkctl-test</code> namespace — no separate image. <code>roksbnkctl</code> is its own probe runner; the Job’s pod runs <code>roksbnkctl test dns ...</code> with <code>--backend local</code> from the cluster’s network vantage. See <a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> for the Job mechanics.</p>
+<h2 id="server-resolution"><a class="header" href="#server-resolution">Server resolution</a></h2>
+<p><code>--server</code> accepts five forms:</p>
+<h3 id="literal-ip-or-hostport"><a class="header" href="#literal-ip-or-hostport">Literal IP or <code>host:port</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server 8.8.8.8
+roksbnkctl test dns --target www.example.com --type A --server 8.8.8.8:53
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com:53
+</code></pre>
+<p>Bare hosts default to port 53. IPv6 literals must be bracketed: <code>[2001:4860:4860::8888]:53</code>.</p>
+<h3 id="system"><a class="header" href="#system"><code>system</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server system
+</code></pre>
+<p>Reads <code>/etc/resolv.conf</code> from the host running the probe (so for <code>--backend local</code> that’s your laptop; for <code>--backend k8s</code> that’s the Pod’s <code>/etc/resolv.conf</code>, which CoreDNS owns; for <code>--backend ssh:&lt;target&gt;</code> that’s the target’s <code>/etc/resolv.conf</code>). This is the default if <code>--server</code> is omitted entirely.</p>
+<h3 id="cluster"><a class="header" href="#cluster"><code>cluster</code></a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server cluster --backend k8s
+</code></pre>
+<p>Identical to <code>system</code> when running with <code>--backend k8s</code> (CoreDNS is what the Pod’s <code>/etc/resolv.conf</code> points at). Allowed only with <code>--backend k8s</code> — using <code>--server cluster</code> from a <code>local</code> or <code>ssh</code> vantage errors at parse time, since “cluster CoreDNS” isn’t a meaningful concept from outside.</p>
+<h3 id="named-resolver-from-workspace-config"><a class="header" href="#named-resolver-from-workspace-config">Named resolver from workspace config</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server gslb-vip
+</code></pre>
+<p>Looks up <code>gslb-vip</code> in <code>test.dns.resolvers</code> (see next section). Useful for checking the same name against several different upstream resolvers without remembering each IP.</p>
+<h2 id="workspace-config-testdns"><a class="header" href="#workspace-config-testdns">Workspace config: <code>test.dns</code></a></h2>
+<p>Two new keys land this sprint under the existing <code>test:</code> block:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  dns:
+    default_target: www.example.com
+    resolvers:
+      google:     "8.8.8.8:53"
+      cloudflare: "1.1.1.1:53"
+      gslb-vip:   "169.45.91.5:53"
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dns.default_target</code></td><td>string</td><td>empty</td><td>The name <code>roksbnkctl test dns</code> queries when <code>--target</code> isn’t passed. Lets you keep the per-workspace canonical name out of every CLI invocation.</td></tr>
+<tr><td><code>dns.resolvers</code></td><td>map[string]string</td><td>empty</td><td>Named resolvers usable as <code>--server &lt;name&gt;</code>. Values are <code>&lt;host&gt;:&lt;port&gt;</code> (port required; mirrors the <code>--server</code> literal-IP form).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Both are optional. With neither set, <code>--target</code> is required on every invocation and <code>--server</code> only accepts literal IPs / <code>system</code> / <code>cluster</code>.</p>
+<p><a href="./12-workspace-config.html#test">Chapter 12 §“test:”</a> is the full workspace-config reference; this is the GSLB-relevant subset.</p>
+<h2 id="backend-selection-for-the-probe"><a class="header" href="#backend-selection-for-the-probe">Backend selection for the probe</a></h2>
+<p>The probe runs from one network vantage at a time per <code>--backend</code>:</p>
+<ul>
+<li><strong><code>--backend local</code></strong>: in-process. Runs in the <code>roksbnkctl</code> binary itself, so the network vantage is your laptop’s. No cluster prereq, no SSH prereq.</li>
+<li><strong><code>--backend k8s</code></strong>: a one-shot Job in <code>roksbnkctl-test</code>. The Job’s pod runs the bundled tools image <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;tag&gt;</code> — the same image the in-cluster ops pod uses, which carries both <code>ibmcloud</code> and <code>roksbnkctl</code> on PATH. (If a Job fails to pull, <code>kubectl describe pod</code> will name the <code>roksbnkctl-tools-ibmcloud</code> image — there is no separate <code>roksbnkctl-cli</code> image to look for.) The Job’s command is <code>roksbnkctl test dns --target ... --type ... --server ... --backend local -o json</code>; the stdout is collected via the k8s backend’s log-stream path. Vantage is the cluster’s egress IP.</li>
+<li><strong><code>--backend ssh:&lt;target&gt;</code></strong>: scps the <code>roksbnkctl</code> binary onto the target if it’s missing (or skips if it’s already there, marker-file gated), then runs the same <code>roksbnkctl test dns ... --backend local -o json</code> over SSH. The vantage is the target’s IP.</li>
+<li><strong><code>--backend docker</code></strong>: rejected — see below.</li>
+</ul>
+<p>The default backend per <code>roksbnkctl</code> invocation (when <code>--backend</code> is omitted and there’s no <code>exec.dns.backend</code> in workspace config) is <code>local</code>. To run GSLB cross-vantage you generally pass <code>--gslb-compare</code>, which fans out instead of picking a single vantage.</p>
+<p><a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> has the one-shot-Job mechanics; <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a> has the file-materialisation and bootstrap story. Both apply to the DNS probe verbatim.</p>
+<h2 id="the---gslb-compare-workflow"><a class="header" href="#the---gslb-compare-workflow">The <code>--gslb-compare</code> workflow</a></h2>
+<p>Pass <code>--gslb-compare</code> to fan out across all configured vantages in parallel and emit a single comparison JSON:</p>
+<pre><code class="language-bash">roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.example.com \
+  --gslb-compare \
+  -o json
+</code></pre>
+<p>What happens:</p>
+<ol>
+<li>The runner enumerates configured vantages: <code>local</code> always; <code>k8s</code> when a kubeconfig is reachable on the host (the probe runs as a one-shot Job in <code>roksbnkctl-test</code> — the long-lived ops pod isn’t required); plus every entry in the workspace’s <code>targets:</code> block, each as <code>ssh:&lt;name&gt;</code>.</li>
+<li>Each vantage runs the probe in sequence (one at a time; the run completes when the slowest vantage returns). The query (target, type, server) is identical; only the backend differs. Worst-case wall time with three vantages and the default 2-second per-query timeout is ~6 seconds.</li>
+<li>Per-vantage results are collected with their full RTT distribution and answer set.</li>
+<li>The runner compares the answer sets across vantages. If they differ, <code>gslb_divergence</code> is set to <code>true</code> in the output and a human-readable summary names the diverging vantages.</li>
+<li>The output is a single <code>roksbnkctl.dns.v1</code> JSON document wrapping one <code>vantages[]</code> entry per backend.</li>
+</ol>
+<p><code>gslb_divergence: true</code> is <strong>not</strong> a failure signal — for a healthy GSLB it’s the <em>expected</em> outcome. The exit code is <code>0</code> whenever every per-vantage probe succeeded (got an answer, even if the answers differ). The exit code is <code>1</code> when any per-vantage probe failed (NXDOMAIN, SERVFAIL, timeout).</p>
+<h2 id="json-output-schema"><a class="header" href="#json-output-schema">JSON output schema</a></h2>
+<p>There are <strong>two distinct JSON shapes</strong> depending on whether <code>--gslb-compare</code> was passed. Both are versioned, both pin against <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe”</a>, and both can be consumed by CI:</p>
+<ul>
+<li><strong><code>roksbnkctl.dns.v1.vantage</code></strong> — single-vantage probe. A flat document describing one vantage’s result.</li>
+<li><strong><code>roksbnkctl.dns.v1</code></strong> — multi-vantage <code>--gslb-compare</code>. Wraps an array of per-vantage entries plus a <code>gslb_divergence</code> boolean.</li>
+</ul>
+<h3 id="single-vantage-output-roksbnkctldnsv1vantage"><a class="header" href="#single-vantage-output-roksbnkctldnsv1vantage">Single-vantage output (<code>roksbnkctl.dns.v1.vantage</code>)</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
+  --iterations 10 --backend local -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1.vantage",
+  "backend": "local",
+  "server": "8.8.8.8:53",
+  "iterations": 10,
+  "rtt_ms": { "p50": 12.4, "p95": 18.1, "p99": 22.7 },
+  "answers": [
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.132.229" },
+    { "name": "www.cloudflare.com.", "type": "A", "ttl": 60, "rdata": "104.16.133.229" }
+  ],
+  "rcode": "NOERROR",
+  "authoritative": false,
+  "truncated": false
+}
+</code></pre>
+<p>This is the per-vantage shape — no <code>target</code> / <code>type</code> wrapper at the top level (the caller already knows what they queried), no <code>vantages[]</code> array, no <code>gslb_divergence</code> field.</p>
+<h3 id="multi-vantage-output-roksbnkctldnsv1-divergence-detected"><a class="header" href="#multi-vantage-output-roksbnkctldnsv1-divergence-detected">Multi-vantage output (<code>roksbnkctl.dns.v1</code>, divergence detected)</a></h3>
+<pre><code class="language-bash">roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "vantages": [
+    {
+      "schema": "roksbnkctl.dns.v1.vantage",
+      "backend": "local",
+      "server": "169.45.91.5:53",
+      "iterations": 1,
+      "rtt_ms": { "p50": 14.2, "p95": 14.2, "p99": 14.2 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "169.45.91.10" }
+      ],
+      "rcode": "NOERROR",
+      "authoritative": true,
+      "truncated": false
+    },
+    {
+      "schema": "roksbnkctl.dns.v1.vantage",
+      "backend": "k8s",
+      "server": "169.45.91.5:53",
+      "iterations": 1,
+      "rtt_ms": { "p50": 8.7, "p95": 8.7, "p99": 8.7 },
+      "answers": [
+        { "name": "www.example.com.", "type": "A", "ttl": 30, "rdata": "10.20.30.40" }
+      ],
+      "rcode": "NOERROR",
+      "authoritative": true,
+      "truncated": false
+    }
+  ],
+  "gslb_divergence": true,
+  "gslb_divergence_summary": "answers differ between local (169.45.91.10) and k8s (10.20.30.40) — GSLB returning location-specific records as expected"
+}
+</code></pre>
+<p>The comparison document embeds the per-vantage shape unchanged inside <code>vantages[]</code> — each entry still carries <code>"schema": "roksbnkctl.dns.v1.vantage"</code> so a downstream parser can validate per-vantage entries against the same schema independent of whether they came in standalone or as part of a comparison.</p>
+<h3 id="schema-field-reference"><a class="header" href="#schema-field-reference">Schema field reference</a></h3>
+<p><strong>Per-vantage shape</strong> (<code>roksbnkctl.dns.v1.vantage</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Type</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>schema</code></td><td>string</td><td>Always <code>roksbnkctl.dns.v1.vantage</code>.</td></tr>
+<tr><td><code>backend</code></td><td>string</td><td><code>local</code>, <code>k8s</code>, or <code>ssh:&lt;target&gt;</code>.</td></tr>
+<tr><td><code>server</code></td><td>string</td><td>The resolver address actually used (literal, system-resolvconf result, or named-resolver lookup).</td></tr>
+<tr><td><code>iterations</code></td><td>int</td><td>How many queries went to that vantage. Mirrors <code>--iterations</code>.</td></tr>
+<tr><td><code>rtt_ms</code></td><td>object</td><td><code>{ p50, p95, p99 }</code> across the iterations. Single-iteration runs report the same number for all three.</td></tr>
+<tr><td><code>answers[]</code></td><td>array</td><td>The RRs returned. <code>name</code> is the FQDN, <code>type</code> is the record type, <code>ttl</code> is from the response, <code>rdata</code> is the RR’s data (IP for A/AAAA, target for CNAME, etc.).</td></tr>
+<tr><td><code>rcode</code></td><td>string</td><td>The DNS response code: <code>NOERROR</code>, <code>NXDOMAIN</code>, <code>SERVFAIL</code>, <code>REFUSED</code>, <code>TIMEOUT</code>.</td></tr>
+<tr><td><code>authoritative</code></td><td>bool</td><td>Whether the AA flag was set in the response.</td></tr>
+<tr><td><code>truncated</code></td><td>bool</td><td>Whether the TC flag was set. (The probe automatically retries truncated UDP responses over TCP; the field reflects the final response.)</td></tr>
+<tr><td><code>error</code></td><td>string</td><td>Present only when the probe could not get a usable response. Carries the underlying Go error string.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Comparison shape</strong> (<code>roksbnkctl.dns.v1</code>, emitted by <code>--gslb-compare</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Type</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>schema</code></td><td>string</td><td>Always <code>roksbnkctl.dns.v1</code>.</td></tr>
+<tr><td><code>target</code></td><td>string</td><td>The queried name, normalised to FQDN (trailing dot included).</td></tr>
+<tr><td><code>type</code></td><td>string</td><td>The record type queried.</td></tr>
+<tr><td><code>vantages[]</code></td><td>array</td><td>One per-vantage entry (each conforms to <code>roksbnkctl.dns.v1.vantage</code>).</td></tr>
+<tr><td><code>gslb_divergence</code></td><td>bool</td><td>True when the answer sets across <code>vantages[]</code> differ.</td></tr>
+<tr><td><code>gslb_divergence_summary</code></td><td>string</td><td>Present only when <code>gslb_divergence: true</code>. Human-readable explanation naming the diverging vantages and answers.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Both schemas are stable for the v0.9 release — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to <code>.v2</code>. PRD 03 calls out an <code>edns_client_subnet</code> field reserved for v1.x; v0.9 doesn’t emit it.</p>
+<h2 id="rtt-measurement-and---iterations"><a class="header" href="#rtt-measurement-and---iterations">RTT measurement and <code>--iterations</code></a></h2>
+<p>Per-query RTT is captured directly from <code>miekg/dns</code>’s <code>Exchange()</code>, which returns the round-trip duration without the runner having to wrap a stopwatch around the call. That keeps the timing honest — no scheduling jitter from a goroutine yield between <code>time.Now()</code> and the actual UDP send.</p>
+<p><code>--iterations N</code> runs the same query against the same server N times serially and reports p50/p95/p99 across the samples. Use cases:</p>
+<ul>
+<li><strong>Detecting health-check flapping</strong>: if a GSLB pool member is on the edge of its health threshold, the answer can flip back and forth across iterations. A single query catches one snapshot; ten iterations show the ratio.</li>
+<li><strong>Detecting anycast routing changes</strong>: when an anycast resolver changes which BGP path serves your AS, RTT can jump 30-100ms. p99 catches the worst case; p50 stays steady.</li>
+<li><strong>Establishing a baseline before a change</strong>: run with <code>--iterations 30</code> before a GSLB rule change, again after, and compare distributions.</li>
+</ul>
+<p>For <code>--backend k8s</code> and <code>--backend ssh:&lt;target&gt;</code>, RTT is measured <strong>inside</strong> the remote vantage. The number reflects the resolver-to-resolver path from that vantage, not the laptop-to-cluster (or laptop-to-jumphost) transit. That’s the correct measurement: when you ask “how slow is the GSLB from inside the cluster”, you mean cluster-side latency, not how long it took your laptop to wait for the SSH-tunnelled answer.</p>
+<h2 id="sample-f5-big-ip-next-gslb-scenarios"><a class="header" href="#sample-f5-big-ip-next-gslb-scenarios">Sample F5 BIG-IP Next GSLB scenarios</a></h2>
+<p>Three concrete scenarios you’ll hit when validating a real BNK deployment.</p>
+<h3 id="scenario-1-geographic-affinity-working-as-expected"><a class="header" href="#scenario-1-geographic-affinity-working-as-expected">Scenario 1: Geographic affinity working as expected</a></h3>
+<p>You’ve configured a GSLB rule that returns <code>dc1</code> (<code>169.45.91.10</code>) for US queries and <code>dc2</code> (<code>52.123.45.67</code>) for EU queries. You’re in the US, your jumphost is in <code>eu-de</code> (Frankfurt).</p>
+<pre><code class="language-bash">roksbnkctl test dns \
+  --target www.example.com \
+  --type A \
+  --server gslb-vip.example.com \
+  --gslb-compare \
+  -o json
+</code></pre>
+<p>Expected output:</p>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "vantages": [
+    { "backend": "local",            "answers": [{ "rdata": "169.45.91.10" }], "rcode": "NOERROR" },
+    { "backend": "ssh:eu-jumphost",  "answers": [{ "rdata": "52.123.45.67" }], "rcode": "NOERROR" }
+  ],
+  "gslb_divergence": true,
+  "gslb_divergence_summary": "answers differ between local (169.45.91.10) and ssh:eu-jumphost (52.123.45.67) — GSLB returning location-specific records as expected"
+}
+</code></pre>
+<p><code>gslb_divergence: true</code> is the assertion you wanted. There are two ways to key CI on it:</p>
+<pre><code class="language-bash"># Option A: parse the JSON yourself
+roksbnkctl test dns ... --gslb-compare -o json | jq -e '.gslb_divergence == true'
+
+# Option B: built-in --require-divergence flag (the binary returns
+# non-zero exit when --gslb-compare finds NO divergence)
+roksbnkctl test dns ... --gslb-compare --require-divergence
+</code></pre>
+<p>Both forms produce a non-zero exit when <code>gslb_divergence</code> is <code>false</code> — the <code>--require-divergence</code> flag is the same assertion baked into the binary so CI scripts don’t need a <code>jq</code> dependency. Pick whichever fits your pipeline.</p>
+<p>If <code>gslb_divergence</code> flips to <code>false</code>, something has changed — the GSLB rule was disabled, the geographic dispatch broke, or the jumphost moved out of the EU range. Surface that as a CI failure.</p>
+<h3 id="scenario-2-health-check-driven-failover"><a class="header" href="#scenario-2-health-check-driven-failover">Scenario 2: Health-check-driven failover</a></h3>
+<p>A BNK pool member backing <code>www.example.com</code> has an active health check. You want to verify that GSLB stops returning that member’s IP when the health check fails.</p>
+<p>Steps:</p>
+<pre><code class="language-bash"># 1. Baseline: while the member is healthy, both vantages return its IP
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json &gt; /tmp/before.json
+
+# 2. Take the member offline (BNK admin UI / API; outside roksbnkctl's surface)
+# 3. Wait for the GSLB's TTL to expire (in this example, 30 seconds)
+sleep 35
+
+# 4. Probe again
+roksbnkctl test dns --target www.example.com --type A --server gslb-vip.example.com \
+  --gslb-compare -o json &gt; /tmp/after.json
+
+# 5. Diff the answer sets
+diff &lt;(jq '.vantages[].answers' /tmp/before.json) &lt;(jq '.vantages[].answers' /tmp/after.json)
+</code></pre>
+<p>You expect the IP in <code>vantages[].answers[].rdata</code> to change from the failed member’s IP to the secondary’s IP across both vantages — and to do so on roughly the same TTL boundary across vantages. If one vantage flips and the other doesn’t, the GSLB’s health-check propagation is asymmetric — useful diagnostic data.</p>
+<h3 id="scenario-3-anycast-vs-unicast-detection"><a class="header" href="#scenario-3-anycast-vs-unicast-detection">Scenario 3: Anycast vs unicast detection</a></h3>
+<p>You suspect a name is fronted by a public anycast resolver fleet (Cloudflare’s <code>1.1.1.1</code>, Google’s <code>8.8.8.8</code>) rather than a real GSLB. Anycast returns the same answer everywhere; GSLB returns per-region answers.</p>
+<pre><code class="language-bash">roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 \
+  --gslb-compare -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.cloudflare.com",
+  "vantages": [
+    { "backend": "local", "answers": [{ "rdata": "104.16.132.229" }] },
+    { "backend": "k8s",   "answers": [{ "rdata": "104.16.132.229" }] }
+  ],
+  "gslb_divergence": false
+}
+</code></pre>
+<p><code>gslb_divergence: false</code> despite probing from two vantages → the answer is anycast, not GSLB-dispatched. Useful when handing off to a customer who’s claiming “the GSLB isn’t routing me right” — you can prove the name they’re querying isn’t actually under GSLB control.</p>
+<h2 id="why---backend-docker-is-rejected"><a class="header" href="#why---backend-docker-is-rejected">Why <code>--backend docker</code> is rejected</a></h2>
+<p>A Docker container running locally on the user’s laptop has the same network identity as the host (default bridge networking). The container’s egress NATs out via the host’s interface, so a DNS query from inside the container reaches the upstream resolver from the host’s IP.</p>
+<p>For GSLB validation, that means <code>--backend docker</code> would give an answer identical to <code>--backend local</code>. No new vantage. The CLI rejects the combination at parse time:</p>
+<pre><code>$ roksbnkctl test dns --backend docker --target www.example.com --type A
+error: DNS probe doesn't benefit from --backend docker (same network identity
+       as --backend local, no GSLB-relevant vantage difference). Use --backend
+       local, --backend k8s, or --backend ssh:&lt;target&gt; instead.
+</code></pre>
+<p>This is by design and called out in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe”</a>. If you want frozen-toolchain DNS testing for CI reproducibility, the <code>roksbnkctl</code> binary itself is already a single static binary — pinning it to a specific version pins the probe.</p>
+<h2 id="integration-with-extra_hosts"><a class="header" href="#integration-with-extra_hosts">Integration with <code>extra_hosts</code></a></h2>
+<p>If you’ve configured <code>connectivity.extra_hosts</code> for your workspace and want a quick “does each of those names resolve” check:</p>
+<pre><code class="language-bash">roksbnkctl test dns
+</code></pre>
+<p>With no <code>--target</code> and no <code>--gslb-compare</code>, the runner falls back to today’s behaviour: probe each host in <code>connectivity.extra_hosts</code>, single-vantage, single-iteration, with the host’s <code>system</code> resolver. This is the same shape as the connectivity suite’s reachability probe — no GSLB awareness, no per-server selection — and is the right tool for “did I typo a hostname in my config” rather than “is the GSLB doing what I configured”.</p>
+<p>For real GSLB validation you almost always want <code>--gslb-compare</code> plus an explicit <code>--target</code> and <code>--server</code>. The <code>extra_hosts</code> fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.</p>
+<p><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> covers <code>connectivity.extra_hosts</code> in full.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a> — design rationale, the full schema spec, the rejected-by-design list.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md#phase-l-dns--dns-probe-gslb-aware-across-backends">PRD 05 §“Phase L-DNS”</a> — the end-to-end test sequence that validates each row of this chapter against a live cluster.</li>
+<li><a href="./12-workspace-config.html#test">Chapter 12 §“test:”</a> — workspace-config schema, including <code>test.dns.resolvers</code> and <code>test.dns.default_target</code>.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — how <code>roksbnkctl</code> itself reaches the cluster / SSH target the probe runs on.</li>
+<li><a href="./17-execution-backends.html#k8s-backend">Chapter 17 §“K8s backend”</a> — the one-shot-Job mechanics the probe reuses for <code>--backend k8s</code>.</li>
+<li><a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a> — file materialisation and bootstrap for <code>--backend ssh:&lt;target&gt;</code>.</li>
+<li><a href="./18-choosing-backend.html#im-doing-gslb-dns-validation">Chapter 18 §“I’m doing GSLB DNS validation”</a> — the decision-tree row that picks backends for a GSLB scenario.</li>
+<li><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> — the simpler “does HTTP work” companion suite.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
+<li><a href="https://github.com/miekg/dns"><code>miekg/dns</code> upstream</a> — the underlying DNS library, used by CoreDNS and a long list of other reference implementations.</li>
+</ul>
 
                     </main>
 

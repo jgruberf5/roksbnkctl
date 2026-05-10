@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
+            window.path_to_searchindex_js = "searchindex-9c10052e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -244,12 +244,13 @@ exec:
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Tool</th><th>Default backend</th><th>Why</th></tr>
+<tr><th>Tool</th><th>Default backend</th><th>Supported backends</th><th>Why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>terraform</code></td><td><code>local</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here.</td></tr>
-<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
-<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi.</td></tr>
+<tr><td><code>terraform</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code></td><td>The terraform-exec local path is the established workflow. State handling is simplest here. v0.9 adds <code>docker</code> (frozen <code>hashicorp/terraform:1.5.7</code>, bind-mount state) — see <a href="#terraform-via-docker">§ terraform via docker</a>. <code>k8s</code> and <code>ssh</code> deferred to v1.x.</td></tr>
+<tr><td><code>ibmcloud</code></td><td><code>local</code></td><td><code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via <code>--backend ssh:jumphost</code> or <code>docker</code>.</td></tr>
+<tr><td><code>iperf3</code></td><td><code>k8s</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi.</td></tr>
+<tr><td><code>dns</code></td><td><code>local</code></td><td><code>local</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code></td><td>Single-vantage by default; <code>--gslb-compare</code> fans out across configured vantages for GSLB validation. See <a href="./21-dns-testing-gslb.html">Chapter 21</a>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -363,6 +364,55 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 <p>Combined with the daemon’s own watchdog on the container, the worst case is a few seconds of “container is dying” between Ctrl-C and the container disappearing. We haven’t seen leaked containers in dev or CI.</p>
 <h4 id="image-build-pipeline"><a class="header" href="#image-build-pipeline">Image build pipeline</a></h4>
 <p>Image versions are tagged in lock-step with <code>roksbnkctl</code> releases; the GitHub Actions workflow that builds + pushes them runs on every release tag. See <a href="./31-building-from-source.html">Chapter 31 — Building from source</a> for the build pipeline details.</p>
+<h4 id="terraform-via-docker"><a class="header" href="#terraform-via-docker">terraform via docker</a></h4>
+<p>Sprint 5 adds <code>terraform</code> to the docker backend’s tool list. The shape is similar to <code>ibmcloud</code> (<code>docker run</code> against a vendored image, single-file mounts for sensitive data, no creds in argv) but with two terraform-specific concerns: state persistence across runs, and host-user UID alignment so state files written inside the container stay readable on the host.</p>
+<h5 id="state-persistence-via-bind-mount"><a class="header" href="#state-persistence-via-bind-mount">State persistence via bind-mount</a></h5>
+<p>Terraform’s local state file lives at <code>terraform.tfstate</code> in the working directory. For the docker backend the working directory has to be a host-side path bind-mounted into the container, not a container-internal path that disappears on <code>--rm</code>. The docker backend bind-mounts the workspace’s state directory into the container:</p>
+<pre><code>docker run --rm \
+  -v ~/.roksbnkctl/&lt;workspace&gt;/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
+  --user $(id -u):$(id -g) \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+</code></pre>
+<p>Concretely:</p>
+<ul>
+<li><strong>Host source</strong>: <code>~/.roksbnkctl/&lt;workspace&gt;/state/</code> — the same directory the local terraform backend writes state to today, so switching between <code>--backend local</code> and <code>--backend docker</code> against the same workspace doesn’t fork state.</li>
+<li><strong>Container target</strong>: <code>/state</code> — the bind-mount root inside the container.</li>
+<li><strong>Container working directory</strong>: <code>/state/tf-source/&lt;source&gt;/</code> (e.g., <code>/state/tf-source/embedded-terraform/</code> for the default embedded source) — the same path the local backend resolves to, so terraform sees the same <code>main.tf</code> either way.</li>
+<li><strong>The HCL is bind-mounted alongside state.</strong> The embedded HCL is materialised at run time into <code>~/.roksbnkctl/&lt;workspace&gt;/state/tf-source/&lt;source&gt;/</code> (chapter 31 covers the embedded-source layout); since <code>state/</code> is the bind-mount root, both <code>terraform.tfstate</code> and the HCL tree land inside the container together. There’s no separate HCL projection.</li>
+</ul>
+<p>The bind-mount is read-write — terraform needs to write <code>terraform.tfstate</code>, rotate <code>terraform.tfstate.backup</code>, and populate the <code>.terraform/</code> cache. Combined with <code>--rm</code>, the file lifecycle is: container creates state, container exits, <code>--rm</code> removes the container, state files persist on the host. Subsequent runs (re-mounted at the same host path) pick up where the prior run left off.</p>
+<h5 id="image-hashicorpterraform157"><a class="header" href="#image-hashicorpterraform157">Image: <code>hashicorp/terraform:1.5.7</code></a></h5>
+<p>The image is the official upstream <code>hashicorp/terraform</code> published by HashiCorp on Docker Hub, pinned to a literal version in <code>internal/exec/docker.go</code>’s <code>toolImages</code> map (currently <code>1.5.7</code>). The pin is intentional — the embedded HCL has been validated against this terraform version, and the docker backend’s whole point is reproducibility. Bumping the pin is a deliberate change to the binary and lands as a release.</p>
+<p>The vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) get their tag from the <code>roksbnkctl</code> binary’s own version (see <a href="#dev-tag-resolution">§ <code>:dev</code> tag resolution</a> above). Terraform is the exception — the binary’s version doesn’t follow upstream terraform’s release cadence, so the pin stays literal.</p>
+<h5 id="the-uidgid-alignment-gotcha"><a class="header" href="#the-uidgid-alignment-gotcha">The UID/GID alignment gotcha</a></h5>
+<p>Linux Docker containers run as root by default. With a root-owned container writing into a bind-mount, the resulting host files end up owned by root — and any subsequent local-backend <code>terraform apply</code> (or even a <code>cat ~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfstate</code>) hits permission errors. The docker backend works around this by passing <code>--user $(id -u):$(id -g)</code> explicitly:</p>
+<pre><code class="language-bash">docker run --rm \
+  --user 1000:1000 \                                     # host's caller-uid:caller-gid
+  -v ~/.roksbnkctl/dev-tor/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
+  hashicorp/terraform:1.5.7 \
+  apply -auto-approve
+</code></pre>
+<p>The container process runs as the host user, so files written into the bind-mount are owned by the host user — same as a local-backend <code>terraform apply</code> would have produced. Switching backends mid-debug doesn’t strand state files behind a permission wall.</p>
+<p>The UID/GID values are read from the host process at run time (Go’s <code>os.Getuid()</code> / <code>os.Getgid()</code>). On macOS this is mostly cosmetic — Docker Desktop’s VM normalises ownership on the host bind-mount automatically — but it’s required for clean Linux behaviour, so the backend always passes the flag.</p>
+<h5 id="supported-commands"><a class="header" href="#supported-commands">Supported commands</a></h5>
+<p>The terraform docker backend honours <code>--backend docker</code> for the four lifecycle commands:</p>
+<pre><code class="language-bash">roksbnkctl up      --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+roksbnkctl plan    --backend docker  [--var-file &lt;path&gt;]
+roksbnkctl apply   --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+roksbnkctl destroy --backend docker  [--var-file &lt;path&gt;] [--auto-approve]
+</code></pre>
+<p>Flags that the local terraform backend honours (<code>--var-file</code>, <code>--auto-approve</code>, plus the <code>-w/--workspace</code> selector) plumb through to the docker backend identically — the backend’s job is to spawn <code>hashicorp/terraform:1.5.7</code> with the right argv; it doesn’t filter or rewrite the lifecycle commands’ flags.</p>
+<p><code>roksbnkctl up --backend docker</code> is the apply-with-auto-approve shorthand the existing local lifecycle uses; <code>--backend docker</code> switches the spawn target without changing the command shape.</p>
+<h5 id="deferred-k8s-and-ssh-terraform-backends"><a class="header" href="#deferred-k8s-and-ssh-terraform-backends">Deferred: k8s and ssh terraform backends</a></h5>
+<p><code>--backend k8s</code> and <code>--backend ssh:&lt;target&gt;</code> for terraform are <strong>not</strong> in v0.9. The blocker is state-handling: the local backend keeps state on the host filesystem, the docker backend bind-mounts the same path, but <code>k8s</code> (run terraform in a one-shot Job) and <code>ssh:&lt;target&gt;</code> (run terraform on a remote host) need a story for shipping state between the run vantage and the canonical workspace state dir. Designs under consideration include a versioned ConfigMap/Secret pair for k8s and an scp-pre-and-post atomic move for ssh; both are deferred to v1.x once the trade-offs have settled.</p>
+<p><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> is the design spec; trying <code>--backend k8s</code> against terraform on v0.9 errors at parse time:</p>
+<pre><code>$ roksbnkctl up --backend k8s
+error: terraform doesn't support backend `k8s` in v0.9 (state-handling design
+       open; tracked in PRD 03 § State concerns); supported: local, docker
+</code></pre>
 <h4 id="when-to-use-it-1"><a class="header" href="#when-to-use-it-1">When to use it</a></h4>
 <ul>
 <li>You’re on a clean dev machine without <code>ibmcloud</code> installed and don’t want to install it.</li>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea7a420d.js";
+            window.path_to_searchindex_js = "searchindex-9c10052e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,8 +178,175 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="connectivity-testing"><a class="header" href="#connectivity-testing">Connectivity testing</a></h1>
-<p><em>Coming in Sprint 5.</em></p>
-<p><em><code>roksbnkctl test connectivity</code>: the <code>extra_hosts</code> config, what a pass / fail looks like, and the insecure-TLS option for self-signed dev environments.</em></p>
+<p><code>roksbnkctl test connectivity</code> answers one question: <em>can my workspace reach the HTTP/HTTPS endpoints I care about right now?</em></p>
+<p>It’s the simplest of the three test suites — no cluster fixtures, no remote vantage, no JSON parsing harness. Each configured URL gets one HTTP <code>GET</code>, the suite reports pass/fail, and the runner exits <code>0</code> if every probe passed.</p>
+<p>Use it as the first sanity check after <code>roksbnkctl up</code>, as a CI smoke step against a known-good fixture set, or as the “is it me or is it the network” baseline before reaching for <code>curl -v</code> or <code>openssl s_client</code>.</p>
+<h2 id="what-the-connectivity-suite-does"><a class="header" href="#what-the-connectivity-suite-does">What the connectivity suite does</a></h2>
+<p>For each configured URL the runner:</p>
+<ol>
+<li>Adds an <code>https://</code> scheme if you didn’t write one.</li>
+<li>Issues a single <code>GET</code> with a 10-second timeout and the user-agent <code>roksbnkctl/test</code>.</li>
+<li>Records the HTTP status code, the wall-clock duration, and (for HTTPS) the negotiated TLS version.</li>
+<li>Marks the probe <strong>pass</strong> if the status code is in <code>[200, 400)</code> (any 2xx or 3xx); <strong>fail</strong> for anything else, any TLS error, any DNS error, any timeout.</li>
+<li>Aggregates the per-URL results into a suite result; the suite passes only when every URL passed.</li>
+</ol>
+<p>That’s it. No retries, no expected-body matching, no configurable status assertions, no L4 reachability — those are deliberate non-goals (see <a href="#when-connectivity-is-the-wrong-tool">§ When connectivity is the wrong tool</a> below).</p>
+<h2 id="configuring-extra_hosts"><a class="header" href="#configuring-extra_hosts">Configuring <code>extra_hosts</code></a></h2>
+<p>The list of URLs to probe lives in your workspace config under <code>test.connectivity.extra_hosts</code>:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
+test:
+  connectivity:
+    extra_hosts:
+      - https://my-bnk-cis-controller.example.com
+      - https://bigip-next-admin.example.com:8443
+      - https://gslb.example.com
+      - my-bare-host.example.com    # scheme defaults to https://
+</code></pre>
+<p>The schema is intentionally minimal — <code>extra_hosts</code> is a <code>[]string</code> of URLs (or bare hostnames; <code>https://</code> is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.</p>
+<p>There’s no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than “does HTTP work” — a particular status code, a custom header, a body match — <code>curl</code> is the right tool, not <code>roksbnkctl test connectivity</code>. We may revisit a richer schema in a future release; the v0.9 surface holds the YAML simple on purpose.</p>
+<p><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> covers the full <code>test:</code> block; this chapter expands the <code>connectivity</code> slice.</p>
+<h3 id="what-extra_hosts-typically-holds"><a class="header" href="#what-extra_hosts-typically-holds">What <code>extra_hosts</code> typically holds</a></h3>
+<p>Three classes of URL show up most often in a real workspace:</p>
+<ul>
+<li><strong>The BNK CIS controller</strong> — confirms the data-plane front-end is reachable and is returning a sane status code.</li>
+<li><strong>The F5 BIG-IP Next admin endpoint</strong> — confirms the management plane is reachable from your seat (often <code>:8443</code> rather than <code>:443</code>).</li>
+<li><strong>The GSLB VIP that fronts the application</strong> — confirms the routed name actually serves a 2xx; pair with <a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a> for the GSLB-aware DNS-side validation.</li>
+</ul>
+<p>What doesn’t belong in <code>extra_hosts</code>: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than “got a 2xx or 3xx”. Those are <code>curl</code> jobs, not connectivity-suite jobs.</p>
+<h2 id="the---insecure-flag"><a class="header" href="#the---insecure-flag">The <code>--insecure</code> flag</a></h2>
+<p>Self-signed certs are common in pre-production BNK deployments — the F5 BIG-IP Next admin endpoint, the CIS controller, an internal GSLB VIP that hasn’t yet been re-fronted with a public CA cert. By default Go’s TLS stack rejects them and the probe fails with <code>x509: certificate signed by unknown authority</code>.</p>
+<p>Pass <code>--insecure</code> to skip certificate verification for the run:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity --insecure
+</code></pre>
+<p>What <code>--insecure</code> does:</p>
+<ul>
+<li>Sets <code>tls.Config.InsecureSkipVerify = true</code> on the HTTP client used by the connectivity suite.</li>
+<li>Applies for the duration of one invocation only.</li>
+<li>Affects every URL probed in that run.</li>
+</ul>
+<p>What <code>--insecure</code> does <strong>not</strong> do:</p>
+<ul>
+<li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
+<li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
+<li>It is not persisted. Setting it in one invocation does not affect the next.</li>
+<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v0.9 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
+</ul>
+<p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
+<h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
+<p>Default output is human-readable on stderr; pass <code>-o json</code> for machine-readable on stdout.</p>
+<h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
+<pre><code class="language-bash">$ roksbnkctl test connectivity
+running connectivity ...
+  PASS  https://my-bnk-cis-controller.example.com  200 OK in 142ms
+  PASS  https://bigip-next-admin.example.com:8443  302 Found in 88ms
+  FAIL  https://gslb.example.com                   Get "...": dial tcp: i/o timeout
+connectivity FAIL (2/3 passed)
+$ echo $?
+1
+</code></pre>
+<p>A 3xx redirect counts as pass — the runner doesn’t follow redirects, but the redirect itself is a successful HTTP response, which is what the suite measures. If you specifically need the final 200 after a redirect chain, <code>curl -L</code> is the tool.</p>
+<h3 id="json"><a class="header" href="#json">JSON</a></h3>
+<pre><code class="language-bash">$ roksbnkctl test connectivity -o json
+</code></pre>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "connectivity",
+  "timestamp": "2026-05-10T14:32:01.123Z",
+  "duration_ms": 235,
+  "overall": "fail",
+  "results": [
+    {
+      "suite": "connectivity",
+      "name": "https://my-bnk-cis-controller.example.com",
+      "status": "pass",
+      "detail": "200 OK in 142ms",
+      "duration_ms": 142,
+      "extra": { "status_code": 200, "tls_version": "TLS 1.3" }
+    },
+    {
+      "suite": "connectivity",
+      "name": "https://gslb.example.com",
+      "status": "fail",
+      "detail": "Get \"https://gslb.example.com\": dial tcp: i/o timeout",
+      "duration_ms": 10003
+    }
+  ]
+}
+</code></pre>
+<p>Exit code follows the same rules as the human-readable form: <code>0</code> on <code>overall: pass</code>, <code>1</code> on <code>overall: fail</code>. CI runners can branch on the exit code; richer assertions (e.g., “I tolerate one fail out of five”) need to consume the JSON.</p>
+<h2 id="running-connectivity-inside-roksbnkctl-test-all"><a class="header" href="#running-connectivity-inside-roksbnkctl-test-all">Running connectivity inside <code>roksbnkctl test all</code></a></h2>
+<p>Connectivity is one of the suites the bare <code>roksbnkctl test</code> (or <code>roksbnkctl test all</code>) command dispatches. The runner walks every configured suite, prints per-suite summaries on stderr, and exits non-zero if any suite failed:</p>
+<pre><code class="language-bash">$ roksbnkctl test
+running connectivity ...
+  PASS  https://bnk-cis.dev-tor.example.com  200 OK in 174ms
+running dns ...
+  PASS  bnk-cis.dev-tor.example.com  resolved 1 address(es)
+connectivity PASS (1/1 passed)
+dns          PASS (1/1 passed)
+
+PASS overall (2/2 suites passed)
+</code></pre>
+<p>In <code>-o json</code> mode, <code>roksbnkctl test all</code> emits an <code>all</code>-shape envelope with one <code>suites[]</code> entry per suite. CI assertions can pin to either the suite-level overall or to a specific probe’s status:</p>
+<pre><code class="language-bash">roksbnkctl test all -o json | jq -e '.suites[] | select(.suite=="connectivity") | .overall == "pass"'
+</code></pre>
+<p>The bare <code>roksbnkctl test</code> defaults to the <code>all</code> suite. To run connectivity in isolation:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity            # explicit suite
+roksbnkctl test connectivity --insecure # session-wide TLS skip
+</code></pre>
+<h2 id="exit-codes-and-ci-integration"><a class="header" href="#exit-codes-and-ci-integration">Exit codes and CI integration</a></h2>
+<pre><code>exit 0  →  every probe passed (every URL returned 2xx or 3xx)
+exit 1  →  any probe failed (non-2xx/3xx, TLS error, DNS error, timeout)
+</code></pre>
+<p>There’s no third “infra error” exit code from the connectivity suite specifically — the suite is straight Go HTTP, no external tooling, no backend dispatch. If <code>roksbnkctl test connectivity</code> exits non-zero, the cause is in the response from one of your configured URLs.</p>
+<p>For a CI step that tolerates a known-flaky endpoint while still failing on the others, consume the JSON instead of relying on the exit code:</p>
+<pre><code class="language-bash">roksbnkctl test connectivity -o json \
+  | jq -e '[.results[] | select(.name | test("flaky-staging.example") | not) | .status] | all(. == "pass")'
+</code></pre>
+<h2 id="worked-example-probing-a-bnk-deployment"><a class="header" href="#worked-example-probing-a-bnk-deployment">Worked example: probing a BNK deployment</a></h2>
+<p>A typical post-<code>up</code> config for a BNK trial — cover the data-plane VIP, the admin endpoint, and the GSLB front:</p>
+<pre><code class="language-yaml"># ~/.roksbnkctl/dev-tor/config.yaml
+test:
+  connectivity:
+    extra_hosts:
+      - https://bnk-cis.dev-tor.bnkfun.example.com         # BNK CIS controller (data plane)
+      - https://bigip-next-admin.dev-tor.bnkfun.example.com:8443  # F5 BIG-IP Next admin
+      - https://gslb-vip.dev-tor.bnkfun.example.com        # the GSLB front
+</code></pre>
+<p>Then:</p>
+<pre><code class="language-bash">$ roksbnkctl test connectivity --insecure
+running connectivity ...
+  PASS  https://bnk-cis.dev-tor.bnkfun.example.com               200 OK in 174ms
+  PASS  https://bigip-next-admin.dev-tor.bnkfun.example.com:8443 302 Found in 91ms
+  PASS  https://gslb-vip.dev-tor.bnkfun.example.com              200 OK in 211ms
+connectivity PASS (3/3 passed)
+</code></pre>
+<p><code>--insecure</code> is needed here because BNK’s admin endpoint and the GSLB VIP are fronted by a self-signed cert in dev. Once the trial moves to a production cert chain, drop the flag — the strict path is what you want for staging and prod.</p>
+<h2 id="when-connectivity-is-the-wrong-tool"><a class="header" href="#when-connectivity-is-the-wrong-tool">When connectivity is the wrong tool</a></h2>
+<p><code>roksbnkctl test connectivity</code> is “does HTTP work”. For anything finer-grained, reach for the right tool:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>Use this instead</th></tr>
+</thead>
+<tbody>
+<tr><td>You want to see the full TLS handshake, the cert chain, the SNI resolution, the negotiated cipher</td><td><code>openssl s_client -connect host:port -servername host</code></td></tr>
+<tr><td>You want headers, redirect-following, body matching, a specific status assertion</td><td><code>curl -v -L --fail-with-body &lt;url&gt;</code></td></tr>
+<tr><td>You want to confirm L4 reachability on a specific port, no HTTP layer</td><td><code>nc -vz host port</code> (or <code>bash -c 'echo &gt; /dev/tcp/host/port'</code>)</td></tr>
+<tr><td>You want to confirm DNS resolution from a specific resolver, especially across vantages for GSLB</td><td><a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a></td></tr>
+<tr><td>You want to see what answer a name returns from inside the cluster vs from your laptop</td><td><a href="./21-dns-testing-gslb.html#the---gslb-compare-workflow"><code>roksbnkctl test dns --gslb-compare</code></a></td></tr>
+<tr><td>You want to measure bandwidth between two endpoints</td><td><a href="./22-throughput-testing.html"><code>roksbnkctl test throughput</code></a></td></tr>
+</tbody>
+</table>
+</div>
+<p>The connectivity suite is intentionally a thin probe. When the answer to “is it broken” is “yes” and you need to know why, the suite has done its job — it’s flagged the URL — and the next step is one of the tools above.</p>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
+<li><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> — when “the URL fails” actually means “the name doesn’t resolve from this vantage”.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
+<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.</li>
+</ul>
 
                     </main>
 
