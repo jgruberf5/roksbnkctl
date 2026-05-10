@@ -108,7 +108,16 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 			"SUDO_ACCESS":     "false",
 			"PUBLIC_KEY":      authorizedKey,
 		},
-		WaitingFor: wait.ForListeningPort("2222/tcp").WithStartupTimeout(60 * time.Second),
+		// linuxserver/openssh-server briefly binds 2222 during s6-overlay
+		// init before sshd is actually accepting handshakes — a wait on
+		// "port listening" alone races and produces "connection reset by
+		// peer" on the next test's Connect. The container's final
+		// readiness signal is the sshd "Server listening" line; gate on
+		// that as well so Connect always lands on a live daemon.
+		WaitingFor: wait.ForAll(
+			wait.ForListeningPort("2222/tcp"),
+			wait.ForLog("Server listening on :: port 2222").WithStartupTimeout(90*time.Second),
+		).WithStartupTimeoutDefault(90 * time.Second),
 	}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,

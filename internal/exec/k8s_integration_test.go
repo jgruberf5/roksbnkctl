@@ -242,8 +242,6 @@ func (b *noopBuilder) Write(p []byte) (int, error) {
 	return b.Builder.Write(p)
 }
 
-func ptrInt64(i int64) *int64 { return &i }
-
 // errIntegrationTimeout is a sentinel for the ensureOpsPodForTest poll
 // loop. Inline error rather than fmt.Errorf to avoid the fmt import.
 var errIntegrationTimeout = ioErrTimeout("ops pod not Ready within timeout")

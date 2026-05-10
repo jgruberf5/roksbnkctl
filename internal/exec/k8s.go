@@ -504,6 +504,7 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 					RestartPolicy: corev1.RestartPolicyNever,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptrBool(true),
+						RunAsUser:    ptrInt64(65532),
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
@@ -519,6 +520,7 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: ptrBool(false),
 							RunAsNonRoot:             ptrBool(true),
+							RunAsUser:                ptrInt64(65532),
 							Capabilities: &corev1.Capabilities{
 								Drop: []corev1.Capability{"ALL"},
 							},
@@ -593,11 +595,19 @@ func waitForJobPodRunning(ctx context.Context, cs kubernetes.Interface, jobName 
 				if p.Status.Phase == corev1.PodRunning || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
 					return p, nil
 				}
-				// Surface ImagePullBackOff and friends early.
+				// Surface terminal-ish waiting reasons early so we don't
+				// burn the whole timeout on configs the kubelet will
+				// never start (PSS rejects, runAsNonRoot mismatches,
+				// missing images, crash loops).
 				for _, st := range p.Status.ContainerStatuses {
 					if st.State.Waiting != nil {
 						switch st.State.Waiting.Reason {
-						case "ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff":
+						case "ImagePullBackOff", "ErrImagePull",
+							"CrashLoopBackOff",
+							"CreateContainerConfigError",
+							"CreateContainerError",
+							"RunContainerError",
+							"InvalidImageName":
 							return nil, fmt.Errorf("pod %s: %s (%s)", p.Name, st.State.Waiting.Reason, st.State.Waiting.Message)
 						}
 					}
@@ -685,7 +695,8 @@ func podReady(p *corev1.Pod) bool {
 	return false
 }
 
-func ptrBool(b bool) *bool { return &b }
+func ptrBool(b bool) *bool    { return &b }
+func ptrInt64(i int64) *int64 { return &i }
 
 func init() {
 	Register("k8s", &K8sBackend{})
