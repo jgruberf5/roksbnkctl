@@ -12,6 +12,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cos"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 )
 
@@ -351,7 +352,11 @@ func openIBMClient() (*config.Context, *ibm.Client, error) {
 	if cctx.Workspace == nil {
 		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}

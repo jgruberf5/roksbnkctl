@@ -13,6 +13,8 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
+
+	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 )
 
 // Build metadata, populated via -ldflags at link time.
@@ -32,6 +34,7 @@ var (
 	flagOn              string // --on <target>: dispatch a passthrough over SSH instead of locally
 	flagInsecureHostKey bool   // --insecure-host-key: skip TOFU prompt; just record the key (CI use)
 	flagBackend         string // --backend <local|docker|k8s|ssh:<target>>: per-invocation execution backend override (PRD 03)
+	flagBootstrap       bool   // --bootstrap: opt-in to apt-get auto-install of missing tools on the SSH backend (PRD 03 §"open questions")
 )
 
 var rootCmd = &cobra.Command{
@@ -118,6 +121,13 @@ func init() {
 	pf.StringVar(&flagOn, "on", "", "run on the named SSH target instead of locally (`roksbnkctl targets list` to see options)")
 	pf.BoolVar(&flagInsecureHostKey, "insecure-host-key", false, "skip the host-key TOFU prompt; record on first contact (CI use)")
 	pf.StringVar(&flagBackend, "backend", "", "execution backend: local | docker | k8s | ssh:<target> (default: per-tool from workspace exec: block, else local)")
+	pf.BoolVar(&flagBootstrap, "bootstrap", false, "for --backend ssh:<target>: auto-install missing tools on Ubuntu via apt-get (requires passwordless sudo on the target)")
+
+	// Wire the docker / k8s backends' image-tag resolver to the
+	// binary's build-time Version. Sprint 4 polish carry-over 5b: a
+	// tag-released binary pulls matching tag-released tool images
+	// instead of the :dev tag CI doesn't publish.
+	execbackend.SetToolImageTag(func() string { return Version })
 }
 
 // unimplemented is the placeholder RunE for stubbed commands.

@@ -306,7 +306,8 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 	//
 	//   1. --backend flag (if set) wins.
 	//   2. Workspace exec.<tool>.backend (if set).
-	//   3. Default "local".
+	//   3. Per-tool default (Sprint 4: ibmcloud=local).
+	//   4. Default "local".
 	backendSpec := resolveBackendSpecWith(cctx, "ibmcloud", be)
 	if backendSpec == "local" || backendSpec == "" {
 		// Fast path — byte-identical to pre-Sprint-3 behaviour.
@@ -320,9 +321,24 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 		return runWithEnv(bin, argv, env)
 	}
 
-	// Non-local backend (docker today; k8s/ssh in Sprint 4) — dispatch
-	// through the exec.Backend interface.
-	return dispatchBackend(cmd.Context(), backendSpec, "ibmcloud", argv, cctx, env)
+	// Non-local backend dispatch. ibmcloud over k8s uses the long-lived
+	// ops pod path (PRD 03 §"K8s"); other backends are stateless one-shot.
+	longLived := backendSpec == "k8s"
+	return dispatchBackend(cmd.Context(), backendSpec, "ibmcloud", argv, cctx, env, longLived)
+}
+
+// perToolDefaultBackend is the per-tool default backend table (Sprint 4
+// §"Tool migration plan" in PRD 03). Tools not present default to
+// "local". The map is consulted only when neither --backend flag nor
+// workspace exec.<tool>.backend is set.
+//
+// PRD 03 §"iperf3" puts the default at k8s — the reproducible-toolchain
+// + in-cluster-network-locality wins. ibmcloud and terraform stay local
+// for v1; users opt in to docker / k8s / ssh per invocation.
+var perToolDefaultBackend = map[string]string{
+	"iperf3":    "k8s",
+	"ibmcloud":  "local",
+	"terraform": "local",
 }
 
 // resolveBackendSpecWith picks the execution backend for tool. Order:
@@ -331,7 +347,8 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 //     either flagBackend or the extractBackendFlag result, whichever
 //     is non-empty)
 //  2. workspace's exec.<tool>.backend
-//  3. "local" default
+//  3. perToolDefaultBackend[tool] (Sprint 4)
+//  4. "local" default
 //
 // Returns the spec string ("local", "docker", "k8s", "ssh:<target>")
 // — the caller passes it into exec.ResolveBackend.
@@ -343,6 +360,9 @@ func resolveBackendSpecWith(cctx *config.Context, tool, flagOverride string) str
 		if entry, ok := cctx.Workspace.Exec[tool]; ok && entry.Backend != "" {
 			return entry.Backend
 		}
+	}
+	if def, ok := perToolDefaultBackend[tool]; ok {
+		return def
 	}
 	return "local"
 }
@@ -356,7 +376,17 @@ func resolveBackendSpecWith(cctx *config.Context, tool, flagOverride string) str
 // uses to look up the per-tool image; for the local backend (which
 // reaches here only on explicit --backend=local) argv[0] is the
 // binary on PATH.
-func dispatchBackend(ctx context.Context, spec, tool string, argv []string, cctx *config.Context, env []string) error {
+//
+// Sprint 4 additions:
+//
+//   - longLived: set to true for the k8s ops-pod path (ibmcloud,
+//     ad-hoc shells). False for one-shot Job invocations like the
+//     iperf3 client. Communicated to the k8s backend via a sentinel
+//     env entry (see exec.k8sLongLivedKey).
+//   - ssh:<target>: the spec-target form pushes the target name into
+//     the env via ROKSBNKCTL_SSH_TARGET so the SSH backend can resolve
+//     without reading the spec string itself.
+func dispatchBackend(ctx context.Context, spec, tool string, argv []string, cctx *config.Context, env []string, longLived bool) error {
 	backend, err := execbackend.ResolveBackend(spec)
 	if err != nil {
 		return err
@@ -390,6 +420,21 @@ func dispatchBackend(ctx context.Context, spec, tool string, argv []string, cctx
 			continue
 		}
 		filteredEnv = append(filteredEnv, kv)
+	}
+
+	// Sprint 4: pass the k8s long-lived sentinel + ssh target sentinel
+	// through env. The respective backends strip them before exec.
+	if longLived {
+		filteredEnv = append(filteredEnv, "ROKSBNKCTL_K8S_LONG_LIVED=1")
+	}
+	if target := execbackend.SpecTarget(spec); target != "" && strings.HasPrefix(spec, "ssh:") {
+		filteredEnv = append(filteredEnv, "ROKSBNKCTL_SSH_TARGET="+target)
+		// Ensure the SSH backend has the workspace + bootstrap flag wired.
+		execbackend.SetSSHOpts(execbackend.SSHBackendOpts{
+			Workspace:       cctx.WorkspaceName,
+			Bootstrap:       flagBootstrap,
+			InsecureHostKey: flagInsecureHostKey,
+		})
 	}
 
 	rc, err := backend.Run(ctx, append([]string{tool}, argv...), execbackend.RunOpts{
@@ -493,7 +538,11 @@ func workspaceEnv() (*config.Context, []string, error) {
 		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}

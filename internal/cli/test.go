@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/test"
 )
@@ -139,6 +141,22 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
+	// Resolve the iperf3 client backend. Sprint 4 default is "k8s" per
+	// PRD 03 §"iperf3" §"Default backend"; users can override via
+	// --backend. Docker isn't useful for iperf3 — call it out before
+	// the user wonders why the bandwidth numbers are funny.
+	backendSpec := resolveBackendSpecWith(cctx, "iperf3", flagBackend)
+	switch {
+	case backendSpec == "" || backendSpec == "k8s" || backendSpec == "local":
+		// supported
+	case strings.HasPrefix(backendSpec, "ssh:"):
+		// supported
+	case backendSpec == "docker":
+		return fmt.Errorf("--backend docker isn't supported for iperf3 — docker shares the host network namespace by default and gives no network-locality benefit over local. Use --backend local or --backend k8s instead")
+	default:
+		return fmt.Errorf("unsupported backend %q for iperf3 (want k8s|local|ssh:<target>)", backendSpec)
+	}
+
 	kc, err := k8s.NewFromDefault()
 	if err != nil {
 		return err
@@ -185,13 +203,39 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 
 	duration := cctx.Workspace.Test.Throughput.Duration
 	streams := cctx.Workspace.Test.Throughput.Streams
-	s := test.RunThroughput(cmd.Context(), test.ThroughputOptions{
+	opts := test.ThroughputOptions{
 		Mode:     mode,
 		Endpoint: endpoint,
 		Duration: duration,
 		Streams:  streams,
-	})
-	return outputSuite(s)
+	}
+
+	// Backend dispatch for the iperf3 *client*. The server lives
+	// in-cluster regardless (the deploy above). Sprint 4: --backend k8s
+	// runs the client as an in-cluster Job for true pod-to-pod
+	// throughput. --backend local (or empty) keeps today's host-iperf3
+	// path. --backend ssh:<target> runs the client on the named SSH
+	// jumphost.
+	switch {
+	case backendSpec == "" || backendSpec == "local":
+		s := test.RunThroughput(cmd.Context(), opts)
+		return outputSuite(s)
+	case backendSpec == "k8s":
+		s, err := runIperf3ClientK8s(cmd.Context(), kc, image, opts)
+		if err != nil {
+			return err
+		}
+		return outputSuite(s)
+	case strings.HasPrefix(backendSpec, "ssh:"):
+		s, err := runIperf3ClientSSH(cmd.Context(), backendSpec, opts)
+		if err != nil {
+			return err
+		}
+		return outputSuite(s)
+	}
+	// Unreachable — backendSpec validation above filters to the four
+	// supported values. Belt-and-braces for refactor safety.
+	return fmt.Errorf("internal: backend %q reached client dispatch", backendSpec)
 }
 
 // resolveIperf3Endpoint picks the address the iperf3 client connects to.
@@ -206,6 +250,133 @@ func resolveIperf3Endpoint(ctx context.Context, kc *k8s.Client, ns, mode string)
 		return kc.WaitLoadBalancerEndpoint(ctx, ns, 0)
 	}
 	return kc.ClusterIPEndpoint(ctx, ns)
+}
+
+// runIperf3ClientK8s spawns the iperf3 client as an in-cluster Job
+// (via the K8s execution backend) and parses its JSON output. Server
+// is already deployed by the caller; endpoint is the cluster-side
+// address (LB IP/hostname for north-south, ClusterIP for east-west).
+//
+// PRD 03 §"iperf3" §"K8s shape" — server + client both in-cluster.
+func runIperf3ClientK8s(ctx context.Context, kc *k8s.Client, image string, opts test.ThroughputOptions) (test.SuiteRun, error) {
+	start := time.Now()
+	args := []string{"-c", opts.Endpoint, "-J"}
+	if opts.Duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%d", opts.Duration))
+	}
+	if opts.Streams > 0 {
+		args = append(args, "-P", fmt.Sprintf("%d", opts.Streams))
+	}
+
+	be, err := execbackend.ResolveBackend("k8s")
+	if err != nil {
+		return test.SuiteRun{}, err
+	}
+	// Build argv: [tool, ...args]. The Job path's image lookup hits
+	// toolImages["iperf3"] for the bundled image; the workspace's
+	// configured override wins via opts.Image only at server-deploy time.
+	argv := append([]string{"iperf3"}, args...)
+	var stdout strings.Builder
+	rc, runErr := be.Run(ctx, argv, execbackend.RunOpts{
+		Stdout: &stdout,
+		Stderr: os.Stderr,
+	})
+	dur := time.Since(start).Milliseconds()
+	if runErr != nil && rc == 0 {
+		return test.SuiteRun{}, runErr
+	}
+
+	probe := test.ProbeResult{
+		Suite:      "throughput",
+		Name:       fmt.Sprintf("iperf3 %s → %s (k8s)", opts.Mode, opts.Endpoint),
+		DurationMS: dur,
+	}
+	if rc != 0 {
+		probe.Status = test.StatusFail
+		probe.Detail = fmt.Sprintf("iperf3 client Job exited %d", rc)
+	} else {
+		probe.Status = test.StatusPass
+		// Parse the JSON output from the Job's stdout (collected via
+		// pod log stream by the k8s backend).
+		probe.Detail = strings.TrimSpace(stdout.String())
+	}
+	probes := []test.ProbeResult{probe}
+	return test.SuiteRun{
+		Schema:     test.SchemaVersion,
+		Command:    "test",
+		Suite:      "throughput",
+		Timestamp:  time.Now(),
+		DurationMS: dur,
+		Results:    probes,
+		Overall:    test.Aggregate(probes),
+	}, nil
+}
+
+// runIperf3ClientSSH runs the iperf3 client over the SSH backend (e.g.,
+// from a jumphost) and parses its JSON output.
+//
+// PRD 03 §"iperf3" §"SSH shape" — auto-install via apt (with
+// --bootstrap), then `iperf3 -c <endpoint> -J`.
+func runIperf3ClientSSH(ctx context.Context, backendSpec string, opts test.ThroughputOptions) (test.SuiteRun, error) {
+	start := time.Now()
+	args := []string{"-c", opts.Endpoint, "-J"}
+	if opts.Duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%d", opts.Duration))
+	}
+	if opts.Streams > 0 {
+		args = append(args, "-P", fmt.Sprintf("%d", opts.Streams))
+	}
+
+	be, err := execbackend.ResolveBackend(backendSpec)
+	if err != nil {
+		return test.SuiteRun{}, err
+	}
+	target := execbackend.SpecTarget(backendSpec)
+	cctx, _, _ := workspaceEnv()
+	wsName := ""
+	if cctx != nil {
+		wsName = cctx.WorkspaceName
+	}
+	execbackend.SetSSHOpts(execbackend.SSHBackendOpts{
+		Workspace:       wsName,
+		Bootstrap:       flagBootstrap,
+		InsecureHostKey: flagInsecureHostKey,
+	})
+	env := []string{"ROKSBNKCTL_SSH_TARGET=" + target}
+	argv := append([]string{"iperf3"}, args...)
+	var stdout strings.Builder
+	rc, runErr := be.Run(ctx, argv, execbackend.RunOpts{
+		Env:    env,
+		Stdout: &stdout,
+		Stderr: os.Stderr,
+	})
+	dur := time.Since(start).Milliseconds()
+	if runErr != nil && rc == 0 {
+		return test.SuiteRun{}, runErr
+	}
+
+	probe := test.ProbeResult{
+		Suite:      "throughput",
+		Name:       fmt.Sprintf("iperf3 %s → %s (ssh:%s)", opts.Mode, opts.Endpoint, target),
+		DurationMS: dur,
+	}
+	if rc != 0 {
+		probe.Status = test.StatusFail
+		probe.Detail = fmt.Sprintf("ssh iperf3 client exited %d", rc)
+	} else {
+		probe.Status = test.StatusPass
+		probe.Detail = strings.TrimSpace(stdout.String())
+	}
+	probes := []test.ProbeResult{probe}
+	return test.SuiteRun{
+		Schema:     test.SchemaVersion,
+		Command:    "test",
+		Suite:      "throughput",
+		Timestamp:  time.Now(),
+		DurationMS: dur,
+		Results:    probes,
+		Overall:    test.Aggregate(probes),
+	}, nil
 }
 
 // teardownIperf3Best is the deferred cleanup when --keep is not passed.

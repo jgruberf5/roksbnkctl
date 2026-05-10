@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -173,4 +174,40 @@ func needsTFOutputs(t *remote.Target) bool {
 		return false
 	}
 	return t.KeyPath == "" && t.KeySource != "" && t.KeySource != "agent"
+}
+
+func init() {
+	// Wire the SSH backend's target resolver to the same tf-output-aware
+	// signer the legacy --on path uses. The exec package can't import
+	// internal/cli (cycle), so the cli layer pushes a fully-resolved
+	// target back into the backend via SetSSHTargetResolver.
+	//
+	// PRD 03 §"SSH" — backend resolves its target identically to --on so
+	// users don't have to maintain two key-resolution paths.
+	execbackend.SetSSHTargetResolver(func(workspace, name string) (*remote.Target, map[string][]byte, error) {
+		if workspace == "" {
+			return nil, nil, fmt.Errorf("ssh backend: no workspace set")
+		}
+		t, err := remote.LoadTarget(workspace, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Reload workspace cctx so loadTFOutputsForTarget can pull
+		// outputs (only needed for the tf-output: key source).
+		cctx, err := config.New(workspace)
+		if err != nil {
+			return nil, nil, err
+		}
+		tfOutputs, err := loadTFOutputsForTarget(context.Background(), cctx, t)
+		if err != nil {
+			return nil, nil, err
+		}
+		signer, err := remote.ResolveSigner(t, tfOutputs)
+		if err != nil {
+			return nil, nil, err
+		}
+		t.Signer = signer
+		t.HostKeyCallback = remote.HostKeyCallback(remote.HostKeyOptions{Insecure: flagInsecureHostKey})
+		return t, nil, nil
+	})
 }

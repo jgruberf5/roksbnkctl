@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 )
 
 // Defaults for the iperf3 fixture. Pod and service share a name so the
@@ -51,6 +52,10 @@ func (c *Client) DeployIperf3(ctx context.Context, opts Iperf3Options) error {
 		return err
 	}
 
+	// SCC posture for OpenShift restricted-v2 + Kubernetes Pod Security
+	// "restricted" admission. Without these fields the pod fails admission
+	// on OpenShift with "must define runAsNonRoot…seccompProfile…".
+	// PRD 03 §"iperf3" §"OpenShift SCC" tracks this fix.
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      Iperf3PodName,
@@ -58,11 +63,34 @@ func (c *Client) DeployIperf3(ctx context.Context, opts Iperf3Options) error {
 			Labels:    map[string]string{"app": Iperf3PodName, "roksbnkctl.io/test": "iperf3"},
 		},
 		Spec: corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: ptr.To(true),
+				// OpenShift's SCC admission overrides RunAsUser with a
+				// project-allocated uid; on plain k8s (kind, minikube)
+				// the bundled roksbnkctl-tools-iperf3 image must respect
+				// uid 1000 (see tools/docker/iperf3/Dockerfile USER
+				// directive). The networkstatic/iperf3 default image
+				// runs as root and will fail admission with RunAsNonRoot
+				// — users on plain k8s should switch to the bundled
+				// image (set test.throughput.image to
+				// ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<v>).
+				RunAsUser: ptr.To(int64(1000)),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			Containers: []corev1.Container{{
 				Name:  "iperf3",
 				Image: opts.Image,
 				Args:  []string{"-s"},
 				Ports: []corev1.ContainerPort{{ContainerPort: Iperf3Port, Protocol: corev1.ProtocolTCP}},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: ptr.To(false),
+					RunAsNonRoot:             ptr.To(true),
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+				},
 			}},
 			RestartPolicy: corev1.RestartPolicyAlways,
 		},

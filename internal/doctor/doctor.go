@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
@@ -198,7 +199,12 @@ func checkWorkspace(cctx *config.Context) withWhy {
 
 func checkAPIKey(cctx *config.Context) withWhy {
 	c := Check{Name: "ibmcloud api key"}
-	_, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace:      cctx.WorkspaceName,
+		Source:         cctx.Workspace.IBMCloud.APIKeySource,
+		NonInteractive: true,
+	}
+	_, err := resolver.IBMCloudAPIKey(context.Background())
 	if err != nil {
 		c.Status = StatusError
 		c.Detail = err.Error()
@@ -211,7 +217,12 @@ func checkAPIKey(cctx *config.Context) withWhy {
 
 func checkIBMAuth(ctx context.Context, cctx *config.Context) withWhy {
 	c := Check{Name: "ibm cloud auth"}
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace:      cctx.WorkspaceName,
+		Source:         cctx.Workspace.IBMCloud.APIKeySource,
+		NonInteractive: true,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		c.Status = StatusError
 		c.Detail = "no api key: " + err.Error()

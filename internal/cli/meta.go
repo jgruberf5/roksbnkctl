@@ -50,6 +50,12 @@ upgrade verb).`,
 // proper backend.
 var flagDoctorTarget string
 
+// flagDoctorBackend — when set, doctor runs the per-backend availability
+// checks defined in PRD 03 §"doctor extensions" (k8s ops pod + RBAC,
+// ssh:<target> reachability + bootstrap feasibility). Empty preserves
+// Sprint 0+ behaviour.
+var flagDoctorBackend string
+
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check prerequisites and report missing pieces",
@@ -68,6 +74,7 @@ Exits non-zero on failures (warnings don't block).`,
 
 func init() {
 	doctorCmd.Flags().StringVar(&flagDoctorTarget, "target", "", "additionally probe the named SSH target with `whoami`")
+	doctorCmd.Flags().StringVar(&flagDoctorBackend, "backend", "", "additionally run per-backend checks: k8s | ssh:<target>")
 	selfCmd.AddCommand(selfUpdateCmd)
 	rootCmd.AddCommand(versionCmd, selfCmd, doctorCmd)
 }
@@ -88,6 +95,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	results := doctor.Run(cmd.Context(), cctx)
 	if flagDoctorTarget != "" {
 		results = append(results, runTargetCheck(cmd.Context(), cctx, flagDoctorTarget))
+	}
+	if flagDoctorBackend != "" {
+		results = append(results, runBackendChecks(cmd.Context(), cctx, flagDoctorBackend)...)
 	}
 	if err := doctor.PrintResults(os.Stdout, results); err != nil {
 		return err

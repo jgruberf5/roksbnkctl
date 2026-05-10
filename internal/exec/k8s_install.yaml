@@ -1,0 +1,141 @@
+# roksbnkctl ops install manifests
+#
+# Embedded into the binary via Go's embed directive (k8s_install.go).
+# `roksbnkctl ops install` applies these in order, performing template
+# substitution for ${IBMCLOUD_API_KEY_B64} (base64 of the resolved cred)
+# and ${OPS_IMAGE} (resolved at install time).
+#
+# PRD 03 §"K8s" + PRD 04 §"K8s" jointly drive this layout. Two namespaces
+# are created up front so the long-lived ops Pod (in roksbnkctl-ops) and
+# the per-Job ephemeral pods (in roksbnkctl-test) both have a place to
+# land without race-y namespace-creation logic during test runs.
+#
+# Document separator order matters — we apply documents one at a time
+# and bail on first error, so namespaces must precede objects that live
+# in them.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: roksbnkctl-ops
+  labels:
+    roksbnkctl.io/managed: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: roksbnkctl-test
+  labels:
+    roksbnkctl.io/managed: "true"
+    roksbnkctl.io/test: "true"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+  labels:
+    roksbnkctl.io/managed: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: roksbnkctl-ibm-creds
+  namespace: roksbnkctl-ops
+  labels:
+    roksbnkctl.io/managed: "true"
+  annotations:
+    # Stamped at apply time so `ops show` can render a rotation timestamp.
+    roksbnkctl.io/rotated-at: "${ROTATED_AT}"
+type: Opaque
+data:
+  # Populated at apply-time from the workspace's resolved IBM Cloud API key.
+  # PRD 04 §"K8s": cred lives in a Secret, projected via envFrom on the ops
+  # pod (and as envFrom for ephemeral Jobs that need it).
+  IBMCLOUD_API_KEY: "${IBMCLOUD_API_KEY_B64}"
+  IC_API_KEY: "${IBMCLOUD_API_KEY_B64}"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: roksbnkctl-ops
+  labels:
+    roksbnkctl.io/managed: "true"
+rules:
+  # Job lifecycle in roksbnkctl-test (one-shot tool runs).
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Pods (read + exec + log) in both namespaces. Exec is required for the
+  # long-lived ops-pod path; log is required for the Job path.
+  #
+  # We don't grant pods/exec cluster-wide — only the two namespaces we
+  # manage. PRD 03 §"K8s" §"least privilege".
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  # Secret read in roksbnkctl-ops only (so the ops pod / Jobs can mount
+  # the cred Secret). No cluster-wide secret access.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: roksbnkctl-ops
+  labels:
+    roksbnkctl.io/managed: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: roksbnkctl-ops
+subjects:
+  - kind: ServiceAccount
+    name: roksbnkctl-ops
+    namespace: roksbnkctl-ops
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+  labels:
+    app: roksbnkctl-ops
+    roksbnkctl.io/managed: "true"
+spec:
+  serviceAccountName: roksbnkctl-ops
+  restartPolicy: Always
+  # OpenShift restricted-v2 SCC compliance — same posture the iperf3 SCC
+  # fix uses. Pod-level seccomp + runAsNonRoot, container-level
+  # allowPrivilegeEscalation=false + cap drop.
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: tools
+      image: ${OPS_IMAGE}
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      envFrom:
+        - secretRef:
+            name: roksbnkctl-ibm-creds
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"

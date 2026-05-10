@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
@@ -226,7 +227,11 @@ func openTF(ctx context.Context, needAPIKey bool) (*config.Context, *tf.Workspac
 
 	var apiKey string
 	if needAPIKey {
-		apiKey, err = config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+		resolver := &cred.Resolver{
+			Workspace: cctx.WorkspaceName,
+			Source:    cctx.Workspace.IBMCloud.APIKeySource,
+		}
+		apiKey, err = resolver.IBMCloudAPIKey(ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving API key: %w", err)
 		}
@@ -277,7 +282,11 @@ func tryAutoKubeconfig(ctx context.Context, cctx *config.Context, tfws *tf.Works
 	if cluster == "" {
 		return
 	}
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: skipping kubeconfig fetch (api key): %v\n", err)
 		return

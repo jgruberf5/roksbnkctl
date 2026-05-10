@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -249,7 +250,11 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 	if cctx.Workspace == nil {
 		return nil, nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}
@@ -362,7 +367,11 @@ func persistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.W
 		identity = clusterName
 	}
 
-	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		return err
 	}
