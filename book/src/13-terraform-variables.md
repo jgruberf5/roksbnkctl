@@ -28,7 +28,7 @@ You don't edit the example file in place. Copy or generate from it instead.
 The `roksbnkctl tfvars` subcommand prints a starter `terraform.tfvars` to stdout, populated from the **current workspace state**:
 
 ```bash
-$ roksbnkctl tfvars > ~/.roksbnkctl/dev/state/terraform.tfvars.user
+$ roksbnkctl tfvars > ~/.roksbnkctl/dev/terraform.tfvars.user
 ```
 
 What gets pre-filled:
@@ -42,7 +42,7 @@ What's deliberately **excluded**:
 - `ibmcloud_api_key` — never on disk (see "The IBMCLOUD_API_KEY exception" below)
 - Sensitive outputs (BIG-IP passwords, COS HMAC secrets) — left as upstream defaults
 
-The starter is meant to be copied into `~/.roksbnkctl/<ws>/state/terraform.tfvars.user` (the workspace-local override file) or into a `--var-file` path you keep alongside the workspace.
+The starter is meant to be copied into `~/.roksbnkctl/<ws>/terraform.tfvars.user` (the workspace-local override file) or into a `--var-file` path you keep alongside the workspace.
 
 ## What you typically edit
 
@@ -81,7 +81,7 @@ Concretely:
 
 ```bash
 # config.yaml says cluster.workers_per_zone: 2
-# ~/.roksbnkctl/dev/state/terraform.tfvars.user contains:
+# ~/.roksbnkctl/dev/terraform.tfvars.user contains:
 #   roks_workers_per_zone = 4
 # Run with no flag:
 roksbnkctl up
@@ -147,7 +147,7 @@ $ roksbnkctl apply
 
 Notice step 6 — dropping the `--var-file` flag is the rollback. Terraform compares its current state to the new desired state (from `config.yaml`) and scales the worker pool back down. No special "undo" command needed.
 
-For a more permanent override (you want this workspace to *always* run with bigger nodes), put the contents of `perf-cluster.tfvars` into `~/.roksbnkctl/dev/state/terraform.tfvars.user` instead. Then every `roksbnkctl up`/`apply` picks it up automatically without a CLI flag.
+For a more permanent override (you want this workspace to *always* run with bigger nodes), put the contents of `perf-cluster.tfvars` into `~/.roksbnkctl/dev/terraform.tfvars.user` instead. Then every `roksbnkctl up`/`apply` picks it up automatically without a CLI flag.
 
 ## When to edit `config.yaml` vs `.tfvars.user` vs `--var-file`
 

@@ -12,7 +12,7 @@ The end-to-end shape:
 
 1. **Implement the interface.** Create `internal/exec/<your-backend>.go`. The contract is `Run(ctx context.Context, argv []string, opts RunOpts) (int, error)`. Honour `opts.Stdin/Stdout/Stderr`, `opts.WorkDir`, `opts.Env`, `opts.Credentials`, `opts.HostMounts`, and `opts.RunAsUser`. Return the subprocess exit code as the first return; second is for backend-side errors (couldn't start, ctx cancelled, etc.).
 
-2. **Register it.** Add an entry to the registry — either via the package's `init()` block or via a `Register(name string, factory func() Backend)` call. The `ResolveBackend(spec string)` function in `internal/exec/registry.go` dispatches `--backend <name>` to your constructor.
+2. **Register it.** Call `exec.Register(name string, b Backend)` from the package's `init()` block. The `ResolveBackend(spec string)` function in `internal/exec/backend.go` dispatches `--backend <name>` to the registered backend.
 
 3. **Handle credentials safely.** Read [PRD 04](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md) before touching `opts.Credentials`. The cardinal rule: **never pass credential values via argv** — they end up in `ps` output, container metadata, and process accounting. Pass by reference (env var by name, projected Secret, SSH `SetEnv`) and let the runtime do the value plumbing.
 
@@ -77,10 +77,13 @@ Tag resolution is handled by `SetToolImageTag` (set in `internal/cli/root.go::in
 [`internal/exec/ssh.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/ssh.go) maintains a map of tool names to apt-package names for the `--bootstrap` auto-install:
 
 ```go
-var toolPackages = map[string][]string{
-    "ibmcloud": {"ibmcloud-cli"},
-    "iperf3":   {"iperf3"},
-    "<your>":   {"<deb-package>"},
+// toolPackage carries apt-repo metadata + package name; see the
+// production form in internal/exec/ssh.go for the full struct shape
+// (IBM repo URL + GPG key + apt-source line for ibmcloud-cli, etc.).
+var toolPackages = map[string]toolPackage{
+    "ibmcloud": { /* IBM apt repo + key + "ibmcloud-cli" */ },
+    "iperf3":   { /* plain ubuntu-main "iperf3" */ },
+    "<your>":   { /* repo + key + "<deb-package>" */ },
 }
 ```
 

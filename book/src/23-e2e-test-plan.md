@@ -6,14 +6,15 @@ The design rationale lives in [PRD 05](https://github.com/jgruberf5/roksbnkctl/b
 
 ## What the E2E suite is
 
-The suite is 14 phases organised into two tiers:
+The suite is 14 automated phases organised into two tiers, plus Phase J as a manual integrator step (kubectl internalisation requires `sudo mv` of the host kubectl/oc binaries; that mutation is too disruptive to automate, so PRD 05 §J leaves it as a release-checklist item):
 
 | Tier | Phases | What it covers | Driver script |
 |---|---|---|---|
 | **Baseline** | A, B, C, D, E, F, G, H | install, init, plan, up, post-apply checks, test suites, down | `scripts/e2e-test.sh` |
-| **Backends + extras** | I, J, K, L, L-DNS, M, N | SSH backend, kubectl-internal, docker backend, k8s backend + ops pod, DNS probe with GSLB compare, cred-leak audit, mixed-mode lifecycle | `scripts/e2e-test-backends.sh` |
+| **Backends + extras** | I, K, L, L-DNS, M, N | SSH backend, docker backend, k8s backend + ops pod, DNS probe with GSLB compare, cred-leak audit, mixed-mode lifecycle | `scripts/e2e-test-backends.sh` |
+| **Manual** | J | kubectl internalisation (PATH-stripped, integrator-driven) | per-release checklist |
 
-A combined driver, `scripts/e2e-test-full.sh`, runs both tiers in sequence against the same cluster — A-H first to bring infrastructure up, then I-N (which reuse the cluster from D) before D's destroy. The combined run is the canonical full-coverage smoke and the one the v1.0 release gate uses.
+A combined driver, `scripts/e2e-test-full.sh`, runs both automated tiers in sequence: A-H first to bring up + exercise + tear down the baseline cluster, then I-N which provisions a fresh cluster via Phase N's mixed-mode-lifecycle step. The two drivers stay decoupled — each can be run standalone — at the cost of an extra cluster apply (~70min wall-time, ~5-7h combined). Cluster-sharing across the two drivers (the PRD-envisioned design) is queued for v1.x; see PRD 05 §"Test infrastructure".
 
 ### Phase coverage at a glance
 
@@ -28,14 +29,14 @@ A combined driver, `scripts/e2e-test-full.sh`, runs both tiers in sequence again
 | G | baseline | `test throughput` (iperf3) | — |
 | H | baseline | `down` — destroy + cleanup | — |
 | I | backends | SSH backend / `--on jumphost`, host-key TOFU | [01](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md) |
-| J | backends | kubectl internalisation (PATH-stripped) | [02](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md) |
+| J | **manual** | kubectl internalisation (PATH-stripped — requires `sudo mv`) | [02](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md) |
 | K | backends | docker backend (ibmcloud + iperf3 client) | [03 § Docker](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#docker-backend) |
 | L | backends | k8s backend (ops pod + ibmcloud + iperf3) | [03 § K8s](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-backend) |
 | L-DNS | backends | DNS probe + GSLB cross-vantage compare | [03 § DNS](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware) |
 | M | backends | cred-leak audit (docker inspect, k8s events, ssh tempfiles) | [04](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md) |
 | N | backends | mixed-mode lifecycle (each tool on a different backend) | all of the above |
 
-Phases I-N share the cluster brought up by Phase D — they run between D's apply and D's destroy, so the 30-50-minute cluster apply happens once per full run.
+Phase J is an integrator-driven manual step; the per-release checklist in [`docs/E2E_TEST.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/E2E_TEST.md) covers its procedure (PATH-strip kubectl + oc, then re-run the baseline driver's Phase E to confirm `roksbnkctl k get/apply/describe/...` still works against the cluster).
 
 ## How to run it locally
 
@@ -45,10 +46,14 @@ The three driver scripts all live under [`scripts/`](https://github.com/jgruberf
 # Baseline only (A-H) — ~90 minutes
 ./scripts/e2e-test.sh
 
-# Backends + extras only (I-N + L-DNS) — assumes an existing cluster
-./scripts/e2e-test-backends.sh --use-existing-cluster
+# Backends + extras only (I-N + L-DNS) — requires a live cluster (run after
+# Phase D of e2e-test.sh, or provision via `roksbnkctl up` in a separate
+# workspace first)
+./scripts/e2e-test-backends.sh
 
-# Combined — A-H followed by I-N against the same cluster, ~5 hours total
+# Combined — A-H baseline, then I-N + L-DNS against a fresh cluster the
+# backends driver brings up via Phase N's mixed-mode-lifecycle step,
+# ~5-7 hours total (two separate cluster applies)
 ./scripts/e2e-test-full.sh
 ```
 
@@ -74,14 +79,20 @@ Every phase is re-runnable. The driver scripts respect a `PHASE_FROM=` env var:
 PHASE_FROM=G ./scripts/e2e-test.sh
 
 # Same for the backend driver
-PHASE_FROM=L ./scripts/e2e-test-backends.sh --use-existing-cluster
+PHASE_FROM=L ./scripts/e2e-test-backends.sh
 ```
 
 The phase pointer is read at startup and the script fast-forwards past every step before it. Assertion phases that hit external APIs (DNS resolvers, IBM Cloud control plane) include jitter and retry on the typical transient failure shapes — short DNS timeouts, IAM 5xx blips, etc. See [PRD 05 §"Risks"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md) for the retry policy.
 
-### Per-phase logs
+### Run logs
 
-Each phase logs to `/tmp/roksbnkctl-e2e-backends/<phase>-<timestamp>.log` (and the baseline driver writes the equivalent under `/tmp/roksbnkctl-e2e/`). Failures preserve the log; success deletes everything but the last summary line. On a CI machine that runs the suite nightly, the logs are the only forensics you get — keep them for at least 7 days.
+Each driver writes a single combined log per run:
+
+- `scripts/e2e-test.sh` → `/tmp/roksbnkctl-e2e/run-<timestamp>.log`
+- `scripts/e2e-test-backends.sh` → `/tmp/roksbnkctl-e2e-backends/run-<timestamp>.log`
+- `scripts/e2e-test-full.sh` → both of the above (the combined runner re-uses each child driver's log directory)
+
+Logs are preserved on both success and failure; clean them up manually when disk pressure warrants. On a CI machine that runs the suite nightly, the logs are the only forensics you get — keep them for at least 7 days. Per-phase log splitting is a v1.x consideration.
 
 ### Dry-run
 
@@ -105,7 +116,7 @@ Each phase logs to `/tmp/roksbnkctl-e2e-backends/<phase>-<timestamp>.log` (and t
 
 The dominant cost phase. `roksbnkctl up --auto` runs `terraform apply` against the embedded HCL — provisioning ~77 resources: VPC, subnets, transit gateway, ROKS cluster, cert-manager, FLO, CNEInstance, License, jumphost. Expect 30-50 minutes on a clean apply, 5-15 minutes longer when IBM Cloud's control plane is slow. The phase asserts terraform exits zero and the admin kubeconfig was fetched and written to `$KUBECONFIG`.
 
-Post-apply, the phase auto-registers the `jumphost` target (per [Chapter 16 §"Auto-discovery from terraform outputs"](./16-on-flag-ssh-jumphosts.md)) so subsequent phases can `--on jumphost` without manual config.
+Post-apply, the phase auto-registers the `jumphost` target (per [Chapter 16 §"Auto-discovery from `roksbnkctl up`"](./16-on-flag-ssh-jumphosts.md#auto-discovery-from-roksbnkctl-up)) so subsequent phases can `--on jumphost` without manual config.
 
 ### Phase E — post-apply checks
 
@@ -176,7 +187,7 @@ A realistic scenario: workspace config routes each tool to its preferred backend
 
 `.github/workflows/ci.yml` runs **unit + integration** on every PR — `go test ./...` plus the testcontainers-go-backed integration tests. The full e2e suite is too expensive (4-6 hours, $5-10 of IBM Cloud spend per run) to gate on every PR.
 
-A separate **manual-trigger workflow** runs `scripts/e2e-test-full.sh` on demand and on release branches. The workflow is dispatched via the GitHub Actions UI ("Run workflow") and stamps the resulting log artefacts onto the workflow run. See the validator agent's e2e CI workflow file (landed in Sprint 6) for the concrete YAML.
+A separate **manual-trigger workflow** runs `scripts/e2e-test-full.sh` on demand and on release branches. The workflow is dispatched via the GitHub Actions UI ("Run workflow") and stamps the resulting log artefacts onto the workflow run. See [`.github/workflows/e2e-full.yml`](https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/e2e-full.yml) for the workflow YAML — the workflow accepts optional `cluster_region` + `teardown_on_success` inputs and runs automatically on every `release/**` branch push.
 
 The release-cut policy is: don't tag `vX.Y.Z` until the most recent manual-trigger run on the release branch is green for **three consecutive nights**. This catches the flakes that don't reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.
 
@@ -229,7 +240,7 @@ The intended workflow on a flake is:
 ```bash
 # Phase L flaked on "ops pod not yet Running"
 # Re-run from L; everything before is preserved
-PHASE_FROM=L ./scripts/e2e-test-backends.sh --use-existing-cluster
+PHASE_FROM=L ./scripts/e2e-test-backends.sh
 ```
 
 If the same phase flakes on consecutive `PHASE_FROM=` runs, it's a real bug — open an issue with the per-phase log attached.
