@@ -46,7 +46,7 @@ book-clean:
 # ldflags for version stamping). See issues/issue_sprint0_staff.md for
 # the rationale.
 
-.PHONY: test-short test-integration lint pre-commit-install
+.PHONY: test-short test-integration test-live lint pre-commit-install
 
 test-short:
 	go test -short ./...
@@ -59,6 +59,20 @@ test-short:
 # Run locally before pushing SSH-related changes.
 test-integration:
 	go test -tags integration -timeout 5m ./...
+
+# test-live runs golden-file byte-equivalence tests for
+# `roksbnkctl k get -o yaml` against `kubectl get -o yaml`. Requires:
+#
+#   - $KUBECONFIG (or ~/.kube/config) pointing at a real cluster
+#   - kubectl on PATH for the comparison side
+#   - roksbnkctl built and on PATH (or $ROKSBNKCTL set to its path)
+#
+# Tests skip cleanly (rather than fail) when prerequisites are missing,
+# so it's safe to invoke from CI as a manual-trigger job. Recommended:
+# run before tagging v0.8 — the byte-equivalence is part of PRD 02's
+# acceptance criteria.
+test-live:
+	go test -tags live -timeout 5m ./internal/k8s/...
 
 lint:
 	gofmt -d -l . && go vet ./... && (command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not on PATH; skipping")

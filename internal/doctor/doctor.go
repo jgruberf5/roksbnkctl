@@ -66,8 +66,12 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	// Required + optional tooling.
 	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up`"))
 	out = append(out, checkBinary("iperf3", false, "needed for `roksbnkctl test throughput`"))
-	out = append(out, checkBinary("kubectl", false, "optional; `roksbnkctl kubectl` passthrough"))
-	out = append(out, checkBinary("oc", false, "optional; `roksbnkctl oc` passthrough"))
+	// kubectl + oc are now informational only — Sprint 2 internalised
+	// the get/apply/logs/exec/port-forward/describe/delete subset via
+	// client-go (PRD 02). Missing host kubectl no longer warns; the
+	// passthrough commands still work if they're installed.
+	out = append(out, checkBinaryInformational("kubectl", "internalised in roksbnkctl k *; passthrough still works if installed"))
+	out = append(out, checkBinaryInformational("oc", "internalised in roksbnkctl k *; passthrough still works if installed"))
 	out = append(out, checkBinary("ibmcloud", false, "optional; `roksbnkctl ibmcloud` passthrough"))
 
 	// Kubeconfig: warn if missing, since throughput/status/etc need it.
@@ -100,6 +104,30 @@ func checkBinary(name string, required bool, w string) withWhy {
 			c.Status = StatusWarning
 		}
 		c.Detail = "not on PATH"
+		return withWhy{Check: c, Why: w}
+	}
+	c.Status = StatusOK
+	c.Detail = path
+	if v := versionLine(name); v != "" {
+		c.Detail = fmt.Sprintf("%s (%s)", path, v)
+	}
+	return withWhy{Check: c, Why: w}
+}
+
+// checkBinaryInformational is the post-Sprint-2 variant for kubectl and
+// oc: the binary is no longer needed because the relevant verbs are
+// internalised via client-go. Missing → StatusOK with an explanatory
+// detail (rather than StatusWarning, which would imply something to
+// fix). Present → StatusOK with the path/version, same as before.
+//
+// The intent: a fresh dev box without kubectl/oc should produce no
+// warnings for everyday roksbnkctl use post-Sprint-2.
+func checkBinaryInformational(name, w string) withWhy {
+	c := Check{Name: name, Optional: true}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		c.Status = StatusOK
+		c.Detail = "not on PATH (internalised; passthrough still works if installed)"
 		return withWhy{Check: c, Why: w}
 	}
 	c.Status = StatusOK

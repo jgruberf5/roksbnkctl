@@ -277,7 +277,34 @@ phase_D() {
     # separately via cluster show + ibmcloud ks cluster get.
     step "D2 status" "$ROKSBNKCTL" status -w "$WORKSPACE"
 
-    step "D3 kubectl get pods -n f5-bnk" "$ROKSBNKCTL" kubectl get pods -n f5-bnk
+    # D3 — native internalised verb (Sprint 2 / PRD 02). Replaces the
+    # earlier passthrough form that shelled out to host kubectl. The
+    # in-process path uses client-go directly; equivalent behaviour, no
+    # host kubectl install required.
+    step "D3 k get pods -n f5-bnk" "$ROKSBNKCTL" k get pods -n f5-bnk
+
+    # D3b — PATH-strip check. Validates the v0.8 "no kubectl required"
+    # claim by removing every PATH entry that looks like it could host a
+    # kubectl binary, then running roksbnkctl k get nodes against the
+    # stripped PATH. If the in-process implementation accidentally shells
+    # out to kubectl, this step fails. We use env PATH=… so the
+    # mutation is per-command — never moves or renames the host binary.
+    if [[ "$DRY_RUN" != "1" ]]; then
+        local stripped_path
+        stripped_path=$(echo "$PATH" | tr ':' '\n' \
+            | while IFS= read -r d; do
+                  [[ -n "$d" ]] || continue
+                  [[ -x "$d/kubectl" ]] && continue
+                  [[ -x "$d/oc" ]] && continue
+                  echo "$d"
+              done | paste -sd:)
+        capture "D3b k get nodes (PATH-stripped)" \
+            env PATH="$stripped_path" "$ROKSBNKCTL" k get nodes \
+            | assert_contains "Ready" "D3b nodes Ready (no host kubectl)"
+    else
+        log "→ D3b k get nodes (PATH-stripped) (dry-run)"
+        log "  cmd: env PATH=<stripped> $ROKSBNKCTL k get nodes"
+    fi
 
     # logs may produce many lines or be empty if FLO hasn't logged
     # recently — just confirm the command exits 0.

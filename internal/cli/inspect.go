@@ -13,12 +13,20 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/cli-runtime/pkg/genericiooptions"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
 
-var flagFollow bool
+var (
+	flagFollow        bool
+	flagLogsNamespace string
+	flagLogsContainer string
+	flagLogsPrevious  bool
+	flagLogsSince     string
+	flagLogsTailLines int64
+)
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -56,6 +64,11 @@ or relabelled, fall back to:
 
 func init() {
 	logsCmd.Flags().BoolVarP(&flagFollow, "follow", "f", false, "follow log output")
+	logsCmd.Flags().StringVarP(&flagLogsNamespace, "namespace", "n", "", "override the component's default namespace")
+	logsCmd.Flags().StringVarP(&flagLogsContainer, "container", "c", "", "container name in a multi-container pod")
+	logsCmd.Flags().BoolVar(&flagLogsPrevious, "previous", false, "fetch logs from the previous container instance")
+	logsCmd.Flags().StringVar(&flagLogsSince, "since", "", "only return logs newer than this duration (e.g. 5s, 2m, 1h)")
+	logsCmd.Flags().Int64Var(&flagLogsTailLines, "tail", -1, "tail the last N lines (-1 = full log)")
 	rootCmd.AddCommand(statusCmd, logsCmd)
 }
 
@@ -194,11 +207,40 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	component := args[0]
 	comp := lookupComponent(component)
 	if comp == nil {
-		names := make([]string, 0, len(bnkComponents))
-		for _, c := range bnkComponents {
-			names = append(names, c.Name)
+		// Not a known component. Fall through to the raw pod-name path
+		// (kubectl-style) — same as `roksbnkctl k logs <pod>`. This
+		// is the v0.8 shortcut so `roksbnkctl logs my-pod` works
+		// without users having to know the `k` prefix.
+		since, err := k8s.ParseSinceDuration(flagLogsSince)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("unknown component %q — available: %s", component, strings.Join(names, ", "))
+		opts := &k8s.LogsOptions{
+			PodName:      component,
+			Namespace:    flagLogsNamespace,
+			Container:    flagLogsContainer,
+			Follow:       flagFollow,
+			Previous:     flagLogsPrevious,
+			SinceSeconds: since,
+			TailLines:    flagLogsTailLines,
+			IOStreams: genericiooptions.IOStreams{
+				In:     os.Stdin,
+				Out:    os.Stdout,
+				ErrOut: os.Stderr,
+			},
+		}
+		if err := opts.Run(cmd.Context()); err != nil {
+			// If the pod-name path also fails with NotFound, surface a
+			// clearer "not a component AND not a pod" message that
+			// nudges toward `-A` or the component list.
+			names := make([]string, 0, len(bnkComponents))
+			for _, c := range bnkComponents {
+				names = append(names, c.Name)
+			}
+			return fmt.Errorf("%w (also not a known BNK component: %s)",
+				err, strings.Join(names, ", "))
+		}
+		return nil
 	}
 
 	kc, err := k8s.NewFromDefault()
@@ -206,28 +248,48 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	ns := comp.Ns
+	if flagLogsNamespace != "" {
+		ns = flagLogsNamespace
+	}
+
 	ctx := cmd.Context()
-	pods, err := kc.Clientset().CoreV1().Pods(comp.Ns).List(ctx, metav1.ListOptions{
+	pods, err := kc.Clientset().CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: comp.Selector,
 	})
 	if err != nil {
-		return fmt.Errorf("listing %s pods in %s: %w", component, comp.Ns, err)
+		return fmt.Errorf("listing %s pods in %s: %w", component, ns, err)
 	}
 	if len(pods.Items) == 0 {
-		return fmt.Errorf("no %s pods found in namespace %s with selector %s — chart label may have changed; try `roksbnkctl kubectl get pods -A | grep <name>`",
-			component, comp.Ns, comp.Selector)
+		return fmt.Errorf("no %s pods found in namespace %s with selector %s — chart label may have changed; try `roksbnkctl k get pods -A | grep <name>`",
+			component, ns, comp.Selector)
 	}
 	pod := &pods.Items[0]
 	if len(pods.Items) > 1 {
-		fmt.Fprintf(os.Stderr, "→ %d %s pods found; tailing %s (use `roksbnkctl kubectl logs -n %s <pod>` for a specific one)\n",
+		fmt.Fprintf(os.Stderr, "→ %d %s pods found; tailing %s (use `roksbnkctl k logs -n %s <pod>` for a specific one)\n",
 			len(pods.Items), component, pod.Name, pod.Namespace)
 	} else {
 		fmt.Fprintf(os.Stderr, "→ Tailing logs from %s/%s\n", pod.Namespace, pod.Name)
 	}
 
-	req := kc.Clientset().CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
-		Follow: flagFollow,
-	})
+	since, err := k8s.ParseSinceDuration(flagLogsSince)
+	if err != nil {
+		return err
+	}
+	logOpts := &corev1.PodLogOptions{
+		Container: flagLogsContainer,
+		Follow:    flagFollow,
+		Previous:  flagLogsPrevious,
+	}
+	if since > 0 {
+		logOpts.SinceSeconds = &since
+	}
+	if flagLogsTailLines >= 0 {
+		t := flagLogsTailLines
+		logOpts.TailLines = &t
+	}
+
+	req := kc.Clientset().CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, logOpts)
 	stream, err := req.Stream(ctx)
 	if err != nil {
 		return fmt.Errorf("opening log stream: %w", err)

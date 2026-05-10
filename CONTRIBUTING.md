@@ -37,6 +37,36 @@ locally before pushing SSH-related changes — the integration tests
 catch real bugs the unit suite can't (the Sprint 1 ctx-cancel fix in
 `internal/remote/ssh.go` was found this way).
 
+### Running golden tests (live cluster)
+
+`internal/k8s/golden_test.go` validates PRD 02's byte-equivalence
+acceptance criterion: `roksbnkctl k get <resource> -o yaml` must match
+`kubectl get <resource> -o yaml` for representative resources (Node,
+Pod, Service, ConfigMap), modulo necessarily-volatile fields like
+`managedFields`, `resourceVersion`, `creationTimestamp`. Gated behind a
+`live` build tag so they only run when explicitly invoked:
+
+```bash
+make test-live                     # equivalent to:
+go test -tags live -timeout 5m ./internal/k8s/...
+```
+
+Requirements:
+
+- A real ROKS (or any Kubernetes) cluster reachable via `$KUBECONFIG`
+  or `~/.kube/config`. The tests `t.Skip` cleanly when no cluster is
+  available — running without one is harmless.
+- `kubectl` on `$PATH` for the comparison side. The internalised `k get`
+  is what we're validating; `kubectl get` is the reference.
+- `roksbnkctl` built and on `$PATH` (or `$ROKSBNKCTL` set to its path).
+  The test `exec`s the binary so an unbuilt working tree is detected
+  cleanly.
+
+These tests are **not** run in CI (no live cluster available). Run them
+locally before tagging `v0.8` (the M2 milestone) — byte-equivalence is
+part of PRD 02's acceptance criteria, and a regression in the
+`cli-runtime` printer chain wouldn't be caught by the fast unit suite.
+
 ## Pre-commit hook
 
 `scripts/pre-commit.sh` runs three checks against the working tree:

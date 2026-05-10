@@ -66,7 +66,8 @@ The everyday `roksbnkctl up` happy path: TF brings up cluster + BNK in one shot 
 |---|---|---|
 | D1 | `roksbnkctl up --auto -w e2e --var-file ~/bnkfun/terraform.tfvars` | exits 0; `Apply complete! Resources: 77 added` (or near — TF can shift counts) |
 | D2 | `roksbnkctl status -w e2e` | exits 0; reports cluster reachable |
-| D3 | `roksbnkctl kubectl get pods -n f5-bnk` | exits 0; pods listed (state checks deferred to test phase) |
+| D3 | `roksbnkctl k get pods -n f5-bnk` | exits 0; pods listed (state checks deferred to test phase). **Sprint 2 / PRD 02**: replaces the previous `roksbnkctl kubectl get pods` passthrough with the internalised `k get` verb. |
+| D3b | `env PATH=<stripped> roksbnkctl k get nodes` | exits 0; output contains `Ready`. Validates the v0.8 "no kubectl required" claim — strips every PATH entry that holds a `kubectl` or `oc` executable, then runs `roksbnkctl k get nodes` against the stripped PATH. If the in-process implementation accidentally shells out to host `kubectl`, this step fails. We use `env PATH=…` rather than `mv kubectl kubectl.hidden` so the host filesystem stays untouched (the dry-run path also remains side-effect-free). |
 | D4 | `roksbnkctl logs flo` (capture 50 lines, then break) | exits 0; output lines > 0 |
 | D5 | `roksbnkctl test connectivity -o json` | exits 0; `schema: roksbnkctl.v1`; all checks pass |
 | D6 | `roksbnkctl test dns -o json` | exits 0; all checks pass |
