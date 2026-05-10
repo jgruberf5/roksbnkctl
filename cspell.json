@@ -71,7 +71,6 @@
     "envFrom",
     "spdy",
     "SPDY",
-    "miekg",
     "coredns",
     "CoreDNS",
     "NXDOMAIN",

@@ -232,12 +232,12 @@ Sprint 5 adds `terraform` to the docker backend's tool list. The shape is simila
 
 ##### State persistence via bind-mount
 
-Terraform's local state file lives at `terraform.tfstate` in the working directory. For the docker backend that working directory has to be a host-side path bind-mounted into the container, not a container-internal path that disappears on `--rm`. The docker backend bind-mounts the workspace's state directory into the container:
+Terraform's local state file lives at `terraform.tfstate` in the working directory. For the docker backend the working directory has to be a host-side path bind-mounted into the container, not a container-internal path that disappears on `--rm`. The docker backend bind-mounts the workspace's state directory into the container:
 
 ```
 docker run --rm \
-  -v ~/.roksbnkctl/<workspace>/state:/work \
-  --workdir /work \
+  -v ~/.roksbnkctl/<workspace>/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
   --user $(id -u):$(id -g) \
   hashicorp/terraform:1.5.7 \
   apply -auto-approve
@@ -246,10 +246,11 @@ docker run --rm \
 Concretely:
 
 - **Host source**: `~/.roksbnkctl/<workspace>/state/` — the same directory the local terraform backend writes state to today, so switching between `--backend local` and `--backend docker` against the same workspace doesn't fork state.
-- **Container target**: `/work` — set as `WorkingDir` so terraform commands run from there without an explicit `cd`.
-- **The HCL itself** is **not** bind-mounted from the workspace's state dir. The HCL ships embedded in the `roksbnkctl` binary (the default `tf_source.type: embedded`) or is otherwise resolved before backend dispatch; the bind-mounted directory holds **state only** (`terraform.tfstate`, `terraform.tfstate.backup`, the `.terraform/` cache dir). The HCL is materialised into the bind-mount alongside state at run time and removed on container exit.
+- **Container target**: `/state` — the bind-mount root inside the container.
+- **Container working directory**: `/state/tf-source/<source>/` (e.g., `/state/tf-source/embedded-terraform/` for the default embedded source) — the same path the local backend resolves to, so terraform sees the same `main.tf` either way.
+- **The HCL is bind-mounted alongside state.** The embedded HCL is materialised at run time into `~/.roksbnkctl/<workspace>/state/tf-source/<source>/` (chapter 31 covers the embedded-source layout); since `state/` is the bind-mount root, both `terraform.tfstate` and the HCL tree land inside the container together. There's no separate HCL projection.
 
-The bind-mount is read-write — terraform needs to write `terraform.tfstate` and rotate `terraform.tfstate.backup`. Combined with `--rm`, the file lifecycle is: container creates state, container exits, `--rm` removes the container, state files persist on the host. Subsequent runs (re-mounted at the same host path) pick up where the prior run left off.
+The bind-mount is read-write — terraform needs to write `terraform.tfstate`, rotate `terraform.tfstate.backup`, and populate the `.terraform/` cache. Combined with `--rm`, the file lifecycle is: container creates state, container exits, `--rm` removes the container, state files persist on the host. Subsequent runs (re-mounted at the same host path) pick up where the prior run left off.
 
 ##### Image: `hashicorp/terraform:1.5.7`
 
@@ -264,8 +265,8 @@ Linux Docker containers run as root by default. With a root-owned container writ
 ```bash
 docker run --rm \
   --user 1000:1000 \                                     # host's caller-uid:caller-gid
-  -v ~/.roksbnkctl/dev-tor/state:/work \
-  --workdir /work \
+  -v ~/.roksbnkctl/dev-tor/state:/state \
+  --workdir /state/tf-source/embedded-terraform \
   hashicorp/terraform:1.5.7 \
   apply -auto-approve
 ```

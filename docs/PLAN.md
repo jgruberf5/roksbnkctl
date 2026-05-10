@@ -660,7 +660,6 @@ These came up during the PRDs but aren't blocking v1.0:
 - Windows full TTY support (v2 — needs ssh-agent named-pipe protocol)
 - Multi-hop SSH ProxyJump (v1.1 — PRD 01 deferred)
 - Long-running ops pod with kubeconfig refresh on token rotation (v1.1 — PRD 04 open question)
-- DNS probe `--require-divergence` CI assertion mode (v1.1)
 - Bash completion for `roksbnkctl k <verb> <resource-name>` with live API lookups (v1.1)
 
 ### Book
