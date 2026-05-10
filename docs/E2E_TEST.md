@@ -40,6 +40,11 @@ Each phase has explicit assertions — the driver script exits non-zero on the f
 | B4 | `roksbnkctl kubectl get nodes` | exits 0; >= 3 nodes; all `Ready` |
 | B5 | `roksbnkctl oc whoami` | exits 0; prints a username |
 | B6 | (cluster stays up — Phase C uses it) | — |
+| B7 | `roksbnkctl -w e2e targets list` | exits 0; output contains `jumphost` (auto-populated by `cluster up` from the upstream HCL's TGW jumphost outputs — PRD 01 §Auto-discovery) |
+| B8 | `roksbnkctl -w e2e exec --on jumphost -- whoami` | exits 0; output contains `root` (the upstream HCL provisions the jumphost as root) |
+| B9 | `roksbnkctl -w e2e ibmcloud --on jumphost iam oauth-tokens` | exits 0; output contains `IAM token` — validates IBMCLOUD_API_KEY env propagates over SSH |
+
+Steps B7-B9 require the upstream HCL's `testing_create_tgw_jumphost` to be true (the default). When users override that to false in their tfvars, the jumphost target won't be auto-populated and B7-B9 are skipped with a yellow `⊘` marker rather than failing the phase. See `scripts/e2e-test.sh phase_B` for the gating logic.
 
 ### Phase C — register an existing cluster (~30 seconds)
 

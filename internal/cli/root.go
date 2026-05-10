@@ -24,11 +24,13 @@ var (
 
 // Persistent flag values, bound on the root command.
 var (
-	flagWorkspace string
-	flagVerbose   bool
-	flagQuiet     bool
-	flagOutput    string
-	flagNoColor   bool
+	flagWorkspace       string
+	flagVerbose         bool
+	flagQuiet           bool
+	flagOutput          string
+	flagNoColor         bool
+	flagOn              string // --on <target>: dispatch a passthrough over SSH instead of locally
+	flagInsecureHostKey bool   // --insecure-host-key: skip TOFU prompt; just record the key (CI use)
 )
 
 var rootCmd = &cobra.Command{
@@ -112,6 +114,8 @@ func init() {
 	pf.BoolVarP(&flagQuiet, "quiet", "q", false, "suppress all but errors")
 	pf.StringVarP(&flagOutput, "output", "o", "text", "output format: text | json")
 	pf.BoolVar(&flagNoColor, "no-color", false, "disable colored output")
+	pf.StringVar(&flagOn, "on", "", "run on the named SSH target instead of locally (`roksbnkctl targets list` to see options)")
+	pf.BoolVar(&flagInsecureHostKey, "insecure-host-key", false, "skip the host-key TOFU prompt; record on first contact (CI use)")
 }
 
 // unimplemented is the placeholder RunE for stubbed commands.

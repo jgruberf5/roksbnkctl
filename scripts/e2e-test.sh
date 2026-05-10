@@ -198,6 +198,44 @@ phase_B() {
         | assert_contains "admin/" "B5 oc whoami returns admin identity"
 
     log "B6 cluster stays up — Phase C will use it"
+
+    # B7-B9: --on jumphost smoke tests (Sprint 1, PRD 01).
+    #
+    # Auto-population from Phase B1's `cluster up` writes a `targets:`
+    # block into ~/.roksbnkctl/<ws>/config.yaml ONLY if the upstream HCL
+    # provisioned the TGW jumphost (testing_create_tgw_jumphost=true,
+    # default). When users disable it via tfvars, runUp skips the
+    # SetTarget call and we have nothing to talk to — log a yellow ⊘
+    # rather than fail the whole phase.
+    local cfg="$HOME/.roksbnkctl/$WORKSPACE/config.yaml"
+    if [[ "$DRY_RUN" != "1" ]] && [[ -f "$cfg" ]] && grep -q "^targets:" "$cfg"; then
+        capture "B7 targets list" "$ROKSBNKCTL" -w "$WORKSPACE" targets list \
+            | assert_contains "jumphost" "B7 jumphost target auto-populated"
+
+        capture "B8 exec --on jumphost -- whoami" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" exec --on jumphost -- whoami \
+            | assert_contains "root" "B8 jumphost user is root"
+
+        # B9 propagates IBMCLOUD_API_KEY to the remote shell, then exercises
+        # `ibmcloud iam oauth-tokens` over SSH. The expected stdout includes
+        # an "IAM token" line; presence confirms both the env propagation
+        # and that ibmcloud CLI is available on the jumphost (the upstream
+        # HCL pre-installs it).
+        capture "B9 ibmcloud --on jumphost iam oauth-tokens" \
+            "$ROKSBNKCTL" -w "$WORKSPACE" ibmcloud --on jumphost iam oauth-tokens \
+            | assert_contains "IAM token" "B9 IAM token returned via SSH"
+    elif [[ "$DRY_RUN" == "1" ]]; then
+        # Dry-run: render the steps so the operator sees the intended
+        # commands without needing the workspace config to exist.
+        log "→ B7 targets list (dry-run)"
+        log "  cmd: $ROKSBNKCTL -w $WORKSPACE targets list"
+        log "→ B8 exec --on jumphost -- whoami (dry-run)"
+        log "  cmd: $ROKSBNKCTL -w $WORKSPACE exec --on jumphost -- whoami"
+        log "→ B9 ibmcloud --on jumphost iam oauth-tokens (dry-run)"
+        log "  cmd: $ROKSBNKCTL -w $WORKSPACE ibmcloud --on jumphost iam oauth-tokens"
+    else
+        yellow "  ⊘ B7-B9 skipped — no jumphost target configured (testing_create_tgw_jumphost=false?)"
+    fi
 }
 
 phase_C() {

@@ -18,12 +18,27 @@ import (
 // this struct. Plaintext keys in the YAML are rejected at load time by
 // rejectPlaintextSecrets.
 type Workspace struct {
-	IBMCloud IBMCloudCfg `yaml:"ibmcloud"`
-	Cluster  ClusterCfg  `yaml:"cluster"`
-	BNK      BNKCfg      `yaml:"bnk,omitempty"`
-	Test     TestCfg     `yaml:"test,omitempty"`
-	TFSource TFSourceCfg `yaml:"tf_source"`
-	COS      *COSCfg     `yaml:"cos,omitempty"`
+	IBMCloud IBMCloudCfg          `yaml:"ibmcloud"`
+	Cluster  ClusterCfg           `yaml:"cluster"`
+	BNK      BNKCfg               `yaml:"bnk,omitempty"`
+	Test     TestCfg              `yaml:"test,omitempty"`
+	TFSource TFSourceCfg          `yaml:"tf_source"`
+	COS      *COSCfg              `yaml:"cos,omitempty"`
+	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
+}
+
+// TargetCfg is the on-disk shape of one entry under `targets:` in the
+// workspace config. Lives in this package (rather than internal/remote)
+// to avoid an import cycle: workspace.go needs to (de)serialise it,
+// internal/remote needs to consume it. Keeping the wire shape here and
+// the runtime Target type in internal/remote keeps the dep direction
+// clean (remote → config, never the reverse).
+type TargetCfg struct {
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port,omitempty"` // default 22
+	User      string `yaml:"user"`
+	KeyPath   string `yaml:"key_path,omitempty"`   // file path (PEM)
+	KeySource string `yaml:"key_source,omitempty"` // "agent" | "tf-output:<name>"
 }
 
 type IBMCloudCfg struct {

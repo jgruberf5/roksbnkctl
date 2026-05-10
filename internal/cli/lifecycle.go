@@ -15,6 +15,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/remote"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -104,6 +105,9 @@ func init() {
 // runUp = plan + confirm + apply + (optional) kubeconfig fetch. The
 // "everyday" deploy command.
 func runUp(cmd *cobra.Command, _ []string) error {
+	if err := rejectOnFlag("up"); err != nil {
+		return err
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -122,6 +126,10 @@ func runUp(cmd *cobra.Command, _ []string) error {
 		// Even with no infra changes, fetching the kubeconfig is useful
 		// (cluster may already exist; user wants creds locally).
 		tryAutoKubeconfig(cmd.Context(), cctx, tfws)
+		// Same for the jumphost target — if it was provisioned by an
+		// earlier apply, populate the workspace's targets:jumphost so
+		// `--on jumphost` works without manual config.
+		tryAutoJumphost(cmd.Context(), cctx, tfws)
 		return nil
 	}
 	if !flagAuto && !promptYesNo("Apply this plan?", false) {
@@ -133,11 +141,15 @@ func runUp(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	tryAutoKubeconfig(cmd.Context(), cctx, tfws)
+	tryAutoJumphost(cmd.Context(), cctx, tfws)
 	return nil
 }
 
 // runPlan = plan only. Read-only — never prompts.
 func runPlan(cmd *cobra.Command, _ []string) error {
+	if err := rejectOnFlag("plan"); err != nil {
+		return err
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -153,6 +165,9 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 // runApply = direct apply, no plan-and-confirm gate. For users who know
 // what they're doing (CI, scripted flows, post-`roksbnkctl plan`).
 func runApply(cmd *cobra.Command, _ []string) error {
+	if err := rejectOnFlag("apply"); err != nil {
+		return err
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -165,11 +180,15 @@ func runApply(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	tryAutoKubeconfig(cmd.Context(), cctx, tfws)
+	tryAutoJumphost(cmd.Context(), cctx, tfws)
 	return nil
 }
 
 // runDown = destroy with confirmation gate. --auto skips the prompt.
 func runDown(cmd *cobra.Command, _ []string) error {
+	if err := rejectOnFlag("down"); err != nil {
+		return err
+	}
 	cctx, tfws, err := openTF(cmd.Context(), true)
 	if err != nil {
 		return err
@@ -293,6 +312,47 @@ func tryAutoKubeconfig(ctx context.Context, cctx *config.Context, tfws *tf.Works
 		return
 	}
 	fmt.Fprintf(os.Stderr, "✓ Wrote kubeconfig to %s\n", target)
+}
+
+// tryAutoJumphost is the post-apply jumphost-target writer. When the
+// upstream HCL provisions a TGW jumphost (testing_tgw_jumphost_ip + the
+// jumphost_shared_key PEM at root), persist a `jumphost` entry under
+// `targets:` so subsequent commands can `--on jumphost`.
+//
+// Best-effort: any failure (no outputs, parse error, save error) is
+// logged as a warning and the parent command still succeeds — `up`
+// passed because terraform passed; the target is a convenience.
+//
+// Idempotent: re-running on a workspace that already has a `jumphost`
+// target overwrites the entry. The IP / PEM may legitimately change
+// across destroy+recreate cycles, and we want known_hosts to follow
+// — caller's responsibility to clean ~/.roksbnkctl/known_hosts when
+// the IP rotates (PRD 01 open question; not auto-handled in v0.7).
+func tryAutoJumphost(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) {
+	if cctx == nil || cctx.Workspace == nil || tfws == nil {
+		return
+	}
+	outputs, err := tfws.Output(ctx)
+	if err != nil {
+		// Not fatal — the cluster may be partway up, or this is a
+		// no-jumphost configuration.
+		return
+	}
+	ip := stringOutput(outputs, "testing_tgw_jumphost_ip")
+	keyPEM := stringOutput(outputs, "jumphost_shared_key")
+	if ip == "" || ip == "TGW jumphost not created" || keyPEM == "" {
+		return
+	}
+	cfg := config.TargetCfg{
+		Host:      ip,
+		User:      "ubuntu", // upstream HCL provisions Ubuntu cloud-init users
+		KeySource: "tf-output:jumphost_shared_key",
+	}
+	if err := remote.SetTarget(cctx.WorkspaceName, "jumphost", cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: writing jumphost target: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "✓ Auto-registered target jumphost (%s); use `roksbnkctl --on jumphost ...`\n", ip)
 }
 
 // resolveClusterIdentity figures out which cluster to fetch the

@@ -79,10 +79,14 @@ func init() {
 
 // ── runE implementations ────────────────────────────────────────────
 
-func runShell(_ *cobra.Command, _ []string) error {
+func runShell(cmd *cobra.Command, _ []string) error {
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
+	}
+	if flagOn != "" {
+		// Remote shell. Always TTY — that's the point of `shell`.
+		return dispatchRemoteShell(cmd.Context(), flagOn)
 	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -91,19 +95,61 @@ func runShell(_ *cobra.Command, _ []string) error {
 	return runWithEnv(shell, nil, env)
 }
 
-func runExec(_ *cobra.Command, args []string) error {
+func runExec(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("exec requires a command to run")
+	}
+	// `roksbnkctl exec` uses DisableFlagParsing so cobra doesn't grab
+	// flags meant for the wrapped binary. That means --on may show up
+	// in args; pull it out manually before dispatch. Also splits at
+	// the canonical `--` separator if the user adds one for clarity.
+	on, argv := extractOnFlag(args)
+	if on == "" {
+		on = flagOn
 	}
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
 	}
-	bin, err := exec.LookPath(args[0])
-	if err != nil {
-		return fmt.Errorf("%s not found on PATH", args[0])
+	if on != "" {
+		return dispatchRemote(cmd.Context(), on, argv, env, false)
 	}
-	return runWithEnv(bin, args[1:], env)
+	bin, err := exec.LookPath(argv[0])
+	if err != nil {
+		return fmt.Errorf("%s not found on PATH", argv[0])
+	}
+	return runWithEnv(bin, argv[1:], env)
+}
+
+// extractOnFlag pulls `--on <name>` (or `--on=<name>`) out of an
+// otherwise-untouched argv. Necessary because exec runs with
+// DisableFlagParsing so cobra doesn't claim flags meant for the
+// wrapped command. Returns ("", argv) if no --on appears.
+//
+// Also strips a leading `--` separator if present after the on flag
+// is removed — users who follow the canonical `roksbnkctl exec --on x -- ls`
+// form expect the `--` to disappear.
+func extractOnFlag(args []string) (string, []string) {
+	out := make([]string, 0, len(args))
+	on := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--on":
+			if i+1 < len(args) {
+				on = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--on="):
+			on = strings.TrimPrefix(a, "--on=")
+		default:
+			out = append(out, a)
+		}
+	}
+	if len(out) > 0 && out[0] == "--" {
+		out = out[1:]
+	}
+	return on, out
 }
 
 func runKubeconfig(cmd *cobra.Command, _ []string) error {
@@ -180,27 +226,38 @@ func runKubeconfigDownload(cmd *cobra.Command) error {
 	return nil
 }
 
-func runKubectlPassthrough(_ *cobra.Command, args []string) error {
-	return runPassthrough("kubectl", args)
+func runKubectlPassthrough(cmd *cobra.Command, args []string) error {
+	return runPassthrough(cmd, "kubectl", args)
 }
 
-func runOCPassthrough(_ *cobra.Command, args []string) error {
-	return runPassthrough("oc", args)
+func runOCPassthrough(cmd *cobra.Command, args []string) error {
+	return runPassthrough(cmd, "oc", args)
 }
 
-func runIBMCloudPassthrough(_ *cobra.Command, args []string) error {
-	bin, err := exec.LookPath("ibmcloud")
-	if err != nil {
-		return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
+func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
+	on, argv := extractOnFlag(args)
+	if on == "" {
+		on = flagOn
 	}
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
 	}
+	if on != "" {
+		// Remote ibmcloud — skip the local-session ensureLoggedIn
+		// dance; the remote sshd / target manages its own state. Pass
+		// IBMCLOUD_API_KEY via env so the remote `ibmcloud` CLI does
+		// non-interactive apikey login on first call.
+		return dispatchRemote(cmd.Context(), on, append([]string{"ibmcloud"}, argv...), env, false)
+	}
+	bin, err := exec.LookPath("ibmcloud")
+	if err != nil {
+		return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
+	}
 	if err := ensureIBMCloudLoggedIn(bin, env); err != nil {
 		return err
 	}
-	return runWithEnv(bin, args, env)
+	return runWithEnv(bin, argv, env)
 }
 
 // ensureIBMCloudLoggedIn establishes a valid ibmcloud session before
@@ -252,16 +309,23 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
-func runPassthrough(tool string, args []string) error {
-	bin, err := exec.LookPath(tool)
-	if err != nil {
-		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)
+func runPassthrough(cmd *cobra.Command, tool string, args []string) error {
+	on, argv := extractOnFlag(args)
+	if on == "" {
+		on = flagOn
 	}
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
 	}
-	return runWithEnv(bin, args, env)
+	if on != "" {
+		return dispatchRemote(cmd.Context(), on, append([]string{tool}, argv...), env, false)
+	}
+	bin, err := exec.LookPath(tool)
+	if err != nil {
+		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)
+	}
+	return runWithEnv(bin, argv, env)
 }
 
 // ── helpers ─────────────────────────────────────────────────────────

@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -8,6 +11,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/doctor"
+	"github.com/jgruberf5/roksbnkctl/internal/remote"
 )
 
 var versionCmd = &cobra.Command{
@@ -40,6 +44,12 @@ upgrade verb).`,
 	RunE: runSelfUpdate,
 }
 
+// flagDoctorTarget — when set, doctor adds an extra Check that runs a
+// no-op `whoami` on the named target (PRD 01 §11). The Check uses
+// BackendName="" today; Phase 3 (PRD 03) will set "ssh" once SSH is a
+// proper backend.
+var flagDoctorTarget string
+
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check prerequisites and report missing pieces",
@@ -50,11 +60,14 @@ var doctorCmd = &cobra.Command{
   - the workspace is initialised
   - the IBM Cloud API key resolves and authenticates
 
+Pass --target <name> to additionally probe an SSH target (runs whoami).
+
 Exits non-zero on failures (warnings don't block).`,
 	RunE: runDoctor,
 }
 
 func init() {
+	doctorCmd.Flags().StringVar(&flagDoctorTarget, "target", "", "additionally probe the named SSH target with `whoami`")
 	selfCmd.AddCommand(selfUpdateCmd)
 	rootCmd.AddCommand(versionCmd, selfCmd, doctorCmd)
 }
@@ -73,6 +86,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 
 	results := doctor.Run(cmd.Context(), cctx)
+	if flagDoctorTarget != "" {
+		results = append(results, runTargetCheck(cmd.Context(), cctx, flagDoctorTarget))
+	}
 	if err := doctor.PrintResults(os.Stdout, results); err != nil {
 		return err
 	}
@@ -80,4 +96,81 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// runTargetCheck runs `whoami` against the named target and reports it
+// as a doctor.Check. Treated as a single Check rather than a stream so
+// the existing PrintResults rendering doesn't change for the
+// no-target case (preserves Sprint 0's byte-equivalence).
+//
+// BackendName is "" today; Phase 3 (PRD 03) will switch to "ssh" once
+// the backend abstraction lands. Until then the Check renders without a
+// backend prefix, identical to the general checks.
+func runTargetCheck(ctx context.Context, cctx *config.Context, name string) doctor.Check {
+	c := doctor.Check{
+		Name:        "target " + name,
+		BackendName: "", // TODO(phase3): set "ssh" once PRD 03 backend lands
+	}
+	if cctx == nil || cctx.Workspace == nil {
+		c.Status = doctor.StatusError
+		c.Detail = "no workspace"
+		return c
+	}
+	t, err := remote.LoadTarget(cctx.WorkspaceName, name)
+	if err != nil {
+		c.Status = doctor.StatusError
+		if errors.Is(err, remote.ErrTargetNotFound) {
+			c.Detail = "not in targets: (try `roksbnkctl targets list`)"
+		} else {
+			c.Detail = err.Error()
+		}
+		return c
+	}
+	tfOutputs, err := loadTFOutputsForTarget(ctx, cctx, t)
+	if err != nil {
+		c.Status = doctor.StatusError
+		c.Detail = "tf outputs: " + err.Error()
+		return c
+	}
+	signer, err := remote.ResolveSigner(t, tfOutputs)
+	if err != nil {
+		c.Status = doctor.StatusError
+		c.Detail = "key: " + err.Error()
+		return c
+	}
+	t.Signer = signer
+	t.HostKeyCallback = remote.HostKeyCallback(remote.HostKeyOptions{Insecure: flagInsecureHostKey})
+
+	client, err := remote.Connect(ctx, t)
+	if err != nil {
+		c.Status = doctor.StatusError
+		c.Detail = "connect: " + err.Error()
+		return c
+	}
+	defer client.Close()
+
+	var stdout, stderr bytes.Buffer
+	code, err := client.Run(ctx, []string{"whoami"}, remote.RunOpts{
+		Stdout: &stdout, Stderr: &stderr,
+	})
+	if err != nil {
+		c.Status = doctor.StatusError
+		c.Detail = "whoami: " + err.Error()
+		return c
+	}
+	if code != 0 {
+		c.Status = doctor.StatusError
+		c.Detail = fmt.Sprintf("whoami exited %d (stderr: %q)", code, stderr.String())
+		return c
+	}
+	c.Status = doctor.StatusOK
+	c.Detail = fmt.Sprintf("%s@%s → %s", t.User, t.Host, trimTrailingNewline(stdout.String()))
+	return c
+}
+
+func trimTrailingNewline(s string) string {
+	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
+		s = s[:len(s)-1]
+	}
+	return s
 }

@@ -64,6 +64,9 @@ const (
 //     long as IBMCLOUD_API_KEY and the existing config (or workspace
 //     name) provide enough context.
 func runInit(_ *cobra.Command, _ []string) error {
+	if err := rejectOnFlag("init"); err != nil {
+		return err
+	}
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err

@@ -46,10 +46,19 @@ book-clean:
 # ldflags for version stamping). See issues/issue_sprint0_staff.md for
 # the rationale.
 
-.PHONY: test-short lint pre-commit-install
+.PHONY: test-short test-integration lint pre-commit-install
 
 test-short:
 	go test -short ./...
+
+# test-integration runs the testcontainers-go-backed suites (currently
+# only internal/remote/integration_test.go — adds an sshd container to
+# exercise the SSH client). Requires Docker on the host. Not invoked by
+# the default CI matrix on every PR — see .github/workflows/ci.yml's
+# `integration` job, which gates this on Linux + same-repo PRs only.
+# Run locally before pushing SSH-related changes.
+test-integration:
+	go test -tags integration -timeout 5m ./...
 
 lint:
 	gofmt -d -l . && go vet ./... && (command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not on PATH; skipping")

@@ -25,7 +25,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          # Track go.mod's `go` directive — testcontainers-go's
+          # transitive otel deps require Go 1.25+, and pinning here
+          # would diverge silently from go.mod. setup-go reads the
+          # directive and downloads a matching toolchain.
+          go-version-file: go.mod
           cache: true
 
       - name: Resolve modules
@@ -57,6 +61,39 @@ jobs:
         # or undefined-symbol issues that vet/test missed.
         run: go build ./...
 
+  integration:
+    name: integration (testcontainers — sshd)
+    needs: test
+    # Linux only: testcontainers-go on macOS GitHub runners requires Docker
+    # Desktop, which isn't installed on the hosted images. Windows runners
+    # have similar Docker-availability gaps. Linux runners ship Docker by
+    # default, so we get a free integration tier on every push to main and
+    # on same-repo PRs.
+    #
+    # Skipped on PRs from forks: the `head.repo.full_name == repository`
+    # check below excludes those. Forks would otherwise hit Docker rate
+    # limits without the right secrets and produce noisy red-x checks for
+    # contributions that don't even touch internal/remote.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Track go.mod's `go` directive rather than hard-coding here —
+          # the testcontainers-go dependency chain (docker → otel) pulls
+          # in a recent toolchain requirement; pinning a stale version
+          # in this YAML would diverge silently.
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test (integration tag)
+        # 5m wall budget covers image pull (~30s on a cold runner) +
+        # six test cases × ~20s each. Bumps if we add tests; reduce
+        # only after measuring.
+        run: go test -tags integration -timeout 5m ./internal/remote/...
+
   windows-build:
     name: windows build
     runs-on: windows-latest
@@ -65,7 +102,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: go.mod
 
       - run: go build ./...
 

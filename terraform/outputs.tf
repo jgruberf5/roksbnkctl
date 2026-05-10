@@ -62,6 +62,18 @@ output "testing_tgw_jumphost_ip" {
   value       = try(module.testing.testing_tgw_jumphost_public_ip, "")
 }
 
+# jumphost_shared_key is the private key (PEM) for the TGW + cluster
+# jumphosts. Read by `roksbnkctl up`'s post-apply hook to auto-populate
+# `targets.jumphost` in the workspace config (PRD 01); referenced as
+# `key_source: tf-output:jumphost_shared_key` from then on. Sensitive
+# so it's masked in `terraform output` but available via tfexec's
+# Output() with raw bytes.
+output "jumphost_shared_key" {
+  description = "PEM private key shared across all jumphosts; used by `roksbnkctl --on jumphost`"
+  value       = try(module.testing.testing_jumphost_shared_private_key, "")
+  sensitive   = true
+}
+
 output "testing_tgw_jumphost_ssh_command" {
   description = "SSH command to connect to the TGW-connected jumphost (empty when testing_create_tgw_jumphost = false)"
   value       = try(module.testing.testing_tgw_jumphost_ssh_command, "")
