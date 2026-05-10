@@ -336,12 +336,14 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 	runCancel()
 
 	select {
-	case err := <-done:
-		// Expect *some* error — context.Canceled wrapped, or an SSH-level
-		// session-closed error. Either is fine; what matters is we exited.
-		if err == nil {
-			t.Errorf("Run returned nil after context cancel; expected cancellation error")
-		}
+	case <-done:
+		// Run returned within the 5s budget — that's the PRD 01
+		// guarantee. The returned error can be context.Canceled wrapped,
+		// an SSH-level session-closed error, OR nil (gliderlabs/testcontainers
+		// sshd sometimes closes the session cleanly before propagating
+		// the cancel — see resolved_sprint4_validator.md Issue 2). What
+		// matters is the goroutine + TCP connection didn't leak past the
+		// timeout.
 	case <-time.After(5 * time.Second):
 		// 5s budget aligns with PRD 01 §Implementation tasks 1: "Context
 		// cancellation closes the session within a few seconds." If Run
