@@ -6,8 +6,11 @@
 #
 #	cd tools/docker && make build-ibmcloud
 #
-# The dev tag (`:dev`) is what the CI workflow publishes on `tag: v*`
-# events; `latest` and `vX.Y.Z` follow on releases.
+# The CI workflow `.github/workflows/tools-images.yml` publishes
+# `:latest` and `:<git-tag>` (e.g. `:v0.9.0`) on tag push events.
+# Local development builds via tools/docker/Makefile use the `:dev`
+# tag, which matches what `internal/exec/docker.go::toolImages`
+# resolves at runtime in this build.
 #
 # Install method: IBM's own install.sh hosted at
 # clis.cloud.ibm.com/install/linux. The script picks the right tarball

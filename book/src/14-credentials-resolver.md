@@ -9,7 +9,7 @@ This chapter is the user-facing distillation of [PRD 04 — credential propagati
 | Credential | Used by | Resolved from |
 |---|---|---|
 | **IBMCLOUD_API_KEY** | `ibmcloud` CLI, terraform's IBM provider, IBM SDK calls | Env → OS keychain → workspace `api_key_b64` → prompt |
-| **kubeconfig** | `kubectl`/`oc` passthroughs, `roksbnkctl k get/apply/...`, terraform's k8s + helm providers | Workspace `state/kubeconfig` → `KUBECONFIG` env → `~/.kube/config` |
+| **kubeconfig** | `kubectl`/`oc` passthroughs, `roksbnkctl k get/apply/...`, terraform's k8s + helm providers | `KUBECONFIG` env → `~/.kube/config` (kubectl-style) |
 | **SSH private key** | The SSH client backing `--on` and the upcoming `ssh` execution backend | Per-target: file path, ssh-agent, or `tf-output:<name>` |
 | **Terraform state** | The `terraform-exec` calls inside `roksbnkctl up`/`apply`/`destroy` | Workspace `state/terraform.tfstate` (filesystem only) |
 
@@ -85,6 +85,8 @@ The encoding exists for two reasons:
 
 `api_key_b64` is the fallback when the OS keychain isn't available — most commonly **WSL2 without libsecret**, **headless Linux servers**, and **CI runners** where bringing up a keychain daemon is more friction than it's worth. Treat the file like a plaintext credential: `chmod 0600`, never commit, never share.
 
+> **File-mode note**: `roksbnkctl init` writes `config.yaml` mode `0644` by default (chapter 12 §"File permissions"). When you populate `api_key_b64`, `chmod 0600` the file yourself — and re-chmod after any subsequent `roksbnkctl init` that re-writes the file, since `init` doesn't preserve the tightened mode. The keychain and env-var paths sidestep this entirely: nothing sensitive lands in `config.yaml`, so the default `0644` is fine.
+
 The plaintext field name `api_key:` is **rejected** at workspace-load time:
 
 ```
@@ -131,35 +133,34 @@ This is useful in two scenarios:
 
 ## kubeconfig discovery
 
-Different chain, different rules. `roksbnkctl` discovers the kubeconfig in this order:
+Different chain, different rules. `roksbnkctl` discovers the kubeconfig the same way `kubectl` does — two sources, in this order:
 
 ```
-1. Workspace-local file: ~/.roksbnkctl/<workspace>/state/kubeconfig
-2. KUBECONFIG environment variable
-3. ~/.kube/config
+1. KUBECONFIG environment variable (first existing path in a colon-separated list)
+2. ~/.kube/config
 ```
 
-The workspace-local file is **first** because it's the kubeconfig the tool itself wrote — produced by `cluster up`, fetched from IBM Cloud's API as the cluster came online. It's the most trusted source for the workspace's cluster.
+This is the kubectl-standard discovery chain, implemented in `internal/k8s/client.go::DefaultKubeconfigPath()`. Whatever you've already taught `kubectl` to read, `roksbnkctl` reads too.
 
-The `KUBECONFIG` env var is second because it represents an explicit user override (a developer hopping between clusters using `kubectx` or similar).
+`cluster up`'s post-apply step writes the admin kubeconfig to `~/.kube/config` (mode `0600`) by default — so the second source in the chain is also the destination of the tool's own output, and the same `KUBECONFIG`-overrides-everything rule applies. If `KUBECONFIG` is set when `cluster up` runs, the download lands at that path instead.
 
-`~/.kube/config` is the last-resort fallback — convenient for users who've already wired up their cluster's kubeconfig system-wide but haven't run `cluster up` yet.
+> **Note**: there is also a `~/.roksbnkctl/<workspace>/state/kubeconfig/` **directory** under the workspace state dir. It's a Terraform input (`kubeconfig_dir` tfvar) that the upstream HCL writes per-component sub-files into (`cert_manager`, `cne_instance`, `flo`, `license`); it is not a kubeconfig file the resolver reads. Don't confuse the two.
 
 ### When the file is missing
 
-If none of the three sources yields a kubeconfig, commands that need one error with:
+If neither source yields a kubeconfig, commands that need one error with:
 
 ```
-error: no kubeconfig: workspace state/kubeconfig is missing, KUBECONFIG env
-       not set, ~/.kube/config not present. Run `roksbnkctl cluster up`,
-       `roksbnkctl cluster register <name>`, or set KUBECONFIG.
+error: no kubeconfig: KUBECONFIG env not set, ~/.kube/config not present.
+       Run `roksbnkctl cluster up`, `roksbnkctl cluster register <name>`,
+       or set KUBECONFIG.
 ```
 
 The remediation message tells you which path to take. `cluster register <name>` is the path for an existing cluster you want to adopt without re-creating it (see [Chapter 9](./09-registering-existing-cluster.md)).
 
 ### File permissions
 
-Workspace-local kubeconfigs are written `chmod 0600` (owner read/write only). They contain the cluster admin token; treat them like a credential. Don't commit them, don't email them, don't `cat` them in screen-shared sessions.
+`cluster up` writes `~/.kube/config` `chmod 0600` (owner read/write only). It contains the cluster admin token; treat it like a credential. Don't commit it, don't email it, don't `cat` it in screen-shared sessions.
 
 ## SSH private keys
 
@@ -272,7 +273,7 @@ What does **not** get redacted:
 - Output from a tool you ran outside `roksbnkctl` (e.g., piping to `tee` after invoking `terraform` directly). The redactor only sees bytes that pass through the exec backend's `Stdout`/`Stderr` writers.
 - The terraform state file. State is on-disk; the redactor is an in-memory stream filter.
 
-The implementation is `internal/exec/redact.go` — a wrapping `io.Writer` with regex-based redaction. The regex matches the resolved API key value (a known string at run-time) rather than a generic "looks like an IBM API key" pattern, to avoid false positives on legitimate output.
+The implementation is `internal/exec/redact.go` — a wrapping `io.Writer` with byte-comparison redaction and cross-write prefix buffering (so a secret split across two `Write` calls still gets masked). The matcher uses the resolved API key value verbatim (a known string at run-time) rather than a generic "looks like an IBM API key" pattern, to avoid false positives on legitimate output.
 
 PRD 04's acceptance criteria require that the API key never appears in `docker inspect`, `ps -ef`, `kubectl get pods/events -o yaml`, or `kubectl describe pod`. The redactor is the defence-in-depth layer; the per-backend cred-propagation rules are the primary control.
 
