@@ -81,6 +81,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected < len(m.sprints)-1 {
 				m.selected++
 			}
+		case "left", "h":
+			if m.detailMode && m.selected > 0 {
+				m.selected--
+			}
+		case "right", "l":
+			if m.detailMode && m.selected < len(m.sprints)-1 {
+				m.selected++
+			}
 		case "enter":
 			m.detailMode = !m.detailMode
 		case "esc":
@@ -117,6 +125,7 @@ var (
 	stCardBlue   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#5F87FF")).Padding(0, 1).MarginBottom(1)
 	stCardGreen  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#00D75F")).Padding(0, 1).MarginBottom(1)
 	stCardYellow = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#FFAF00")).Padding(0, 1).MarginBottom(1)
+	stCardWhite  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#FFFFFF")).Padding(0, 1).MarginBottom(1)
 )
 
 func (m Model) View() string {
@@ -142,7 +151,7 @@ func (m Model) View() string {
 	}
 
 	if m.detailMode {
-		sb.WriteString("\n" + stHelp.Render("[esc] back  [q] quit  [r] refresh"))
+		sb.WriteString("\n" + stHelp.Render("[esc] back  [q] quit  [r] refresh  [←/→] prev/next sprint"))
 	} else {
 		sb.WriteString("\n" + stHelp.Render("[q] quit  [r] refresh  [↑/↓] select  [enter] detail"))
 	}
@@ -246,6 +255,8 @@ func (m Model) renderCard(sp Sprint, selected bool) string {
 
 	style := stCardBlue
 	switch {
+	case sp.IsComplete() && selected:
+		style = stCardWhite
 	case sp.IsComplete():
 		style = stCardGreen
 	case selected:
