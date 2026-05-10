@@ -24,12 +24,12 @@ const (
 // ProbeResult is one observation: e.g. "DNS for foo.example.com" or
 // "HTTPS GET to https://api.example.com".
 type ProbeResult struct {
-	Suite      string         `json:"suite"`             // connectivity | dns | throughput
-	Name       string         `json:"name"`              // human-readable target
-	Status     Status         `json:"status"`            // pass | fail | skipped
-	DurationMS int64          `json:"duration_ms"`       // wall-clock for this probe
-	Detail     string         `json:"detail,omitempty"`  // short human summary
-	Extra      map[string]any `json:"extra,omitempty"`   // suite-specific structured data
+	Suite      string         `json:"suite"`            // connectivity | dns | throughput
+	Name       string         `json:"name"`             // human-readable target
+	Status     Status         `json:"status"`           // pass | fail | skipped
+	DurationMS int64          `json:"duration_ms"`      // wall-clock for this probe
+	Detail     string         `json:"detail,omitempty"` // short human summary
+	Extra      map[string]any `json:"extra,omitempty"`  // suite-specific structured data
 }
 
 // SuiteRun is a collection of probe results for one suite invocation.

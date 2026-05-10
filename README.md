@@ -1,5 +1,7 @@
 # roksbnkctl
 
+> 📖 **[Read the book](https://jgruberf5.github.io/roksbnkctl/book/)** — _Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl_
+
 A single-binary CLI to deploy F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS, manage its IBM Cloud Object Storage supply chain, and validate the deployment with built-in connectivity / DNS / throughput tests.
 
 > **Status:** Pre-release. Source compiles, unit tests pass, every PRD verb is implemented. Real-cluster shake-out items are tracked in [docs/SHAKEOUT.md](docs/SHAKEOUT.md). No tagged release yet — install via build-from-source.

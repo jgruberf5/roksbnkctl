@@ -14,15 +14,18 @@ permissions:
 
 jobs:
   test:
-    name: vet + test + build
-    runs-on: ubuntu-latest
+    name: vet + fmt + staticcheck + test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          # Reads Go version from go.mod so bumps stay in lockstep.
-          go-version-file: go.mod
+          go-version: '1.23'
           cache: true
 
       - name: Resolve modules
@@ -33,6 +36,17 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: gofmt
+        # Fail if any file is not gofmt-clean. `tee` keeps the diff in the
+        # log so reviewers can see exactly what's wrong.
+        run: gofmt -d -l . | tee /tmp/gofmt.diff && test ! -s /tmp/gofmt.diff
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: 'latest'
+          install-go: false
+
       - name: go test
         # -race catches data races; cheap to run on the small unit suite
         # we have today.
@@ -42,6 +56,18 @@ jobs:
         # Build everything (cmd/ + internal/) to catch any unused-import
         # or undefined-symbol issues that vet/test missed.
         run: go build ./...
+
+  windows-build:
+    name: windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - run: go build ./...
 
   goreleaser-check:
     name: goreleaser config sanity

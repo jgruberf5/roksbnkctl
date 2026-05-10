@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	flagInstallDir string
-	flagInstallForce  bool
+	flagInstallDir   string
+	flagInstallForce bool
 )
 
 var installCmd = &cobra.Command{

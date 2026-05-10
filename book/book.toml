@@ -1,0 +1,12 @@
+[book]
+title = "Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl"
+authors = ["roksbnkctl maintainers"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/jgruberf5/roksbnkctl"
+default-theme = "rust"
+
+[output.html.search]
+enable = true

@@ -6,7 +6,7 @@
 //
 //   - source.go  — resolve "what tag should we run?" (GitHub Releases API)
 //   - fetch.go   — turn that into a local directory of .tf files (tarball
-//                  download, or use local Path for type=local)
+//     download, or use local Path for type=local)
 //   - vars.go    — render config.yaml into terraform.tfvars
 //   - terraform.go — Workspace.{Init,Plan,Apply,Destroy,Output} via tfexec
 //

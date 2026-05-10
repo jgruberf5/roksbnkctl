@@ -15,27 +15,53 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
 
-// Status is the outcome of a single check.
-type Status string
+// Why is the human-readable "why roksbnkctl cares" clause that the
+// existing doctor table renders alongside each row. It's not part of the
+// spec'd Check struct (see check.go) because future per-backend checks
+// won't always have a why blurb — but the legacy general checks all do,
+// and we keep it here so output remains byte-identical to the pre-refactor
+// behaviour. A parallel slice keyed by Check index lets us extend Check
+// later without breaking external callers.
+type why string
 
-const (
-	StatusOK   Status = "ok"
-	StatusWarn Status = "warn"
-	StatusFail Status = "fail"
-)
-
-// CheckResult is one row in `roksbnkctl doctor` output.
-type CheckResult struct {
-	Name   string
-	Why    string // why roksbnkctl cares — one short clause
-	Status Status
-	Detail string
+// withWhy pairs a Check with its rendering blurb.
+type withWhy struct {
+	Check Check
+	Why   string
 }
 
 // Run executes all diagnostic checks. cctx may carry a nil Workspace —
 // workspace-dependent checks downgrade to a clear "no workspace" detail.
-func Run(ctx context.Context, cctx *config.Context) []CheckResult {
-	var out []CheckResult
+//
+// The slice returned is the public API used by `roksbnkctl doctor`'s
+// rendering; the rendering helper PrintResults takes the same slice so
+// callers don't need to know about the internal withWhy pairing.
+func Run(ctx context.Context, cctx *config.Context) []Check {
+	pairs := runWithWhy(ctx, cctx)
+	out := make([]Check, len(pairs))
+	for i, p := range pairs {
+		out[i] = p.Check
+	}
+	// Stash the why blurbs on a package-level map keyed by pointer to the
+	// returned slice header so PrintResults can recover them without
+	// changing the public Check shape. Keep this strictly local to one
+	// Run/PrintResults round-trip — concurrent doctor invocations are not
+	// supported (the CLI runs one).
+	lastWhys = make([]string, len(pairs))
+	for i, p := range pairs {
+		lastWhys[i] = p.Why
+	}
+	return out
+}
+
+// lastWhys is the side-channel for the last Run's why blurbs. Doctor is
+// not concurrent-safe; the CLI calls Run + PrintResults sequentially.
+var lastWhys []string
+
+// runWithWhy is the actual check-list builder. Split out so we can
+// unit-test it without poking the lastWhys side-channel.
+func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
+	var out []withWhy
 
 	// Required + optional tooling.
 	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up`"))
@@ -49,7 +75,9 @@ func Run(ctx context.Context, cctx *config.Context) []CheckResult {
 
 	// Workspace + creds.
 	if cctx == nil {
-		out = append(out, CheckResult{Name: "workspace", Status: StatusFail, Detail: "no config context"})
+		out = append(out, withWhy{
+			Check: Check{Name: "workspace", Status: StatusError, Detail: "no config context"},
+		})
 		return out
 	}
 	out = append(out, checkWorkspace(cctx))
@@ -62,24 +90,24 @@ func Run(ctx context.Context, cctx *config.Context) []CheckResult {
 }
 
 // checkBinary reports whether name is on PATH and (best-effort) which version.
-func checkBinary(name string, required bool, why string) CheckResult {
-	cr := CheckResult{Name: name, Why: why}
+func checkBinary(name string, required bool, w string) withWhy {
+	c := Check{Name: name, Optional: !required}
 	path, err := exec.LookPath(name)
 	if err != nil {
 		if required {
-			cr.Status = StatusFail
+			c.Status = StatusError
 		} else {
-			cr.Status = StatusWarn
+			c.Status = StatusWarning
 		}
-		cr.Detail = "not on PATH"
-		return cr
+		c.Detail = "not on PATH"
+		return withWhy{Check: c, Why: w}
 	}
-	cr.Status = StatusOK
-	cr.Detail = path
+	c.Status = StatusOK
+	c.Detail = path
 	if v := versionLine(name); v != "" {
-		cr.Detail = fmt.Sprintf("%s (%s)", path, v)
+		c.Detail = fmt.Sprintf("%s (%s)", path, v)
 	}
-	return cr
+	return withWhy{Check: c, Why: w}
 }
 
 // versionLine runs the binary's --version-equivalent and returns the
@@ -115,92 +143,108 @@ func versionLine(name string) string {
 	return ""
 }
 
-func checkKubeconfig() CheckResult {
-	cr := CheckResult{Name: "kubeconfig", Why: "needed for cluster-side ops"}
+func checkKubeconfig() withWhy {
+	c := Check{Name: "kubeconfig"}
 	path := k8s.DefaultKubeconfigPath()
 	if path == "" {
-		cr.Status = StatusWarn
-		cr.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `ibmcloud ks cluster config --admin`"
-		return cr
+		c.Status = StatusWarning
+		c.Detail = "$KUBECONFIG and ~/.kube/config both missing — fetch with `ibmcloud ks cluster config --admin`"
+		return withWhy{Check: c, Why: "needed for cluster-side ops"}
 	}
-	cr.Status = StatusOK
-	cr.Detail = path
-	return cr
+	c.Status = StatusOK
+	c.Detail = path
+	return withWhy{Check: c, Why: "needed for cluster-side ops"}
 }
 
-func checkWorkspace(cctx *config.Context) CheckResult {
-	cr := CheckResult{Name: "workspace", Why: "per-environment config + state"}
+func checkWorkspace(cctx *config.Context) withWhy {
+	c := Check{Name: "workspace"}
 	if cctx.Workspace == nil {
-		cr.Status = StatusWarn
-		cr.Detail = fmt.Sprintf("%q not initialised — run `roksbnkctl init`", cctx.WorkspaceName)
-		return cr
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("%q not initialised — run `roksbnkctl init`", cctx.WorkspaceName)
+		return withWhy{Check: c, Why: "per-environment config + state"}
 	}
-	cr.Status = StatusOK
-	cr.Detail = cctx.WorkspaceName
-	return cr
+	c.Status = StatusOK
+	c.Detail = cctx.WorkspaceName
+	return withWhy{Check: c, Why: "per-environment config + state"}
 }
 
-func checkAPIKey(cctx *config.Context) CheckResult {
-	cr := CheckResult{Name: "ibmcloud api key", Why: "auth for terraform + IBM SDK calls"}
+func checkAPIKey(cctx *config.Context) withWhy {
+	c := Check{Name: "ibmcloud api key"}
 	_, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
 	if err != nil {
-		cr.Status = StatusFail
-		cr.Detail = err.Error()
-		return cr
+		c.Status = StatusError
+		c.Detail = err.Error()
+		return withWhy{Check: c, Why: "auth for terraform + IBM SDK calls"}
 	}
-	cr.Status = StatusOK
-	cr.Detail = "resolved"
-	return cr
+	c.Status = StatusOK
+	c.Detail = "resolved"
+	return withWhy{Check: c, Why: "auth for terraform + IBM SDK calls"}
 }
 
-func checkIBMAuth(ctx context.Context, cctx *config.Context) CheckResult {
-	cr := CheckResult{Name: "ibm cloud auth", Why: "verifies API key works against IBM IAM"}
+func checkIBMAuth(ctx context.Context, cctx *config.Context) withWhy {
+	c := Check{Name: "ibm cloud auth"}
 	apiKey, err := config.ResolveAPIKey(cctx.WorkspaceName, cctx.Workspace.IBMCloud.APIKeySource)
 	if err != nil {
-		cr.Status = StatusFail
-		cr.Detail = "no api key: " + err.Error()
-		return cr
+		c.Status = StatusError
+		c.Detail = "no api key: " + err.Error()
+		return withWhy{Check: c, Why: "verifies API key works against IBM IAM"}
 	}
-	c, err := ibm.New(apiKey, cctx.Workspace.IBMCloud.Region)
+	cl, err := ibm.New(apiKey, cctx.Workspace.IBMCloud.Region)
 	if err != nil {
-		cr.Status = StatusFail
-		cr.Detail = err.Error()
-		return cr
+		c.Status = StatusError
+		c.Detail = err.Error()
+		return withWhy{Check: c, Why: "verifies API key works against IBM IAM"}
 	}
 	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	id, err := c.Verify(tctx)
+	id, err := cl.Verify(tctx)
 	if err != nil {
-		cr.Status = StatusFail
-		cr.Detail = err.Error()
-		return cr
+		c.Status = StatusError
+		c.Detail = err.Error()
+		return withWhy{Check: c, Why: "verifies API key works against IBM IAM"}
 	}
-	cr.Status = StatusOK
-	cr.Detail = id.String()
-	return cr
+	c.Status = StatusOK
+	c.Detail = id.String()
+	return withWhy{Check: c, Why: "verifies API key works against IBM IAM"}
 }
 
 // PrintResults writes a tabular human-readable rendering to w.
-func PrintResults(w io.Writer, results []CheckResult) error {
+//
+// Format and column widths are intentionally identical to the pre-refactor
+// output: "<sym>\t<name>\t<detail>\t(<why>)\n", flushed via tabwriter so
+// columns line up regardless of detail length.
+func PrintResults(w io.Writer, results []Check) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, r := range results {
-		sym := "✗"
-		switch r.Status {
-		case StatusOK:
-			sym = "✓"
-		case StatusWarn:
-			sym = "⚠"
+	for i, r := range results {
+		sym := symbolFor(r.Status)
+		var why string
+		if i < len(lastWhys) {
+			why = lastWhys[i]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", sym, r.Name, r.Detail, dim(r.Why))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", sym, r.Name, r.Detail, dim(why))
 	}
 	return tw.Flush()
 }
 
+// symbolFor maps a CheckStatus to the printed glyph. StatusSkipped renders
+// as ⚠ for now (no skipped checks exist yet); revisit when Phase 3
+// per-backend checks land.
+func symbolFor(s CheckStatus) string {
+	switch s {
+	case StatusOK:
+		return "✓"
+	case StatusWarning, StatusSkipped:
+		return "⚠"
+	default:
+		return "✗"
+	}
+}
+
 // HasFailures reports whether any check failed (exit-code-worthy).
-// Warnings don't count — they're informational.
-func HasFailures(results []CheckResult) bool {
+// Warnings and skipped checks don't count — they're informational.
+func HasFailures(results []Check) bool {
 	for _, r := range results {
-		if r.Status == StatusFail {
+		if r.Status == StatusError {
 			return true
 		}
 	}
@@ -208,9 +252,9 @@ func HasFailures(results []CheckResult) bool {
 }
 
 // AsError returns a single error summarising the first failure, or nil.
-func AsError(results []CheckResult) error {
+func AsError(results []Check) error {
 	for _, r := range results {
-		if r.Status == StatusFail {
+		if r.Status == StatusError {
 			return errors.New(r.Name + ": " + r.Detail)
 		}
 	}

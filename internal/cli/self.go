@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	roksbnkctlRepo        = "jgruberf5/roksbnkctl"
+	roksbnkctlRepo    = "jgruberf5/roksbnkctl"
 	selfUpdateTimeout = 5 * time.Minute
 )
 

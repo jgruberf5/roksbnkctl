@@ -1,0 +1,90 @@
+# Contributing to roksbnkctl
+
+## Running tests
+
+The unit suite lives under `internal/...` and runs without any external
+dependencies — no IBM Cloud credentials, no Terraform, no kubectl.
+
+```bash
+go test ./...                  # full suite (the same thing CI runs)
+make test-short                # fast subset; -short skips slow tests
+go test -short ./...           # equivalent to make test-short
+```
+
+CI runs `go test -race ./...` on Linux + macOS; locally you can add
+`-race` if you suspect a data race, but it isn't required for the
+pre-commit hook (the hook stays under 30s on a clean tree).
+
+The long-running end-to-end test (`scripts/e2e-test.sh`) is documented
+separately below — it provisions real cloud resources and is **never**
+run in PR CI.
+
+## Pre-commit hook
+
+`scripts/pre-commit.sh` runs three checks against the working tree:
+
+1. `gofmt -d -l .` — fail if any file is unformatted.
+2. `go vet ./...` — fail on any vet finding.
+3. `go test -short ./internal/...` — fail on any short-mode unit test.
+
+Install it as your local Git pre-commit hook:
+
+```bash
+make pre-commit-install
+```
+
+That symlinks `.git/hooks/pre-commit` to the script, so future updates
+to the script are picked up automatically — no reinstall needed.
+
+To bypass it for a one-off commit (e.g. a WIP commit on a feature
+branch):
+
+```bash
+git commit --no-verify
+```
+
+CI re-runs all three checks (plus staticcheck and go test on
+ubuntu-latest + macos-latest), so `--no-verify` only delays the
+feedback loop — it doesn't get the change merged.
+
+## Code style
+
+- **gofmt** is enforced. CI fails when `gofmt -d -l .` produces a
+  non-empty diff. Run `gofmt -w .` (or rely on your editor's
+  format-on-save) before committing.
+- **go vet** is enforced. CI fails on any `go vet ./...` finding.
+- **staticcheck** is enforced on Linux and macOS via
+  `dominikh/staticcheck-action@v1`. Run `staticcheck ./...` locally
+  if you want the same feedback before pushing.
+- **Imports** are grouped into three blocks separated by a blank line:
+  stdlib first, third-party second, project (`github.com/jgruberf5/...`)
+  third. `goimports -local github.com/jgruberf5/roksbnkctl` produces
+  this layout automatically.
+
+## Long-running smoke test
+
+The full end-to-end test (`scripts/e2e-test.sh`) provisions a real
+ROKS cluster + BNK deployment on IBM Cloud, exercises every roksbnkctl
+verb against it, and tears down. It's the canonical "did we break
+anything" check before tagging a release.
+
+### Prerequisites
+- `IBMCLOUD_API_KEY` env var (or extracted from `~/bnkfun/terraform.tfvars`)
+- `~/bnkfun/terraform.tfvars` with cluster + region + RG values
+- terraform on PATH
+- kubectl, oc, ibmcloud, iperf3 on PATH (Phase 3 plans to remove these
+  prereqs — see `docs/prd/03-EXECUTION-BACKENDS.md`)
+
+### Running
+
+```bash
+./scripts/e2e-test.sh                       # full pass from scratch
+PHASE_FROM=D ./scripts/e2e-test.sh           # resume from phase D
+DRY_RUN=1 ./scripts/e2e-test.sh              # show plan without execution
+```
+
+### Cost & duration
+
+~3-4 hours wall time. ~$5-10 of IBM Cloud spend per full pass (cluster +
+load balancers + COS). The test is **never** run in PR CI — release
+branch nightly only, until 3 consecutive nights green, then tag.

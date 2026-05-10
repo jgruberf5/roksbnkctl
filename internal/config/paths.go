@@ -23,8 +23,8 @@ const (
 
 // BaseDir returns the roksbnkctl root directory.
 //
-//   1. $ROKSBNKCTL_HOME if set (no expansion — used as-is)
-//   2. $HOME/.roksbnkctl otherwise
+//  1. $ROKSBNKCTL_HOME if set (no expansion — used as-is)
+//  2. $HOME/.roksbnkctl otherwise
 func BaseDir() (string, error) {
 	if v := os.Getenv(ROKSBNKCTLHomeEnv); v != "" {
 		return v, nil
