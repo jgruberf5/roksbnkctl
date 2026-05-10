@@ -114,6 +114,18 @@ func renderCommand(w io.Writer, c *cobra.Command, depth int) {
 		fmt.Fprintf(w, "%s\n\n", s)
 	}
 
+	// Aliases — emitted under the synopsis so readers searching for the
+	// short form (e.g. `ws` for `workspaces`) find the section. The rest
+	// of the book uses the alias forms universally; chapter 27 follows
+	// cobra's canonical `Use` value for the heading + path.
+	if len(c.Aliases) > 0 {
+		quoted := make([]string, 0, len(c.Aliases))
+		for _, a := range c.Aliases {
+			quoted = append(quoted, fmt.Sprintf("`%s`", a))
+		}
+		fmt.Fprintf(w, "**Aliases**: %s\n\n", strings.Join(quoted, ", "))
+	}
+
 	// Synopsis: cobra's UseLine() returns the FULL command path plus
 	// the Use suffix (`roksbnkctl ws delete [flags] <name>`). Render it
 	// verbatim inside a fenced block when it adds info beyond the path

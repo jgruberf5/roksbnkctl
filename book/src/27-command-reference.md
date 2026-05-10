@@ -682,6 +682,8 @@ Both forms honour -n, -c, -f, --previous, --since, --tail.
 
 Forward local port(s) to a pod via SPDY
 
+**Aliases**: `port_forward`
+
 ```
 roksbnkctl k port-forward <pod> [-n <ns>] <local-port>[:<remote-port>] [...] [flags]
 ```
@@ -1096,6 +1098,8 @@ Print version, commit, and build date
 ## `roksbnkctl workspaces`
 
 Manage roksbnkctl workspaces (per-environment config + state bundles)
+
+**Aliases**: `ws`
 
 Each workspace lives under ~/.roksbnkctl/<name>/ with its own config.yaml
 and state. The current_workspace pointer in ~/.roksbnkctl/config.yaml decides

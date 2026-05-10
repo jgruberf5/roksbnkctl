@@ -31,7 +31,7 @@ The Terraform repo (`ibmcloud_terraform_bigip_next_for_kubernetes_2_3`) continue
 
 ### Migrating your `terraform.tfvars` by hand
 
-If you have an existing `terraform.tfvars` file you want to keep, copy it to `~/.roksbnkctl/<workspace>/state/terraform.tfvars.user` after running `roksbnkctl init`. roksbnkctl layers files in this order (later wins):
+If you have an existing `terraform.tfvars` file you want to keep, copy it to `~/.roksbnkctl/<workspace>/terraform.tfvars.user` after running `roksbnkctl init`. roksbnkctl layers files in this order (later wins):
 
 1. The auto-generated `terraform.tfvars` derived from `config.yaml`
 2. `terraform.tfvars.user` (your hand-edited override)
@@ -75,13 +75,13 @@ terraform apply -var-file=~/.roksbnkctl/<ws>/state/terraform.tfvars
 
 The state file lives wherever terraform's local backend lands it. roksbnkctl's auto-discovery (`roksbnkctl up` re-using state from a prior `terraform apply`) only works when state lives at `~/.roksbnkctl/<ws>/state/terraform.tfstate` — adjust the working directory or copy the state file if you want to interoperate.
 
-## From roksbnkctl v0.7 / v0.8 → v0.9 → v0.10
+## From roksbnkctl v0.7 / v0.8 → v0.9 → v1.0
 
 Per-version migration notes from `CHANGELOG.md`. roksbnkctl follows [semantic versioning](https://semver.org/) starting at `v0.9.0`; pre-v1.0 minor bumps may introduce breaking changes (always documented here and in `CHANGELOG.md`).
 
-### v0.10 (current — Sprint 6)
+### Sprint 6 (v1.0 prep — pre-tag)
 
-No breaking changes. New surface:
+No breaking changes. New surface landing for the v1.0 cut:
 
 - **Auto-generated reference chapters**: chapter 27 (command reference) and chapter 29 (terraform variable reference) are now generated from source via `go run ./tools/refgen/cobra-md` and `go run ./tools/refgen/tfvars-md`. Run these after any CLI or `variables.tf` change.
 - **Doctor green-by-default refresh**: `roksbnkctl doctor` on a stock dev box with only `terraform` installed now exits 0 with zero warnings. `kubectl`, `oc`, `ibmcloud`, `iperf3`, and `dig` are rendered as informational rows naming the internalised path (`--backend docker` / `--backend k8s` / miekg-dns / client-go). A missing kubeconfig pre-`up` is informational rather than a warning. See [Chapter 5](./book/src/05-doctor.md).
@@ -111,11 +111,11 @@ Every roksbnkctl invocation runs against exactly one workspace, identified by `-
 ~/.roksbnkctl/
 └── <workspace-name>/
     ├── config.yaml                 # workspace config (Chapter 12)
+    ├── terraform.tfvars.user       # optional user override (Chapter 13) — workspace root, not state/
     └── state/
         ├── terraform.tfstate       # terraform local-backend state
         ├── terraform.tfstate.backup
         ├── terraform.tfvars        # auto-generated from config.yaml
-        ├── terraform.tfvars.user   # optional user override (Chapter 13)
         ├── kubeconfig              # admin kubeconfig fetched post-apply
         ├── cluster-outputs.json    # ROKS cluster identity (Chapter 9)
         └── tf-source/              # materialised terraform module tree

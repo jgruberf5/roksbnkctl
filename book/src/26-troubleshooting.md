@@ -46,7 +46,7 @@ IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init --auto -w my-workspace
 
 **Root cause**: the IBM Cloud kubeconfig API ([`/global/v2/applications/kubeconfig`](https://cloud.ibm.com/docs/openshift?topic=openshift-cs_cli_install)) returns 404 for ~30-60 seconds after the cluster create call returns. The cluster exists but the kubeconfig endpoint hasn't materialised.
 
-**Fix**: the binary retries with exponential backoff and usually succeeds within a minute. If it still 404s after the retry budget, run `roksbnkctl init --refresh-kubeconfig -w <workspace>` (or just `roksbnkctl kubeconfig --download` once that command lands) to retry just the fetch without re-applying.
+**Fix**: the binary retries with exponential backoff and usually succeeds within a minute. If it still 404s after the retry budget, run `roksbnkctl kubeconfig --download -w <workspace>` to retry just the fetch without re-applying.
 
 ### Symptom: `Error: Inappropriate value for attribute "kubeconfig_dir": directory does not exist`
 
@@ -216,9 +216,7 @@ roksbnkctl test dns --target www.example.com --type A --backend k8s --server clu
 **Fix**:
 
 ```bash
-roksbnkctl kubeconfig --download
-# or, force a refresh via the registration flow
-roksbnkctl cluster register <name> --refresh-kubeconfig
+roksbnkctl kubeconfig --download --cluster <name>
 ```
 
 The token refresh is automatic on every `up`/`apply`, but `register` against a cluster you didn't just provision sometimes lands you with a stale token in the kubeconfig.
