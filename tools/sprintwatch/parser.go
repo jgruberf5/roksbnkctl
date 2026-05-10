@@ -161,7 +161,11 @@ func LoadSprints(root string) ([]Sprint, error) {
 			}
 			if _, err := os.Stat(resolvedPath); err == nil {
 				r.ResolvedFile = resolvedPath
+				if err := overlayResolved(r, resolvedPath); err != nil {
+					return nil, err
+				}
 			}
+			applyRoadmapRule(r)
 			sp.Roles[role] = r
 		}
 		sprints = append(sprints, sp)
@@ -175,13 +179,22 @@ func parseIssueFile(r *Role, path string) error {
 		return err
 	}
 	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	parseBlobScanner(r, sc)
+	return sc.Err()
+}
 
+// ParseBlob parses the contents of an issue or resolved markdown file (without
+// touching the filesystem) into r.Issues. Reusable for git-show output.
+func ParseBlob(r *Role, content string) {
+	parseBlobScanner(r, bufio.NewScanner(strings.NewReader(content)))
+}
+
+func parseBlobScanner(r *Role, sc *bufio.Scanner) {
 	var current *Issue
 	foundIssue := false
 	foundNoIssuesMarker := false
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
 		if !foundIssue && strings.Contains(strings.ToLower(line), "no issues filed") {
@@ -211,13 +224,59 @@ func parseIssueFile(r *Role, path string) error {
 	if current != nil {
 		r.Issues = append(r.Issues, *current)
 	}
-	if err := sc.Err(); err != nil {
-		return err
-	}
 	if !foundIssue && foundNoIssuesMarker {
 		r.NoIssuesFiled = true
 	}
+}
+
+// OverlayResolved is the public version of overlayResolved, taking blob
+// contents directly. Resolved file's per-issue status overrides the issue
+// file's; resolved-only issues are appended.
+func OverlayResolved(r *Role, resolvedContent string) {
+	tmp := &Role{}
+	ParseBlob(tmp, resolvedContent)
+	byNum := map[int]*Issue{}
+	for i := range tmp.Issues {
+		byNum[tmp.Issues[i].Number] = &tmp.Issues[i]
+	}
+	for i := range r.Issues {
+		if rv, ok := byNum[r.Issues[i].Number]; ok {
+			if rv.Status != "" {
+				r.Issues[i].Status = rv.Status
+				r.Issues[i].OpenLike = rv.OpenLike
+				r.Issues[i].Deferred = rv.Deferred
+			}
+			if rv.Severity != "unknown" && rv.Severity != "" {
+				r.Issues[i].Severity = rv.Severity
+			}
+			delete(byNum, r.Issues[i].Number)
+		}
+	}
+	for _, leftover := range byNum {
+		r.Issues = append(r.Issues, *leftover)
+	}
+}
+
+// ApplyRoadmapRule is the exported applyRoadmapRule for use by history.go.
+func ApplyRoadmapRule(r *Role) { applyRoadmapRule(r) }
+
+func overlayResolved(r *Role, path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	OverlayResolved(r, string(content))
 	return nil
+}
+
+// applyRoadmapRule treats severity=roadmap as never-blocking, regardless of
+// status text. Roadmap items are forward-looking notes for future sprints.
+func applyRoadmapRule(r *Role) {
+	for i := range r.Issues {
+		if r.Issues[i].Severity == "roadmap" {
+			r.Issues[i].OpenLike = false
+		}
+	}
 }
 
 func parseIssueHeader(line string) *Issue {

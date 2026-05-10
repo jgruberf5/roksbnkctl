@@ -44,27 +44,10 @@ func Burndown(ctx context.Context, root string, sprintNum int, roles []string) (
 		sha := parts[0]
 		var ts int64
 		fmt.Sscanf(parts[1], "%d", &ts)
-		open := 0
-		for _, role := range roles {
-			issuePath := filepath.Join("issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
-			content, err := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+issuePath).Output()
-			if err != nil {
-				continue
-			}
-			open += countOpenInBlob(string(content))
-		}
-		snaps = append(snaps, Snapshot{Time: time.Unix(ts, 0), Open: open})
+		snaps = append(snaps, Snapshot{Time: time.Unix(ts, 0), Open: openAt(ctx, root, sha, sprintNum, roles)})
 	}
 
-	nowOpen := 0
-	for _, role := range roles {
-		path := filepath.Join(root, "issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
-		body, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		nowOpen += countOpenInBlob(string(body))
-	}
+	nowOpen := openNow(root, sprintNum, roles)
 	if len(snaps) == 0 || snaps[len(snaps)-1].Open != nowOpen {
 		snaps = append(snaps, Snapshot{Time: time.Now(), Open: nowOpen})
 	}
@@ -73,30 +56,44 @@ func Burndown(ctx context.Context, root string, sprintNum int, roles []string) (
 	return snaps, nil
 }
 
-func countOpenInBlob(content string) int {
-	var current *Issue
-	n := 0
-	flush := func() {
-		if current != nil && current.OpenLike {
-			n++
-		}
-	}
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "## Issue ") {
-			flush()
-			current = &Issue{OpenLike: true} // default open until status line proves otherwise
+func openAt(ctx context.Context, root, sha string, sprintNum int, roles []string) int {
+	open := 0
+	for _, role := range roles {
+		issuePath := filepath.Join("issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
+		resolvedPath := filepath.Join("issues", fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role))
+		issue, _ := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+issuePath).Output()
+		if len(issue) == 0 {
 			continue
 		}
-		if current == nil {
+		resolved, _ := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+resolvedPath).Output()
+		open += countRoleOpen(string(issue), string(resolved))
+	}
+	return open
+}
+
+func openNow(root string, sprintNum int, roles []string) int {
+	open := 0
+	for _, role := range roles {
+		issuePath := filepath.Join(root, "issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
+		issue, err := os.ReadFile(issuePath)
+		if err != nil {
 			continue
 		}
-		if m := statRE.FindStringSubmatch(line); m != nil {
-			current.Status = strings.TrimSpace(m[1])
-			current.OpenLike, current.Deferred = classifyStatus(current.Status)
-		}
+		resolvedPath := filepath.Join(root, "issues", fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role))
+		resolved, _ := os.ReadFile(resolvedPath) // ignore missing
+		open += countRoleOpen(string(issue), string(resolved))
 	}
-	flush()
-	return n
+	return open
+}
+
+func countRoleOpen(issueContent, resolvedContent string) int {
+	r := &Role{}
+	ParseBlob(r, issueContent)
+	if resolvedContent != "" {
+		OverlayResolved(r, resolvedContent)
+	}
+	ApplyRoadmapRule(r)
+	return r.HardOpen()
 }
 
 // ETA uses a trailing-window slope of the burndown to project when Open hits 0.
