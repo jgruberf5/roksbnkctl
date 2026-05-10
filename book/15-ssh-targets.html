@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-60854cfa.js";
+            window.path_to_searchindex_js = "searchindex-58e0a648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -254,7 +254,7 @@
 <li>You’re on a shared workstation where putting the key file in <code>~/.ssh/</code> is undesirable.</li>
 <li>You’re already using ssh-agent for everything else and want consistent behaviour.</li>
 </ul>
-<p><strong>Platform note</strong>: ssh-agent integration is <strong>Linux/macOS-only</strong> in v0.7. Windows users should use <code>key_path</code> to a file. (The Windows ssh-agent uses a named-pipe protocol that the underlying Go SSH library doesn’t yet wrap; full support is a v2 item.)</p>
+<p><strong>Platform note</strong>: ssh-agent integration is <strong>Linux/macOS-only</strong>. Windows users should use <code>key_path</code> to a file. The restriction is structural to the Go SSH library, which doesn’t wrap the Windows ssh-agent named-pipe protocol — see <a href="https://pkg.go.dev/golang.org/x/crypto/ssh/agent"><code>golang.org/x/crypto/ssh/agent</code></a> and upstream tracking issues for status; full Windows support is a v2 item.</p>
 <h3 id="key_source-tf-outputoutput-name"><a class="header" href="#key_source-tf-outputoutput-name"><code>key_source: tf-output:&lt;output-name&gt;</code></a></h3>
 <p>Reads the key from the workspace’s terraform state output of that name:</p>
 <pre><code class="language-yaml">jumphost:

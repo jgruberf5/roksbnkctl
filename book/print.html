@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-60854cfa.js";
+            window.path_to_searchindex_js = "searchindex-58e0a648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -1952,7 +1952,7 @@ cos:             # optional COS supply-chain config
 <tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
 <tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
-<tr><td><code>exec.*</code></td><td>Per-tool defaults built into the binary apply (<code>iperf3</code>→<code>k8s</code>, everything else→<code>local</code>).</td></tr>
+<tr><td><code>exec.*</code></td><td>Defaults to <code>local</code> for every tool today (Sprint 3). PRD 03’s design intent is <code>iperf3</code>→<code>k8s</code> once the k8s backend lands in Sprint 4 — the per-tool default map will switch over then. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
 <tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
 </tbody>
 </table>
@@ -2183,7 +2183,7 @@ $ roksbnkctl apply
 </thead>
 <tbody>
 <tr><td><strong>IBMCLOUD_API_KEY</strong></td><td><code>ibmcloud</code> CLI, terraform’s IBM provider, IBM SDK calls</td><td>Env → OS keychain → workspace <code>api_key_b64</code> → prompt</td></tr>
-<tr><td><strong>kubeconfig</strong></td><td><code>kubectl</code>/<code>oc</code> passthroughs, <code>roksbnkctl k get/apply/...</code>, terraform’s k8s + helm providers</td><td>Workspace <code>state/kubeconfig</code> → <code>KUBECONFIG</code> env → <code>~/.kube/config</code></td></tr>
+<tr><td><strong>kubeconfig</strong></td><td><code>kubectl</code>/<code>oc</code> passthroughs, <code>roksbnkctl k get/apply/...</code>, terraform’s k8s + helm providers</td><td><code>KUBECONFIG</code> env → <code>~/.kube/config</code> (kubectl-style)</td></tr>
 <tr><td><strong>SSH private key</strong></td><td>The SSH client backing <code>--on</code> and the upcoming <code>ssh</code> execution backend</td><td>Per-target: file path, ssh-agent, or <code>tf-output:&lt;name&gt;</code></td></tr>
 <tr><td><strong>Terraform state</strong></td><td>The <code>terraform-exec</code> calls inside <code>roksbnkctl up</code>/<code>apply</code>/<code>destroy</code></td><td>Workspace <code>state/terraform.tfstate</code> (filesystem only)</td></tr>
 </tbody>
@@ -2242,6 +2242,9 @@ $ keyring set roksbnkctl dev/ibmcloud_api_key
 <li><strong>Format.</strong> API keys can contain <code>=</code> and other YAML-special characters that complicate inline storage. Base64 normalises them.</li>
 </ol>
 <p><code>api_key_b64</code> is the fallback when the OS keychain isn’t available — most commonly <strong>WSL2 without libsecret</strong>, <strong>headless Linux servers</strong>, and <strong>CI runners</strong> where bringing up a keychain daemon is more friction than it’s worth. Treat the file like a plaintext credential: <code>chmod 0600</code>, never commit, never share.</p>
+<blockquote>
+<p><strong>File-mode note</strong>: <code>roksbnkctl init</code> writes <code>config.yaml</code> mode <code>0644</code> by default (chapter 12 §“File permissions”). When you populate <code>api_key_b64</code>, <code>chmod 0600</code> the file yourself — and re-chmod after any subsequent <code>roksbnkctl init</code> that re-writes the file, since <code>init</code> doesn’t preserve the tightened mode. The keychain and env-var paths sidestep this entirely: nothing sensitive lands in <code>config.yaml</code>, so the default <code>0644</code> is fine.</p>
+</blockquote>
 <p>The plaintext field name <code>api_key:</code> is <strong>rejected</strong> at workspace-load time:</p>
 <pre><code>$ roksbnkctl up
 error: ~/.roksbnkctl/dev/config.yaml: plaintext secret detected (offset 47):
@@ -2271,23 +2274,24 @@ Save the key for future runs? [Y/n]: y
 <li><strong>Auditable single-source-of-truth</strong>: pinning to <code>keychain</code> documents that this workspace’s key lives in the OS keychain and nowhere else; reading the key from a different source becomes an error rather than a silent fallback.</li>
 </ul>
 <h2 id="kubeconfig-discovery"><a class="header" href="#kubeconfig-discovery">kubeconfig discovery</a></h2>
-<p>Different chain, different rules. <code>roksbnkctl</code> discovers the kubeconfig in this order:</p>
-<pre><code>1. Workspace-local file: ~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig
-2. KUBECONFIG environment variable
-3. ~/.kube/config
+<p>Different chain, different rules. <code>roksbnkctl</code> discovers the kubeconfig the same way <code>kubectl</code> does — two sources, in this order:</p>
+<pre><code>1. KUBECONFIG environment variable (first existing path in a colon-separated list)
+2. ~/.kube/config
 </code></pre>
-<p>The workspace-local file is <strong>first</strong> because it’s the kubeconfig the tool itself wrote — produced by <code>cluster up</code>, fetched from IBM Cloud’s API as the cluster came online. It’s the most trusted source for the workspace’s cluster.</p>
-<p>The <code>KUBECONFIG</code> env var is second because it represents an explicit user override (a developer hopping between clusters using <code>kubectx</code> or similar).</p>
-<p><code>~/.kube/config</code> is the last-resort fallback — convenient for users who’ve already wired up their cluster’s kubeconfig system-wide but haven’t run <code>cluster up</code> yet.</p>
+<p>This is the kubectl-standard discovery chain, implemented in <code>internal/k8s/client.go::DefaultKubeconfigPath()</code>. Whatever you’ve already taught <code>kubectl</code> to read, <code>roksbnkctl</code> reads too.</p>
+<p><code>cluster up</code>’s post-apply step writes the admin kubeconfig to <code>~/.kube/config</code> (mode <code>0600</code>) by default — so the second source in the chain is also the destination of the tool’s own output, and the same <code>KUBECONFIG</code>-overrides-everything rule applies. If <code>KUBECONFIG</code> is set when <code>cluster up</code> runs, the download lands at that path instead.</p>
+<blockquote>
+<p><strong>Note</strong>: there is also a <code>~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig/</code> <strong>directory</strong> under the workspace state dir. It’s a Terraform input (<code>kubeconfig_dir</code> tfvar) that the upstream HCL writes per-component sub-files into (<code>cert_manager</code>, <code>cne_instance</code>, <code>flo</code>, <code>license</code>); it is not a kubeconfig file the resolver reads. Don’t confuse the two.</p>
+</blockquote>
 <h3 id="when-the-file-is-missing"><a class="header" href="#when-the-file-is-missing">When the file is missing</a></h3>
-<p>If none of the three sources yields a kubeconfig, commands that need one error with:</p>
-<pre><code>error: no kubeconfig: workspace state/kubeconfig is missing, KUBECONFIG env
-       not set, ~/.kube/config not present. Run `roksbnkctl cluster up`,
-       `roksbnkctl cluster register &lt;name&gt;`, or set KUBECONFIG.
+<p>If neither source yields a kubeconfig, commands that need one error with:</p>
+<pre><code>error: no kubeconfig: KUBECONFIG env not set, ~/.kube/config not present.
+       Run `roksbnkctl cluster up`, `roksbnkctl cluster register &lt;name&gt;`,
+       or set KUBECONFIG.
 </code></pre>
 <p>The remediation message tells you which path to take. <code>cluster register &lt;name&gt;</code> is the path for an existing cluster you want to adopt without re-creating it (see <a href="#registering-an-existing-cluster">Chapter 9</a>).</p>
 <h3 id="file-permissions"><a class="header" href="#file-permissions">File permissions</a></h3>
-<p>Workspace-local kubeconfigs are written <code>chmod 0600</code> (owner read/write only). They contain the cluster admin token; treat them like a credential. Don’t commit them, don’t email them, don’t <code>cat</code> them in screen-shared sessions.</p>
+<p><code>cluster up</code> writes <code>~/.kube/config</code> <code>chmod 0600</code> (owner read/write only). It contains the cluster admin token; treat it like a credential. Don’t commit it, don’t email it, don’t <code>cat</code> it in screen-shared sessions.</p>
 <h2 id="ssh-private-keys"><a class="header" href="#ssh-private-keys">SSH private keys</a></h2>
 <p>Per-target, not per-workspace. Each entry under <code>targets:</code> in <code>config.yaml</code> declares exactly one of:</p>
 <div class="table-wrapper">
@@ -2390,7 +2394,7 @@ Save the key for future runs? [Y/n]: y
 <li>Output from a tool you ran outside <code>roksbnkctl</code> (e.g., piping to <code>tee</code> after invoking <code>terraform</code> directly). The redactor only sees bytes that pass through the exec backend’s <code>Stdout</code>/<code>Stderr</code> writers.</li>
 <li>The terraform state file. State is on-disk; the redactor is an in-memory stream filter.</li>
 </ul>
-<p>The implementation is <code>internal/exec/redact.go</code> — a wrapping <code>io.Writer</code> with regex-based redaction. The regex matches the resolved API key value (a known string at run-time) rather than a generic “looks like an IBM API key” pattern, to avoid false positives on legitimate output.</p>
+<p>The implementation is <code>internal/exec/redact.go</code> — a wrapping <code>io.Writer</code> with byte-comparison redaction and cross-write prefix buffering (so a secret split across two <code>Write</code> calls still gets masked). The matcher uses the resolved API key value verbatim (a known string at run-time) rather than a generic “looks like an IBM API key” pattern, to avoid false positives on legitimate output.</p>
 <p>PRD 04’s acceptance criteria require that the API key never appears in <code>docker inspect</code>, <code>ps -ef</code>, <code>kubectl get pods/events -o yaml</code>, or <code>kubectl describe pod</code>. The redactor is the defence-in-depth layer; the per-backend cred-propagation rules are the primary control.</p>
 <h2 id="cross-references-7"><a class="header" href="#cross-references-7">Cross-references</a></h2>
 <ul>
@@ -2480,7 +2484,7 @@ Save the key for future runs? [Y/n]: y
 <li>You’re on a shared workstation where putting the key file in <code>~/.ssh/</code> is undesirable.</li>
 <li>You’re already using ssh-agent for everything else and want consistent behaviour.</li>
 </ul>
-<p><strong>Platform note</strong>: ssh-agent integration is <strong>Linux/macOS-only</strong> in v0.7. Windows users should use <code>key_path</code> to a file. (The Windows ssh-agent uses a named-pipe protocol that the underlying Go SSH library doesn’t yet wrap; full support is a v2 item.)</p>
+<p><strong>Platform note</strong>: ssh-agent integration is <strong>Linux/macOS-only</strong>. Windows users should use <code>key_path</code> to a file. The restriction is structural to the Go SSH library, which doesn’t wrap the Windows ssh-agent named-pipe protocol — see <a href="https://pkg.go.dev/golang.org/x/crypto/ssh/agent"><code>golang.org/x/crypto/ssh/agent</code></a> and upstream tracking issues for status; full Windows support is a v2 item.</p>
 <h3 id="key_source-tf-outputoutput-name"><a class="header" href="#key_source-tf-outputoutput-name"><code>key_source: tf-output:&lt;output-name&gt;</code></a></h3>
 <p>Reads the key from the workspace’s terraform state output of that name:</p>
 <pre><code class="language-yaml">jumphost:
@@ -2877,11 +2881,12 @@ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 <h3 id="backend-failure-semantics"><a class="header" href="#backend-failure-semantics">Backend-failure semantics</a></h3>
 <p>Each backend has a different failure surface. The convention is:</p>
 <ul>
-<li><strong>Backend startup failure</strong> (Docker daemon down, k8s cluster unreachable, SSH target down) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
+<li><strong>Backend-side failure of any kind</strong> (Docker daemon down, image pull failed, container create/start error, binary not on PATH for <code>local</code>) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
 <li><strong>Tool exit code</strong> (the actual <code>ibmcloud</code> / <code>terraform</code> / <code>iperf3</code> exit code) ⇒ propagated 1:1, including non-zero codes.</li>
-<li><strong>Backend-internal error</strong> during a successful run (e.g., the docker container started but failed to bind-mount the kubeconfig) ⇒ exit code <code>126</code>, with a message naming the failure mode.</li>
+<li><strong>Context cancellation / timeout</strong> ⇒ exit code <code>137</code> (the conventional SIGKILL-on-signal code).</li>
 </ul>
-<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (126/127).</p>
+<p>PRD 03 reserves both <code>126</code> and <code>127</code> for backend-specific failures with a finer-grained split (<code>126</code> for “backend started but mid-run failure”, <code>127</code> for “backend startup failure”). Sprint 3’s <code>local</code> + <code>docker</code> implementations collapse to <code>127</code> for both cases; the split lands in Sprint 4 if the use cases that motivated PRD 03’s distinction surface in practice.</p>
+<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (<code>127</code>) from “we ran out of time” (<code>137</code>).</p>
 <h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
 <p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
@@ -2919,15 +2924,14 @@ exec:
 <p>Runs the tool inside a vendored container image:</p>
 <pre><code class="language-bash">roksbnkctl ibmcloud --backend docker ks cluster ls
 </code></pre>
-<p>Mechanically:</p>
+<p>Mechanically (Sprint 3’s <code>ibmcloud</code> passthrough shape):</p>
 <pre><code>docker run --rm \
-  --workdir /work \
-  -v &lt;workspace-state&gt;:/work \                # for terraform state, etc.
   -v &lt;kubeconfig-path&gt;:/root/.kube/config:ro \ # if the tool needs a kubeconfig
-  -e IBMCLOUD_API_KEY \                       # env var name only; value inherits
+  -e IBMCLOUD_API_KEY \                        # env var name only; value inherits
   ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt; \
   ks cluster ls
 </code></pre>
+<p>There’s no workspace-wide bind-mount: each invocation’s mount set comes from <code>RunOpts.Files</code> (per-file <code>/work/&lt;basename&gt;</code> mounts), the kubeconfig (single-file at <code>/root/.kube/config</code>), and any explicit working dir from <code>RunOpts.WorkDir</code>. Sprint 3’s <code>ibmcloud</code> passthrough sets none of those except the kubeconfig and <code>IBMCLOUD_API_KEY</code>.</p>
 <p>Three things to call out:</p>
 <ol>
 <li><strong>Frozen toolchain version.</strong> The image tag pins the tool’s version. Updates happen on <code>roksbnkctl</code> release, not on the host’s package manager schedule.</li>

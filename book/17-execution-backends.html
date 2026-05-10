@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-60854cfa.js";
+            window.path_to_searchindex_js = "searchindex-58e0a648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -226,11 +226,12 @@ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 <h3 id="backend-failure-semantics"><a class="header" href="#backend-failure-semantics">Backend-failure semantics</a></h3>
 <p>Each backend has a different failure surface. The convention is:</p>
 <ul>
-<li><strong>Backend startup failure</strong> (Docker daemon down, k8s cluster unreachable, SSH target down) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
+<li><strong>Backend-side failure of any kind</strong> (Docker daemon down, image pull failed, container create/start error, binary not on PATH for <code>local</code>) ⇒ exit code <code>127</code>, with a message naming the cause. <strong>No silent fallback to <code>local</code>.</strong> Silent fallback hides intent and produces confusing test results.</li>
 <li><strong>Tool exit code</strong> (the actual <code>ibmcloud</code> / <code>terraform</code> / <code>iperf3</code> exit code) ⇒ propagated 1:1, including non-zero codes.</li>
-<li><strong>Backend-internal error</strong> during a successful run (e.g., the docker container started but failed to bind-mount the kubeconfig) ⇒ exit code <code>126</code>, with a message naming the failure mode.</li>
+<li><strong>Context cancellation / timeout</strong> ⇒ exit code <code>137</code> (the conventional SIGKILL-on-signal code).</li>
 </ul>
-<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (126/127).</p>
+<p>PRD 03 reserves both <code>126</code> and <code>127</code> for backend-specific failures with a finer-grained split (<code>126</code> for “backend started but mid-run failure”, <code>127</code> for “backend startup failure”). Sprint 3’s <code>local</code> + <code>docker</code> implementations collapse to <code>127</code> for both cases; the split lands in Sprint 4 if the use cases that motivated PRD 03’s distinction surface in practice.</p>
+<p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “the backend itself broke” (<code>127</code>) from “we ran out of time” (<code>137</code>).</p>
 <h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
 <p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
@@ -268,15 +269,14 @@ exec:
 <p>Runs the tool inside a vendored container image:</p>
 <pre><code class="language-bash">roksbnkctl ibmcloud --backend docker ks cluster ls
 </code></pre>
-<p>Mechanically:</p>
+<p>Mechanically (Sprint 3’s <code>ibmcloud</code> passthrough shape):</p>
 <pre><code>docker run --rm \
-  --workdir /work \
-  -v &lt;workspace-state&gt;:/work \                # for terraform state, etc.
   -v &lt;kubeconfig-path&gt;:/root/.kube/config:ro \ # if the tool needs a kubeconfig
-  -e IBMCLOUD_API_KEY \                       # env var name only; value inherits
+  -e IBMCLOUD_API_KEY \                        # env var name only; value inherits
   ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;v&gt; \
   ks cluster ls
 </code></pre>
+<p>There’s no workspace-wide bind-mount: each invocation’s mount set comes from <code>RunOpts.Files</code> (per-file <code>/work/&lt;basename&gt;</code> mounts), the kubeconfig (single-file at <code>/root/.kube/config</code>), and any explicit working dir from <code>RunOpts.WorkDir</code>. Sprint 3’s <code>ibmcloud</code> passthrough sets none of those except the kubeconfig and <code>IBMCLOUD_API_KEY</code>.</p>
 <p>Three things to call out:</p>
 <ol>
 <li><strong>Frozen toolchain version.</strong> The image tag pins the tool’s version. Updates happen on <code>roksbnkctl</code> release, not on the host’s package manager schedule.</li>

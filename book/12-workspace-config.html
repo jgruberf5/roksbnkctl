@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-60854cfa.js";
+            window.path_to_searchindex_js = "searchindex-58e0a648.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -430,7 +430,7 @@ cos:             # optional COS supply-chain config
 <tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
 <tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
-<tr><td><code>exec.*</code></td><td>Per-tool defaults built into the binary apply (<code>iperf3</code>→<code>k8s</code>, everything else→<code>local</code>).</td></tr>
+<tr><td><code>exec.*</code></td><td>Defaults to <code>local</code> for every tool today (Sprint 3). PRD 03’s design intent is <code>iperf3</code>→<code>k8s</code> once the k8s backend lands in Sprint 4 — the per-tool default map will switch over then. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
 <tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
 </tbody>
 </table>
