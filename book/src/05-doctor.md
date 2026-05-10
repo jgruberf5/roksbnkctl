@@ -12,8 +12,8 @@ A bare `roksbnkctl doctor` runs the **general** checks: tooling on `PATH`, kubec
 roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
-✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (informational; `roksbnkctl k get/apply/...` covers the happy path natively)
-✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (informational; `roksbnkctl k ...` covers the happy path natively)
+✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
+✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
@@ -120,7 +120,7 @@ The chapter readers most often land on. Each row maps a real-world symptom to it
 | `workspace "foo" not initialised` | `ws new` was run but `init` was not | run `roksbnkctl init -w foo` |
 | `workspace: no config context` | `~/.roksbnkctl/config.yaml` corrupt | inspect the file; worst case delete it and re-run `init` |
 
-If a fix isn't here, [Chapter 26 — Troubleshooting](./26-troubleshooting.md) covers the longer tail.
+If a fix isn't here, [Chapter 26 — Troubleshooting](./26-troubleshooting.md) (lands in Sprint 6) covers the longer tail.
 
 ## The `--target <name>` SSH check (Sprint 1)
 

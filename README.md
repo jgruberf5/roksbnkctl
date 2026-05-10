@@ -33,6 +33,7 @@ roksbnkctl/
 - **Cross-platform single binary** — Linux, macOS, Windows. No Docker dependency. ~25 MB statically linked.
 - **No `ibmcloud` CLI dependency** — IBM Go SDKs (platform-services / container-services / cos) cover everything internally.
 - **`--on jumphost` (v0.7)** — run any passthrough (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) against an auto-discovered SSH jumphost. Useful for customer-firewalled or air-gapped environments where the laptop can't reach IBM Cloud APIs directly. Embedded SSH client; no host `ssh` binary needed. See [chapter 16](https://jgruberf5.github.io/roksbnkctl/book/16-on-flag-ssh-jumphosts.html).
+- **Internalised kubectl verbs (v0.8)** — `roksbnkctl k get/apply/describe/delete/logs/exec/port-forward` run natively in-process via `client-go`; no host `kubectl` required for the everyday workflow. Top-level `roksbnkctl get` / `logs` for muscle-memory parity. Host `kubectl` / `oc` are now informational on `roksbnkctl doctor`. See [chapter 24](https://jgruberf5.github.io/roksbnkctl/book/24-day-2-ops.html).
 
 ---
 

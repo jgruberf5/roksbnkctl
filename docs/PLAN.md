@@ -227,7 +227,7 @@ Ship M1 (`v0.7`): users can run `roksbnkctl ibmcloud --on jumphost ks cluster ls
 
 ### Goal
 
-Ship M2 (`v0.8`): `roksbnkctl get/apply/logs/exec/port-forward` works without `kubectl` on PATH.
+Ship M2 (`v0.8`): `roksbnkctl k get/apply/logs/exec/port-forward` works without `kubectl` on PATH (top-level aliases for `get` and `logs`; `apply` not aliased to avoid shadowing the lifecycle `roksbnkctl apply`).
 
 ### Code deliverables
 
@@ -242,7 +242,7 @@ Ship M2 (`v0.8`): `roksbnkctl get/apply/logs/exec/port-forward` works without `k
 | 7 | `internal/k8s/exec.go` — SPDY executor wrapper | new |
 | 8 | `internal/k8s/port_forward.go` — SPDY port-forwarder | new |
 | 9 | `internal/k8s/describe.go` — delegates to `k8s.io/kubectl/pkg/describe` | new |
-| 10 | `internal/cli/k_*.go` — wire `roksbnkctl k get/apply/describe/delete/exec/logs/port-forward` plus top-level aliases for `get/apply/logs` | new |
+| 10 | `internal/cli/k_*.go` — wire `roksbnkctl k get/apply/describe/delete/exec/logs/port-forward` plus top-level aliases for `get` and `logs`; `apply` deliberately not aliased to avoid shadowing the lifecycle `apply` (terraform apply) | new |
 | 11 | `internal/cli/doctor.go` — downgrade kubectl/oc from required to informational | edit |
 
 ### Test deliverables

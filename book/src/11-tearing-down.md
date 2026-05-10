@@ -49,14 +49,9 @@ The post-destroy cleanup deletes `cluster-outputs.json` automatically — the wo
 
 The upstream HCL's resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live *in* the cluster, after all), and Terraform's destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase's resources are still there — finalisers block the destroy of the cluster's namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.
 
-`roksbnkctl cluster down` enforces this with a check: it refuses to run if the workspace's BNK trial state still lists resources. The error is:
+`roksbnkctl cluster down` warns about this when run interactively — without `--auto` it prints a stderr line ("Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.") and prompts `Continue? [y/N]`. With `--auto` the warning and prompt are skipped and the destroy proceeds; correctness becomes the user's responsibility. v0.8 does not yet inspect `state/terraform.tfstate` to refuse on a non-empty trial — that hard guard is tracked as a future improvement.
 
-```
-Error: workspace "default" has BNK trial state with N resources still present;
-       run `roksbnkctl down` first to destroy the trial before destroying the cluster
-```
-
-The check looks at `state/terraform.tfstate` — if it has any resources, `cluster down` aborts. `--auto` does **not** override this; the order is correctness, not preference.
+So in practice, **always run `down` before `cluster down`**, and do not skip the warning when running interactively.
 
 The clean teardown sequence:
 
@@ -148,7 +143,7 @@ Two safety rails on `ws delete`:
 
 The `--force` flag overrides both checks — but if you `ws delete --force` a workspace that still has provisioned cloud resources, you'll have leaked them. There's no auto-recovery; you'd need to find them via the IBM Cloud console and delete them by hand.
 
-The full clean-as-you-go pattern from `scripts/e2e-test.sh` Phase H:
+The full clean-as-you-go pattern from `scripts/e2e-test.sh` (Phase D destroys; Phase H parks and deletes):
 
 ```bash
 # 1. Destroy the trial
