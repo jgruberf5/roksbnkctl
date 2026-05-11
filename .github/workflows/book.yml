@@ -22,6 +22,15 @@ jobs:
         uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: 'latest'
+      - name: Install mdbook-mermaid
+        # The Sprint 7 polish pass added Mermaid diagrams to chapters 7 / 17 / 21.
+        # mdbook-mermaid is a separate preprocessor binary; peaceiris/actions-mdbook
+        # only ships mdbook itself. We cache the cargo install across runs so the
+        # first PR per cache eviction pays the ~3-min build, subsequent runs are
+        # instant.
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: mdbook-mermaid
       - name: Test (link check + code-block validation)
         run: mdbook test book/
       - name: Build (catches malformed markdown)
@@ -41,6 +50,11 @@ jobs:
         with:
           mdbook-version: 'latest'
 
+      - name: Install mdbook-mermaid
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: mdbook-mermaid
+
       - name: Build book
         run: mdbook build book/
 
@@ -48,7 +62,10 @@ jobs:
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./book/book
+          # mdbook namespaces output per backend once book.toml has more
+          # than one [output.*] block (HTML at book/html/, pandoc PDF at
+          # book/pandoc/<profile>/). Publish only the HTML subtree.
+          publish_dir: ./book/book/html
           publish_branch: gh-pages
           # Publish under /book/ on gh-pages so the served URL matches
           # the README link: https://jgruberf5.github.io/roksbnkctl/book/

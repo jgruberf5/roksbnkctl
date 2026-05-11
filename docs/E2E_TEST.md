@@ -159,6 +159,24 @@ Sprint 6 lands [`scripts/e2e-test-full.sh`](../scripts/e2e-test-full.sh) — the
 
 NOT for every PR — 4-6 hour wall time exceeds the PR check budget.
 
+### CI preflight (workflow secret fail-fast)
+
+`e2e-full.yml`'s first step is a preflight that fail-fasts the workflow with a
+clear `missing secret X` message if either of the two required GitHub Actions
+secrets is unset:
+
+- `IBMCLOUD_API_KEY` — IBM Cloud IAM credential (the same value `~/bnkfun/terraform.tfvars` carries locally).
+- `E2E_TFVARS_CONTENT` — the full `~/bnkfun/terraform.tfvars` contents **minus** the `ibmcloud_api_key` line. Multi-line value; paste the file verbatim.
+
+The optional `E2E_SSH_TARGET` / `E2E_SSH_NON_UBUNTU` / `E2E_SSH_NO_NOPASSWD`
+secrets stay optional — when unset, the workflow's Phase I + M5/M6 + N3 steps
+yellow-skip without failing the run. Set them against purpose-built SSH targets
+for the integrator's v1.0 sign-off run.
+
+If preflight fails, set the missing secret in **repo settings → Actions →
+secrets** and re-dispatch the workflow. The failure message names which secret
+is missing — no need to dig through `roksbnkctl up` logs from 5 minutes later.
+
 ### Running
 
 ```bash

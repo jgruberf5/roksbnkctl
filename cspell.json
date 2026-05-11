@@ -126,7 +126,15 @@
     "rerun",
     "Reentrant",
     "preflight",
-    "workspace_dispatch"
+    "workspace_dispatch",
+    "Foreword",
+    "foreword",
+    "preface",
+    "Preface",
+    "swimlane",
+    "swimlanes",
+    "yak-shaving",
+    "VPEs"
   ],
   "ignorePaths": [
     "book/book/**",

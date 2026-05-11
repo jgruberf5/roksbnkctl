@@ -52,6 +52,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Preflight — required secrets present
+        # Fail-fast (early-exit with a clear message) if a required secret is
+        # unset, instead of letting the failure surface five minutes later at
+        # `roksbnkctl up` time. Sprint 6 validator Issue 5 carry-over.
+        #
+        # The optional E2E_SSH_TARGET / E2E_SSH_NON_UBUNTU / E2E_SSH_NO_NOPASSWD
+        # secrets stay optional — only the two below are required for the
+        # workflow to make forward progress.
+        run: |
+          : "${IBMCLOUD_API_KEY:?missing secret IBMCLOUD_API_KEY (set in repo settings → Actions → secrets)}"
+          : "${E2E_TFVARS_CONTENT:?missing secret E2E_TFVARS_CONTENT (full ~/bnkfun/terraform.tfvars contents minus ibmcloud_api_key)}"
+          echo "preflight OK — both required secrets are set"
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+          E2E_TFVARS_CONTENT: ${{ secrets.E2E_TFVARS_CONTENT }}
+
       - uses: actions/setup-go@v5
         with:
           # Track go.mod's `go` directive — same as ci.yml. The
