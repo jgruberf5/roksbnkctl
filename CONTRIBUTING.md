@@ -427,6 +427,78 @@ Examples should be runnable as written. Cross-reference other chapters
 with relative links (e.g. `see [Workspaces](./06-workspaces.md)`) so
 mdBook's internal-link checker can verify them.
 
+## Releasing
+
+The release pipeline is driven by `make release` from the repo root.
+The single command sequences five steps and aborts on the first
+failure:
+
+```
+make release
+  [1/5] Stamping CHANGELOG.md v1.0.0 date          # 2026-MM-DD → today
+  [2/5] Building HTML + PDF book                   # tools/docker/mdbook image
+  [3/5] Linting .goreleaser.yml                    # goreleaser/goreleaser:latest
+  [4/5] Snapshot build (multi-platform binaries)   # produces dist/
+  [5/5] Verifying GitHub Pages is enabled          # gh api, idempotent
+```
+
+After the driver returns green, review the diff and cut the tag:
+
+```bash
+git add -A && git commit -m "chore: prep v1.0.0 release"
+git tag v1.0.0 && git push origin main --tags
+```
+
+Pushing `main` triggers `.github/workflows/book.yml` (rebuilds the HTML
+book and deploys to the `gh-pages` branch under `/book/`); pushing the
+tag triggers `.github/workflows/release.yml` (runs goreleaser
+for-real, attaches the PDF via `release.extra_files`, publishes the
+GitHub Release).
+
+### Release-time tooling
+
+| Tool | Source |
+|---|---|
+| `mdbook` + `mdbook-mermaid` + `mdbook-pandoc` + `pandoc` + `texlive-xetex` + `@mermaid-js/mermaid-cli` | Bundled in [`tools/docker/mdbook/Dockerfile`](./tools/docker/mdbook/Dockerfile) — ~6 GB image, build once with `make -C tools/docker build-mdbook`. |
+| `goreleaser` | Pulled at run-time from `goreleaser/goreleaser:latest` (~150 MB). No host install needed. |
+| `gh` | Required on `PATH` for the `pages-assure` step. Authenticate once with `gh auth login`. |
+
+Override defaults on the command line if needed:
+
+```bash
+make release RELEASE_DATE=2026-06-01                            # back-date the CHANGELOG
+make release GORELEASER_IMAGE=goreleaser/goreleaser:v2.4.1      # pin a goreleaser version
+```
+
+### Individual targets
+
+`make release` is the canonical driver, but each sub-step is also
+exposed for iteration:
+
+```bash
+make stamp-changelog              # idempotent — no-op if placeholder already gone
+make book                         # HTML book only, host install (fast)
+make book BOOK_BACKEND=docker     # HTML via docker image (no host mdbook needed)
+make book-pdf BOOK_BACKEND=docker # PDF book (docker required — LaTeX + mermaid-cli)
+make book-serve                   # live preview at http://localhost:3000
+make goreleaser-check             # YAML/schema lint
+make goreleaser-snapshot          # multi-platform binary dry-run, writes dist/
+make pages-assure                 # check (or enable) GitHub Pages on the repo
+```
+
+The snapshot build writes to `dist/`, which is `.gitignore`d.
+
+### Why a docker-based pipeline?
+
+The release-time stack (LaTeX + Chromium + Node.js + Rust + Go) is
+weighty enough that asking every contributor to install it on their
+host would be unkind. The docker images encapsulate the version pinning
+so the release a maintainer cuts in 2026 is reproducible by a
+maintainer in 2028 against the same images. For day-to-day book
+iteration, `make book` against a host `mdbook` install remains the
+fast path — the docker pipeline only runs when producing release
+artifacts.
+
 ## Sprint execution and the prompts/ folder
 
 Sprint work runs through dispatched sub-agent prompts checked in under
