@@ -42,16 +42,17 @@ The four-role pattern (architect / staff / validator / tech writer) borrows libe
 - Chapter 9. Bootstrapping Sprint 0
 - Chapter 10. Running a sprint end to end
 - Chapter 11. The issues / resolved ledger
-- Chapter 12. Watching progress and reporting up
+- Chapter 12. The post-sprint interview
+- Chapter 13. Watching progress and reporting up
 
 **Part IV — Patterns & failure modes**
-- Chapter 13. When agents disagree
-- Chapter 14. Failure modes and their fixes
-- Chapter 15. Patterns and antipatterns
+- Chapter 14. When agents disagree
+- Chapter 15. Failure modes and their fixes
+- Chapter 16. Patterns and antipatterns
 
 **Part V — Shipping**
-- Chapter 16. From sprint to release tag
-- Chapter 17. Scaling the methodology
+- Chapter 17. From sprint to release tag
+- Chapter 18. Scaling the methodology
 
 **Appendices**
 - Appendix A. Real prompt templates (verbatim from `roksbnkctl`)
@@ -61,6 +62,7 @@ The four-role pattern (architect / staff / validator / tech writer) borrows libe
 - Appendix E. PRD template
 - Appendix F. Sprint plan template
 - Appendix G. Integrator's pre-flight checklist
+- Appendix H. Post-sprint interview prompt template
 
 **References**
 
@@ -338,6 +340,18 @@ Agentic engineering teams in this methodology have **four roles**. Every sprint 
 
 **Why this role exists:** quality. The other three roles are heads-down on their own deliverables; without a dedicated reviewer, drift between what the architect documented and what the staff engineer implemented goes unnoticed. The tech writer also catches the kind of "this command doesn't actually work as written" issues that a real-world user would file as a GitHub issue six weeks after release.
 
+By the seventh sprint of the case study, the tech writer's role expanded to also produce a **release-readiness verdict** against the upcoming release's gate criteria — not just an issue list. The verdict format is described in Chapter 12 (the post-sprint interview) and in `agents/tech-writer.md`.
+
+## The role files in `agents/`
+
+After Sprint 7 of the case study, the four role definitions were extracted into a dedicated `agents/` directory in the project root, with one markdown file per role plus a README explaining how to invoke them with multi-LLM tooling. The shift was a refactor of the prompt-template pattern, not a methodology change: the four roles are unchanged; what changed is *where* the persistent role identity lives versus the per-sprint task brief.
+
+Pre-Sprint-7, the case study's `prompts/sprint<N>/<role>.md` files were ~150–250 lines each because they inlined the persistent role identity alongside the sprint-specific task brief. From the `agents/` refactor onward, the per-sprint brief is ~50–100 lines (concrete scope, parallel-agent off-limits, deliverables, verification checklist) and the persistent role identity is read from `agents/<role>.md` by the agent at task time.
+
+This matters for multi-LLM portability. The `agents/<role>.md` files are written as tool-agnostic markdown — no Claude Code YAML frontmatter, no Cursor `.cursorrules` shape, no Aider `.aider.conf.yml` structure. The same file works as a system prompt for Claude Code, Cursor, Aider, Continue, plain API calls, and pasted-into-chat-UI invocation. The per-sprint task brief is also tool-agnostic; it concatenates with the role file at agent dispatch time.
+
+Appendix A reproduces the verbatim Sprint 2 prompts that pre-date the refactor. They remain valid as historical templates and as teaching examples of the full structure; the canonical role definitions now live in `agents/`.
+
 ## Why these four and not others
 
 The pattern of *design + implementation + verification + review* is a load-bearing four-element decomposition of engineering work. Other potential roles (security specialist, performance engineer, UX designer) can be added when the project warrants — but for the bread-and-butter case of a CLI / library / internal-tool product, the four covered here are sufficient.
@@ -396,8 +410,11 @@ For a "real-world" sprint with one full-day-equivalent of integrator time spread
 - ~30 min dispatching Wave 2
 - ~1 hour Wave 2 runtime
 - ~1 hour integrating Wave 2
+- ~30 min running the post-sprint interview (Chapter 12) before the tag push
 
-That's about 9 hours of integrator time per sprint, give or take. Two-week sprints with one full day of integrator time per week is a comfortable cadence; one full day every other week is achievable but tight.
+That's about 10 hours of integrator time per sprint, give or take. Two-week sprints with one full day of integrator time per week is a comfortable cadence; one full day every other week is achievable but tight.
+
+The case study's Sprint 2 (the teaching example used through Chapter 10) was ~7 hours integrator time end-to-end. By Sprints 6 and 7 it had grown to ~10–11 hours, driven by (a) the `agents/`-and-task-brief split adding a thin extra dispatch step, and (b) the tech writer's findings folding across more surfaces as the codebase grew (Sprint 7's tech writer surfaced 6 HIGH + MEDIUM findings, all folded by the integrator post-review per `resolved_sprint7_architect.md` § "Integrator additions"). Growth is structural — the surface to reconcile grows with the codebase.
 
 ## The integrator's superpower: pattern reuse across sprints
 
@@ -474,9 +491,18 @@ Each sprint either tags a release or doesn't. The case study tags every two-to-t
 | 4 | (none) | Other half of PRD 03; not yet a usable backend matrix |
 | 5 | `v0.9` | All four backends + DNS; M3 |
 | 6 | (none) | E2E test sprint; gates v1.0 but doesn't ship it |
-| 7 | `v1.0` | Polish + dogfood + book launch |
+| 7 | `v1.0.0` | Polish + dogfood + book launch (but see tag-hygiene below) |
+| (recovery) | `v1.0.1` | Same-day re-cut after `v1.0.0` tagged the wrong commit |
 
 The lesson: not every sprint ships a tag. Tag when the user has something material that wasn't usable before. Bunching multiple sprints behind a single tag (Sprints 3–5 → v0.9) is fine when the intermediate sprints don't leave the product in a useful state on their own.
+
+## Release-tag hygiene
+
+The case study's `v1.0.0` tag landed at a commit nine commits before HEAD, missing every Sprint 7 polish commit (the 32-chapter book pass, the Mermaid diagrams, the README v1.0 rewrite, the release-pipeline containerisation, the date-stamped CHANGELOG). The CI release workflow then built `v1.0.0` binaries from that older commit; the GitHub Pages book deploy never ran for those polish commits either. The recovery cut, `v1.0.1`, was tagged the same calendar day on what should have been `v1.0.0` content, and CHANGELOG.md formally redirects users to install `v1.0.1` instead.
+
+The mistake was banal: pushing the tag without re-verifying that the integration commit at HEAD was the one being tagged. The fix is also banal: post-sprint interview Q4 (Chapter 12) explicitly asks "is the commit you are about to tag the one you mean to tag?" Run the interview before the tag push, every release.
+
+A second lesson from the same recovery: `v1.0.1` was cut as a *patch-level bump*, not a fork of `v1.0.0` history or a force-push of the `v1.0.0` tag. Force-moving a published tag is a destructive operation visible to anyone who already fetched it; cutting a clean patch release is cheap and explicit. When in doubt, cut a new tag.
 
 ---
 
@@ -499,6 +525,10 @@ Every prompt — architect, staff, validator, tech writer — has the same nine-
 9. **"Do NOT commit"** — explicit instruction that only the integrator commits. Belongs in every prompt; the agent will commit unprompted otherwise.
 
 Sections 1, 2, 6, 7, 8, 9 are nearly identical across roles within a sprint and across sprints — they're your project's house style. Sections 3, 4, 5 are role- and sprint-specific.
+
+**Note on the `agents/` shape.** From Sprint 7 of the case study onward, sections 1, 6, 7, 8, 9 (the persistent role identity and house style) live in `agents/<role>.md` rather than being inlined in every per-sprint prompt. The per-sprint prompt opens with "You are playing the role described in `agents/<role>.md`" and contains only sections 2–5 plus the closing instructions. This is a refactor of layout, not of substance — the nine-section skeleton is unchanged. See Chapter 5 § "The role files in `agents/`" for the rationale and `agents/README.md` for the tool-agnostic dispatch pattern.
+
+**Note on tech-writer prompt evolution.** Through Sprint 3 the tech writer's prompt produced an issue list and a brief prose summary. From Sprint 5 onward, after the team gained release-cycle experience, the prompt also asks for a **release-readiness verdict** against the upcoming release's gate criteria. By Sprint 7 the verdict was structured: per-gate-criterion `met / not-met / TBD-by-integrator-at-tag-cut`, plus a release-ready-yes-or-no recommendation. The verdict is consumed by the post-sprint interview (Chapter 12) and feeds into the integrator's tag-or-no-tag decision.
 
 ## Architect prompts
 
@@ -756,6 +786,27 @@ All four met. Integrator runs `git tag v0.8 -m "..."` and `git push origin v0.8`
 
 Total integrator time across Sprint 2: ~7 hours over 2 days. The agents' total runtime was ~3 hours.
 
+### What shifted by Sprint 7
+
+The Sprint 2 walkthrough above is the teaching example. By Sprint 7 of the case study (the v1.0 launch sprint), the shape of a sprint had evolved in three small but consequential ways:
+
+- **Wave 1 dispatch passes two files per agent.** The `agents/<role>.md` persistent role file plus the per-sprint `prompts/sprint<N>/<role>.md` task brief, concatenated. The per-sprint brief is shorter (~50–100 lines) because the role identity has moved to `agents/`.
+- **Wave 2 produces a release-readiness verdict.** The tech writer's prompt asks for a per-gate-criterion verdict (`met / not-met / TBD-by-integrator-at-tag-cut`) plus a release-ready recommendation, not just an issue list.
+- **A "Day 2 evening" step lands before the tag push: the post-sprint interview** (Chapter 12). The integrator reconciles the four agents' issue files plus the resolved files plus the upcoming release's gate criteria, produces an `issues/interview_sprint<N>.md` verdict file, and tags only when the verdict is green (or yellow with follow-ups filed).
+
+The Sprint 7 sprint loop, end to end:
+
+```
+Day 0 evening  →  Drafts prompts/sprint7/<role>.md briefs (4 files)
+Day 1 morning  →  Wave 1 dispatch (architect/staff/validator in parallel)
+Day 1 afternoon→  Wave 1 integration commit + 3 resolved files
+Day 2 morning  →  Wave 2 dispatch (tech writer)
+Day 2 noon     →  Wave 2 integration commit + 1 resolved file
+Day 2 evening  →  Post-sprint interview verdict + tag push
+```
+
+Total integrator time across Sprint 7: ~10 hours over 2 days. The structural growth from Sprint 2's ~7 hours is real and predictable (Chapter 6 § "Time budget").
+
 ## Day 3 onwards — Sprint 3 planning begins
 
 The cycle repeats. The integrator reads PRD 03 and PRD 04, reads Sprint 2's prompts as templates, and starts drafting Sprint 3's four prompts.
@@ -839,7 +890,116 @@ When you draft Sprint N's prompts, you read all `issues/issue_sprint<M>_*.md` fo
 
 ---
 
-# Chapter 12. Watching progress and reporting up
+# Chapter 12. The post-sprint interview
+
+The four agents file independent issue files. The integrator folds them in waves. The tech writer reviews the integrated tree. Everything seems orderly — and yet, in the case study's seventh sprint, the `v1.0.0` tag landed on a commit that pre-dated all of Sprint 7's polish work, two latent CI bugs surfaced only at tag-cut time, and a same-day recovery release (`v1.0.1`) had to be cut. None of those failures was caught by any of the four agents, the integrator's wave-2 integration, or the tech writer's launch-readiness review.
+
+The pattern these failures share is **drift between PRD goals and shipped reality** that no single agent in a single sprint can see, because the visibility surface is *between* sprints, *between* agents, and *between* the PRD-stated intent and what the release actually contains.
+
+This chapter introduces the **post-sprint interview**: a structured read-only pass the integrator (or a dedicated agent) runs after wave 2 and before the tag push, designed specifically to surface that between-spaces drift.
+
+## Why a post-sprint interview exists
+
+The four-agent split deliberately partitions the work; the same split necessarily partitions visibility. Each agent's issue file is locally coherent — it documents what *that agent* found in *its* surface. The reconciliation of "do these four agents' findings tell a single coherent story about what shipped?" is no agent's job. Without a structured pass, it's also not really the integrator's job in any explicit sense — they fold issues one at a time, which is not the same as reading all four files *as a set* and asking "where does this set as a whole disagree with the PRD?"
+
+Three drift cases from the case study, each load-bearing:
+
+- **`v1.0.0` tagged on the wrong commit.** The `v1.0.0` tag landed at a commit nine commits before HEAD, missing every Sprint 7 polish commit (the 32-chapter book pass, the Mermaid diagrams, the README v1.0 rewrite, the release-pipeline containerisation, the date-stamped CHANGELOG). The CI release workflow built binaries from that older commit; users who installed `v1.0.0` got a pre-polish artifact. The recovery cut, `v1.0.1`, was tagged on what should have been `v1.0.0`. The drift was *between* what every PRD and PLAN.md document described as `v1.0` and what the `v1.0.0` GitHub Release actually contained. No agent owned that drift, because no agent's surface is "what's at HEAD when you push the tag."
+- **`mdbook test` silently failing for months.** The book-validate CI workflow ran on PRs only; pushes directly to `main` skipped validation entirely. Untagged code fences in chapter 31 had been broken since Sprint 3, but no PR ever ran the validate path on those fences (the changes that introduced them landed via direct-to-main pushes). The first time validate ran in earnest was the v1.0.1 recovery cut. The drift was between "the CI workflow exists and is wired" (which every agent could observe) and "the CI workflow actually validates the surface it claims to validate" (which no agent ever tested).
+- **`.goreleaser.yml`'s `extra_files` fail-stopping the release.** The release config referenced a PDF artifact at `./book/book/pandoc/pdf/book.pdf` via `extra_files`. The accompanying comment claimed goreleaser would *warn and continue* on a missing path; in practice it fail-stops the release publish. The PDF was built locally by `make release` but never landed in the CI runner's filesystem, so the goreleaser run died at the publish step after successfully building all six platform binaries. The drift was between the staff agent's release-config comment (an assertion about goreleaser's behavior, written in good faith) and goreleaser's actual behavior.
+
+Each of these had a structural fix in `v1.0.1`. None of them was caught in Sprint 7 wave 1 or wave 2.
+
+The lesson is not "the four-agent methodology has a hole." The lesson is that the methodology has a *seam* between the agents' visibility and the project's release-time surface, and the seam needs a dedicated review pass.
+
+## What the post-sprint interview is
+
+The post-sprint interview is a **read-only structured reconciliation pass**, run between wave 2's tech-writer-fold integration commit and the release tag push. It can be conducted by the integrator in person (~20 minutes if the issue files are well-formed) or dispatched as a fifth agent (see Appendix H for the prompt template). Either way, the output is a single markdown file at `issues/interview_sprint<N>.md` containing a structured verdict.
+
+The interview is **not** a re-run of the tech writer's role. The tech writer reviews the integrated tree for voice / drift / first-time-reader experience. The interview reviews the *reconciliation* — does the set of four agents' issue files plus their resolutions plus what's about to ship plus the PRD's stated goals tell a single coherent story?
+
+Concretely, the interview consumes:
+
+- `issues/issue_sprint<N>_{architect,staff,validator,tech-writer}.md` (four files)
+- `issues/resolved_sprint<N>_{architect,staff,validator,tech-writer}.md` (four files)
+- `docs/PLAN.md`'s sprint-N section and the next-release gate criteria
+- The relevant PRD's stated goals
+- `CHANGELOG.md`'s draft section for the upcoming release
+- The `git log` since the last release tag
+
+The interview produces a `green | yellow | red` verdict against four questions (below) plus a single-paragraph release-readiness recommendation. The integrator owns the final tag-or-no-tag decision; the interview produces the structured input that decision rests on.
+
+## The four interview questions
+
+**Q1: PRD drift — what shipped vs. what the PRD said.**
+
+For each PRD goal, did something land that materially differs? Examples from Sprint 7 of the case study: the architect's fold of validator Issue 2 substituted `--auto` for the non-existent `--api-key-stdin` flag in chapter 12, but `--auto` itself did not exist — the fix *introduced* drift while resolving other drift. The tech writer caught it as Issue 1 (HIGH) and the integrator re-folded post-review (`resolved_sprint7_tech-writer.md` § Issue 1). A "3-command happy path" framing leaked into five surfaces (chapter 7, README, CHANGELOG, root.go `Long:`, chapter 3) while the chapters themselves taught a 4-command lifecycle (`init` → `up` → `test` → `down`); tech-writer Issue 6 surfaced it, integrator aligned all seven surfaces (`resolved_sprint7_architect.md` § "Integrator additions").
+
+The interview asks: are there *more* of these? A canonical check: grep for every flag, env-var, and command name mentioned in the PRD against the binary's actual `--help` output; grep for every command name mentioned in any docs against the cobra tree.
+
+**Q2: Cross-agent issue reconciliation.**
+
+Does role A's open issue contradict role B's resolved finding? Does role A's resolution introduce a regression in role B's surface? Sprint 7's eight validator findings were folded by the re-dispatched architect; tech writer then caught three HIGH findings in that fold (`resolved_sprint7_architect.md` § "Integrator additions"). The interview asks: are there resolutions whose effect on another agent's surface was never reviewed?
+
+A simple heuristic: any resolution that touched a file in role B's scope-of-record needs role B's eyes (in practice, a single grep + a 30-second read).
+
+**Q3: Deferred-items risk.**
+
+Is the deferred-items list growing faster than the release cadence can absorb? The case study deferred eight items at v1.0 (CHANGELOG.md § "Deferred (v1.x roadmap)"): cosign release signing, Homebrew formula, terraform `--backend k8s/ssh`, a `--truncated` user-facing flag, cross-driver cluster-sharing for e2e, SSH apt-get bootstrap on non-Ubuntu distros, Windows Docker Desktop UID/GID handling, F5 corporate theming for the book. The interview asks: are any of these *implicit* dependencies of features that *did* ship? (None were here, but the question matters.) And: is the deferred list as a whole accumulating debt that will block the v1.x roadmap?
+
+**Q4: Verification-surface coverage.**
+
+What CI gate would have caught the last release's bugs? This is the question the case study answered too late. For v1.0.1, two answers were unambiguous: `mdbook build` should run on push-to-main, not PR-only; `goreleaser check` should validate `extra_files` paths exist as a config-time check, not a runtime failure. Both fixes landed in the recovery commit `288e1e7`. The interview asks: what bugs are likely to fail-stop the *next* release, and what gate would catch them at PR time instead of at tag-cut time?
+
+A useful framing: every release-time fail-stop is a missed PR-time gate. Add the gate retroactively.
+
+## The verdict file
+
+The interview produces a structured markdown file at `issues/interview_sprint<N>.md` with four sections, one per question, each tagged `green | yellow | red`:
+
+- **green** — the question is fully answered, nothing material outstanding. Tag now.
+- **yellow** — there is material outstanding, but the work to resolve it does not block the release. Tag, but file follow-up issues into the next sprint's plan *before* the tag push.
+- **red** — the question surfaces a release blocker. Do not tag. Run another integration pass.
+
+The semantics are deliberate: yellow ≠ green. The integrator must file the follow-ups *before* pushing the tag, not after. The case study's v1.0.0 cut was effectively yellow on Q4 (mdbook-test gate gap, goreleaser extra_files behavior) — the integrator pushed without filing follow-ups, and the issues surfaced at release-time as the next sprint's emergency work. v1.0.1's effective interview verdict was the recovery cut itself.
+
+After the four section verdicts, the file closes with a single-paragraph **release-readiness recommendation**: tag now / tag with follow-ups (listed) / do not tag (specific blockers listed). The recommendation is structured input to the integrator's decision; it is not the decision itself.
+
+## Running the interview as an agent vs. as the integrator manually
+
+Both work. The integrator can do the four-question pass in person in roughly 20 minutes per sprint if the four agents' issue files are well-formed. The agent dispatch costs about 5 minutes of agent runtime plus 10 minutes of integrator review, and produces a more structured artifact at the cost of token-spend.
+
+The case study's recommendation: dispatch as an agent for the first two or three sprints to *internalize the four questions*, then do it manually thereafter unless the sprint is particularly large or contentious.
+
+Appendix H contains the agent prompt template. The role is **read-only**: the interview agent edits exactly one file (`issues/interview_sprint<N>.md`) and never commits.
+
+## Where the interview fits in the sprint cycle
+
+Inserted between wave 2 integration and the tag push:
+
+```
+Wave 1 (architect + staff + validator)    → 3 issue files
+Wave 1 integration                        → 3 resolved files + integration commit
+Wave 2 (tech writer)                      → 1 issue file
+Wave 2 integration                        → 1 resolved file + integration commit
+Post-sprint interview                     → interview_sprint<N>.md verdict file
+[If green or yellow] Tag the release
+[If yellow] File the follow-ups before tag push
+[If red] Run another integration pass; re-run the interview
+```
+
+The interview is not optional. Skipping it on the theory that "the tech writer already reviewed everything" is the case-study mistake that surfaced at v1.0.0 tag time.
+
+## Anti-patterns
+
+- **Skipping the interview because the tech writer's verdict was clean.** The tech writer reviews the integrated tree; the interview reviews the reconciliation of the four issue files + the PRD + what's about to ship. Different surface.
+- **Letting the agent's verdict be final.** The interview agent produces a draft. The integrator signs off (or rejects). The case study's v1.0.0 mistake was tagging without the interview *or* the equivalent manual reconciliation; the fix is to gate the tag on the integrator's review of the verdict, not on the verdict itself.
+- **Treating yellow as green.** If the interview says yellow on Q4, file the follow-ups in the next sprint's planning *before* pushing the tag. After the tag pushes is when emergency work starts.
+- **Running the interview after the tag.** The point is to gate the tag. After the tag, you are doing recovery work, not interview work.
+
+---
+
+# Chapter 13. Watching progress and reporting up
 
 You have agents running. You have an integrator (you). You have a stakeholder (your boss, your customer, your team) who wants to know "where are we." This chapter covers tooling and habits for both the live-watch case (during a sprint) and the report-up case (between sprints).
 
@@ -889,7 +1049,7 @@ That's three sentences for what got done, one for what's next, one with the open
 
 # Part IV — Patterns & failure modes
 
-# Chapter 13. When agents disagree
+# Chapter 14. When agents disagree
 
 Wave 1 agents run in parallel. They cannot directly communicate. They can only coordinate through the prompts the integrator wrote and through the files they each touch.
 
@@ -934,9 +1094,27 @@ When this fails — two agents both edit the same line — the integrator merges
 
 **Mitigation:** explicit ownership in prompts. The case study's Sprint 2 staff prompt says: *"You own everything else"* (after listing what validator owns), which leaves no ambiguity.
 
+## Drift introduced by the fix for drift
+
+A subtler case: the validator finds drift, files an issue, the architect (re-dispatched mid-sprint) folds the fix — and the fold itself introduces *new* drift that the tech writer then catches in Wave 2. The case study's Sprint 7 had a three-deep chain:
+
+1. Validator filed Issue 2 (HIGH): chapter 12 referenced a non-existent `--api-key-stdin` flag.
+2. Architect was re-dispatched to fold the eight validator findings. The fold of Issue 2 substituted `--auto` for `--api-key-stdin`.
+3. Tech writer caught it as Issue 1 (HIGH): `--auto` doesn't exist either. The integrator re-folded post-review, dropping `--auto` entirely and rewriting the prose to acknowledge `init` still prompts interactively for the remaining workspace metadata.
+
+The lesson is not that any single agent failed. The lesson is that **a fold pass that substitutes one name for another can introduce a new drift if the substitute name isn't itself verified against the binary**. Mitigation: any fold that introduces a *new* flag or command name into prose needs the validator's read-only check before tech-writer review. In practice, the integrator runs a `grep` against the cobra tree before committing the fold.
+
+## Latent CI bug surfaces only at release time
+
+Not strictly an inter-agent disagreement, but symptomatically similar: the four agents agree on the codebase's state, the four issue files report clean, the tech writer's verdict is clean — and then `release.yml` fail-stops at the publish step because of a CI assumption that no agent's surface tests.
+
+The case study's v1.0.1 recovery had two of these: `mdbook test` had been silently failing for months on PR-only gates, and `.goreleaser.yml`'s `extra_files` reference fail-stopped the release publish despite a comment claiming it would warn-and-continue. Neither was visible in any agent's surface; neither would have been caught by any rerun of the per-agent checklists.
+
+This is the pattern Chapter 12 (the post-sprint interview) exists to catch. Q4 ("verification-surface coverage") asks specifically: what would fail-stop the next release at tag-cut time, and what PR-time gate would catch it earlier?
+
 ---
 
-# Chapter 14. Failure modes and their fixes
+# Chapter 15. Failure modes and their fixes
 
 This chapter catalogs the failure modes you will encounter and what to do about each.
 
@@ -1023,9 +1201,35 @@ This both gets you better implementations (the agent isn't forced into a bad spe
 
 If a tech writer files >5 issues per sprint and most are low-severity, dial back the prompt next sprint.
 
+## CI-gate gaps hidden by branch-protection asymmetry
+
+**Symptom:** a CI workflow that's supposed to validate your codebase has been silently failing — or silently *not running* — for weeks or months, and you only discover this when an unrelated workflow fails-stops the release.
+
+**Root cause:** the workflow's trigger paths exclude the failure surface. The case study's `mdbook test` step was wired to run on PRs only; pushes directly to `main` skipped validation. Broken code fences in chapter 31 had been there for sprints, but no PR ever ran the validate path on those fences. The first time validate ran in earnest was the v1.0.1 recovery cut, at which point three doctest failures + the `mdbook test` design itself (running rustdoc on every untagged code fence as if it were Rust) all surfaced together.
+
+**Fix:** every CI workflow that gates the release should also run on push to main, even if redundantly with the PR-time run. Post-sprint interview Q4 asks this directly. Treat any gate that only runs on PRs as suspect.
+
+## Tag landed on the wrong commit
+
+**Symptom:** a release tag points at a commit that pre-dates the integration work the release is supposed to ship. CI builds the wrong artifacts; users get a less-polished binary than intended.
+
+**Root cause:** pushing the tag without re-verifying that the integration commit at HEAD is the one being tagged. Easy to do if the integrator has been moving fast and there are several intermediate commits between "ready to tag" and "actually tagged."
+
+**Fix:** post-sprint interview Q4 explicitly asks "is the commit you are about to tag the one you mean to tag?" If the answer is uncertain, run `git log <prev-tag>..HEAD --oneline` and confirm every commit belongs to the release. Don't tag from a remote-tracking ref; tag from a local SHA you've just verified.
+
+If you discover the wrong-commit tag after pushing, cut a patch-level recovery release (the case study's v1.0.0 → v1.0.1) rather than force-moving the existing tag.
+
+## Release-pipeline references files that don't ship
+
+**Symptom:** goreleaser (or your equivalent release tool) fails-stops at publish time because a referenced artifact path doesn't exist on the CI runner. Binaries build, archives are produced, then the publish step dies.
+
+**Root cause:** a release-config path that depends on the integrator's local environment. The case study's `.goreleaser.yml` referenced a PDF at `./book/book/pandoc/pdf/book.pdf` via `extra_files`. The PDF was built by `make release` locally, but never landed in the CI runner's filesystem. The accompanying config comment claimed goreleaser would warn-and-continue on a missing path; in practice it fail-stops.
+
+**Fix:** every CI/release-config path needs an active reference *somewhere* that exercises it. If the path is integrator-local-only, the release pipeline shouldn't reference it; do the upload as a separate post-release step (the case study's `make release-publish` does this for the PDF, uploading via `gh release upload` after the tag push completes). Post-sprint interview Q4 catches this category by asking what would fail-stop the *next* release.
+
 ---
 
-# Chapter 15. Patterns and antipatterns
+# Chapter 16. Patterns and antipatterns
 
 A condensed reference of what to do and what not to do, with a one-line rationale each.
 
@@ -1054,12 +1258,18 @@ A condensed reference of what to do and what not to do, with a one-line rational
 - **Don't rely on agent memory across sprints.** Each sprint's prompts are self-contained.
 - **Don't ship without the resolved file.** "We didn't have any issues" is not a valid resolved file.
 - **Don't conflate sprint and release.** Some sprints don't tag; that's normal.
+- **Don't trust a validate workflow that only runs on PRs.** If pushes to main skip it, latent breakage accumulates until release time.
+
+Two additions from the v1.0.1 recovery experience:
+
+- **DO run the post-sprint interview before every release tag.** Skipping it surfaced two latent CI bugs at v1.0.0 tag time (Chapter 12).
+- **DO pin role identity in `agents/<role>.md`; rewrite only the per-sprint task brief.** The persistent role file is read fresh by each agent; the per-sprint brief is short and focused.
 
 ---
 
 # Part V — Shipping
 
-# Chapter 16. From sprint to release tag
+# Chapter 17. From sprint to release tag
 
 A sprint either ships a release or it doesn't. This chapter formalizes when each is the right call.
 
@@ -1071,6 +1281,7 @@ To tag a release, all of the following must be true:
 2. **All previous releases' criteria still hold.** No regressions. CI must be green; manual smoke tests must pass.
 3. **The release-specific definition of done is met.** PLAN.md's "Definition of done — per release" section is a checklist. Every box checked, or every unchecked box has a documented reason.
 4. **No `blocker` or `high`-severity issues open** from the current or any prior sprint without an explicit accept-and-defer rationale.
+5. **The post-sprint interview's verdict is green (or yellow with follow-ups filed).** See Chapter 12. The interview specifically catches PRD drift, cross-agent reconciliation gaps, deferred-items risk, and verification-surface coverage holes that the per-agent issue files don't see individually.
 
 If any of these is missing, you do not tag. You either fix the gap (preferred) or document the gap and slip the tag (acceptable).
 
@@ -1099,6 +1310,21 @@ When deferring:
 
 Stakeholders trust release notes that say "we deferred X to v1.1 because of Y" much more than release notes that omit the deferral entirely. They'll find out anyway; you might as well surface it.
 
+## When a tag has to be re-cut
+
+Occasionally a release tag is pushed and then discovered to be broken — wrong commit, missing artifact, CI workflow fail-stopped mid-publish. The case study's `v1.0.0` shipped with these problems and was recovered same-day as `v1.0.1`.
+
+The recovery pattern is **patch-level bump, not force-move**. Force-moving a published tag is a destructive operation: anyone who already fetched the tag, installed via `go install <pkg>@v1.0.0`, or built against it has a different SHA than the new tag points at. Force-pushing a tag silently invalidates their state. Cutting a clean patch release (`v1.0.0` → `v1.0.1` same-day) is cheap, explicit, and atomic.
+
+The case study's recovery sequence:
+
+1. Commit the fixes to `main` (in v1.0.1's case: drop the broken `extra_files` from `.goreleaser.yml`; drop the broken `mdbook test` step from `book.yml`; tag the three untagged code fences in chapter 31).
+2. Document the recovery as a new CHANGELOG.md section explicitly framing the original release as superseded ("End users should install v1.0.1; the v1.0.0 Release page is retained as a historical artifact only").
+3. Tag the recovery commit; push the tag.
+4. After the CI release workflow finishes, run any local publish steps (the case study's `make release-publish` uploads the book PDF to the release).
+
+The CHANGELOG narrative matters. A future maintainer or contributor reading the project's release history needs to see why `v1.0.0` exists but is not the canonical first stable. Don't delete the original release; mark it superseded.
+
 ## Release artifacts
 
 For a CLI / library / tool product, release artifacts include:
@@ -1112,13 +1338,15 @@ For a CLI / library / tool product, release artifacts include:
 For agentic projects specifically, also include:
 
 - **The prompt files used in the sprints leading up to this release.** These live in `prompts/sprint<N>/` and are already in git; no extra packaging needed. Just don't `.gitignore` them.
+- **The role files in `agents/`.** Tool-agnostic markdown definitions of the four roles (Chapter 5). Travels with the repo; reproducible across LLM tools.
+- **The post-sprint interview verdict files** (`issues/interview_sprint<N>.md`). Per-sprint, in git, document the release-readiness decision each sprint produced.
 - **The PLAN.md and PRD set as-of this tag.** Same: in-git, no extra work.
 
 The reason to include the prompts and the PRDs is reproducibility. A future contributor (human or LLM) should be able to check out the v0.8 tag and re-dispatch Sprint 2 against the v0.7 codebase to validate the methodology.
 
 ---
 
-# Chapter 17. Scaling the methodology
+# Chapter 18. Scaling the methodology
 
 Two questions come up once the four-role / single-integrator pattern works for your first project:
 
@@ -1171,6 +1399,8 @@ In practice, compliance overhead adds 20–30% to integrator time and ~10% to ag
 # Appendix A. Real prompt templates (verbatim from `roksbnkctl`)
 
 The following four prompts are reproduced from the case study's `prompts/sprint2/` directory. They are presented here exactly as dispatched, with one cosmetic redaction: the absolute project paths in the prompts (e.g., `/mnt/d/project/roksbnkctl/`) are templated as `${PROJECT_ROOT}` for portability.
+
+**Historical note.** These Sprint 2 prompts pre-date the case study's `agents/` refactor (Chapter 5 § "The role files in `agents/`"). The persistent role identity used to be inlined in each per-sprint prompt; from Sprint 7 onward, the persistent role identity lives in `agents/<role>.md` (tool-agnostic markdown, ~50 lines per role) and the per-sprint task brief is a thin ~50–100-line file at `prompts/sprint<N>/<role>.md`. The Sprint 2 prompts below are still valid as teaching examples of the full nine-section skeleton, but the canonical role definitions for new projects should be drafted in the `agents/`-and-task-brief shape. See Appendix H for the post-sprint interview prompt in the new shape.
 
 ## A.1 Architect prompt template
 
@@ -1874,6 +2104,153 @@ Before drafting Sprint N's prompts, walk this list. Each item should answer
 
 ---
 
+# Appendix H. Post-sprint interview prompt template
+
+The prompt to dispatch as a fifth agent for the post-sprint interview described in Chapter 12. Read-only — the interview agent never edits any project file except `issues/interview_sprint<N>.md`.
+
+```markdown
+You are the post-sprint interview agent for Sprint <N> of the
+<project> project. Your scope is read-only reconciliation across
+the four agents' issue files, the resolved files from this sprint,
+PLAN.md's gate criteria for the upcoming release, and the relevant
+PRD's stated goals. You produce a single structured verdict file
+that the integrator reviews before pushing the release tag.
+
+Project location: <repo path>. You will NOT edit any file except
+your own verdict file at `issues/interview_sprint<N>.md`.
+
+## Read first
+
+- `agents/<role>.md` for each of the four roles, to remind yourself
+  what surface each agent owns.
+- `issues/issue_sprint<N>_architect.md`,
+  `issues/issue_sprint<N>_staff.md`,
+  `issues/issue_sprint<N>_validator.md`,
+  `issues/issue_sprint<N>_tech-writer.md` — the four agents'
+  findings.
+- `issues/resolved_sprint<N>_<role>.md` (four files) — how the
+  integrator handled each finding, with rationale.
+- `docs/PLAN.md` — sprint-<N> section + "Gate to next sprint" +
+  "Definition of done — per release" for the upcoming release.
+- `docs/prd/<relevant>.md` — the PRD this sprint's work implements
+  against. Compare its "Acceptance criteria" / "In scope" /
+  "Decided" sections against what shipped.
+- `CHANGELOG.md` — the section for the upcoming release.
+- `git log <prev-tag>..HEAD --oneline` — the commits since the
+  last release tag, for the deferred-items risk and verification-
+  surface questions.
+
+## The four questions
+
+Answer each one with a verdict — `green` / `yellow` / `red` — and a
+one-paragraph rationale. Concrete evidence (file paths, line
+numbers, commit SHAs, issue-file references) is required for
+yellow or red verdicts.
+
+### Q1: PRD drift — what shipped vs. what the PRD said
+
+For each PRD goal in scope this sprint, did something materially
+different ship? Grep for every flag / env-var / command name in
+the PRD against the binary's `--help` output. Grep for every
+command name in user-facing docs (book, README, CHANGELOG)
+against the cobra tree. Look for resolutions whose fix *introduced*
+new drift (the case study's Sprint 7 had a `--auto` flag substituted
+for `--api-key-stdin` that itself didn't exist).
+
+Verdict criteria:
+- green: zero material drift.
+- yellow: drift exists but is documented (e.g., a deferred-with-
+  rationale entry); follow-ups filable.
+- red: undocumented drift between PRD-stated and shipped surface.
+
+### Q2: Cross-agent issue reconciliation
+
+For every resolution in `resolved_sprint<N>_*.md`, did the
+resolution touch a file in another role's scope-of-record? If so,
+was that other role's surface re-reviewed after the fold? Look for
+issues introduced *by* the fold of other issues (validator fixed,
+architect folded, tech-writer caught — a three-deep drift chain).
+
+Verdict criteria:
+- green: every cross-surface resolution was re-reviewed.
+- yellow: one or two cross-surface resolutions weren't re-reviewed
+  but the fix is small enough to verify by inspection.
+- red: significant cross-surface resolution shipped without
+  re-review.
+
+### Q3: Deferred-items risk
+
+Read `CHANGELOG.md`'s deferred-items section (or PLAN.md's
+"What's deliberately deferred" section). Compare the deferred
+items against what *did* ship this release: is any deferred item
+an *implicit dependency* of a feature that shipped? Compare the
+deferred list against prior releases' deferred lists: is the list
+growing faster than the release cadence is absorbing it?
+
+Verdict criteria:
+- green: deferred list is stable or shrinking; no implicit
+  dependencies on deferred items in shipped features.
+- yellow: deferred list growing; no implicit dependencies but the
+  trend needs flagging for the next planning sprint.
+- red: a shipped feature has an implicit dependency on a deferred
+  item.
+
+### Q4: Verification-surface coverage
+
+For each CI gate (lint, test, build, release-publish, doc-build,
+e2e), ask: would this gate have caught a release-time failure at
+PR time? Specifically look for: gates that run on PRs only but not
+push-to-main (or vice versa); release config that references files
+or paths that depend on the integrator's local environment; CI
+workflows where the "success" condition is structurally weaker
+than what the release pipeline actually needs.
+
+Verdict criteria:
+- green: every release-pipeline assumption has a PR-time gate.
+- yellow: one or two assumptions don't have PR-time gates but are
+  low-risk (e.g., depending on an integrator-provisioned image).
+- red: at least one release-pipeline assumption can fail-stop the
+  release at tag-cut time with no earlier gate.
+
+## Output
+
+Write `issues/interview_sprint<N>.md` with four sections (one per
+question), each with `**Verdict**: green | yellow | red` and a
+one-paragraph rationale citing the specific evidence. Close the
+file with a single-paragraph **release-readiness recommendation**:
+
+- `tag now` — all verdicts green; recommend pushing the tag.
+- `tag with follow-ups` — verdicts include yellow; recommend pushing
+  the tag *after* the listed follow-up issues are filed into the
+  next sprint's plan.
+- `do not tag` — at least one red verdict; recommend running another
+  integration pass before tagging.
+
+## Verification before reporting done
+
+- All four issue files, four resolved files, PLAN.md sprint section,
+  relevant PRD, and CHANGELOG section have been read.
+- `git log <prev-tag>..HEAD --oneline` has been run.
+- Each question has a verdict + rationale + concrete evidence.
+- The verdict file is committed locally to your sandbox (the
+  integrator commits to the repo).
+
+## Final report (under 200 words)
+
+- Per-question verdicts (4 × `green | yellow | red`)
+- Top 3 concrete findings across the four questions
+- Release-readiness recommendation
+- Anything the integrator should know before reviewing the verdict
+  file
+
+Do NOT edit any file except `issues/interview_sprint<N>.md`. Do NOT
+commit anything.
+```
+
+The prompt is intentionally **read-mostly** — the agent's output is a single new file. The integrator reads the verdict file, agrees or overrides, files any necessary follow-up issues, and then pushes the tag.
+
+---
+
 # References
 
 ## Primary sources (the case study)
@@ -1921,53 +2298,61 @@ and sections.*
 
 - **Acceptance criteria** — Chapter 3 (PRD format), Appendix C (per-role)
 - **Agent platforms** — Preface, References
-- **API drift** — Chapter 13
-- **Append-only-shared files** — Chapter 13, Chapter 15
+- **Agents directory (`agents/`)** — Chapter 5, Chapter 8, Appendix A
+- **API drift** — Chapter 14
+- **Append-only-shared files** — Chapter 14, Chapter 16
 - **Architect role** — Chapter 5, Chapter 8 (prompt), Appendix A.1, Appendix C
-- **Burnout (integrator)** — Chapter 14
-- **Burn-down chart** — Chapter 12
-- **Calibration (severity)** — Chapter 11, Chapter 15
-- **Compliance** — Chapter 17
+- **Burnout (integrator)** — Chapter 15
+- **Burn-down chart** — Chapter 13
+- **Calibration (severity)** — Chapter 11, Chapter 16
+- **Compliance** — Chapter 18
 - **Coordination notes (in prompts)** — Chapter 8, Appendix G
-- **Definition of done** — Chapter 16, Appendix C
-- **Deferred work** — Chapter 11, Chapter 16
+- **Definition of done** — Chapter 17, Appendix C
+- **Deferred work** — Chapter 11, Chapter 12, Chapter 17
 - **Dispatch (Wave 1, Wave 2)** — Chapter 5, Chapter 6, Chapter 10
 - **Documentation infrastructure** — Chapter 9
 - **End-of-sprint commit** — Chapter 6, Chapter 10
-- **Failure modes** — Chapter 14
+- **Failure modes** — Chapter 15
 - **File layout** — Appendix B
-- **Half-finished implementations** — Chapter 8, Chapter 14
-- **Hallucinated APIs** — Chapter 14
+- **Half-finished implementations** — Chapter 8, Chapter 15
+- **Hallucinated APIs** — Chapter 15
 - **Initiative (definition)** — Chapter 2
 - **Integrator role** — Chapter 6
+- **Interview (post-sprint)** — Chapter 12, Appendix H
 - **Issue file format** — Chapter 11
 - **Issue ledger** — Chapter 11
 - **mdBook** — Chapter 9, References
-- **Out of scope (PRD section)** — Chapter 3, Chapter 15
-- **Parallel sprints** — Chapter 17
+- **Out of scope (PRD section)** — Chapter 3, Chapter 16
+- **Parallel sprints** — Chapter 18
 - **PLAN.md** — Chapter 4, Chapter 7, Appendix F
+- **Post-sprint interview** — Chapter 12, Appendix H
+- **PRD drift** — Chapter 12, Chapter 15
 - **Pre-flight checklist** — Appendix G
 - **PRD index** — Chapter 4
 - **PRD format** — Chapter 3, Appendix E
 - **PRFAQ format** — Chapter 1, Appendix D
-- **Priority ordering (in tasks)** — Chapter 8, Chapter 14
-- **Prompt commit (before dispatch)** — Chapter 6, Chapter 15
+- **Priority ordering (in tasks)** — Chapter 8, Chapter 15
+- **Prompt commit (before dispatch)** — Chapter 6, Chapter 16
 - **Prompt structure** — Chapter 8
-- **Read-first section** — Chapter 8, Chapter 14
-- **Release tags** — Chapter 7, Chapter 16
+- **Read-first section** — Chapter 8, Chapter 15
+- **Release-readiness verdict** — Chapter 5, Chapter 12
+- **Release tags** — Chapter 7, Chapter 17
 - **Resolved file format** — Chapter 11
 - **Roadmap severity** — Chapter 8 (validator), Chapter 11
 - **Roles (architect/staff/validator/tech-writer/integrator)** — Chapter 5, Chapter 6
 - **Severity values** — Chapter 11
 - **Sprint 0** — Chapter 7, Chapter 9
 - **Sprint anatomy** — Chapter 7
-- **Sprintwatch** — Chapter 12
-- **Stakeholder reporting** — Chapter 12
+- **Sprintwatch** — Chapter 13
+- **Stakeholder reporting** — Chapter 13
 - **Staff engineer role** — Chapter 5, Chapter 8 (prompt), Appendix A.2, Appendix C
-- **Stop at boundary (priority)** — Chapter 8, Chapter 14
+- **Stop at boundary (priority)** — Chapter 8, Chapter 15
+- **Tag re-cut** — Chapter 12, Chapter 17
 - **Tech writer role** — Chapter 5, Chapter 8 (prompt), Appendix A.4, Appendix C
 - **Templates (PRFAQ / PRD / sprint)** — Appendices D, E, F
+- **v1.0.1 recovery** — Chapter 12, Chapter 14, Chapter 15, Chapter 17
 - **Validator role** — Chapter 5, Chapter 8 (prompt), Appendix A.3, Appendix C
+- **Verdict file (post-sprint)** — Chapter 12, Appendix H
 - **Verification before reporting done** — Chapter 8, Appendix C
 - **Wave 1 / Wave 2** — Chapter 5, Chapter 6, Chapter 10
 - **"Working Backwards"** — Chapter 1, References
