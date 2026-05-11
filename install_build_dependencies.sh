@@ -66,6 +66,18 @@
 #         missing — but doesn't install it (kubectl install paths vary
 #         widely: snap, krew, the official IBM Cloud ks plugin, etc.).
 #
+# What this also installs:
+#   - oc (Red Hat OpenShift CLI) — REQUIRED for the e2e flow's
+#     Phase B5 step (`roksbnkctl oc whoami` passthrough verifies
+#     cluster-admin auth). The `roksbnkctl oc <args>` passthrough
+#     shells out to host oc; without it the passthrough errors with
+#     `Error: oc not found on PATH`. The everyday `roksbnkctl k *`
+#     verbs (Sprint 2 internalised surface) don't need host oc and
+#     work fine without it. Installed via Red Hat's official mirror
+#     tarball (no apt package); we extract only the `oc` binary into
+#     /usr/local/bin/ and leave the bundled kubectl alone to avoid
+#     drift with the host's existing kubectl.
+#
 # After this script completes, run:
 #   make build              # builds bin/roksbnkctl with ldflags
 #   ./bin/roksbnkctl doctor # confirms green on this host
@@ -218,6 +230,27 @@ install_ibmcloud() {
     done
 }
 
+install_oc() {
+    log "oc (Red Hat OpenShift CLI, from the Red Hat mirror)"
+    if command -v oc >/dev/null 2>&1; then
+        ok "oc already installed: $(oc version --client 2>/dev/null | head -1)"
+        return
+    fi
+
+    # No apt package on Ubuntu/Debian; pull the stable tarball from
+    # Red Hat's mirror and extract only the `oc` binary into
+    # /usr/local/bin/. Skip the bundled kubectl (the host already has
+    # one from snap or apt; overwriting it would risk version drift).
+    local url=https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+    ok "downloading $url"
+    if curl -sSL "$url" | sudo tar -xz -C /usr/local/bin oc; then
+        ok "oc installed: $(oc version --client 2>/dev/null | head -1)"
+    else
+        err "oc install failed; check network access to mirror.openshift.com"
+        exit 1
+    fi
+}
+
 install_helm() {
     log "helm (Helm 3, official apt repo)"
     if command -v helm >/dev/null 2>&1; then
@@ -259,7 +292,7 @@ verify() {
     # Required: terraform (local backend), ibmcloud (--backend local
     # passthrough), jq (script JSON parsing), the base utilities the
     # e2e scripts rely on.
-    for cmd in terraform ibmcloud helm jq unzip ssh python3 gpg docker gh go git make; do
+    for cmd in terraform ibmcloud helm oc jq unzip ssh python3 gpg docker gh go git make; do
         if command -v "$cmd" >/dev/null 2>&1; then
             ok "$cmd: $(command -v "$cmd")"
         else
@@ -315,6 +348,7 @@ main() {
     install_terraform
     install_ibmcloud
     install_helm
+    install_oc
     verify
     hints
 }

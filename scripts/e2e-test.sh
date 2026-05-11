@@ -99,6 +99,27 @@ assert_contains() {
     fi
 }
 
+# assert_matches is the regex variant of assert_contains. Use it when
+# more than one legitimate output shape exists — e.g. `oc whoami`
+# returns `admin/<hash>` on vanilla OpenShift, `KubeCert#IBMid-<id>`
+# on ROKS cert-auth, or `IAM#<email>` on ROKS OAuth, and all three
+# represent a privileged identity for cluster-admin assertions.
+assert_matches() {
+    local pattern="$1"
+    local label="$2"
+    if [[ "$DRY_RUN" == "1" ]]; then
+        cat >/dev/null
+        log "  (dry-run; skipping assertion: $label)"
+        return 0
+    fi
+    if grep -qE "$pattern" -; then
+        green "  ✓ $label"
+    else
+        red "  ✗ $label — expected regex not matched: $pattern"
+        exit 2
+    fi
+}
+
 phase_header() {
     echo "" >&2
     bold "════════════════════════════════════════════════════════════"
@@ -191,11 +212,17 @@ phase_B() {
     capture "B4 kubectl get nodes" "$ROKSBNKCTL" kubectl get nodes \
         | assert_contains "Ready" "B4 nodes Ready"
 
-    # Admin-cert kubeconfig (which `roksbnkctl cluster up` writes) returns
-    # `admin/<cluster-id>` from `oc whoami` — no email shape, so just
-    # check the admin/ prefix instead of looking for `@`.
+    # `oc whoami` returns one of three legitimate privileged-identity
+    # shapes depending on how the kubeconfig was minted:
+    #   - vanilla OpenShift admin-cert: `admin/<cluster-id>`
+    #   - IBM Cloud ROKS cert-auth:     `KubeCert#IBMid-<user-id>`
+    #   - IBM Cloud ROKS OAuth:         `IAM#<email>`
+    # `roksbnkctl cluster up` against ROKS produces the cert-auth
+    # form; the vanilla shape is what self-managed OpenShift returns.
+    # Either is a valid pass — assert the alternation rather than
+    # pinning a single shape.
     capture "B5 oc whoami" "$ROKSBNKCTL" oc whoami \
-        | assert_contains "admin/" "B5 oc whoami returns admin identity"
+        | assert_matches '^(admin/|KubeCert#|IAM#)' "B5 oc whoami returns admin identity"
 
     log "B6 cluster stays up — Phase C will use it"
 
@@ -314,6 +341,14 @@ phase_D() {
     # stripped PATH. If the in-process implementation accidentally shells
     # out to kubectl, this step fails. We use env PATH=… so the
     # mutation is per-command — never moves or renames the host binary.
+    #
+    # Assertion via `-o jsonpath`: `roksbnkctl k get`'s default
+    # printer currently emits only NAME+AGE columns (the rich
+    # STATUS/ROLES/VERSION columns come from server-side TablePrinter
+    # which the v1.0 binary doesn't request — tracked as a v1.x
+    # bug to fix in internal/k8s/get.go). Until that lands, query
+    # the Ready condition explicitly via jsonpath so the assertion
+    # validates the actual condition (not the default-printer table).
     if [[ "$DRY_RUN" != "1" ]]; then
         local stripped_path
         stripped_path=$(echo "$PATH" | tr ':' '\n' \
@@ -325,10 +360,11 @@ phase_D() {
               done | paste -sd:)
         capture "D3b k get nodes (PATH-stripped)" \
             env PATH="$stripped_path" "$ROKSBNKCTL" k get nodes \
-            | assert_contains "Ready" "D3b nodes Ready (no host kubectl)"
+                -o "jsonpath={range .items[*]}{.metadata.name}{'='}{.status.conditions[?(@.type=='Ready')].status}{'\n'}{end}" \
+            | assert_matches '=True$' "D3b nodes Ready (no host kubectl)"
     else
         log "→ D3b k get nodes (PATH-stripped) (dry-run)"
-        log "  cmd: env PATH=<stripped> $ROKSBNKCTL k get nodes"
+        log "  cmd: env PATH=<stripped> $ROKSBNKCTL k get nodes -o jsonpath=…"
     fi
 
     # logs may produce many lines or be empty if FLO hasn't logged

@@ -15,6 +15,7 @@ What it installs (idempotent — re-running skips anything already present):
 - `terraform` (HashiCorp apt repo) — required for the binary's local backend
 - `helm` 3 (official apt repo) — required at `roksbnkctl up` time; terraform's `null_resource` + `local-exec` provisioners for the `cert_manager` / `flo` / `cne_instance` modules shell out to host `helm`
 - `ibmcloud` CLI + the `kubernetes-service` and `cloud-object-storage` plugins — required for the `roksbnkctl ibmcloud …` passthrough with `--backend local` and for e2e Phase B/I
+- `oc` (Red Hat OpenShift CLI, from Red Hat's mirror tarball) — required for the e2e flow's Phase B5 step (`roksbnkctl oc whoami` passthrough). The everyday `roksbnkctl k *` verbs don't need it; the passthrough does
 - `jq`, `unzip`, `gnupg`, `openssh-client`, `python3` — dev utilities the e2e scripts and Makefile targets shell out to
 
 What it deliberately does NOT install:
