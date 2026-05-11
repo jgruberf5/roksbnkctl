@@ -191,7 +191,7 @@ roksbnkctl status
 Workspace:    default
 Region:       us-south
 Cluster:      bnk-quickstart  (attach existing)
-TF source:    embedded@v0.8.0
+TF source:    embedded@v1.0.0
 Last apply:   2026-05-08 14:22:08 UTC  (3m ago)
 Kubeconfig:   /home/you/.kube/config
 Cluster:      2/2 nodes ready

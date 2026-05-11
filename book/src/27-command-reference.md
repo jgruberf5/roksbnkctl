@@ -6,12 +6,13 @@ roksbnkctl deploys F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS,
 manages the COS supply chain BNK depends on, and runs built-in connectivity,
 DNS, and throughput tests against the deployed environment.
 
-The 3-command happy path:
+The 4-command lifecycle:
   roksbnkctl init    Interactive setup; writes the workspace config
   roksbnkctl up      Provision (or attach) and deploy BNK
   roksbnkctl test    Run connectivity, DNS, and throughput tests
+  roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)
 
-See docs/PRD.md or https://github.com/jgruberf5/roksbnkctl for the full surface.
+See https://jgruberf5.github.io/roksbnkctl/book/ for the canonical user guide.
 
 
 ## Global flags

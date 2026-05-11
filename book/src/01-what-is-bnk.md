@@ -63,3 +63,5 @@ A single BNK install can handle both at once. Customer architectures often start
 Everything in this chapter is intentionally a sketch — enough to make the rest of this book legible. For definitive and up-to-date product information, including the full CRD reference, version compatibility matrix, sizing guidance, and license model, see F5's official BNK documentation: <https://clouddocs.f5.com/bigip-next/latest/>.
 
 The rest of this book focuses on deploying BNK with `roksbnkctl` and validating that the deployment works end-to-end. It does not duplicate F5's product documentation; it complements it.
+
+For an at-a-glance view of how `roksbnkctl`'s components fit together — the four execution backends, the cluster, the jumphost, the IBM Cloud control plane — see the architecture diagram at the top of [Chapter 17 — Execution backends](./17-execution-backends.md). For the happy-path lifecycle from one command to the next, see [Chapter 7 — Quick start](./07-quick-start.md).

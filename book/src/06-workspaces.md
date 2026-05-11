@@ -38,7 +38,7 @@ Three things are worth calling out:
 
 Override the base directory with the `ROKSBNKCTL_HOME` env var. Test fixtures use this; everyday users shouldn't need it.
 
-## The 3-command path
+## The everyday workspace routine
 
 The minimum daily routine:
 
@@ -101,8 +101,8 @@ Prints the current workspace name on stdout. If no pointer is set, prints `(no c
 ```bash
 roksbnkctl ws list
 NAME      CURRENT  REGION    CLUSTER          TF SOURCE
-default   *        us-south  bnk-quickstart   embedded@v0.8.0
-prod               eu-de     bnk-prod         embedded@v0.8.0
+default   *        us-south  bnk-quickstart   embedded@v1.0.0
+prod               eu-de     bnk-prod         embedded@v1.0.0
 staging            us-south  bnk-staging      local:./terraform
 ```
 
@@ -233,4 +233,4 @@ Workspaces are cheap. If a flow benefits from isolation, make a new one rather t
 
 ## Forward-link to Chapter 12
 
-This chapter covers the *workspace-as-a-unit*: how to create, switch, list, delete. The schema of the per-workspace `config.yaml` itself — every field, default, valid range — is [Chapter 12 — Workspace config](./12-workspace-config.md), which lands in Sprint 3. Until that chapter is published, the canonical reference is the godoc on `config.Workspace` in [`internal/config/workspace.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go).
+This chapter covers the *workspace-as-a-unit*: how to create, switch, list, delete. The schema of the per-workspace `config.yaml` itself — every field, default, valid range — is [Chapter 12 — Workspace config](./12-workspace-config.md).

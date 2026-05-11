@@ -10,7 +10,7 @@ This chapter is the user-facing distillation of [PRD 04 — credential propagati
 |---|---|---|
 | **IBMCLOUD_API_KEY** | `ibmcloud` CLI, terraform's IBM provider, IBM SDK calls | Env → OS keychain → workspace `api_key_b64` → prompt |
 | **kubeconfig** | `kubectl`/`oc` passthroughs, `roksbnkctl k get/apply/...`, terraform's k8s + helm providers | `KUBECONFIG` env → `~/.kube/config` (kubectl-style) |
-| **SSH private key** | The SSH client backing `--on` and the upcoming `ssh` execution backend | Per-target: file path, ssh-agent, or `tf-output:<name>` |
+| **SSH private key** | The SSH client backing `--on` and the `ssh:<target>` execution backend | Per-target: file path, ssh-agent, or `tf-output:<name>` |
 | **Terraform state** | The `terraform-exec` calls inside `roksbnkctl up`/`apply`/`destroy` | Workspace `state/terraform.tfstate` (filesystem only) |
 
 Each has its own discovery rules. Walk them in turn.
@@ -169,7 +169,7 @@ Per-target, not per-workspace. Each entry under `targets:` in `config.yaml` decl
 | Source | Form | Notes |
 |---|---|---|
 | **File** | `key_path: ~/.ssh/id_ed25519` | Standard OpenSSH key formats. Tilde expansion honoured. |
-| **Agent** | `key_source: agent` | Talks to ssh-agent over `$SSH_AUTH_SOCK`. Linux/macOS only in v0.7. |
+| **Agent** | `key_source: agent` | Talks to ssh-agent over `$SSH_AUTH_SOCK`. Linux/macOS only at v1.0; Windows ssh-agent named-pipe support is on the v1.x roadmap. |
 | **TF output** | `key_source: tf-output:jumphost_shared_key` | Reads from terraform state at connect time; never written to disk separately. |
 
 The `tf-output:` form is the auto-discovered jumphost path — the upstream HCL provisions a `tls_private_key` resource per cluster create, marks it `sensitive`, and surfaces it as a terraform output. `roksbnkctl` reads the output via `terraform output -raw` at SSH-connect time, never persists it, and the key only exists in TF state plus in memory during a connect.
@@ -187,7 +187,7 @@ The `tf-output:` form is the auto-discovered jumphost path — the upstream HCL 
 
 It is **plaintext-credential-equivalent**. The file mode is `0600`; the parent directory is `0700`. Backup the workspace dir intact, never commit it to git, treat compromise of the state file as compromise of every secret it contains.
 
-There is no separate "TF state credential" — the file's filesystem ACL is the only access control. PRD 04 covers the cross-backend story for moving state into a Docker bind-mount, a Kubernetes Secret, or an SCP'd remote temp directory; today (Sprint 3) the local file is the only path.
+There is no separate "TF state credential" — the file's filesystem ACL is the only access control. PRD 04 covers the cross-backend story for moving state into a Docker bind-mount, a Kubernetes Secret, or an SCP'd remote temp directory; at v1.0 the local file is the only path (`terraform --backend k8s` / `ssh` are deferred to v1.x; see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0").
 
 ## What's safe to commit vs not
 
@@ -207,7 +207,7 @@ The longer version, by file:
 | `~/.roksbnkctl/<ws>/state/kubeconfig` | **No** | Cluster admin token. |
 | `~/.roksbnkctl/<ws>/state/terraform.tfstate` | **No** | Every secret terraform manages, in plaintext. |
 | `~/.roksbnkctl/<ws>/state/terraform.tfvars` | **No** | Generated; references no secrets directly but documents resource layout. |
-| `~/.roksbnkctl/<ws>/state/terraform.tfvars.user` | **Maybe** | If you've kept secrets out (no `bigip_password`, no `ibmcloud_api_key`), it's just config. Audit before committing. |
+| `~/.roksbnkctl/<ws>/terraform.tfvars.user` | **Maybe** | If you've kept secrets out (no `bigip_password`, no `ibmcloud_api_key`), it's just config. Audit before committing. |
 | `~/.roksbnkctl/<ws>/cluster-outputs.json` | **No** | Cluster identity + COS instance name. Not directly a secret but tied to the workspace. |
 | `~/.roksbnkctl/known_hosts` | **Yes (if you want)** | Host-key fingerprints; not a secret. Same threat model as OpenSSH's `~/.ssh/known_hosts`. |
 
@@ -243,16 +243,16 @@ If step 4 had failed (no keychain, WSL2 without libsecret), `SaveAPIKeyForWorksp
 
 Both destinations work. The keychain path is the recommended default; the config-b64 path is the documented fallback.
 
-## Backend-specific cred propagation (forward-look)
+## Backend-specific cred propagation
 
-This sprint (Sprint 3) ships the `local` and `docker` execution backends. The credential-propagation rules differ per backend:
+The credential-propagation rules differ per backend. All four backends ship at v1.0:
 
 | Backend | Where creds live | Mechanism |
 |---|---|---|
 | `local` | The user's environment | `os/exec` inherits parent env |
 | `docker` | Caller's env, propagated by reference | `docker run --env IBMCLOUD_API_KEY` (no `=value`) — value inherits, never appears in `docker inspect` |
-| `k8s` (Sprint 4) | Kubernetes Secret in the `roksbnkctl-ops` namespace | Mounted into the ops pod via `valueFrom: secretKeyRef`; or IAM trusted profile (preferred) |
-| `ssh` (Sprint 4) | Remote env or wrapper script | `ssh -o SetEnv=IBMCLOUD_API_KEY=...` first; falls back to a 0700 wrapper script with `trap rm EXIT` |
+| `k8s` | Kubernetes Secret in the `roksbnkctl-ops` namespace | Mounted into the ops pod via `envFrom: secretRef`; or IAM trusted profile (preferred) |
+| `ssh` | Remote env or wrapper script | `ssh -o SetEnv=IBMCLOUD_API_KEY=...` first; falls back to a 0700 wrapper script with `trap rm EXIT` |
 
 Each backend's "where creds live" surface is summarised in [Chapter 17 — Execution backends](./17-execution-backends.md); the design rationale is in [PRD 04](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md).
 

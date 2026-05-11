@@ -1,6 +1,36 @@
 # Quick start: from API key to deployed BNK
 
-This chapter walks the 3-command happy path end-to-end. By the time you reach the bottom you'll have a deployed BNK trial on a fresh ROKS cluster, a passing connectivity test, and a clean tear-down command ready when you're done.
+This chapter walks the 4-command lifecycle (`init` → `up` → `test` → `down`) end-to-end. By the time you reach the bottom you'll have a deployed BNK trial on a fresh ROKS cluster, a passing connectivity test, and a clean tear-down command ready when you're done.
+
+The lifecycle, at a glance:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as roksbnkctl
+    participant TF as terraform-exec (embedded HCL)
+    participant IBM as IBM Cloud API
+    participant K8s as ROKS cluster + BNK
+    User->>CLI: roksbnkctl init
+    CLI->>CLI: write workspace config.yaml
+    CLI-->>User: workspace ready
+    User->>CLI: roksbnkctl up --auto
+    CLI->>TF: terraform plan + apply
+    TF->>IBM: provision cluster, VPC, jumphost
+    IBM-->>TF: 77 resources created
+    TF->>K8s: helm install cert-manager + flo + BNK
+    K8s-->>CLI: cluster + BNK up
+    CLI-->>User: kubeconfig saved, jumphost target auto-populated
+    User->>CLI: roksbnkctl test
+    CLI->>K8s: connectivity + DNS + (optional) throughput
+    K8s-->>CLI: pass/fail per check
+    CLI-->>User: green
+    User->>CLI: roksbnkctl down --auto
+    CLI->>TF: terraform destroy
+    TF->>IBM: 77 resources destroyed
+    CLI-->>User: workspace state retained
+```
 
 The walkthrough assumes:
 
@@ -68,7 +98,7 @@ Sample output (heavily abridged — a real run is ~50 minutes and prints terrafo
 
 ```
 roksbnkctl up --auto
-→ Resolving terraform source ... embedded (v0.7.0)
+→ Resolving terraform source ... embedded (v1.0.0)
 → Extracting bundled HCL to ~/.roksbnkctl/default/state/tf-source/embedded-terraform/
 → Pre-creating kubeconfig + scratch directories
 → Rendering auto-tfvars from config.yaml ... ok
@@ -117,7 +147,7 @@ Workspace: default
 Region:    us-south
 RG:        Default (id: ...)
 Cluster:   bnk-quickstart (id: <cluster-id>) — Ready
-TF source: embedded (v0.7.0)
+TF source: embedded (v1.0.0)
 Last apply: 2026-05-08T14:22:08Z
 Nodes:     2/2 Ready
 BNK pods:  flo (3/3), cis (1/1), cert-manager (3/3), cne-instance (1/1)
@@ -185,11 +215,11 @@ roksbnkctl shell
 # run a one-shot kubectl with the workspace context loaded
 roksbnkctl kubectl get pods -A
 
-# run ibmcloud through the auto-discovered jumphost (Sprint 1 feature)
+# run ibmcloud through the auto-discovered jumphost
 roksbnkctl ibmcloud --on jumphost ks cluster ls
 ```
 
-The `--on jumphost` flag is covered in detail in [Chapter 16](./16-on-flag-ssh-jumphosts.md). It's the v0.7-flagship feature that lets you run any of the passthrough commands (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) from inside the cluster's network — useful when your workstation is behind a corporate firewall that can't reach IBM Cloud directly.
+The `--on jumphost` flag is covered in detail in [Chapter 16](./16-on-flag-ssh-jumphosts.md). It lets you run any of the passthrough commands (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) from inside the cluster's network — useful when your workstation is behind a corporate firewall that can't reach IBM Cloud directly.
 
 ## Step 7 — `roksbnkctl down --auto`
 

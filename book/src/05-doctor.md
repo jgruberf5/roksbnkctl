@@ -120,7 +120,7 @@ The chapter readers most often land on. Each row maps a real-world symptom to it
 | `workspace "foo" not initialised` | `ws new` was run but `init` was not | run `roksbnkctl init -w foo` |
 | `workspace: no config context` | `~/.roksbnkctl/config.yaml` corrupt | inspect the file; worst case delete it and re-run `init` |
 
-If a fix isn't here, [Chapter 26 — Troubleshooting](./26-troubleshooting.md) (lands in Sprint 6) covers the longer tail.
+If a fix isn't here, [Chapter 26 — Troubleshooting](./26-troubleshooting.md) covers the longer tail.
 
 ## The `--target <name>` SSH check (Sprint 1)
 
@@ -176,13 +176,13 @@ fi
 A few deliberate non-features worth naming:
 
 - **Not a fix-it tool.** `doctor` reports; it never installs, never modifies workspace config, never calls IBM Cloud APIs that mutate state. The IAM verify call is read-only. If `doctor` could break things, users couldn't run it freely — and "run `doctor`" needs to be a safe first move.
-- **Not a backend probe.** Per-backend availability checks (docker daemon reachable, k8s ops pod healthy, ssh target reachable) land in Sprint 4 (PRD 03) as separate `BackendName`-tagged rows. The `--target` probe is the early prototype of that pattern.
+- **Not a backend probe.** Per-backend availability checks (docker daemon reachable, k8s ops pod healthy, ssh target reachable) ship as separate `BackendName`-tagged rows via `doctor --backend <name>` ([PRD 03](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md)). The `--target` probe was the early prototype of that pattern.
 - **Not concurrent-safe.** The CLI invokes `doctor` once per command; the side-channel for "why we care" blurbs in [`internal/doctor/doctor.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/doctor.go) doesn't synchronise. Don't run two `doctor`s against the same process.
 
 ## Cross-references
 
 - [Chapter 4 — Installation](./04-installation.md) introduces `doctor` as the post-install verification step.
 - [Chapter 6 — Workspaces](./06-workspaces.md) explains the `workspace` row and the `-w` override.
-- [Chapter 14 — Credentials](./14-credentials-resolver.md) (lands in Sprint 3) is the deep dive on the `ibmcloud api key` resolution chain.
+- [Chapter 14 — Credentials](./14-credentials-resolver.md) is the deep dive on the `ibmcloud api key` resolution chain.
 - [Chapter 16 — The `--on` flag](./16-on-flag-ssh-jumphosts.md) covers the `--target` probe's underlying SSH client.
 - [Chapter 24 — Day-2 ops](./24-day-2-ops.md) is the canonical reference for the internalised `k <verb>` commands that make `kubectl` / `oc` informational.

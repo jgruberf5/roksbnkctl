@@ -4,7 +4,47 @@
 
 This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you "the URL works"; throughput testing tells you "the path is fast". Both assume the name resolved. When the GSLB is the thing under test, "the name resolved" is *itself* the question — and the answer changes depending on the network vantage of whoever's asking.
 
-The flag surface, the JSON output, and the multi-vantage workflow on this page are all what `v0.9` ships. The design rationale lives in [PRD 03 §"DNS probe (GSLB-aware)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware); read that for the *why*, this chapter for the *how*.
+The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in [PRD 03 §"DNS probe (GSLB-aware)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware); read that for the *why*, this chapter for the *how*.
+
+## Three vantages, one comparison
+
+`--gslb-compare` is the flagship workflow: a single `roksbnkctl test dns` invocation fans out across `local`, `k8s`, and (optionally) `ssh:<target>` vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.
+
+```mermaid
+graph TB
+    subgraph runner[roksbnkctl test dns --gslb-compare]
+        cmd[fan-out parallel<br/>per-vantage probe]
+        cmp[divergence detector<br/>+ JSON aggregate]
+    end
+    subgraph vantage_local[local vantage]
+        L[laptop resolver<br/>public DNS / GSLB outside-the-cluster answer]
+    end
+    subgraph vantage_k8s[k8s vantage]
+        K[ops-pod resolver<br/>cluster CoreDNS / cluster-routed GSLB answer]
+    end
+    subgraph vantage_ssh[ssh:jumphost vantage]
+        S[remote-host resolver<br/>third network path's GSLB answer]
+    end
+    GSLB[F5 BIG-IP Next GSLB<br/>per-resolver dispatch rule]
+
+    cmd --> L
+    cmd --> K
+    cmd --> S
+    L --> GSLB
+    K --> GSLB
+    S --> GSLB
+    GSLB -. region A IP .-> L
+    GSLB -. region B IP .-> K
+    GSLB -. region C IP .-> S
+    L --> cmp
+    K --> cmp
+    S --> cmp
+    cmp -->|gslb_divergence: true/false| out[stdout JSON<br/>roksbnkctl.dns.v1]
+```
+
+The point of the diagram: a single `roksbnkctl` invocation probes from network positions a `dig` from your laptop can't reach. The cluster vantage answers from the cluster's egress IP; the SSH vantage answers from a third network path. Comparing the three is exactly the assertion "is the GSLB rule taking effect" needs.
+
+The design rationale for this shape lives in [PRD 03 §"DNS probe (GSLB-aware)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware). The rest of this chapter is the user-facing surface.
 
 ## The GSLB problem
 
@@ -286,7 +326,7 @@ The comparison document embeds the per-vantage shape unchanged inside `vantages[
 | `gslb_divergence` | bool | True when the answer sets across `vantages[]` differ. |
 | `gslb_divergence_summary` | string | Present only when `gslb_divergence: true`. Human-readable explanation naming the diverging vantages and answers. |
 
-Both schemas are stable starting at v0.9 — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to `.v2`. v0.10 added an optional `edns_client_subnet` object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don't, in which case the field is omitted from the JSON via `omitempty`. Sub-fields are `family` (1 = IPv4, 2 = IPv6), `source_netmask`, `scope_netmask`, and `address`. Useful for confirming the GSLB actually saw your client's geographic scope rather than the resolver's IP.
+Both schemas are stable at v1.0 — additive changes (new optional fields) are allowed within `v1`; field renames or removals would bump to `.v2`. v1.0 includes the optional `edns_client_subnet` object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don't, in which case the field is omitted from the JSON via `omitempty`. Sub-fields are `family` (1 = IPv4, 2 = IPv6), `source_netmask`, `scope_netmask`, and `address`. Useful for confirming the GSLB actually saw your client's geographic scope rather than the resolver's IP.
 
 ## RTT measurement and `--iterations`
 
@@ -424,6 +464,84 @@ With no `--target` and no `--gslb-compare`, the runner falls back to today's beh
 For real GSLB validation you almost always want `--gslb-compare` plus an explicit `--target` and `--server`. The `extra_hosts` fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.
 
 [Chapter 20 — Connectivity testing](./20-connectivity-testing.md) covers `connectivity.extra_hosts` in full.
+
+## Worked example: GSLB divergence troubleshooting
+
+End-to-end Part VI scenario: a customer's BNK GSLB rule says "users in the US get IP A, users in the EU get IP B". They claim the rule isn't working — EU users keep landing on the US datacenter. You have `roksbnkctl` configured with a local laptop (your office), the customer's cluster (ops pod installed), and a customer-provided EU bastion as an SSH target named `eu-bastion`. Goal: prove or disprove the divergence, point at where to look next.
+
+```bash
+# 1. Baseline — three-vantage probe of the GSLB-fronted name
+$ roksbnkctl test dns \
+    --target www.example.com \
+    --type A \
+    --server gslb-vip.example.com \
+    --gslb-compare \
+    -o json | tee /tmp/gslb-baseline.json | jq .
+{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "server": "gslb-vip.example.com",
+  "gslb_divergence": false,
+  "vantages": [
+    {
+      "backend": "local",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 18.2, "p95": 22.1}
+    },
+    {
+      "backend": "k8s",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 6.4, "p95": 9.8}
+    },
+    {
+      "backend": "ssh:eu-bastion",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 24.7, "p95": 31.4}
+    }
+  ]
+}
+
+# Note: `gslb_divergence: false` means ALL THREE vantages got 192.0.2.10
+# back. That's the smoking gun — the customer is right. The GSLB is
+# returning the same answer regardless of where the resolver is.
+
+# 2. Confirm via `dig` from the EU bastion directly (sanity check that
+# roksbnkctl isn't somehow masking the answer)
+$ roksbnkctl exec --on eu-bastion -- dig +short @gslb-vip.example.com www.example.com
+192.0.2.10
+# Same answer. The probe isn't lying.
+
+# 3. Check the GSLB rule's resolver-IP detection
+$ roksbnkctl ibmcloud --backend ssh:eu-bastion ks cluster get \
+    --cluster customer-cluster --json | jq '.serviceEndpoints'
+# (Inspect the cluster's egress IP that GSLB sees for k8s vantage queries)
+
+# 4. Repeat the probe with a known-good test name (one with a working
+# anycast resolver, to rule out probe-side bugs)
+$ roksbnkctl test dns \
+    --target www.cloudflare.com \
+    --type A \
+    --server 8.8.8.8 \
+    --gslb-compare
+✓ local         : 104.16.124.96 (RTT 12ms)
+✓ k8s           : 104.16.124.96 (RTT 6ms)
+✓ ssh:eu-bastion: 104.16.124.96 (RTT 28ms)
+  gslb_divergence: false  (anycast — expected)
+
+# 5. Hand off the artefact to the GSLB owner with three pieces of evidence:
+#    - /tmp/gslb-baseline.json (the divergence-false JSON)
+#    - The cluster's resolver-IP-as-seen-by-GSLB from step 3
+#    - Confirmation that the probe machinery itself works (step 4)
+```
+
+What this walkthrough lets you say with confidence: "the GSLB is returning 192.0.2.10 to all three vantages including the EU bastion. The rule isn't dispatching. Check the rule's resolver-IP-CIDR-match clause against the EU bastion's egress IP `<X>`." That's a falsifiable claim a GSLB engineer can act on.
+
+Common follow-up failure modes (covered in [Chapter 26](./26-troubleshooting.md)):
+
+- **Probe says diverged but customer says it's not** — likely the customer's testing point is behind a NAT that masks their network position; their resolver looks like a different region to the GSLB.
+- **Probe says NOT diverged but customer says it IS** — likely the customer is querying through a CDN-fronted resolver that anycasts the request. Re-probe with `--server <gslb-vip-directly>` to skip the resolver chain.
+- **All vantages return SERVFAIL** — the GSLB-VIP isn't reachable from any of them. Check connectivity ([Chapter 20](./20-connectivity-testing.md)) before re-running.
 
 ## Cross-references
 

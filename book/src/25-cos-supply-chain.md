@@ -2,7 +2,7 @@
 
 BIG-IP Next for Kubernetes (BNK) pulls its runtime artefacts — the F5 Application Runtime (FAR) container images, the JWT licence used at install + renewal time, the f5-bigip-k8s-manifest Helm chart, and the schematic JSON the deployer renders — from IBM Cloud Object Storage (COS). The COS bucket is the **supply chain**: it's how artefacts produced upstream (F5 build pipeline, licence-issuing service, schematic generator) reach the cluster.
 
-`roksbnkctl cos` is the management surface for that supply chain. Three command levels — `cos instance`, `cos bucket`, `cos object` — cover the full CRUD on COS resources without touching the `ibmcloud` CLI; everything goes through the IBM Cloud Go SDKs ([go-sdk-core](https://pkg.go.dev/github.com/IBM/go-sdk-core/v5), [platform-services-go-sdk](https://pkg.go.dev/github.com/IBM/platform-services-go-sdk), [ibm-cos-sdk-go](https://pkg.go.dev/github.com/IBM/ibm-cos-sdk-go)).
+`roksbnkctl cos` is the management surface for that supply chain. Three command levels — `cos instance`, `cos bucket`, `cos object` — cover the full CRUD on COS resources without touching the `ibmcloud` CLI; everything (most visibly `cos object put` for uploads and `cos object get` for downloads) goes through the IBM Cloud Go SDKs ([go-sdk-core](https://pkg.go.dev/github.com/IBM/go-sdk-core/v5), [platform-services-go-sdk](https://pkg.go.dev/github.com/IBM/platform-services-go-sdk), [ibm-cos-sdk-go](https://pkg.go.dev/github.com/IBM/ibm-cos-sdk-go)).
 
 ## What COS is in this stack
 
@@ -204,9 +204,9 @@ roksbnkctl k delete license -n f5-bnk --all
 
 FLO picks up the new JWT within 60-90 seconds. No `roksbnkctl up` re-run required for licence rotation alone.
 
-## Worked example: upload a new FAR image
+## Worked example: rotating COS supply-chain assets
 
-End-to-end: replace the FAR auth key, push a new image tarball for air-gapped use, point the deployer at the new key.
+End-to-end Part VII scenario: the FAR auth key on file is about to expire, a new one arrived from the F5 distribution side, and you need to rotate it without taking BNK down. The same flow handles licence-JWT rotation (swap `trial.jwt` for the production JWT) and FAR-image-tarball uploads for air-gapped clusters. Cross-link to [Chapter 14](./14-credentials-resolver.md) for the API-key half of the rotation story; this walkthrough focuses on the COS object half.
 
 ```bash
 # 1. Sanity-check the current state

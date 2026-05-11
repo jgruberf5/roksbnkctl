@@ -1,6 +1,6 @@
 # SSH targets
 
-This chapter is the technical reference for the `targets:` system. Its companion is [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md), which is the user-facing prose for "how do I run a command on the jumphost". Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the upcoming `ssh` execution backend (Sprint 4) layers on top.
+This chapter is the technical reference for the `targets:` system. Its companion is [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md), which is the user-facing prose for "how do I run a command on the jumphost". Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the `ssh` execution backend layers on top of the lightweight `--on` flag.
 
 If you arrived here from Chapter 16 looking for "where do I learn the full surface", you're in the right place.
 
@@ -302,28 +302,28 @@ roksbnkctl tf output -json jumphost_shared_key | head -c 50
 
 If all three are populated and the auto-write didn't fire, that's a bug — file an issue with the output values redacted.
 
-## What Sprint 4's SSH execution backend will add
+## What the SSH execution backend adds on top of `--on`
 
-Today (Sprint 3), the SSH client backs the `--on <target>` flag — one-shot remote command execution. Sprint 4's `ssh` **execution backend** layers more on top, reusing the same `internal/remote.Client`:
+The `--on <target>` flag is the lightweight remote-exec path — one SSH session, one command, no remote state. The `ssh:<target>` **execution backend** layers more on top, reusing the same `internal/remote.Client` under [`internal/exec/ssh.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/ssh.go):
 
-| Sprint 4 addition | What it gives you |
+| Capability | What it gives you |
 |---|---|
 | **File materialisation** | `RunOpts.Files` map gets written to `/tmp/roksbnkctl.<rand>/<basename>` on the remote, available as the working directory for the command. Cleanup via `trap 'rm -rf' EXIT` in a wrapper. |
 | **Env passing with fallback** | First tries `ssh -o SetEnv=KEY=VALUE` (requires remote sshd `AcceptEnv`). On failure, writes a 0700 wrapper script that exports the env and execs the command, with `trap 'rm -f $0' EXIT` to scrub. |
-| **Apt bootstrap** | If the remote target doesn't have a tool (`iperf3`, `ibmcloud`) installed, the backend can `sudo apt-get install` it on demand (Ubuntu only this round). |
+| **Apt bootstrap** | If the remote target doesn't have a tool (`iperf3`, `ibmcloud`) installed, the backend can `sudo apt-get install` it on demand (Ubuntu only at v1.0). |
 | **SCP-and-cleanup for kubeconfig** | The backend's recommended path for shipping a kubeconfig to the remote: SCP to a tempdir, run, `trap 'rm -rf' EXIT` to scrub. |
 | **Wrapper-script credential propagation** | Detailed in [PRD 04 § SSH](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md). Brief on-disk window with strict cleanup. |
 
-The `targets:` schema and the `roksbnkctl targets` commands stay exactly the same — Sprint 4 just gives the backend more it can do with each target. Anything you set up in Sprint 3 keeps working.
+The `targets:` schema and the `roksbnkctl targets` commands are the same surface for both — the backend just uses each target in a heavier-weight way. Anything you set up for `--on` keeps working under `--backend ssh:<target>`.
 
-The split between the lightweight `--on` path (Sprint 1) and the full `ssh` backend (Sprint 4) is deliberate: `--on` stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).
+The split between the lightweight `--on` path and the full `ssh` backend is deliberate: `--on` stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).
 
 ## Cross-references
 
 - [Chapter 12 — Workspace config](./12-workspace-config.md) — where `targets:` fits in the overall schema.
 - [Chapter 14 — Credentials and the resolver chain](./14-credentials-resolver.md) — the SSH-key sources from a credential-discipline perspective.
 - [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md) — the user-facing prose for "how do I use this".
-- [Chapter 17 — Execution backends](./17-execution-backends.md) — where the SSH backend (Sprint 4) sits in the broader backend matrix.
+- [Chapter 17 — Execution backends](./17-execution-backends.md) — where the SSH backend sits in the broader backend matrix.
 - [PRD 01 — SSH client + --on flag](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md) — the design rationale for `targets:` and the SSH client.
 - `internal/remote/` package: <https://github.com/jgruberf5/roksbnkctl/tree/main/internal/remote>
 - `internal/cli/targets.go`: <https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/targets.go>

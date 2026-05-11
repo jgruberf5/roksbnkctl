@@ -229,4 +229,4 @@ There's deliberately **no** `roksbnkctl cluster unregister` command. Deleting th
 
 - [Chapter 8 — The cluster phase](./08-cluster-phase.md) — the alternative when you want `roksbnkctl` to provision the cluster.
 - [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) — what `roksbnkctl up` does on top of a registered (or `cluster up`'d) cluster.
-- [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) (lands in Sprint 6) — the COS instance and bucket layout that `--registry-cos-name` points at.
+- [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) — the COS instance and bucket layout that `--registry-cos-name` points at.

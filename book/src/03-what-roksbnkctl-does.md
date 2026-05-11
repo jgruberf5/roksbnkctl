@@ -1,26 +1,21 @@
 # What roksbnkctl does (and doesn't do)
 
-`roksbnkctl` is a single-binary CLI for deploying and validating F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS. It exists to compress a multi-step deployment — clone the right Terraform, configure it, run terraform, fetch a kubeconfig, install BNK, run smoke tests — into three commands.
+`roksbnkctl` is a single-binary CLI for deploying and validating F5 BIG-IP Next for Kubernetes (BNK) onto IBM Cloud ROKS. It exists to compress a multi-step deployment — clone the right Terraform, configure it, run terraform, fetch a kubeconfig, install BNK, run smoke tests — into a four-command lifecycle.
 
 This chapter is about scope. What `roksbnkctl` owns, what it deliberately does not own, and what's coming in future releases. Read it before you reach for the tool to do something it isn't trying to do.
 
-## The 3-command happy path
+## The 4-command lifecycle
 
-The everyday user-facing flow is three commands:
+The everyday user-facing flow is four commands:
 
 ```bash
 roksbnkctl init        # answer a few prompts about region, RG, cluster name
 roksbnkctl up          # terraform plan + apply (~50 min for fresh ROKS + BNK)
 roksbnkctl test        # connectivity + DNS + throughput against the deployment
+roksbnkctl down        # tear it all back down when you're done evaluating
 ```
 
-That's it. From "I have an IBM Cloud API key" to "deployed BNK with a passing throughput test" with no manual `terraform apply`, no hand-editing kubeconfig paths, no chasing down BNK Helm charts.
-
-When the deployment is done you tear it back down with:
-
-```bash
-roksbnkctl down
-```
+That's it. From "I have an IBM Cloud API key" to "deployed BNK with a passing throughput test" with no manual `terraform apply`, no hand-editing kubeconfig paths, no chasing down BNK Helm charts — then a clean tear-down when you're done so you stop paying for the cluster.
 
 [Chapter 7](./07-quick-start.md) walks through this end-to-end with sample output.
 
@@ -57,7 +52,7 @@ A core design decision worth surfacing: the Terraform that drives the deployment
 This means:
 
 - **One install** gets you the CLI + a matched HCL pair. No "clone the right tag of the terraform repo separately" step.
-- **Versioning is unified.** A `roksbnkctl v0.7` release ships with a specific snapshot of the HCL. Upgrading the binary upgrades the HCL atomically. There's no skew between "binary version" and "Terraform version".
+- **Versioning is unified.** A `roksbnkctl v1.0` release ships with a specific snapshot of the HCL. Upgrading the binary upgrades the HCL atomically. There's no skew between "binary version" and "Terraform version".
 - **Power users can override.** The workspace config has a `tf_source:` block:
 
   ```yaml
@@ -74,19 +69,27 @@ This means:
 
 [Chapter 13](./13-terraform-variables.md) covers the tfvars layering rules; this is just the elevator pitch for "the HCL ships with the binary".
 
-## What's coming in future releases
+## What v1.0 ships and what's queued for v1.x
 
-This is the v0.7 surface. The roadmap to v1.0 has a few significant pieces still to land. Brief preview so you know what to expect:
+This book ships with **v1.0**. The surface it documents:
 
-- **v0.8 — kubectl internalisation.** `roksbnkctl k get/apply/logs/exec/port-forward` becomes a first-class verb that talks to the cluster directly via `client-go`, with no host `kubectl` binary required. The `kubectl` passthrough remains as an escape hatch for advanced flags. After v0.8, the only required prereq on PATH is `terraform`.
-- **v0.9 — four execution backends.** Every external tool (`ibmcloud`, `iperf3`, `terraform`) becomes selectable across `local | docker | k8s | ssh` backends via `--backend`. You'll be able to run iperf3 entirely in-cluster without installing it on the host, run ibmcloud in a Docker container with a pinned version, or proxy any tool through a jumphost. [Chapter 17](./17-execution-backends.md) covers the user-facing surface; the design rationale lives in [PRD 03](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md).
-- **v0.9 — GSLB-aware DNS testing.** The DNS probe becomes [miekg/dns](https://github.com/miekg/dns)-based with multi-vantage support, so you can verify that BNK's GSLB is returning different answers from different network locations.
-- **v1.0 — book launched, full E2E test plan green, dogfood feedback integrated.** The `https://jgruberf5.github.io/roksbnkctl/book/` site (this book) ships with all 32 chapters polished, every code example verified, diagrams in place.
+- **kubectl internalisation** — `roksbnkctl k get/apply/logs/exec/port-forward` is a first-class verb talking to the cluster directly via `client-go`. Host `kubectl` is informational only; the only required prereq on PATH is `terraform`.
+- **Four execution backends** — every external tool (`ibmcloud`, `iperf3`, `terraform`) selectable across `local | docker | k8s | ssh` via `--backend`. iperf3 runs entirely in-cluster by default; ibmcloud runs in a pinned-version Docker container if you don't want to install it; any tool proxies through a jumphost via `--backend ssh:<target>`. [Chapter 17](./17-execution-backends.md) is the user-facing surface; [PRD 03](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md) is the design rationale.
+- **GSLB-aware DNS testing** — the DNS probe is [miekg/dns](https://github.com/miekg/dns)-based with multi-vantage support, so you can verify that BNK's GSLB is returning different answers from different network locations. [Chapter 21](./21-dns-testing-gslb.md) covers it.
+- **Polished book** — all 32 chapters, every code example verified, four Mermaid diagrams (architecture / lifecycle / GSLB cross-vantage / backend matrix), per-Part worked examples.
 
-The book follows the code: each sprint adds chapters for what just landed. By the time you read this in production, the chapter list reflects everything the binary at that version supports.
+A handful of items are explicitly **deferred to v1.x**:
+
+- `terraform` over `--backend k8s` and `--backend ssh` (state-file portability design needed).
+- Multi-hop SSH `ProxyJump` for the `--on` and `ssh:<target>` paths.
+- Windows full TTY (interactive `shell` on Windows ships as line-buffered; full PTY is a v1.x item).
+- Typed OpenShift CRDs (today's unstructured printer works; richer per-type output is queued).
+- Cross-driver cluster-sharing for `e2e-test-full.sh` (each driver brings up its own cluster today).
+
+See [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0" for the full roadmap.
 
 ## Pointers to the next chapters
 
 - [Chapter 4 — Installation](./04-installation.md) gets the binary on your machine.
-- [Chapter 7 — Quick start](./07-quick-start.md) walks the 3-command happy path with sample output.
-- [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md) covers the v0.7-flagship feature: running passthrough commands over SSH against an auto-discovered jumphost, useful in customer-firewalled and air-gapped scenarios.
+- [Chapter 7 — Quick start](./07-quick-start.md) walks the 4-command lifecycle with sample output.
+- [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md) covers running passthrough commands over SSH against an auto-discovered jumphost — useful in customer-firewalled and air-gapped scenarios.

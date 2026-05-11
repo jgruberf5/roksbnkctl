@@ -35,7 +35,7 @@ test:
 
 The schema is intentionally minimal — `extra_hosts` is a `[]string` of URLs (or bare hostnames; `https://` is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.
 
-There's no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than "does HTTP work" — a particular status code, a custom header, a body match — `curl` is the right tool, not `roksbnkctl test connectivity`. We may revisit a richer schema in a future release; the v0.9 surface holds the YAML simple on purpose.
+There's no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than "does HTTP work" — a particular status code, a custom header, a body match — `curl` is the right tool, not `roksbnkctl test connectivity`. A richer per-host schema is queued for v1.x; the v1.0 surface holds the YAML simple on purpose.
 
 [Chapter 12 — Workspace config](./12-workspace-config.md#test) covers the full `test:` block; this chapter expands the `connectivity` slice.
 
@@ -70,7 +70,7 @@ What `--insecure` does **not** do:
 - It does not change L4 / DNS behaviour. A name that won't resolve still fails; a host that drops TCP still fails.
 - It is not per-host — there's no `--insecure-only=foo.example.com`. Once set, the run skips verification for everything in `extra_hosts`.
 - It is not persisted. Setting it in one invocation does not affect the next.
-- It is not the same as a config-level `insecure_tls: true` per host. The v0.9 schema doesn't have that knob; the only way to skip cert verification today is the session-wide flag.
+- It is not the same as a config-level `insecure_tls: true` per host. The v1.0 schema doesn't have that knob; the only way to skip cert verification today is the session-wide flag.
 
 If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different `extra_hosts` lists in two workspaces — that's the workaround until per-host trust lands.
 

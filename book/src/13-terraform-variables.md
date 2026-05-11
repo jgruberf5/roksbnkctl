@@ -63,7 +63,7 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `cneinstance_gslb_datacenter_name` | `""` | Set when wiring BNK into an F5 BIG-IP GSLB datacenter. |
 | `license_mode` | `connected` | `connected` \| `disconnected`. |
 
-For the full list with types and per-field descriptions, see `terraform/variables.tf` directly — link [here](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf) — or the auto-generated [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md) (lands in Sprint 6).
+For the full list with types and per-field descriptions, see `terraform/variables.tf` directly — link [here](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf) — or the auto-generated [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md).
 
 ## The layering rule
 
@@ -167,6 +167,6 @@ The schema in `config.yaml` covers about a third of the upstream HCL variables �
 
 - [Chapter 12 — Workspace config](./12-workspace-config.md) — what `config.yaml` covers vs what falls through to tfvars.
 - [Chapter 14 — Credentials and the resolver chain](./14-credentials-resolver.md) — why `ibmcloud_api_key` doesn't go in tfvars.
-- [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md) — auto-generated complete reference for `terraform/variables.tf` (Sprint 6).
+- [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md) — auto-generated complete reference for `terraform/variables.tf`.
 - The upstream `terraform/variables.tf` source: <https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf>
 - The upstream starter file: <https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example>
