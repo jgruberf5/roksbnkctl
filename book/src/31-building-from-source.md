@@ -8,7 +8,7 @@ For users who just want to *install* the binary, [Chapter 4 — Installation](./
 
 The minimum Go version is the one pinned in [`go.mod`](https://github.com/jgruberf5/roksbnkctl/blob/main/go.mod):
 
-```
+```text
 go 1.25.0
 ```
 
@@ -93,7 +93,7 @@ For users who want to *not* use the embedded HCL, the `tf_source: github` or `tf
 
 The `tools/docker/` directory holds Dockerfiles for the images the `docker` and `k8s` backends use:
 
-```
+```text
 tools/docker/
 ├── Makefile
 ├── ibmcloud/
@@ -176,7 +176,7 @@ The Windows caveat is real: `golang.org/x/crypto/ssh`'s PTY allocation isn't com
 
 Output from `goreleaser release --snapshot --clean` lands in `dist/`:
 
-```
+```text
 dist/
 ├── roksbnkctl_linux_amd64_v1/
 │   └── roksbnkctl

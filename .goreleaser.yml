@@ -94,14 +94,20 @@ release:
 
     The attached `roksbnkctl-book-{{ .Tag }}.pdf` is the same book published at <https://jgruberf5.github.io/roksbnkctl/book/>, packaged for offline reading. Build it locally any time via `make release` from the source tree.
 
-  # The PDF artifact has to exist at this path before goreleaser runs.
-  # `make release` (from the repo root) produces it via the
-  # tools/docker/mdbook image. If goreleaser runs without the PDF having
-  # been built first, the release still publishes — `extra_files` warns
-  # about a missing path but doesn't fail-stop.
-  extra_files:
-    - glob: ./book/book/pandoc/pdf/book.pdf
-      name_template: "roksbnkctl-book-{{ .Tag }}.pdf"
+  # The PDF book artifact is NOT attached by goreleaser. The CI runner
+  # for release.yml doesn't have pandoc/XeLaTeX/mermaid-cli installed
+  # (deliberately — pulling the multi-GB tools/docker/mdbook image on
+  # every tag-push is wasteful when the integrator already has it built
+  # locally). Instead, after this workflow finishes, the integrator runs:
+  #
+  #   make release-publish VERSION=vX.Y.Z
+  #
+  # from their machine, which uploads ./book/book/pandoc/pdf/book.pdf to
+  # this Release as roksbnkctl-book-vX.Y.Z.pdf via `gh release upload`.
+  #
+  # Earlier versions of this config had `extra_files` pointing at the PDF.
+  # That turned out to fail-stop the release (not warn-and-continue as
+  # the comment claimed); removed in v1.0.1's recovery cut.
 
 # Homebrew tap — wire when an `homebrew-tap` repo exists under the org.
 # Until then, leaving this block commented out so goreleaser doesn't
