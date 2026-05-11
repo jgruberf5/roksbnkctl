@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -232,7 +232,7 @@
 </tbody>
 </table>
 </div>
-<p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> (lands in Sprint 6).</p>
+<p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a>.</p>
 <h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
 <p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
 <pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)
@@ -319,7 +319,7 @@ $ roksbnkctl apply
 <ul>
 <li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — what <code>config.yaml</code> covers vs what falls through to tfvars.</li>
 <li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — why <code>ibmcloud_api_key</code> doesn’t go in tfvars.</li>
-<li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — auto-generated complete reference for <code>terraform/variables.tf</code> (Sprint 6).</li>
+<li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — auto-generated complete reference for <code>terraform/variables.tf</code>.</li>
 <li>The upstream <code>terraform/variables.tf</code> source: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf</a></li>
 <li>The upstream starter file: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example">https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/terraform.tfvars.example</a></li>
 </ul>
@@ -375,6 +375,8 @@ $ roksbnkctl apply
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

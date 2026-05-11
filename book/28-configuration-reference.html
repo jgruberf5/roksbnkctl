@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -192,7 +192,7 @@
 <tr><td>Overridable home</td><td><code>ROKSBNKCTL_HOME</code> env var (defaults to <code>~/.roksbnkctl/</code>)</td></tr>
 <tr><td>Mode</td><td><code>0644</code></td></tr>
 <tr><td>Created by</td><td><code>roksbnkctl init</code></td></tr>
-<tr><td>Updated by</td><td><code>roksbnkctl init --upgrade-tf</code>, <code>roksbnkctl init --refresh-kubeconfig</code>, hand-editing</td></tr>
+<tr><td>Updated by</td><td><code>roksbnkctl init --upgrade-tf</code>, <code>roksbnkctl kubeconfig --download</code>, hand-editing</td></tr>
 </tbody>
 </table>
 </div>
@@ -306,7 +306,7 @@ exec:            # optional; per-tool default-backend map
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>extra_hosts</code></td><td>list of string</td><td>(empty)</td><td>URLs</td><td>Each URL is probed via HTTP GET; pass criterion is a 2xx response. The v0.9 shape is a bare list — no per-host method, expected-status, or TLS-trust override. Use <code>--insecure</code> (session-wide) for self-signed certs. See <a href="./20-connectivity-testing.html">Chapter 20 §“Configuring extra_hosts”</a>.</td></tr>
+<tr><td><code>extra_hosts</code></td><td>list of string</td><td>(empty)</td><td>URLs</td><td>Each URL is probed via HTTP GET; pass criterion is a 2xx response. The v1.0 shape is a bare list — no per-host method, expected-status, or TLS-trust override. Use <code>--insecure</code> (session-wide) for self-signed certs. See <a href="./20-connectivity-testing.html">Chapter 20 §“Configuring extra_hosts”</a>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -557,6 +557,8 @@ exec:            # optional; per-tool default-backend map
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

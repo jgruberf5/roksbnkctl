@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -313,7 +313,7 @@ An IBM IAM construct that lets a Kubernetes ServiceAccount assume IBM Cloud perm
 <p><strong>v1.0</strong>
 The release this book is the launch deliverable for. All E2E phases pass on a clean dev box; doctor green-by-default with terraform-only required.</p>
 <p><strong>VPE</strong>
-<strong>Virtual Private Endpoint</strong> — IBM Cloud’s private-network access point for managed services. Sometimes left dangling after a cluster destroy (see <a href="./26-troubleshooting.html#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources">Chapter 26 §“orphan IBM Cloud resources”</a>).</p>
+<strong>Virtual Private Endpoint</strong> — IBM Cloud’s private-network access point for managed services. Sometimes left dangling after a cluster destroy (see <a href="./26-troubleshooting.html#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes">Chapter 26 §“orphan IBM Cloud resources”</a>).</p>
 <p><strong>VPC</strong>
 <strong>Virtual Private Cloud</strong> — IBM Cloud’s network-isolation primitive. The cluster lives in one VPC; the testing client jumphost lives in another, connected via TGW.</p>
 <p><strong>VSI</strong>
@@ -383,6 +383,8 @@ The CLI subtree managing workspaces. <code>roksbnkctl ws new/use/list/delete</co
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

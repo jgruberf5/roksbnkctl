@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,7 +178,35 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="quick-start-from-api-key-to-deployed-bnk"><a class="header" href="#quick-start-from-api-key-to-deployed-bnk">Quick start: from API key to deployed BNK</a></h1>
-<p>This chapter walks the 3-command happy path end-to-end. By the time you reach the bottom you’ll have a deployed BNK trial on a fresh ROKS cluster, a passing connectivity test, and a clean tear-down command ready when you’re done.</p>
+<p>This chapter walks the 4-command lifecycle (<code>init</code> → <code>up</code> → <code>test</code> → <code>down</code>) end-to-end. By the time you reach the bottom you’ll have a deployed BNK trial on a fresh ROKS cluster, a passing connectivity test, and a clean tear-down command ready when you’re done.</p>
+<p>The lifecycle, at a glance:</p>
+<pre class="mermaid">sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as roksbnkctl
+    participant TF as terraform-exec (embedded HCL)
+    participant IBM as IBM Cloud API
+    participant K8s as ROKS cluster + BNK
+    User-&gt;&gt;CLI: roksbnkctl init
+    CLI-&gt;&gt;CLI: write workspace config.yaml
+    CLI--&gt;&gt;User: workspace ready
+    User-&gt;&gt;CLI: roksbnkctl up --auto
+    CLI-&gt;&gt;TF: terraform plan + apply
+    TF-&gt;&gt;IBM: provision cluster, VPC, jumphost
+    IBM--&gt;&gt;TF: 77 resources created
+    TF-&gt;&gt;K8s: helm install cert-manager + flo + BNK
+    K8s--&gt;&gt;CLI: cluster + BNK up
+    CLI--&gt;&gt;User: kubeconfig saved, jumphost target auto-populated
+    User-&gt;&gt;CLI: roksbnkctl test
+    CLI-&gt;&gt;K8s: connectivity + DNS + (optional) throughput
+    K8s--&gt;&gt;CLI: pass/fail per check
+    CLI--&gt;&gt;User: green
+    User-&gt;&gt;CLI: roksbnkctl down --auto
+    CLI-&gt;&gt;TF: terraform destroy
+    TF-&gt;&gt;IBM: 77 resources destroyed
+    CLI--&gt;&gt;User: workspace state retained
+</pre>
+
 <p>The walkthrough assumes:</p>
 <ul>
 <li>You have a <code>roksbnkctl</code> binary on <code>PATH</code> (<a href="./04-installation.html">Chapter 4</a>).</li>
@@ -226,7 +254,7 @@
 </code></pre>
 <p>Sample output (heavily abridged — a real run is ~50 minutes and prints terraform’s full plan + apply log):</p>
 <pre><code>roksbnkctl up --auto
-→ Resolving terraform source ... embedded (v0.7.0)
+→ Resolving terraform source ... embedded (v1.0.0)
 → Extracting bundled HCL to ~/.roksbnkctl/default/state/tf-source/embedded-terraform/
 → Pre-creating kubeconfig + scratch directories
 → Rendering auto-tfvars from config.yaml ... ok
@@ -267,7 +295,7 @@
 Region:    us-south
 RG:        Default (id: ...)
 Cluster:   bnk-quickstart (id: &lt;cluster-id&gt;) — Ready
-TF source: embedded (v0.7.0)
+TF source: embedded (v1.0.0)
 Last apply: 2026-05-08T14:22:08Z
 Nodes:     2/2 Ready
 BNK pods:  flo (3/3), cis (1/1), cert-manager (3/3), cne-instance (1/1)
@@ -315,10 +343,10 @@ roksbnkctl shell
 # run a one-shot kubectl with the workspace context loaded
 roksbnkctl kubectl get pods -A
 
-# run ibmcloud through the auto-discovered jumphost (Sprint 1 feature)
+# run ibmcloud through the auto-discovered jumphost
 roksbnkctl ibmcloud --on jumphost ks cluster ls
 </code></pre>
-<p>The <code>--on jumphost</code> flag is covered in detail in <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>. It’s the v0.7-flagship feature that lets you run any of the passthrough commands (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) from inside the cluster’s network — useful when your workstation is behind a corporate firewall that can’t reach IBM Cloud directly.</p>
+<p>The <code>--on jumphost</code> flag is covered in detail in <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>. It lets you run any of the passthrough commands (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) from inside the cluster’s network — useful when your workstation is behind a corporate firewall that can’t reach IBM Cloud directly.</p>
 <h2 id="step-7--roksbnkctl-down---auto"><a class="header" href="#step-7--roksbnkctl-down---auto">Step 7 — <code>roksbnkctl down --auto</code></a></h2>
 <p>Tear it all back down when you’re finished. The teardown is <code>terraform destroy</code> under the hood, with the same resilience to transient IBM API errors as <code>up</code>.</p>
 <pre><code class="language-bash">roksbnkctl down --auto
@@ -402,6 +430,8 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

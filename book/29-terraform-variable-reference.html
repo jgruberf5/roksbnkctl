@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -235,7 +235,7 @@
 <tr><td><code>testing_client_vpc_name</code></td><td><code>string</code></td><td><code>"tf-testing-vpc"</code></td><td>Name of the client VPC — created when testing_create_client_vpc = true, or looked up when false</td><td>no</td></tr>
 <tr><td><code>testing_client_vpc_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region for the client VPC and TGW jumphost</td><td>no</td></tr>
 <tr><td><code>testing_tgw_jumphost_name</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-tgw"</code></td><td>Name of the TGW-connected jumphost instance</td><td>no</td></tr>
-<tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<prefix>-<zone>)</zone></prefix></td><td>no</td></tr>
+<tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<code>&lt;prefix&gt;</code>-<code>&lt;zone&gt;</code>)</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig"</code></td><td>Parent directory where ibm_container_cluster_config writes admin kubeconfigs. Each submodule appends its name as a subdir. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FLO’s FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
 </tbody>
@@ -400,7 +400,7 @@
 <tr><td><code>testing_client_vpc_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region for the client VPC and TGW jumphost</td><td>no</td></tr>
 <tr><td><code>testing_transit_gateway_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name of an existing Transit Gateway to connect the client VPC to (leave empty to skip TGW attachment)</td><td>no</td></tr>
 <tr><td><code>testing_tgw_jumphost_name</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-tgw"</code></td><td>Name of the TGW-connected jumphost instance (used as prefix for subnet, gateway, security group, and floating IP)</td><td>no</td></tr>
-<tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<prefix>-<zone>)</zone></prefix></td><td>no</td></tr>
+<tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<code>&lt;prefix&gt;</code>-<code>&lt;zone&gt;</code>)</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time</td><td>no</td></tr>
@@ -459,6 +459,8 @@
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

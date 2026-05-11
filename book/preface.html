@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,29 +178,47 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="preface"><a class="header" href="#preface">Preface</a></h1>
-<h2 id="how-to-read-this-book"><a class="header" href="#how-to-read-this-book">How to read this book</a></h2>
-<p>This book is the canonical user-facing documentation for <code>roksbnkctl</code>, a single-binary CLI for deploying and validating F5 BIG-IP Next for Kubernetes (BNK) on top of IBM Cloud Red Hat OpenShift Kubernetes Service (ROKS).</p>
+<h2 id="foreword"><a class="header" href="#foreword">Foreword</a></h2>
+<p>Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A <code>terraform init/plan/apply</code> against an HCL tree somebody handed you. A manual <code>ibmcloud ks cluster config</code> to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual <code>oc adm policy add-scc-to-user privileged</code> to let iperf3 actually run. SSH plumbing, env-var plumbing, kubeconfig plumbing — each one a small thing, and together a half-day of yak-shaving before BNK was even on the cluster.</p>
+<p><code>roksbnkctl</code> collapses that into a single static binary plus four interchangeable execution backends (<code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code>) plus an opt-in in-cluster ops pod. One command brings a workspace up; one command tears it down; the connectivity, DNS, and throughput tests run from whichever network vantage the question actually requires. The tool exists because the manual path has too many moving parts for somebody who just wants to evaluate BNK or run a customer demo.</p>
+<p>This book is the user-facing documentation for <code>roksbnkctl</code>. It ships alongside the v1.0 binary.</p>
 <h2 id="who-this-book-is-for"><a class="header" href="#who-this-book-is-for">Who this book is for</a></h2>
+<p>Four audiences:</p>
 <ul>
 <li><strong>BNK evaluators</strong> kicking the tires on F5 BIG-IP Next for Kubernetes who want a low-friction path to a working trial deployment.</li>
 <li><strong>F5 sales engineers (SEs)</strong> who need a repeatable demo and proof-of-concept toolchain for customer engagements.</li>
 <li><strong>Customer engineers</strong> standing up BNK in their own IBM Cloud account, either for evaluation or as the foundation of a production rollout.</li>
+<li><strong>Contributors</strong> who want to extend <code>roksbnkctl</code> — add a backend, add a test suite, ship a new chapter. See <a href="./32-extending-roksbnkctl.html">Part IX — Contributing</a>.</li>
 </ul>
-<h2 id="linear-vs-reference"><a class="header" href="#linear-vs-reference">Linear vs reference</a></h2>
-<p>The book is organized so it can be read either way:</p>
+<h2 id="how-to-read-this-book"><a class="header" href="#how-to-read-this-book">How to read this book</a></h2>
+<p>The book is organised so it can be read either way.</p>
 <ul>
-<li><strong>Linear</strong>: Parts I-VII walk the reader from concepts through their first deployment, day-2 operations, and the built-in test suite. New users should read in order.</li>
-<li><strong>Reference</strong>: Part VIII (Command reference, Configuration reference, Terraform variable reference, Glossary) is exhaustive and indexed for lookups during day-to-day work.</li>
+<li><strong>Linear</strong>: Parts I-VII walk from concepts through your first deployment, day-2 operations, and the built-in test suite. New users should read in order.</li>
+<li><strong>Reference</strong>: Part VIII (Command reference, Configuration reference, Terraform variable reference, Glossary) is exhaustive and indexed for lookups during day-to-day work. Search at the top of every page also reaches into reference material.</li>
 </ul>
+<p>If you have 30 minutes and an IBM Cloud account, skip straight to <a href="./07-quick-start.html">Chapter 7 — Quick start</a>. It’s the canonical “first cluster up” walkthrough and the rest of the book makes more sense after you’ve seen the happy path end-to-end.</p>
 <p>Part IX is for contributors who want to build <code>roksbnkctl</code> from source or extend it.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <p>This book assumes:</p>
 <ul>
 <li>Basic familiarity with <strong>IBM Cloud</strong> — you have an account, you know what an API key is, and you’ve used the IBM Cloud console at least once.</li>
 <li>Basic familiarity with <strong>Kubernetes</strong> — you know what a pod, service, and namespace are; you’ve run <code>kubectl</code> (or <code>oc</code>) before.</li>
-<li>A working terminal on Linux or macOS. Windows is supported for <code>roksbnkctl</code> itself, with documented limitations around interactive SSH.</li>
+<li>A working terminal on Linux or macOS. Windows is supported for <code>roksbnkctl</code> itself, with documented limitations around interactive SSH (see <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>).</li>
 </ul>
-<p>You do <strong>not</strong> need prior experience with Terraform, OpenShift, or F5 BIG-IP Next — the tool and this book introduce them as needed.</p>
+<p>You do <strong>not</strong> need prior experience with:</p>
+<ul>
+<li><strong>Terraform</strong> — <code>roksbnkctl</code> embeds a vetted HCL tree and drives <code>terraform</code> for you. You can ignore the underlying HCL until you want to customise it (<a href="./13-terraform-variables.html">Chapter 13</a>).</li>
+<li><strong>OpenShift specifics</strong> — the tool treats ROKS as Kubernetes with a thin SCC + project overlay; the few OpenShift-specific gotchas are called out in <a href="./22-throughput-testing.html">Chapter 22</a> and <a href="./26-troubleshooting.html">Chapter 26</a>.</li>
+<li><strong>F5 BIG-IP Next</strong> — BNK is the thing the book deploys; you don’t need to be a Big-IP engineer to evaluate it. <a href="./01-what-is-bnk.html">Chapter 1</a> is the 5-minute “what is this product” primer.</li>
+</ul>
+<h2 id="book-conventions"><a class="header" href="#book-conventions">Book conventions</a></h2>
+<ul>
+<li><strong>Code blocks</strong>: shell commands use <code>bash</code> syntax highlighting; YAML snippets use <code>yaml</code>; HCL fragments use <code>hcl</code>; sample command output is shown in plain <code>text</code> blocks to distinguish output from input.</li>
+<li><strong>Cross-references</strong>: every chapter ends with a “Cross-references” section linking related chapters. Inline links use the form <code>[Chapter 7 — Quick start](./07-quick-start.md)</code> — a chapter number, an em-dash, the chapter title, and the relative path to the chapter source.</li>
+<li><strong>PRD links</strong>: design documents under <code>docs/prd/</code> are linked as full GitHub URLs (e.g. <code>https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md</code>) so they resolve from the published book at GitHub Pages. The PRDs are the design surface; the book is the user surface — read PRDs only if you’re contributing or want the <em>why</em> behind a design call.</li>
+<li><strong>Forward references to post-v1.0 work</strong>: where a feature is explicitly queued for a v1.x release (e.g. <code>terraform --backend k8s</code>, multi-hop SSH <code>ProxyJump</code>), the prose flags it in future tense and points at <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0” for the roadmap.</li>
+</ul>
+<p>Welcome.</p>
 
                     </main>
 
@@ -247,6 +265,8 @@
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

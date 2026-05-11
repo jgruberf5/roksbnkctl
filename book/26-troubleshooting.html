@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -187,8 +187,9 @@
 <h3 id="symptom-roksbnkctl-init-interactive-prompts-loop-forever-asking-for-the-api-key"><a class="header" href="#symptom-roksbnkctl-init-interactive-prompts-loop-forever-asking-for-the-api-key">Symptom: <code>roksbnkctl init</code> interactive prompts loop forever asking for the API key</a></h3>
 <p><strong>Root cause</strong>: you’re running under CI / a non-TTY shell and <code>roksbnkctl</code> can’t read stdin. The interactive prompt fallback is the last step in the <a href="./14-credentials-resolver.html#the-ibmcloud_api_key-resolver-chain">credential resolver chain</a> and it doesn’t gracefully skip when stdin is closed.</p>
 <p><strong>Fix</strong>: set <code>IBMCLOUD_API_KEY</code> in the env, or pre-populate the keychain entry. For batch / CI runs, the documented invocation is:</p>
-<pre><code class="language-bash">IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init --auto -w my-workspace
+<pre><code class="language-bash">IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init -w my-workspace
 </code></pre>
+<p>Pre-setting <code>IBMCLOUD_API_KEY</code> skips the API-key prompt (it’s the first link in the resolver chain). <code>init</code> still prompts for the remaining workspace metadata (region, resource group, cluster name) on TTY-bound stdin — a fully non-interactive bootstrap is on the v1.x roadmap.</p>
 <h3 id="symptom-doctor-reports-terraform-not-found-on-a-fresh-dev-box"><a class="header" href="#symptom-doctor-reports-terraform-not-found-on-a-fresh-dev-box">Symptom: doctor reports <code>terraform: not found</code> on a fresh dev box</a></h3>
 <p><strong>Root cause</strong>: <code>terraform</code> is the only strictly-required host tool for v1.0 (everything else is internalised). Doctor checks PATH; if your shell session hasn’t sourced the install location it’ll miss.</p>
 <p><strong>Fix</strong>: install terraform via your package manager (<code>brew install terraform</code>, <code>apt-get install terraform</code>, etc.) and re-source the shell, or set the <code>TERRAFORM_BIN</code> env var pointing at the binary explicitly.</p>
@@ -292,7 +293,7 @@ roksbnkctl test dns --target www.example.com --type A --backend k8s --server clu
 <li>The name is fronted by an anycast resolver fleet (Cloudflare, Google Public DNS) — same answer everywhere by design.</li>
 <li>Your laptop and your cluster are both in the same geographic region from GSLB’s perspective (both in North America hitting the same datacenter).</li>
 </ol>
-<p><strong>Fix</strong>: pick a target known to be geo-resolved (<code>www.google.com</code> is the canonical “different IPs from different regions” example), or add an SSH-based vantage (<code>--backend ssh:eu-bastion</code>) to bring in a third region. <a href="./21-dns-testing-gslb.html#the-gslb-compare-workflow">Chapter 21 §“GSLB cross-vantage compare”</a> covers the multi-vantage workflow.</p>
+<p><strong>Fix</strong>: pick a target known to be geo-resolved (<code>www.google.com</code> is the canonical “different IPs from different regions” example), or add an SSH-based vantage (<code>--backend ssh:eu-bastion</code>) to bring in a third region. <a href="./21-dns-testing-gslb.html#the---gslb-compare-workflow">Chapter 21 §“GSLB cross-vantage compare”</a> covers the multi-vantage workflow.</p>
 <h3 id="symptom-roksbnkctl-test-dns---backend-docker-errors-dns-probe-doesnt-benefit-from-docker"><a class="header" href="#symptom-roksbnkctl-test-dns---backend-docker-errors-dns-probe-doesnt-benefit-from-docker">Symptom: <code>roksbnkctl test dns --backend docker</code> errors <code>DNS probe doesn't benefit from docker</code></a></h3>
 <p><strong>Root cause</strong>: design choice. Docker containers share the host’s network namespace by default, so a docker-backend probe has the same network identity as a <code>--backend local</code> probe — no GSLB-relevant vantage difference.</p>
 <p><strong>Fix</strong>: use <code>--backend local</code>, <code>--backend k8s</code>, or <code>--backend ssh:&lt;target&gt;</code> instead.</p>
@@ -317,7 +318,7 @@ roksbnkctl test dns --target www.example.com --type A --backend k8s --server clu
 # Restart FLO so it re-reads
 roksbnkctl k delete pod -n f5-bnk -l app=flo
 </code></pre>
-<p>See <a href="./25-cos-supply-chain.html#worked-example-upload-a-new-far-image">Chapter 25 §“Worked example”</a> for the full flow.</p>
+<p>See <a href="./25-cos-supply-chain.html#worked-example-rotating-cos-supply-chain-assets">Chapter 25 §“Worked example”</a> for the full flow.</p>
 <h3 id="symptom-cos-object-put-for-a-3-gb-file-errors-midway-with-requesttimeout"><a class="header" href="#symptom-cos-object-put-for-a-3-gb-file-errors-midway-with-requesttimeout">Symptom: <code>cos object put</code> for a 3 GB file errors midway with <code>RequestTimeout</code></a></h3>
 <p><strong>Root cause</strong>: the multipart upload SDK encountered a transient COS HTTP timeout on one of the part uploads. Multipart uploads aren’t currently resumed from the failure point — they restart from zero.</p>
 <p><strong>Fix</strong>: re-run the <code>cos object put</code>. If it fails reproducibly on the same part, the underlying network is the problem (your egress link is saturated, or COS is having a regional outage — check the IBM Cloud status page).</p>
@@ -405,6 +406,8 @@ roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestrati
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

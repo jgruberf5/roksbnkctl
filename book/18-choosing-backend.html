@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -230,25 +230,35 @@
 </code></pre>
 <p><a href="./12-workspace-config.html">Chapter 12 §“<code>exec:</code>”</a> covers the schema. The <code>--backend</code> CLI flag overrides whatever is in <code>exec:</code> for a single invocation.</p>
 <h2 id="per-tool-supported-backend-matrix"><a class="header" href="#per-tool-supported-backend-matrix">Per-tool supported-backend matrix</a></h2>
-<p>Not every tool supports every backend. The supported set per tool:</p>
+<p>Not every tool supports every backend. The authoritative matrix at v1.0:</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Tool</th><th><code>local</code></th><th><code>docker</code></th><th><code>k8s</code></th><th><code>ssh:&lt;target&gt;</code></th></tr>
 </thead>
 <tbody>
-<tr><td><code>ibmcloud</code></td><td>yes</td><td>yes</td><td>yes (long-lived ops pod)</td><td>yes</td></tr>
-<tr><td><code>iperf3</code></td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes (default)</td><td>yes</td></tr>
-<tr><td><code>terraform</code></td><td>yes (default)</td><td>yes</td><td>deferred</td><td>deferred</td></tr>
-<tr><td>DNS probe (Sprint 5)</td><td>yes</td><td><strong>no</strong> (same network identity as <code>local</code>, no value-add)</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>ibmcloud</code></td><td>yes (default)</td><td>yes (frozen image)</td><td>yes (long-lived ops pod)</td><td>yes</td></tr>
+<tr><td><code>iperf3</code></td><td>yes (opt-in: laptop vantage)</td><td>not supported (same network identity as <code>local</code>)</td><td>yes (default)</td><td>yes</td></tr>
+<tr><td><code>terraform</code></td><td>yes (default)</td><td>yes (frozen image)</td><td>deferred to v1.x (state-file handling)</td><td>deferred to v1.x (state-file handling)</td></tr>
+<tr><td>DNS probe</td><td>yes (default for laptop vantage)</td><td>not supported (same network identity as <code>local</code>)</td><td>yes (cluster vantage)</td><td>yes (remote vantage)</td></tr>
+<tr><td><code>kubectl</code> / <code>oc</code></td><td>internalised — runs via the Go client, not via a host binary</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+<tr><td><code>dig</code></td><td>internalised — DNS probe replaces <code>dig</code> for in-tree work</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
 </tbody>
 </table>
 </div>
+<p>Legend:</p>
+<ul>
+<li><strong>yes</strong> — supported; same surface command works on this backend.</li>
+<li><strong>yes (default)</strong> — this backend is the per-tool default; pass <code>--backend other</code> to override.</li>
+<li><strong>not supported</strong> — rejected at CLI parse time with a clear error pointing at the right alternative.</li>
+<li><strong>deferred to v1.x</strong> — a real design constraint, not a gap; see the cell text and <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>.</li>
+<li><strong>internalised</strong> — <code>roksbnkctl</code> performs the operation via its own embedded library, not by shelling out; no backend selection applies.</li>
+</ul>
 <p>The “no” entries are intentional design decisions, not gaps:</p>
 <ul>
 <li><strong><code>iperf3</code> over <code>docker</code> is rejected</strong> because a Docker container running locally has the same network identity as the host — same NAT egress, same uplink, same observed bandwidth as <code>--backend local</code>. The user’s mental model would be “I picked docker, so the iperf3 must be hermetic now” but the throughput number wouldn’t actually differ. Better to refuse and force the user to pick <code>local</code> (deliberate laptop measurement) or <code>k8s</code> (cluster measurement).</li>
 <li><strong>DNS probe over <code>docker</code> is rejected</strong> for the same reason. DNS resolution from a Docker container with default bridge networking goes through the same resolver as the host. There’s no GSLB-relevant network-locality difference. The probe subcommand errors with “DNS probe doesn’t benefit from docker; use local instead” when <code>--backend docker</code> is passed.</li>
-<li><strong><code>terraform</code> over <code>k8s</code> and <code>ssh</code> is deferred</strong>. The state file is sensitive (admin tokens, generated TLS keys, license bundles); moving it into a Kubernetes Secret or scp’ing it pre/post-run requires a state-handling design that hasn’t shipped yet. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> lays out the considerations; expect this in a Sprint 5+ release.</li>
+<li><strong><code>terraform</code> over <code>k8s</code> and <code>ssh</code> is deferred to v1.x</strong>. The state file is sensitive (admin tokens, generated TLS keys, license bundles); moving it into a Kubernetes Secret or scp’ing it pre/post-run requires a state-handling design that hasn’t shipped yet. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a> lays out the considerations; the roadmap entry lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</li>
 </ul>
 <p>Passing an unsupported <code>(tool, backend)</code> pair errors at the CLI layer before the backend is invoked:</p>
 <pre><code>$ roksbnkctl test throughput --backend docker
@@ -270,16 +280,15 @@ roksbnkctl test throughput --backend k8s
 <p>That’s a deliberately different measurement — useful when you suspect office Wi-Fi, not cluster fabric, is the bottleneck.</p>
 <h3 id="im-doing-gslb-dns-validation"><a class="header" href="#im-doing-gslb-dns-validation">“I’m doing GSLB DNS validation”</a></h3>
 <p>Use <strong>both</strong> <code>local</code> and <code>k8s</code>. F5 BIG-IP Next’s GSLB returns different answers depending on the requesting resolver’s IP — geographic affinity, datacenter routing, health-check state. To validate that the GSLB is actually doing this, query from multiple network vantage points and compare.</p>
-<p>The full multi-vantage probe is a <strong>Sprint 5 deliverable</strong>; today (Sprint 4) <code>roksbnkctl test dns</code> is the simpler single-vantage workspace probe. The shape below is what the Sprint 5 expanded surface will look like — the flags (<code>--target</code>, <code>--type</code>, <code>--server</code>, <code>--gslb-compare</code>) don’t exist on <code>roksbnkctl test dns</code> yet:</p>
-<pre><code class="language-bash"># Sprint 5+ — the flags below don't exist on `roksbnkctl test dns` today
-roksbnkctl test dns \
+<p>The multi-vantage probe ships at v1.0 via <code>roksbnkctl test dns --gslb-compare</code>:</p>
+<pre><code class="language-bash">roksbnkctl test dns \
   --target www.example.com \
   --type A \
   --server gslb-vip.f5.example.com \
   --gslb-compare
 </code></pre>
-<p>When it lands, <code>--gslb-compare</code> will fan out to every configured backend (<code>local</code> for your office IP, <code>k8s</code> for the cluster’s egress IP, <code>ssh:&lt;region-bastion&gt;</code> for a bastion in another region) and emit a single comparison JSON. Different answers across vantages are <strong>expected</strong> in a healthy GSLB; identical answers might mean the GSLB rules aren’t taking effect.</p>
-<p><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> is the chapter to read once the probe ships.</p>
+<p><code>--gslb-compare</code> fans out to every configured vantage (<code>local</code> for your office IP, <code>k8s</code> for the cluster’s egress IP, <code>ssh:&lt;region-bastion&gt;</code> for a bastion in another region) in parallel and emits a single comparison JSON with a <code>gslb_divergence</code> boolean. Different answers across vantages are <strong>expected</strong> in a healthy GSLB; identical answers might mean the GSLB rules aren’t taking effect for the resolver positions you queried from.</p>
+<p><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> is the full reference.</p>
 <h3 id="i-need-to-run-ibmcloud-from-a-customer-firewalled-office"><a class="header" href="#i-need-to-run-ibmcloud-from-a-customer-firewalled-office">“I need to run <code>ibmcloud</code> from a customer-firewalled office”</a></h3>
 <p>Use <code>--backend ssh:&lt;bastion&gt;</code>. Your customer’s network policy lets the corporate jumphost reach <code>*.cloud.ibm.com</code> but blocks your laptop. The SSH backend ships your kubeconfig to the bastion (single file, mode <code>0600</code>, removed via <code>trap</code> on session exit), runs <code>ibmcloud</code> there, streams the output back:</p>
 <pre><code class="language-bash">roksbnkctl ibmcloud --backend ssh:bastion ks cluster ls
@@ -339,7 +348,7 @@ error: iperf3 doesn't support backend `docker` (same network identity as `local`
 </code></pre>
 <p>Once the tool is installed, <code>--backend ssh:host</code> works without <code>--bootstrap</code>.</p>
 <h3 id="--backend-k8s-for-terraform"><a class="header" href="#--backend-k8s-for-terraform"><code>--backend k8s</code> for <code>terraform</code></a></h3>
-<p>Deferred. The <code>terraform</code> tool’s k8s + ssh backends require a state-handling design that hasn’t shipped — moving the state file into a Kubernetes Secret or scp’ing it pre/post-run is fiddly enough to be a feature in its own right (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>). For now, <code>terraform</code> supports <code>local</code> and <code>docker</code> only. If the network-locality use case (running <code>terraform</code> from a customer VPC for IP-egress reasons) is blocking, file an issue.</p>
+<p>Deferred to v1.x. The <code>terraform</code> tool’s k8s + ssh backends require a state-handling design that hasn’t shipped — moving the state file into a Kubernetes Secret or scp’ing it pre/post-run is fiddly enough to be a feature in its own right (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>; roadmap in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”). For now, <code>terraform</code> supports <code>local</code> and <code>docker</code> only. If the network-locality use case (running <code>terraform</code> from a customer VPC for IP-egress reasons) is blocking, file an issue.</p>
 <h3 id="mixing---on-and---backend-sshtarget"><a class="header" href="#mixing---on-and---backend-sshtarget">Mixing <code>--on</code> and <code>--backend ssh:&lt;target&gt;</code></a></h3>
 <p><code>--on &lt;target&gt;</code> is the <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a> lightweight remote-exec — it runs the <em>passthrough</em> shape (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on the target by literally re-running the command via SSH. <code>--backend ssh:&lt;target&gt;</code> is the heavier-duty form — it routes through the <code>Backend</code> interface, which means file materialisation, env propagation hardening, opt-in apt-bootstrap, and the redactor are all wired in.</p>
 <p>You generally want one or the other, not both. The supported precedence is “<code>--backend ssh:&lt;target&gt;</code> wins”; passing both flags on the same invocation surfaces a warning. If you’re calling <code>roksbnkctl ibmcloud …</code>, prefer <code>--backend ssh:&lt;target&gt;</code> for the same target — you get the better cred-handling story automatically.</p>
@@ -367,7 +376,7 @@ error: iperf3 doesn't support backend `docker` (same network identity as `local`
 <tbody>
 <tr><td>Measure cluster bandwidth</td><td><code>k8s</code></td><td>iperf3 client + server in cluster (the default)</td></tr>
 <tr><td>Measure laptop-uplink-to-cluster bandwidth</td><td><code>local</code></td><td>deliberate; not the iperf3 default</td></tr>
-<tr><td>GSLB DNS cross-vantage compare</td><td><code>local</code> + <code>k8s</code> (<code>--gslb-compare</code>)</td><td>Sprint 5; multiple vantages</td></tr>
+<tr><td>GSLB DNS cross-vantage compare</td><td><code>local</code> + <code>k8s</code> (<code>--gslb-compare</code>)</td><td>multiple vantages in parallel</td></tr>
 <tr><td><code>ibmcloud</code> from a customer-firewalled office</td><td><code>ssh:bastion</code></td><td>with <code>--bootstrap</code> if first call on fresh Ubuntu</td></tr>
 <tr><td>Frozen-version CI for any tool</td><td><code>docker</code></td><td>image tag matches <code>roksbnkctl</code> release</td></tr>
 <tr><td>Cluster-side ad-hoc <code>ibmcloud</code> debugging</td><td><code>k8s</code></td><td>requires <code>roksbnkctl ops install</code> first</td></tr>
@@ -378,6 +387,65 @@ error: iperf3 doesn't support backend `docker` (same network identity as `local`
 </tbody>
 </table>
 </div>
+<h2 id="worked-example-bare-metal--jumphost-office-workflow"><a class="header" href="#worked-example-bare-metal--jumphost-office-workflow">Worked example: bare-metal + jumphost office workflow</a></h2>
+<p>End-to-end Part V scenario: you’re an F5 SE running a customer POC from a corporate-firewalled office. The laptop can’t reach <code>*.cloud.ibm.com</code> directly (the office proxy blocks it) but a customer-provisioned Ubuntu jumphost at <code>10.20.30.40</code> can. The jumphost was already auto-discovered by an earlier <code>roksbnkctl up</code> against this customer’s account, so <code>targets list</code> shows it. You need to: install the in-cluster ops pod, run <code>ibmcloud</code> from the bastion, and run a throughput test from inside the cluster — all without installing tools locally.</p>
+<pre><code class="language-bash"># 1. Verify jumphost is registered + reachable
+$ roksbnkctl targets list -w customer
+NAME       HOST          KEY_SOURCE         STATUS
+jumphost   10.20.30.40   workspace/state    reachable
+
+# 2. Run ibmcloud from the jumphost (Sprint 1 --on flag, lightweight)
+$ roksbnkctl ibmcloud --on jumphost ks cluster ls
+OK
+Name              ID                                     State    Created     ...
+customer-cluster  c4abc123def456                         normal   3 days ago  ...
+
+# 3. For the same call routed through the Backend interface (cred-handling
+# hardened, redactor wired, opt-in apt-bootstrap available), use --backend
+$ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
+# Same output; different code path. Prefer --backend ssh:&lt;target&gt; for
+# everything except quick interactive shells where --on is faster to type.
+
+# 4. Install the in-cluster ops pod (one-time per cluster)
+$ roksbnkctl ops install
+✓ Namespace roksbnkctl-ops created
+✓ ServiceAccount + Role + RoleBinding applied
+✓ Secret roksbnkctl-ibm-creds applied (envFrom secretRef)
+✓ Pod roksbnkctl-ops Running (2.3s)
+
+# 5. Same ibmcloud call routed through the ops pod (k8s backend)
+$ roksbnkctl ibmcloud --backend k8s iam oauth-tokens
+IAM token: Bearer eyJ...
+# (The token comes from inside the cluster — different egress IP from the
+# jumphost's, useful when IAM policy is IP-conditional.)
+
+# 6. Throughput test using the cluster vantage (default for iperf3)
+$ roksbnkctl test throughput
+→ Deploying iperf3 server pod into namespace "roksbnkctl-test"
+✓ Pod ready (iperf3-server-...)
+→ Deploying iperf3 client Job in the same namespace
+✓ Client Job complete
+✓ throughput: 8.92 Gbits/sec (mean over 10s)
+→ Tearing down iperf3 fixture
+✓ pod, service, and Job deleted
+
+# 7. Throughput test from the jumphost into the cluster (north-south, real
+# customer-network bandwidth — not laptop wifi)
+$ roksbnkctl test throughput --backend ssh:jumphost --mode north-south
+✓ throughput: 936 Mbits/sec  (jumphost → cluster LB; customer's WAN)
+
+# 8. Persist the per-tool routing in workspace config (one-time)
+$ cat &gt;&gt; ~/.roksbnkctl/customer/config.yaml &lt;&lt;'YAML'
+exec:
+  ibmcloud:  { backend: ssh:jumphost }
+  iperf3:    { backend: k8s }
+  terraform: { backend: local }
+YAML
+# Subsequent runs skip the --backend flag — every ibmcloud call routes via
+# the jumphost automatically; every iperf3 runs in-cluster.
+</code></pre>
+<p>The point of this walkthrough: with no tools installed locally beyond <code>roksbnkctl</code> itself, you’ve reached the IBM Cloud control plane from the customer’s bastion (compliance-correct egress), exercised the cluster fabric for throughput, and persisted the routing per workspace. The same laptop with the same <code>roksbnkctl</code> binary handles a different customer’s POC by pointing at a different workspace; nothing on the laptop is workspace-specific.</p>
+<p><a href="./19-in-cluster-ops-pod.html">Chapter 19</a> covers the ops-pod lifecycle in detail; <a href="./22-throughput-testing.html">Chapter 22</a> covers the north-south vs east-west modes.</p>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
@@ -440,6 +508,8 @@ error: iperf3 doesn't support backend `docker` (same network identity as `local`
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 
