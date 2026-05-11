@@ -280,9 +280,15 @@ release-publish:
 	@$(MAKE) book-publish
 	@echo ""
 	@echo "==> [2/2] Uploading PDF book to GitHub Release $(VERSION)"
-	gh release upload $(VERSION) \
-	    "book/book/pandoc/pdf/book.pdf#roksbnkctl-book-$(VERSION).pdf" \
-	    --clobber
+	@# The asset's filename (not just display label) needs to be
+	@# roksbnkctl-book-$(VERSION).pdf so the download URL is predictable
+	@# and unique-per-release. gh release upload's `path#label` syntax
+	@# only sets the display label — the asset name stays as the source
+	@# filename. So we copy to a properly-named tempfile and upload that.
+	@tmp=$$(mktemp -d -t roksbnkctl-pdf.XXXXXX) && \
+	    trap "rm -rf $$tmp" EXIT && \
+	    cp book/book/pandoc/pdf/book.pdf "$$tmp/roksbnkctl-book-$(VERSION).pdf" && \
+	    gh release upload $(VERSION) "$$tmp/roksbnkctl-book-$(VERSION).pdf" --clobber
 	@echo ""
 	@echo "==> Published:"
 	@echo "    HTML: https://jgruberf5.github.io/roksbnkctl/book/"
