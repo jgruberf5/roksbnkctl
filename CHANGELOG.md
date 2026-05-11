@@ -82,7 +82,7 @@ The book at <https://jgruberf5.github.io/roksbnkctl/book/> covered the v0.9 surf
 
 Per-PRD design rationale (cred propagation, execution backends, kubectl internalisation, etc.) lives under [`docs/prd/`](docs/prd/).
 
-## v1.0.0 — 2026-MM-DD (M4 milestone)
+## v1.0.0 — 2026-05-11 (M4 milestone)
 
 The first stable release. roksbnkctl bundles seven sprints of work (M1 → M4) into a single-binary CLI: a 4-command lifecycle (`init` → `up` → `test` → `down`), four execution backends (`local` / `docker` / `k8s` / `ssh:<target>`), a GSLB-aware DNS probe, terraform-via-docker, an in-cluster ops pod, and a full kubectl-internalised cluster-ops surface — all in one statically linked binary with terraform as the only required host install. The published book at <https://jgruberf5.github.io/roksbnkctl/book/> ships alongside the binary as the canonical user documentation.
 
