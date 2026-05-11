@@ -1,6 +1,18 @@
 # goreleaser config for roksbnkctl.
 # Run with: goreleaser release --clean (after tagging a release)
 # Cross-compile sweep: linux/darwin/windows × amd64/arm64.
+#
+# Sprint 7 v1.0 polish:
+#  - release.header / .footer link the GitHub Release page at the book.
+#  - PDF book artifact: attached via `release.extra_files` below. Built
+#    locally via `make release` (which routes through the docker image
+#    at tools/docker/mdbook/Dockerfile) before running goreleaser, so
+#    the PDF exists at book/book/pandoc/pdf/book.pdf at goreleaser time.
+#  - Cosign / sigstore signing: deferred to v1.x (no signing infra wired
+#    in the release workflow yet; shipping a half-working signs: block
+#    would just produce bad attestations).
+#  - Homebrew tap: deferred to v1.x (no tap repo yet; the brews: block
+#    is left commented out below as a marker for when a tap lands).
 version: 2
 
 project_name: roksbnkctl
@@ -29,11 +41,19 @@ builds:
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
 
 archives:
+  # The name_template here is load-bearing: `internal/cli/self.go`
+  # rebuilds the same template to find the asset for the host's
+  # OS/arch when `roksbnkctl self update` runs. Keep these aligned.
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     # goreleaser v2 renamed `format` (singular) to `formats` (list).
     format_overrides:
       - goos: windows
         formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - MIGRATING.md
 
 checksum:
   name_template: "checksums.txt"
@@ -49,3 +69,51 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+release:
+  # The header / footer wrap goreleaser's auto-generated changelog body
+  # on the GitHub Release page. Keeping it short — the canonical
+  # documentation lives in the book, the per-version detail in
+  # CHANGELOG.md.
+  header: |
+    ## roksbnkctl {{ .Tag }}
+
+    Single-binary CLI for deploying F5 BIG-IP Next for Kubernetes on IBM Cloud ROKS.
+
+    Read the book: <https://jgruberf5.github.io/roksbnkctl/book/> — _Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl_
+
+    Migration guide: <https://github.com/jgruberf5/roksbnkctl/blob/main/MIGRATING.md>
+  footer: |
+    ---
+    See [`CHANGELOG.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/CHANGELOG.md) for the full per-version change log.
+
+    Verify the downloaded archive against `checksums.txt`:
+    ```
+    sha256sum -c checksums.txt --ignore-missing
+    ```
+
+    The attached `roksbnkctl-book-{{ .Tag }}.pdf` is the same book published at <https://jgruberf5.github.io/roksbnkctl/book/>, packaged for offline reading. Build it locally any time via `make release` from the source tree.
+
+  # The PDF artifact has to exist at this path before goreleaser runs.
+  # `make release` (from the repo root) produces it via the
+  # tools/docker/mdbook image. If goreleaser runs without the PDF having
+  # been built first, the release still publishes — `extra_files` warns
+  # about a missing path but doesn't fail-stop.
+  extra_files:
+    - glob: ./book/book/pandoc/pdf/book.pdf
+      name_template: "roksbnkctl-book-{{ .Tag }}.pdf"
+
+# Homebrew tap — wire when an `homebrew-tap` repo exists under the org.
+# Until then, leaving this block commented out so goreleaser doesn't
+# half-publish a formula pointing at a nonexistent tap.
+#
+# brews:
+#   - name: roksbnkctl
+#     repository:
+#       owner: jgruberf5
+#       name: homebrew-tap
+#     homepage: "https://jgruberf5.github.io/roksbnkctl/book/"
+#     description: "Single-binary CLI for deploying F5 BIG-IP Next for Kubernetes on IBM Cloud ROKS."
+#     license: "MIT"
+#     test: |
+#       system "#{bin}/roksbnkctl", "version"

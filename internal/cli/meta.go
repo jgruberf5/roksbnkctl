@@ -14,11 +14,22 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 )
 
+// DocsURL is the canonical user documentation surface for roksbnkctl —
+// the published mdBook at GitHub Pages. Single source of truth so the
+// `version` subcommand, the cobra-wired `--version` flag, and the
+// `self update` flow all surface the same URL.
+const DocsURL = "https://jgruberf5.github.io/roksbnkctl/book/"
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version, commit, and build date",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		fmt.Printf("roksbnkctl %s (commit %s, built %s)\n", Version, Commit, BuildDate)
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		// Keep the first line byte-identical to the pre-v1.0 shape so
+		// any scripts that grep `roksbnkctl version` output for the
+		// "(commit X, built Y)" tail continue to parse. Append the
+		// docs URL on its own second line.
+		fmt.Fprintf(cmd.OutOrStdout(), "roksbnkctl %s (commit %s, built %s)\nDocs: %s\n",
+			Version, Commit, BuildDate, DocsURL)
 		return nil
 	},
 }
