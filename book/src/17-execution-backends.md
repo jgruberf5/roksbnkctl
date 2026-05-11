@@ -522,7 +522,7 @@ Bootstrap failure modes split between the two backend-failure exit codes per [§
 | Failure | Exit | What you see |
 |---|---|---|
 | `--bootstrap` not set and tool missing | `127` | "tool `<name>` not found on ssh target `<target>`; re-run with --bootstrap to install via apt-get, or pre-install on the target manually" |
-| `sudo` requires a password (NOPASSWD not configured) | `126` | `sudo: a password is required` → "the SSH user needs passwordless sudo for `apt-get install`. Configure `<user> ALL=(ALL) NOPASSWD: /usr/bin/apt-get` in /etc/sudoers, or pre-install <pkg> manually." |
+| `sudo` requires a password (NOPASSWD not configured) | `126` | `sudo: a password is required` → "the SSH user needs passwordless sudo for `apt-get install`. Configure `<user> ALL=(ALL) NOPASSWD: /usr/bin/apt-get` in /etc/sudoers, or pre-install `<pkg>` manually." |
 | Non-Ubuntu OS (`lsb_release -is` doesn't return `Ubuntu`) | `126` | "auto-install only supports Ubuntu. Pre-install `<pkg>` on the target (RHEL: `yum install <pkg>`)." |
 | Network unreachable from target (apt-get can't reach the repo) | `127` | "target can't reach the package repo. Check the target's egress policy or pre-install `<pkg>` manually." |
 | No apt mapping for the requested tool | `126` | "no bootstrap recipe known for tool `<name>`; the SSH backend only auto-installs `ibmcloud` + `iperf3` today" |

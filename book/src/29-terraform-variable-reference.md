@@ -57,7 +57,7 @@ Source: `terraform/variables.tf`
 | `testing_client_vpc_name` | `string` | `"tf-testing-vpc"` | Name of the client VPC — created when testing_create_client_vpc = true, or looked up when false | no |
 | `testing_client_vpc_region` | `string` | `"ca-tor"` | IBM Cloud region for the client VPC and TGW jumphost | no |
 | `testing_tgw_jumphost_name` | `string` | `"tf-testing-jumphost-tgw"` | Name of the TGW-connected jumphost instance | no |
-| `testing_cluster_jumphost_name_prefix` | `string` | `"tf-testing-jumphost-cluster"` | Name prefix for cluster jumphosts — zone name is appended (<prefix>-<zone>) | no |
+| `testing_cluster_jumphost_name_prefix` | `string` | `"tf-testing-jumphost-cluster"` | Name prefix for cluster jumphosts — zone name is appended (`<prefix>`-`<zone>`) | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig"` | Parent directory where ibm_container_cluster_config writes admin kubeconfigs. Each submodule appends its name as a subdir. Default is the bnk runner image's /work mount; override for direct-on-host runs. | no |
 | `scratch_dir` | `string` | `"/work/.bnk/scratch"` | Persistent scratch directory for FLO's FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount; override for direct-on-host runs. | no |
 
@@ -198,7 +198,7 @@ Source: `terraform/modules/testing/variables.tf`
 | `testing_client_vpc_region` | `string` | `"ca-tor"` | IBM Cloud region for the client VPC and TGW jumphost | no |
 | `testing_transit_gateway_name` | `string` | `""` | Name of an existing Transit Gateway to connect the client VPC to (leave empty to skip TGW attachment) | no |
 | `testing_tgw_jumphost_name` | `string` | `"tf-testing-jumphost-tgw"` | Name of the TGW-connected jumphost instance (used as prefix for subnet, gateway, security group, and floating IP) | no |
-| `testing_cluster_jumphost_name_prefix` | `string` | `"tf-testing-jumphost-cluster"` | Name prefix for cluster jumphosts — zone name is appended (<prefix>-<zone>) | no |
+| `testing_cluster_jumphost_name_prefix` | `string` | `"tf-testing-jumphost-cluster"` | Name prefix for cluster jumphosts — zone name is appended (`<prefix>`-`<zone>`) | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes | no |
 | `create_roks_cluster` | `bool` | `false` | Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster | no |
 | `cluster_vpc_id` | `string` | `""` | ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time | no |

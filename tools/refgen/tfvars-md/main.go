@@ -318,12 +318,56 @@ func writeVariableTable(w io.Writer, vars []Variable) {
 		if v.Sensitive {
 			sensitive = "**yes**"
 		}
-		desc := escapePipes(v.Description)
+		desc := wrapAnglePlaceholders(escapePipes(v.Description))
 		if desc == "" {
 			desc = "—"
 		}
 		fmt.Fprintf(w, "| `%s` | %s | %s | %s | %s |\n", v.Name, typ, def, desc, sensitive)
 	}
+}
+
+// anglePlaceholderRE matches placeholder tokens like <zone>, <prefix>,
+// <cluster-name> that variable descriptions in terraform/variables.tf
+// occasionally use. mdbook's markdown→HTML pipeline parses bare <foo>
+// as an HTML opening tag and renders nothing (the placeholder
+// vanishes); wrapping in backticks turns it into inline code.
+var anglePlaceholderRE = regexp.MustCompile(`<([a-zA-Z][a-zA-Z0-9_-]*)>`)
+
+// wrapAnglePlaceholders backticks every <word> placeholder in s, but
+// leaves <word> tokens already inside a backtick code span alone.
+// Idempotent. Treats the string as flat text + backtick-spans; doesn't
+// understand fenced code blocks (variable descriptions never contain
+// ``` fences in practice).
+func wrapAnglePlaceholders(s string) string {
+	var out strings.Builder
+	var inCode bool
+	var i int
+	for i < len(s) {
+		c := s[i]
+		if c == '`' {
+			inCode = !inCode
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if inCode || c != '<' {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		loc := anglePlaceholderRE.FindStringIndex(s[i:])
+		if loc == nil || loc[0] != 0 {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		match := s[i : i+loc[1]]
+		out.WriteByte('`')
+		out.WriteString(match)
+		out.WriteByte('`')
+		i += loc[1]
+	}
+	return out.String()
 }
 
 // escapePipes makes a string safe to drop into a Markdown table cell

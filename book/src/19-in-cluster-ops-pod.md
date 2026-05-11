@@ -111,7 +111,7 @@ stringData:
 
 The key value comes from the workspace's resolver chain (env → keychain → config-b64 → prompt) — see [Chapter 14](./14-credentials-resolver.md) for the resolution order. The Secret carries two keys (`IBMCLOUD_API_KEY` and the legacy alias `IC_API_KEY`) both populated from the same resolved value, so older `ibmcloud` CLI versions that look for the `IC_` name find it.
 
-If the Secret already exists (re-running `ops install` after a key rotation), `roksbnkctl` does a client-side Get + Update: the Secret's `data` is overwritten with the freshly resolved value, the `roksbnkctl.io/rotated-at` annotation is stamped with the current timestamp, and the rest of the Secret's metadata is left untouched. `roksbnkctl ops show` surfaces "last cred rotation: <timestamp>" by reading that annotation.
+If the Secret already exists (re-running `ops install` after a key rotation), `roksbnkctl` does a client-side Get + Update: the Secret's `data` is overwritten with the freshly resolved value, the `roksbnkctl.io/rotated-at` annotation is stamped with the current timestamp, and the rest of the Secret's metadata is left untouched. `roksbnkctl ops show` surfaces `last cred rotation: <timestamp>` by reading that annotation.
 
 ### 5. Create the Pod
 

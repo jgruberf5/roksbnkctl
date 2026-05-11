@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -35,6 +36,54 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/cli"
 )
+
+// anglePlaceholderRE matches placeholder tokens like <name>, <ws>,
+// <cluster-name>, <pod_name>. mdbook's markdown→HTML pipeline parses
+// bare <foo> as an HTML opening tag, then warns about the missing
+// closing tag and renders nothing in the browser (the placeholder
+// vanishes). Wrapping each occurrence in backticks turns it into
+// inline code, which mdbook treats as opaque text — readers see the
+// literal `<name>` and mdbook stops warning.
+var anglePlaceholderRE = regexp.MustCompile(`<([a-zA-Z][a-zA-Z0-9_-]*)>`)
+
+// wrapAnglePlaceholders backticks every <word> placeholder in s, but
+// leaves <word> tokens already inside a backtick code span alone (so
+// re-running the function is idempotent and doesn't double-wrap).
+// Treats the string as a flat sequence of text + backtick-spans; doesn't
+// understand fenced code blocks (cobra Short/Long/Usage fields never
+// contain ``` fences in practice).
+func wrapAnglePlaceholders(s string) string {
+	var out strings.Builder
+	var inCode bool
+	var i int
+	for i < len(s) {
+		c := s[i]
+		if c == '`' {
+			inCode = !inCode
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if inCode || c != '<' {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		// Try to match a placeholder starting at this position.
+		loc := anglePlaceholderRE.FindStringIndex(s[i:])
+		if loc == nil || loc[0] != 0 {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		match := s[i : i+loc[1]]
+		out.WriteByte('`')
+		out.WriteString(match)
+		out.WriteByte('`')
+		i += loc[1]
+	}
+	return out.String()
+}
 
 func main() {
 	root := cli.RootCommand()
@@ -111,7 +160,7 @@ func renderCommand(w io.Writer, c *cobra.Command, depth int) {
 	fmt.Fprintf(w, "%s `%s`\n\n", hash, path)
 
 	if s := strings.TrimSpace(c.Short); s != "" {
-		fmt.Fprintf(w, "%s\n\n", s)
+		fmt.Fprintf(w, "%s\n\n", wrapAnglePlaceholders(s))
 	}
 
 	// Aliases — emitted under the synopsis so readers searching for the
@@ -137,7 +186,7 @@ func renderCommand(w io.Writer, c *cobra.Command, depth int) {
 
 	// Long description, if present and distinct from Short.
 	if l := strings.TrimSpace(c.Long); l != "" && l != strings.TrimSpace(c.Short) {
-		fmt.Fprintf(w, "%s\n\n", l)
+		fmt.Fprintf(w, "%s\n\n", wrapAnglePlaceholders(l))
 	}
 
 	// Local flag table (NOT inherited — those live in `## Global flags`).
@@ -220,7 +269,7 @@ func writeFlagTable(w io.Writer, fs *pflag.FlagSet) {
 			short:       f.Shorthand,
 			typ:         f.Value.Type(),
 			def:         f.DefValue,
-			description: strings.ReplaceAll(f.Usage, "|", `\|`),
+			description: wrapAnglePlaceholders(strings.ReplaceAll(f.Usage, "|", `\|`)),
 		})
 	})
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })

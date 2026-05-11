@@ -46,10 +46,41 @@ filters = ["/opt/render-mermaid.lua"]
 documentclass = "report"
 papersize = "letter"
 geometry = ["margin=1in"]
-mainfont = "Latin Modern Roman"
-sansfont = "Latin Modern Sans"
-monofont = "Latin Modern Mono"
+# Font picks chosen for broad Unicode coverage — the chapters use
+# box-drawing characters in ASCII tree diagrams (── │ ┌ ┐ └ ┘ ├ ┤),
+# checkmark/cross/warning glyphs in sample doctor output (✓ ✗ ⚠), and
+# arrow / math glyphs in prose (→ ⇒ ↔ ≠ ≥ ≫ ≈). Latin Modern doesn't
+# cover those code points; DejaVu and Noto both do.
+#
+# DejaVu Sans Mono is the classic technical-book monospace — wide
+# Unicode + good readability at body-text size. DejaVu Serif / Sans
+# cover the math + arrow glyphs in body prose.
+mainfont = "DejaVu Serif"
+sansfont = "DejaVu Sans"
+monofont = "DejaVu Sans Mono"
 colorlinks = true
 linkcolor = "NavyBlue"
 urlcolor = "NavyBlue"
 toccolor = "NavyBlue"
+
+# header-includes injects raw LaTeX into the document preamble. We use
+# it to map rare Unicode glyphs to LaTeX commands so they render
+# correctly even in font faces (e.g. DejaVu Sans Mono Oblique used for
+# bash-comment lines like `# ✓ Created workspace`) that don't carry the
+# Dingbats or Mathematical Operators ranges. Without these maps,
+# XeLaTeX prints `[WARNING] Missing character` and leaves a blank.
+header-includes = [
+  "\\usepackage{pifont}",
+  "\\usepackage{newunicodechar}",
+  "\\newunicodechar{✓}{\\ding{52}}",
+  "\\newunicodechar{✗}{\\ding{56}}",
+  "\\newunicodechar{⚠}{\\textbf{!}}",
+  "\\newunicodechar{≫}{\\ensuremath{\\gg}}",
+  "\\newunicodechar{≪}{\\ensuremath{\\ll}}",
+  "\\newunicodechar{⇒}{\\ensuremath{\\Rightarrow}}",
+  "\\newunicodechar{↔}{\\ensuremath{\\leftrightarrow}}",
+  "\\newunicodechar{≥}{\\ensuremath{\\geq}}",
+  "\\newunicodechar{≤}{\\ensuremath{\\leq}}",
+  "\\newunicodechar{≠}{\\ensuremath{\\neq}}",
+  "\\newunicodechar{≈}{\\ensuremath{\\approx}}",
+]

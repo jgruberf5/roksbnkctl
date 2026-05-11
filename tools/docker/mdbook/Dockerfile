@@ -81,6 +81,7 @@ RUN apt-get update \
         texlive-latex-recommended \
         texlive-latex-extra \
         lmodern \
+        fonts-dejavu \
         librsvg2-bin \
         nodejs \
         npm \

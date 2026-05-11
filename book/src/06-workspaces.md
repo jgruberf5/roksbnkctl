@@ -94,7 +94,7 @@ roksbnkctl ws current
 # default
 ```
 
-Prints the current workspace name on stdout. If no pointer is set, prints `(no current workspace; run `roksbnkctl ws use <name>` or `roksbnkctl init`)` to **stderr** and exits 0 with empty stdout — so `WS=$(roksbnkctl ws current)` produces an empty string in scripts rather than spurious output.
+Prints the current workspace name on stdout. If no pointer is set, prints a hint like "no current workspace; run `roksbnkctl ws use <name>` or `roksbnkctl init`" to **stderr** and exits 0 with empty stdout — so `WS=$(roksbnkctl ws current)` produces an empty string in scripts rather than spurious output.
 
 ### `ws list` — table view
 

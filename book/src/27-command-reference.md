@@ -21,8 +21,8 @@ These flags apply to every command. They are declared on the root command and in
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--backend` | `string` | — | execution backend: local \| docker \| k8s \| ssh:<target> (default: per-tool from workspace exec: block, else local) |
-| `--bootstrap` | `bool` | `false` | for --backend ssh:<target>: auto-install missing tools on Ubuntu via apt-get (requires passwordless sudo on the target) |
+| `--backend` | `string` | — | execution backend: local \| docker \| k8s \| ssh:`<target>` (default: per-tool from workspace exec: block, else local) |
+| `--bootstrap` | `bool` | `false` | for --backend ssh:`<target>`: auto-install missing tools on Ubuntu via apt-get (requires passwordless sudo on the target) |
 | `--insecure-host-key` | `bool` | `false` | skip the host-key TOFU prompt; record on first contact (CI use) |
 | `--no-color` | `bool` | `false` | disable colored output |
 | `--on` | `string` | — | run on the named SSH target instead of locally (`roksbnkctl targets list` to see options) |
@@ -95,14 +95,14 @@ roksbnkctl cluster register [cluster-name-or-id] [flags]
 
 Looks up an existing ROKS cluster in your IBM Cloud account,
 verifies its registry COS instance exists, and writes the cluster's
-identity to ~/.roksbnkctl/<workspace>/cluster-outputs.json.
+identity to ~/.roksbnkctl/`<workspace>`/cluster-outputs.json.
 
 Subsequent `roksbnkctl up` runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.
 
 By default the registry COS instance name follows the upstream HCL
-fallback formula "<cluster-name>-cos". Pass --registry-cos-name to
+fallback formula "`<cluster-name>`-cos". Pass --registry-cos-name to
 override (e.g. if your tfvars sets roks_cos_instance_name to a different
 value).
 
@@ -111,7 +111,7 @@ value).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--prompt` | `bool` | `false` | prompt for the cluster name even if one is given as an argument |
-| `--registry-cos-name` | `string` | — | expected registry COS instance name (default "<cluster>-cos" — matches the upstream HCL fallback) |
+| `--registry-cos-name` | `string` | — | expected registry COS instance name (default "`<cluster>`-cos" — matches the upstream HCL fallback) |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
@@ -133,10 +133,10 @@ Runs terraform apply with deploy_bnk=false forced — creates the
 ROKS cluster, transit gateway, registry COS, cert-manager, and the test
 jumphost, but skips the BNK trial modules (flo, cne_instance, license).
 On success, writes the cluster's identity to
-~/.roksbnkctl/<workspace>/cluster-outputs.json so subsequent `roksbnkctl up`
+~/.roksbnkctl/`<workspace>`/cluster-outputs.json so subsequent `roksbnkctl up`
 runs can deploy BNK trials onto this cluster.
 
-Uses a separate state directory (~/.roksbnkctl/<workspace>/state-cluster/)
+Uses a separate state directory (~/.roksbnkctl/`<workspace>`/state-cluster/)
 so it doesn't tangle with BNK-trial state.
 
 **Flags**
@@ -324,15 +324,15 @@ Required (hard fail on missing):
 
 Informational (the binary internalises each surface; missing → no warning):
   - kubectl / oc — internalised via client-go (`roksbnkctl k *`)
-  - ibmcloud     — bundled image, run via --backend docker / --backend ssh:<target>
+  - ibmcloud     — bundled image, run via --backend docker / --backend ssh:`<target>`
   - iperf3       — bundled image, run via --backend k8s
   - dig          — DNS probe internalised via miekg/dns
 
 A stock dev box with only `terraform` installed should produce exit 0
 and zero warnings.
 
-Pass --target <name> to additionally probe an SSH target (runs whoami).
-Pass --backend k8s | ssh:<target> for per-backend prereq checks.
+Pass --target `<name>` to additionally probe an SSH target (runs whoami).
+Pass --backend k8s | ssh:`<target>` for per-backend prereq checks.
 
 Exits non-zero only when a required check fails (warnings don't block).
 
@@ -340,7 +340,7 @@ Exits non-zero only when a required check fails (warnings don't block).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--backend` | `string` | — | additionally run per-backend checks: k8s \| ssh:<target> |
+| `--backend` | `string` | — | additionally run per-backend checks: k8s \| ssh:`<target>` |
 | `--target` | `string` | — | additionally probe the named SSH target with `whoami` |
 
 ## `roksbnkctl down`
@@ -414,7 +414,7 @@ roksbnkctl init [flags]
 ```
 
 roksbnkctl init walks through the prompts (region, resource group, cluster,
-BNK version) and writes ~/.roksbnkctl/<workspace>/config.yaml.
+BNK version) and writes ~/.roksbnkctl/`<workspace>`/config.yaml.
 
 On first run with no -w flag, creates and uses the 'default' workspace.
 Re-run with --upgrade-tf to bump the pinned Terraform source to its latest
@@ -469,7 +469,7 @@ pulls the latest GitHub release tarball over the network.
 
 Kubernetes verbs (kubectl-internalised; no host kubectl required)
 
-roksbnkctl k <verb> runs the BNK-relevant kubectl/oc verb subset
+roksbnkctl k `<verb>` runs the BNK-relevant kubectl/oc verb subset
 natively in-process via client-go, with no host kubectl/oc binary
 required. Output formatting matches kubectl byte-for-byte for
 -o yaml/json/wide/name/jsonpath/go-template.
@@ -497,8 +497,8 @@ roksbnkctl k apply -f <file-or-dir> [-n <ns>] [--force] [flags]
 
 Server-side apply with field-manager 'roksbnkctl'.
 
-  -f <file>       single YAML/JSON file (multi-doc YAML supported)
-  -f <dir>        directory: kustomization.yaml-detected → krusty build;
+  -f `<file>`       single YAML/JSON file (multi-doc YAML supported)
+  -f `<dir>`        directory: kustomization.yaml-detected → krusty build;
                   otherwise recursive *.yaml / *.yml
   -f -            stdin (multi-doc YAML)
 
@@ -604,7 +604,7 @@ Examples:
   roksbnkctl k exec my-pod -c sidecar -- cat /etc/hostname
 
 Note: this is the cluster-side exec. The host-side equivalent is
-'roksbnkctl exec <cmd>' — distinct on purpose (PRD 02 §"Disambiguating
+'roksbnkctl exec `<cmd>`' — distinct on purpose (PRD 02 §"Disambiguating
 roksbnkctl exec", Option B).
 
 **Flags**
@@ -660,7 +660,7 @@ roksbnkctl k logs <pod-name> [-n <ns>] [-c <container>] [-f] [--previous] [--sin
 ```
 
 Streams logs for a named pod. Differs from the top-level
-'roksbnkctl logs <component>' in that this takes a literal pod name —
+'roksbnkctl logs `<component>`' in that this takes a literal pod name —
 matching kubectl's surface — while the component variant maps a known
 BNK component name to a label selector.
 
@@ -753,7 +753,7 @@ The component → namespace/selector map is hardcoded for v1 against the
 upstream TF chart's default labels; if your install renamed namespaces
 or relabelled, fall back to:
 
-  roksbnkctl kubectl logs -n <ns> <pod>
+  roksbnkctl kubectl logs -n `<ns>` `<pod>`
 
 **Flags**
 
@@ -906,7 +906,7 @@ roksbnkctl targets add <name> --host H --user U [--port P] [--key-path P | --key
 |---|---|---|---|
 | `--host` | `string` | — | host or IP |
 | `--key-path` | `string` | — | path to a PEM private key |
-| `--key-source` | `string` | — | key source — "agent" or "tf-output:<name>" |
+| `--key-source` | `string` | — | key source — "agent" or "tf-output:`<name>`" |
 | `--port` | `int` | `0` | ssh port (default 22) |
 | `--user` | `string` | — | remote user |
 
@@ -990,9 +990,9 @@ Two modes:
   uses the embedded miekg/dns probe (no external dig install needed).
   Single-vantage emits `roksbnkctl.dns.v1.vantage`; --gslb-compare
   emits `roksbnkctl.dns.v1` with a gslb_divergence boolean across
-  all configured backends (local + k8s + ssh:<targets>).
+  all configured backends (local + k8s + ssh:`<targets>`).
 
-Use --backend local|k8s|ssh:<target> to pick a single vantage point;
+Use --backend local|k8s|ssh:`<target>` to pick a single vantage point;
 --gslb-compare fans out across all available vantages. PRD 03 §"DNS
 probe (GSLB-aware)".
 
@@ -1000,10 +1000,10 @@ probe (GSLB-aware)".
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--gslb-compare` | `bool` | `false` | fan out the probe across all configured backends (local + k8s + ssh:<targets>) and emit a comparison JSON with gslb_divergence |
+| `--gslb-compare` | `bool` | `false` | fan out the probe across all configured backends (local + k8s + ssh:`<targets>`) and emit a comparison JSON with gslb_divergence |
 | `--iterations` | `int` | `1` | number of repeated queries; >1 enables RTT distribution |
 | `--require-divergence` | `bool` | `false` | with --gslb-compare: exit non-zero if NO divergence is observed (CI assertion that GSLB is doing something) |
-| `--server` | `string` | — | resolver: <ip>[:<port>] \| system \| cluster \| <named-from-workspace> (default: system) |
+| `--server` | `string` | — | resolver: `<ip>`[:`<port>`] \| system \| cluster \| `<named-from-workspace>` (default: system) |
 | `--target` | `string` | — | DNS name to query (overrides workspace test.dns.default_target) |
 | `--timeout` | `duration` | `2s` | per-query timeout |
 | `--type` | `string` | `A` | record type: A \| AAAA \| CNAME \| MX \| NS \| TXT \| SRV \| SOA \| PTR \| CAA \| DS \| DNSKEY \| ANY |
@@ -1054,7 +1054,7 @@ if not yet cached) and writes its terraform.tfvars.example as a
 starting point you can edit and pass to roksbnkctl up.
 
 Default writes to ./terraform.tfvars in the current directory.
-Pass -o <path> to write elsewhere, or -o - to print to stdout.
+Pass -o `<path>` to write elsewhere, or -o - to print to stdout.
 
 Refuses to overwrite an existing destination unless --force is set.
 
@@ -1102,7 +1102,7 @@ Manage roksbnkctl workspaces (per-environment config + state bundles)
 
 **Aliases**: `ws`
 
-Each workspace lives under ~/.roksbnkctl/<name>/ with its own config.yaml
+Each workspace lives under ~/.roksbnkctl/`<name>`/ with its own config.yaml
 and state. The current_workspace pointer in ~/.roksbnkctl/config.yaml decides
 which one commands run against; -w/--workspace overrides for one invocation.
 
