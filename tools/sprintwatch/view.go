@@ -24,6 +24,7 @@ type Model struct {
 	sprints     []Sprint
 	burndowns   map[int][]Snapshot
 	selected    int
+	offset      int // index of the topmost visible card; window scrolls to keep `selected` visible
 	detailMode  bool
 	err         error
 	width       int
@@ -67,6 +68,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.scrollToSelected()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -76,10 +78,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.selected > 0 {
 				m.selected--
+				m.scrollToSelected()
 			}
 		case "down", "j":
 			if m.selected < len(m.sprints)-1 {
 				m.selected++
+				m.scrollToSelected()
+			}
+		case "home", "g":
+			m.selected = 0
+			m.scrollToSelected()
+		case "end", "G":
+			if len(m.sprints) > 0 {
+				m.selected = len(m.sprints) - 1
+				m.scrollToSelected()
 			}
 		case "left", "h":
 			if m.detailMode && m.selected > 0 {
@@ -108,8 +120,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selected >= len(m.sprints) && len(m.sprints) > 0 {
 			m.selected = len(m.sprints) - 1
 		}
+		m.scrollToSelected()
 	}
 	return m, nil
+}
+
+// chromeHeight is the number of rows View() spends on non-card chrome:
+// title bar (1) + blank line after title (1) + blank line before help
+// (1) + help line (1). Subtracted from m.height to size the card area.
+const chromeHeight = 4
+
+// indicatorSlack reserves 2 rows for the "▲ N above" / "▼ N below"
+// scroll markers. Always reserved (even when no marker is showing) so
+// the layout doesn't reflow on every scroll — wastes at most 1–2 lines.
+const indicatorSlack = 2
+
+// availCardHeight returns the vertical room left for sprint cards after
+// chrome + indicator slack. Returns 0 when m.height isn't known yet
+// (e.g. before the first WindowSizeMsg, or in --once mode) — callers
+// treat 0 as "render everything, no scrolling."
+func (m Model) availCardHeight() int {
+	if m.height <= 0 {
+		return 0
+	}
+	h := m.height - chromeHeight - indicatorSlack
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// scrollToSelected slides the visible window so m.sprints[m.selected]
+// is on-screen. Walks backward from selected accumulating card heights
+// until the budget is exhausted; that becomes the new offset.
+func (m *Model) scrollToSelected() {
+	if len(m.sprints) == 0 {
+		m.offset = 0
+		return
+	}
+	if m.selected < 0 {
+		m.selected = 0
+	}
+	if m.selected >= len(m.sprints) {
+		m.selected = len(m.sprints) - 1
+	}
+	avail := m.availCardHeight()
+	if avail <= 0 {
+		// Height unknown → no scrolling; show everything from the top.
+		m.offset = 0
+		return
+	}
+	// Snap up if selected scrolled above the window.
+	if m.selected < m.offset {
+		m.offset = m.selected
+		return
+	}
+	// Walk backward from selected, adding card heights until we run
+	// out of budget. The last index that still fits becomes offset.
+	used := 0
+	for i := m.selected; i >= 0; i-- {
+		h := lipgloss.Height(m.renderCard(m.sprints[i], i == m.selected))
+		if used+h > avail && i != m.selected {
+			// Selected itself always renders even if it overflows by
+			// a row — better that than a blank pane.
+			m.offset = i + 1
+			return
+		}
+		used += h
+	}
+	m.offset = 0
 }
 
 var (
@@ -145,15 +224,31 @@ func (m Model) View() string {
 	if m.detailMode && m.selected < len(m.sprints) {
 		sb.WriteString(m.renderDetail(m.sprints[m.selected]))
 	} else {
-		for i, sp := range m.sprints {
-			sb.WriteString(m.renderCard(sp, i == m.selected))
+		avail := m.availCardHeight()
+		if m.offset > 0 {
+			sb.WriteString(stDim.Render(fmt.Sprintf("  ▲ %d more above\n", m.offset)))
+		}
+		used := 0
+		lastShown := m.offset - 1
+		for i := m.offset; i < len(m.sprints); i++ {
+			card := m.renderCard(m.sprints[i], i == m.selected)
+			h := lipgloss.Height(card)
+			if avail > 0 && used+h > avail && i != m.selected && i > m.offset {
+				break
+			}
+			sb.WriteString(card)
+			used += h
+			lastShown = i
+		}
+		if hidden := len(m.sprints) - 1 - lastShown; hidden > 0 {
+			sb.WriteString(stDim.Render(fmt.Sprintf("  ▼ %d more below\n", hidden)))
 		}
 	}
 
 	if m.detailMode {
 		sb.WriteString("\n" + stHelp.Render("[esc] back  [q] quit  [r] refresh  [←/→] prev/next sprint"))
 	} else {
-		sb.WriteString("\n" + stHelp.Render("[q] quit  [r] refresh  [↑/↓] select  [enter] detail"))
+		sb.WriteString("\n" + stHelp.Render("[q] quit  [r] refresh  [↑/↓] select  [g/G] top/bottom  [enter] detail"))
 	}
 	return sb.String()
 }
