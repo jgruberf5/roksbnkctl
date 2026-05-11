@@ -1,10 +1,57 @@
 # Execution backends: local, docker, k8s, ssh
 
-`roksbnkctl` runs a handful of external tools as part of its job — `ibmcloud`, `terraform`, `iperf3`, eventually `dig`-equivalents and others. By default each tool runs as a child process on your laptop. That's fine for some tools and wrong for others: `iperf3` from your laptop measures your laptop's internet uplink, not the cluster's bandwidth.
+`roksbnkctl` runs a handful of external tools as part of its job — `ibmcloud`, `terraform`, `iperf3`, eventually `dig`-equivalents and others. By default each tool runs as a child process on your laptop. That's fine for some tools and wrong for others: `iperf3` from your laptop measures your laptop's internet uplink, not the cluster's bandwidth. Likewise, **terraform via docker** (the `--backend docker` mode covered below) lets you pin a frozen tool version for CI reproducibility without installing it on the host.
 
 The execution-backend system lets you pick **where** each tool runs without changing the surface command. The same `roksbnkctl ibmcloud ks cluster ls` invocation can run as a local process, inside a vendored container, inside the cluster, or on a remote SSH host — selected by a flag or a per-tool default in your workspace config.
 
 This chapter is the user-facing reference for all four backends. After the introduction, each backend gets its own deep-dive section covering the mechanics, the credential-propagation rules, the failure modes, and a short "when to use it" callout. [Chapter 18](./18-choosing-backend.md) is the decision-tree companion that picks one for a given (tool, scenario) pair.
+
+## Architecture at a glance
+
+The four backends sit between `roksbnkctl` (the binary on your laptop) and the external tools each backend runs. Every backend produces the same observable behaviour from the user's point of view — the same `roksbnkctl ibmcloud ks cluster ls` invocation — but routes the actual tool execution to a different network vantage.
+
+```mermaid
+graph LR
+    User[laptop<br/>roksbnkctl binary]
+    subgraph local[local backend]
+        L_tf[terraform]
+        L_ibm[ibmcloud]
+        L_iperf[iperf3]
+        L_dns[dns probe]
+    end
+    subgraph docker[docker backend]
+        D_ibm[ibmcloud<br/>frozen image]
+        D_tf[terraform<br/>frozen image]
+    end
+    subgraph k8s[k8s backend]
+        K_ops[ops pod<br/>ibmcloud]
+        K_job[one-shot Job<br/>iperf3 / dns]
+    end
+    subgraph ssh[ssh:target backend]
+        S_ibm[ibmcloud<br/>on jumphost]
+        S_iperf[iperf3<br/>on jumphost]
+    end
+    Cluster[ROKS cluster<br/>cert-manager + flo + BNK]
+    Jump[SSH jumphost<br/>auto-discovered from terraform]
+    IBMAPI[IBM Cloud API<br/>+ IAM]
+
+    User --> local
+    User --> docker
+    User --> k8s
+    User --> ssh
+    local --> IBMAPI
+    docker --> IBMAPI
+    k8s --> Cluster
+    Cluster --> IBMAPI
+    ssh --> Jump
+    Jump --> IBMAPI
+    Jump -.->|optional<br/>private path| Cluster
+
+    classDef bk fill:#f4f4f4,stroke:#666,color:#000;
+    class local,docker,k8s,ssh bk;
+```
+
+[Chapter 18](./18-choosing-backend.md) is the decision-tree companion that picks a backend for a given scenario; the rest of this chapter is the per-backend mechanics.
 
 ## The four backends at a glance
 
@@ -81,7 +128,7 @@ The defaults shipped today:
 
 | Tool | Default backend | Supported backends | Why |
 |---|---|---|---|
-| `terraform` | `local` | `local`, `docker` | The terraform-exec local path is the established workflow. State handling is simplest here. v0.9 adds `docker` (frozen `hashicorp/terraform:1.5.7`, bind-mount state) — see [§ terraform via docker](#terraform-via-docker). `k8s` and `ssh` deferred to v1.x. |
+| `terraform` | `local` | `local`, `docker` | The terraform-exec local path is the established workflow. State handling is simplest here. The `docker` backend runs frozen `hashicorp/terraform:1.5.7` with a bind-mounted state dir — see [§ terraform via docker](#terraform-via-docker). `k8s` and `ssh` are deferred to v1.x. |
 | `ibmcloud` | `local` | `local`, `docker`, `k8s`, `ssh:<target>` | Most users have it on PATH or are happy installing it. Compliance/firewall scenarios opt in via `--backend ssh:jumphost` or `docker`. |
 | `iperf3` | `k8s` | `local`, `k8s`, `ssh:<target>` | Throughput from a laptop's uplink isn't the cluster's bandwidth. The k8s default runs the iperf3 client adjacent to (or inside) the cluster so the number reflects cluster fabric, not your office Wi-Fi. |
 | `dns` | `local` | `local`, `k8s`, `ssh:<target>` | Single-vantage by default; `--gslb-compare` fans out across configured vantages for GSLB validation. See [Chapter 21](./21-dns-testing-gslb.md). |
@@ -193,7 +240,7 @@ The tempdir is removed via `defer` after `Run` returns, regardless of exit code 
 
 Three things matter, all enforced by `internal/exec/creds.go::Credentials.DockerArgs(...)`:
 
-1. **`--env IBMCLOUD_API_KEY` (bare name, no `=value`).** The docker daemon looks up the value from the *daemon's* environment at container-create time, not from argv. So the literal API key string never appears in `docker inspect`, `docker ps -a --format`, or the daemon's container metadata. [PRD 04 §"Anti-patterns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#docker-container) calls out the `--env IBMCLOUD_API_KEY=$KEY` form as a leak vector — we don't use it. See [Chapter 14 — `Credentials.DockerArgs()`](./14-credentials-resolver.md#backend-specific-cred-propagation-forward-look) for the full call shape.
+1. **`--env IBMCLOUD_API_KEY` (bare name, no `=value`).** The docker daemon looks up the value from the *daemon's* environment at container-create time, not from argv. So the literal API key string never appears in `docker inspect`, `docker ps -a --format`, or the daemon's container metadata. [PRD 04 §"Anti-patterns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#docker-container) calls out the `--env IBMCLOUD_API_KEY=$KEY` form as a leak vector — we don't use it. See [Chapter 14 — `Credentials.DockerArgs()`](./14-credentials-resolver.md#backend-specific-cred-propagation) for the full call shape.
 2. **Single-file kubeconfig mount, read-only.** Not the parent dir. The container can read exactly the kubeconfig you handed it — nothing else under `~/.kube/`.
 3. **Stdout/stderr through the redactor.** Same defense-in-depth as the local backend: if the wrapped tool prints the API key value (rare but possible), the redactor masks it before the bytes leave `roksbnkctl`'s process.
 
@@ -228,7 +275,7 @@ Image versions are tagged in lock-step with `roksbnkctl` releases; the GitHub Ac
 
 #### terraform via docker
 
-Sprint 5 adds `terraform` to the docker backend's tool list. The shape is similar to `ibmcloud` (`docker run` against a vendored image, single-file mounts for sensitive data, no creds in argv) but with two terraform-specific concerns: state persistence across runs, and host-user UID alignment so state files written inside the container stay readable on the host.
+`terraform` is the second tool routed through the docker backend (alongside `ibmcloud`). The shape is similar to `ibmcloud` (`docker run` against a vendored image, single-file mounts for sensitive data, no creds in argv) but with two terraform-specific concerns: state persistence across runs, and host-user UID alignment so state files written inside the container stay readable on the host.
 
 ##### State persistence via bind-mount
 
@@ -280,25 +327,25 @@ The UID/GID values are read from the host process at run time (Go's `os.Getuid()
 The terraform docker backend honours `--backend docker` for the four lifecycle commands:
 
 ```bash
-roksbnkctl up      --backend docker  [--var-file <path>] [--auto-approve]
-roksbnkctl plan    --backend docker  [--var-file <path>]
-roksbnkctl apply   --backend docker  [--var-file <path>] [--auto-approve]
-roksbnkctl destroy --backend docker  [--var-file <path>] [--auto-approve]
+roksbnkctl up    --backend docker  [--var-file <path>] [--auto]
+roksbnkctl plan  --backend docker  [--var-file <path>]
+roksbnkctl apply --backend docker  [--var-file <path>] [--auto]
+roksbnkctl down  --backend docker  [--var-file <path>] [--auto]
 ```
 
-Flags that the local terraform backend honours (`--var-file`, `--auto-approve`, plus the `-w/--workspace` selector) plumb through to the docker backend identically — the backend's job is to spawn `hashicorp/terraform:1.5.7` with the right argv; it doesn't filter or rewrite the lifecycle commands' flags.
+Flags that the local terraform backend honours (`--var-file`, `--auto`, plus the `-w/--workspace` selector) plumb through to the docker backend identically — the backend's job is to spawn `hashicorp/terraform:1.5.7` with the right argv; it doesn't filter or rewrite the lifecycle commands' flags. (`--auto` is roksbnkctl's shorthand for terraform's `-auto-approve`; the wrapper renames it for terseness and consistency across `up`/`apply`/`down`.)
 
 `roksbnkctl up --backend docker` is the apply-with-auto-approve shorthand the existing local lifecycle uses; `--backend docker` switches the spawn target without changing the command shape.
 
 ##### Deferred: k8s and ssh terraform backends
 
-`--backend k8s` and `--backend ssh:<target>` for terraform are **not** in v0.9. The blocker is state-handling: the local backend keeps state on the host filesystem, the docker backend bind-mounts the same path, but `k8s` (run terraform in a one-shot Job) and `ssh:<target>` (run terraform on a remote host) need a story for shipping state between the run vantage and the canonical workspace state dir. Designs under consideration include a versioned ConfigMap/Secret pair for k8s and an scp-pre-and-post atomic move for ssh; both are deferred to v1.x once the trade-offs have settled.
+`--backend k8s` and `--backend ssh:<target>` for terraform are **not** in v1.0. The blocker is state-handling: the local backend keeps state on the host filesystem, the docker backend bind-mounts the same path, but `k8s` (run terraform in a one-shot Job) and `ssh:<target>` (run terraform on a remote host) need a story for shipping state between the run vantage and the canonical workspace state dir. Designs under consideration include a versioned ConfigMap/Secret pair for k8s and an scp-pre-and-post atomic move for ssh; both are deferred to v1.x once the trade-offs have settled (see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0").
 
-[PRD 03 §"State concerns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform) is the design spec; trying `--backend k8s` against terraform on v0.9 errors at parse time:
+[PRD 03 §"State concerns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform) is the design spec; trying `--backend k8s` against terraform errors at parse time:
 
 ```
 $ roksbnkctl up --backend k8s
-error: terraform doesn't support backend `k8s` in v0.9 (state-handling design
+error: terraform doesn't support backend `k8s` at v1.0 (state-handling design
        open; tracked in PRD 03 § State concerns); supported: local, docker
 ```
 

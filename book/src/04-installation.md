@@ -9,7 +9,7 @@ A tagged release with pre-built binaries, a `brew` tap, and an `install.sh` one-
 - **Linux or macOS** for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.
 - **Git** to clone the repository.
 - **Go 1.25 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build below.
-- **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`. This is the only required external prerequisite for the v0.7 happy path; everything else (`ibmcloud`, `kubectl`, `oc`, `iperf3`) is optional and only needed for the corresponding passthrough or test command.
+- **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`. This is the only required external prerequisite at v1.0; everything else (`ibmcloud`, `kubectl`, `oc`, `iperf3`, `docker`) is optional and only needed for the corresponding passthrough or backend.
 
 You do not need Docker installed to *use* `roksbnkctl`. Docker is only used here as a convenience for building the binary without touching your host Go install.
 
@@ -130,10 +130,11 @@ roksbnkctl version
 Sample output:
 
 ```
-roksbnkctl v0.7.0 (commit abc1234, built 2026-05-08T14:22:08Z)
+roksbnkctl v1.0.0 (commit abc1234, built 2026-05-10T14:22:08Z)
+Docs: https://jgruberf5.github.io/roksbnkctl/book/
 ```
 
-The version string is populated via `-ldflags` at build time; `make build VERSION=v0.7.0` injects an explicit tag. A bare `make build` produces something like `dev (commit abc1234, built ...)`.
+The version string is populated via `-ldflags` at build time; `make build VERSION=v1.0.0` injects an explicit tag. A bare `make build` produces something like `dev (commit abc1234, built ...)`. The `Docs:` URL is a compile-time constant (`internal/cli/meta.go::DocsURL`) — every binary built from this tree points at the same book URL.
 
 ### `roksbnkctl doctor`
 
@@ -155,7 +156,7 @@ roksbnkctl doctor
 ✓  ibm cloud auth    OK (account: Main F5 Account)                                            (verifies API key works against IBM IAM)
 ```
 
-Each row is `<status> <name> <detail> <why we care>`. Failures are red `✗` and exit non-zero; warnings are yellow `⚠` and don't fail the run. `terraform` is the only check that's hard-required for v0.7 — the rest are either optional passthroughs or specific to test suites. [Chapter 5](./05-doctor.md) walks through what each check is verifying and how to fix common failures.
+Each row is `<status> <name> <detail> <why we care>`. Failures are red `✗` and exit non-zero; warnings are yellow `⚠` and don't fail the run. `terraform` is the only check that's hard-required at v1.0 — the rest are either optional passthroughs or specific to test suites. [Chapter 5](./05-doctor.md) walks through what each check is verifying and how to fix common failures.
 
 ## OS support matrix
 
@@ -165,28 +166,38 @@ Each row is `<status> <name> <detail> <why we care>`. Failures are red `✗` and
 | macOS (amd64, arm64) | yes | yes | yes | first-class |
 | Windows (amd64, arm64) | yes | yes | yes | compile-only; `roksbnkctl shell --on` and `roksbnkctl exec --on jumphost` PTY behaviour limited |
 
-"First-class" means the v0.7 acceptance criteria are validated on those platforms; "compile-only" means the binary builds and runs but interactive features (notably TTY-bound SSH) have known limitations and are not part of the v0.7 release gate.
+"First-class" means the v1.0 acceptance criteria are validated on those platforms; "compile-only" means the binary builds and runs but interactive features (notably TTY-bound SSH) have known limitations and are not part of the v1.0 release gate.
 
-The Windows limitations are tracked in PRD 01 (the SSH client design) and largely come down to `golang.org/x/crypto/ssh`'s incomplete PTY handling on Windows and the absence of an SSH agent named-pipe protocol. File-based SSH keys work; ssh-agent integration on Windows is post-v1.0.
+The Windows limitations are tracked in PRD 01 (the SSH client design) and largely come down to `golang.org/x/crypto/ssh`'s incomplete PTY handling on Windows and the absence of an SSH agent named-pipe protocol. File-based SSH keys work; full PTY and ssh-agent integration on Windows are on the v1.x roadmap (see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0").
 
-## Required prerequisites — only `terraform`, post-v0.8
+## Required prerequisites — only `terraform` at v1.0
 
-The v0.7 surface still requires a few external binaries on `PATH` if you want everything to work:
+The v1.0 surface needs exactly one binary on `PATH`:
 
-- **`terraform` (>= 1.5)** — hard-required for any cluster lifecycle command.
-- **`iperf3`** — required for `roksbnkctl test throughput` until v0.9 internalises it via the k8s execution backend.
-- **`kubectl`** — required for `roksbnkctl kubectl <args...>` passthrough until v0.8 internalises it.
-- **`oc`** — same as `kubectl`, passthrough only.
-- **`ibmcloud`** — required for `roksbnkctl ibmcloud <args...>` passthrough; the cluster-lifecycle path uses IBM Go SDKs internally and does *not* shell out to `ibmcloud`, so you can skip this binary if you don't need the passthrough.
+- **`terraform` (>= 1.5)** — hard-required for any cluster lifecycle command (`up`, `down`, `plan`, `apply`).
 
-After v0.8 lands the picture simplifies: `terraform` is the only required external dependency, and every other tool moves into the "optional passthrough" category. Until then, run `roksbnkctl doctor` and install whatever it warns about for the workflow you intend to run.
+Optional binaries — only needed for the corresponding passthrough or fallback path:
+
+- **`iperf3`** — only needed for `--backend local` and `--backend ssh:<target>` throughput modes. The default `--backend k8s` runs iperf3 entirely in cluster (no host binary needed).
+- **`kubectl`** / **`oc`** — only needed for the `roksbnkctl kubectl <args...>` / `roksbnkctl oc <args...>` passthroughs. The everyday verbs (`get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`) are internalised under `roksbnkctl k` and need no host binary.
+- **`ibmcloud`** — only needed for the `roksbnkctl ibmcloud <args...>` passthrough on `--backend local`. The cluster-lifecycle path uses IBM Go SDKs internally and does *not* shell out to `ibmcloud`. The `docker`, `k8s`, and `ssh` backends ship their own ibmcloud — no host install needed.
+- **`docker`** — only needed for `--backend docker`. Optional; the `k8s` and `ssh` backends are alternatives if docker isn't available.
+
+Run `roksbnkctl doctor` to see exactly what your environment is missing for the workflow you intend to run.
 
 ## Updating
 
-For now, `git pull && make build` is the update mechanism (or re-run the Docker build).
+`git pull && make build` is the source-build update mechanism (or re-run the Docker build for the containerised path).
 
-The `roksbnkctl self update` subcommand exists but only works against tagged GitHub releases; it'll be useful once v0.7 is tagged.
+`roksbnkctl self update` upgrades from a tagged GitHub release. Use it once you've installed an initial v1.0 binary:
+
+```bash
+roksbnkctl self update
+# Checks https://github.com/jgruberf5/roksbnkctl/releases/latest, downloads
+# the matching asset for your OS+arch, verifies the checksum, swaps the
+# binary atomically.
+```
 
 ## Next
 
-With a working binary on PATH, [Chapter 5 — Doctor](./05-doctor.md) explains what every doctor check is looking at, [Chapter 6 — Workspaces](./06-workspaces.md) explains the `~/.roksbnkctl/<workspace>/` layout, and [Chapter 7 — Quick start](./07-quick-start.md) walks the 3-command happy path end-to-end.
+With a working binary on PATH, [Chapter 5 — Doctor](./05-doctor.md) explains what every doctor check is looking at, [Chapter 6 — Workspaces](./06-workspaces.md) explains the `~/.roksbnkctl/<workspace>/` layout, and [Chapter 7 — Quick start](./07-quick-start.md) walks the 4-command lifecycle end-to-end.

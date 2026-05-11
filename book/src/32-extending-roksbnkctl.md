@@ -44,7 +44,7 @@ The test subtree (`roksbnkctl test <suite>`) holds three suites at v1.0: `connec
 
 6. **Documentation.** New chapter or major section in Part VI of the book (currently chapters 20-23). Cross-link from [Chapter 23 — The E2E test plan](./23-e2e-test-plan.md) and [Chapter 18 — Choosing a backend per tool](./18-choosing-backend.md).
 
-The DNS probe (Sprint 5) is the canonical worked example — read the Sprint 5 architect prompt and the resulting `internal/test/dns.go` + `internal/cli/test.go` to see all five steps in their landed form.
+The DNS probe is the canonical worked example — read [`internal/test/dns.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/test/dns.go) + [`internal/cli/test.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/test.go) to see all six steps in their landed form, plus the [Sprint 5 architect prompt](https://github.com/jgruberf5/roksbnkctl/blob/main/prompts/sprint5/architect.md) for the design framing.
 
 ## Adding a new tool to an existing backend
 
@@ -153,6 +153,82 @@ When to dispatch four agents vs. just open a PR:
 | You're the only contributor | Coordinating with reviewers who'd otherwise serialise |
 
 `prompts/README.md` documents the agent-coordination pattern. The sprint dispatch is the project's way of running review-and-implementation in parallel rather than serial — it works when the surfaces are well-separated (code vs docs vs tests don't conflict on file ownership) and the integrator has enough context to merge the four lanes.
+
+## Worked example: adding a new execution backend
+
+End-to-end Part IX scenario: you want to add a `podman` backend (rootless container runtime as an alternative to `docker`) so users on Fedora/RHEL hosts that ship podman by default don't have to install Docker just to use the `--backend docker` workflow. Same surface, different daemon. The walkthrough below tracks the eight-step recipe above with concrete file paths and a diff-shaped sketch of each change.
+
+```bash
+# 1. Implement the interface — new backend file
+cat > internal/exec/podman.go <<'GO'
+package exec
+
+import (
+    "context"
+    "os/exec"
+)
+
+type podmanBackend struct{}
+
+func (p *podmanBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, error) {
+    args := append([]string{"run", "--rm"}, dockerStyleArgs(opts)...)
+    args = append(args, opts.Image)
+    args = append(args, argv...)
+    cmd := exec.CommandContext(ctx, "podman", args...)
+    return runWithRedactor(cmd, opts)
+}
+
+func init() {
+    Register("podman", &podmanBackend{})
+}
+GO
+
+# 2. Add the tool image mapping (podman uses the same OCI images as docker)
+# Edit internal/exec/podman.go — add a toolImages map analogous to docker.go,
+# or share the docker.go map by exporting it. The two registries are
+# compatible; you'd typically share.
+
+# 3. Doctor check — internal/cli/doctor_backend.go
+# Add a `checkPodmanBackend()` function that runs `podman info` once with a
+# 2s timeout. Green if exit 0, yellow if podman not found, red if podman
+# present but daemon unreachable.
+
+# 4. Wire credentials — re-use the docker backend's cred-propagation logic
+# (the `-e VAR` pattern works identically for podman). Pass opts.Credentials
+# by env-var reference, never by argv. See internal/exec/docker.go::
+# dockerStyleArgs for the pattern to copy.
+
+# 5. Add cred-audit test
+cat > internal/exec/podman_audit_test.go <<'GO'
+package exec_test
+
+func TestCredAudit_Podman(t *testing.T) {
+    // Run a no-op command via the podman backend with a known API key,
+    // then inspect `podman inspect`'s output for the key value. Assert
+    // the value never appears in the container's labels, env, or args.
+}
+GO
+
+# 6. E2E phase — extend scripts/e2e-test-backends.sh
+# Add Phase P (or extend Phase K) with a parallel sequence to K2-K6 but
+# using --backend podman. Cross-link to PRD 05.
+
+# 7. Documentation — chapters 17 + 18
+# - Chapter 17: add a "Podman backend" section parallel to "Docker backend",
+#   noting it's rootless-by-default and a drop-in alternative.
+# - Chapter 18: add a row to the per-tool matrix; add a decision-tree entry
+#   ("I'm on a podman-only host"); update the at-a-glance table.
+
+# 8. Run the full test suite
+go build ./...
+go vet ./...
+go test ./...
+DRY_RUN=1 ./scripts/e2e-test-backends.sh
+```
+
+The PR should land all eight steps in one commit-set. A reviewer will look for: registered `init()`, doctor check, cred-audit test, e2e phase, and the two chapter additions. Without the audit + docs, the PR isn't complete — see the cardinal rule at the top of the [Adding a new execution backend](#adding-a-new-execution-backend) section.
+
+The same pattern applies to a new test suite, a new tool on an existing backend, or a new chapter — the eight-step recipe is the long version; the worked example is the copy-paste short version. Pick the shape that matches your contribution.
 
 ## Cross-references
 

@@ -60,13 +60,13 @@ test:            # test-suite tuning (optional)
 tf_source:       # where the Terraform HCL comes from
   type: embedded         # embedded | github | local
 
-targets:         # SSH targets (Sprint 1; see Chapter 15)
+targets:         # SSH targets (see Chapter 15)
   jumphost:
     host: 169.45.91.177
     user: ubuntu
     key_source: tf-output:jumphost_shared_key
 
-exec:            # per-tool execution backend defaults (Sprint 3; see Chapter 17)
+exec:            # per-tool execution backend defaults (see Chapter 17)
   ibmcloud:  { backend: local }
   iperf3:    { backend: k8s }
   terraform: { backend: local }
@@ -150,7 +150,7 @@ test:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `throughput.image` | string | `networkstatic/iperf3:latest` | iperf3 image used by the throughput test (when running with the `local` or `ssh` backends). Sprint 4's `k8s` backend uses the GHCR image instead. |
+| `throughput.image` | string | `networkstatic/iperf3:latest` | iperf3 image used by the throughput test (when running with the `local` or `ssh` backends). The `k8s` backend uses the GHCR image (`ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<version>`) instead. |
 | `throughput.duration` | int seconds | `30` | iperf3 `-t` flag. |
 | `throughput.streams` | int | `8` | iperf3 `-P` flag. |
 | `throughput.default_mode` | enum | `north-south` | `north-south` \| `east-west`. The connectivity vector to test by default. |
@@ -189,11 +189,11 @@ targets:
 
 Each entry has `host`, `user`, optional `port` (default `22`), and exactly one of `key_path` or `key_source`. The `key_source` enum supports `agent` and `tf-output:<name>`.
 
-This block was introduced in Sprint 1; the deep reference is [Chapter 15 — SSH targets](./15-ssh-targets.md), and the user-facing prose is [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md). This chapter just notes the schema's place in the overall config.
+The deep reference is [Chapter 15 — SSH targets](./15-ssh-targets.md), and the user-facing prose is [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md). This chapter just notes the schema's place in the overall config.
 
 You don't typically edit this block by hand. `roksbnkctl up` auto-populates `jumphost` post-apply, and `roksbnkctl targets add ...` populates the rest.
 
-## `exec:` — execution-backend defaults (new in Sprint 3)
+## `exec:` — execution-backend defaults
 
 ```yaml
 exec:
@@ -204,18 +204,18 @@ exec:
 
 Per-tool defaults for the `--backend` system. Each entry is keyed by the tool name (`ibmcloud`, `iperf3`, `terraform`, and others as the matrix grows) and selects which execution backend that tool uses by default. Allowed backend values:
 
-| Backend | Available in | Notes |
-|---|---|---|
-| `local` | Sprint 3 (today) | `os/exec` against the host binary. The default for `terraform` and `ibmcloud`. |
-| `docker` | Sprint 3 (today) | Runs inside a vendored container image. Frozen toolchain version, no host install. |
-| `k8s` | Sprint 4 | Runs inside the cluster (long-lived ops pod or one-shot Job). Default for `iperf3`. |
-| `ssh` | Sprint 4 | Runs on a registered SSH target. Format: `ssh:<target-name>`. |
+| Backend | Notes |
+|---|---|
+| `local` | `os/exec` against the host binary. The default for `terraform` and `ibmcloud`. |
+| `docker` | Runs inside a vendored container image. Frozen toolchain version, no host install. |
+| `k8s` | Runs inside the cluster (long-lived ops pod or one-shot Job). Default for `iperf3`. |
+| `ssh` | Runs on a registered SSH target. Format: `ssh:<target-name>`. |
 
 A `--backend <value>` flag on the command line overrides the workspace config for that single invocation. The flag wins; the config sets the default.
 
 The `iperf3` default is `k8s` because measuring throughput from a laptop's internet uplink isn't useful — you want the test to run from a network location adjacent to or inside the cluster. The `local` default is wrong for that tool, so the workspace config flips it.
 
-[Chapter 17 — Execution backends](./17-execution-backends.md) covers the full backend matrix; [Chapter 18 — Choosing a backend per tool](./18-choosing-backend.md) (lands in Sprint 4) is the decision tree.
+[Chapter 17 — Execution backends](./17-execution-backends.md) covers the full backend matrix; [Chapter 18 — Choosing a backend per tool](./18-choosing-backend.md) is the decision tree.
 
 ## `cos:` — COS supply-chain (optional)
 
@@ -253,7 +253,7 @@ The block is optional — if you've already populated COS by hand or via the ups
 | `bnk.*` | Field is omitted from the generated `terraform.tfvars` and the upstream HCL default applies. |
 | `tf_source` | Treated as `type: embedded` (legacy default). |
 | `targets.*` | Block absent ⇒ `roksbnkctl --on jumphost` errors with "no target named jumphost"; auto-populated by `up`. |
-| `exec.*` | Defaults to `local` for every tool today (Sprint 3). PRD 03's design intent is `iperf3`→`k8s` once the k8s backend lands in Sprint 4 — the per-tool default map will switch over then. Override per-tool via this block, or per-invocation via `--backend`. |
+| `exec.*` | Per-tool defaults at v1.0: `ibmcloud`→`local`, `terraform`→`local`, `iperf3`→`k8s`, DNS probe→`local`. Override per-tool via this block, or per-invocation via `--backend`. |
 | `cos.*` | No pre-flight uploads; the COS instance/bucket are read from the upstream HCL's tfvars instead. |
 
 The general rule: **if you don't write it in `config.yaml`, `roksbnkctl` doesn't write it into `terraform.tfvars`**, and the upstream HCL's `default = ...` clause takes over. The full upstream defaults are listed in [Chapter 29](./29-terraform-variable-reference.md).
@@ -264,7 +264,7 @@ Both `roksbnkctl up` and `roksbnkctl plan/apply/destroy` accept the same `--var-
 
 ```
 1. config.yaml-derived terraform.tfvars        (written first by roksbnkctl)
-2. ~/.roksbnkctl/<ws>/state/terraform.tfvars.user  (optional manual override)
+2. ~/.roksbnkctl/<ws>/terraform.tfvars.user  (optional manual override)
 3. --var-file <path>                           (CLI; repeatable)
 ```
 
@@ -293,18 +293,19 @@ When you do edit by hand, the load-time validators run on next `roksbnkctl` invo
 
 If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you'll know within one invocation.
 
-## Worked example
+## Worked example: bootstrap a workspace from scratch
 
-Walk through what `roksbnkctl init` writes for a typical "fresh install + new cluster" run:
+End-to-end Part IV scenario: brand-new laptop, no `roksbnkctl` workspaces yet, an IBM Cloud API key in your password manager. Goal: a usable workspace with the key in the OS keychain, the right region + resource group resolved, and `terraform.tfvars` ready to drive the HCL.
 
 ```bash
+# 1. roksbnkctl init — interactive bootstrap
 $ roksbnkctl init
 Workspace name [default]: dev
 IBM Cloud region [ca-tor]:
 IBM Cloud resource group [default]:
 Enter IBM Cloud API key (input hidden):
 Save the key for future runs? [Y/n]: y
-  ✓ saved to OS keychain
+  ✓ saved to OS keychain (service: roksbnkctl, account: dev/ibmcloud_api_key)
 Cluster name [tf-openshift-cluster]: dev-cluster
 Workers per zone [1]: 2
 ✓ Created workspace "dev"
@@ -325,7 +326,45 @@ tf_source:
   type: embedded
 ```
 
-That's the minimum. Everything else (`bnk:`, `test:`, `targets:`, `exec:`, `cos:`) is empty and falls through to defaults. You can layer on more fields by editing the file directly or by using the helpers — both are supported.
+That's the minimum. Everything else (`bnk:`, `test:`, `targets:`, `exec:`, `cos:`) is empty and falls through to defaults. The API key can also be supplied non-interactively from your password manager's CLI by setting `IBMCLOUD_API_KEY` in the environment of the `init` invocation:
+
+`op` here is the [1Password CLI](https://developer.1password.com/docs/cli/); the `op://...` URI is its secret-reference scheme. Any password-manager CLI that prints a secret to stdout works the same way — Bitwarden (`bw`), gopass, `aws secretsmanager get-secret-value`, Doppler, etc. — the only thing roksbnkctl cares about is that `IBMCLOUD_API_KEY` is set in the environment when `init` runs.
+
+```bash
+# Alternative: pre-set IBMCLOUD_API_KEY so init resolves it from env rather than prompting
+IBMCLOUD_API_KEY=$(op read 'op://Private/IBM Cloud/api-key') roksbnkctl init -w dev
+```
+
+[Chapter 14 §"The `IBMCLOUD_API_KEY` resolver chain"](./14-credentials-resolver.md#the-ibmcloud_api_key-resolver-chain) covers the full env → keychain → workspace `api_key_b64` → TTY-prompt order; this env-var path is the first link in that chain, so anything `init` resolves at bootstrap time follows the same precedence later invocations use. Once `init` has saved the key to the OS keychain (the default sink), no further prompting is needed. `init` still prompts interactively for the remaining workspace metadata (region, resource group, cluster name) — a fully non-interactive bootstrap is on the v1.x roadmap.
+
+Now render `terraform.tfvars` so subsequent `up` runs have explicit HCL inputs to point `--var-file` at:
+
+```bash
+# 2. Render terraform.tfvars from config.yaml
+$ roksbnkctl tfvars -w dev > ~/.roksbnkctl/dev/terraform.tfvars
+$ head ~/.roksbnkctl/dev/terraform.tfvars
+ibmcloud_region        = "ca-tor"
+ibmcloud_resource_group = "default"
+cluster_name           = "dev-cluster"
+workers_per_zone       = 2
+# ...
+```
+
+[Chapter 13](./13-terraform-variables.md) covers the precedence rules between `config.yaml`, `terraform.tfvars`, and `terraform.tfvars.user` (the hand-edit overlay).
+
+Finally, verify the workspace is healthy before the first real `up`:
+
+```bash
+# 3. Sanity-check
+$ roksbnkctl doctor -w dev
+✓ terraform     1.6.2  on PATH
+✓ IBMCLOUD_API_KEY resolves via keychain
+✓ region "ca-tor" accepts the key (IAM round-trip OK)
+✓ resource group "default" exists (id: ...)
+✓ workspace dev healthy
+```
+
+From here, `roksbnkctl up --auto -w dev` is the next step (see [Chapter 7 — Quick start](./07-quick-start.md)). You can layer on `bnk:`, `test:`, `targets:`, `exec:`, `cos:` blocks by hand-editing `config.yaml` whenever you need them — `init` only writes the minimum to keep first-run friction low.
 
 ## Cross-references
 
@@ -333,5 +372,5 @@ That's the minimum. Everything else (`bnk:`, `test:`, `targets:`, `exec:`, `cos:
 - [Chapter 14 — Credentials and the resolver chain](./14-credentials-resolver.md) — the `api_key_*` fields and how they're resolved.
 - [Chapter 15 — SSH targets](./15-ssh-targets.md) — the `targets:` block.
 - [Chapter 17 — Execution backends](./17-execution-backends.md) — the `exec:` block.
-- [Chapter 28 — Configuration reference](./28-configuration-reference.md) — auto-generated complete field list (Sprint 6).
+- [Chapter 28 — Configuration reference](./28-configuration-reference.md) — auto-generated complete field list.
 - [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md) — the upstream HCL variables `config.yaml` translates to.

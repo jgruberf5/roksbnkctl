@@ -13,7 +13,7 @@ Field-by-field schema reference for the workspace `config.yaml`. Source of truth
 | Overridable home | `ROKSBNKCTL_HOME` env var (defaults to `~/.roksbnkctl/`) |
 | Mode | `0644` |
 | Created by | `roksbnkctl init` |
-| Updated by | `roksbnkctl init --upgrade-tf`, `roksbnkctl init --refresh-kubeconfig`, hand-editing |
+| Updated by | `roksbnkctl init --upgrade-tf`, `roksbnkctl kubeconfig --download`, hand-editing |
 
 The file is hand-editable; YAML is parsed with [`gopkg.in/yaml.v3`](https://pkg.go.dev/gopkg.in/yaml.v3) so anchors and aliases work but are not idiomatic for this file. Plaintext credentials in any of the regex-matched secret fields (`api_key`, `apikey`, `password`, `token`, `secret_access_key`, `hmac_secret`) are rejected at load time — the file fails to parse with a clear error. Base64-encoded credentials in `ibmcloud.api_key_b64` are allowed (the field name doesn't match the rejection regex). See [Chapter 14](./14-credentials-resolver.md).
 
@@ -117,7 +117,7 @@ test:
 
 | Field | Type | Default | Allowed | Notes |
 |---|---|---|---|---|
-| `extra_hosts` | list of string | (empty) | URLs | Each URL is probed via HTTP GET; pass criterion is a 2xx response. The v0.9 shape is a bare list — no per-host method, expected-status, or TLS-trust override. Use `--insecure` (session-wide) for self-signed certs. See [Chapter 20 §"Configuring extra_hosts"](./20-connectivity-testing.md). |
+| `extra_hosts` | list of string | (empty) | URLs | Each URL is probed via HTTP GET; pass criterion is a 2xx response. The v1.0 shape is a bare list — no per-host method, expected-status, or TLS-trust override. Use `--insecure` (session-wide) for self-signed certs. See [Chapter 20 §"Configuring extra_hosts"](./20-connectivity-testing.md). |
 
 ### `test.dns`
 

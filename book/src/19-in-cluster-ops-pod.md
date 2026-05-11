@@ -12,7 +12,7 @@ A long-lived pod in the `roksbnkctl-ops` namespace, running an image bundled wit
 
 The pod sits idle waiting for `kubectl exec` calls. Each `roksbnkctl ibmcloud --backend k8s …` invocation routes through `client-go`'s SPDY executor, runs the wrapped tool inside the existing pod, streams stdout/stderr back, and returns the exit code. No pod create/start latency between invocations — a session of twenty `ibmcloud` commands pays the startup cost once.
 
-Compared to the one-shot Job pattern (used for `iperf3` and the upcoming DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It's the right shape when you want to debug interactively or run many small commands.
+Compared to the one-shot Job pattern (used for `iperf3` and the DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It's the right shape when you want to debug interactively or run many small commands.
 
 ## `roksbnkctl ops install`
 
@@ -181,7 +181,7 @@ What each line surfaces:
 3. **RBAC subject** — the SA the pod runs as. `kubectl describe clusterrole roksbnkctl-ops` prints the full ruleset (the ClusterRoleBinding is named the same as the role).
 4. **Secret line** — the cred Secret's name + the `roksbnkctl.io/rotated-at` annotation that `ops install` stamps each time the Secret is applied. If the Secret is missing entirely, the line reads `secret: (missing: …)`.
 
-The current output is a fixed six-line key/value block; a structured `--output json` mode is on the Sprint 5+ roadmap once `ops show` grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.).
+The current output is a fixed six-line key/value block; a structured `--output json` mode is on the v1.x roadmap once `ops show` grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
 
 ## `roksbnkctl ops uninstall`
 

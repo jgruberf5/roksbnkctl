@@ -1,6 +1,6 @@
 # The --on flag and SSH jumphosts
 
-The `--on <target>` flag re-runs a `roksbnkctl` passthrough command (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) on a remote SSH host instead of locally. After a successful `roksbnkctl up`, a `jumphost` target is auto-populated from the upstream HCL's terraform outputs, so the flag works with no manual configuration in the common case.
+The `--on <target>` flag (most commonly `--on jumphost`) re-runs a `roksbnkctl` passthrough command (`exec`, `shell`, `kubectl`, `oc`, `ibmcloud`) on a remote SSH host instead of locally. After a successful `roksbnkctl up`, a `jumphost` target is auto-populated from the upstream HCL's terraform outputs, so `--on jumphost` works with no manual configuration in the common case.
 
 This chapter covers when to reach for `--on`, the `targets:` workspace config block, the auto-population behaviour, the `roksbnkctl targets` command tree for managing your own targets, and how host-key trust is established.
 
@@ -68,7 +68,7 @@ Three ways to tell `roksbnkctl` how to find the SSH private key:
 
 1. **`key_path: <path>`** — a file on disk. Standard OpenSSH key formats are accepted (`~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, etc.). Tilde expansion is honoured.
 
-2. **`key_source: agent`** — talk to the user's `ssh-agent` over the socket pointed at by `$SSH_AUTH_SOCK`. The agent presents whichever keys it currently holds; `roksbnkctl` tries each in turn against the target's `authorized_keys`. This is the right setting if your team already manages keys via 1Password / hardware tokens / `gpg-agent` and you don't want a key file on disk. **Note**: ssh-agent integration is Linux/macOS-only in v0.7; Windows users should use `key_path` instead.
+2. **`key_source: agent`** — talk to the user's `ssh-agent` over the socket pointed at by `$SSH_AUTH_SOCK`. The agent presents whichever keys it currently holds; `roksbnkctl` tries each in turn against the target's `authorized_keys`. This is the right setting if your team already manages keys via 1Password / hardware tokens / `gpg-agent` and you don't want a key file on disk. **Note**: ssh-agent integration is Linux/macOS-only at v1.0; Windows users should use `key_path` instead. Windows ssh-agent named-pipe support is on the v1.x roadmap.
 
 3. **`key_source: tf-output:<output-name>`** — read the key from the workspace's terraform state output of that name. Used by the auto-discovered `jumphost` target. The terraform output must be a string-typed PEM-encoded private key; sensitive outputs work fine because `terraform output -raw <name>` returns the value regardless of the sensitive flag.
 
@@ -205,22 +205,22 @@ Behaviour details worth knowing:
 
 - **Streaming I/O.** stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (`oc adm top nodes`, `ibmcloud ks cluster get` on a slow API call) work normally.
 - **Exit code propagation.** The remote command's exit code is the local exit code. A failing remote command produces a non-zero `roksbnkctl` exit; a succeeding remote command produces `0`. CI scripts can rely on this.
-- **TTY auto-detection.** `roksbnkctl shell --on` auto-allocates a PTY. Other verbs (`exec`, `kubectl`, `oc`, `ibmcloud`) run without a PTY in v0.7; if you need a PTY for `top` or another `isatty()`-sensitive command, fall back to `roksbnkctl shell --on jumphost` and run the command from the interactive shell.
+- **TTY auto-detection.** `roksbnkctl shell --on` auto-allocates a PTY. Other verbs (`exec`, `kubectl`, `oc`, `ibmcloud`) run without a PTY at v1.0; if you need a PTY for `top` or another `isatty()`-sensitive command, fall back to `roksbnkctl shell --on jumphost` and run the command from the interactive shell.
 - **Environment passthrough.** `IBMCLOUD_API_KEY`, `IBMCLOUD_REGION`, and `KUBECONFIG` are propagated to the remote session via SSH `SetEnv`, so `ibmcloud iam oauth-tokens` on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept `AcceptEnv IBMCLOUD_*` etc. for this to work; the upstream HCL's jumphost is already configured for it.
 
 ## What `--on` doesn't do (yet)
 
 A few things deliberately deferred to later phases:
 
-- **Lifecycle commands** (`up`, `down`, `plan`, `apply`) reject `--on` with a clear error in v0.7. Running terraform on a remote host has different state-handling considerations and is the job of v0.9's SSH execution backend ([Chapter 17](./17-execution-backends.md)).
-- **ProxyJump / multi-hop SSH.** If your jumphost itself is reached through another bastion, that's not directly supported in v0.7. The upstream HCL's jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don't need multi-hop in practice.
+- **Lifecycle commands** (`up`, `down`, `plan`, `apply`) reject `--on` with a clear error at v1.0. Running terraform on a remote host has different state-handling considerations and is the job of the SSH execution backend ([Chapter 17](./17-execution-backends.md)) — `terraform` over `--backend ssh:<target>` is itself deferred to v1.x (state-file portability).
+- **ProxyJump / multi-hop SSH.** If your jumphost itself is reached through another bastion, that's not directly supported at v1.0. The upstream HCL's jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don't need multi-hop in practice. ProxyJump support is on the v1.x roadmap.
 - **`~/.ssh/config` parsing.** Targets must be defined explicitly in workspace config; `roksbnkctl` does not read your existing `~/.ssh/config`.
 - **Password auth.** Keys + agent only. Passwords are not supported and won't be.
-- **SCP / SFTP.** File transfer is the SSH execution backend's job in v0.9. v0.7's `--on` does one-shot remote exec only.
-- **Windows ssh-agent.** The `key_source: agent` path is Linux/macOS only in v0.7; Windows users must use `key_path` to a file. Already noted in [Key sources](#key-sources) above; called out here so a Windows reader who skipped to this section doesn't miss it.
+- **SCP / SFTP.** File transfer is the SSH execution backend's job (handled via `RunOpts.Files` materialisation; see [Chapter 17 §"SSH backend"](./17-execution-backends.md#ssh-backend)). `--on` does one-shot remote exec only.
+- **Windows ssh-agent.** The `key_source: agent` path is Linux/macOS only at v1.0; Windows users must use `key_path` to a file. Already noted in [Key sources](#key-sources) above; called out here so a Windows reader who skipped to this section doesn't miss it.
 
 ## Cross-reference
 
-[Chapter 17 — Execution backends](./17-execution-backends.md) (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can't `AcceptEnv`, and apt-bootstrap of missing tools on Ubuntu jumphosts. The `--on` flag stays as the lightweight one-shot path; `--backend ssh` is the deeper integration. The two are designed to share the same `internal/remote.Client` so what you learn here translates directly.
+[Chapter 17 — Execution backends](./17-execution-backends.md) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can't `AcceptEnv`, and apt-bootstrap of missing tools on Ubuntu jumphosts. The `--on` flag stays as the lightweight one-shot path; `--backend ssh` is the deeper integration. The two share the same `internal/remote.Client` so what you learn here translates directly.
 
 For the design rationale, edge cases, and open questions, read [PRD 01](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md) — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.

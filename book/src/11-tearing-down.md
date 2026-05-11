@@ -49,7 +49,7 @@ The post-destroy cleanup deletes `cluster-outputs.json` automatically — the wo
 
 The upstream HCL's resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live *in* the cluster, after all), and Terraform's destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase's resources are still there — finalisers block the destroy of the cluster's namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.
 
-`roksbnkctl cluster down` warns about this when run interactively — without `--auto` it prints a stderr line ("Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.") and prompts `Continue? [y/N]`. With `--auto` the warning and prompt are skipped and the destroy proceeds; correctness becomes the user's responsibility. v0.8 does not yet inspect `state/terraform.tfstate` to refuse on a non-empty trial — that hard guard is tracked as a future improvement.
+`roksbnkctl cluster down` warns about this when run interactively — without `--auto` it prints a stderr line ("Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.") and prompts `Continue? [y/N]`. With `--auto` the warning and prompt are skipped and the destroy proceeds; correctness becomes the user's responsibility. v1.0 does not inspect `state/terraform.tfstate` to refuse on a non-empty trial — that hard guard is tracked as a v1.x improvement (see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0").
 
 So in practice, **always run `down` before `cluster down`**, and do not skip the warning when running interactively.
 
@@ -194,9 +194,56 @@ The Terraform state is regenerated implicitly during register + plan; the resour
 
 The `ws delete` `--force` flag's "still has resources" check exists exactly to prevent this scenario — don't bypass it without thinking about the consequences.
 
+## Worked example: register an existing cluster, deploy BNK, tear down
+
+End-to-end Part III scenario: somebody on your team already provisioned a ROKS cluster manually via the IBM Cloud console (or via a different terraform tree); you need to deploy BNK on top of it using `roksbnkctl`, validate, and tear the whole thing down cleanly. The flow exercises [Chapter 9](./09-registering-existing-cluster.md), [Chapter 10](./10-deploying-bnk-trials.md), and this chapter end-to-end.
+
+```bash
+# 1. Workspace bootstrap — same as a fresh deploy
+roksbnkctl init -w preexisting
+# (answer prompts for region + resource group; pick the values matching
+#  the existing cluster's location)
+
+# 2. Register the already-running cluster into the workspace
+roksbnkctl cluster register existing-bnk-cluster -w preexisting
+# Expected:
+#   → Discovering cluster "existing-bnk-cluster" via IBM Cloud API ...
+#   ✓ Cluster ID: <crn>
+#   ✓ Wrote ~/.roksbnkctl/preexisting/cluster-outputs.json
+#   ✓ Fetched admin kubeconfig to ~/.kube/config (chmod 0600)
+
+# 3. Verify roksbnkctl sees the cluster
+roksbnkctl status -w preexisting
+# Expected: cluster Ready, workers count, no BNK pods yet
+
+# 4. Deploy BNK on top — `up` is idempotent over the existing cluster
+roksbnkctl up --auto -w preexisting
+# Expected: terraform applies the cert-manager + flo + cne_instance +
+# license modules only; the roks_cluster module sees the cluster already
+# exists and skips. ~10-15 min vs ~50 min for a from-scratch up.
+
+# 5. Validate
+roksbnkctl test -w preexisting
+# Expected: green across connectivity + dns
+
+# 6. Tear down — destroys the BNK overlay; the registered cluster survives
+roksbnkctl down --auto -w preexisting
+# Expected:
+#   → terraform destroy (auto-approved)
+#   Destroy complete! Resources: N destroyed.
+#   ✓ Workspace "preexisting" state retained at ~/.roksbnkctl/preexisting/
+```
+
+The destroy count `N` is the BNK overlay + jumphost only — typically 30-40 resources, **not** the from-scratch ~77 count. `cluster register` is a discovery-only path: terraform state holds the overlay modules (`cert_manager`, `flo`, `cne_instance`, `license`) and the `testing` jumphost, but **not** the `roks_cluster` module, because the cluster pre-existed roksbnkctl. `down` destroys only what terraform knows about, so the registered cluster survives untouched.
+
+If you also want to release the underlying cluster, you have to tear it down through whatever provisioned it originally (the IBM Cloud console, or the separate terraform tree your teammate used). `roksbnkctl cluster down` only works against clusters `roksbnkctl cluster up` created in the first place — see [Chapter 8](./08-cluster-phase.md) for the cluster-phase boundary.
+
+The full register → up → test → down loop above is what Phase E + Phase H of the e2e plan exercise; see [Chapter 23](./23-e2e-test-plan.md) for the CI version.
+
 ## Cross-references
 
 - [Chapter 6 — Workspaces](./06-workspaces.md) — `ws delete` mechanics and the parking-lot pattern.
 - [Chapter 8 — The cluster phase](./08-cluster-phase.md) — what `cluster up` provisions and `cluster down` removes.
+- [Chapter 9 — Registering an existing cluster](./09-registering-existing-cluster.md) — the `cluster register` mechanics the walkthrough builds on.
 - [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) — what `up` provisions and `down` removes.
-- [Chapter 26 — Troubleshooting](./26-troubleshooting.md) (lands in Sprint 6) — recovery from partial-destroy and orphan-state scenarios.
+- [Chapter 26 — Troubleshooting](./26-troubleshooting.md) — recovery from partial-destroy and orphan-state scenarios.

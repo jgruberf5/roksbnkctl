@@ -19,8 +19,10 @@ Use the page as a lookup table. If your symptom isn't here, [Chapter 23 — The 
 **Fix**: set `IBMCLOUD_API_KEY` in the env, or pre-populate the keychain entry. For batch / CI runs, the documented invocation is:
 
 ```bash
-IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init --auto -w my-workspace
+IBMCLOUD_API_KEY=$(cat /path/to/secret) roksbnkctl init -w my-workspace
 ```
+
+Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in the resolver chain). `init` still prompts for the remaining workspace metadata (region, resource group, cluster name) on TTY-bound stdin — a fully non-interactive bootstrap is on the v1.x roadmap.
 
 ### Symptom: doctor reports `terraform: not found` on a fresh dev box
 
@@ -193,7 +195,7 @@ roksbnkctl test dns --target www.example.com --type A --backend k8s --server clu
 1. The name is fronted by an anycast resolver fleet (Cloudflare, Google Public DNS) — same answer everywhere by design.
 2. Your laptop and your cluster are both in the same geographic region from GSLB's perspective (both in North America hitting the same datacenter).
 
-**Fix**: pick a target known to be geo-resolved (`www.google.com` is the canonical "different IPs from different regions" example), or add an SSH-based vantage (`--backend ssh:eu-bastion`) to bring in a third region. [Chapter 21 §"GSLB cross-vantage compare"](./21-dns-testing-gslb.md#the-gslb-compare-workflow) covers the multi-vantage workflow.
+**Fix**: pick a target known to be geo-resolved (`www.google.com` is the canonical "different IPs from different regions" example), or add an SSH-based vantage (`--backend ssh:eu-bastion`) to bring in a third region. [Chapter 21 §"GSLB cross-vantage compare"](./21-dns-testing-gslb.md#the---gslb-compare-workflow) covers the multi-vantage workflow.
 
 ### Symptom: `roksbnkctl test dns --backend docker` errors `DNS probe doesn't benefit from docker`
 
@@ -238,7 +240,7 @@ roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
 roksbnkctl k delete pod -n f5-bnk -l app=flo
 ```
 
-See [Chapter 25 §"Worked example"](./25-cos-supply-chain.md#worked-example-upload-a-new-far-image) for the full flow.
+See [Chapter 25 §"Worked example"](./25-cos-supply-chain.md#worked-example-rotating-cos-supply-chain-assets) for the full flow.
 
 ### Symptom: `cos object put` for a 3 GB file errors midway with `RequestTimeout`
 

@@ -1,6 +1,6 @@
 # Throughput testing
 
-`roksbnkctl test throughput` measures TCP bandwidth between an iperf3 client and an iperf3 server, with at least one side running adjacent to (or inside) the cluster so the number reflects something useful — cluster fabric, the inbound path through a LoadBalancer, the outbound path from a jumphost.
+`roksbnkctl test throughput` measures TCP bandwidth between an iperf3 client and an iperf3 server, with at least one side running adjacent to (or inside) the cluster so the number reflects something useful — cluster fabric, the inbound path through a LoadBalancer (the **iperf3 north-south** mode, default), the outbound path from a jumphost, or pod-to-pod (**east-west**).
 
 The heavy lifting (server pod lifecycle, OpenShift SCC compliance, in-cluster client Job, log streaming) lives in [Chapter 17 §"K8s backend"](./17-execution-backends.md#k8s-backend). This chapter is the user-facing flag surface, the mode selection, and the output-interpretation guide.
 
@@ -183,7 +183,7 @@ The fields you'll most often want from the embedded iperf3 JSON, in order of use
 | `end.sum_sent.bits_per_second` | Sender-side throughput. If sent ≫ received, packets were dropped on the path. If sent ≈ received, the path is healthy. |
 | `end.sum_sent.retransmits` | TCP retransmits over the run. A handful is normal; double-digit-percent of streams indicates congestion or a bad NIC. |
 | `end.streams[].sender.jitter_ms` | Per-stream jitter. Useful for diagnosing variable-latency paths. |
-| `end.cpu_utilization_percent.host_total` | Whether the client CPU was the bottleneck. >80% suggests the iperf3 client maxed out CPU before the network did — increase `--streams` to spread load, or run on a beefier client. |
+| `end.cpu_utilization_percent.host_total` | Whether the client CPU was the bottleneck. >80% suggests the iperf3 client maxed out CPU before the network did — increase the iperf3 server's stream count (a server-pod knob, not a roksbnkctl flag) to spread load, or run on a beefier client. |
 
 Example interpretation:
 

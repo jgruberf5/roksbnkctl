@@ -269,7 +269,7 @@ Concretely, the validator agent's golden-file tests at [`internal/k8s/golden_tes
 - `metadata.resourceVersion` (monotonic counter; changes on every read)
 - `metadata.creationTimestamp` (set server-side; not under our control)
 
-Anything else differing is a test failure. The covered resources for v0.8 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via `cli-runtime`'s `resource.Builder`) paths.
+Anything else differing is a test failure. The covered resources at v1.0 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via `cli-runtime`'s `resource.Builder`) paths.
 
 Run them locally with:
 
@@ -277,7 +277,7 @@ Run them locally with:
 make test-live
 ```
 
-…against a `KUBECONFIG` that points at a real ROKS cluster. They're **not** part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.
+…against a `KUBECONFIG` that points at a real ROKS cluster. They're **not** part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging a release. Documented in CONTRIBUTING.md.
 
 ## OpenShift extensions
 
@@ -292,7 +292,7 @@ roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK
 
 Same verb shape (`get` / `describe` / `delete`); the dynamic-client + RESTMapper combination handles type discovery without needing a per-type Go-side scheme registration.
 
-Phase 2.1 of PRD 02 adds **typed clients** via `github.com/openshift/client-go` for nicer printing and `describe` integration of these resources. PLAN.md flags this as deferrable to Sprint 5 polish. Until typed clients land, `roksbnkctl k get/describe` still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the `oc` passthrough:
+Phase 2.1 of PRD 02 adds **typed clients** via `github.com/openshift/client-go` for nicer printing and `describe` integration of these resources. This is on the v1.x roadmap (see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0"). Until typed clients land, `roksbnkctl k get/describe` still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the `oc` passthrough:
 
 ```bash
 roksbnkctl oc get projects                   # typed-client output today

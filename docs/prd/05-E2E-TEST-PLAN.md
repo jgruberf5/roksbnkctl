@@ -26,18 +26,26 @@ Phases I-N share a cluster brought up by Phase D (full lifecycle in baseline). T
 
 ## Phase I — SSH backend / `--on jumphost`
 
-**Prereqs**: Phase D apply complete, `targets.jumphost` auto-populated.
+**Prereqs**: Phase D apply complete, `targets.<SSH_TARGET>` populated (auto-discovered jumphost from terraform outputs, or registered manually via `roksbnkctl targets add`).
 
-| Step | Command | Pass criterion |
+The driver implementation lives in [`scripts/e2e-test-backends.sh::phase_I`](https://github.com/jgruberf5/roksbnkctl/blob/main/scripts/e2e-test-backends.sh); the table below reflects what shipped at v1.0 (12 steps, I0-I11). Steps marked **opt-in** require an environment variable to enable (the e2e runner skips them cleanly when unset, since they need specific remote-host shapes that not every CI environment has).
+
+| Step | Command / check | Pass criterion |
 |---|---|---|
-| I0 | `roksbnkctl targets list` | exits 0; `jumphost` present with auto-populated `host` and `key_source` |
-| I1 | `roksbnkctl exec --on jumphost -- whoami` | exits 0; prints `root` |
-| I2 | `roksbnkctl exec --on jumphost -- uname -a` | exits 0; output contains `Linux` |
-| I3 | `roksbnkctl ibmcloud --on jumphost iam oauth-tokens` | exits 0; output contains `IAM token` (validates `IBMCLOUD_API_KEY` propagation over SSH) |
-| I4 | `roksbnkctl shell --on jumphost </dev/null` (non-TTY: just opens + closes) | exits 0 |
-| I5 | (negative) `roksbnkctl exec --on nonexistent -- whoami` | exits non-zero; clear "no such target" error message |
-| I6 | (host-key change negative test) Modify `~/.roksbnkctl/known_hosts` to a wrong fingerprint, rerun I1 | exits 126; clear "host key mismatch" error |
-| I7 | After I6, restore known_hosts (delete bad entry); rerun I1 | passes |
+| I0 | `roksbnkctl targets show $TARGET` | exits 0; target present with host + key_source |
+| I1 | `roksbnkctl ibmcloud --on $TARGET iam oauth-tokens` (Sprint 1 `--on` flag path) | exits 0; output contains `IAM token` (validates `IBMCLOUD_API_KEY` propagation over SSH via the lightweight `--on` flag) |
+| I2 | `roksbnkctl ibmcloud --backend ssh:$TARGET iam oauth-tokens` (Sprint 4 unified Backend interface path) | exits 0; output contains `IAM token` (same end-to-end behaviour as I1 routed through the `Backend.Run` interface) |
+| I3 | `roksbnkctl exec --backend ssh:$TARGET --bootstrap -- iperf3 -v` (apt-bootstrap on Ubuntu target) | exits 0; output contains `iperf` (the bootstrap path installs iperf3 via apt-get if absent, then runs the version check; idempotent on subsequent calls) |
+| I4 | Cred-audit: `exec --backend ssh:$TARGET -- bash -lc 'env \| grep -i IBMCLOUD'` | output does NOT contain the API key VALUE (the wrapper script sources an env-file inside the command's process tree; SSH login env doesn't carry the key) |
+| I5 | Wrapper-script cleanup: `exec --backend ssh:$TARGET -- ls -d /tmp/roksbnkctl.* 2>/dev/null` | output empty (trap-on-EXIT in wrappers removed all per-invocation tempdirs) |
+| I6 | **Informational**: SetEnv silent-drop fallback note | logged only; the wrapper-script path activates automatically if sshd's `AcceptEnv` rejects `IBMCLOUD_API_KEY` (production sshd default) |
+| I7 | **Opt-in** (`ROKSBNKCTL_E2E_SSH_NON_UBUNTU=<target>`): apt-bootstrap against a non-Ubuntu target | exits non-zero; error message mentions Ubuntu (the bootstrap is Ubuntu-only at v1.0; RHEL/CentOS/Alpine must pre-install) |
+| I8 | **Opt-in** (`ROKSBNKCTL_E2E_SSH_NO_NOPASSWD=<target>`): apt-bootstrap against a target without passwordless sudo | exits non-zero; error message mentions `sudo` |
+| I9 | **Manual**: repo-unreachable failure (integrator mutates remote's `/etc/apt/sources.list` or severs DNS) | skipped in automated runs — would affect remote's stable state |
+| I10 | Context-cancel: background SSH-backed `sleep 30; echo done`, send SIGINT after 1s | roksbnkctl process exits within 5s of the signal (clean cancellation of the in-flight SSH session) |
+| I11 | `roksbnkctl doctor --backend ssh:$TARGET` | exits 0; output mentions the `ssh` backend (no API-key value in logs after redactor) |
+
+The `--use-existing-cluster` flag from the early PRD draft is not implemented in the shipped driver; the driver expects an active cluster (Phase D apply complete) or skips Phase I cleanly when the SSH target isn't reachable. Set `ROKSBNKCTL_E2E_SSH_TARGET=<name>` to enable Phase I; unset, the phase is skipped with a yellow `⊘` marker.
 
 ## Phase J — kubectl internalization (PATH-stripped)
 
@@ -128,21 +136,18 @@ Cross-cutting check that runs **after** Phases I-L — confirms no creds leaked 
 
 ## Phase N — mixed-mode lifecycle
 
-A realistic scenario: fresh `up`/`down` cycle with each tool routed to its preferred backend per workspace config.
+A realistic scenario: fresh `up`/`down` cycle that exercises a *different* backend for `down` than for `up`, validating cross-backend state-file portability. The driver implementation lives in [`scripts/e2e-test-backends.sh::phase_N`](https://github.com/jgruberf5/roksbnkctl/blob/main/scripts/e2e-test-backends.sh); the table below reflects what shipped at v1.0 (6 steps, N1-N6, restructured from the original PRD draft to be a single end-to-end lifecycle assertion rather than a fine-grained per-tool sequence).
 
-| Step | Command | Pass criterion |
+The init-backend is auto-selected: `local` if `terraform` is on PATH, `docker` otherwise. The teardown-backend is whichever of `local`/`docker` was NOT used for init (or the same one if the alternative is unavailable). The integrator can override the init-backend with `ROKSBNKCTL_E2E_INIT_BACKEND=<name>`.
+
+| Step | Command / check | Pass criterion |
 |---|---|---|
-| N0 | Set workspace config: `exec.iperf3.backend=k8s, exec.ibmcloud.backend=ssh:jumphost, exec.terraform.backend=local` | applied |
-| N1 | `roksbnkctl ws delete e2e --force; roksbnkctl ws use default` (clean slate) | |
-| N2 | `roksbnkctl init -w e2e-mixed --auto` | succeeds |
-| N3 | `roksbnkctl up --auto -w e2e-mixed --var-file ~/bnkfun/terraform.tfvars` | exits 0; cluster + BNK come up; terraform runs locally; ibmcloud calls during `init` checks routed via SSH (jumphost); jumphost auto-populated |
-| N4 | `roksbnkctl ops install -w e2e-mixed` | exits 0 (k8s backend ops pod) |
-| N5 | `roksbnkctl test connectivity -w e2e-mixed` | passes (uses local for connectivity probe) |
-| N6 | `roksbnkctl test throughput -w e2e-mixed` | iperf3 runs entirely in cluster; passes (k8s backend) |
-| N7 | `roksbnkctl ibmcloud account show -w e2e-mixed` | runs over SSH per workspace config |
-| N8 | `roksbnkctl ops uninstall -w e2e-mixed` | exits 0 |
-| N9 | `roksbnkctl down --auto -w e2e-mixed --var-file ~/bnkfun/terraform.tfvars` | clean tear-down (77 destroyed) |
-| N10 | `roksbnkctl ws delete e2e-mixed --force` (after switching to a parking lot) | exits 0 |
+| N1 | `roksbnkctl up --auto -w $WORKSPACE --backend $INIT_BACKEND --var-file $TFVARS` | exits 0; cluster + BNK come up (50-70 min wall time); 77 resources created |
+| N2 | `roksbnkctl test throughput --backend k8s -w $WORKSPACE` (against cluster from N1) | exits 0; iperf3 client+server both run in cluster; bandwidth reported; fixtures torn down (skipped cleanly if no kube context reachable) |
+| N3 | `roksbnkctl ibmcloud --backend ssh:$SSH_TARGET ks cluster ls -w $WORKSPACE` | exits 0; output contains `OK`; cluster from N1 visible from the SSH target's egress IP (skipped cleanly if no SSH target configured) |
+| N4 | `roksbnkctl test dns --target www.cloudflare.com --type A --server 8.8.8.8 --backend k8s --gslb-compare -o json -w $WORKSPACE` | exits 0; output contains `gslb_divergence` boolean (multi-vantage probe emits the JSON aggregate; covers Phase L-DNS happy path) |
+| N5 | `roksbnkctl down --auto -w $WORKSPACE --backend $TEARDOWN_BACKEND --var-file $TFVARS` (cross-backend) | exits 0; 77 resources destroyed; the .tfstate written by `$INIT_BACKEND` is readable by `$TEARDOWN_BACKEND` (state-file portability assertion) |
+| N6 | Post-teardown state check: `test ! -f ~/.roksbnkctl/$WORKSPACE/cluster-outputs.json` | file removed by `down` (cluster-state cleanup invariant — Phase C in the baseline driver depends on the same shape) |
 
 ## Test infrastructure
 

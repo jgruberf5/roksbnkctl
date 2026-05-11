@@ -205,7 +205,7 @@ An IBM IAM construct that lets a Kubernetes ServiceAccount assume IBM Cloud perm
 The release this book is the launch deliverable for. All E2E phases pass on a clean dev box; doctor green-by-default with terraform-only required.
 
 **VPE**
-**Virtual Private Endpoint** — IBM Cloud's private-network access point for managed services. Sometimes left dangling after a cluster destroy (see [Chapter 26 §"orphan IBM Cloud resources"](./26-troubleshooting.md#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources)).
+**Virtual Private Endpoint** — IBM Cloud's private-network access point for managed services. Sometimes left dangling after a cluster destroy (see [Chapter 26 §"orphan IBM Cloud resources"](./26-troubleshooting.md#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes)).
 
 **VPC**
 **Virtual Private Cloud** — IBM Cloud's network-isolation primitive. The cluster lives in one VPC; the testing client jumphost lives in another, connected via TGW.

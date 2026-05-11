@@ -7,6 +7,49 @@ src = "src"
 [output.html]
 git-repository-url = "https://github.com/jgruberf5/roksbnkctl"
 default-theme = "rust"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.search]
 enable = true
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+# ---------------------------------------------------------------------
+# PDF output via mdbook-pandoc + pandoc + XeLaTeX.
+#
+# Active only when the build host has `mdbook-pandoc`, `pandoc`, and a
+# LaTeX distribution with `xelatex` available. The
+# tools/docker/mdbook/Dockerfile image bundles all three; the GitHub
+# Pages CI workflow at .github/workflows/book.yml does NOT (HTML-only
+# build there). For a full release-prep build (HTML + PDF together),
+# run `make release` from the repo root — it routes through the docker
+# image.
+#
+# mdbook will warn and skip this backend on hosts where mdbook-pandoc
+# isn't installed; that's by design so contributors without LaTeX can
+# still iterate on the HTML book without errors.
+#
+# The Lua filter pre-renders Mermaid code blocks to SVG via mermaid-cli
+# so the PDF embeds real diagrams (rather than literal `sequenceDiagram
+# ...` text). The filter path is the in-container location from
+# tools/docker/mdbook/Dockerfile.
+[output.pandoc.profile.pdf]
+output-file = "book.pdf"
+to = "pdf"
+pdf-engine = "xelatex"
+toc = true
+number-sections = true
+filters = ["/opt/render-mermaid.lua"]
+
+[output.pandoc.profile.pdf.variables]
+documentclass = "report"
+papersize = "letter"
+geometry = ["margin=1in"]
+mainfont = "Latin Modern Roman"
+sansfont = "Latin Modern Sans"
+monofont = "Latin Modern Mono"
+colorlinks = true
+linkcolor = "NavyBlue"
+urlcolor = "NavyBlue"
+toccolor = "NavyBlue"

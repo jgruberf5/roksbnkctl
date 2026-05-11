@@ -150,7 +150,7 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 The var-file chain is, in order:
 
 1. The auto-generated `terraform.tfvars` (rendered from `config.yaml`).
-2. `~/.roksbnkctl/<workspace>/state/terraform.tfvars.user` if present.
+2. `~/.roksbnkctl/<workspace>/terraform.tfvars.user` if present.
 3. Each `--var-file` flag, left-to-right.
 
 Later wins on conflict — same as Terraform's own ordering.
@@ -201,6 +201,6 @@ The kubeconfig fetch and jumphost registration are best-effort: they log warning
 
 - [Chapter 7 — Quick start](./07-quick-start.md) — happy-path walkthrough end-to-end.
 - [Chapter 11 — Tearing down](./11-tearing-down.md) — `roksbnkctl down` to undo a trial.
-- [Chapter 13 — Terraform variables](./13-terraform-variables.md) (lands in Sprint 3) — full reference for what you can override via `--var-file`.
+- [Chapter 13 — Terraform variables](./13-terraform-variables.md) — full reference for what you can override via `--var-file`.
 - [Chapter 22 — Throughput testing](./22-throughput-testing.md) — once BNK is deployed, validating its data plane.
 - [Chapter 26 — Troubleshooting](./26-troubleshooting.md) — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.
