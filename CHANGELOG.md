@@ -152,6 +152,14 @@ Re-cut of the v1.0 release. The original `v1.0.0` tag landed on an earlier commi
 - **`book/book.toml`** marks `[output.pandoc]` as `optional = true` so host-install mdbook (no pandoc on PATH) skips PDF rendering with a warning instead of failing the entire build. Fixes the underlying CI failure that prompted this re-cut.
 - **`.gitignore`** excludes `.env`, `.env.local`, `.env.*.local` — local-secrets files sourced by `scripts/e2e-test-full.sh`. Never commit (contain `IBMCLOUD_API_KEY`).
 
+### Fixed (CI recovery)
+
+The first v1.0.1 tag-cut surfaced two latent CI bugs that the previous PR-only validate gate had hidden. Both fixed in this same v1.0.1 cut:
+
+- **`.goreleaser.yml`** no longer references `./book/book/pandoc/pdf/book.pdf` via `release.extra_files`. The previous comment claimed goreleaser would warn-and-continue on a missing path; in practice it fail-stops the release. The PDF is now uploaded separately by `make release-publish` (which runs `gh release upload` from the integrator's machine after the CI workflow finishes), so the `extra_files` reference had no remaining purpose.
+- **`mdbook test` dropped from `.github/workflows/book.yml`'s validate job.** mdbook's test step invokes rustdoc on every untagged code fence, treating it as Rust by default. This book contains zero Rust (it's a Go project's operator-facing docs; the actual languages used are bash / go / hcl / json / yaml / text / mermaid / powershell), so the test step generated only false positives. The `mdbook build` step still validates markdown rendering, link integrity, and structural correctness.
+- **Chapter 31 (`Building from source`)** — three untagged code fences (Go version snippet, `tools/docker/` tree, `dist/` tree) explicitly tagged as `text` so they render identically and don't trip any future code-fence-aware tooling.
+
 ### Release-flow documentation
 
 Integrator tag-cut sequence is now:

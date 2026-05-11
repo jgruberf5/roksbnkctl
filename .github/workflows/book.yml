@@ -43,10 +43,14 @@ jobs:
         with:
           crate: mdbook-mermaid
 
-      - name: Test (link check + code-block validation)
-        run: mdbook test book/
-
-      - name: Build HTML (catches malformed markdown)
+      - name: Build HTML (catches malformed markdown + dead links)
         # Pandoc backend is `optional = true` in book.toml, so this
         # builds HTML cleanly without needing pandoc/XeLaTeX on the runner.
+        #
+        # `mdbook test` is deliberately NOT run here — it invokes rustdoc
+        # on every untagged code fence, treating it as Rust. This book
+        # has zero Rust code (it's a Go project's operator-facing docs;
+        # actual languages used: bash / go / hcl / json / yaml / text /
+        # mermaid / powershell), so the test step generated only false
+        # positives. Dropped in v1.0.1's recovery cut.
         run: mdbook build book/
