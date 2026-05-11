@@ -22,7 +22,7 @@ The four-backend, GSLB-validation, in-cluster-ops release. Cumulative surface ac
   - `--require-divergence` flips the exit code when no divergence is observed (CI assertion that GSLB is doing something)
   - In-cluster path runs as a one-shot Job re-execing the bundled tools image (no separate `roksbnkctl-cli` image)
   - Workspace config: new `test.dns.resolvers` (named resolver map) and `test.dns.default_target` fields
-- **Terraform via docker** (`roksbnkctl up/plan/apply/destroy --backend docker`)
+- **Terraform via docker** (`roksbnkctl up/plan/apply/down --backend docker`)
   - `hashicorp/terraform:1.5.7` pinned upstream image
   - Workspace state directory bind-mounted at `/state` (read-write); embedded HCL materialised under `/state/tf-source/<source>/`
   - `--user $(id -u):$(id -g)` keeps state-file ownership aligned with the host user (Linux/WSL2; macOS Docker Desktop transparent)
@@ -78,15 +78,27 @@ See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). High-
 
 ### Documentation
 
-The book at <https://jgruberf5.github.io/roksbnkctl/book/> covers the v0.9 surface in **22 published chapters**: 0 (Preface) through 22 (Throughput testing). Sprint 6 will land chapters 23-32 (E2E plan, COS supply chain, troubleshooting, command + config reference, glossary, building from source).
+The book at <https://jgruberf5.github.io/roksbnkctl/book/> covered the v0.9 surface in **22 published chapters**: 0 (Preface) through 22 (Throughput testing). Sprint 6 landed chapters 23-32 (E2E plan, COS supply chain, troubleshooting, command + config reference, glossary, building from source); Sprint 7 launched the polished book alongside the v1.0 tag.
 
 Per-PRD design rationale (cred propagation, execution backends, kubectl internalisation, etc.) lives under [`docs/prd/`](docs/prd/).
 
-## Unreleased — Sprint 6 (v1.0 prep)
+## v1.0.0 — 2026-MM-DD (M4 milestone)
 
-Sprint 6 lands the testing build-out + reference chapter coverage that gates the **`v1.0`** tag. Tagged separately at end of Sprint 7 (book launch + polish).
+The first stable release. roksbnkctl bundles seven sprints of work (M1 → M4) into a single-binary CLI: a 4-command lifecycle (`init` → `up` → `test` → `down`), four execution backends (`local` / `docker` / `k8s` / `ssh:<target>`), a GSLB-aware DNS probe, terraform-via-docker, an in-cluster ops pod, and a full kubectl-internalised cluster-ops surface — all in one statically linked binary with terraform as the only required host install. The published book at <https://jgruberf5.github.io/roksbnkctl/book/> ships alongside the binary as the canonical user documentation.
+
+Milestone history: **v0.7** (M1) landed `--on jumphost` for customer-firewalled environments. **v0.8** (M2) internalised kubectl + oc via client-go. **v0.9** (M3) added the four-backend matrix, the GSLB-aware DNS probe, and terraform-via-docker. **v1.0** (M4) closes out with full E2E coverage, doctor green-by-default on a stock dev box with only `terraform` installed, the polished book launch, and the release artifacts (signed binaries deferred to v1.x — see Deferred below).
 
 ### Added
+
+#### Sprint 7 — book launch + v1.0 release artifacts
+
+- **Book published** at <https://jgruberf5.github.io/roksbnkctl/book/> — _Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl_. 32 chapters + preface + worked-example walkthroughs in each Part, Mermaid diagrams for architecture / lifecycle / GSLB cross-vantage / execution-backend matrix, foreword/preface rewrite, every code example re-verified in a fresh workspace. Dogfooded by ≥1 external user against a real IBM Cloud account before the tag cut (per PLAN.md §"v1.0 (M4)" gate).
+- **`roksbnkctl --version` / `roksbnkctl version`** now emits a second line `Docs: https://jgruberf5.github.io/roksbnkctl/book/` pointing at the canonical user-documentation surface. The first line ("`roksbnkctl <ver> (commit <c>, built <d>)`") is byte-identical to the pre-v1.0 shape so scripts that grep on it continue to parse. The shape is pinned by `internal/cli/meta_test.go::TestVersionCmd_OutputShape`. Constant of record: `internal/cli/meta.go::DocsURL`.
+- **GitHub Release artifacts** — Linux / macOS / Windows × amd64 / arm64 archives + `checksums.txt` + offline **`roksbnkctl-book-v1.0.0.pdf`** (the same book that ships at GitHub Pages, packaged for offline reading via mdbook-pandoc + XeLaTeX). The release page header links at the book and the footer at `CHANGELOG.md`. Archives now include `LICENSE`, `README.md`, `CHANGELOG.md`, and `MIGRATING.md` alongside the binary so the downloaded tarball is self-contained.
+- **PDF release pipeline** — `make release` from the repo root drives a docker-containerised build (via `tools/docker/mdbook/Dockerfile` — bundles mdbook + mdbook-mermaid + mdbook-pandoc + pandoc + texlive-xetex + mermaid-cli) that produces both the HTML (for GitHub Pages) and the PDF (for the GitHub Release page) in one shot. Mermaid diagrams pre-render to SVG via mermaid-cli so the PDF embeds real diagrams rather than literal source text. Local dev iteration on HTML stays lightweight via `make book` + `make book-serve` (host install, no docker required).
+- **README rewritten** for the v1.0 narrative — single-line status, terraform-only prereq table, install options (go install / pre-built binary / from-source / self-update), pointer block to the book + CHANGELOG + MIGRATING + PLAN + per-PRD design rationale. Trimmed from 700+ lines to ~90; the book is the canonical documentation surface.
+
+#### Sprint 6 — testing build-out + reference chapter coverage
 
 - **Full e2e Phases I + M + N** — `scripts/e2e-test-backends.sh` expanded with Phase I (SSH backend, 12 steps I0-I11), full Phase M (cred audit including the SSH-side M5/M6 steps), and Phase N (mixed-mode lifecycle N1-N6). LD9 (SSH vantage for DNS probe) wired alongside.
 - **`scripts/e2e-test-full.sh`** — combined A-H + I-N + L-DNS runner (~4-6 hour wall time); designed for release branches + manual-trigger CI.
@@ -101,10 +113,29 @@ Sprint 6 lands the testing build-out + reference chapter coverage that gates the
 
 ### Changed
 
-- **`roksbnkctl doctor`** is now **green-by-default on a stock dev box with only `terraform` installed**. The historical checks for `kubectl`, `oc`, `ibmcloud`, `iperf3`, and `dig` are now **informational** rather than warnings/errors — the binary has internalised those surfaces (chapter 2 / chapter 17 for backends; chapter 21 for DNS).
+- **`roksbnkctl doctor`** is **green-by-default on a stock dev box with only `terraform` installed**. The historical checks for `kubectl`, `oc`, `ibmcloud`, `iperf3`, and `dig` are now **informational** rather than warnings/errors — the binary has internalised those surfaces (chapter 2 / chapter 17 for backends; chapter 21 for DNS). Exit code semantic (0 on green / 1 on red) unchanged.
 - **`tools/docker/ibmcloud/Dockerfile`** dropped `ENTRYPOINT ["ibmcloud"]`. The docker backend's dispatch layer now prepends the tool binary name explicitly via a new `dockerImageBinary` map; the k8s `jobToolCmdOverride` map mirrors it. Sprint 5's `jobToolCmdOverride` shim for `roksbnkctl` self-exec dns-probe is now unnecessary — the cross-backend invariant is pinned in `TestDockerImageBinary_MirrorsK8sOverrides`.
 - **Chapter 22** reordered to surface the bundled-image / SCC story before sample output (Sprint 5 tech-writer Issue 14 carry-over).
 
+### Documentation
+
+The book at <https://jgruberf5.github.io/roksbnkctl/book/> launched alongside the v1.0 tag with **32 chapters + preface + worked-example walkthroughs**. Sprint 6 landed chapters 23-32 (E2E plan, day-2 ops, COS supply chain, troubleshooting, command + config + terraform variable reference, glossary, building from source, extending). Sprint 7 added Mermaid diagrams (architecture, lifecycle, GSLB cross-vantage, execution-backend matrix), rewrote the preface, added per-Part worked-example walkthroughs, re-verified every code example against a fresh workspace, and refreshed PRD 05 §"Phase I" + §"Phase N" step matrices to match the shipped surface.
+
+Per-PRD design rationale (cred propagation, execution backends, kubectl internalisation, DNS probe, lifecycle, …) lives under [`docs/prd/`](docs/prd/). Sprint-by-sprint development history lives in [`docs/PLAN.md`](docs/PLAN.md).
+
+### Deferred (v1.x roadmap)
+
+See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). High-water-mark v1.x items the v1.0 cut explicitly does NOT ship:
+
+- **Cosign / sigstore release signing** — the `.goreleaser.yml` has a placeholder; the signing infra in `.github/workflows/release.yml` lands in v1.x.
+- **Homebrew formula / tap repo** — the `brews:` block is wired but commented out pending an `homebrew-tap` repo.
+- terraform `--backend k8s` and `--backend ssh:<target>` (state-handling design open).
+- `--truncated` user-facing CLI flag for the DNS probe (Sprint 6 validator carry-over).
+- Cross-driver cluster-sharing for `scripts/e2e-test-full.sh`.
+- SSH backend `apt-get` bootstrap on RHEL/CentOS/Alpine (Ubuntu-only).
+- Native Windows Docker Desktop UID/GID handling for terraform-via-docker.
+- F5 corporate theming for the book.
+
 ## Unreleased (v1.x)
 
-Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next milestone is **M4 / v1.0** — Sprint 7 polishes the book, lands the dogfooding feedback loop, and cuts the v1.0 tag.
+Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next dev cycle's CHANGELOG entries land here.

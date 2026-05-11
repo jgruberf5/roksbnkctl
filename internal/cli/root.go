@@ -44,12 +44,13 @@ var rootCmd = &cobra.Command{
 manages the COS supply chain BNK depends on, and runs built-in connectivity,
 DNS, and throughput tests against the deployed environment.
 
-The 3-command happy path:
+The 4-command lifecycle:
   roksbnkctl init    Interactive setup; writes the workspace config
   roksbnkctl up      Provision (or attach) and deploy BNK
   roksbnkctl test    Run connectivity, DNS, and throughput tests
+  roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)
 
-See docs/PRD.md or https://github.com/jgruberf5/roksbnkctl for the full surface.`,
+See https://jgruberf5.github.io/roksbnkctl/book/ for the canonical user guide.`,
 	SilenceUsage:      true,
 	PersistentPreRunE: warnLegacyState,
 }
@@ -91,6 +92,17 @@ func warnLegacyState(_ *cobra.Command, _ []string) error {
 // project-scoped file instead of shell profiles.
 func Execute() {
 	loadDotenv()
+	// Wire cobra's auto-generated `--version` flag at Execute() time
+	// rather than init() so the value reflects the build-time Version
+	// even when callers (tests, refgen) import the package and mutate
+	// the Version variable. The custom VersionTemplate produces the
+	// same two-line shape as `roksbnkctl version`:
+	//   roksbnkctl <version> (commit <c>, built <d>)
+	//   Docs: <url>
+	rootCmd.Version = Version
+	rootCmd.SetVersionTemplate(fmt.Sprintf(
+		"roksbnkctl {{.Version}} (commit %s, built %s)\nDocs: %s\n",
+		Commit, BuildDate, DocsURL))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
