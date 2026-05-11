@@ -226,7 +226,11 @@ func (m Model) View() string {
 	} else {
 		avail := m.availCardHeight()
 		if m.offset > 0 {
-			sb.WriteString(stDim.Render(fmt.Sprintf("  ▲ %d more above\n", m.offset)))
+			// Trailing "\n" must live OUTSIDE stDim.Render — lipgloss
+			// pads the styled span's trailing empty line to the first
+			// line's visible width, which would shift the next card
+			// (the new top of the viewport) right by ~16 columns.
+			sb.WriteString(stDim.Render(fmt.Sprintf("  ▲ %d more above", m.offset)) + "\n")
 		}
 		used := 0
 		lastShown := m.offset - 1
@@ -241,7 +245,7 @@ func (m Model) View() string {
 			lastShown = i
 		}
 		if hidden := len(m.sprints) - 1 - lastShown; hidden > 0 {
-			sb.WriteString(stDim.Render(fmt.Sprintf("  ▼ %d more below\n", hidden)))
+			sb.WriteString(stDim.Render(fmt.Sprintf("  ▼ %d more below", hidden)) + "\n")
 		}
 	}
 
