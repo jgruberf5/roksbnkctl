@@ -22,3 +22,11 @@ book/book/
 
 # Claude Code local state (worktrees, scheduled tasks, per-user settings)
 .claude/
+
+# Local secrets / per-run overrides for scripts/e2e-test-full.sh.
+# Source with `set -a; . .env; set +a` before invoking the script.
+# NEVER commit — contains IBMCLOUD_API_KEY plus optional SSH target
+# names. Copy .env.example as a starting point if one ever lands.
+.env
+.env.local
+.env.*.local

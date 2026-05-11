@@ -1,5 +1,32 @@
 # Contributing to roksbnkctl
 
+## Setting up a contributor host
+
+This guide assumes a clone of the repo on a Linux or macOS host with Go 1.25+, git, make, and docker already installed (the "build tools" assumed-present prerequisites).
+
+For Ubuntu/Debian hosts, the repository ships a one-shot installer for everything else `make build` / `make release` / `scripts/e2e-test-full.sh` rely on:
+
+```bash
+./install_build_dependencies.sh
+```
+
+What it installs (idempotent — re-running skips anything already present):
+
+- `terraform` (HashiCorp apt repo) — required for the binary's local backend
+- `ibmcloud` CLI + the `kubernetes-service` and `cloud-object-storage` plugins — required for the `roksbnkctl ibmcloud …` passthrough with `--backend local` and for e2e Phase B/I
+- `jq`, `unzip`, `gnupg`, `openssh-client`, `python3` — dev utilities the e2e scripts and Makefile targets shell out to
+
+What it deliberately does NOT install:
+
+- `mdbook` / `mdbook-pandoc` / `pandoc` / `texlive` / `mermaid-cli` — bundled in `tools/docker/mdbook/Dockerfile`; build once via `make -C tools/docker build-mdbook`
+- `goreleaser` — pulled at run-time from `goreleaser/goreleaser:latest`
+- `iperf3` — bundled in `tools/docker/iperf3/`, runs via `--backend k8s`
+- `kubectl` — sprint 2 internalised the surface; install on host only if you want to shell out for cred-audit assertions in `scripts/e2e-test-backends.sh`
+
+For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …) and for macOS, the script doesn't auto-detect — install the prereqs manually per the per-OS recipes in [chapter 4 of the book](book/src/04-installation.md#installing-prerequisites).
+
+End users running a pre-built `roksbnkctl` binary from the GitHub Release page do **not** need this script — they only need `terraform` and (optionally) the passthrough CLIs. See the book's installation chapter for that path.
+
 ## Running tests
 
 The unit suite lives under `internal/...` and runs without any external

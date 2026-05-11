@@ -2,16 +2,90 @@
 
 This chapter gets a `roksbnkctl` binary onto your machine and verifies it works. Two install paths are covered: build-from-source (native Go, the canonical path until release artefacts ship) and build-with-Docker (no host Go required).
 
-A tagged release with pre-built binaries, a `brew` tap, and an `install.sh` one-liner is on the roadmap but not yet shipped. Until then, building from source is the supported install path.
+Pre-built binaries are attached to every [GitHub Release](https://github.com/jgruberf5/roksbnkctl/releases) (Linux, macOS, Windows × amd64, arm64). The book also ships as an offline PDF (`roksbnkctl-book-<tag>.pdf`) on the same release page. A Homebrew tap is on the v1.x roadmap; until then macOS users grab the binary from the release page or build from source.
 
 ## Prerequisites
 
 - **Linux or macOS** for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.
-- **Git** to clone the repository.
-- **Go 1.25 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build below.
+- **Git** to clone the repository (only if building from source — not needed if you grab a pre-built binary).
+- **Go 1.25 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build or a pre-built release binary.
 - **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`. This is the only required external prerequisite at v1.0; everything else (`ibmcloud`, `kubectl`, `oc`, `iperf3`, `docker`) is optional and only needed for the corresponding passthrough or backend.
 
-You do not need Docker installed to *use* `roksbnkctl`. Docker is only used here as a convenience for building the binary without touching your host Go install.
+You do not need Docker installed to *use* `roksbnkctl` with the default `local` backend. Docker is required only if you opt in to `--backend docker` for `terraform` / `ibmcloud`. The k8s and ssh backends are alternatives that need neither host Docker nor host Go.
+
+## Installing prerequisites
+
+Install paths per platform. `terraform` is the only one strictly required for v1.0; the rest are optional, install only what you need.
+
+### macOS — Homebrew
+
+```bash
+brew install terraform               # required
+brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
+brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough
+brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:<t>` throughput tests
+# kubectl-oc (Red Hat OpenShift CLI) — no brew formula; download from
+# https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz
+```
+
+If you installed `ibmcloud-cli`, add the plugins roksbnkctl uses:
+
+```bash
+ibmcloud plugin install kubernetes-service -f
+ibmcloud plugin install cloud-object-storage -f
+```
+
+### Linux — Ubuntu / Debian
+
+```bash
+# terraform — required
+wget -qO- https://apt.releases.hashicorp.com/gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update && sudo apt-get install -y terraform
+
+# ibmcloud CLI + plugins — optional, for `roksbnkctl ibmcloud …` passthrough with --backend local
+curl -fsSL https://clis.cloud.ibm.com/install/linux | sudo sh
+ibmcloud plugin install kubernetes-service -f
+ibmcloud plugin install cloud-object-storage -f
+
+# kubectl — optional, passthrough only (`roksbnkctl k *` is internalised and needs no host install)
+sudo snap install kubectl --classic
+# or via direct download:
+# curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+# chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# iperf3 — optional, only for `--backend local` / `--backend ssh:<t>` throughput tests
+sudo apt-get install -y iperf3
+```
+
+Instructions above target Ubuntu and Debian. For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …), a quick online search for "install terraform on _&lt;your distro&gt;_" — and the same pattern for `ibmcloud`, `kubectl`, and `iperf3` — yields the equivalent commands. HashiCorp ships an RPM repo at <https://rpm.releases.hashicorp.com> covering RHEL/Fedora, and most distributions package `kubectl` and `iperf3` in their official repos; the IBM Cloud CLI installer at <https://clis.cloud.ibm.com/install/linux> is a single curl-pipe-sh that works across distros.
+
+### Windows — Chocolatey
+
+```powershell
+choco install terraform
+choco install ibmcloud-cli   # optional
+choco install kubernetes-cli # optional, provides kubectl
+choco install iperf3         # optional
+```
+
+Or via [Scoop](https://scoop.sh/):
+
+```powershell
+scoop install terraform ibmcloud-cli kubernetes-cli iperf3
+```
+
+After installing `ibmcloud-cli`, add the plugins:
+
+```powershell
+ibmcloud plugin install kubernetes-service -f
+ibmcloud plugin install cloud-object-storage -f
+```
+
+Windows TTY-bound SSH features (the `roksbnkctl shell --on <target>` interactive path) have known limitations on Windows; file-based SSH keys + non-interactive commands work, but `ssh-agent` named-pipe integration is a v1.x item. See [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
 
 ## Path A — native build (requires Go 1.25+)
 
