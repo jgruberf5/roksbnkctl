@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -377,11 +377,11 @@ roksbnkctl k port-forward flo-controller-abc123 -n f5-bnk :80
 <li><code>metadata.resourceVersion</code> (monotonic counter; changes on every read)</li>
 <li><code>metadata.creationTimestamp</code> (set server-side; not under our control)</li>
 </ul>
-<p>Anything else differing is a test failure. The covered resources for v0.8 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via <code>cli-runtime</code>’s <code>resource.Builder</code>) paths.</p>
+<p>Anything else differing is a test failure. The covered resources at v1.0 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via <code>cli-runtime</code>’s <code>resource.Builder</code>) paths.</p>
 <p>Run them locally with:</p>
 <pre><code class="language-bash">make test-live
 </code></pre>
-<p>…against a <code>KUBECONFIG</code> that points at a real ROKS cluster. They’re <strong>not</strong> part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging v0.8. Documented in CONTRIBUTING.md.</p>
+<p>…against a <code>KUBECONFIG</code> that points at a real ROKS cluster. They’re <strong>not</strong> part of the unit-test CI run because they need a live cluster; the integrator runs them before tagging a release. Documented in CONTRIBUTING.md.</p>
 <h2 id="openshift-extensions"><a class="header" href="#openshift-extensions">OpenShift extensions</a></h2>
 <p>Beyond the core kubectl-equivalent verbs, ROKS clusters surface OpenShift-specific resource types — <code>Project</code>, <code>Route</code>, <code>ImageStream</code>, <code>BuildConfig</code>. <strong><code>roksbnkctl k get</code> discovers these natively today</strong> via the dynamic client + RESTMapper path (the cluster advertises them through the API discovery doc; the deferred-discovery mapper picks them up):</p>
 <pre><code class="language-bash">roksbnkctl k get projects                    # OpenShift projects (vs Kubernetes namespaces)
@@ -390,7 +390,7 @@ roksbnkctl k get imagestreams -n f5-bnk      # OpenShift ImageStreams
 roksbnkctl k get buildconfigs                # BuildConfigs (mostly empty in BNK trials)
 </code></pre>
 <p>Same verb shape (<code>get</code> / <code>describe</code> / <code>delete</code>); the dynamic-client + RESTMapper combination handles type discovery without needing a per-type Go-side scheme registration.</p>
-<p>Phase 2.1 of PRD 02 adds <strong>typed clients</strong> via <code>github.com/openshift/client-go</code> for nicer printing and <code>describe</code> integration of these resources. PLAN.md flags this as deferrable to Sprint 5 polish. Until typed clients land, <code>roksbnkctl k get/describe</code> still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the <code>oc</code> passthrough:</p>
+<p>Phase 2.1 of PRD 02 adds <strong>typed clients</strong> via <code>github.com/openshift/client-go</code> for nicer printing and <code>describe</code> integration of these resources. This is on the v1.x roadmap (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”). Until typed clients land, <code>roksbnkctl k get/describe</code> still works against OpenShift CRDs — just with the generic unstructured printer. If you want richer per-type output today, fall back to the <code>oc</code> passthrough:</p>
 <pre><code class="language-bash">roksbnkctl oc get projects                   # typed-client output today
 roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </code></pre>
@@ -486,6 +486,8 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

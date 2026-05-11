@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -180,7 +180,42 @@
                         <h1 id="dns-testing-for-gslb"><a class="header" href="#dns-testing-for-gslb">DNS testing for GSLB</a></h1>
 <p><code>roksbnkctl test dns</code> is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the <em>answer</em> a name returns isn’t a single global truth but a function of <em>who’s asking from where</em>.</p>
 <p>This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you “the URL works”; throughput testing tells you “the path is fast”. Both assume the name resolved. When the GSLB is the thing under test, “the name resolved” is <em>itself</em> the question — and the answer changes depending on the network vantage of whoever’s asking.</p>
-<p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what <code>v0.9</code> ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<h2 id="three-vantages-one-comparison"><a class="header" href="#three-vantages-one-comparison">Three vantages, one comparison</a></h2>
+<p><code>--gslb-compare</code> is the flagship workflow: a single <code>roksbnkctl test dns</code> invocation fans out across <code>local</code>, <code>k8s</code>, and (optionally) <code>ssh:&lt;target&gt;</code> vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.</p>
+<pre class="mermaid">graph TB
+    subgraph runner[roksbnkctl test dns --gslb-compare]
+        cmd[fan-out parallel&lt;br/&gt;per-vantage probe]
+        cmp[divergence detector&lt;br/&gt;+ JSON aggregate]
+    end
+    subgraph vantage_local[local vantage]
+        L[laptop resolver&lt;br/&gt;public DNS / GSLB outside-the-cluster answer]
+    end
+    subgraph vantage_k8s[k8s vantage]
+        K[ops-pod resolver&lt;br/&gt;cluster CoreDNS / cluster-routed GSLB answer]
+    end
+    subgraph vantage_ssh[ssh:jumphost vantage]
+        S[remote-host resolver&lt;br/&gt;third network path's GSLB answer]
+    end
+    GSLB[F5 BIG-IP Next GSLB&lt;br/&gt;per-resolver dispatch rule]
+
+    cmd --&gt; L
+    cmd --&gt; K
+    cmd --&gt; S
+    L --&gt; GSLB
+    K --&gt; GSLB
+    S --&gt; GSLB
+    GSLB -. region A IP .-&gt; L
+    GSLB -. region B IP .-&gt; K
+    GSLB -. region C IP .-&gt; S
+    L --&gt; cmp
+    K --&gt; cmp
+    S --&gt; cmp
+    cmp --&gt;|gslb_divergence: true/false| out[stdout JSON&lt;br/&gt;roksbnkctl.dns.v1]
+</pre>
+
+<p>The point of the diagram: a single <code>roksbnkctl</code> invocation probes from network positions a <code>dig</code> from your laptop can’t reach. The cluster vantage answers from the cluster’s egress IP; the SSH vantage answers from a third network path. Comparing the three is exactly the assertion “is the GSLB rule taking effect” needs.</p>
+<p>The design rationale for this shape lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>. The rest of this chapter is the user-facing surface.</p>
 <h2 id="the-gslb-problem"><a class="header" href="#the-gslb-problem">The GSLB problem</a></h2>
 <p>F5 BIG-IP Next’s GSLB (Global Server Load Balancing) returns different DNS answers depending on the requesting resolver’s IP address. The discrimination is a feature, not a bug — that’s the whole point of GSLB:</p>
 <ul>
@@ -421,7 +456,7 @@ test:
 </tbody>
 </table>
 </div>
-<p>Both schemas are stable starting at v0.9 — additive changes (new optional fields) are allowed in v0.x; field renames or removals would bump to <code>.v2</code>. v0.10 added an optional <code>edns_client_subnet</code> object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don’t, in which case the field is omitted from the JSON via <code>omitempty</code>. Sub-fields are <code>family</code> (1 = IPv4, 2 = IPv6), <code>source_netmask</code>, <code>scope_netmask</code>, and <code>address</code>. Useful for confirming the GSLB actually saw your client’s geographic scope rather than the resolver’s IP.</p>
+<p>Both schemas are stable at v1.0 — additive changes (new optional fields) are allowed within <code>v1</code>; field renames or removals would bump to <code>.v2</code>. v1.0 includes the optional <code>edns_client_subnet</code> object on each per-vantage entry, emitted when the resolver echoes an EDNS Client Subnet option (RFC 7871) in its response — most GSLB-aware authoritative servers do; vanilla recursive resolvers don’t, in which case the field is omitted from the JSON via <code>omitempty</code>. Sub-fields are <code>family</code> (1 = IPv4, 2 = IPv6), <code>source_netmask</code>, <code>scope_netmask</code>, and <code>address</code>. Useful for confirming the GSLB actually saw your client’s geographic scope rather than the resolver’s IP.</p>
 <h2 id="rtt-measurement-and---iterations"><a class="header" href="#rtt-measurement-and---iterations">RTT measurement and <code>--iterations</code></a></h2>
 <p>Per-query RTT is captured directly from <code>miekg/dns</code>’s <code>Exchange()</code>, which returns the round-trip duration without the runner having to wrap a stopwatch around the call. That keeps the timing honest — no scheduling jitter from a goroutine yield between <code>time.Now()</code> and the actual UDP send.</p>
 <p><code>--iterations N</code> runs the same query against the same server N times serially and reports p50/p95/p99 across the samples. Use cases:</p>
@@ -516,6 +551,79 @@ error: DNS probe doesn't benefit from --backend docker (same network identity
 <p>With no <code>--target</code> and no <code>--gslb-compare</code>, the runner falls back to today’s behaviour: probe each host in <code>connectivity.extra_hosts</code>, single-vantage, single-iteration, with the host’s <code>system</code> resolver. This is the same shape as the connectivity suite’s reachability probe — no GSLB awareness, no per-server selection — and is the right tool for “did I typo a hostname in my config” rather than “is the GSLB doing what I configured”.</p>
 <p>For real GSLB validation you almost always want <code>--gslb-compare</code> plus an explicit <code>--target</code> and <code>--server</code>. The <code>extra_hosts</code> fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.</p>
 <p><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> covers <code>connectivity.extra_hosts</code> in full.</p>
+<h2 id="worked-example-gslb-divergence-troubleshooting"><a class="header" href="#worked-example-gslb-divergence-troubleshooting">Worked example: GSLB divergence troubleshooting</a></h2>
+<p>End-to-end Part VI scenario: a customer’s BNK GSLB rule says “users in the US get IP A, users in the EU get IP B”. They claim the rule isn’t working — EU users keep landing on the US datacenter. You have <code>roksbnkctl</code> configured with a local laptop (your office), the customer’s cluster (ops pod installed), and a customer-provided EU bastion as an SSH target named <code>eu-bastion</code>. Goal: prove or disprove the divergence, point at where to look next.</p>
+<pre><code class="language-bash"># 1. Baseline — three-vantage probe of the GSLB-fronted name
+$ roksbnkctl test dns \
+    --target www.example.com \
+    --type A \
+    --server gslb-vip.example.com \
+    --gslb-compare \
+    -o json | tee /tmp/gslb-baseline.json | jq .
+{
+  "schema": "roksbnkctl.dns.v1",
+  "target": "www.example.com",
+  "type": "A",
+  "server": "gslb-vip.example.com",
+  "gslb_divergence": false,
+  "vantages": [
+    {
+      "backend": "local",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 18.2, "p95": 22.1}
+    },
+    {
+      "backend": "k8s",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 6.4, "p95": 9.8}
+    },
+    {
+      "backend": "ssh:eu-bastion",
+      "answers": [{"rdata": "192.0.2.10"}],
+      "rtt_ms": {"p50": 24.7, "p95": 31.4}
+    }
+  ]
+}
+
+# Note: `gslb_divergence: false` means ALL THREE vantages got 192.0.2.10
+# back. That's the smoking gun — the customer is right. The GSLB is
+# returning the same answer regardless of where the resolver is.
+
+# 2. Confirm via `dig` from the EU bastion directly (sanity check that
+# roksbnkctl isn't somehow masking the answer)
+$ roksbnkctl exec --on eu-bastion -- dig +short @gslb-vip.example.com www.example.com
+192.0.2.10
+# Same answer. The probe isn't lying.
+
+# 3. Check the GSLB rule's resolver-IP detection
+$ roksbnkctl ibmcloud --backend ssh:eu-bastion ks cluster get \
+    --cluster customer-cluster --json | jq '.serviceEndpoints'
+# (Inspect the cluster's egress IP that GSLB sees for k8s vantage queries)
+
+# 4. Repeat the probe with a known-good test name (one with a working
+# anycast resolver, to rule out probe-side bugs)
+$ roksbnkctl test dns \
+    --target www.cloudflare.com \
+    --type A \
+    --server 8.8.8.8 \
+    --gslb-compare
+✓ local         : 104.16.124.96 (RTT 12ms)
+✓ k8s           : 104.16.124.96 (RTT 6ms)
+✓ ssh:eu-bastion: 104.16.124.96 (RTT 28ms)
+  gslb_divergence: false  (anycast — expected)
+
+# 5. Hand off the artefact to the GSLB owner with three pieces of evidence:
+#    - /tmp/gslb-baseline.json (the divergence-false JSON)
+#    - The cluster's resolver-IP-as-seen-by-GSLB from step 3
+#    - Confirmation that the probe machinery itself works (step 4)
+</code></pre>
+<p>What this walkthrough lets you say with confidence: “the GSLB is returning 192.0.2.10 to all three vantages including the EU bastion. The rule isn’t dispatching. Check the rule’s resolver-IP-CIDR-match clause against the EU bastion’s egress IP <code>&lt;X&gt;</code>.” That’s a falsifiable claim a GSLB engineer can act on.</p>
+<p>Common follow-up failure modes (covered in <a href="./26-troubleshooting.html">Chapter 26</a>):</p>
+<ul>
+<li><strong>Probe says diverged but customer says it’s not</strong> — likely the customer’s testing point is behind a NAT that masks their network position; their resolver looks like a different region to the GSLB.</li>
+<li><strong>Probe says NOT diverged but customer says it IS</strong> — likely the customer is querying through a CDN-fronted resolver that anycasts the request. Re-probe with <code>--server &lt;gslb-vip-directly&gt;</code> to skip the resolver chain.</li>
+<li><strong>All vantages return SERVFAIL</strong> — the GSLB-VIP isn’t reachable from any of them. Check connectivity (<a href="./20-connectivity-testing.html">Chapter 20</a>) before re-running.</li>
+</ul>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a> — design rationale, the full schema spec, the rejected-by-design list.</li>
@@ -581,6 +689,8 @@ error: DNS probe doesn't benefit from --backend docker (same network identity
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

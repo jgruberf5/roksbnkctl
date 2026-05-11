@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,7 +178,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-on-flag-and-ssh-jumphosts"><a class="header" href="#the-on-flag-and-ssh-jumphosts">The –on flag and SSH jumphosts</a></h1>
-<p>The <code>--on &lt;target&gt;</code> flag re-runs a <code>roksbnkctl</code> passthrough command (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on a remote SSH host instead of locally. After a successful <code>roksbnkctl up</code>, a <code>jumphost</code> target is auto-populated from the upstream HCL’s terraform outputs, so the flag works with no manual configuration in the common case.</p>
+<p>The <code>--on &lt;target&gt;</code> flag (most commonly <code>--on jumphost</code>) re-runs a <code>roksbnkctl</code> passthrough command (<code>exec</code>, <code>shell</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) on a remote SSH host instead of locally. After a successful <code>roksbnkctl up</code>, a <code>jumphost</code> target is auto-populated from the upstream HCL’s terraform outputs, so <code>--on jumphost</code> works with no manual configuration in the common case.</p>
 <p>This chapter covers when to reach for <code>--on</code>, the <code>targets:</code> workspace config block, the auto-population behaviour, the <code>roksbnkctl targets</code> command tree for managing your own targets, and how host-key trust is established.</p>
 <p>The full design rationale for this feature lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01</a>. This chapter is the user-facing distillation.</p>
 <h2 id="why-this-exists"><a class="header" href="#why-this-exists">Why this exists</a></h2>
@@ -229,7 +229,7 @@
 <p><strong><code>key_path: &lt;path&gt;</code></strong> — a file on disk. Standard OpenSSH key formats are accepted (<code>~/.ssh/id_ed25519</code>, <code>~/.ssh/id_rsa</code>, etc.). Tilde expansion is honoured.</p>
 </li>
 <li>
-<p><strong><code>key_source: agent</code></strong> — talk to the user’s <code>ssh-agent</code> over the socket pointed at by <code>$SSH_AUTH_SOCK</code>. The agent presents whichever keys it currently holds; <code>roksbnkctl</code> tries each in turn against the target’s <code>authorized_keys</code>. This is the right setting if your team already manages keys via 1Password / hardware tokens / <code>gpg-agent</code> and you don’t want a key file on disk. <strong>Note</strong>: ssh-agent integration is Linux/macOS-only in v0.7; Windows users should use <code>key_path</code> instead.</p>
+<p><strong><code>key_source: agent</code></strong> — talk to the user’s <code>ssh-agent</code> over the socket pointed at by <code>$SSH_AUTH_SOCK</code>. The agent presents whichever keys it currently holds; <code>roksbnkctl</code> tries each in turn against the target’s <code>authorized_keys</code>. This is the right setting if your team already manages keys via 1Password / hardware tokens / <code>gpg-agent</code> and you don’t want a key file on disk. <strong>Note</strong>: ssh-agent integration is Linux/macOS-only at v1.0; Windows users should use <code>key_path</code> instead. Windows ssh-agent named-pipe support is on the v1.x roadmap.</p>
 </li>
 <li>
 <p><strong><code>key_source: tf-output:&lt;output-name&gt;</code></strong> — read the key from the workspace’s terraform state output of that name. Used by the auto-discovered <code>jumphost</code> target. The terraform output must be a string-typed PEM-encoded private key; sensitive outputs work fine because <code>terraform output -raw &lt;name&gt;</code> returns the value regardless of the sensitive flag.</p>
@@ -328,21 +328,21 @@ roksbnkctl oc --on jumphost projects
 <ul>
 <li><strong>Streaming I/O.</strong> stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (<code>oc adm top nodes</code>, <code>ibmcloud ks cluster get</code> on a slow API call) work normally.</li>
 <li><strong>Exit code propagation.</strong> The remote command’s exit code is the local exit code. A failing remote command produces a non-zero <code>roksbnkctl</code> exit; a succeeding remote command produces <code>0</code>. CI scripts can rely on this.</li>
-<li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. Other verbs (<code>exec</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) run without a PTY in v0.7; if you need a PTY for <code>top</code> or another <code>isatty()</code>-sensitive command, fall back to <code>roksbnkctl shell --on jumphost</code> and run the command from the interactive shell.</li>
+<li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. Other verbs (<code>exec</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) run without a PTY at v1.0; if you need a PTY for <code>top</code> or another <code>isatty()</code>-sensitive command, fall back to <code>roksbnkctl shell --on jumphost</code> and run the command from the interactive shell.</li>
 <li><strong>Environment passthrough.</strong> <code>IBMCLOUD_API_KEY</code>, <code>IBMCLOUD_REGION</code>, and <code>KUBECONFIG</code> are propagated to the remote session via SSH <code>SetEnv</code>, so <code>ibmcloud iam oauth-tokens</code> on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept <code>AcceptEnv IBMCLOUD_*</code> etc. for this to work; the upstream HCL’s jumphost is already configured for it.</li>
 </ul>
 <h2 id="what---on-doesnt-do-yet"><a class="header" href="#what---on-doesnt-do-yet">What <code>--on</code> doesn’t do (yet)</a></h2>
 <p>A few things deliberately deferred to later phases:</p>
 <ul>
-<li><strong>Lifecycle commands</strong> (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>) reject <code>--on</code> with a clear error in v0.7. Running terraform on a remote host has different state-handling considerations and is the job of v0.9’s SSH execution backend (<a href="./17-execution-backends.html">Chapter 17</a>).</li>
-<li><strong>ProxyJump / multi-hop SSH.</strong> If your jumphost itself is reached through another bastion, that’s not directly supported in v0.7. The upstream HCL’s jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don’t need multi-hop in practice.</li>
+<li><strong>Lifecycle commands</strong> (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>) reject <code>--on</code> with a clear error at v1.0. Running terraform on a remote host has different state-handling considerations and is the job of the SSH execution backend (<a href="./17-execution-backends.html">Chapter 17</a>) — <code>terraform</code> over <code>--backend ssh:&lt;target&gt;</code> is itself deferred to v1.x (state-file portability).</li>
+<li><strong>ProxyJump / multi-hop SSH.</strong> If your jumphost itself is reached through another bastion, that’s not directly supported at v1.0. The upstream HCL’s jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don’t need multi-hop in practice. ProxyJump support is on the v1.x roadmap.</li>
 <li><strong><code>~/.ssh/config</code> parsing.</strong> Targets must be defined explicitly in workspace config; <code>roksbnkctl</code> does not read your existing <code>~/.ssh/config</code>.</li>
 <li><strong>Password auth.</strong> Keys + agent only. Passwords are not supported and won’t be.</li>
-<li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job in v0.9. v0.7’s <code>--on</code> does one-shot remote exec only.</li>
-<li><strong>Windows ssh-agent.</strong> The <code>key_source: agent</code> path is Linux/macOS only in v0.7; Windows users must use <code>key_path</code> to a file. Already noted in <a href="#key-sources">Key sources</a> above; called out here so a Windows reader who skipped to this section doesn’t miss it.</li>
+<li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job (handled via <code>RunOpts.Files</code> materialisation; see <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a>). <code>--on</code> does one-shot remote exec only.</li>
+<li><strong>Windows ssh-agent.</strong> The <code>key_source: agent</code> path is Linux/macOS only at v1.0; Windows users must use <code>key_path</code> to a file. Already noted in <a href="#key-sources">Key sources</a> above; called out here so a Windows reader who skipped to this section doesn’t miss it.</li>
 </ul>
 <h2 id="cross-reference"><a class="header" href="#cross-reference">Cross-reference</a></h2>
-<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> (lands in v0.9) extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can’t <code>AcceptEnv</code>, and apt-bootstrap of missing tools on Ubuntu jumphosts. The <code>--on</code> flag stays as the lightweight one-shot path; <code>--backend ssh</code> is the deeper integration. The two are designed to share the same <code>internal/remote.Client</code> so what you learn here translates directly.</p>
+<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> extends the SSH client used here into a full execution backend with file materialisation, env-file fallback for sshd configurations that can’t <code>AcceptEnv</code>, and apt-bootstrap of missing tools on Ubuntu jumphosts. The <code>--on</code> flag stays as the lightweight one-shot path; <code>--backend ssh</code> is the deeper integration. The two share the same <code>internal/remote.Client</code> so what you learn here translates directly.</p>
 <p>For the design rationale, edge cases, and open questions, read <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01</a> — this chapter is the user-facing surface; PRD 01 is the developer-facing surface.</p>
 
                     </main>
@@ -396,6 +396,8 @@ roksbnkctl oc --on jumphost projects
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

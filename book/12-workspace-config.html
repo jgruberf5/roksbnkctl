@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -232,13 +232,13 @@ test:            # test-suite tuning (optional)
 tf_source:       # where the Terraform HCL comes from
   type: embedded         # embedded | github | local
 
-targets:         # SSH targets (Sprint 1; see Chapter 15)
+targets:         # SSH targets (see Chapter 15)
   jumphost:
     host: 169.45.91.177
     user: ubuntu
     key_source: tf-output:jumphost_shared_key
 
-exec:            # per-tool execution backend defaults (Sprint 3; see Chapter 17)
+exec:            # per-tool execution backend defaults (see Chapter 17)
   ibmcloud:  { backend: local }
   iperf3:    { backend: k8s }
   terraform: { backend: local }
@@ -327,7 +327,7 @@ cos:             # optional COS supply-chain config
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image used by the throughput test (when running with the <code>local</code> or <code>ssh</code> backends). Sprint 4’s <code>k8s</code> backend uses the GHCR image instead.</td></tr>
+<tr><td><code>throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image used by the throughput test (when running with the <code>local</code> or <code>ssh</code> backends). The <code>k8s</code> backend uses the GHCR image (<code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;version&gt;</code>) instead.</td></tr>
 <tr><td><code>throughput.duration</code></td><td>int seconds</td><td><code>30</code></td><td>iperf3 <code>-t</code> flag.</td></tr>
 <tr><td><code>throughput.streams</code></td><td>int</td><td><code>8</code></td><td>iperf3 <code>-P</code> flag.</td></tr>
 <tr><td><code>throughput.default_mode</code></td><td>enum</td><td><code>north-south</code></td><td><code>north-south</code> | <code>east-west</code>. The connectivity vector to test by default.</td></tr>
@@ -365,9 +365,9 @@ cos:             # optional COS supply-chain config
     key_path: ~/.ssh/id_ed25519
 </code></pre>
 <p>Each entry has <code>host</code>, <code>user</code>, optional <code>port</code> (default <code>22</code>), and exactly one of <code>key_path</code> or <code>key_source</code>. The <code>key_source</code> enum supports <code>agent</code> and <code>tf-output:&lt;name&gt;</code>.</p>
-<p>This block was introduced in Sprint 1; the deep reference is <a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a>, and the user-facing prose is <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a>. This chapter just notes the schema’s place in the overall config.</p>
+<p>The deep reference is <a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a>, and the user-facing prose is <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a>. This chapter just notes the schema’s place in the overall config.</p>
 <p>You don’t typically edit this block by hand. <code>roksbnkctl up</code> auto-populates <code>jumphost</code> post-apply, and <code>roksbnkctl targets add ...</code> populates the rest.</p>
-<h2 id="exec--execution-backend-defaults-new-in-sprint-3"><a class="header" href="#exec--execution-backend-defaults-new-in-sprint-3"><code>exec:</code> — execution-backend defaults (new in Sprint 3)</a></h2>
+<h2 id="exec--execution-backend-defaults"><a class="header" href="#exec--execution-backend-defaults"><code>exec:</code> — execution-backend defaults</a></h2>
 <pre><code class="language-yaml">exec:
   ibmcloud:  { backend: local }
   iperf3:    { backend: k8s }
@@ -377,19 +377,19 @@ cos:             # optional COS supply-chain config
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Backend</th><th>Available in</th><th>Notes</th></tr>
+<tr><th>Backend</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>local</code></td><td>Sprint 3 (today)</td><td><code>os/exec</code> against the host binary. The default for <code>terraform</code> and <code>ibmcloud</code>.</td></tr>
-<tr><td><code>docker</code></td><td>Sprint 3 (today)</td><td>Runs inside a vendored container image. Frozen toolchain version, no host install.</td></tr>
-<tr><td><code>k8s</code></td><td>Sprint 4</td><td>Runs inside the cluster (long-lived ops pod or one-shot Job). Default for <code>iperf3</code>.</td></tr>
-<tr><td><code>ssh</code></td><td>Sprint 4</td><td>Runs on a registered SSH target. Format: <code>ssh:&lt;target-name&gt;</code>.</td></tr>
+<tr><td><code>local</code></td><td><code>os/exec</code> against the host binary. The default for <code>terraform</code> and <code>ibmcloud</code>.</td></tr>
+<tr><td><code>docker</code></td><td>Runs inside a vendored container image. Frozen toolchain version, no host install.</td></tr>
+<tr><td><code>k8s</code></td><td>Runs inside the cluster (long-lived ops pod or one-shot Job). Default for <code>iperf3</code>.</td></tr>
+<tr><td><code>ssh</code></td><td>Runs on a registered SSH target. Format: <code>ssh:&lt;target-name&gt;</code>.</td></tr>
 </tbody>
 </table>
 </div>
 <p>A <code>--backend &lt;value&gt;</code> flag on the command line overrides the workspace config for that single invocation. The flag wins; the config sets the default.</p>
 <p>The <code>iperf3</code> default is <code>k8s</code> because measuring throughput from a laptop’s internet uplink isn’t useful — you want the test to run from a network location adjacent to or inside the cluster. The <code>local</code> default is wrong for that tool, so the workspace config flips it.</p>
-<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> covers the full backend matrix; <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a> (lands in Sprint 4) is the decision tree.</p>
+<p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> covers the full backend matrix; <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a> is the decision tree.</p>
 <h2 id="cos--cos-supply-chain-optional"><a class="header" href="#cos--cos-supply-chain-optional"><code>cos:</code> — COS supply-chain (optional)</a></h2>
 <pre><code class="language-yaml">cos:
   instance: bnk-orchestration
@@ -430,7 +430,7 @@ cos:             # optional COS supply-chain config
 <tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
 <tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
-<tr><td><code>exec.*</code></td><td>Defaults to <code>local</code> for every tool today (Sprint 3). PRD 03’s design intent is <code>iperf3</code>→<code>k8s</code> once the k8s backend lands in Sprint 4 — the per-tool default map will switch over then. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
+<tr><td><code>exec.*</code></td><td>Per-tool defaults at v1.0: <code>ibmcloud</code>→<code>local</code>, <code>terraform</code>→<code>local</code>, <code>iperf3</code>→<code>k8s</code>, DNS probe→<code>local</code>. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
 <tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
 </tbody>
 </table>
@@ -439,7 +439,7 @@ cos:             # optional COS supply-chain config
 <h2 id="how---var-file-interacts-with-configyaml"><a class="header" href="#how---var-file-interacts-with-configyaml">How <code>--var-file</code> interacts with <code>config.yaml</code></a></h2>
 <p>Both <code>roksbnkctl up</code> and <code>roksbnkctl plan/apply/destroy</code> accept the same <code>--var-file</code> flag terraform itself accepts (repeatable, later files win). The layering rule is:</p>
 <pre><code>1. config.yaml-derived terraform.tfvars        (written first by roksbnkctl)
-2. ~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars.user  (optional manual override)
+2. ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user  (optional manual override)
 3. --var-file &lt;path&gt;                           (CLI; repeatable)
 </code></pre>
 <p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
@@ -467,15 +467,16 @@ cos:             # optional COS supply-chain config
 <li>YAML parse errors surface a line number.</li>
 </ul>
 <p>If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you’ll know within one invocation.</p>
-<h2 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h2>
-<p>Walk through what <code>roksbnkctl init</code> writes for a typical “fresh install + new cluster” run:</p>
-<pre><code class="language-bash">$ roksbnkctl init
+<h2 id="worked-example-bootstrap-a-workspace-from-scratch"><a class="header" href="#worked-example-bootstrap-a-workspace-from-scratch">Worked example: bootstrap a workspace from scratch</a></h2>
+<p>End-to-end Part IV scenario: brand-new laptop, no <code>roksbnkctl</code> workspaces yet, an IBM Cloud API key in your password manager. Goal: a usable workspace with the key in the OS keychain, the right region + resource group resolved, and <code>terraform.tfvars</code> ready to drive the HCL.</p>
+<pre><code class="language-bash"># 1. roksbnkctl init — interactive bootstrap
+$ roksbnkctl init
 Workspace name [default]: dev
 IBM Cloud region [ca-tor]:
 IBM Cloud resource group [default]:
 Enter IBM Cloud API key (input hidden):
 Save the key for future runs? [Y/n]: y
-  ✓ saved to OS keychain
+  ✓ saved to OS keychain (service: roksbnkctl, account: dev/ibmcloud_api_key)
 Cluster name [tf-openshift-cluster]: dev-cluster
 Workers per zone [1]: 2
 ✓ Created workspace "dev"
@@ -492,14 +493,40 @@ cluster:
 tf_source:
   type: embedded
 </code></pre>
-<p>That’s the minimum. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. You can layer on more fields by editing the file directly or by using the helpers — both are supported.</p>
+<p>That’s the minimum. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. The API key can also be supplied non-interactively from your password manager’s CLI by setting <code>IBMCLOUD_API_KEY</code> in the environment of the <code>init</code> invocation:</p>
+<p><code>op</code> here is the <a href="https://developer.1password.com/docs/cli/">1Password CLI</a>; the <code>op://...</code> URI is its secret-reference scheme. Any password-manager CLI that prints a secret to stdout works the same way — Bitwarden (<code>bw</code>), gopass, <code>aws secretsmanager get-secret-value</code>, Doppler, etc. — the only thing roksbnkctl cares about is that <code>IBMCLOUD_API_KEY</code> is set in the environment when <code>init</code> runs.</p>
+<pre><code class="language-bash"># Alternative: pre-set IBMCLOUD_API_KEY so init resolves it from env rather than prompting
+IBMCLOUD_API_KEY=$(op read 'op://Private/IBM Cloud/api-key') roksbnkctl init -w dev
+</code></pre>
+<p><a href="./14-credentials-resolver.html#the-ibmcloud_api_key-resolver-chain">Chapter 14 §“The <code>IBMCLOUD_API_KEY</code> resolver chain”</a> covers the full env → keychain → workspace <code>api_key_b64</code> → TTY-prompt order; this env-var path is the first link in that chain, so anything <code>init</code> resolves at bootstrap time follows the same precedence later invocations use. Once <code>init</code> has saved the key to the OS keychain (the default sink), no further prompting is needed. <code>init</code> still prompts interactively for the remaining workspace metadata (region, resource group, cluster name) — a fully non-interactive bootstrap is on the v1.x roadmap.</p>
+<p>Now render <code>terraform.tfvars</code> so subsequent <code>up</code> runs have explicit HCL inputs to point <code>--var-file</code> at:</p>
+<pre><code class="language-bash"># 2. Render terraform.tfvars from config.yaml
+$ roksbnkctl tfvars -w dev &gt; ~/.roksbnkctl/dev/terraform.tfvars
+$ head ~/.roksbnkctl/dev/terraform.tfvars
+ibmcloud_region        = "ca-tor"
+ibmcloud_resource_group = "default"
+cluster_name           = "dev-cluster"
+workers_per_zone       = 2
+# ...
+</code></pre>
+<p><a href="./13-terraform-variables.html">Chapter 13</a> covers the precedence rules between <code>config.yaml</code>, <code>terraform.tfvars</code>, and <code>terraform.tfvars.user</code> (the hand-edit overlay).</p>
+<p>Finally, verify the workspace is healthy before the first real <code>up</code>:</p>
+<pre><code class="language-bash"># 3. Sanity-check
+$ roksbnkctl doctor -w dev
+✓ terraform     1.6.2  on PATH
+✓ IBMCLOUD_API_KEY resolves via keychain
+✓ region "ca-tor" accepts the key (IAM round-trip OK)
+✓ resource group "default" exists (id: ...)
+✓ workspace dev healthy
+</code></pre>
+<p>From here, <code>roksbnkctl up --auto -w dev</code> is the next step (see <a href="./07-quick-start.html">Chapter 7 — Quick start</a>). You can layer on <code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code> blocks by hand-editing <code>config.yaml</code> whenever you need them — <code>init</code> only writes the minimum to keep first-run friction low.</p>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> — the layering between <code>config.yaml</code> and <code>terraform.tfvars</code>.</li>
 <li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — the <code>api_key_*</code> fields and how they’re resolved.</li>
 <li><a href="./15-ssh-targets.html">Chapter 15 — SSH targets</a> — the <code>targets:</code> block.</li>
 <li><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> — the <code>exec:</code> block.</li>
-<li><a href="./28-configuration-reference.html">Chapter 28 — Configuration reference</a> — auto-generated complete field list (Sprint 6).</li>
+<li><a href="./28-configuration-reference.html">Chapter 28 — Configuration reference</a> — auto-generated complete field list.</li>
 <li><a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a> — the upstream HCL variables <code>config.yaml</code> translates to.</li>
 </ul>
 
@@ -554,6 +581,8 @@ tf_source:
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

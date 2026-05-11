@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,7 +178,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="ssh-targets"><a class="header" href="#ssh-targets">SSH targets</a></h1>
-<p>This chapter is the technical reference for the <code>targets:</code> system. Its companion is <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a>, which is the user-facing prose for “how do I run a command on the jumphost”. Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the upcoming <code>ssh</code> execution backend (Sprint 4) layers on top.</p>
+<p>This chapter is the technical reference for the <code>targets:</code> system. Its companion is <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a>, which is the user-facing prose for “how do I run a command on the jumphost”. Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the <code>ssh</code> execution backend layers on top of the lightweight <code>--on</code> flag.</p>
 <p>If you arrived here from Chapter 16 looking for “where do I learn the full surface”, you’re in the right place.</p>
 <h2 id="the-targets-block-schema"><a class="header" href="#the-targets-block-schema">The <code>targets:</code> block schema</a></h2>
 <p>Targets live under <code>targets:</code> in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
@@ -405,30 +405,30 @@ roksbnkctl tf output -json jumphost_shared_key | head -c 50
 </code></pre>
 <p>(The third one returns a JSON-encoded string for a sensitive output; truncate to confirm it’s non-empty without dumping the key.)</p>
 <p>If all three are populated and the auto-write didn’t fire, that’s a bug — file an issue with the output values redacted.</p>
-<h2 id="what-sprint-4s-ssh-execution-backend-will-add"><a class="header" href="#what-sprint-4s-ssh-execution-backend-will-add">What Sprint 4’s SSH execution backend will add</a></h2>
-<p>Today (Sprint 3), the SSH client backs the <code>--on &lt;target&gt;</code> flag — one-shot remote command execution. Sprint 4’s <code>ssh</code> <strong>execution backend</strong> layers more on top, reusing the same <code>internal/remote.Client</code>:</p>
+<h2 id="what-the-ssh-execution-backend-adds-on-top-of---on"><a class="header" href="#what-the-ssh-execution-backend-adds-on-top-of---on">What the SSH execution backend adds on top of <code>--on</code></a></h2>
+<p>The <code>--on &lt;target&gt;</code> flag is the lightweight remote-exec path — one SSH session, one command, no remote state. The <code>ssh:&lt;target&gt;</code> <strong>execution backend</strong> layers more on top, reusing the same <code>internal/remote.Client</code> under <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/exec/ssh.go"><code>internal/exec/ssh.go</code></a>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Sprint 4 addition</th><th>What it gives you</th></tr>
+<tr><th>Capability</th><th>What it gives you</th></tr>
 </thead>
 <tbody>
 <tr><td><strong>File materialisation</strong></td><td><code>RunOpts.Files</code> map gets written to <code>/tmp/roksbnkctl.&lt;rand&gt;/&lt;basename&gt;</code> on the remote, available as the working directory for the command. Cleanup via <code>trap 'rm -rf' EXIT</code> in a wrapper.</td></tr>
 <tr><td><strong>Env passing with fallback</strong></td><td>First tries <code>ssh -o SetEnv=KEY=VALUE</code> (requires remote sshd <code>AcceptEnv</code>). On failure, writes a 0700 wrapper script that exports the env and execs the command, with <code>trap 'rm -f $0' EXIT</code> to scrub.</td></tr>
-<tr><td><strong>Apt bootstrap</strong></td><td>If the remote target doesn’t have a tool (<code>iperf3</code>, <code>ibmcloud</code>) installed, the backend can <code>sudo apt-get install</code> it on demand (Ubuntu only this round).</td></tr>
+<tr><td><strong>Apt bootstrap</strong></td><td>If the remote target doesn’t have a tool (<code>iperf3</code>, <code>ibmcloud</code>) installed, the backend can <code>sudo apt-get install</code> it on demand (Ubuntu only at v1.0).</td></tr>
 <tr><td><strong>SCP-and-cleanup for kubeconfig</strong></td><td>The backend’s recommended path for shipping a kubeconfig to the remote: SCP to a tempdir, run, <code>trap 'rm -rf' EXIT</code> to scrub.</td></tr>
 <tr><td><strong>Wrapper-script credential propagation</strong></td><td>Detailed in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 § SSH</a>. Brief on-disk window with strict cleanup.</td></tr>
 </tbody>
 </table>
 </div>
-<p>The <code>targets:</code> schema and the <code>roksbnkctl targets</code> commands stay exactly the same — Sprint 4 just gives the backend more it can do with each target. Anything you set up in Sprint 3 keeps working.</p>
-<p>The split between the lightweight <code>--on</code> path (Sprint 1) and the full <code>ssh</code> backend (Sprint 4) is deliberate: <code>--on</code> stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).</p>
+<p>The <code>targets:</code> schema and the <code>roksbnkctl targets</code> commands are the same surface for both — the backend just uses each target in a heavier-weight way. Anything you set up for <code>--on</code> keeps working under <code>--backend ssh:&lt;target&gt;</code>.</p>
+<p>The split between the lightweight <code>--on</code> path and the full <code>ssh</code> backend is deliberate: <code>--on</code> stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).</p>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — where <code>targets:</code> fits in the overall schema.</li>
 <li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a> — the SSH-key sources from a credential-discipline perspective.</li>
 <li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The –on flag and SSH jumphosts</a> — the user-facing prose for “how do I use this”.</li>
-<li><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> — where the SSH backend (Sprint 4) sits in the broader backend matrix.</li>
+<li><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> — where the SSH backend sits in the broader backend matrix.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/01-SSH-AND-ON-FLAG.md">PRD 01 — SSH client + –on flag</a> — the design rationale for <code>targets:</code> and the SSH client.</li>
 <li><code>internal/remote/</code> package: <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/remote">https://github.com/jgruberf5/roksbnkctl/tree/main/internal/remote</a></li>
 <li><code>internal/cli/targets.go</code>: <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/targets.go">https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/targets.go</a></li>
@@ -485,6 +485,8 @@ roksbnkctl tf output -json jumphost_shared_key | head -c 50
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

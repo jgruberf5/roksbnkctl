@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -263,7 +263,7 @@
 </tbody>
 </table>
 </div>
-<p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> (lands in Sprint 6) covers the longer tail.</p>
+<p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> covers the longer tail.</p>
 <h2 id="the---target-name-ssh-check-sprint-1"><a class="header" href="#the---target-name-ssh-check-sprint-1">The <code>--target &lt;name&gt;</code> SSH check (Sprint 1)</a></h2>
 <p>Sprint 1’s <code>--on jumphost</code> flag introduced an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
 <pre><code class="language-bash">roksbnkctl doctor --target jumphost
@@ -303,14 +303,14 @@ fi
 <p>A few deliberate non-features worth naming:</p>
 <ul>
 <li><strong>Not a fix-it tool.</strong> <code>doctor</code> reports; it never installs, never modifies workspace config, never calls IBM Cloud APIs that mutate state. The IAM verify call is read-only. If <code>doctor</code> could break things, users couldn’t run it freely — and “run <code>doctor</code>” needs to be a safe first move.</li>
-<li><strong>Not a backend probe.</strong> Per-backend availability checks (docker daemon reachable, k8s ops pod healthy, ssh target reachable) land in Sprint 4 (PRD 03) as separate <code>BackendName</code>-tagged rows. The <code>--target</code> probe is the early prototype of that pattern.</li>
+<li><strong>Not a backend probe.</strong> Per-backend availability checks (docker daemon reachable, k8s ops pod healthy, ssh target reachable) ship as separate <code>BackendName</code>-tagged rows via <code>doctor --backend &lt;name&gt;</code> (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03</a>). The <code>--target</code> probe was the early prototype of that pattern.</li>
 <li><strong>Not concurrent-safe.</strong> The CLI invokes <code>doctor</code> once per command; the side-channel for “why we care” blurbs in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/doctor.go"><code>internal/doctor/doctor.go</code></a> doesn’t synchronise. Don’t run two <code>doctor</code>s against the same process.</li>
 </ul>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./04-installation.html">Chapter 4 — Installation</a> introduces <code>doctor</code> as the post-install verification step.</li>
 <li><a href="./06-workspaces.html">Chapter 6 — Workspaces</a> explains the <code>workspace</code> row and the <code>-w</code> override.</li>
-<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a> (lands in Sprint 3) is the deep dive on the <code>ibmcloud api key</code> resolution chain.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a> is the deep dive on the <code>ibmcloud api key</code> resolution chain.</li>
 <li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag</a> covers the <code>--target</code> probe’s underlying SSH client.</li>
 <li><a href="./24-day-2-ops.html">Chapter 24 — Day-2 ops</a> is the canonical reference for the internalised <code>k &lt;verb&gt;</code> commands that make <code>kubectl</code> / <code>oc</code> informational.</li>
 </ul>
@@ -366,6 +366,8 @@ fi
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7102f972.js";
+            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -184,7 +184,7 @@
 <h2 id="what-the-ops-pod-is"><a class="header" href="#what-the-ops-pod-is">What the ops pod is</a></h2>
 <p>A long-lived pod in the <code>roksbnkctl-ops</code> namespace, running an image bundled with the tools <code>roksbnkctl</code> may want to invoke cluster-side: <code>ibmcloud</code> CLI plus <code>kubectl</code> as a fallback, with <code>oc</code> and <code>terraform</code> reserved for future iterations.</p>
 <p>The pod sits idle waiting for <code>kubectl exec</code> calls. Each <code>roksbnkctl ibmcloud --backend k8s …</code> invocation routes through <code>client-go</code>’s SPDY executor, runs the wrapped tool inside the existing pod, streams stdout/stderr back, and returns the exit code. No pod create/start latency between invocations — a session of twenty <code>ibmcloud</code> commands pays the startup cost once.</p>
-<p>Compared to the one-shot Job pattern (used for <code>iperf3</code> and the upcoming DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It’s the right shape when you want to debug interactively or run many small commands.</p>
+<p>Compared to the one-shot Job pattern (used for <code>iperf3</code> and the DNS probe), the ops pod trades a bit of resource-usage idle-state for substantially lower per-call latency. It’s the right shape when you want to debug interactively or run many small commands.</p>
 <h2 id="roksbnkctl-ops-install"><a class="header" href="#roksbnkctl-ops-install"><code>roksbnkctl ops install</code></a></h2>
 <p>Idempotent setup. Run once per cluster; re-run any time you want to refresh the image, rotate the API key Secret, or recover from a partial uninstall.</p>
 <pre><code class="language-bash">roksbnkctl ops install
@@ -261,7 +261,7 @@ stringData:
   IBMCLOUD_API_KEY: &lt;resolved-key-value&gt;
 </code></pre>
 <p>The key value comes from the workspace’s resolver chain (env → keychain → config-b64 → prompt) — see <a href="./14-credentials-resolver.html">Chapter 14</a> for the resolution order. The Secret carries two keys (<code>IBMCLOUD_API_KEY</code> and the legacy alias <code>IC_API_KEY</code>) both populated from the same resolved value, so older <code>ibmcloud</code> CLI versions that look for the <code>IC_</code> name find it.</p>
-<p>If the Secret already exists (re-running <code>ops install</code> after a key rotation), <code>roksbnkctl</code> does a client-side Get + Update: the Secret’s <code>data</code> is overwritten with the freshly resolved value, the <code>roksbnkctl.io/rotated-at</code> annotation is stamped with the current timestamp, and the rest of the Secret’s metadata is left untouched. <code>roksbnkctl ops show</code> surfaces “last cred rotation: <timestamp>” by reading that annotation.</timestamp></p>
+<p>If the Secret already exists (re-running <code>ops install</code> after a key rotation), <code>roksbnkctl</code> does a client-side Get + Update: the Secret’s <code>data</code> is overwritten with the freshly resolved value, the <code>roksbnkctl.io/rotated-at</code> annotation is stamped with the current timestamp, and the rest of the Secret’s metadata is left untouched. <code>roksbnkctl ops show</code> surfaces <code>last cred rotation: &lt;timestamp&gt;</code> by reading that annotation.</p>
 <h3 id="5-create-the-pod"><a class="header" href="#5-create-the-pod">5. Create the Pod</a></h3>
 <pre><code class="language-yaml">apiVersion: v1
 kind: Pod
@@ -321,7 +321,7 @@ secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
 <li><strong>RBAC subject</strong> — the SA the pod runs as. <code>kubectl describe clusterrole roksbnkctl-ops</code> prints the full ruleset (the ClusterRoleBinding is named the same as the role).</li>
 <li><strong>Secret line</strong> — the cred Secret’s name + the <code>roksbnkctl.io/rotated-at</code> annotation that <code>ops install</code> stamps each time the Secret is applied. If the Secret is missing entirely, the line reads <code>secret: (missing: …)</code>.</li>
 </ol>
-<p>The current output is a fixed six-line key/value block; a structured <code>--output json</code> mode is on the Sprint 5+ roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.).</p>
+<p>The current output is a fixed six-line key/value block; a structured <code>--output json</code> mode is on the v1.x roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
 <h2 id="roksbnkctl-ops-uninstall"><a class="header" href="#roksbnkctl-ops-uninstall"><code>roksbnkctl ops uninstall</code></a></h2>
 <p>Full removal. Run when decommissioning the cluster, or when you want a clean re-install. The command is a <strong>destructive-action gate</strong>: by default it prints a preview of what <em>would</em> be deleted and exits successfully; the actual deletion only runs with <code>--confirm</code>.</p>
 <pre><code class="language-bash">$ roksbnkctl ops uninstall
@@ -524,6 +524,8 @@ applying secret roksbnkctl-ops/roksbnkctl-ibm-creds       ... ERROR: Get "https:
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
 
 
 
