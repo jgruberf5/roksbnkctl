@@ -173,7 +173,7 @@ pages-assure:
 # AND uploads book.pdf to the GitHub Release as roksbnkctl-book-v1.0.0.pdf.
 # No CI image pulls, no pandoc/LaTeX on the runner.
 release:
-	@echo "==> [1/5] Stamping CHANGELOG.md v1.0.0 date"
+	@echo "==> [1/5] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
 	@$(MAKE) stamp-changelog
 	@echo ""
 	@echo "==> [2/5] Building HTML + PDF book via $(BOOK_IMAGE)"
@@ -195,11 +195,20 @@ release:
 	@ls -la dist/checksums.txt dist/*.tar.gz dist/*.zip 2>/dev/null | head -20 || true
 	@echo ""
 	@echo "==> Next: review the diff, commit, tag, push:"
-	@echo "    git add -A && git commit -m 'chore: prep v1.0.0 release'"
-	@echo "    git tag v1.0.0 && git push origin main --tags"
-	@echo ""
-	@echo "    Once .github/workflows/release.yml has published the Release:"
-	@echo "    make release-publish VERSION=v1.0.0"
+	@if [ "$(VERSION)" = "dev" ]; then \
+	    echo "    (re-run with VERSION=vX.Y.Z to get tag-cut commands tailored to a real release)"; \
+	    echo "    git add -A && git commit -m 'chore: prep vX.Y.Z release'"; \
+	    echo "    git tag vX.Y.Z && git push origin main --tags"; \
+	    echo ""; \
+	    echo "    Once .github/workflows/release.yml has published the Release:"; \
+	    echo "    make release-publish VERSION=vX.Y.Z"; \
+	else \
+	    echo "    git add -A && git commit -m 'chore: prep $(VERSION) release'"; \
+	    echo "    git tag $(VERSION) && git push origin main --tags"; \
+	    echo ""; \
+	    echo "    Once .github/workflows/release.yml has published the Release:"; \
+	    echo "    make release-publish VERSION=$(VERSION)"; \
+	fi
 
 # book-publish: push the locally-built book/book/html/ tree to the
 # gh-pages branch under /book/. Replaces what .github/workflows/book.yml
