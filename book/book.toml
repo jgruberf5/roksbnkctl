@@ -26,14 +26,19 @@ command = "mdbook-mermaid"
 # run `make release` from the repo root — it routes through the docker
 # image.
 #
-# mdbook will warn and skip this backend on hosts where mdbook-pandoc
-# isn't installed; that's by design so contributors without LaTeX can
-# still iterate on the HTML book without errors.
+# `optional = true` makes mdbook warn-and-skip this backend on hosts
+# where mdbook-pandoc isn't installed (CI runners, contributor laptops
+# without LaTeX) instead of erroring. Without it, `mdbook build` returns
+# exit 101 with "the command `mdbook-pandoc` wasn't found" and the
+# entire build fails.
 #
 # The Lua filter pre-renders Mermaid code blocks to SVG via mermaid-cli
 # so the PDF embeds real diagrams (rather than literal `sequenceDiagram
 # ...` text). The filter path is the in-container location from
 # tools/docker/mdbook/Dockerfile.
+[output.pandoc]
+optional = true
+
 [output.pandoc.profile.pdf]
 output-file = "book.pdf"
 to = "pdf"

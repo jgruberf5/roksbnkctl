@@ -29,8 +29,9 @@ run: build
 clean:
 	rm -rf bin/
 
-.PHONY: book book-pdf book-test book-serve book-clean release \
-        stamp-changelog goreleaser-check goreleaser-snapshot pages-assure
+.PHONY: book book-pdf book-test book-serve book-clean release release-publish \
+        book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
+        pages-assure
 
 # Release date stamped into CHANGELOG.md's `## v1.0.0 — 2026-MM-DD`
 # placeholder. Defaults to today; override with RELEASE_DATE=YYYY-MM-DD
@@ -45,9 +46,10 @@ GORELEASER_IMAGE ?= goreleaser/goreleaser:latest
 # Book backend: `host` (default) uses mdbook + mdbook-mermaid from PATH;
 # `docker` routes through the tools/docker/mdbook image, which also
 # bundles pandoc + LaTeX + mermaid-cli for the PDF output path. The CI
-# workflow at .github/workflows/book.yml installs mdbook + mdbook-mermaid
-# directly on the runner for the HTML-only build (faster cold-start than
-# pulling the 1.2 GB image).
+# workflow at .github/workflows/book.yml validates only (HTML build +
+# rust doctest) — it never publishes. Publishing is local-driven via
+# `make release` + `make release-publish` so the multi-GB pandoc /
+# XeLaTeX / mermaid-cli toolchain stays off the runner.
 BOOK_BACKEND ?= host
 BOOK_IMAGE   ?= ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev
 
@@ -161,10 +163,15 @@ pages-assure:
 #   git add -A && git commit -m "chore: prep v1.0.0 release"
 #   git tag v1.0.0 && git push origin main --tags
 #
-# Pushing to main triggers .github/workflows/book.yml's build-deploy job
-# (publishes HTML to gh-pages branch); pushing the tag triggers
-# .github/workflows/release.yml (runs goreleaser for-real, attaches the
-# PDF via release.extra_files, publishes the GitHub Release).
+# Pushing the tag triggers .github/workflows/release.yml (goreleaser
+# builds the multi-platform binaries and publishes the GitHub Release).
+# Once that workflow completes, attach the book artifacts locally:
+#
+#   make release-publish VERSION=v1.0.0
+#
+# That single step pushes the locally-built HTML to the gh-pages branch
+# AND uploads book.pdf to the GitHub Release as roksbnkctl-book-v1.0.0.pdf.
+# No CI image pulls, no pandoc/LaTeX on the runner.
 release:
 	@echo "==> [1/5] Stamping CHANGELOG.md v1.0.0 date"
 	@$(MAKE) stamp-changelog
@@ -190,6 +197,87 @@ release:
 	@echo "==> Next: review the diff, commit, tag, push:"
 	@echo "    git add -A && git commit -m 'chore: prep v1.0.0 release'"
 	@echo "    git tag v1.0.0 && git push origin main --tags"
+	@echo ""
+	@echo "    Once .github/workflows/release.yml has published the Release:"
+	@echo "    make release-publish VERSION=v1.0.0"
+
+# book-publish: push the locally-built book/book/html/ tree to the
+# gh-pages branch under /book/. Replaces what .github/workflows/book.yml
+# used to do via peaceiris/actions-gh-pages — but with no runner, no
+# image pull, just a git worktree + push from the integrator's machine.
+#
+# Preserves anything already on gh-pages outside the /book/ subdirectory
+# (.nojekyll, CNAME, etc.) — only the /book/ subtree is replaced.
+#
+# Prereqs:
+#   - book/book/html/ exists (run `make book` or `make book-pdf` first)
+#   - origin remote points at the publish target
+#   - git push access to gh-pages
+book-publish:
+	@if [ ! -d book/book/html ]; then \
+	    echo "book/book/html missing — run 'make book' or 'make book-pdf BOOK_BACKEND=docker' first" >&2; \
+	    exit 2; \
+	fi
+	@echo "==> Fetching origin/gh-pages"
+	@git fetch origin gh-pages
+	@tmp=$$(mktemp -d -t roksbnkctl-gh-pages.XXXXXX) && \
+	    trap "git worktree remove --force $$tmp >/dev/null 2>&1 || true" EXIT && \
+	    git worktree add --detach $$tmp origin/gh-pages && \
+	    rm -rf $$tmp/book && \
+	    mkdir -p $$tmp/book && \
+	    cp -r book/book/html/. $$tmp/book/ && \
+	    cd $$tmp && \
+	    git add -A book/ && \
+	    if git diff --cached --quiet; then \
+	        echo "    gh-pages /book/ already up to date — nothing to push"; \
+	    else \
+	        git -c user.name="$$(git -C $(CURDIR) config user.name)" \
+	            -c user.email="$$(git -C $(CURDIR) config user.email)" \
+	            commit -m "book: publish $$(git -C $(CURDIR) describe --tags --always)" && \
+	        git push origin HEAD:gh-pages && \
+	        echo "    Pushed to gh-pages — https://jgruberf5.github.io/roksbnkctl/book/"; \
+	    fi
+
+# release-publish: post-tag publish step. Run after .github/workflows/release.yml
+# has finished creating the GitHub Release for $(VERSION). Does the work
+# we deliberately keep off CI:
+#
+#   1. Push the locally-built HTML book to the gh-pages branch
+#   2. Upload the locally-built PDF book to the GitHub Release as
+#      roksbnkctl-book-$(VERSION).pdf
+#
+# Requires VERSION to match the tag you cut (e.g. VERSION=v1.0.0). Will
+# refuse to run with VERSION=dev to prevent accidental publishes.
+#
+# Prereqs:
+#   - book/book/html/ and book/book/pandoc/pdf/book.pdf exist (i.e.
+#     `make release` was run from the repo root)
+#   - tag $(VERSION) exists on origin and has an associated GitHub Release
+#   - `gh` is authenticated (gh auth status)
+release-publish:
+	@if [ "$(VERSION)" = "dev" ]; then \
+	    echo "VERSION=dev refuses to publish — re-run as 'make release-publish VERSION=v1.0.0'" >&2; \
+	    exit 2; \
+	fi
+	@if [ ! -f book/book/pandoc/pdf/book.pdf ]; then \
+	    echo "book/book/pandoc/pdf/book.pdf missing — run 'make book-pdf BOOK_BACKEND=docker' first" >&2; \
+	    exit 2; \
+	fi
+	@if ! gh release view $(VERSION) >/dev/null 2>&1; then \
+	    echo "No GitHub Release found for tag $(VERSION) — wait for release.yml to finish, then retry" >&2; \
+	    exit 2; \
+	fi
+	@echo "==> [1/2] Pushing HTML book to gh-pages"
+	@$(MAKE) book-publish
+	@echo ""
+	@echo "==> [2/2] Uploading PDF book to GitHub Release $(VERSION)"
+	gh release upload $(VERSION) \
+	    "book/book/pandoc/pdf/book.pdf#roksbnkctl-book-$(VERSION).pdf" \
+	    --clobber
+	@echo ""
+	@echo "==> Published:"
+	@echo "    HTML: https://jgruberf5.github.io/roksbnkctl/book/"
+	@echo "    PDF:  $$(gh release view $(VERSION) --json url --jq '.url')"
 
 book-test:
 ifeq ($(BOOK_BACKEND),docker)

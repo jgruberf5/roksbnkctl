@@ -1,4 +1,18 @@
-name: Build and deploy book
+name: Validate book
+
+# Validation-only workflow. Runs `mdbook test` (rust doctest) and
+# `mdbook build` on every push and PR that touches the book — catches
+# broken markdown, dead links, malformed code fences.
+#
+# Publishing (HTML → gh-pages, PDF → GitHub Release asset) is driven
+# locally by `make release` + `make release-publish` on the integrator's
+# machine. That keeps the multi-GB pandoc + XeLaTeX + mermaid-cli
+# toolchain off the runner — it lives in the tools/docker/mdbook image
+# the integrator already has built locally.
+#
+# The pandoc backend is marked `optional = true` in book/book.toml so
+# host-install mdbook (no pandoc) skips PDF rendering with a warning
+# instead of failing the build.
 
 on:
   push:
@@ -13,60 +27,26 @@ on:
 
 jobs:
   validate:
-    # Build + link-check on every PR; doesn't deploy.
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: 'latest'
+
       - name: Install mdbook-mermaid
-        # The Sprint 7 polish pass added Mermaid diagrams to chapters 7 / 17 / 21.
         # mdbook-mermaid is a separate preprocessor binary; peaceiris/actions-mdbook
-        # only ships mdbook itself. We cache the cargo install across runs so the
-        # first PR per cache eviction pays the ~3-min build, subsequent runs are
-        # instant.
+        # only ships mdbook itself. Cached across runs.
         uses: baptiste0928/cargo-install@v3
         with:
           crate: mdbook-mermaid
+
       - name: Test (link check + code-block validation)
         run: mdbook test book/
-      - name: Build (catches malformed markdown)
+
+      - name: Build HTML (catches malformed markdown)
+        # Pandoc backend is `optional = true` in book.toml, so this
+        # builds HTML cleanly without needing pandoc/XeLaTeX on the runner.
         run: mdbook build book/
-
-  build-deploy:
-    # Deploy on push to main only.
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@v2
-        with:
-          mdbook-version: 'latest'
-
-      - name: Install mdbook-mermaid
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: mdbook-mermaid
-
-      - name: Build book
-        run: mdbook build book/
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # mdbook namespaces output per backend once book.toml has more
-          # than one [output.*] block (HTML at book/html/, pandoc PDF at
-          # book/pandoc/<profile>/). Publish only the HTML subtree.
-          publish_dir: ./book/book/html
-          publish_branch: gh-pages
-          # Publish under /book/ on gh-pages so the served URL matches
-          # the README link: https://jgruberf5.github.io/roksbnkctl/book/
-          destination_dir: book
