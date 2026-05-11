@@ -26,10 +26,13 @@ Install paths per platform. `terraform` and `helm` are strictly required for v1.
 brew install terraform               # required
 brew install helm                    # required — terraform `local-exec` provisioner shells out to `helm`
 brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
-brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough
+brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough (`roksbnkctl k *` is internalised)
 brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:<t>` throughput tests
-# kubectl-oc (Red Hat OpenShift CLI) — no brew formula; download from
-# https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz
+
+# oc (Red Hat OpenShift CLI) — optional, only for `roksbnkctl oc …` passthrough.
+# No brew formula; install via the Red Hat mirror tarball:
+curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz \
+  | sudo tar -xz -C /usr/local/bin oc
 ```
 
 If you installed `ibmcloud-cli`, add the plugins roksbnkctl uses:
@@ -63,11 +66,16 @@ curl -fsSL https://clis.cloud.ibm.com/install/linux | sudo sh
 ibmcloud plugin install kubernetes-service -f
 ibmcloud plugin install cloud-object-storage -f
 
-# kubectl — optional, passthrough only (`roksbnkctl k *` is internalised and needs no host install)
+# kubectl — optional, only for `roksbnkctl kubectl <args>` passthrough (`roksbnkctl k *` is internalised and needs no host install)
 sudo snap install kubectl --classic
 # or via direct download:
 # curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 # chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# oc (Red Hat OpenShift CLI) — optional, only for `roksbnkctl oc <args>` passthrough.
+# No apt package; install via the Red Hat mirror tarball:
+curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz \
+  | sudo tar -xz -C /usr/local/bin oc
 
 # iperf3 — optional, only for `--backend local` / `--backend ssh:<t>` throughput tests
 sudo apt-get install -y iperf3
@@ -80,15 +88,24 @@ Instructions above target Ubuntu and Debian. For other Linux distributions (RHEL
 ```powershell
 choco install terraform
 choco install kubernetes-helm  # required — terraform local-exec provisioner shells out to `helm`
-choco install ibmcloud-cli   # optional
-choco install kubernetes-cli # optional, provides kubectl
-choco install iperf3         # optional
+choco install ibmcloud-cli     # optional
+choco install kubernetes-cli   # optional, provides kubectl
+choco install openshift-cli    # optional, provides oc (Red Hat OpenShift CLI)
+choco install iperf3           # optional
 ```
 
 Or via [Scoop](https://scoop.sh/):
 
 ```powershell
-scoop install terraform helm ibmcloud-cli kubernetes-cli iperf3
+scoop install terraform helm ibmcloud-cli kubernetes-cli openshift-cli iperf3
+```
+
+If `choco`/`scoop` don't carry `openshift-cli` for your version, grab the Windows tarball from the Red Hat mirror directly:
+
+```powershell
+Invoke-WebRequest -Uri https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-windows.zip -OutFile oc.zip
+Expand-Archive oc.zip -DestinationPath "$env:USERPROFILE\bin\"
+# then add %USERPROFILE%\bin to your PATH
 ```
 
 After installing `ibmcloud-cli`, add the plugins:
