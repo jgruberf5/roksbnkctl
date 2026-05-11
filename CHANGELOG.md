@@ -136,6 +136,36 @@ See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). High-
 - Native Windows Docker Desktop UID/GID handling for terraform-via-docker.
 - F5 corporate theming for the book.
 
+## v1.0.1 — 2026-05-11
+
+Re-cut of the v1.0 release. The original `v1.0.0` tag landed on an earlier commit than intended, so the sprint 7 polish (32-chapter book pass, Mermaid diagrams, release-pipeline containerisation, README v1.0 rewrite, `--version` book URL, `make release` driver) never made it into the `v1.0.0` binaries on the GitHub Release page. `v1.0.1` is the corrected cut — everything the `v1.0.0` CHANGELOG entry above describes plus the two deltas below. **End users should install v1.0.1**; the `v1.0.0` Release page is retained as a historical artifact only.
+
+### Added
+
+- **`install_build_dependencies.sh`** — per-OS prereq installer (Linux apt / macOS brew / Windows WSL2). Drives the same toolchain the book chapter 4 walks readers through (Go, terraform, docker, mdbook stack for contributors). Idempotent — skips anything already present.
+- **Book chapter 4 (`Installing roksbnkctl`)** expanded with per-OS prereq install steps mirroring the installer script, so the path from "fresh box" to "first `roksbnkctl up`" is one block of commands per platform.
+
+### Changed
+
+- **Book CI shifted from build-and-deploy to validate-only.** `.github/workflows/book.yml` no longer publishes to GitHub Pages from CI — the pandoc backend required for the PDF output isn't present on the runner, and pulling the multi-GB `tools/docker/mdbook` image on every push is wasteful. The workflow now runs `mdbook test` + `mdbook build` for syntax and link validation on PRs and pushes to main; publishing is driven locally by the release integrator.
+- **New publish targets** in the Makefile: `make book-publish` pushes the locally-built `book/book/html/` tree to the `gh-pages` branch under `/book/` via a `git worktree` round-trip (preserves `.nojekyll`, CNAME, anything else on the branch). `make release-publish VERSION=v1.0.1` runs `book-publish` AND uploads the PDF to the GitHub Release as `roksbnkctl-book-v1.0.1.pdf` via `gh release upload`. The combined effect: a single command from the integrator's machine handles both publish surfaces, with no CI image pull.
+- **`book/book.toml`** marks `[output.pandoc]` as `optional = true` so host-install mdbook (no pandoc on PATH) skips PDF rendering with a warning instead of failing the entire build. Fixes the underlying CI failure that prompted this re-cut.
+- **`.gitignore`** excludes `.env`, `.env.local`, `.env.*.local` — local-secrets files sourced by `scripts/e2e-test-full.sh`. Never commit (contain `IBMCLOUD_API_KEY`).
+
+### Release-flow documentation
+
+Integrator tag-cut sequence is now:
+
+```sh
+make release                 # stamp, build HTML+PDF, lint, snapshot, verify Pages
+git add -A && git commit -m "chore: prep v1.0.1 release"
+git tag v1.0.1 && git push origin main --tags
+# wait for .github/workflows/release.yml to publish the GitHub Release
+make release-publish VERSION=v1.0.1
+```
+
+The old `.github/workflows/book.yml build-deploy` step is gone. See `Makefile`'s `release-publish` target and the `book-publish` target it composes.
+
 ## Unreleased (v1.x)
 
 Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next dev cycle's CHANGELOG entries land here.
