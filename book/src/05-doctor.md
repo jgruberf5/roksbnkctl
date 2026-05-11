@@ -11,6 +11,7 @@ A bare `roksbnkctl doctor` runs the **general** checks: tooling on `PATH`, kubec
 ```
 roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+✓  helm              /usr/local/bin/helm (v3.20.2)                                            (required for `roksbnkctl up`; terraform `local-exec` shells out to helm)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
 ✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
@@ -38,11 +39,40 @@ The `BackendName` column on the underlying `Check` struct ([`internal/doctor/che
 
 ### `terraform` — required
 
-The only **hard-required** binary for the `roksbnkctl up` happy path. `roksbnkctl` shells out to `terraform` via `terraform-exec` for plan/apply/destroy; without it nothing in the cluster lifecycle works.
+One of two **hard-required** binaries for the `roksbnkctl up` happy path. `roksbnkctl` shells out to `terraform` via `terraform-exec` for plan/apply/destroy; without it nothing in the cluster lifecycle works.
 
 Pass condition: a binary on `PATH`, version `1.5` or newer.
 
 Failure mode: `not on PATH`. Fix: install Terraform from [terraform.io](https://www.terraform.io/downloads), or your distro's package manager, then re-run `doctor`.
+
+### `helm` — required
+
+The second **hard-required** binary, added in v1.0.2. The bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. Without `helm` on `PATH`, the apply fails partway through the cluster lifecycle with:
+
+```
+Error: local-exec provisioner error
+Error running command 'helm upgrade --install cert-manager ...':
+exit status 127. Output: /bin/sh: 1: helm: not found
+```
+
+Pass condition: a `helm` (v3.x) binary on `PATH`. Doctor parses `helm version --short` for the version detail.
+
+Failure mode: `not on PATH`. Fix: install Helm 3 from [helm.sh/docs/intro/install/](https://helm.sh/docs/intro/install/), or via your distro's package manager:
+
+```bash
+# Linux (Ubuntu/Debian — official Helm apt repo):
+curl https://baltocdn.com/helm/signing.asc | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update && sudo apt-get install -y helm
+
+# macOS:
+brew install helm
+
+# Windows:
+choco install kubernetes-helm
+```
+
+A v1.x effort to refactor the `cert_manager` / `flo` / `cne_instance` modules onto the `helm_release` terraform resource type (which uses the `hashicorp/helm` provider's embedded Helm 3 runtime) would eliminate this host requirement. Tracked in [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
 
 ### `iperf3` — informational
 

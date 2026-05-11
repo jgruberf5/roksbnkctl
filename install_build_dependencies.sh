@@ -46,13 +46,16 @@
 #   - iperf3
 #       → bundled in `tools/docker/iperf3/` and runs via --backend k8s
 #         (the throughput suite's one-shot Job). Host install unneeded.
-#   - helm
-#       → the terraform IBM Cloud provider uses the hashicorp/helm
-#         terraform provider, which speaks the Helm 3 protocol via its
-#         own embedded runtime. Neither the roksbnkctl binary nor the
-#         e2e scripts shell out to host `helm`. Don't install it just
-#         because the deployment installs cert-manager / FLO / BNK via
-#         Helm — terraform handles that side internally.
+# What this also installs:
+#   - helm (Helm 3)   (REQUIRED — terraform's null_resource +
+#                      local-exec provisioner for cert_manager / flo
+#                      / cne_instance shells out to `helm upgrade
+#                      --install`. Earlier doc framing claimed the
+#                      terraform helm provider handled this with an
+#                      embedded runtime; that's incorrect for the
+#                      current HCL — the modules genuinely require
+#                      host helm. Installed via Helm's apt repo
+#                      pinned to amd64 + your distro.)
 #   - kubectl
 #       → Sprint 2 internalised the kubectl surface into `roksbnkctl k
 #         get/apply/logs/exec/port-forward` via client-go; the binary
@@ -215,6 +218,40 @@ install_ibmcloud() {
     done
 }
 
+install_helm() {
+    log "helm (Helm 3, official apt repo)"
+    if command -v helm >/dev/null 2>&1; then
+        ok "helm already installed: $(helm version --short 2>/dev/null || helm version)"
+        return
+    fi
+
+    # Import Helm's signing key into a keyring file (apt-key deprecated
+    # on noble).
+    if [[ ! -f /usr/share/keyrings/helm.gpg ]]; then
+        ok "importing Helm GPG signing key"
+        curl -fsSL https://baltocdn.com/helm/signing.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+    else
+        ok "Helm keyring already present"
+    fi
+
+    # Add Helm's apt repo. The "all main" pattern is Helm's standard
+    # (single distribution covering every Debian-derived release).
+    if [[ ! -f /etc/apt/sources.list.d/helm-stable-debian.list ]]; then
+        ok "adding Helm apt repo for $(dpkg --print-architecture)"
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" \
+            | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list >/dev/null
+        apt_mark_dirty
+    else
+        ok "Helm apt repo already configured"
+    fi
+
+    apt_update_once
+    ok "installing helm"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq helm
+    ok "helm installed: $(helm version --short)"
+}
+
 # ── verification ───────────────────────────────────────────────────────
 verify() {
     log "verification — required"
@@ -222,7 +259,7 @@ verify() {
     # Required: terraform (local backend), ibmcloud (--backend local
     # passthrough), jq (script JSON parsing), the base utilities the
     # e2e scripts rely on.
-    for cmd in terraform ibmcloud jq unzip ssh python3 gpg docker gh go git make; do
+    for cmd in terraform ibmcloud helm jq unzip ssh python3 gpg docker gh go git make; do
         if command -v "$cmd" >/dev/null 2>&1; then
             ok "$cmd: $(command -v "$cmd")"
         else
@@ -277,6 +314,7 @@ main() {
     install_base_pkgs
     install_terraform
     install_ibmcloud
+    install_helm
     verify
     hints
 }
