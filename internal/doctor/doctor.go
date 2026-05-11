@@ -87,8 +87,23 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	// binary embeds the HCL but doesn't (yet) ship a terraform-go
 	// runtime — `--backend docker` runs upstream `hashicorp/terraform`
 	// in a container, but the local backend still needs a host
-	// install. This is the ONE hard fail for the general doctor.
+	// install.
 	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up` (local backend); `--backend docker` runs containerised but the local path needs a host install"))
+
+	// REQUIRED: helm is invoked by terraform's `null_resource` +
+	// `local-exec` provisioners during `roksbnkctl up`. The bundled
+	// HCL modules (cert_manager, flo, cne_instance) shell out to
+	// `helm upgrade --install` from inside terraform's apply phase;
+	// without `helm` on PATH the apply fails with exit 127 ("helm: not
+	// found") deep into the cluster lifecycle. This is the SECOND
+	// hard fail (along with terraform).
+	//
+	// A v1.x effort to refactor the modules onto the `helm_release`
+	// terraform resource would eliminate this host requirement (the
+	// hashicorp/helm provider speaks the Helm 3 protocol via an
+	// embedded Go runtime). Tracked in docs/PLAN.md §"What's
+	// deliberately deferred to post-v1.0".
+	out = append(out, checkBinary("helm", true, "required for `roksbnkctl up`; terraform's null_resource+local-exec provisioners (cert_manager / flo / cne_instance) shell out to `helm upgrade --install`. `--backend docker` runs terraform containerised but the local-exec still needs a host install."))
 
 	// INFORMATIONAL: every other tool. Missing surfaces as StatusOK
 	// with a "(internalised; …)" detail explaining the alternative.
@@ -172,6 +187,8 @@ func versionLine(name string) string {
 	switch name {
 	case "terraform":
 		args = []string{"version"}
+	case "helm":
+		args = []string{"version", "--short"}
 	case "iperf3":
 		args = []string{"--version"}
 	case "kubectl":
