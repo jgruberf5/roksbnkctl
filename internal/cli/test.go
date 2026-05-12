@@ -282,7 +282,12 @@ func runDNSSingleVantage(ctx context.Context, cctx *config.Context, target strin
 	} else {
 		printDNSVantageText(os.Stderr, res)
 	}
-	if res.Err != "" || res.Rcode == "TIMEOUT" || res.Rcode == "ERROR" {
+	// Any non-NOERROR Rcode is a failure for CI / e2e purposes — including
+	// DNS-layer negatives like NXDOMAIN, SERVFAIL, REFUSED, NOTAUTH. The
+	// JSON / text output already classifies these distinctly (`⚠` glyph
+	// in the text rendering at printDNSVantageText); the exit code mirrors
+	// that classification. Pinned by e2e step LD3 (NXDOMAIN must exit 1).
+	if res.Err != "" || res.Rcode != "NOERROR" {
 		os.Exit(1)
 	}
 	return nil
