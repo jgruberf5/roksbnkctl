@@ -45,6 +45,7 @@ Both pain points compound: a user iterating on a BNK trial against a stable clus
   - `bnk up` and `bnk down` refuse on `ShapeLegacySingle` (can't isolate the trial when it shares state with the cluster).
   - `bnk down` refuses on `ShapeEmpty` and `ShapeClusterOnly` (no trial to destroy).
 - Refusal messages point at the resolution: "use `roksbnkctl up`/`down`" for legacy, "use `roksbnkctl bnk down` first" for trial-on-top scenarios.
+- **`roksbnkctl status` reflects the phase split** (Sprint 10 scope addition) — the v1.0.x status output shows a single "Last apply" line drawn from `state/terraform.tfstate` mtime, which conflates the cluster phase and the BNK trial under the new shape. Sprint 10 adds two per-phase lines, each reading the corresponding state file independently, so a reader can tell at a glance which phase is currently deployed without running `cluster show` + inspecting tfstate by hand. See §"`status` command integration" under §"Design".
 
 ### Out of scope
 
@@ -149,6 +150,23 @@ Every refusal points at a concrete resolution:
 
 The "migrate the state first" references describe a `roksbnkctl migrate` command that does not exist yet and is out of scope (see §"Out of scope"). The refusals point at it so the message stays valid once the command lands; users who hit the refusal today get the unambiguous alternative (the unscoped `up` / `down`).
 
+### `status` command integration (Sprint 10 scope addition)
+
+`runStatus` in `internal/cli/inspect.go` consumes `config.DetectShape` and emits two per-phase deployment lines instead of the v1.0.x single `Last apply` line that conflates the two phases. Output shape by `WorkspaceShape`:
+
+| Shape | New status lines (replaces the single "Last apply" line) |
+|---|---|
+| `ShapeEmpty` | `Cluster phase:  not deployed`<br>`BNK trial:      not deployed` |
+| `ShapeClusterOnly` | `Cluster phase:  deployed (last apply 2026-05-13 14:08:33 MST)`<br>`BNK trial:      not deployed` |
+| `ShapeSplit` | `Cluster phase:  deployed (last apply 2026-05-13 14:08:33 MST)`<br>`BNK trial:      deployed (last apply 2026-05-13 14:15:01 MST)` |
+| `ShapeLegacySingle` | `Shape:          legacy single-state (cluster + trial in one tfstate)`<br>`Last apply:     2026-05-13 14:15:01 MST` (existing v1.0.x line preserved) |
+
+Per-phase last-apply timestamps come from each state file's mtime — `<state-dir>/terraform.tfstate` for the BNK trial, `<state-cluster-dir>/terraform.tfstate` for the cluster phase. Pattern already in use elsewhere in `runStatus`. Failures to read either state file (e.g., directory missing on a fresh workspace) degrade silently to "not deployed" rather than surfacing an error — every section in `runStatus` is best-effort by convention.
+
+For `ShapeLegacySingle`, the chapter-8/10/11 reframe already tells v1.0.x users their shape; the status output adds a one-line shape callout so the reader sees "I'm on legacy single-state" at a glance without having to grep the docs. The existing v1.0.x `Last apply` line is preserved verbatim in this shape only so existing scripts that parse status output don't break.
+
+The Sprint 10 architect mirrors this design in chapter 24 (Day-2 ops) where `status` output is documented, and validator's live-verification adds a `status` invocation against the four shapes (matches the dispatch matrix's structure).
+
 ## Implementation tasks
 
 | Order | Item | Files |
@@ -159,6 +177,7 @@ The "migrate the state first" references describe a `roksbnkctl migrate` command
 | 4 | `runClusterUp` adds `ShapeLegacySingle` refusal; `runClusterDown` adds `ShapeLegacySingle` / `ShapeSplit` / `ShapeEmpty` refusals; remove the old "warning-but-prompts-anyway" trial-exists copy in `runClusterDown` | `internal/cli/cluster_phase.go` (edit) |
 | 5 | Unit tests: shape detection against synthetic tfstate fixtures (one per shape); dispatch tests for `runUp`/`runDown`/`runBnk*`/`runCluster*` via fake state directories | `internal/config/tfstate_test.go` (new), `internal/cli/bnk_phase_test.go` (new), extensions to `internal/cli/lifecycle_test.go` if it exists |
 | 6 | CHANGELOG entry under Unreleased / `v1.1.0`; book chapter updates (chapter 10 "Deploying BNK trials" gains a `bnk up`/`bnk down` section; chapter 11 "Tearing down" gains a phase-aware decision matrix; chapter 8 "The cluster phase" cross-links to `bnk`) | `CHANGELOG.md` (edit), `book/src/10-*.md`, `book/src/11-*.md`, `book/src/08-*.md` (edits) |
+| 7 (Sprint 10) | `runStatus` (`internal/cli/inspect.go`) consumes `config.DetectShape` + each phase's `terraform.tfstate` mtime; emits the per-phase deployment lines per §"`status` command integration". Replaces the v1.0.x single "Last apply" line for non-`LegacySingle` shapes; preserves it verbatim for `ShapeLegacySingle` to keep existing scripts parsing status output stable. Chapter 24 (Day-2 ops) updated to document the new lines with a sample per-shape. Unit test against the four-shape fixture set in `internal/config/testdata/` (reuses Sprint 8's fixtures). | `internal/cli/inspect.go` (edit), `book/src/24-day-2-ops.md` (edit), `internal/cli/inspect_test.go` (new or extend) |
 
 A reference prototype lives on the `spike/bnk-phase-split` branch (commit `00181d0`). Empirical evidence that the shape detector correctly identifies the real canada-roks legacy state. The branch is **reference only** — the staff agent re-implements from this PRD; the spike is not for merge.
 
@@ -177,6 +196,7 @@ A reference prototype lives on the `spike/bnk-phase-split` branch (commit `00181
   - `roksbnkctl -w <cluster-only> cluster down` → no longer refuses; runs the cluster destroy.
   - `roksbnkctl -w <cluster-only> bnk up` → no cluster-bootstrap prompt; proceeds straight to the trial.
 - Live verification on a real IBM Cloud workspace (sandbox-permitting): `cluster up` → `bnk up` → `bnk down` → `bnk up` cycle leaves the cluster intact across the down/up pair; `cluster down` after the second `bnk down` succeeds without orphans.
+- **Sprint 10**: `roksbnkctl status` against each of the four shapes (empty, cluster-only, split, legacy-single-state) emits the expected per-phase deployment lines per §"`status` command integration". `ShapeLegacySingle` still emits the v1.0.x `Last apply` line verbatim (script-compat). The four-shape `internal/config/testdata/` fixture set from Sprint 8 is the basis for the new `inspect_test.go` table test.
 
 ## Open questions
 
