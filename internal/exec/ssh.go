@@ -537,7 +537,7 @@ func mergeSSHEnv(env []string, creds *Credentials) []string {
 		"USER":    true,
 		"LOGNAME": true,
 		"PWD":     true,
-		"OLDPWD": true,
+		"OLDPWD":  true,
 		"SHELL":   true,
 		"PATH":    true,
 		"TMPDIR":  true,

@@ -45,11 +45,22 @@ jobs:
       # Tag-push: publish :<tagname> + :latest. The first matrix job
       # also publishes :latest; the workflow doesn't dedupe across
       # matrix runs because each tools-* image has its own :latest.
+      #
+      # Context is the REPO ROOT (not tools/docker/<image>/) because
+      # the ibmcloud image's Stage 1 Go build needs ./cmd, ./internal,
+      # go.mod/go.sum, embedded.go, and ./terraform/. The iperf3
+      # Dockerfile doesn't reference repo-root paths and ignores the
+      # broader context. The build-args below are ibmcloud-specific
+      # and harmlessly ignored by iperf3.
       - name: Build and push (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v5
         with:
-          context: tools/docker/${{ matrix.image }}
+          context: .
+          file: ./tools/docker/${{ matrix.image }}/Dockerfile
+          build-args: |
+            ROKSBNKCTL_VERSION=${{ github.ref_name }}
+            ROKSBNKCTL_COMMIT=${{ github.sha }}
           push: true
           tags: |
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:${{ github.ref_name }}
@@ -64,7 +75,11 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/build-push-action@v5
         with:
-          context: tools/docker/${{ matrix.image }}
+          context: .
+          file: ./tools/docker/${{ matrix.image }}/Dockerfile
+          build-args: |
+            ROKSBNKCTL_VERSION=dev
+            ROKSBNKCTL_COMMIT=${{ github.sha }}
           push: true
           tags: |
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:dev
@@ -75,7 +90,11 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v5
         with:
-          context: tools/docker/${{ matrix.image }}
+          context: .
+          file: ./tools/docker/${{ matrix.image }}/Dockerfile
+          build-args: |
+            ROKSBNKCTL_VERSION=dev
+            ROKSBNKCTL_COMMIT=${{ github.sha }}
           push: true
           tags: |
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:dev
