@@ -1,8 +1,12 @@
 # The cluster phase (cluster up/down)
 
-`roksbnkctl up` is the everyday "deploy a BNK trial" verb. Underneath, it's actually two phases on top of each other: a **cluster phase** that provisions the durable ROKS cluster + cluster-shared services, and a **trial phase** that deploys a BNK trial onto that cluster. For workflows that want to keep the cluster around across many trials, the cluster phase is exposed as its own command pair: `roksbnkctl cluster up` / `roksbnkctl cluster down`.
+A `roksbnkctl` workspace is **two phases on top of each other**: a durable **cluster phase** (the ROKS cluster + cluster-shared services that take 30+ minutes to provision) and a short-lived **trial phase** (the BNK trial that iterates on top in 5-10 minutes). The cluster phase is exposed as its own command pair, `roksbnkctl cluster up` / `roksbnkctl cluster down`, so the cluster survives across many BNK trial cycles.
 
-This chapter covers what each phase deploys, why the two state directories are separate, the `deploy_bnk=false` override that makes "cluster only" work, the `cluster-outputs.json` artefact written on success, and a worked example.
+> **As of v1.1.0, this two-phase shape is the default for every new workspace.** A fresh `roksbnkctl up` provisions the cluster phase first, then the trial phase, against separate state directories. Tearing down only the trial — the common iteration case — uses [`roksbnkctl bnk down`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group) and leaves the cluster intact. The unscoped `up` / `down` verbs are now shape-aware composites that delegate to the right phase commands underneath.
+>
+> Workspaces created against v1.0.x that have cluster modules and trial modules in the same `terraform.tfstate` (the legacy single-state shape) keep working — `roksbnkctl up` and `down` continue to operate against them in-place, byte-for-byte the way they did in v1.0. See [§ Legacy single-state workspaces](#legacy-single-state-workspaces) at the bottom of the chapter to identify which shape a workspace is.
+
+This chapter covers what each phase deploys, why the two state directories are separate, the `deploy_bnk=false` override that makes "cluster only" work, the `cluster-outputs.json` artefact written on success, a worked example, and the legacy single-state shape. The companion BNK-trial chapter, [Chapter 10](./10-deploying-bnk-trials.md), covers `roksbnkctl bnk up` / `bnk down` for the trial layer.
 
 ## What's deployed where
 
@@ -209,7 +213,7 @@ See [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) for the 
 
 ### Step 5 — `roksbnkctl cluster down --auto`
 
-Tear down the cluster phase. Refuses to run if BNK trial state still exists for the workspace — destroy those first with `roksbnkctl down`.
+Tear down the cluster phase. In v1.1.0 `cluster down` is **strictly** scoped: it refuses with a hard error (rather than the v1.0.x warning-but-prompt) on any workspace whose trial state is non-empty, so an out-of-order destroy can't accidentally orphan BNK resources. Destroy the trial first with `roksbnkctl bnk down` (or `roksbnkctl down` for both at once); see [Chapter 11](./11-tearing-down.md) for the full refusal catalogue.
 
 ```bash
 roksbnkctl cluster down --auto
@@ -230,21 +234,58 @@ Sample output:
 
 Post-destroy, `cluster-outputs.json` is deleted. The workspace directory and its `config.yaml` survive — re-running `cluster up` against the same workspace re-creates the cluster with the same name and region.
 
-## When to use the cluster phase as its own command
+## Why split cluster from trial?
 
-Three scenarios where the explicit cluster phase is the right tool:
+Two-phase is the default because the cost of conflating them is concrete. ROKS clusters take 30-50 minutes to provision and bill at roughly $0.30/hour; a BNK trial on top takes 5-10 minutes. Iterating on the trial — different `flo` versions, different `cne_instance` shapes, license bundle revisions — happens far more often than iterating on the cluster underneath. Splitting state means a `bnk down` / `bnk up` cycle is a five-minute round-trip instead of an hour.
 
-1. **Many BNK trial iterations on one cluster.** You're testing different `flo` versions or different `cne_instance` shapes. Run `cluster up` once, then loop `roksbnkctl up` / `roksbnkctl down` against the same cluster until you've covered all the trial permutations. Then `cluster down` once when you're finished.
+Three scenarios this shape unlocks:
 
-2. **Pre-provisioning for a workshop or demo.** You want the cluster ready and warm before the demo starts; you'll deploy the BNK trial live in front of the audience. `cluster up` the night before; `roksbnkctl up` during the demo.
+1. **Many BNK trial iterations on one cluster.** Run `cluster up` once, then loop `bnk up` / `bnk down` against the same cluster until you've covered all the trial permutations. Then `cluster down` once when you're finished. This is the headline win of the v1.1.0 surface — see [Chapter 10 §"Worked example — iterating on a BNK trial"](./10-deploying-bnk-trials.md#worked-example--iterating-on-a-bnk-trial).
 
-3. **Decoupling cluster lifecycle from trial lifecycle.** A long-lived cluster used by multiple team members, where one person owns the cluster phase and others own the BNK trials. Cluster-phase outputs live in `cluster-outputs.json`; trials read it. Each trial can `up`/`down` without affecting the cluster.
+2. **Pre-provisioning for a workshop or demo.** You want the cluster ready and warm before the demo starts; you'll deploy the BNK trial live in front of the audience. `cluster up` the night before; `bnk up` during the demo.
 
-If your workflow is "create a cluster, deploy BNK on it, test, tear it all down", just use `roksbnkctl up` / `roksbnkctl down` — they handle both phases together. The cluster commands are the escape hatch for the multi-trial-per-cluster cases.
+3. **Decoupling cluster lifecycle from trial lifecycle.** A long-lived cluster used by multiple team members, where one person owns the cluster phase and others own the BNK trials. Cluster-phase outputs live in `cluster-outputs.json`; trials read it. Each trial can `bnk up` / `bnk down` without affecting the cluster.
+
+For workspaces that just want "create a cluster, deploy BNK on it, test, tear it all down", the unscoped `roksbnkctl up` / `roksbnkctl down` are still the right verbs — in v1.1.0 they're shape-aware composites that drive the cluster + trial steps in the right order without you having to think about it.
+
+## Legacy single-state workspaces
+
+Workspaces created against v1.0.x predate the split. Their `terraform.tfstate` under `~/.roksbnkctl/<workspace>/state/` contains **both** the cluster modules (`module.roks_cluster`, `module.cert_manager`, `module.testing`) and the trial modules (`module.flo`, `module.cne_instance`, `module.license`) in one file; `state-cluster/` either doesn't exist or is empty.
+
+`roksbnkctl` calls this shape `LegacySingle` and identifies it by walking the trial state's resource list for cluster-module addresses. To check a workspace's shape from the outside, look at the state directories:
+
+```
+$ ls ~/.roksbnkctl/<workspace>/
+config.yaml  state/  state-cluster/    # split (v1.1.0+) or cluster-only
+
+$ ls ~/.roksbnkctl/<workspace>/
+config.yaml  state/                    # legacy single-state, or empty
+```
+
+A `state/terraform.tfstate` that contains `module.roks_cluster` and friends is legacy single-state; a `state-cluster/terraform.tfstate` with content is the split shape.
+
+The v1.1.0 binary handles both shapes:
+
+- **Legacy single-state workspaces**: `roksbnkctl up` and `roksbnkctl down` operate monolithically the way they did in v1.0 — same plan output, same resource count, same byte-for-byte behaviour. The phase-scoped commands (`cluster up`/`down`, `bnk up`/`down`) **refuse** with a message pointing you back at the unscoped lifecycle verbs.
+- **Split workspaces (the new default)**: `up` / `down` are shape-aware composites that delegate to the phase commands underneath; `cluster up`/`down` and `bnk up`/`down` work directly.
+
+The refusal messages on a legacy workspace look like:
+
+```
+$ roksbnkctl -w canada-roks cluster down
+this workspace is legacy single-state; cluster and BNK trial share one state.
+Use `roksbnkctl down` to tear down both, or migrate the state first
+
+$ roksbnkctl -w canada-roks bnk down
+this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
+Use `roksbnkctl down` to tear down both, or migrate the state first
+```
+
+There is no automatic state-migration command in v1.1.0. The refusal text references migration ("or migrate the state first") because a future `roksbnkctl migrate` is planned, but until it ships, legacy workspaces stay on the unscoped `up` / `down` flow that's worked for them since v1.0. See [Chapter 11 §"The phase-aware decision tree"](./11-tearing-down.md#the-phase-aware-decision-tree) for the full destruction-time decision matrix.
 
 ## Cross-references
 
 - [Chapter 9 — Registering an existing cluster](./09-registering-existing-cluster.md) — the alternative to `cluster up` when you already have a ROKS cluster you want `roksbnkctl` to manage.
-- [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) — what happens when `roksbnkctl up` runs on top of a registered or `cluster up`'d cluster.
-- [Chapter 11 — Tearing down](./11-tearing-down.md) — destroy ordering and the trial-then-cluster requirement.
+- [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) — `roksbnkctl up` and the `bnk up` / `bnk down` command group; the dispatch matrix; iteration walkthrough.
+- [Chapter 11 — Tearing down](./11-tearing-down.md) — phase-aware decision matrix and the refusal-message catalogue.
 - [Chapter 24 — Day-2 ops](./24-day-2-ops.md) — `roksbnkctl k get` / `apply` / `logs` for working against the cluster after either phase.

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -302,23 +301,6 @@ func DeleteWorkspace(name string, force bool) error {
 		}
 	}
 	return os.RemoveAll(dir)
-}
-
-// tfstateHasResources is a deliberately shallow check — counts entries in
-// state.resources via JSON parse. Errors (file missing, malformed) are
-// treated as "no resources" so the caller falls back to safe-delete.
-func tfstateHasResources(path string) (bool, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	var s struct {
-		Resources []any `json:"resources"`
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return false, err
-	}
-	return len(s.Resources) > 0, nil
 }
 
 // plaintextSecretsRE matches lines that look like a credential value being

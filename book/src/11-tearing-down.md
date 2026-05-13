@@ -1,19 +1,57 @@
 # Tearing down
 
-`roksbnkctl down` and `roksbnkctl cluster down` are the destroy verbs — the inverse of [`up`](./10-deploying-bnk-trials.md) and [`cluster up`](./08-cluster-phase.md) respectively. This chapter covers what each one removes, the ordering constraint between them, what survives a destroy, the `--auto` flag for non-interactive runs, and the workspace-cleanup story.
+`roksbnkctl down`, `roksbnkctl bnk down`, and `roksbnkctl cluster down` are the three destroy verbs — the inverses of [`up`](./10-deploying-bnk-trials.md), [`bnk up`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group), and [`cluster up`](./08-cluster-phase.md) respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you'll hit if you ask for the wrong one, what survives a destroy, the `--auto` flag for non-interactive runs, and the workspace-cleanup story.
 
-The big rule, stated up front: **destroy in reverse of create**. Trial first (`down`), cluster second (`cluster down`). Destroying out of order leaves orphans the upstream HCL's resource graph can't unwind cleanly.
+## The phase-aware decision tree
 
-## The two destroys
+Which verb do you want? The shape of your workspace and your intent both matter. Start here:
 
-There are two distinct teardowns matching the two phases:
+```
+I want to keep the cluster and just tear down the BNK trial:
+    → roksbnkctl bnk down
 
-### `roksbnkctl down` — destroy the BNK trial
+I want to tear down everything (cluster + trial):
+    → roksbnkctl down
 
-Tears down everything `roksbnkctl up` created: the `flo` Helm release, `cne_instance`, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens.
+I want to tear down only the cluster (no trial currently deployed):
+    → roksbnkctl cluster down
+
+I'm on a v1.0.x workspace (cluster + trial in one state):
+    → roksbnkctl down       (tears down everything in one shot)
+    → see Chapter 8 §"Legacy single-state workspaces" to confirm your shape
+```
+
+The big rule, stated up front: **destroy in reverse of create**. Trial first (`bnk down`), cluster second (`cluster down`). The unscoped `roksbnkctl down` does this ordering for you — on a split workspace it runs the trial destroy first and then the cluster destroy. On a legacy single-state workspace it runs a monolithic destroy (the v1.0.x behaviour, byte-for-byte). Either way you don't have to think about ordering; `down` is the safe default.
+
+The phase-scoped commands (`bnk down`, `cluster down`) are the precision tools — they let you keep one phase across many cycles of the other. They also **refuse loudly** if you ask them to do something that would orphan resources or that the shape doesn't allow. The full refusal catalogue is in [§"Refusal messages catalogue"](#refusal-messages-catalogue) below; the rule of thumb is that the error message always names the verb that would actually work.
+
+## The three destroys
+
+There are three teardown verbs matching the three slices of state:
+
+### `roksbnkctl down` — shape-aware composite
+
+The unscoped `down` is a **shape-aware composite** in v1.1.0: it detects the on-disk shape of the workspace and dispatches to the right phase destroys in the right order.
 
 ```bash
 roksbnkctl down
+```
+
+| Workspace shape | `down` does |
+|---|---|
+| Split (cluster + trial) | trial destroy → cluster destroy |
+| ClusterOnly (only cluster applied) | cluster destroy |
+| LegacySingle (v1.0.x — both in one state) | monolithic destroy (v1.0.x behaviour, byte-for-byte) |
+| Empty | error: `nothing to destroy in this workspace` |
+
+This is the safe default — `down` always does the right thing regardless of shape, and it's the only verb you can run on a legacy single-state workspace.
+
+### `roksbnkctl bnk down` — destroy the BNK trial only
+
+New in v1.1.0. Tears down everything the trial phase created — the `flo` Helm release, `cne_instance`, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens — and leaves the cluster running.
+
+```bash
+roksbnkctl bnk down
 ```
 
 What survives:
@@ -23,9 +61,12 @@ What survives:
 - The registry COS instance and its bucket contents (FAR images, license artefacts)
 - The TGW jumphost
 - All cluster-phase Terraform state under `state-cluster/`
+- `cluster-outputs.json` (the cluster is still registered)
 - The workspace's `config.yaml`
 
-Roughly **41 resources destroyed** on a clean trial-only `down`. Time is dominated by Helm's pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.
+Roughly **41 resources destroyed** on a clean trial-only `bnk down`. Time is dominated by Helm's pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.
+
+`bnk down` **refuses** on Empty, ClusterOnly, and LegacySingle workspaces — there's nothing to destroy on the first two, and the trial-only isolation isn't possible on the third. See [§"Refusal messages catalogue"](#refusal-messages-catalogue) for the exact text.
 
 ### `roksbnkctl cluster down` — destroy the cluster phase
 
@@ -49,15 +90,21 @@ The post-destroy cleanup deletes `cluster-outputs.json` automatically — the wo
 
 The upstream HCL's resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live *in* the cluster, after all), and Terraform's destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase's resources are still there — finalisers block the destroy of the cluster's namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.
 
-`roksbnkctl cluster down` warns about this when run interactively — without `--auto` it prints a stderr line ("Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.") and prompts `Continue? [y/N]`. With `--auto` the warning and prompt are skipped and the destroy proceeds; correctness becomes the user's responsibility. v1.0 does not inspect `state/terraform.tfstate` to refuse on a non-empty trial — that hard guard is tracked as a v1.x improvement (see [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0").
+In v1.1.0 `roksbnkctl cluster down` enforces this ordering with a **hard refusal**: if the trial state has any resources in it, `cluster down` errors out and points you at `bnk down` (or `down`) instead. The v1.0.x "warning-but-prompt" behaviour is gone — even `--auto` won't bypass the guard, because correctness, not confirmation, is the issue. The full refusal text:
 
-So in practice, **always run `down` before `cluster down`**, and do not skip the warning when running interactively.
+```
+$ roksbnkctl cluster down
+BNK trial state exists in this workspace; run `roksbnkctl bnk down` first
+(or `roksbnkctl down` to tear down both phases)
+```
 
-The clean teardown sequence:
+So in practice, **always destroy the trial before the cluster**. The unscoped `down` does this ordering for you on a split workspace; the phase-scoped pair is `bnk down` then `cluster down`.
+
+The clean teardown sequence — split workspace, explicit phase commands:
 
 ```bash
 # 1. Destroy the BNK trial
-roksbnkctl down --auto
+roksbnkctl bnk down --auto
 
 # 2. Now safe to destroy the cluster phase
 roksbnkctl cluster down --auto
@@ -66,7 +113,34 @@ roksbnkctl cluster down --auto
 roksbnkctl ws delete <name> --force
 ```
 
-If you `roksbnkctl up` against a registered cluster (one you didn't `cluster up` yourself), you skip step 2 — the cluster wasn't yours to destroy. Just `down` the trial and stop there, then optionally unregister by deleting `cluster-outputs.json`.
+Or the one-shot equivalent:
+
+```bash
+# 1. Tear down both phases in order
+roksbnkctl down --auto
+
+# 2. (Optional) Delete the workspace itself
+roksbnkctl ws delete <name> --force
+```
+
+If you `roksbnkctl up` against a registered cluster (one you didn't `cluster up` yourself), step 2 doesn't apply — the cluster wasn't yours to destroy. Just `bnk down` the trial and stop there, then optionally unregister by deleting `cluster-outputs.json`.
+
+## Refusal messages catalogue
+
+The phase-scoped destroy verbs refuse loudly when the shape doesn't allow what you've asked for. Every refusal names the verb that would actually work. If you hit one in the wild, grep your terminal output for the message text and you should land here:
+
+| Command + shape | Refusal text | Resolution |
+|---|---|---|
+| `bnk down` on **LegacySingle** | `this workspace is legacy single-state; `bnk down` can't isolate the trial phase. Use `roksbnkctl down` to tear down both, or migrate the state first` | Use `roksbnkctl down`; the legacy state has the trial and cluster in one file, so a trial-only destroy isn't possible. See [Chapter 8 §"Legacy single-state workspaces"](./08-cluster-phase.md#legacy-single-state-workspaces). |
+| `bnk down` on **Empty** or **ClusterOnly** | `no BNK trial state to destroy in this workspace` | Nothing to do — no trial is deployed. If you want to destroy the cluster, use `roksbnkctl cluster down`. |
+| `cluster down` on **LegacySingle** | `this workspace is legacy single-state; cluster and BNK trial share one state. Use `roksbnkctl down` to tear down both, or migrate the state first` | Use `roksbnkctl down`. |
+| `cluster down` on **Split** | ``BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)`` | Run `bnk down` first to remove the trial, then `cluster down` for the cluster — or `roksbnkctl down` to do both in one shot. |
+| `cluster down` on **Empty** | `nothing to destroy in this workspace` | Nothing to do — the cluster hasn't been provisioned. |
+| `down` on **Empty** | `nothing to destroy in this workspace` | Nothing to do — the workspace has no state. |
+| `cluster up` on **LegacySingle** | ``this workspace was provisioned with v1.0.x single-state — its cluster lives in the trial state file. Use `roksbnkctl up` to operate on it, or migrate the state to two-phase shape first`` | Use `roksbnkctl up`. The cluster already exists in the trial state; applying the cluster phase separately would create a second one. |
+| `bnk up` on **LegacySingle** | ``this workspace is legacy single-state; `bnk up` can't isolate the trial phase. Use `roksbnkctl up` for in-place behavior, or migrate the state first`` | Use `roksbnkctl up`. |
+
+The "migrate the state first" references in two of the messages describe a future `roksbnkctl migrate` command that does not exist in v1.1.0. The refusals point at it so the wording stays valid once migrate ships; until then, the unscoped `up` / `down` is the working alternative for legacy workspaces.
 
 ## What survives a destroy
 
@@ -90,7 +164,7 @@ The COS bucket point is worth highlighting: the bundled HCL provisions the COS i
 
 ## `--auto` for non-interactive runs
 
-Both destroy commands prompt for confirmation by default:
+All three destroy commands prompt for confirmation by default:
 
 ```
 $ roksbnkctl down
@@ -99,9 +173,15 @@ Continue? [y/N]:
 ```
 
 ```
+$ roksbnkctl bnk down
+This will destroy the BNK trial for workspace "default". The cluster phase
+will remain in place — run `roksbnkctl cluster down` to remove it too.
+Continue? [y/N]: 
+```
+
+```
 $ roksbnkctl cluster down
 This will destroy the cluster phase for workspace "default" (ROKS + transit gateway + registry COS + cert-manager + jumphost).
-Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.
 Continue? [y/N]: 
 ```
 
@@ -109,10 +189,11 @@ Continue? [y/N]:
 
 ```bash
 roksbnkctl down --auto
+roksbnkctl bnk down --auto
 roksbnkctl cluster down --auto
 ```
 
-`--auto` does **not** override the trial-then-cluster ordering check; that's a correctness guard, not a confirmation prompt. If trial state is present, `cluster down --auto` still refuses.
+`--auto` does **not** override the shape-based refusals (see [§"Refusal messages catalogue"](#refusal-messages-catalogue) above) — those are correctness guards, not confirmation prompts. If trial state is present, `cluster down --auto` still refuses; on a legacy single-state workspace, `bnk down --auto` and `cluster down --auto` still refuse.
 
 ## Like `up`, transient errors retry
 

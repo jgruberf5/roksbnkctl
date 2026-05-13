@@ -1,0 +1,34 @@
+{
+  "version": 4,
+  "terraform_version": "1.9.0",
+  "serial": 7,
+  "lineage": "22222222-2222-2222-2222-222222222222",
+  "outputs": {},
+  "resources": [
+    {
+      "module": "module.flo",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "flo",
+      "provider": "provider[\"registry.terraform.io/hashicorp/helm\"]",
+      "instances": []
+    },
+    {
+      "module": "module.cne_instance",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "cne_instance",
+      "provider": "provider[\"registry.terraform.io/hashicorp/helm\"]",
+      "instances": []
+    },
+    {
+      "module": "module.license",
+      "mode": "managed",
+      "type": "kubernetes_manifest",
+      "name": "license",
+      "provider": "provider[\"registry.terraform.io/hashicorp/kubernetes\"]",
+      "instances": []
+    }
+  ],
+  "check_results": null
+}

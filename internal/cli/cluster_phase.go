@@ -282,6 +282,23 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 
 func runClusterUp(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
+
+	// Refuse on legacy single-state per PRD 06 §"Refusal messages" —
+	// the cluster modules live in the *trial* state file there, so
+	// applying the cluster phase against an empty state-cluster/ would
+	// silently provision a second cluster.
+	cctx0, err := config.New(flagWorkspace)
+	if err != nil {
+		return err
+	}
+	shape, err := config.DetectShape(cctx0.WorkspaceName)
+	if err != nil {
+		return fmt.Errorf("detecting workspace shape: %w", err)
+	}
+	if shape == config.ShapeLegacySingle {
+		return errors.New("this workspace was provisioned with v1.0.x single-state — its cluster lives in the trial state file. Use `roksbnkctl up` to operate on it, or migrate the state to two-phase shape first")
+	}
+
 	cctx, tfws, varFiles, err := openClusterTF(ctx)
 	if err != nil {
 		return err
@@ -323,13 +340,36 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 
 func runClusterDown(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
+
+	// Shape gating per PRD 06 §"Refusal messages": `cluster down`
+	// operates strictly on the cluster phase. Hard-refuse if the trial
+	// state has anything in it (legacy or split) so users aren't
+	// surprised by orphaned trial resources or a destroy that silently
+	// wipes both phases. Replaces the v1.0.x "warning, but-prompt"
+	// copy that used to live below.
+	cctx0, err := config.New(flagWorkspace)
+	if err != nil {
+		return err
+	}
+	shape, err := config.DetectShape(cctx0.WorkspaceName)
+	if err != nil {
+		return fmt.Errorf("detecting workspace shape: %w", err)
+	}
+	switch shape {
+	case config.ShapeLegacySingle:
+		return errors.New("this workspace is legacy single-state; cluster and BNK trial share one state. Use `roksbnkctl down` to tear down both, or migrate the state first")
+	case config.ShapeSplit:
+		return errors.New("BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)")
+	case config.ShapeEmpty:
+		return errors.New("nothing to destroy in this workspace")
+	}
+
 	cctx, tfws, varFiles, err := openClusterTF(ctx)
 	if err != nil {
 		return err
 	}
 	if !flagAuto {
 		fmt.Fprintf(os.Stderr, "This will destroy the cluster phase for workspace %q (ROKS + transit gateway + registry COS + cert-manager + jumphost).\n", cctx.WorkspaceName)
-		fmt.Fprintln(os.Stderr, "Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.")
 		if !promptYesNo("Continue?", false) {
 			return errors.New("aborted")
 		}

@@ -228,3 +228,47 @@ make release-publish VERSION=v1.0.2
 ## Unreleased (v1.x)
 
 Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next dev cycle's CHANGELOG entries land here.
+
+The first post-v1.0 cycle (Sprint 8 → `v1.1.0`) ships the cluster/trial phase split as a first-class command surface. See [PRD 06](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md) for the design rationale.
+
+### Added
+
+#### Sprint 8 — `bnk` command group + shape-aware lifecycle
+
+- **`roksbnkctl bnk` command group** ([PRD 06 §"Scope"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#scope)) — the trial-layer counterpart to `roksbnkctl cluster`, so the BNK trial can be torn down and re-deployed without destroying the cluster underneath.
+  - `roksbnkctl bnk up` — applies the trial phase against an existing cluster (~7 minutes vs ~50 for a full from-scratch deploy). On an empty workspace it offers to bootstrap the cluster phase first (`~30 min ROKS provision + transit gateway + registry COS + cert-manager + jumphost`) with a confirmation prompt; `--auto` threads through both prompts.
+  - `roksbnkctl bnk down` — destroys the trial phase only; the cluster persists for the next iteration. Headline win: a `bnk down` / `bnk up` round-trip is the 5-10 minute trial-apply window, not the 30-minute cluster rebuild that a v1.0.x `down` / `up` cost.
+  - Flag surface mirrors `cluster up` / `cluster down`: `--auto`, `--var-file` (repeatable), `--no-kubeconfig` on `bnk up`.
+- **`config.DetectShape` workspace-shape classifier** ([PRD 06 §"Shape detection"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#shape-detection)) — on-disk-only (no `terraform` calls), parses the workspace's tfstate files and emits one of:
+  - `ShapeEmpty` — neither phase has resources.
+  - `ShapeClusterOnly` — cluster phase applied, trial empty.
+  - `ShapeSplit` — both phases applied independently (the v1.1.0 default for new workspaces).
+  - `ShapeLegacySingle` — trial state contains cluster modules (`module.roks_cluster`, `module.cert_manager`, `module.testing`) from a pre-split `roksbnkctl up`. Verified against the real `canada-roks` workspace (135 resources).
+  - Missing tfstate files → treated as "no resources". Malformed JSON → surfaced as error so dispatch doesn't silently misroute.
+- **Shape-aware refusal messages** on the phase-scoped commands. Every refusal names the verb that would actually work. The full catalogue is in [Chapter 11 §"Refusal messages catalogue"](https://jgruberf5.github.io/roksbnkctl/book/11-tearing-down.html#refusal-messages-catalogue); the highlights:
+  - `cluster up` / `bnk up` / `bnk down` refuse on `ShapeLegacySingle` — there's no way to isolate the cluster or trial phase when both share one tfstate. Points readers at `roksbnkctl up` / `down` for the in-place v1.0.x behaviour.
+  - `cluster down` refuses on `ShapeSplit` with a hard error pointing at `bnk down` first (replaces the v1.0.x warning-but-prompt — see §"Changed" below).
+  - `bnk down` refuses on `ShapeEmpty` and `ShapeClusterOnly` ("no BNK trial state to destroy in this workspace").
+- **Book chapter edits** for the new surface:
+  - **Chapter 8** — reframed from "opt-in two-phase mode" to "the default for new workspaces", with a new §"Legacy single-state workspaces" subsection that helps v1.0.x users identify their shape.
+  - **Chapter 10** — new §"The `bnk up` / `bnk down` command group" with the bootstrap-prompt sample output, the four-shape dispatch matrix (user-facing simplification of [PRD 06 §"Dispatch table"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#dispatch-table)), and a worked iteration example showing the explicit time savings.
+  - **Chapter 11** — new §"The phase-aware decision tree" at the top + §"Refusal messages — catalogue" near the middle; "two destroys" → "three destroys" with `bnk down` documented alongside `down` and `cluster down`.
+
+### Changed
+
+- **`roksbnkctl up` and `roksbnkctl down` are now shape-aware composites** ([PRD 06 §"Dispatch table"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#dispatch-table)). Their semantics shift from "monolithic apply/destroy against the trial state" to "detect the workspace shape and dispatch to the right phase commands in the right order":
+  - **Split / Empty / ClusterOnly**: `up` runs `cluster up` (provision or refresh) then trial up; `down` runs trial down then `cluster down`.
+  - **LegacySingle**: `up` and `down` run the v1.0.x monolithic trial apply / destroy **byte-for-byte** — same plan output, same resource count. v1.0.x workspaces continue to work without migration.
+  - **Empty** + `down`: errors `nothing to destroy in this workspace` (was: same error, semantics unchanged).
+  - The composites are pure dispatchers — no business logic of their own. The leaf commands (`runTrialUp`, `runTrialDown`, `runClusterUp`, `runClusterDown`) carry the apply / destroy logic.
+  - Implementation: `internal/cli/lifecycle.go` renames the existing `runUp` / `runDown` bodies to `runTrialUp` / `runTrialDown` (the v1.0.x behaviour, factored out) and introduces the composite `runUp` / `runDown` keyed on `config.DetectShape`. `internal/cli/cluster_phase.go` and `internal/cli/bnk_phase.go` add the refusal logic.
+- **`roksbnkctl cluster down` enforces trial-then-cluster ordering with a hard refusal**, replacing the v1.0.x warning-but-prompt copy. Previously, `cluster down` would warn `Any BNK trial state on top of this cluster will be orphaned — run roksbnkctl down first if needed` and proceed on confirm; with `--auto` it would proceed silently. v1.1.0 instead refuses with ``BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)`` — and `--auto` does **not** bypass it (correctness, not confirmation, is the issue). The motivating case: `scripts/e2e-test.sh` runs that destroyed the cluster while trial finalisers were still pending now fail loudly instead of silently leaking resources.
+
+### Deferred (v1.x roadmap, post-v1.1.0)
+
+Not in v1.1.0 — see [PRD 06 §"Out of scope"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#out-of-scope) for full rationale.
+
+- **`roksbnkctl migrate`** — splitting a legacy single-state workspace's tfstate into separate `state/` + `state-cluster/` trees via `terraform state mv`. Real engineering work and one-shot state surgery. Deferred until a real legacy user asks; refusal messages reference it as future work so the wording stays valid when it lands.
+- **`roksbnkctl bnk plan` / `bnk apply` / `cluster plan` / `cluster apply`** — top-level `plan` / `apply` already operate on the trial state and that behaviour is unchanged. Symmetry additions deferred to a later cycle.
+- **Docker-backend composition** for the composite `up` / `down` on empty/split workspaces — `cluster up` has no docker shortcut today, so composing it with a docker-backend trial apply would mix backends mid-run. The composite explicitly disables itself on non-local backends for the empty/split paths; legacy single-state and the direct `cluster up` / `bnk up` calls retain v1.0.x docker behaviour. Full multi-phase docker composition is a follow-up PRD.
+- **Multi-trial UX** — a cluster can host multiple BNK trials in principle (different workspaces sharing `cluster-outputs.json`); polish around naming trials and "which trial is current" prompts is deferred.

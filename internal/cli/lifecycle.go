@@ -105,12 +105,64 @@ func init() {
 
 // ── lifecycle implementations ───────────────────────────────────────
 
-// runUp = plan + confirm + apply + (optional) kubeconfig fetch. The
-// "everyday" deploy command.
-func runUp(cmd *cobra.Command, _ []string) error {
+// runUp is the shape-aware composite dispatcher for the top-level
+// `roksbnkctl up`. It detects the workspace's on-disk shape and routes
+// to the right phase combination per PRD 06 §"Dispatch table":
+//
+//   - LegacySingle → monolithic trial up (preserves v1.0.x byte-for-byte:
+//     one terraform apply against the trial state, which still carries
+//     the cluster modules in pre-split workspaces).
+//   - Empty / Split → cluster up first (no-op refresh on Split), then
+//     trial up.
+//   - ClusterOnly → trial up directly (cluster already provisioned).
+//
+// The composite is a pure dispatcher — no business logic of its own.
+// All the terraform / docker / retry behavior lives in the leaf helpers.
+func runUp(cmd *cobra.Command, args []string) error {
 	if err := rejectOnFlag("up"); err != nil {
 		return err
 	}
+	cctx, err := config.New(flagWorkspace)
+	if err != nil {
+		return err
+	}
+	shape, err := config.DetectShape(cctx.WorkspaceName)
+	if err != nil {
+		return fmt.Errorf("detecting workspace shape: %w", err)
+	}
+	switch shape {
+	case config.ShapeLegacySingle:
+		// Cluster + trial share one state file — the monolithic path
+		// applies the whole HCL tree in one terraform run, matching
+		// v1.0.x semantics exactly.
+		return runTrialUp(cmd, args)
+	case config.ShapeEmpty, config.ShapeSplit:
+		// Empty: brand-new workspace; cluster up creates the cluster
+		// phase, then trial up adds the BNK trial layer on top.
+		// Split: cluster up is a no-op refresh (PRD 06 open Q on
+		// `--skip-cluster-refresh`); trial up applies any drift /
+		// tfvars changes.
+		if err := runClusterUp(cmd, nil); err != nil {
+			return err
+		}
+		return runTrialUp(cmd, args)
+	case config.ShapeClusterOnly:
+		return runTrialUp(cmd, args)
+	default:
+		return fmt.Errorf("unrecognised workspace shape %v", shape)
+	}
+}
+
+// runTrialUp = plan + confirm + apply + (optional) kubeconfig fetch
+// against the trial state dir. The leaf "trial phase up" used by both
+// the composite `runUp` (on Empty/Split/ClusterOnly) and `bnk up`. For
+// legacy single-state workspaces this is the v1.0.x monolithic apply —
+// the trial state still carries the cluster modules in that shape.
+//
+// Preserves the v1.0.x docker-backend short-circuit at the top: a
+// non-local terraform backend dispatches through
+// runTerraformLifecycleDocker before any state-dir prep.
+func runTrialUp(cmd *cobra.Command, _ []string) error {
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "up")
 	}
@@ -196,11 +248,57 @@ func runApply(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// runDown = destroy with confirmation gate. --auto skips the prompt.
-func runDown(cmd *cobra.Command, _ []string) error {
+// runDown is the shape-aware composite dispatcher for top-level
+// `roksbnkctl down`. Detects the workspace's on-disk shape and routes
+// per PRD 06 §"Dispatch table":
+//
+//   - LegacySingle → monolithic trial down (one terraform destroy
+//     against the trial state; same v1.0.x behavior).
+//   - Empty        → error "nothing to destroy".
+//   - Split        → trial down, then cluster down (tear down in the
+//     reverse order they were created so trial doesn't get orphaned
+//     against a missing cluster).
+//   - ClusterOnly  → cluster down.
+//
+// Pure dispatcher; all destroy / confirmation logic lives in the leaf
+// helpers.
+func runDown(cmd *cobra.Command, args []string) error {
 	if err := rejectOnFlag("down"); err != nil {
 		return err
 	}
+	cctx, err := config.New(flagWorkspace)
+	if err != nil {
+		return err
+	}
+	shape, err := config.DetectShape(cctx.WorkspaceName)
+	if err != nil {
+		return fmt.Errorf("detecting workspace shape: %w", err)
+	}
+	switch shape {
+	case config.ShapeLegacySingle:
+		return runTrialDown(cmd, args)
+	case config.ShapeEmpty:
+		return errors.New("nothing to destroy in this workspace")
+	case config.ShapeSplit:
+		if err := runTrialDown(cmd, args); err != nil {
+			return err
+		}
+		return runClusterDown(cmd, nil)
+	case config.ShapeClusterOnly:
+		return runClusterDown(cmd, nil)
+	default:
+		return fmt.Errorf("unrecognised workspace shape %v", shape)
+	}
+}
+
+// runTrialDown = destroy against the trial state dir with a
+// confirmation gate (skipped on --auto). Leaf "trial phase down" used
+// by the composite `runDown` (on LegacySingle and Split) and `bnk
+// down`.
+//
+// Preserves the v1.0.x docker-backend short-circuit — non-local
+// backends dispatch through runTerraformLifecycleDocker.
+func runTrialDown(cmd *cobra.Command, _ []string) error {
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "destroy")
 	}

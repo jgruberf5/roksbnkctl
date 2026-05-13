@@ -1,0 +1,47 @@
+{
+  "version": 4,
+  "terraform_version": "1.9.0",
+  "serial": 14,
+  "lineage": "11111111-1111-1111-1111-111111111111",
+  "outputs": {
+    "roks_cluster_id": {
+      "value": "c8x7example",
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "module": "module.roks_cluster",
+      "mode": "managed",
+      "type": "ibm_container_vpc_cluster",
+      "name": "roks",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "module": "module.roks_cluster.module.cluster",
+      "mode": "managed",
+      "type": "ibm_container_vpc_worker_pool",
+      "name": "default",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "module": "module.cert_manager",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "cert_manager",
+      "provider": "provider[\"registry.terraform.io/hashicorp/helm\"]",
+      "instances": []
+    },
+    {
+      "module": "module.testing",
+      "mode": "managed",
+      "type": "ibm_is_instance",
+      "name": "jumphost",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    }
+  ],
+  "check_results": null
+}

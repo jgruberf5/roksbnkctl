@@ -1,8 +1,10 @@
 # Deploying BNK trials on top
 
-`roksbnkctl up` is the verb that deploys a **BNK trial** — F5's Lifecycle Operator, the CNE Instance, license bundles, and the cluster-side glue that makes them work — onto a ROKS cluster that already exists. "Already exists" means either provisioned by [`cluster up`](./08-cluster-phase.md) or [registered](./09-registering-existing-cluster.md) from a pre-existing cluster.
+`roksbnkctl up` deploys a **BNK trial** — F5's Lifecycle Operator, the CNE Instance, license bundles, and the cluster-side glue that makes them work — onto a ROKS cluster that already exists. "Already exists" means either provisioned by [`cluster up`](./08-cluster-phase.md) or [registered](./09-registering-existing-cluster.md) from a pre-existing cluster.
 
-This chapter is the deeper-than-quick-start view of `up`: what each module does, the ~77-resource shape of a clean apply, the token-rotation observation when you re-run `up` against an existing cluster, and how to read the Terraform plan output that scrolls past on every run.
+For workspaces where the cluster and the trial are managed as separate phases (the v1.1.0 default — see [Chapter 8](./08-cluster-phase.md)), the trial layer also gets its own command pair: `roksbnkctl bnk up` / `bnk down`. `bnk down` tears down only the trial; the cluster keeps running, so the next iteration starts in 5-10 minutes instead of an hour. The `bnk` group is documented in [§"The `bnk up` / `bnk down` command group"](#the-bnk-up--bnk-down-command-group) below.
+
+This chapter is the deeper-than-quick-start view of `up`: what each module does, the ~77-resource shape of a clean apply, the token-rotation observation when you re-run `up` against an existing cluster, how to read the Terraform plan output, and how the `bnk` group + the shape-aware composite `up` / `down` fit together.
 
 [Chapter 7 — Quick start](./07-quick-start.md) shows the happy path end-to-end with sample output. This chapter goes deeper.
 
@@ -197,10 +199,135 @@ A successful `up` does five things in order:
 
 The kubeconfig fetch and jumphost registration are best-effort: they log warnings on failure but don't fail the parent command. `up` succeeded if Terraform succeeded; the post-apply niceties are conveniences.
 
+## The `bnk up` / `bnk down` command group
+
+New in v1.1.0. The `roksbnkctl bnk` group is the trial-only counterpart to `roksbnkctl cluster` — it operates on the trial state under `state/` and leaves the cluster state under `state-cluster/` untouched. The whole point is that **iterating on a BNK trial no longer costs a 30-minute cluster rebuild**: a `bnk down` / `bnk up` round-trip is the 5-10 minute trial-apply window, the cluster keeps running underneath.
+
+### `roksbnkctl bnk up`
+
+Deploys the BNK trial against the workspace's registered cluster.
+
+- If the workspace already has a cluster phase (either from `cluster up` or from `cluster register`), `bnk up` runs the trial apply directly — same plan, same ~41 resources, same 5-10 minute window as the trial half of a full `up`.
+- If the workspace is **empty** (no cluster registered yet), `bnk up` offers to **bootstrap the cluster phase first** with a confirmation prompt, then runs the trial apply. This keeps the new user's quick-start path one command, even if they typed `bnk up` instead of `up`.
+- On a [legacy single-state](./08-cluster-phase.md#legacy-single-state-workspaces) workspace, `bnk up` **refuses** — there's no way to isolate the trial phase when the trial and cluster share one state file.
+
+Sample output of the bootstrap-prompt path:
+
+```
+$ roksbnkctl bnk up
+No cluster registered for this workspace.
+→ Provisioning the cluster phase first (ROKS cluster + transit gateway +
+  registry COS + cert-manager + jumphost; ~30 min) before the BNK trial.
+Continue? [y/N]: y
+→ terraform plan (cluster phase: deploy_bnk=false forced)
+...
+✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+→ terraform plan (trial phase)
+...
+Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+```
+
+Two prompts fire in the empty-workspace case — one for "do you want to bootstrap the cluster phase," and one for "apply this terraform plan" inside the nested `cluster up` (and a third when the trial-phase apply also prompts unless `--auto` is set). For a 30-minute operation we kept the prompts explicit rather than collapsing them. `--auto` skips all three:
+
+```
+$ roksbnkctl bnk up --auto
+```
+
+### `roksbnkctl bnk down`
+
+Destroys the trial only. The cluster phase keeps running.
+
+- On a **split** workspace (cluster + trial both present), `bnk down` runs `terraform destroy` against the trial state — ~41 resources, the same as the trial half of a full `down`.
+- On an **empty** or **cluster-only** workspace, `bnk down` refuses: there's no trial to destroy.
+- On a **legacy single-state** workspace, `bnk down` refuses: the cluster lives in the trial state so a trial-only destroy isn't possible.
+
+Sample output against a split workspace:
+
+```
+$ roksbnkctl bnk down --auto
+→ terraform destroy (trial phase)
+  module.license.helm_release.license: Destroying...
+  module.cne_instance.kubernetes_manifest.cne: Destroying...
+  module.flo.helm_release.flo: Destroying...
+  ...
+  Destroy complete! Resources: 41 destroyed.
+
+✓ Trial phase destroyed. Cluster phase ~/.roksbnkctl/default/state-cluster/ is intact.
+  Run `roksbnkctl bnk up` to deploy another trial against the same cluster.
+```
+
+### The shape dispatch matrix
+
+The unscoped `roksbnkctl up` / `down` verbs are now **shape-aware composites** — they detect the on-disk shape of the workspace and delegate to the right phase commands underneath. The full picture for all four shapes and all six commands:
+
+| Command | **Empty** (nothing applied) | **ClusterOnly** (`cluster up` ran) | **Split** (cluster + trial both applied) | **LegacySingle** (v1.0.x state) |
+|---|---|---|---|---|
+| `up` | `cluster up` → trial up | trial up | `cluster up` (refresh) → trial up | monolithic trial up (v1.0.x behaviour) |
+| `down` | error: nothing to destroy | `cluster down` | trial down → `cluster down` | monolithic trial down (v1.0.x behaviour) |
+| `bnk up` | confirm + `cluster up` → trial up | trial up | trial up | **refuse** |
+| `bnk down` | refuse: no trial | refuse: no trial | trial down | **refuse** |
+| `cluster up` | `cluster up` | `cluster up` (refresh) | `cluster up` (refresh) | **refuse** |
+| `cluster down` | refuse: nothing to destroy | `cluster down` | **refuse**: trial exists | **refuse** |
+
+The user-facing simplification: the unscoped `up` / `down` "just work" against every shape (including v1.0.x legacy state). The phase-scoped commands (`bnk`, `cluster`) only operate when the shape allows isolation and refuse loudly with an actionable message otherwise. Refusals always point at the resolution — see [Chapter 11 §"Refusal messages"](./11-tearing-down.md#refusal-messages-catalogue) for the full catalogue.
+
+The engineering version of this table — with the implementation details, the `ShapeUnknown` edge cases, and the rationale — lives in [PRD 06 §"Dispatch table"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#dispatch-table).
+
+### Worked example — iterating on a BNK trial
+
+The headline workflow the v1.1.0 surface unlocks. You're testing different `cne_instance` parameter combinations against a stable cluster.
+
+```bash
+# Step 1 — one-time cluster provision (~38 minutes)
+roksbnkctl cluster up --auto
+# → terraform apply (cluster phase: deploy_bnk=false forced)
+#   ...
+#   Apply complete! Resources: 36 added, 0 changed, 0 destroyed.
+# ✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+
+# Step 2 — first BNK trial (~7 minutes — trial only, cluster is reused)
+roksbnkctl bnk up --auto
+# → terraform plan (trial phase)
+#   Plan: 41 to add, 0 to change, 0 to destroy.
+#   ...
+#   Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+
+# Step 3 — poke at the trial, find something to tune
+roksbnkctl k get pods -n f5-bnk
+roksbnkctl test connectivity
+
+# Step 4 — destroy just the trial (~3 minutes — cluster persists)
+roksbnkctl bnk down --auto
+# → terraform destroy (trial phase)
+#   Destroy complete! Resources: 41 destroyed.
+# ✓ Trial phase destroyed. Cluster phase ~/.roksbnkctl/default/state-cluster/ is intact.
+
+# Step 5 — edit config.yaml (or a --var-file) to change cne_instance settings
+$EDITOR ~/.roksbnkctl/default/config.yaml
+
+# Step 6 — second BNK trial against the same cluster (~7 minutes; the 30-minute
+#          cluster provision from step 1 does NOT repeat)
+roksbnkctl bnk up --auto
+# → terraform plan (trial phase)
+#   ...
+#   Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+```
+
+The win is in step 6: the cluster persists across the `bnk down` / `bnk up` boundary, so the second trial deploy is **~7 minutes** instead of the ~50 minutes a full `down` → `up` cycle would cost in v1.0.x. Across a day of iteration, that's the difference between five trial permutations and one.
+
+When you're done with the whole session:
+
+```bash
+# Step 7 — tear down the cluster too
+roksbnkctl cluster down --auto
+# (or `roksbnkctl down` from any starting state — see the dispatch matrix above)
+```
+
 ## Cross-references
 
 - [Chapter 7 — Quick start](./07-quick-start.md) — happy-path walkthrough end-to-end.
-- [Chapter 11 — Tearing down](./11-tearing-down.md) — `roksbnkctl down` to undo a trial.
+- [Chapter 8 — The cluster phase](./08-cluster-phase.md) — what `cluster up` provisions, the two state directories, and how to identify a legacy single-state workspace.
+- [Chapter 11 — Tearing down](./11-tearing-down.md) — phase-aware decision matrix; full refusal-message catalogue; orphan recovery.
 - [Chapter 13 — Terraform variables](./13-terraform-variables.md) — full reference for what you can override via `--var-file`.
 - [Chapter 22 — Throughput testing](./22-throughput-testing.md) — once BNK is deployed, validating its data plane.
 - [Chapter 26 — Troubleshooting](./26-troubleshooting.md) — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.
