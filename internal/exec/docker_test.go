@@ -12,6 +12,7 @@ package exec
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -158,17 +159,20 @@ func TestResolveDockerImageAndArgv(t *testing.T) {
 		wantCmd []string
 	}{
 		{
-			// ibmcloud now wraps argv with a sh -c login-then-exec dance
-			// so any stateful subcommand (iam, ks, account, target, …)
-			// gets a primed session. See dockerImageBinary["ibmcloud"]
-			// in docker.go for the wrap rationale. argv[1:] flows
-			// through `"$@"` after the `--` separator.
-			name:    "ibmcloud wraps argv with login-then-exec sh -c",
+			// ibmcloud wraps argv with a sh -c shim that:
+			//   1. sources $IBMCLOUD_API_KEY from the bind-mounted
+			//      tempfile (Sprint 9 / PRD 04 §"Resolved in Sprint 9"
+			//      §"Cred tmpfile-bind-mount pattern")
+			//   2. runs `ibmcloud login` against the sourced key
+			//   3. exec's the user's argv as the wrapped invocation
+			// All three pieces live in dockerImageBinary["ibmcloud"];
+			// argv[1:] flows through `"$@"` after the `--` separator.
+			name:    "ibmcloud wraps argv with cred-shim + login-then-exec sh -c",
 			argv:    []string{"ibmcloud", "iam", "oauth-tokens"},
 			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:",
 			wantCmd: []string{
 				"sh", "-c",
-				`ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`,
+				credShimScript + `ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`,
 				"--",
 				"iam", "oauth-tokens",
 			},
@@ -290,6 +294,203 @@ func keysOf(m map[string][]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// — Sprint 9: tmpfile-bind-mount cred pattern unit tests — //
+
+// TestBuildMountsAndEnv_CredTmpfileBindMount asserts the Sprint 9
+// tmpfile-bind-mount design:
+//
+//   - the API key value is written to a per-run 0600 tempfile under
+//     tempDir/creds/api-key
+//   - the file is bind-mounted READ-ONLY at /run/secrets/ibmcloud_api_key
+//   - container env carries ONLY `IBMCLOUD_API_KEY_FILE=<bind-target>`
+//     — the key value itself NEVER appears in container env
+//
+// This is the unit-tier sibling of
+// TestIntegration_DockerBackend_NoLeakInInspect.
+func TestBuildMountsAndEnv_CredTmpfileBindMount(t *testing.T) {
+	const secret = "test-key-roksbnkctl-tmpfile-NEVER-IN-ENV"
+	tempDir := t.TempDir()
+	b := &DockerBackend{}
+	mounts, env, cleanup, err := b.buildMountsAndEnv(RunOpts{
+		Credentials: &Credentials{IBMCloudAPIKey: secret},
+	}, tempDir)
+	if err != nil {
+		t.Fatalf("buildMountsAndEnv: %v", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	// 1. Container env must include only the _FILE pointer; never the value.
+	var sawFileVar bool
+	for _, kv := range env {
+		if strings.HasPrefix(kv, credEnvFileVar+"=") {
+			sawFileVar = true
+			if kv != credEnvFileVar+"="+credBindMountTarget {
+				t.Errorf("%s env: got %q, want %q", credEnvFileVar,
+					kv, credEnvFileVar+"="+credBindMountTarget)
+			}
+		}
+		if strings.Contains(kv, secret) {
+			t.Errorf("PRD 04 SECURITY VIOLATION: cred value in container env: %q", kv)
+		}
+		// The legacy KEY=VALUE shape MUST NOT appear.
+		if strings.HasPrefix(kv, "IBMCLOUD_API_KEY=") ||
+			strings.HasPrefix(kv, "IC_API_KEY=") ||
+			strings.HasPrefix(kv, "TF_VAR_ibmcloud_api_key=") {
+			t.Errorf("PRD 04 anti-pattern: legacy KEY=VALUE env form leaked back in: %q", kv)
+		}
+	}
+	if !sawFileVar {
+		t.Errorf("expected %s env entry; got %v", credEnvFileVar, env)
+	}
+
+	// 2. Mounts must include a single-file read-only bind at the
+	// stable target path, with source pointing at a 0600 file holding
+	// the secret.
+	var sawCredMount bool
+	for _, m := range mounts {
+		if m.Target != credBindMountTarget {
+			continue
+		}
+		sawCredMount = true
+		if !m.ReadOnly {
+			t.Errorf("cred bind-mount must be read-only; got %v", m)
+		}
+		// The source must be a file (not a directory) — PRD 04
+		// anti-pattern: never bind-mount the parent dir.
+		fi, err := os.Stat(m.Source)
+		if err != nil {
+			t.Errorf("cred bind-mount source: %v", err)
+			continue
+		}
+		if fi.IsDir() {
+			t.Errorf("cred bind-mount source must be a file, got dir: %s", m.Source)
+		}
+		if mode := fi.Mode().Perm(); mode != 0o600 {
+			t.Errorf("cred bind-mount source perms: got %o, want 0600", mode)
+		}
+		// File content must be exactly the secret (the shim cat's it).
+		data, err := os.ReadFile(m.Source)
+		if err != nil {
+			t.Errorf("reading cred bind-mount source: %v", err)
+			continue
+		}
+		if string(data) != secret {
+			t.Errorf("cred file content mismatch")
+		}
+	}
+	if !sawCredMount {
+		t.Errorf("expected a bind-mount at %s; got %v", credBindMountTarget, mounts)
+	}
+}
+
+// TestBuildMountsAndEnv_NoCredsNoTmpfile asserts the inverse: an empty
+// Credentials struct produces no cred bind-mount and no
+// IBMCLOUD_API_KEY_FILE env entry. Backends without secrets shouldn't
+// pay any tmpfile cost.
+func TestBuildMountsAndEnv_NoCredsNoTmpfile(t *testing.T) {
+	tempDir := t.TempDir()
+	b := &DockerBackend{}
+	mounts, env, cleanup, err := b.buildMountsAndEnv(RunOpts{}, tempDir)
+	if err != nil {
+		t.Fatalf("buildMountsAndEnv: %v", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	for _, m := range mounts {
+		if m.Target == credBindMountTarget {
+			t.Errorf("empty creds emitted cred bind-mount: %v", m)
+		}
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, credEnvFileVar+"=") {
+			t.Errorf("empty creds emitted %s env: %q", credEnvFileVar, kv)
+		}
+	}
+}
+
+// TestCredShimScript_ExportsKeyFromFile pins the shape of the in-
+// container shell shim. The shim is the load-bearing piece of the
+// tmpfile-bind-mount design: it sources the key from
+// $IBMCLOUD_API_KEY_FILE at process-spawn time and exports
+// IBMCLOUD_API_KEY (and the IC_API_KEY / TF_VAR_ibmcloud_api_key
+// aliases) into the shell scope ONLY — never into container env
+// metadata.
+//
+// Regression-protects against accidental shim edits that would either:
+//   - leave the key unexported (breaks ibmcloud login wrap),
+//   - export it via `set -a` or similar global mechanism that would
+//     leak it to a subsequent `docker exec` inspection, or
+//   - skip the IC_API_KEY / TF_VAR_ibmcloud_api_key aliases (breaks
+//     terraform's IBM provider auth).
+func TestCredShimScript_ExportsKeyFromFile(t *testing.T) {
+	for _, want := range []string{
+		`IBMCLOUD_API_KEY_FILE`,
+		`cat "$IBMCLOUD_API_KEY_FILE"`,
+		`export IBMCLOUD_API_KEY`,
+		`IC_API_KEY="$IBMCLOUD_API_KEY"`,
+		`TF_VAR_ibmcloud_api_key="$IBMCLOUD_API_KEY"`,
+	} {
+		if !strings.Contains(credShimScript, want) {
+			t.Errorf("credShimScript missing %q\n--- script ---\n%s", want, credShimScript)
+		}
+	}
+}
+
+// TestWrapCmdWithCredShim covers the helper that wraps the resolved
+// Cmd slice with a sh -c shim. The terraform path is the canonical
+// case: image has its own ENTRYPOINT, but the IBM provider needs
+// TF_VAR_ibmcloud_api_key sourced from the bind-mounted file.
+func TestWrapCmdWithCredShim(t *testing.T) {
+	wrapped := wrapCmdWithCredShim("terraform", []string{"plan", "-no-color"})
+	if len(wrapped) < 5 {
+		t.Fatalf("wrapped cmd too short: %v", wrapped)
+	}
+	if wrapped[0] != "sh" || wrapped[1] != "-c" {
+		t.Errorf("wrapped cmd prefix: got %v, want [sh -c ...]", wrapped[:2])
+	}
+	if !strings.Contains(wrapped[2], credShimScript) {
+		t.Errorf("wrapped cmd script missing credShimScript prefix: %q", wrapped[2])
+	}
+	if !strings.Contains(wrapped[2], `exec terraform "$@"`) {
+		t.Errorf("wrapped cmd script missing exec target: %q", wrapped[2])
+	}
+	// Args after the `--` separator must be preserved in order.
+	got := wrapped[len(wrapped)-2:]
+	want := []string{"plan", "-no-color"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("wrapped arg [%d]: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestNeedsCredShim covers the decision matrix: terraform needs the
+// shim; ibmcloud + roksbnkctl already have it baked into
+// dockerImageBinary; iperf3 + literal image refs don't consume the
+// key.
+func TestNeedsCredShim(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"terraform", "plan"}, true},
+		{[]string{"ibmcloud", "iam", "oauth-tokens"}, false}, // already shim-wrapped in dockerImageBinary
+		{[]string{"roksbnkctl", "test", "dns"}, false},       // doesn't read IBMCLOUD_API_KEY env
+		{[]string{"iperf3", "-c", "host"}, false},
+		{[]string{"busybox:latest", "echo", "hi"}, false},
+		{nil, false},
+		{[]string{}, false},
+	}
+	for _, tc := range cases {
+		if got := needsCredShim(tc.argv); got != tc.want {
+			t.Errorf("needsCredShim(%v): got %v, want %v", tc.argv, got, tc.want)
+		}
+	}
 }
 
 // TestDockerBackend_DaemonUnreachableErrorClear asserts the docker backend

@@ -36,6 +36,10 @@ metadata:
   namespace: roksbnkctl-ops
   labels:
     roksbnkctl.io/managed: "true"
+  # `ops install --trusted-profile=auto|on` patches an additional
+  # annotation `iam.cloud.ibm.com/trusted-profile: <profile-id>` here
+  # at apply time. Empty when the static-key Secret path is in use.
+  # PRD 04 §"Resolved in Sprint 9" §"Trusted-profile auto-provisioning".
 ---
 apiVersion: v1
 kind: Secret
@@ -52,6 +56,15 @@ data:
   # Populated at apply-time from the workspace's resolved IBM Cloud API key.
   # PRD 04 §"K8s": cred lives in a Secret, projected via envFrom on the ops
   # pod (and as envFrom for ephemeral Jobs that need it).
+  #
+  # Sprint 9 / PRD 04 §"Resolved in Sprint 9" §"Trusted-profile auto-
+  # provisioning": when `--trusted-profile=auto|on` provisions a profile,
+  # the renderer passes an empty key to decodeOpsManifests so these data
+  # fields hold the empty string. The ops pod authenticates via the
+  # trusted-profile annotation on the SA + projected token, NOT this
+  # Secret. The Secret remains in the manifest so that `--trusted-profile=
+  # off` (and the auto-fallback path) can repopulate it without a
+  # schema change.
   IBMCLOUD_API_KEY: "${IBMCLOUD_API_KEY_B64}"
   IC_API_KEY: "${IBMCLOUD_API_KEY_B64}"
 ---

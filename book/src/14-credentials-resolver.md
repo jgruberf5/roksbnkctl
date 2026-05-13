@@ -243,6 +243,32 @@ If step 4 had failed (no keychain, WSL2 without libsecret), `SaveAPIKeyForWorksp
 
 Both destinations work. The keychain path is the recommended default; the config-b64 path is the documented fallback.
 
+## What's new in v1.2: the cred-tmpfile and trusted-profile paths
+
+`v1.2.0` closes the two longest-deferred items from [PRD 04 §"Open questions"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#open-questions): `roksbnkctl --backend docker` no longer leaks `IBMCLOUD_API_KEY` in `docker inspect`, and `roksbnkctl --backend k8s ops install` auto-provisions an IBM Cloud trusted profile so the ops pod never sees a static API key. Both have fallbacks for environments where the new path doesn't apply; v1.0.x / v1.1.x workspaces continue to work without change.
+
+### The tmpfile-bind-mount pattern (docker backend)
+
+The docker backend writes the resolved `IBMCLOUD_API_KEY` to a `0600` tempfile on the host, bind-mounts that single file read-only at `/run/secrets/ibmcloud_api_key` inside the container, and points the container at the file via `IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key`. The value never appears in the container's stored env metadata — `docker inspect <id>` shows the path, not the key. The tempfile is owned by the calling user and is removed on backend exit (and on context cancellation, so an interrupted run still cleans up).
+
+You don't have to do anything to opt in — the pattern is the default for `--backend docker` on v1.2 and up. The engineering shape (lifecycle, the inline `sh -c` shim that re-exports the value into the legacy `IBMCLOUD_API_KEY` env name for tools that read from env, the why-not-just-use-`--secret` discussion) lives in [PRD 04 §"Resolved in Sprint 9" → "Cred tmpfile-bind-mount pattern (docker backend)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend). For most users the takeaway is one line: in `v1.2`, `--backend docker` is `docker inspect`-clean.
+
+### The `--trusted-profile` flag (k8s backend)
+
+New flag on `roksbnkctl ops install` that controls how the ops pod gets its IBM Cloud credential. Three values:
+
+| Value | What it does | When to use |
+|---|---|---|
+| `auto` (default) | Try to provision an IBM Cloud trusted profile (`roksbnkctl-ops-<workspace>`) linked to the ops pod's ServiceAccount. The pod assumes the profile via its projected SA token and the static API key never lands in any Secret. If your workspace API key doesn't have IAM `iam-identity` permissions, automatically fall back to the v1.0.x static-key Secret with a stderr warning that names the missing perm and how to silence it (`--trusted-profile=off`). | Default for new installs. Production users get the secure path automatically; restricted-IAM users still complete `ops install` successfully. |
+| `on` | Try to provision; fail loudly with a non-zero exit if perms don't allow. No fallback. | CI / hardened environments where the static-key path is unacceptable and a perm-missing case should block, not warn. |
+| `off` | Skip the trusted-profile path entirely; provision the v1.0.x static-key Secret (matches v1.0.x / v1.1.x behaviour). | Compatibility / debugging — and the documented path for clusters whose IAM admin doesn't grant `iam-identity` perms and isn't expected to. |
+
+[Chapter 19 — The in-cluster ops pod](./19-in-cluster-ops-pod.md#trusted-profile-flow-v12) walks through the `--trusted-profile=auto` install flow, the verification commands (`oc get serviceaccount roksbnkctl-ops -o yaml` showing the trusted-profile annotation), the fallback warning shape, and how `ops uninstall` cleans up a provisioned profile.
+
+### Compatibility note
+
+v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s `--trusted-profile=auto` default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning block on `ops install` naming the fallback and how to silence it. Setting `--trusted-profile=off` reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).
+
 ## Backend-specific cred propagation
 
 The credential-propagation rules differ per backend. All four backends ship at v1.0:

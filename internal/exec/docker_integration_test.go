@@ -68,22 +68,17 @@ func TestIntegration_DockerBackend_BusyboxEcho(t *testing.T) {
 
 // TestIntegration_DockerBackend_NoLeakInInspect runs a short-lived container
 // with a known IBMCLOUD_API_KEY value, then greps the output for the value.
-// PRD 04 §Docker container's recommended `--env IBMCLOUD_API_KEY` (no =value)
-// form means `docker inspect` should show only the env var NAME, never the
-// value. This test is the integration-tier sibling of audit_test.go's unit
-// check.
+// PRD 04 §"Resolved in Sprint 9" §"Cred tmpfile-bind-mount pattern": the
+// secret is written to a 0600 tempfile under $TMPDIR/roksbnkctl-docker-*/
+// creds/api-key, bind-mounted read-only at /run/secrets/ibmcloud_api_key,
+// and container env carries ONLY `IBMCLOUD_API_KEY_FILE=<bind-target>`. So
+// `docker inspect` must NEVER contain the secret value — only the env-file
+// pointer and the bind-mount source path.
+//
+// Unit-tier sibling: TestBuildMountsAndEnv_CredTmpfileBindMount in
+// docker_test.go pins the construction shape; this test verifies the
+// end-to-end runtime invariant against a live docker daemon.
 func TestIntegration_DockerBackend_NoLeakInInspect(t *testing.T) {
-	// TODO(sprint9): re-enable when the tmpfile-bind-mount cred-passing
-	// pattern lands. The v1.0.2 docker.go fix (bare-name IBMCLOUD_API_KEY
-	// → KEY=VALUE) restored ibmcloud functionality on the docker SDK path
-	// but regresses on `docker inspect` visibility, which this test
-	// catches as a "PRD 04 SECURITY VIOLATION". The trade-off is
-	// documented in docker.go::buildMountsAndEnv; the proper fix is the
-	// "tmpfile-bind-mount pattern" the WIP comment references. Until
-	// that lands, this assertion is genuinely false against the live
-	// shape and the skip records the gap rather than the test masking it.
-	t.Skip("skip: tracked as Sprint 9 PRD 04 cred-tmpfile-bind-mount work — see docker.go::buildMountsAndEnv trade-off note")
-
 	if !dockerAvailable() {
 		t.Skip("docker daemon not reachable; skipping")
 	}

@@ -4,6 +4,64 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased (v1.x)
+
+Sprint 9 closure cycle — closes the two PRD 04 §"Open questions" items that have been open since the v0.9 cycle (the cred-tmpfile-bind-mount pattern for the docker backend, and the trusted-profile auto-provisioning for the k8s backend), plus the CI / Makefile polish that prevents another v1.1.0 → v1.1.1 → v1.1.2 cascade. The headline reframe: from v1.0.x-style "static API key in env / Secret" to "no static API key on the wire when it can be avoided". Both backends get sane fallbacks for environments where the new pattern doesn't apply. See [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) for the design rationale and [PLAN.md §"Sprint 9"](docs/PLAN.md) for the cycle's deliverables. Integrator renames this section to `## v1.2.0 — <date>` at tag time.
+
+### Added
+
+#### Sprint 9 — PRD 04 closure (cred tmpfile + trusted profile) + CI polish
+
+- **Cred tmpfile-bind-mount pattern for the docker backend** ([PRD 04 §"Resolved in Sprint 9" → "Cred tmpfile-bind-mount pattern (docker backend)"](docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend))
+  - The resolved `IBMCLOUD_API_KEY` is written to a per-run `0600` tempfile under `$TMPDIR/roksbnkctl-creds-<rand>/api-key`, bind-mounted read-only at `/run/secrets/ibmcloud_api_key` in the container.
+  - Container env carries only `IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key`; the legacy `IBMCLOUD_API_KEY=<value>` form is gone. `docker inspect <id>` shows the path and the bind-mount entry, never the key value.
+  - Container command is wrapped in `sh -c 'export IBMCLOUD_API_KEY="$(cat "$IBMCLOUD_API_KEY_FILE")" && exec …'` so tools that read from env (the existing `dockerImageBinary["ibmcloud"]` login wrap, terraform's IBM provider, ad-hoc `ibmcloud` invocations) continue to find the value at process-spawn time.
+  - Tempfile cleanup runs via `defer` on backend `Run` exit, with a `context.AfterFunc` backstop so interrupted runs still scrub the file. Long-running invocations (e.g., `roksbnkctl up --backend docker` with a 30-min terraform apply) hold the file open via the bind mount for the duration; cleanup fires after the container exits.
+  - Closes the v1.0.x → v1.1.0 trade-off documented at [`internal/exec/docker.go`](internal/exec/docker.go) `buildMountsAndEnv` and unblocks `TestIntegration_DockerBackend_NoLeakInInspect` (was `t.Skip`'d on commit `776fe56`).
+  - Sample (no flag change required — the pattern is the default for `--backend docker` on v1.2 and up):
+    ```bash
+    roksbnkctl --backend docker ibmcloud iam oauth-tokens
+    # docker inspect on the spawned container shows IBMCLOUD_API_KEY_FILE only, never the value
+    ```
+- **Trusted-profile auto-provisioning for the k8s backend** ([PRD 04 §"Resolved in Sprint 9" → "Trusted-profile auto-provisioning (k8s backend)"](docs/prd/04-CREDENTIALS.md#trusted-profile-auto-provisioning-k8s-backend); closes PRD 04 §"Implementation tasks" task 8)
+  - New `--trusted-profile=auto|on|off` flag on `roksbnkctl ops install`, default `auto`, validated at flag-parse time.
+  - `auto`: probe the resolved API key for IAM `iam-identity` perms; on present, provision `roksbnkctl-ops-<workspace>` trusted profile linked to the ops pod's ServiceAccount via its projected SA token. On perm-missing (`403` from the IAM probe), fall back to the v1.0.x static-key Secret with a single stderr warning line naming the missing perm and how to silence (`--trusted-profile=off`).
+  - `on`: try to provision, fail loudly on perm-missing with a non-zero exit. For CI / hardened environments where the static-key path is unacceptable.
+  - `off`: skip the trusted-profile path; provision the v1.0.x static-key Secret. Compatibility / debugging / air-gapped clusters.
+  - Profile name is namespaced per workspace (`roksbnkctl-ops-<workspace>`) so multiple workspaces against the same IBM Cloud account don't race for a single shared name.
+  - ServiceAccount carries `iam.cloud.ibm.com/trusted-profile: <name>` (the IBM IAM CSI hook reads this) plus `roksbnkctl.io/trusted-profile-managed: "true"` (signals `ops uninstall --confirm` to delete the profile on teardown — best-effort, with a warning line if IAM perms have since changed).
+  - New `internal/ibm/trusted_profile.go` package wraps the IBM IAM Identity SDK calls (`CreateProfile`, `CreateClaimRule`, `CreatePolicy`, `DeleteProfile`); reusable for future trusted-profile use cases beyond the ops pod.
+  - Implementation lands in [`internal/exec/k8s.go`](internal/exec/k8s.go) (`installOpsPod` branch on flag value), [`internal/cli/ops.go`](internal/cli/ops.go) (cobra flag wiring + validation), and the new [`internal/ibm/trusted_profile.go`](internal/ibm/trusted_profile.go).
+  - Sample:
+    ```bash
+    roksbnkctl ops install --trusted-profile=auto    # default; auto-falls-back
+    roksbnkctl ops install --trusted-profile=on      # CI / fail-loud on perm-missing
+    roksbnkctl ops install --trusted-profile=off     # v1.0.x static-key path
+    ```
+- **Book chapter edits** for the new surface:
+  - **Chapter 14 (`Credentials and the resolver chain`)** — new §"What's new in v1.2: the cred-tmpfile and trusted-profile paths" with the one-paragraph docker pattern explainer + the three-row `--trusted-profile` flag table + compatibility note.
+  - **Chapter 19 (`The in-cluster ops pod`)** — new §"Trusted-profile flow (v1.2+)" with the `ops install --trusted-profile=auto` sample output, the SA verification command, the auto-fallback warning shape, the `--trusted-profile=off` opt-out path, and the `ops uninstall` trusted-profile cleanup behaviour. Existing §"Credential propagation" + §"Rotation" sections gain v1.2+ pointer notes so they're not stale.
+
+### Changed
+
+- **`--backend docker` cred propagation** — the v1.0.x bare-name `Env: ["IBMCLOUD_API_KEY"]` form and the v1.1.0 explicit `IBMCLOUD_API_KEY=<value>` form are both gone. The container's env carries only `IBMCLOUD_API_KEY_FILE` (pointing at the bind-mounted tempfile); the value reaches tools that read from env via a `sh -c export …` shim. `docker inspect` is now clean per [PRD 04 §"Anti-patterns to avoid"](docs/prd/04-CREDENTIALS.md#docker-container) item 1. The user-facing invariant — set `IBMCLOUD_API_KEY` in your shell or workspace config and `roksbnkctl --backend docker` works — is unchanged.
+- **`roksbnkctl ops install` defaults to `--trusted-profile=auto`** — previously the install always provisioned the v1.0.x static-key Secret with no trusted-profile path. Workspaces whose API key has IAM `iam-identity` perms now get the trusted-profile path transparently on first `ops install` after the upgrade; the static-key Secret is replaced. Workspaces whose key lacks the perms see one new warning line per `ops install` and otherwise continue to work as in v1.0.x.
+
+### Fixed
+
+- **`TestIntegration_DockerBackend_NoLeakInInspect`** re-enabled — the `t.Skip` marker landed on commit `776fe56` is removed. The test asserts that a known `IBMCLOUD_API_KEY` value never appears in `docker inspect` output for a container spawned by `--backend docker`. Closed by the cred tmpfile-bind-mount pattern (this release's headline cred work).
+- **`TestIntegration_K8sBackend_JobMode_Echo`** re-enabled — the `t.Skip` marker landed on commit `776fe56` is removed. The Job-mode echo test now runs against `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:<tag>` (already runs as uid 1000) instead of `busybox:1.36` (default USER root, which collided with `runAsJob`'s `RunAsNonRoot: true` SecurityContext). Picked option 1 from the test body's two-options TODO so the production `runAsJob` SecurityContext stays unchanged.
+- **`TESTCONTAINERS_RYUK_DISABLED=true`** in the CI integration job — kills the docker-hub `testcontainers/ryuk` pull that produced the intermittent `429 too many requests` flake on `TestIntegration_Connect_Whoami` (the v1.1.2 §"Not fixed" carry-over). Ephemeral CI runners don't need the testcontainers reaper. Implementation lands in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+- **`Makefile` pre-tag checklist** (the v1.1.2 carry-over) — the `release` target now runs `staticcheck ./...` AND `go build -tags integration ./...` AND the default-build sweep, closing the three-configuration gap that produced the v1.1.0 → v1.1.1 → v1.1.2 cascade. The new gate matches what CI runs and surfaces all three build configs' failures locally before the tag goes out.
+
+### Deferred (v1.x roadmap, post-v1.2.0)
+
+See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). Not in v1.2.0:
+
+- **Workspace-config customisation of trusted-profile policies** — v1.2 ships with minimal defaults (Viewer on container-registry, Operator on cloud-object-storage). A future cycle will surface `ibmcloud.trusted_profile.policies` as a workspace-config block so users can layer custom IAM policies onto the provisioned profile.
+- **Trusted-profile path for the SSH backend** — out of scope; the SSH backend ships its own cred-passing model (SetEnv + wrapper-script fallback) and the trusted-profile path requires a projected k8s SA token, which the SSH-target side doesn't have.
+- **`--trusted-profile` flag on `roksbnkctl up` / `cluster up`** — out of scope; the terraform-driven lifecycle commands still use the workspace's resolved API key directly for HCL provider auth. The trusted-profile path is exclusively for the ops pod.
+
 ## v0.9.0 — 2026-05-10 (M3 milestone)
 
 The four-backend, GSLB-validation, in-cluster-ops release. Cumulative surface across Sprints 3–5.

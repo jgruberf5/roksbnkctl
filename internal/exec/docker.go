@@ -161,6 +161,22 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 	// argv=["busybox:latest", "echo", "hi"]).
 	image, cmdArgv := resolveDockerImageAndArgv(argv)
 
+	// Cred-shim wrap for tools that need IBMCLOUD_API_KEY in env but
+	// aren't already wrapped via dockerImageBinary. Terraform is the
+	// canonical case: the IBM provider reads `TF_VAR_ibmcloud_api_key`
+	// from env, and the tmpfile-bind-mount pattern (PRD 04 §"Resolved
+	// in Sprint 9") keeps the value out of container env metadata —
+	// so we wrap terraform's invocation in a sh -c that sources the
+	// key from the bind-mounted file (credShimScript) and then exec's
+	// the image's terraform ENTRYPOINT with the user's argv.
+	//
+	// ibmcloud + roksbnkctl are NOT wrapped here — dockerImageBinary
+	// already shim-wraps them. iperf3 + literal-image-ref shapes
+	// (busybox in tests) don't need the API key.
+	if needsCredShim(argv) && opts.Credentials != nil && opts.Credentials.IBMCloudAPIKey != "" {
+		cmdArgv = wrapCmdWithCredShim(argv[0], cmdArgv)
+	}
+
 	// Materialise creds + Files into a per-run tempdir.
 	tempDir, err := os.MkdirTemp("", "roksbnkctl-docker-")
 	if err != nil {
@@ -207,10 +223,13 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		AutoRemove: true,
 		Mounts:     mounts,
 	}
-	// Stash the propagated env names (no values) on the container env
-	// list. PRD 04 §Docker forbids the =value form, so we only emit
-	// the bare name; the docker daemon picks up the value from the
-	// caller's environment at container-start time.
+	// Append the cred-related env entries from buildMountsAndEnv.
+	// Sprint 9 / PRD 04 §"Resolved in Sprint 9" §"Cred tmpfile-bind-
+	// mount pattern": the only cred-related entry here is the bind-
+	// mount path pointer (`IBMCLOUD_API_KEY_FILE=/run/secrets/...`).
+	// The actual key value never enters cfg.Env — it lives in the
+	// bind-mounted tempfile and is sourced inside the container by
+	// the credShimScript at process-spawn time.
 	cfg.Env = append(cfg.Env, env...)
 
 	// Pull the image lazily — if it's already cached, this is a noop;
@@ -375,17 +394,37 @@ func (b *DockerBackend) ensureImage(ctx context.Context, cli *dockerclient.Clien
 	return nil
 }
 
+// credBindMountTarget is the in-container path the API-key tempfile is
+// bind-mounted at. Stable name so the `IBMCLOUD_API_KEY_FILE` env var
+// and the credShimScript both reference it. PRD 04 §"Resolved in
+// Sprint 9" §"Cred tmpfile-bind-mount pattern" pins this convention.
+const credBindMountTarget = "/run/secrets/ibmcloud_api_key"
+
+// credEnvFileVar is the env var name the container sees pointing at
+// the bind-mounted secret file. The credShimScript reads this and
+// exports the actual API key into the shell scope before `exec`'ing
+// the wrapped tool. Naming follows the `_FILE` convention popularised
+// by docker-library images (postgres, mysql, etc.) for file-backed
+// secrets.
+const credEnvFileVar = "IBMCLOUD_API_KEY_FILE"
+
 // buildMountsAndEnv translates RunOpts into docker container mounts +
-// the list of env-var names whose values should be inherited from the
-// caller's environment.
+// the list of `KEY=VALUE` env entries the container should carry.
 //
-// Values for the env-name list come from os.Environ() at container-
-// start time (the Docker daemon copies them in if the container's
-// `Env` field has the bare-name form — same semantics as docker CLI's
-// `--env IBMCLOUD_API_KEY` no-value form).
+// PRD 04 §"Resolved in Sprint 9" §"Cred tmpfile-bind-mount pattern":
+// the IBM Cloud API key is NEVER materialised into the container's
+// stored env (which `docker inspect` would expose). Instead the key
+// value is written to a per-run `0600` tempfile under `tempDir`, the
+// file is bind-mounted read-only at `/run/secrets/ibmcloud_api_key`,
+// and only the bind-mount-target path is set as
+// `IBMCLOUD_API_KEY_FILE` in container env. The shim script in
+// `dockerImageBinary["ibmcloud"]` (and any tool that reads
+// `IBMCLOUD_API_KEY` directly via the `credShimScript` prefix)
+// `cat`s the file at process-spawn time and exports the value into
+// the shell scope only — the value never appears in `docker inspect`.
 func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount.Mount, []string, func(), error) {
 	var mounts []mount.Mount
-	var envNames []string
+	var env []string
 	cleanupFns := []func(){}
 	cleanup := func() {
 		for _, f := range cleanupFns {
@@ -415,54 +454,51 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 		}
 	}
 
-	// Cred propagation. PRD 04 §Docker container: bind-mount the
-	// SINGLE kubeconfig FILE read-only at /root/.kube/config; pass
-	// IBMCLOUD_API_KEY=VALUE explicitly so the container has the key
-	// in env.
+	// Cred propagation.
 	//
-	// v1.0.2 fix: pre-v1.0.2 this used the BARE-NAME form
-	// (`Env: ["IBMCLOUD_API_KEY"]`, no `=value`). The intent was
-	// "inherit from caller's env at container-start time" — the
-	// docker CLI's `--env VAR` no-value form does exactly that.
-	// HOWEVER the docker SDK path doesn't replicate that behavior:
-	// bare names land in the container env as defined-but-empty,
-	// which silently broke every ibmcloud-via-docker-backend call.
-	// The Phase K e2e tests' `assert_contains "IAM token"`
-	// false-positive-matched the ibmcloud help banner (which
-	// documents IAM token env vars) and the gap went undetected.
+	// Tmpfile-bind-mount pattern (PRD 04 §"Resolved in Sprint 9"): the
+	// API key value lands in a 0600 tempfile under `tempDir/creds/api-key`,
+	// the file is bind-mounted at `/run/secrets/ibmcloud_api_key` read-only,
+	// and we set ONLY `IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key`
+	// in container env. The container's shell shim (credShimScript)
+	// reads the file and exports the key into shell scope at process-
+	// spawn time — the value never appears in `docker inspect`.
 	//
-	// TRADE-OFF: KEY=VALUE makes the api key visible in
-	// `docker inspect <ctr>` output. The Phase M2 cred audit
-	// catches this; M2 is marked yellow-skip until v1.x lands a
-	// proper tmpfile-bind-mount pattern that keeps the value out of
-	// container env entirely. See PLAN.md §"What's deliberately
-	// deferred to post-v1.0".
+	// Replaces:
+	//   - the pre-v1.0.2 BARE-NAME form (`Env: ["IBMCLOUD_API_KEY"]`,
+	//     silently broken on the docker SDK path because bare names
+	//     land as defined-but-empty); and
+	//   - the v1.0.2 KEY=VALUE form (worked on the SDK path but
+	//     leaked the value to `docker inspect`).
+	//
+	// Kubeconfig propagation (unchanged): the SINGLE kubeconfig file
+	// is bind-mounted read-only at /root/.kube/config. PRD 04 §"Docker
+	// container" §"Anti-patterns" — never mount the parent .kube dir.
 	if opts.Credentials != nil {
 		if opts.Credentials.IBMCloudAPIKey != "" {
-			envNames = append(envNames,
-				"IBMCLOUD_API_KEY="+opts.Credentials.IBMCloudAPIKey,
-				"IC_API_KEY="+opts.Credentials.IBMCloudAPIKey,
-				"TF_VAR_ibmcloud_api_key="+opts.Credentials.IBMCloudAPIKey,
-			)
-			// Keep the host env-setting paths for callers that might
-			// still rely on os.Environ() observation (defensive — the
-			// container-env path above is the authoritative one).
-			// Make sure IC_API_KEY is set in our env if only IBMCLOUD_API_KEY is.
-			if os.Getenv("IC_API_KEY") == "" {
-				_ = os.Setenv("IC_API_KEY", opts.Credentials.IBMCloudAPIKey)
-				cleanupFns = append(cleanupFns, func() { _ = os.Unsetenv("IC_API_KEY") })
+			credsDir := filepath.Join(tempDir, "creds")
+			if err := os.MkdirAll(credsDir, 0o700); err != nil {
+				cleanup()
+				return nil, nil, nil, fmt.Errorf("creating creds dir: %w", err)
 			}
-			// Likewise make sure IBMCLOUD_API_KEY is set, in case
-			// the resolver returned the value but the host env doesn't
-			// carry it (resolver came from keychain/config).
-			if os.Getenv("IBMCLOUD_API_KEY") == "" {
-				_ = os.Setenv("IBMCLOUD_API_KEY", opts.Credentials.IBMCloudAPIKey)
-				cleanupFns = append(cleanupFns, func() { _ = os.Unsetenv("IBMCLOUD_API_KEY") })
+			keyPath := filepath.Join(credsDir, "api-key")
+			if err := os.WriteFile(keyPath, []byte(opts.Credentials.IBMCloudAPIKey), 0o600); err != nil {
+				cleanup()
+				return nil, nil, nil, fmt.Errorf("materialising api key tempfile: %w", err)
 			}
-			if os.Getenv("TF_VAR_ibmcloud_api_key") == "" {
-				_ = os.Setenv("TF_VAR_ibmcloud_api_key", opts.Credentials.IBMCloudAPIKey)
-				cleanupFns = append(cleanupFns, func() { _ = os.Unsetenv("TF_VAR_ibmcloud_api_key") })
-			}
+			// Bind the SINGLE file (not the parent dir) read-only.
+			// PRD 04 §"Docker container" §"Anti-patterns" — same
+			// pattern as kubeconfig; expose only what the container
+			// needs.
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   keyPath,
+				Target:   credBindMountTarget,
+				ReadOnly: true,
+			})
+			// Container env: ONLY the path pointer. `docker inspect`
+			// shows this value, not the secret.
+			env = append(env, credEnvFileVar+"="+credBindMountTarget)
 		}
 		if len(opts.Credentials.KubeconfigBytes) > 0 {
 			path := filepath.Join(tempDir, "kubeconfig")
@@ -480,7 +516,7 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 		}
 	}
 
-	return mounts, envNames, cleanup, nil
+	return mounts, env, cleanup, nil
 }
 
 // buildContainerEnv translates RunOpts.Env (KEY=VALUE strings) into
@@ -553,6 +589,24 @@ func buildContainerEnv(env []string) []string {
 // The ibmcloud image's `roksbnkctl` alias maps to `/usr/local/bin/
 // roksbnkctl` so a `--backend docker` invocation of roksbnkctl-as-tool
 // (the dns-probe re-exec path, etc.) lands on the right binary.
+// credShimPrefix is the POSIX sh -c shim that sources the IBM Cloud
+// API key from the bind-mounted tempfile and exports it (plus the
+// IC_API_KEY / TF_VAR_ibmcloud_api_key aliases) BEFORE exec'ing the
+// real tool. PRD 04 §"Resolved in Sprint 9" §"Cred tmpfile-bind-mount
+// pattern" — the export-then-exec means the env var is only set
+// inside the container's shell scope and never appears in the
+// container metadata visible to `docker inspect` (which records
+// only the `IBMCLOUD_API_KEY_FILE` pointer + the bind mount entry).
+//
+// Constructed once at package load so callers don't re-allocate. The
+// shim is idempotent: when `$IBMCLOUD_API_KEY_FILE` is unset (no
+// creds passed) the read fails silently and the exec'd tool sees
+// the parent env unchanged.
+const credShimScript = `if [ -n "$IBMCLOUD_API_KEY_FILE" ] && [ -r "$IBMCLOUD_API_KEY_FILE" ]; then ` +
+	`IBMCLOUD_API_KEY="$(cat "$IBMCLOUD_API_KEY_FILE")"; ` +
+	`export IBMCLOUD_API_KEY IC_API_KEY="$IBMCLOUD_API_KEY" TF_VAR_ibmcloud_api_key="$IBMCLOUD_API_KEY"; ` +
+	`fi; `
+
 // dockerImageBinary maps tool name → in-container Cmd prefix. Each
 // entry's slice is prepended to argv[1:] when building the container's
 // Cmd. For tools that need session priming (ibmcloud), the prefix is a
@@ -563,12 +617,15 @@ func buildContainerEnv(env []string) []string {
 // ks, account, target, …) — without it the CLI errors with "No API
 // endpoint set" or "Not logged in", since the container starts cold
 // with no $HOME/.bluemix config cached. The wrap below:
-//  1. Runs `ibmcloud login -a https://cloud.ibm.com -r <region>
+//  1. Sources `IBMCLOUD_API_KEY` from the bind-mounted tempfile (see
+//     `credShimScript`) — Sprint 9 / PRD 04 §"Cred tmpfile-bind-mount
+//     pattern". The key value never appears in container env metadata.
+//  2. Runs `ibmcloud login -a https://cloud.ibm.com -r <region>
 //     --apikey "$IBMCLOUD_API_KEY" --quiet` (quiet suppresses banner)
-//  2. Redirects login output to /dev/null so the caller sees only the
+//  3. Redirects login output to /dev/null so the caller sees only the
 //     wrapped command's output (preserves "byte-identical to local
 //     backend" promise from PRD 03)
-//  3. `exec ibmcloud "$@"` runs the user's actual args with the
+//  4. `exec ibmcloud "$@"` runs the user's actual args with the
 //     now-logged-in session
 //
 // $@ expands the positional args resolveDockerImageAndArgv appends
@@ -580,7 +637,7 @@ func buildContainerEnv(env []string) []string {
 //
 // `login` and `logout` skip the wrap (caller's explicit intent).
 var dockerImageBinary = map[string][]string{
-	"ibmcloud":   {"sh", "-c", `ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`, "--"},
+	"ibmcloud":   {"sh", "-c", credShimScript + `ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`, "--"},
 	"roksbnkctl": {"/usr/local/bin/roksbnkctl"},
 }
 
@@ -612,6 +669,54 @@ func resolveDockerImageAndArgv(argv []string) (image string, cmdArgv []string) {
 		return img, argv[1:]
 	}
 	return argv[0], argv[1:]
+}
+
+// needsCredShim reports whether the tool named by argv[0] needs the
+// IBMCLOUD_API_KEY sourced from the bind-mounted tempfile via the
+// credShimScript at process-spawn time.
+//
+// Tools that are ALREADY shim-wrapped via dockerImageBinary (ibmcloud)
+// have credShimScript baked into their Cmd prefix; they return false
+// here to avoid double-wrapping. Tools that consume the key in env
+// (terraform's IBM provider reads TF_VAR_ibmcloud_api_key) but flow
+// through the image's ENTRYPOINT return true so the Run path wraps
+// them. Tools that don't consume the key (iperf3, literal image refs
+// in tests) return false.
+func needsCredShim(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	switch argv[0] {
+	case "terraform":
+		return true
+	}
+	return false
+}
+
+// wrapCmdWithCredShim takes the resolved in-container Cmd slice (from
+// resolveDockerImageAndArgv) and produces a sh -c wrap that sources
+// IBMCLOUD_API_KEY from the bind-mounted file via credShimScript, then
+// exec's the original Cmd's binary with the original args.
+//
+// `tool` is argv[0] — used to pick the in-container binary name
+// (e.g., "terraform" → the upstream image's ENTRYPOINT runs the
+// terraform binary). For tools where the in-container binary name
+// equals the tool name, the exec target is simply `tool`. The args
+// slice from resolveDockerImageAndArgv is appended after the `--`
+// separator so the shell positional `$@` expansion picks them up.
+func wrapCmdWithCredShim(tool string, cmdArgv []string) []string {
+	// cmdArgv at this point is the args (no binary prefix) for tools
+	// that rely on image ENTRYPOINT. Wrap with sh -c that runs the
+	// credShimScript then exec's the same binary `tool` provides.
+	wrap := []string{
+		"sh", "-c",
+		credShimScript + `exec ` + tool + ` "$@"`,
+		"--",
+	}
+	out := make([]string, 0, len(wrap)+len(cmdArgv))
+	out = append(out, wrap...)
+	out = append(out, cmdArgv...)
+	return out
 }
 
 func init() {

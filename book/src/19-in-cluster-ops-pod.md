@@ -159,6 +159,143 @@ Three details to call out:
 
 `roksbnkctl ops install` waits for `Pod.Status.Phase == Running` and the container's `Ready` condition before returning. Default timeout is 60 seconds; longer for clusters with slow image pulls (the ghcr.io image is ~80 MiB). Failures surface a `kubectl describe pod roksbnkctl-ops` excerpt for context.
 
+## Trusted-profile flow (v1.2+)
+
+The static-key Secret described above is the v1.0.x / v1.1.x path. In `v1.2.0` it becomes the **fallback**: the default `ops install` invocation auto-provisions an IBM Cloud IAM **trusted profile** linked to the ops pod's ServiceAccount, the pod assumes the profile at runtime via its projected SA token, and the static API key never lands in any Kubernetes Secret. [PRD 04 §"Resolved in Sprint 9" → "Trusted-profile auto-provisioning (k8s backend)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#trusted-profile-auto-provisioning-k8s-backend) is the design reference; this section is the operational walkthrough.
+
+### `roksbnkctl ops install --trusted-profile=auto`
+
+`--trusted-profile=auto` is the **default** as of v1.2 — running `roksbnkctl ops install` with no flag picks the auto path. Naming the flag explicitly is useful in scripts that pin behaviour or in docs that want to read unambiguously:
+
+```bash
+$ roksbnkctl ops install --trusted-profile=auto
+✓ applied namespace roksbnkctl-ops
+✓ applied serviceaccount roksbnkctl-ops/roksbnkctl-ops
+✓ applied clusterrole roksbnkctl-ops
+✓ applied clusterrolebinding roksbnkctl-ops
+checking IAM permissions for trusted-profile provisioning ...
+  ✓ iam-identity perms present (key c3b7…b4a2)
+provisioning trusted profile roksbnkctl-ops-sandbox-roks ...
+  ✓ created profile crn:v1:bluemix:public:iam-identity:::profile/iam-Profile-9f2…
+  ✓ linked compute resource: cluster a1b2c3d4 / ns roksbnkctl-ops / sa roksbnkctl-ops
+  ✓ attached policies: viewer on container-registry, operator on cloud-object-storage
+annotated serviceaccount roksbnkctl-ops with iam.cloud.ibm.com/trusted-profile=roksbnkctl-ops-sandbox-roks
+✓ created pod roksbnkctl-ops/roksbnkctl-ops (no static-key Secret needed)
+✓ pod Ready (3.4s)
+```
+
+What just happened, in order:
+
+1. **IAM perm check.** `ops install` makes a probe call against the IBM IAM API (`POST /v1/profiles` dry-run equivalent — actually a `GET /v1/profiles?limit=1` listing call, since IAM doesn't support dry-run-create). If the call returns `403`, the flag value determines the next step: `auto` falls back, `on` errors out.
+2. **Profile creation.** Names the profile `roksbnkctl-ops-<workspace>` so multiple workspaces against the same IBM Cloud account don't race for a single shared name. The compute-resource link binds the profile to your cluster's OIDC issuer URL + the `roksbnkctl-ops/roksbnkctl-ops` ServiceAccount specifically — other SAs on the same cluster can't assume the profile.
+3. **Policy attachment.** Minimal default policies: viewer on Container Registry (for image pulls if you ever run private-registry tools), operator on Cloud Object Storage (for the BNK supply chain). Adjust via the workspace config's `ibmcloud.trusted_profile.policies` block (post-v1.2 enhancement; v1.2 ships with the defaults).
+4. **SA annotation.** The ServiceAccount gets `iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-<workspace>` plus the `roksbnkctl.io/trusted-profile-managed: "true"` marker that signals `ops uninstall` to delete the profile during cleanup.
+5. **Pod creation.** No `envFrom: secretRef` — instead, the pod gets a projected SA token volume that the IBM IAM SDK inside the ops image trades for a short-lived IAM token on each call. The `IBMCLOUD_API_KEY_FILE` env var (when set) is also honored as an alternative authn path for tools that don't speak the trusted-profile flow; under `--trusted-profile=auto` it's unset and the SDK uses the projected token directly.
+
+### Verifying the profile is in use
+
+The ServiceAccount carries the truth-of-record annotation:
+
+```bash
+$ oc get serviceaccount roksbnkctl-ops -n roksbnkctl-ops -o yaml
+# or, kubectl-equivalent via the bundled passthrough:
+$ roksbnkctl k get sa roksbnkctl-ops -n roksbnkctl-ops -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-sandbox-roks            # ← the profile name
+    roksbnkctl.io/trusted-profile-managed: "true"                             # ← ops uninstall will delete it
+    roksbnkctl.io/provisioned-at: "2026-05-13T14:08:33Z"
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+```
+
+End-to-end smoke test — if the profile is wired correctly, a fresh OAuth token returns:
+
+```bash
+$ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
+IAM token:  Bearer eyJ…
+```
+
+The token is fresh-each-call (the pod's SDK re-trades the projected SA token); there's no in-pod cache that needs warming on first call. If this errors with `failed to assume trusted profile`, the most common cause is that the cluster's OIDC issuer URL isn't yet propagated through IBM IAM — wait 30-60 seconds after `ops install` returns and retry. Persistent failures mean the SA-to-profile binding is broken; re-run `ops install` to refresh the profile's compute-resource link.
+
+`roksbnkctl ops show` surfaces the cred posture in one line:
+
+```
+secret:       <none — trusted profile roksbnkctl-ops-sandbox-roks in use>
+```
+
+vs the v1.0.x static-key shape:
+
+```
+secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
+```
+
+### `--trusted-profile=auto` falling back
+
+`auto` falls back to the v1.0.x static-key Secret when any of three pre-conditions for trusted-profile provisioning aren't met. Each fall-back fires a short single-line stderr warning naming the specific failure and pointing at the silence-or-fix:
+
+```
+$ roksbnkctl ops install
+✓ applied namespace roksbnkctl-ops
+warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass `--trusted-profile=off` to silence.
+✓ applied secret roksbnkctl-ops/roksbnkctl-ibm-creds (static-key fallback)
+✓ pod Ready (3.1s)
+```
+
+The three warning shapes (in source order — `internal/cli/ops.go` `resolveTrustedProfileForInstall`):
+
+| Trigger | Warning |
+|---|---|
+| Workspace has no registered cluster yet (`cluster-outputs.json` missing — run `cluster up` or `cluster register` first) | `warning: trusted-profile mode 'auto' needs a registered cluster (<err>); falling back to static-key Secret. Pass `--trusted-profile=off` to silence.` |
+| Registered cluster lookup against the IBM Cloud API failed (network, key auth, cluster deleted out-of-band) | `warning: trusted-profile mode 'auto' couldn't look up cluster (<err>); falling back to static-key Secret. Pass `--trusted-profile=off` to silence.` |
+| API key lacks IAM `iam-identity` permission (the most common fallback) | `warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass `--trusted-profile=off` to silence.` |
+
+All three are non-fatal; the install completes and the pod works exactly as it did in v1.0.x. The warnings are terse on purpose — the actionable detail belongs in this chapter, not in every stderr line. Three ways to clear them permanently:
+
+- **Run `cluster up` or `cluster register`** first if the warning names the missing cluster registration. `ops install` re-run after the registration completes will detect the cluster and switch to the trusted-profile path.
+- **Ask your IAM admin** to grant `iam-identity` Operator role on the API key (or use a different key that already has it) if the warning names the missing IAM perm. Re-run `ops install` — the install detects the changed perm posture on re-run and replaces the static-key Secret with a trusted-profile binding.
+- **Opt out** via `--trusted-profile=off` (next subsection) if you don't want the warning every install.
+
+### `--trusted-profile=off`
+
+Explicit opt-out. Skips the IAM perm check entirely and provisions the v1.0.x static-key Secret:
+
+```bash
+$ roksbnkctl ops install --trusted-profile=off
+✓ applied namespace roksbnkctl-ops
+✓ applied secret roksbnkctl-ops/roksbnkctl-ibm-creds (static-key, --trusted-profile=off)
+✓ pod Ready (3.0s)
+```
+
+Use cases:
+
+- **Reproducing v1.0.x behaviour exactly** — for byte-for-byte parity tests against an older deployment, or for scripts whose assertions match the v1.0.x `ops show` output verbatim.
+- **Air-gapped clusters** that can't reach the IBM IAM API at runtime — without that connectivity, the pod can't trade its projected SA token for an IAM token, so the trusted-profile path is non-functional regardless of perms.
+- **Cred rotation runbooks** that already automate the static-key path and aren't yet ready to switch to the projected-token model.
+
+The third value, `--trusted-profile=on`, is the inverse — it forces the trusted-profile path and refuses to fall back on perm-missing, returning a non-zero exit with the same warning text. Use it in CI to surface IAM-perm regressions explicitly.
+
+### Cleanup on `ops uninstall`
+
+`roksbnkctl ops uninstall --confirm` honors the `roksbnkctl.io/trusted-profile-managed: "true"` annotation on the SA and deletes the IBM Cloud trusted profile alongside the cluster-side objects:
+
+```bash
+$ roksbnkctl ops uninstall --confirm
+✓ deleted pod roksbnkctl-ops
+✓ deleted serviceaccount roksbnkctl-ops
+✓ deleted clusterrolebinding roksbnkctl-ops
+✓ deleted clusterrole roksbnkctl-ops
+✓ deleted namespace roksbnkctl-ops
+✓ deleted namespace roksbnkctl-test
+✓ deleted IAM trusted profile roksbnkctl-ops-sandbox-roks
+```
+
+The trusted-profile delete is **best-effort** — if the calling user's API key has lost `iam-identity` perms in the meantime (or the key itself has rotated and the new key doesn't have those perms), the cluster-side objects still delete and a warning line is printed instructing the user to delete the profile manually via the IBM Cloud console. The annotation remains correct documentation of what was provisioned; `roksbnkctl ops install` on a fresh cluster will pick a fresh profile name unconditionally so an orphaned profile from a prior install doesn't collide.
+
+`--trusted-profile=off` installs leave no trusted profile to clean up — `ops uninstall --confirm` just deletes the cluster-side objects + the static-key Secret as it did in v1.0.x.
+
 ## `roksbnkctl ops show`
 
 Reports current state without making any changes:
@@ -249,6 +386,8 @@ kubectl auth can-i --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops \
 
 ## Credential propagation
 
+> **v1.2+ note.** What follows is the **static-key** propagation path. As of v1.2 it's the fallback rather than the default — `--trusted-profile=auto` installs assume an IBM Cloud trusted profile via the pod's projected SA token and the static API key never lands in a Kubernetes Secret. See [§"Trusted-profile flow (v1.2+)"](#trusted-profile-flow-v12) above for that path. The hop-by-hop description below still describes what happens under `--trusted-profile=off` (and under the `auto`-fallback when IAM perms don't allow the trusted-profile path).
+
 The `IBMCLOUD_API_KEY` reaches the wrapped tool in three hops:
 
 ```
@@ -270,6 +409,8 @@ Three properties this gives you:
 The Secret carries two keys today — `IBMCLOUD_API_KEY` and the legacy `IC_API_KEY` alias older `ibmcloud` versions accept — both populated from the same resolved value. Names are stable; embedded in `internal/exec/k8s_install.yaml`. Future cluster-side credentials (an AWS access key, a GCP service-account JSON) will add new keys to the same Secret rather than spinning up new Secrets, simplifying RBAC.
 
 ## Rotation: rotating the API key
+
+> **v1.2+ note.** Under `--trusted-profile=auto` / `=on` (default), there's nothing to rotate — the ops pod's IAM tokens are short-lived and the IBM IAM endpoint refreshes them transparently each time the SDK trades the projected SA token. Key rotation only matters when the install ran with `--trusted-profile=off` or fell back to the static-key Secret because the resolved key lacked `iam-identity` perms. The procedure below covers that static-key case.
 
 When the IBM Cloud API key changes (key rotation, account takeover, key compromise), you need to update the cluster-side Secret. The flow:
 

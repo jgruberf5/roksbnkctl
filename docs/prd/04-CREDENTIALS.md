@@ -4,6 +4,48 @@
 >
 > Estimated effort: small in code (~300 LOC), medium in design care.
 
+## Resolved in Sprint 9
+
+Sprint 9 (`v1.2.0`) closed two §"Open questions" items that had been open since the v0.9 cycle and that surfaced as `t.Skip`-marked integration tests on commit `776fe56`. Landing notes preserved for future readers; the user-facing shape lives in [Chapter 14 §"What changed in v1.2"](https://github.com/jgruberf5/roksbnkctl/blob/main/book/src/14-credentials-resolver.md#whats-new-in-v12-the-cred-tmpfile-and-trusted-profile-paths) and [Chapter 19 §"Trusted-profile flow"](https://github.com/jgruberf5/roksbnkctl/blob/main/book/src/19-in-cluster-ops-pod.md#trusted-profile-flow-v12).
+
+### Cred tmpfile-bind-mount pattern (docker backend)
+
+**The gap.** The v1.0.x docker path materialised the IBM Cloud API key as `--env IBMCLOUD_API_KEY` (bare-name, value inherits from caller env) — secure on `docker inspect` but silently broken on the docker SDK path because the SDK requires `KEY=VALUE` form. The v1.0.x → v1.1.0 fix switched to the explicit `KEY=VALUE` form so the SDK path worked, but the value then appeared verbatim in `docker inspect` output, regressing PRD 04 §"Anti-patterns to avoid" item 1. The integration test `TestIntegration_DockerBackend_NoLeakInInspect` was `t.Skip`'d on `776fe56` against this exact gap.
+
+**The closure.** The docker backend now writes `IBMCLOUD_API_KEY` to a per-run `0600` tempfile under `$TMPDIR/roksbnkctl-creds-<rand>/api-key`, bind-mounts the file (not its parent directory) read-only at `/run/secrets/ibmcloud_api_key` in the container, and sets a single env var that points at the bind-mounted path:
+
+```
+IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key
+```
+
+The container's command is wrapped in a small `sh -c` shim — `export IBMCLOUD_API_KEY="$(cat "$IBMCLOUD_API_KEY_FILE")" && exec …` — so the existing `dockerImageBinary["ibmcloud"]` login wrap (and any tool that reads `IBMCLOUD_API_KEY` from env) sees the value at process-spawn time without it ever appearing in the container's stored env-var metadata. `docker inspect` shows only `IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key` plus the bind-mount entry pointing at the tempfile path; the key value is in the bind-mounted file (mode `0600`, owned by the calling user, on host filesystem only — not in image layers, not in container metadata, not in `docker logs`).
+
+**Tempfile lifecycle.** The tempfile is created at backend `Run` invocation time (one per container execution; multiple concurrent docker runs each get their own random dir). Cleanup runs via `defer` on the backend's `Run` method tail, plus a backstop on `context.Context` cancellation (`AfterFunc` registered against `RunOpts.Context`) so an interrupted run still scrubs the file. The longer-running `roksbnkctl up --backend docker` (terraform-via-docker; up to ~30 minute apply window) creates the tempfile once per terraform invocation; the file outlives the container by definition since the container holds the bind mount open for the duration of the run.
+
+**Replaces:** the v1.0.x bare-name `Env: ["IBMCLOUD_API_KEY"]` form (silently broken on docker SDK path) and the v1.1.0/v1.1.x `IBMCLOUD_API_KEY=<value>` form (works but leaks to `docker inspect`).
+
+**Fallback.** None needed — the pattern works on any docker daemon (Linux native, Docker Desktop for macOS, Docker Desktop for Windows / WSL2) since bind mounts of single files are a baseline docker primitive. The only environments where it doesn't apply are non-docker docker-compatible runtimes that don't support file bind-mounts; those would already be excluded from the docker backend by the daemon-availability check.
+
+### Trusted-profile auto-provisioning (k8s backend)
+
+**The gap.** The v1.0.x k8s backend put the IBM Cloud API key in a Kubernetes Secret (`roksbnkctl-ibm-creds`) and mounted it into the ops pod via `envFrom: secretRef`. The static-key approach worked but had two well-known weaknesses: the key is at rest in etcd (cluster admins can read it), and rotating the key requires a full `roksbnkctl ops install` re-run + pod recreation. PRD 04 §"Recommended path: IAM trusted profile" called for the trusted-profile path but it was §"Open questions" first item — deferred to a later release.
+
+**The closure.** `roksbnkctl ops install --trusted-profile=auto` (the new default) provisions an IBM Cloud IAM trusted profile named `roksbnkctl-ops-<workspace>` linked to the ops pod's ServiceAccount via its projected SA token. The ops pod assumes the trusted profile at runtime using the projected token as the OIDC-style proof; the IBM IAM endpoint issues short-lived IAM tokens against the profile's policies. The static API key never lands in any Secret — the workspace's resolved key is used only at `ops install` time to perform the one-shot IAM API calls that create the profile and bind the cluster's OIDC issuer as a trusted compute resource.
+
+**The `--trusted-profile` flag.** New flag on `roksbnkctl ops install`. Three values, validated at flag-parse time:
+
+| Value | Behaviour | When to use |
+|---|---|---|
+| `auto` (default) | Try to provision; on IAM `iam-identity` perm-missing, fall back to the v1.0.x static-key Secret with a stderr warning naming the missing perm and how to opt out (`--trusted-profile=off`). | Default for new installs. Production users get the secure path automatically; restricted-IAM users still complete `ops install` successfully. |
+| `on` | Try to provision; fail loudly with a non-zero exit if perms don't allow. No fallback. | CI / hardened environments where the static-key path is unacceptable and the perm-missing case should block, not warn. |
+| `off` | Skip the trusted-profile path entirely; provision the v1.0.x static-key Secret. | Compatibility / debugging — and the documented path for clusters whose IAM admin doesn't grant `iam-identity` perms and isn't expected to. |
+
+**Workspace namespacing.** The profile name `roksbnkctl-ops-<workspace>` lets multiple workspaces against the same IBM Cloud account each provision their own profile without racing for a single shared name. A single user with `dev`, `staging`, `prod` workspaces ends up with three distinct trusted profiles, each scoped to its own cluster's ops pod SA. The cleanup path (`roksbnkctl ops uninstall`) deletes the profile if `ops install` provisioned it (the `roksbnkctl.io/trusted-profile-managed: "true"` annotation on the SA records this).
+
+**Replaces:** the v1.0.x static-key Secret as the default; the static-key Secret remains as the explicit `--trusted-profile=off` fallback (and as the auto-fallback when IAM perms don't allow).
+
+**Fallback.** Built into the `auto` semantics — if the resolved API key doesn't have IAM `iam-identity` perms (i.e., can't create trusted profiles), `auto` automatically degrades to the static-key path with a warning. The warning is one stderr line, doesn't fail the command, and tells the user how to silence it (`--trusted-profile=off`) or how to upgrade the key's perms.
+
 ## Goal
 
 Single source of truth for how `roksbnkctl` propagates secrets — kubeconfig contents, IBM Cloud API keys, SSH keys, terraform state — across every execution backend (local, docker, k8s, ssh). Every external-tool invocation that needs creds gets them via the same documented mechanism per backend, with security tradeoffs explicit.
@@ -187,9 +229,9 @@ Then `ssh target /tmp/roksbnkctl.$RAND/wrap.sh ibmcloud iam oauth-tokens`.
 ## Open questions
 
 - **Centralized cred resolver**: should there be a single `internal/cred/Resolver` that backends call, or each backend resolves independently? **Recommendation: single resolver** so the keychain → env → config-b64 → prompt chain is implemented once.
-- **Trusted profile auto-provisioning**: should `roksbnkctl ops install` provision the trusted profile, or expect the user to configure it? **Recommendation: auto-provision with `--trusted-profile=auto` default**, fall back to static key if IAM permissions don't allow.
+- ~~**Trusted profile auto-provisioning**: should `roksbnkctl ops install` provision the trusted profile, or expect the user to configure it? **Recommendation: auto-provision with `--trusted-profile=auto` default**, fall back to static key if IAM permissions don't allow.~~ **Resolved in Sprint 9** — see [§"Resolved in Sprint 9" → "Trusted-profile auto-provisioning (k8s backend)"](#trusted-profile-auto-provisioning-k8s-backend).
 - **kubeconfig refresh during long-running pods**: the long-lived ops pod has its SA token rotated periodically (k8s v1.21+ projected token rotation); does the ibmcloud CLI inside the pod handle this? Test in Phase 5.
-- **Cred TTL alignment**: `roksbnkctl up` triggers a token rotation in the upstream HCL; should `roksbnkctl ops install`'s Secret rotate too? Or rely on trusted-profile model where this is moot?
+- ~~**Cred TTL alignment**: `roksbnkctl up` triggers a token rotation in the upstream HCL; should `roksbnkctl ops install`'s Secret rotate too? Or rely on trusted-profile model where this is moot?~~ **Resolved in Sprint 9** — moot under the trusted-profile path; the ops pod's IAM tokens are short-lived (5-min default) and rotated transparently by IBM IAM as the projected SA token rotates. See [§"Resolved in Sprint 9" → "Trusted-profile auto-provisioning (k8s backend)"](#trusted-profile-auto-provisioning-k8s-backend). The `--trusted-profile=off` static-key fallback retains the v1.0.x behaviour (re-run `ops install` to rotate the Secret).
 
 ## Related work
 

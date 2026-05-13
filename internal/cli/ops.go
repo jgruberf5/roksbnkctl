@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	encodingjson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,11 +25,50 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
 
 // flagOpsConfirm — destructive-action gate for `ops uninstall`.
 var flagOpsConfirm bool
+
+// flagTrustedProfile controls the `--trusted-profile` flag on `ops
+// install`. Three values, validated in validateTrustedProfileFlag:
+//
+//	auto (default) — try to provision a trusted profile; fall back to
+//	                 the static-key Secret with a stderr warning when
+//	                 the API key lacks `iam-identity` perms.
+//	on             — try to provision; fail loudly if perms don't
+//	                 allow. No fallback.
+//	off            — skip the trusted-profile path entirely; provision
+//	                 the v1.0.x static-key Secret directly.
+//
+// PRD 04 §"Resolved in Sprint 9" §"Trusted-profile auto-provisioning".
+var flagTrustedProfile string
+
+// trustedProfileSAAnnotation marks the ops pod's ServiceAccount when
+// `ops install` provisioned a trusted profile. `ops show` reads this
+// to display the profile ID; `ops uninstall` reads it to clean up the
+// profile.
+const trustedProfileSAAnnotation = "iam.cloud.ibm.com/trusted-profile"
+
+// trustedProfileManagedAnnotation flags that roksbnkctl provisioned
+// the profile (vs. a user pointing the SA at a pre-existing profile).
+// Set in tandem with trustedProfileSAAnnotation when `--trusted-profile`
+// took the create path.
+const trustedProfileManagedAnnotation = "roksbnkctl.io/trusted-profile-managed"
+
+// validateTrustedProfileFlag enforces the auto|on|off vocabulary at
+// flag-parse time. Returns a clear error so users get actionable
+// feedback before the install gets anywhere near IBM Cloud.
+func validateTrustedProfileFlag(v string) error {
+	switch v {
+	case "auto", "on", "off":
+		return nil
+	default:
+		return fmt.Errorf("--trusted-profile: %q is not one of auto|on|off", v)
+	}
+}
 
 var opsCmd = &cobra.Command{
 	Use:   "ops",
@@ -50,7 +90,21 @@ var opsInstallCmd = &cobra.Command{
 	Short: "Apply (or update) the in-cluster ops fixtures",
 	Long: `Applies the embedded namespaces, ServiceAccount, Secret, ClusterRole,
 ClusterRoleBinding, and ops Pod. Idempotent: re-running with a new
-API key updates the Secret and rolls the Pod.`,
+API key updates the Secret and rolls the Pod.
+
+Credential mode is selected via --trusted-profile (auto|on|off):
+
+  auto (default) — provision an IBM Cloud IAM trusted profile linked
+                   to the ops pod's ServiceAccount when the resolved
+                   API key has 'iam-identity' perms; otherwise fall
+                   back to the static-key Secret with a stderr warning.
+  on             — require the trusted-profile path; fail loudly if
+                   perms don't allow.
+  off            — skip the trusted-profile path; install the v1.0.x
+                   static-key Secret.`,
+	PreRunE: func(_ *cobra.Command, _ []string) error {
+		return validateTrustedProfileFlag(flagTrustedProfile)
+	},
 	RunE: runOpsInstall,
 }
 
@@ -68,6 +122,8 @@ var opsUninstallCmd = &cobra.Command{
 
 func init() {
 	opsUninstallCmd.Flags().BoolVar(&flagOpsConfirm, "confirm", false, "actually perform the uninstall (otherwise prints what would be deleted)")
+	opsInstallCmd.Flags().StringVar(&flagTrustedProfile, "trusted-profile", "auto",
+		"IBM IAM trusted profile mode: auto (default; provision when perms allow, fall back to static-key Secret), on (require trusted profile), off (static-key Secret only)")
 	opsCmd.AddCommand(opsInstallCmd, opsShowCmd, opsUninstallCmd)
 	rootCmd.AddCommand(opsCmd)
 
@@ -112,7 +168,8 @@ func runOpsInstall(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
-	// Resolve API key for the Secret.
+	// Resolve API key. Used either to populate the static-key Secret
+	// (off / fallback) or to provision the trusted profile (auto / on).
 	resolver := &cred.Resolver{
 		Workspace:      cctx.WorkspaceName,
 		NonInteractive: true,
@@ -123,6 +180,16 @@ func runOpsInstall(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("resolving IBM Cloud API key: %w", err)
 	}
 
+	// Trusted-profile branch (Sprint 9 / PRD 04 §"Resolved in Sprint 9"
+	// §"Trusted-profile auto-provisioning"). Resolves a TrustedProfile
+	// per the flag mode; on `auto` with missing IAM perms, falls back
+	// to static-key with a stderr warning. On `on` with missing perms,
+	// errors out. On `off`, skips entirely.
+	tp, useTrustedProfile, err := resolveTrustedProfileForInstall(ctx, cctx, apiKey)
+	if err != nil {
+		return err
+	}
+
 	cs, err := k8s.BuildClientset("")
 	if err != nil {
 		return fmt.Errorf("building kubernetes client: %w", err)
@@ -130,9 +197,34 @@ func runOpsInstall(cmd *cobra.Command, _ []string) error {
 
 	// Decode the embedded YAML (with placeholders substituted) into typed
 	// objects, then apply each via a kind-typed Get-then-Create-or-Update.
-	objs, err := decodeOpsManifests(apiKey)
+	// When the trusted-profile path is in play, pass an empty API key to
+	// the manifest renderer so the static-key Secret is rendered with
+	// empty data fields (the trusted-profile annotation on the SA is what
+	// authenticates the pod); the Secret remains in the manifest only as
+	// a no-op placeholder the v1.0.x rollback path can repopulate.
+	manifestKey := apiKey
+	if useTrustedProfile {
+		manifestKey = ""
+	}
+	objs, err := decodeOpsManifests(manifestKey)
 	if err != nil {
 		return fmt.Errorf("decoding manifests: %w", err)
+	}
+
+	// Stamp the trusted-profile annotation on the ServiceAccount before
+	// apply so the IAM webhook injects the projected token volume on
+	// pod create. Annotation is the same one IBM Cloud's
+	// trusted-profile sidecar-injector watches for.
+	if useTrustedProfile && tp != nil {
+		for _, obj := range objs {
+			if sa, ok := obj.(*corev1.ServiceAccount); ok && sa.Name == "roksbnkctl-ops" {
+				if sa.Annotations == nil {
+					sa.Annotations = map[string]string{}
+				}
+				sa.Annotations[trustedProfileSAAnnotation] = tp.ID
+				sa.Annotations[trustedProfileManagedAnnotation] = "true"
+			}
+		}
 	}
 
 	for _, obj := range objs {
@@ -145,8 +237,80 @@ func runOpsInstall(cmd *cobra.Command, _ []string) error {
 	if err := waitForOpsPodReady(ctx, cs, 60*time.Second); err != nil {
 		return fmt.Errorf("ops pod not ready: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "✓ Ops pod is Ready")
+	if useTrustedProfile && tp != nil {
+		fmt.Fprintf(os.Stderr, "✓ Ops pod is Ready (trusted profile %s)\n", tp.Name)
+	} else {
+		fmt.Fprintln(os.Stderr, "✓ Ops pod is Ready (static-key Secret)")
+	}
 	return nil
+}
+
+// resolveTrustedProfileForInstall implements the --trusted-profile flag
+// branching logic per PRD 04 §"Resolved in Sprint 9". Returns:
+//
+//   - (tp, true, nil) on the trusted-profile path (auto/on success);
+//   - (nil, false, nil) on the static-key path (off, or auto-fallback);
+//   - (nil, false, err) on hard failures (auto+non-perm error; on+any
+//     error).
+//
+// Stderr is the warning surface for auto-fallback (one line; tells the
+// user how to silence).
+func resolveTrustedProfileForInstall(ctx context.Context, cctx *config.Context, apiKey string) (*ibm.TrustedProfile, bool, error) {
+	mode := flagTrustedProfile
+	if mode == "off" {
+		return nil, false, nil
+	}
+
+	// Resolve cluster CRN. Required for the IAM trusted-profile link
+	// (CrType=ROKS_SA needs the cluster CRN). The CRN lives in the
+	// workspace's cluster-outputs.json — set by `cluster up` /
+	// `cluster register`.
+	outputs, err := config.ReadClusterOutputs(cctx.WorkspaceName)
+	if err != nil {
+		// auto: degrade with warning. on: hard fail.
+		if mode == "auto" {
+			fmt.Fprintf(os.Stderr, "warning: trusted-profile mode 'auto' needs a registered cluster (%v); falling back to static-key Secret. Pass `--trusted-profile=off` to silence.\n", err)
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("trusted-profile mode 'on' needs cluster registration first: %w", err)
+	}
+
+	region := cctx.Workspace.IBMCloud.Region
+	if region == "" {
+		region = outputs.Region
+	}
+	ibmClient, err := ibm.New(apiKey, region)
+	if err != nil {
+		return nil, false, fmt.Errorf("ibm client: %w", err)
+	}
+
+	// Look up the cluster's CRN. GetCluster also auto-verifies the
+	// API key (the IAM token exchange happens internally), so if the
+	// caller's perms are missing this is where it'll surface first.
+	cluster, err := ibmClient.GetCluster(ctx, outputs.ClusterID)
+	if err != nil {
+		if mode == "auto" {
+			fmt.Fprintf(os.Stderr, "warning: trusted-profile mode 'auto' couldn't look up cluster (%v); falling back to static-key Secret. Pass `--trusted-profile=off` to silence.\n", err)
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("trusted-profile mode 'on' couldn't look up cluster %s: %w", outputs.ClusterID, err)
+	}
+
+	profileName := "roksbnkctl-ops-" + cctx.WorkspaceName
+	tp, err := ibmClient.TrustedProfiles().CreateForOpsPod(ctx,
+		profileName, cluster.CRN, execbackend.K8sOpsNamespace, "roksbnkctl-ops")
+	if err != nil {
+		if errors.Is(err, ibm.ErrIAMPermDenied) {
+			if mode == "auto" {
+				fmt.Fprintf(os.Stderr, "warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass `--trusted-profile=off` to silence.\n")
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("trusted-profile mode 'on' but API key lacks 'iam-identity' perms: %w", err)
+		}
+		return nil, false, fmt.Errorf("provisioning trusted profile: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ Provisioned IAM trusted profile %s (%s)\n", tp.Name, tp.ID)
+	return tp, true, nil
 }
 
 func runOpsShow(cmd *cobra.Command, _ []string) error {
@@ -172,6 +336,19 @@ func runOpsShow(cmd *cobra.Command, _ []string) error {
 		fmt.Printf("image:        %s\n", pod.Spec.Containers[0].Image)
 	}
 	fmt.Printf("rbac subject: system:serviceaccount:%s:%s\n", execbackend.K8sOpsNamespace, execbackend.K8sOpsPodName)
+
+	// Surface the trusted-profile annotation on the ops pod's SA if
+	// present (Sprint 9 / PRD 04 §"Resolved in Sprint 9"). Absent
+	// annotation → the install used the static-key Secret path.
+	sa, saErr := cs.CoreV1().ServiceAccounts(execbackend.K8sOpsNamespace).Get(ctx, "roksbnkctl-ops", metav1.GetOptions{})
+	if saErr == nil {
+		if tpID, ok := sa.Annotations[trustedProfileSAAnnotation]; ok && tpID != "" {
+			fmt.Printf("trusted-profile: %s\n", tpID)
+		} else {
+			fmt.Printf("trusted-profile: (none — static-key Secret path)\n")
+		}
+	}
+
 	if serr == nil {
 		rotated := secret.Annotations["roksbnkctl.io/rotated-at"]
 		if rotated == "" {
@@ -201,6 +378,15 @@ func runOpsUninstall(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("building kubernetes client: %w", err)
 	}
+
+	// If `ops install` provisioned a trusted profile (the SA carries
+	// the trustedProfileSAAnnotation + trustedProfileManagedAnnotation
+	// pair), delete it via the IAM API. Best-effort: a failure here
+	// shouldn't block cluster-side cleanup. PRD 04 §"Resolved in
+	// Sprint 9" §"Trusted-profile auto-provisioning" — the
+	// `-managed: "true"` flag is what distinguishes a roksbnkctl-
+	// provisioned profile from one the user pre-created.
+	deleteTrustedProfileIfManaged(ctx, cs)
 
 	// Delete leaf resources first; namespaces last.
 	delErrs := []string{}
@@ -435,6 +621,56 @@ func waitForOpsPodReady(ctx context.Context, cs kubernetes.Interface, timeout ti
 // minimum of moving parts.
 func mapToJSONBytes(m map[string]any) ([]byte, error) {
 	return encodingjson.Marshal(m)
+}
+
+// deleteTrustedProfileIfManaged checks the ops SA for the
+// roksbnkctl.io/trusted-profile-managed="true" annotation and, when
+// present, deletes the named trusted profile via the IAM API.
+// Best-effort: failures are logged to stderr but don't propagate.
+//
+// Surfaces ErrIAMPermDenied as a clear "perms missing for cleanup"
+// warning so users know what's left behind. Other errors get a
+// generic warning.
+func deleteTrustedProfileIfManaged(ctx context.Context, cs kubernetes.Interface) {
+	sa, err := cs.CoreV1().ServiceAccounts(execbackend.K8sOpsNamespace).Get(ctx, "roksbnkctl-ops", metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	managed := sa.Annotations[trustedProfileManagedAnnotation]
+	profileID := sa.Annotations[trustedProfileSAAnnotation]
+	if managed != "true" || profileID == "" {
+		return
+	}
+
+	cctx, err := config.New(flagWorkspace)
+	if err != nil || cctx.Workspace == nil {
+		fmt.Fprintf(os.Stderr, "warning: trusted profile %s left behind (no workspace context to resolve cleanup API key)\n", profileID)
+		return
+	}
+	resolver := &cred.Resolver{
+		Workspace:      cctx.WorkspaceName,
+		NonInteractive: true,
+		Source:         cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: trusted profile %s left behind (couldn't resolve API key: %v)\n", profileID, err)
+		return
+	}
+	ibmClient, err := ibm.New(apiKey, cctx.Workspace.IBMCloud.Region)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: trusted profile %s left behind (ibm client: %v)\n", profileID, err)
+		return
+	}
+	if err := ibmClient.TrustedProfiles().Delete(ctx, profileID); err != nil {
+		if errors.Is(err, ibm.ErrIAMPermDenied) {
+			fmt.Fprintf(os.Stderr, "warning: trusted profile %s left behind (IAM perm 'iam-identity' missing for delete)\n", profileID)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: deleting trusted profile %s: %v\n", profileID, err)
+		}
+		return
+	}
+	fmt.Fprintf(os.Stderr, "✓ deleted trusted profile %s\n", profileID)
 }
 
 func podReady(pod *corev1.Pod) bool {

@@ -31,7 +31,7 @@ clean:
 
 .PHONY: book book-pdf book-test book-serve book-clean release release-publish \
         book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
-        pages-assure
+        pages-assure staticcheck build-integration-tags
 
 # Release date stamped into CHANGELOG.md's `## v1.0.0 — 2026-MM-DD`
 # placeholder. Defaults to today; override with RELEASE_DATE=YYYY-MM-DD
@@ -147,45 +147,90 @@ pages-assure:
 	    echo "    GitHub Pages enabled: $$url"; \
 	fi
 
-# release: full release-prep driver. Run before `git tag v1.0` to verify
+# staticcheck: run honnef.co/go/tools/cmd/staticcheck against the whole
+# module. Sprint 9 / PLAN.md §"Sprint 9" code deliverable 5: this is the
+# pre-tag gate step the v1.1.0 → v1.1.1 → v1.1.2 cascade exposed as
+# missing — staticcheck was running in CI but not as a local pre-tag
+# requirement. Auto-installs the binary into $(GOBIN)/staticcheck if
+# it's not on PATH; idempotent on re-runs.
+staticcheck:
+	@if ! command -v staticcheck >/dev/null 2>&1 && [ ! -x "$$(go env GOPATH)/bin/staticcheck" ]; then \
+	    echo "    installing honnef.co/go/tools/cmd/staticcheck@latest"; \
+	    go install honnef.co/go/tools/cmd/staticcheck@latest; \
+	fi
+	@if command -v staticcheck >/dev/null 2>&1; then \
+	    staticcheck ./...; \
+	else \
+	    "$$(go env GOPATH)/bin/staticcheck" ./...; \
+	fi
+
+# build-integration-tags: compile-check the whole tree under the
+# `integration` build tag without executing any tests. Sprint 9 /
+# PLAN.md §"Sprint 9" code deliverable 5: closes the
+# v1.1.0 → v1.1.1 → v1.1.2 gap where `internal/exec/*_integration_test.go`
+# files compiled fine on `go test ./...` (which skips integration-tagged
+# files) but broke under `go test -tags integration ./...`. Running the
+# build alone is faster than the full integration test sweep and catches
+# the same shape of compile-time gap (unused imports, undefined symbols
+# behind the tag, drift between the production code and the
+# tag-gated test code).
+build-integration-tags:
+	go build -tags integration ./...
+
+# release: full release-prep driver. Run before `git tag vX.Y.Z` to verify
 # every release artifact builds cleanly and every publish surface is
 # wired. Steps:
 #
-#   1. Stamp today's date into CHANGELOG.md's v1.0.0 placeholder
-#   2. Build HTML + PDF book via tools/docker/mdbook (HTML for Pages,
+#   1. Stamp today's date into CHANGELOG.md's vX.Y.Z placeholder
+#   2. Run staticcheck ./... (Sprint 9 pre-tag gate)
+#   3. Compile-check under -tags integration (Sprint 9 pre-tag gate)
+#   4. Build HTML + PDF book via tools/docker/mdbook (HTML for Pages,
 #      PDF for the GitHub Release page)
-#   3. Lint .goreleaser.yml via docker
-#   4. Cross-compile snapshot build via goreleaser docker (writes dist/)
-#   5. Confirm GitHub Pages is enabled (publishing from gh-pages branch)
+#   5. Lint .goreleaser.yml via docker
+#   6. Cross-compile snapshot build via goreleaser docker (writes dist/)
+#   7. Confirm GitHub Pages is enabled (publishing from gh-pages branch)
+#
+# Steps 2 + 3 are Sprint 9 additions per PLAN.md §"Sprint 9" code
+# deliverable 5 — they catch the shape of gap that produced the v1.1.0 →
+# v1.1.1 → v1.1.2 cascade (staticcheck-clean fail in CI between tags,
+# and -tags integration compile-fail in CI between tags). Running them
+# locally before the tag commit means the integrator finds the breakage
+# before goreleaser publishes the binaries, not after.
 #
 # After this completes successfully, the integrator's tag-cut sequence is:
 #
-#   git add -A && git commit -m "chore: prep v1.0.0 release"
-#   git tag v1.0.0 && git push origin main --tags
+#   git add -A && git commit -m "chore: prep vX.Y.Z release"
+#   git tag vX.Y.Z && git push origin main --tags
 #
 # Pushing the tag triggers .github/workflows/release.yml (goreleaser
 # builds the multi-platform binaries and publishes the GitHub Release).
 # Once that workflow completes, attach the book artifacts locally:
 #
-#   make release-publish VERSION=v1.0.0
+#   make release-publish VERSION=vX.Y.Z
 #
 # That single step pushes the locally-built HTML to the gh-pages branch
-# AND uploads book.pdf to the GitHub Release as roksbnkctl-book-v1.0.0.pdf.
+# AND uploads book.pdf to the GitHub Release as roksbnkctl-book-vX.Y.Z.pdf.
 # No CI image pulls, no pandoc/LaTeX on the runner.
 release:
-	@echo "==> [1/5] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
+	@echo "==> [1/7] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
 	@$(MAKE) stamp-changelog
 	@echo ""
-	@echo "==> [2/5] Building HTML + PDF book via $(BOOK_IMAGE)"
+	@echo "==> [2/7] Running staticcheck ./... (Sprint 9 pre-tag gate)"
+	@$(MAKE) staticcheck
+	@echo ""
+	@echo "==> [3/7] Compile-checking under -tags integration (Sprint 9 pre-tag gate)"
+	@$(MAKE) build-integration-tags
+	@echo ""
+	@echo "==> [4/7] Building HTML + PDF book via $(BOOK_IMAGE)"
 	@$(MAKE) book-pdf BOOK_BACKEND=docker
 	@echo ""
-	@echo "==> [3/5] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
+	@echo "==> [5/7] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
 	@$(MAKE) goreleaser-check
 	@echo ""
-	@echo "==> [4/5] Snapshot build (multi-platform binaries → dist/)"
+	@echo "==> [6/7] Snapshot build (multi-platform binaries → dist/)"
 	@$(MAKE) goreleaser-snapshot
 	@echo ""
-	@echo "==> [5/5] Verifying GitHub Pages is enabled"
+	@echo "==> [7/7] Verifying GitHub Pages is enabled"
 	@$(MAKE) pages-assure
 	@echo ""
 	@echo "==> Release artifacts ready:"

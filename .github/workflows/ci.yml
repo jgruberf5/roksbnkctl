@@ -80,6 +80,16 @@ jobs:
     # contributions that don't even touch internal/remote.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    env:
+      # Disable the testcontainers-go `testcontainers/ryuk` reaper. On
+      # ephemeral GitHub-hosted runners the runner VM is discarded after
+      # the job, so leaked containers can't survive — the reaper's only
+      # job is to clean up against long-lived hosts. Disabling it kills
+      # the docker-hub `testcontainers/ryuk:<v>` image pull that produced
+      # the intermittent `429 too many requests` flake on
+      # `TestIntegration_Connect_Whoami` during the v1.1.x cycle.
+      # PLAN.md §"Sprint 9" code deliverable 4.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
 

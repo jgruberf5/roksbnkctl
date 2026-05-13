@@ -88,6 +88,15 @@ RUN apt-get update \
 # tool name resolves to this same path.
 COPY --from=roksbnkctl-build /out/roksbnkctl /usr/local/bin/roksbnkctl
 
+# Drop to uid 1000 — matches the other tools-* images
+# (tools-iperf3, tools-mdbook) and lets the k8s backend's `runAsJob`
+# spec (`RunAsNonRoot: true`, no `RunAsUser` pin) pass admission on
+# clusters without SCC mutating webhooks (kind, vanilla k8s) without
+# colliding with OpenShift's per-namespace UID range. Sprint 9 /
+# PRD 04 §"Resolved in Sprint 9" — required for
+# TestIntegration_K8sBackend_JobMode_Echo to start the pod.
+USER 1000
+
 # No ENTRYPOINT — Sprint 6 (PLAN.md row §"Code/config deliverables" +
 # `issues/resolved_sprint5_staff.md` Issue 1). The image carries
 # BOTH `ibmcloud` and `roksbnkctl` (self-exec via the docker and k8s

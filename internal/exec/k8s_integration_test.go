@@ -93,31 +93,21 @@ func ensureTestNamespace(t *testing.T, cs kubernetes.Interface) {
 	}
 }
 
-// TestIntegration_K8sBackend_JobMode_Echo runs a no-op probe via the Job
-// path: argv = ["busybox:1.36", "echo", "hello"]. Asserts the Job runs to
-// completion, logs reach the caller's stdout, and the Job is cleaned up
-// (TTLSecondsAfterFinished or our cancel-cleanup goroutine).
+// TestIntegration_K8sBackend_JobMode_Echo runs a no-op probe via the
+// Job path. Sprint 9 / PRD 04 §"Resolved in Sprint 9" §"Trusted-profile
+// auto-provisioning" carry-over (Option 1 from the v1.0.2 TODO): the
+// test image switched from busybox:1.36 (USER root, fails runAsJob's
+// strict `RunAsNonRoot: true` admission on clusters without an SCC
+// mutating webhook) to the tools-ibmcloud image. That image carries
+// `USER 1000` (Sprint 9 Dockerfile addition), so runAsJob's existing
+// SecurityContext passes admission unchanged.
+//
+// argv shape: ["ibmcloud", "--version"]. The runAsJob path resolves
+// argv[0]="ibmcloud" → toolImages["ibmcloud"] (the tools-ibmcloud
+// image) and prepends the `ibmcloud` binary via jobToolCmdOverride.
+// `ibmcloud --version` runs to completion in <1s and prints a
+// stable banner ("ibmcloud version <v>") to stdout.
 func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
-	// TODO(sprint9): re-enable once the Job pod spec aligns with the
-	// busybox test image's USER root. The v1.0.2 Container.Command/Args
-	// fix in runAsJob (was setting Command, which overrode the image's
-	// ENTRYPOINT and produced CreateContainerError before admission;
-	// now sets Args so the image's ENTRYPOINT picks the binary)
-	// makes the container reach admission — and admission rejects it
-	// because runAsJob sets `RunAsNonRoot: true` but does not set
-	// `RunAsUser`, so the kubelet refuses to start an image whose
-	// default USER is root (busybox). Two valid fixes; pick in sprint 9:
-	//   1. Switch the test image to one of our tools images
-	//      (ghcr.io/jgruberf5/roksbnkctl-tools-* run as uid 1000) so
-	//      the production runAsJob's existing SecurityContext applies
-	//      unchanged.
-	//   2. Have runAsJob set RunAsUser to a fallback non-zero value
-	//      when the image is unknown. Risks breaking images that
-	//      legitimately need root.
-	// Until either lands, this assertion is failing on a known
-	// known-gap, not on regression-class drift.
-	t.Skip("skip: tracked as Sprint 9 work — Job spec runAsNonRoot vs busybox-USER-root mismatch; see test body comment")
-
 	cs, cfg := k8sIntegrationClient(t)
 	ensureTestNamespace(t, cs)
 
@@ -131,11 +121,11 @@ func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Pin the busybox tag — CI pre-loads busybox:1.36 into the kind cluster
-	// via `kind load docker-image` so the kubelet doesn't need to pull
-	// from Docker Hub (slow + rate-limited on cold runners).
+	// Use the tools-ibmcloud image (USER 1000 — passes admission with
+	// runAsNonRoot=true) and the most stable subcommand (`--version`)
+	// — no network round-trip, no IAM call, exits 0 in <1s.
 	rc, err := b.Run(ctx,
-		[]string{"busybox:1.36", "echo", "hello-from-job"},
+		[]string{"ibmcloud", "--version"},
 		RunOpts{
 			Stdout: &noopBuilder{&stdout},
 			Stderr: &noopBuilder{&stderr},
@@ -148,9 +138,12 @@ func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 	if rc != 0 {
 		t.Errorf("expected rc=0, got %d (stderr=%q)", rc, stderr.String())
 	}
-	// Note: argv[0]="busybox" isn't in toolImages, so it's used as a
-	// literal image ref. The runAsJob path uses argv[0] in the job name —
-	// hyphens-only, no colons, so this is label-safe.
+	// `ibmcloud --version` output shape is stable across releases:
+	// "ibmcloud version <semver>+<commit> <date>". Just check the
+	// "ibmcloud version" prefix.
+	if !strings.Contains(stdout.String(), "ibmcloud version") {
+		t.Errorf("stdout missing 'ibmcloud version' banner: %q", stdout.String())
+	}
 }
 
 // TestIntegration_K8sBackend_OpsPodExec runs `echo hello` through the
