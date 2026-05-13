@@ -106,7 +106,8 @@ func ensureTestNamespace(t *testing.T, cs kubernetes.Interface) {
 // argv[0]="ibmcloud" → toolImages["ibmcloud"] (the tools-ibmcloud
 // image) and prepends the `ibmcloud` binary via jobToolCmdOverride.
 // `ibmcloud --version` runs to completion in <1s and prints a
-// stable banner ("ibmcloud version <v>") to stdout.
+// stable banner: `ibmcloud <semver> (<commit>-<date>)` followed by
+// `Copyright IBM Corp. <year>` — both stable across releases.
 func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 	cs, cfg := k8sIntegrationClient(t)
 	ensureTestNamespace(t, cs)
@@ -139,10 +140,17 @@ func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 		t.Errorf("expected rc=0, got %d (stderr=%q)", rc, stderr.String())
 	}
 	// `ibmcloud --version` output shape is stable across releases:
-	// "ibmcloud version <semver>+<commit> <date>". Just check the
-	// "ibmcloud version" prefix.
-	if !strings.Contains(stdout.String(), "ibmcloud version") {
-		t.Errorf("stdout missing 'ibmcloud version' banner: %q", stdout.String())
+	// `ibmcloud <semver> (<commit>-<date>)\nCopyright IBM Corp. <year>\n`.
+	// Spot-check both halves so a banner-shape change in either line is
+	// caught explicitly (the v1.2.1 cycle hit a one-word assertion drift
+	// when the previous shape `"ibmcloud version <v>"` was assumed but
+	// the real banner has no "version" word).
+	got := stdout.String()
+	if !strings.HasPrefix(got, "ibmcloud ") {
+		t.Errorf("stdout missing 'ibmcloud <ver>' banner prefix: %q", got)
+	}
+	if !strings.Contains(got, "Copyright IBM") {
+		t.Errorf("stdout missing 'Copyright IBM' banner second-line: %q", got)
 	}
 }
 
