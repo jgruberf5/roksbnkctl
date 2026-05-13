@@ -158,10 +158,20 @@ func TestResolveDockerImageAndArgv(t *testing.T) {
 		wantCmd []string
 	}{
 		{
-			name:    "ibmcloud prepends binary",
+			// ibmcloud now wraps argv with a sh -c login-then-exec dance
+			// so any stateful subcommand (iam, ks, account, target, …)
+			// gets a primed session. See dockerImageBinary["ibmcloud"]
+			// in docker.go for the wrap rationale. argv[1:] flows
+			// through `"$@"` after the `--` separator.
+			name:    "ibmcloud wraps argv with login-then-exec sh -c",
 			argv:    []string{"ibmcloud", "iam", "oauth-tokens"},
 			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:",
-			wantCmd: []string{"ibmcloud", "iam", "oauth-tokens"},
+			wantCmd: []string{
+				"sh", "-c",
+				`ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`,
+				"--",
+				"iam", "oauth-tokens",
+			},
 		},
 		{
 			name:    "roksbnkctl prepends absolute binary path",
@@ -170,9 +180,15 @@ func TestResolveDockerImageAndArgv(t *testing.T) {
 			wantCmd: []string{"/usr/local/bin/roksbnkctl", "test", "dns", "--target=example.com"},
 		},
 		{
+			// iperf3 image is `networkstatic/iperf3:latest` (public on
+			// Docker Hub) — see toolImages comment for the switch from
+			// the private ghcr bundled image. ENTRYPOINT-picks-the-binary
+			// shape is preserved: dockerImageBinary has no iperf3 entry,
+			// so argv[1:] flows straight through to the image's
+			// ENTRYPOINT.
 			name:    "iperf3 keeps legacy shape (image ENTRYPOINT picks the binary)",
 			argv:    []string{"iperf3", "-s", "-D"},
-			wantImg: "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:",
+			wantImg: "networkstatic/iperf3:",
 			wantCmd: []string{"-s", "-D"},
 		},
 		{
@@ -215,12 +231,31 @@ func TestResolveDockerImageAndArgv(t *testing.T) {
 // A future tool added to one map without the other is a latent bug
 // (works on docker, broken on k8s, or vice versa) — this test catches
 // it at unit-test time.
+//
+// Tools that diverge intentionally — i.e. one backend applies a wrap
+// statically in the map and the other applies it dynamically at
+// dispatch time — are listed in `mirrorExempt` below with a note
+// explaining the divergence. Currently: `ibmcloud` (docker applies
+// the `sh -c login-then-exec` wrap via `dockerImageBinary`; k8s
+// applies the same wrap dynamically inside `runOnOpsPod` so the
+// `jobToolCmdOverride` map stays a bare `[ibmcloud]`).
 func TestDockerImageBinary_MirrorsK8sOverrides(t *testing.T) {
-	if len(dockerImageBinary) != len(jobToolCmdOverride) {
-		t.Fatalf("dockerImageBinary (%v) and jobToolCmdOverride (%v) must list the same tools; diverged",
-			keysOf(dockerImageBinary), keysOf(jobToolCmdOverride))
+	mirrorExempt := map[string]string{
+		"ibmcloud": "docker uses dockerImageBinary sh-c wrap; k8s applies the same wrap dynamically in runOnOpsPod",
+	}
+	// Length-comparison is meaningful only after exempt tools are
+	// excluded on both sides.
+	dockerKeys := keysOf(dockerImageBinary)
+	k8sKeys := keysOf(jobToolCmdOverride)
+	if len(dockerKeys)-countIn(dockerKeys, mirrorExempt) != len(k8sKeys)-countIn(k8sKeys, mirrorExempt) {
+		t.Fatalf("dockerImageBinary (%v) and jobToolCmdOverride (%v) must list the same tools (minus exempt %v); diverged",
+			dockerKeys, k8sKeys, mirrorExempt)
 	}
 	for tool, dockerBin := range dockerImageBinary {
+		if reason, exempt := mirrorExempt[tool]; exempt {
+			t.Logf("tool %q exempt from mirror check: %s", tool, reason)
+			continue
+		}
 		k8sBin, ok := jobToolCmdOverride[tool]
 		if !ok {
 			t.Errorf("tool %q in dockerImageBinary but not in jobToolCmdOverride", tool)
@@ -236,6 +271,17 @@ func TestDockerImageBinary_MirrorsK8sOverrides(t *testing.T) {
 			}
 		}
 	}
+}
+
+// countIn returns how many entries of `keys` are present as keys in `m`.
+func countIn(keys []string, m map[string]string) int {
+	n := 0
+	for _, k := range keys {
+		if _, ok := m[k]; ok {
+			n++
+		}
+	}
+	return n
 }
 
 func keysOf(m map[string][]string) []string {

@@ -126,6 +126,17 @@ spec:
       image: ${OPS_IMAGE}
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
+      env:
+        # The pod runs with OpenShift's SCC-assigned random non-root
+        # UID, which has no /etc/passwd entry — ibmcloud's home-dir
+        # fallback then hits `/` (read-only fs root) and tries to
+        # mkdir `/.bluemix`, failing with permission-denied.
+        # Override HOME to a writable path inside the container so
+        # ibmcloud's config dir lands at /tmp/.bluemix instead.
+        # Same rationale applies to any tool that probes $HOME at
+        # invocation time (helm, kubectl, oc).
+        - name: HOME
+          value: /tmp
       envFrom:
         - secretRef:
             name: roksbnkctl-ibm-creds

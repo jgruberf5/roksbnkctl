@@ -131,6 +131,37 @@ func runExec(cmd *cobra.Command, args []string) error {
 // Also strips a leading `--` separator if present after the on flag
 // is removed — users who follow the canonical `roksbnkctl exec --on x -- ls`
 // form expect the `--` to disappear.
+// extractWorkspaceFlag is the persistent-flag counterpart of
+// extractOnFlag. With DisableFlagParsing=true on the passthrough
+// subcommands, cobra doesn't consume the root's persistent flags
+// either — `-w foo passthrough args` leaks `-w foo` through to the
+// wrapped binary. This pulls `-w`/`--workspace` (and their `=VAL`
+// shapes) out of argv and mutates `flagWorkspace` so workspaceEnv()
+// resolves to the right workspace. Returns the cleaned argv.
+func extractWorkspaceFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-w" || a == "--workspace":
+			if i+1 < len(args) {
+				flagWorkspace = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "-w="):
+			flagWorkspace = strings.TrimPrefix(a, "-w=")
+		case strings.HasPrefix(a, "--workspace="):
+			flagWorkspace = strings.TrimPrefix(a, "--workspace=")
+		default:
+			out = append(out, a)
+		}
+	}
+	if len(out) > 0 && out[0] == "--" {
+		out = out[1:]
+	}
+	return out
+}
+
 func extractOnFlag(args []string) (string, []string) {
 	out := make([]string, 0, len(args))
 	on := ""
@@ -264,14 +295,17 @@ func runKubeconfigDownload(cmd *cobra.Command) error {
 }
 
 func runKubectlPassthrough(cmd *cobra.Command, args []string) error {
+	args = extractWorkspaceFlag(args)
 	return runPassthrough(cmd, "kubectl", args)
 }
 
 func runOCPassthrough(cmd *cobra.Command, args []string) error {
+	args = extractWorkspaceFlag(args)
 	return runPassthrough(cmd, "oc", args)
 }
 
 func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
+	args = extractWorkspaceFlag(args)
 	on, argv := extractOnFlag(args)
 	if on == "" {
 		on = flagOn

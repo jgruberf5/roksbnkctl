@@ -82,23 +82,38 @@ func TestRunOpts_HostMounts_StateDirReadWrite(t *testing.T) {
 	}
 }
 
-// TestRunOpts_TFVarsEnvPassthrough asserts TF_VAR_* env vars from
-// RunOpts.Env are usable as-is (the docker backend's
-// buildContainerEnv just filters on `=` presence).
+// TestRunOpts_TFVarsEnvPassthrough asserts buildContainerEnv passes
+// TF_VAR_* env vars through to the container, AND filters host-only
+// vars (HOME, USER, PATH, …) that would confuse programs running
+// inside the container — see buildContainerEnv comment in docker.go
+// for why (the bundled ibmcloud image's plugin lookup breaks if the
+// host's HOME leaks through).
+//
+// PATH is intentionally in the host-only filter set: the container's
+// image-default PATH must apply, not the host's `/usr/local/bin:/usr/bin:…`.
 func TestRunOpts_TFVarsEnvPassthrough(t *testing.T) {
-	tfVars := []string{
+	in := []string{
 		"TF_VAR_region=us-south",
 		"TF_VAR_cluster_name=test-cluster",
 		"PATH=/usr/local/bin",
+		"HOME=/home/jgruber",
 	}
-	got := buildContainerEnv(tfVars)
+	got := buildContainerEnv(in)
 	envSet := map[string]bool{}
 	for _, e := range got {
 		envSet[e] = true
 	}
-	for _, want := range []string{"TF_VAR_region=us-south", "TF_VAR_cluster_name=test-cluster", "PATH=/usr/local/bin"} {
+
+	// TF_VAR_* must pass through.
+	for _, want := range []string{"TF_VAR_region=us-south", "TF_VAR_cluster_name=test-cluster"} {
 		if !envSet[want] {
 			t.Errorf("expected env entry %q in container env; got %v", want, got)
+		}
+	}
+	// Host-only vars must be filtered.
+	for _, blocked := range []string{"PATH=/usr/local/bin", "HOME=/home/jgruber"} {
+		if envSet[blocked] {
+			t.Errorf("host-only env entry %q must be filtered from container env; got %v", blocked, got)
 		}
 	}
 }
