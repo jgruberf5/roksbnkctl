@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6d4594f0.js";
+            window.path_to_searchindex_js = "searchindex-c265d250.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -1191,8 +1191,12 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 <p>The same flow runs against multiple workspaces, multiple regions, and multiple resource groups — see <a href="#workspaces">Chapter 6</a> for the multi-environment patterns. From here, <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> covers the <code>--on</code> flag, <a href="#day-2-ops-status-logs-k-getapplyexec">Chapter 24</a> covers day-2 operations, and <a href="#troubleshooting">Chapter 26</a> covers what to do when one of the above steps doesn’t go right.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-cluster-phase-cluster-updown"><a class="header" href="#the-cluster-phase-cluster-updown">The cluster phase (cluster up/down)</a></h1>
-<p><code>roksbnkctl up</code> is the everyday “deploy a BNK trial” verb. Underneath, it’s actually two phases on top of each other: a <strong>cluster phase</strong> that provisions the durable ROKS cluster + cluster-shared services, and a <strong>trial phase</strong> that deploys a BNK trial onto that cluster. For workflows that want to keep the cluster around across many trials, the cluster phase is exposed as its own command pair: <code>roksbnkctl cluster up</code> / <code>roksbnkctl cluster down</code>.</p>
-<p>This chapter covers what each phase deploys, why the two state directories are separate, the <code>deploy_bnk=false</code> override that makes “cluster only” work, the <code>cluster-outputs.json</code> artefact written on success, and a worked example.</p>
+<p>A <code>roksbnkctl</code> workspace is <strong>two phases on top of each other</strong>: a durable <strong>cluster phase</strong> (the ROKS cluster + cluster-shared services that take 30+ minutes to provision) and a short-lived <strong>trial phase</strong> (the BNK trial that iterates on top in 5-10 minutes). The cluster phase is exposed as its own command pair, <code>roksbnkctl cluster up</code> / <code>roksbnkctl cluster down</code>, so the cluster survives across many BNK trial cycles.</p>
+<blockquote>
+<p><strong>As of v1.1.0, this two-phase shape is the default for every new workspace.</strong> A fresh <code>roksbnkctl up</code> provisions the cluster phase first, then the trial phase, against separate state directories. Tearing down only the trial — the common iteration case — uses <a href="#the-bnk-up--bnk-down-command-group"><code>roksbnkctl bnk down</code></a> and leaves the cluster intact. The unscoped <code>up</code> / <code>down</code> verbs are now shape-aware composites that delegate to the right phase commands underneath.</p>
+<p>Workspaces created against v1.0.x that have cluster modules and trial modules in the same <code>terraform.tfstate</code> (the legacy single-state shape) keep working — <code>roksbnkctl up</code> and <code>down</code> continue to operate against them in-place, byte-for-byte the way they did in v1.0. See <a href="#legacy-single-state-workspaces">§ Legacy single-state workspaces</a> at the bottom of the chapter to identify which shape a workspace is.</p>
+</blockquote>
+<p>This chapter covers what each phase deploys, why the two state directories are separate, the <code>deploy_bnk=false</code> override that makes “cluster only” work, the <code>cluster-outputs.json</code> artefact written on success, a worked example, and the legacy single-state shape. The companion BNK-trial chapter, <a href="#deploying-bnk-trials-on-top">Chapter 10</a>, covers <code>roksbnkctl bnk up</code> / <code>bnk down</code> for the trial layer.</p>
 <h2 id="whats-deployed-where"><a class="header" href="#whats-deployed-where">What’s deployed where</a></h2>
 <p>The bundled HCL has roughly two halves. The cluster phase owns the durable, cluster-scoped resources:</p>
 <ul>
@@ -1340,7 +1344,7 @@ Cluster:      2/2 nodes ready
 </code></pre>
 <p>See <a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> for the trial-phase walkthrough. You can run <code>up</code> / <code>down</code> many times against the same cluster — each cycle is ~5 minutes rather than the ~50 minutes of a fresh-cluster run.</p>
 <h3 id="step-5--roksbnkctl-cluster-down---auto"><a class="header" href="#step-5--roksbnkctl-cluster-down---auto">Step 5 — <code>roksbnkctl cluster down --auto</code></a></h3>
-<p>Tear down the cluster phase. Refuses to run if BNK trial state still exists for the workspace — destroy those first with <code>roksbnkctl down</code>.</p>
+<p>Tear down the cluster phase. In v1.1.0 <code>cluster down</code> is <strong>strictly</strong> scoped: it refuses with a hard error (rather than the v1.0.x warning-but-prompt) on any workspace whose trial state is non-empty, so an out-of-order destroy can’t accidentally orphan BNK resources. Destroy the trial first with <code>roksbnkctl bnk down</code> (or <code>roksbnkctl down</code> for both at once); see <a href="#tearing-down">Chapter 11</a> for the full refusal catalogue.</p>
 <pre><code class="language-bash">roksbnkctl cluster down --auto
 </code></pre>
 <p>Sample output:</p>
@@ -1354,25 +1358,50 @@ Cluster:      2/2 nodes ready
   Destroy complete! Resources: 36 destroyed.
 </code></pre>
 <p>Post-destroy, <code>cluster-outputs.json</code> is deleted. The workspace directory and its <code>config.yaml</code> survive — re-running <code>cluster up</code> against the same workspace re-creates the cluster with the same name and region.</p>
-<h2 id="when-to-use-the-cluster-phase-as-its-own-command"><a class="header" href="#when-to-use-the-cluster-phase-as-its-own-command">When to use the cluster phase as its own command</a></h2>
-<p>Three scenarios where the explicit cluster phase is the right tool:</p>
+<h2 id="why-split-cluster-from-trial"><a class="header" href="#why-split-cluster-from-trial">Why split cluster from trial?</a></h2>
+<p>Two-phase is the default because the cost of conflating them is concrete. ROKS clusters take 30-50 minutes to provision and bill at roughly $0.30/hour; a BNK trial on top takes 5-10 minutes. Iterating on the trial — different <code>flo</code> versions, different <code>cne_instance</code> shapes, license bundle revisions — happens far more often than iterating on the cluster underneath. Splitting state means a <code>bnk down</code> / <code>bnk up</code> cycle is a five-minute round-trip instead of an hour.</p>
+<p>Three scenarios this shape unlocks:</p>
 <ol>
 <li>
-<p><strong>Many BNK trial iterations on one cluster.</strong> You’re testing different <code>flo</code> versions or different <code>cne_instance</code> shapes. Run <code>cluster up</code> once, then loop <code>roksbnkctl up</code> / <code>roksbnkctl down</code> against the same cluster until you’ve covered all the trial permutations. Then <code>cluster down</code> once when you’re finished.</p>
+<p><strong>Many BNK trial iterations on one cluster.</strong> Run <code>cluster up</code> once, then loop <code>bnk up</code> / <code>bnk down</code> against the same cluster until you’ve covered all the trial permutations. Then <code>cluster down</code> once when you’re finished. This is the headline win of the v1.1.0 surface — see <a href="#worked-example--iterating-on-a-bnk-trial">Chapter 10 §“Worked example — iterating on a BNK trial”</a>.</p>
 </li>
 <li>
-<p><strong>Pre-provisioning for a workshop or demo.</strong> You want the cluster ready and warm before the demo starts; you’ll deploy the BNK trial live in front of the audience. <code>cluster up</code> the night before; <code>roksbnkctl up</code> during the demo.</p>
+<p><strong>Pre-provisioning for a workshop or demo.</strong> You want the cluster ready and warm before the demo starts; you’ll deploy the BNK trial live in front of the audience. <code>cluster up</code> the night before; <code>bnk up</code> during the demo.</p>
 </li>
 <li>
-<p><strong>Decoupling cluster lifecycle from trial lifecycle.</strong> A long-lived cluster used by multiple team members, where one person owns the cluster phase and others own the BNK trials. Cluster-phase outputs live in <code>cluster-outputs.json</code>; trials read it. Each trial can <code>up</code>/<code>down</code> without affecting the cluster.</p>
+<p><strong>Decoupling cluster lifecycle from trial lifecycle.</strong> A long-lived cluster used by multiple team members, where one person owns the cluster phase and others own the BNK trials. Cluster-phase outputs live in <code>cluster-outputs.json</code>; trials read it. Each trial can <code>bnk up</code> / <code>bnk down</code> without affecting the cluster.</p>
 </li>
 </ol>
-<p>If your workflow is “create a cluster, deploy BNK on it, test, tear it all down”, just use <code>roksbnkctl up</code> / <code>roksbnkctl down</code> — they handle both phases together. The cluster commands are the escape hatch for the multi-trial-per-cluster cases.</p>
+<p>For workspaces that just want “create a cluster, deploy BNK on it, test, tear it all down”, the unscoped <code>roksbnkctl up</code> / <code>roksbnkctl down</code> are still the right verbs — in v1.1.0 they’re shape-aware composites that drive the cluster + trial steps in the right order without you having to think about it.</p>
+<h2 id="legacy-single-state-workspaces"><a class="header" href="#legacy-single-state-workspaces">Legacy single-state workspaces</a></h2>
+<p>Workspaces created against v1.0.x predate the split. Their <code>terraform.tfstate</code> under <code>~/.roksbnkctl/&lt;workspace&gt;/state/</code> contains <strong>both</strong> the cluster modules (<code>module.roks_cluster</code>, <code>module.cert_manager</code>, <code>module.testing</code>) and the trial modules (<code>module.flo</code>, <code>module.cne_instance</code>, <code>module.license</code>) in one file; <code>state-cluster/</code> either doesn’t exist or is empty.</p>
+<p><code>roksbnkctl</code> calls this shape <code>LegacySingle</code> and identifies it by walking the trial state’s resource list for cluster-module addresses. To check a workspace’s shape from the outside, look at the state directories:</p>
+<pre><code>$ ls ~/.roksbnkctl/&lt;workspace&gt;/
+config.yaml  state/  state-cluster/    # split (v1.1.0+) or cluster-only
+
+$ ls ~/.roksbnkctl/&lt;workspace&gt;/
+config.yaml  state/                    # legacy single-state, or empty
+</code></pre>
+<p>A <code>state/terraform.tfstate</code> that contains <code>module.roks_cluster</code> and friends is legacy single-state; a <code>state-cluster/terraform.tfstate</code> with content is the split shape.</p>
+<p>The v1.1.0 binary handles both shapes:</p>
+<ul>
+<li><strong>Legacy single-state workspaces</strong>: <code>roksbnkctl up</code> and <code>roksbnkctl down</code> operate monolithically the way they did in v1.0 — same plan output, same resource count, same byte-for-byte behaviour. The phase-scoped commands (<code>cluster up</code>/<code>down</code>, <code>bnk up</code>/<code>down</code>) <strong>refuse</strong> with a message pointing you back at the unscoped lifecycle verbs.</li>
+<li><strong>Split workspaces (the new default)</strong>: <code>up</code> / <code>down</code> are shape-aware composites that delegate to the phase commands underneath; <code>cluster up</code>/<code>down</code> and <code>bnk up</code>/<code>down</code> work directly.</li>
+</ul>
+<p>The refusal messages on a legacy workspace look like:</p>
+<pre><code>$ roksbnkctl -w canada-roks cluster down
+this workspace is legacy single-state; cluster and BNK trial share one state. Use `roksbnkctl down` to tear down both, or migrate the state first
+
+$ roksbnkctl -w canada-roks bnk down
+this workspace is legacy single-state; `bnk down` can't isolate the trial phase. Use `roksbnkctl down` to tear down both, or migrate the state first
+</code></pre>
+<p>The refusals print as a single line each — wrapping is a function of your terminal width. Grep against any of the inline punctuation (e.g. <code>\</code>bnk down` can’t isolate`) lands a clean match.</p>
+<p>There is no automatic state-migration command in v1.1.0. The refusal text references migration (“or migrate the state first”) because a future <code>roksbnkctl migrate</code> is planned, but until it ships, legacy workspaces stay on the unscoped <code>up</code> / <code>down</code> flow that’s worked for them since v1.0. See <a href="#the-phase-aware-decision-tree">Chapter 11 §“The phase-aware decision tree”</a> for the full destruction-time decision matrix.</p>
 <h2 id="cross-references-1"><a class="header" href="#cross-references-1">Cross-references</a></h2>
 <ul>
 <li><a href="#registering-an-existing-cluster">Chapter 9 — Registering an existing cluster</a> — the alternative to <code>cluster up</code> when you already have a ROKS cluster you want <code>roksbnkctl</code> to manage.</li>
-<li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — what happens when <code>roksbnkctl up</code> runs on top of a registered or <code>cluster up</code>’d cluster.</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — destroy ordering and the trial-then-cluster requirement.</li>
+<li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — <code>roksbnkctl up</code> and the <code>bnk up</code> / <code>bnk down</code> command group; the dispatch matrix; iteration walkthrough.</li>
+<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — phase-aware decision matrix and the refusal-message catalogue.</li>
 <li><a href="#day-2-ops-status-logs-k-getapplyexec">Chapter 24 — Day-2 ops</a> — <code>roksbnkctl k get</code> / <code>apply</code> / <code>logs</code> for working against the cluster after either phase.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -1553,8 +1582,9 @@ roksbnkctl -w canada down --auto
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deploying-bnk-trials-on-top"><a class="header" href="#deploying-bnk-trials-on-top">Deploying BNK trials on top</a></h1>
-<p><code>roksbnkctl up</code> is the verb that deploys a <strong>BNK trial</strong> — F5’s Lifecycle Operator, the CNE Instance, license bundles, and the cluster-side glue that makes them work — onto a ROKS cluster that already exists. “Already exists” means either provisioned by <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a> or <a href="#registering-an-existing-cluster">registered</a> from a pre-existing cluster.</p>
-<p>This chapter is the deeper-than-quick-start view of <code>up</code>: what each module does, the ~77-resource shape of a clean apply, the token-rotation observation when you re-run <code>up</code> against an existing cluster, and how to read the Terraform plan output that scrolls past on every run.</p>
+<p><code>roksbnkctl up</code> deploys a <strong>BNK trial</strong> — F5’s Lifecycle Operator, the CNE Instance, license bundles, and the cluster-side glue that makes them work — onto a ROKS cluster that already exists. “Already exists” means either provisioned by <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a> or <a href="#registering-an-existing-cluster">registered</a> from a pre-existing cluster.</p>
+<p>For workspaces where the cluster and the trial are managed as separate phases (the v1.1.0 default — see <a href="#the-cluster-phase-cluster-updown">Chapter 8</a>), the trial layer also gets its own command pair: <code>roksbnkctl bnk up</code> / <code>bnk down</code>. <code>bnk down</code> tears down only the trial; the cluster keeps running, so the next iteration starts in 5-10 minutes instead of an hour. The <code>bnk</code> group is documented in <a href="#the-bnk-up--bnk-down-command-group">§“The <code>bnk up</code> / <code>bnk down</code> command group”</a> below.</p>
+<p>This chapter is the deeper-than-quick-start view of <code>up</code>: what each module does, the ~77-resource shape of a clean apply, the token-rotation observation when you re-run <code>up</code> against an existing cluster, how to read the Terraform plan output, and how the <code>bnk</code> group + the shape-aware composite <code>up</code> / <code>down</code> fit together.</p>
 <p><a href="#quick-start-from-api-key-to-deployed-bnk">Chapter 7 — Quick start</a> shows the happy path end-to-end with sample output. This chapter goes deeper.</p>
 <h2 id="what-deploying-bnk-means"><a class="header" href="#what-deploying-bnk-means">What “deploying BNK” means</a></h2>
 <p>A BNK trial is a deliberately small set of Kubernetes resources that share state with a cluster-shared cert-manager and a cluster-scoped registry COS. The components that <code>roksbnkctl up</code> is responsible for landing:</p>
@@ -1704,23 +1734,164 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <li><strong>Exit 0.</strong></li>
 </ol>
 <p>The kubeconfig fetch and jumphost registration are best-effort: they log warnings on failure but don’t fail the parent command. <code>up</code> succeeded if Terraform succeeded; the post-apply niceties are conveniences.</p>
+<h2 id="the-bnk-up--bnk-down-command-group"><a class="header" href="#the-bnk-up--bnk-down-command-group">The <code>bnk up</code> / <code>bnk down</code> command group</a></h2>
+<p>New in v1.1.0. The <code>roksbnkctl bnk</code> group is the trial-only counterpart to <code>roksbnkctl cluster</code> — it operates on the trial state under <code>state/</code> and leaves the cluster state under <code>state-cluster/</code> untouched. The whole point is that <strong>iterating on a BNK trial no longer costs a 30-minute cluster rebuild</strong>: a <code>bnk down</code> / <code>bnk up</code> round-trip is the 5-10 minute trial-apply window, the cluster keeps running underneath.</p>
+<h3 id="roksbnkctl-bnk-up"><a class="header" href="#roksbnkctl-bnk-up"><code>roksbnkctl bnk up</code></a></h3>
+<p>Deploys the BNK trial against the workspace’s registered cluster.</p>
+<ul>
+<li>If the workspace already has a cluster phase (either from <code>cluster up</code> or from <code>cluster register</code>), <code>bnk up</code> runs the trial apply directly — same plan, same ~41 resources, same 5-10 minute window as the trial half of a full <code>up</code>.</li>
+<li>If the workspace is <strong>empty</strong> (no cluster registered yet), <code>bnk up</code> offers to <strong>bootstrap the cluster phase first</strong> with a confirmation prompt, then runs the trial apply. This keeps the new user’s quick-start path one command, even if they typed <code>bnk up</code> instead of <code>up</code>.</li>
+<li>On a <a href="#legacy-single-state-workspaces">legacy single-state</a> workspace, <code>bnk up</code> <strong>refuses</strong> — there’s no way to isolate the trial phase when the trial and cluster share one state file.</li>
+</ul>
+<p>Sample output of the bootstrap-prompt path:</p>
+<pre><code>$ roksbnkctl bnk up
+No cluster registered for this workspace.
+→ Provisioning the cluster phase first (ROKS cluster + transit gateway +
+  registry COS + cert-manager + jumphost; ~30 min) before the BNK trial.
+Continue? [y/N]: y
+→ terraform plan (cluster phase: deploy_bnk=false forced)
+...
+✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+→ terraform plan (trial phase)
+...
+Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+</code></pre>
+<p>Three prompts fire in the empty-workspace case — one for “do you want to bootstrap the cluster phase,” one for “apply this terraform plan” inside the nested <code>cluster up</code>, and a third when the trial-phase apply prompts. (On a non-empty workspace where <code>bnk up</code> skips the cluster bootstrap, only the latter two fire — and a <code>ShapeClusterOnly</code>/<code>ShapeSplit</code> <code>bnk up</code> is the common iteration case.) For a 30-minute operation we kept the prompts explicit rather than collapsing them. <code>--auto</code> skips all three:</p>
+<pre><code>$ roksbnkctl bnk up --auto
+</code></pre>
+<h3 id="roksbnkctl-bnk-down"><a class="header" href="#roksbnkctl-bnk-down"><code>roksbnkctl bnk down</code></a></h3>
+<p>Destroys the trial only. The cluster phase keeps running.</p>
+<ul>
+<li>On a <strong>split</strong> workspace (cluster + trial both present), <code>bnk down</code> runs <code>terraform destroy</code> against the trial state — ~41 resources, the same as the trial half of a full <code>down</code>.</li>
+<li>On an <strong>empty</strong> or <strong>cluster-only</strong> workspace, <code>bnk down</code> refuses: there’s no trial to destroy.</li>
+<li>On a <strong>legacy single-state</strong> workspace, <code>bnk down</code> refuses: the cluster lives in the trial state so a trial-only destroy isn’t possible.</li>
+</ul>
+<p>Sample output against a split workspace:</p>
+<pre><code>$ roksbnkctl bnk down --auto
+→ terraform destroy (trial phase)
+  module.license.helm_release.license: Destroying...
+  module.cne_instance.kubernetes_manifest.cne: Destroying...
+  module.flo.helm_release.flo: Destroying...
+  ...
+  Destroy complete! Resources: 41 destroyed.
+
+✓ Trial phase destroyed. Cluster phase ~/.roksbnkctl/default/state-cluster/ is intact.
+  Run `roksbnkctl bnk up` to deploy another trial against the same cluster.
+</code></pre>
+<h3 id="the-shape-dispatch-matrix"><a class="header" href="#the-shape-dispatch-matrix">The shape dispatch matrix</a></h3>
+<p>The unscoped <code>roksbnkctl up</code> / <code>down</code> verbs are now <strong>shape-aware composites</strong> — they detect the on-disk shape of the workspace and delegate to the right phase commands underneath. The full picture for all four shapes and all six commands:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th><strong>Empty</strong> (nothing applied)</th><th><strong>ClusterOnly</strong> (<code>cluster up</code> ran)</th><th><strong>Split</strong> (cluster + trial both applied)</th><th><strong>LegacySingle</strong> (v1.0.x state)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>up</code></td><td><code>cluster up</code> → trial up</td><td>trial up</td><td><code>cluster up</code> (refresh) → trial up</td><td>monolithic trial up (v1.0.x behaviour)</td></tr>
+<tr><td><code>down</code></td><td>error: nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td><td>monolithic trial down (v1.0.x behaviour)</td></tr>
+<tr><td><code>bnk up</code></td><td>confirm + <code>cluster up</code> → trial up</td><td>trial up</td><td>trial up</td><td><strong>refuse</strong></td></tr>
+<tr><td><code>bnk down</code></td><td>refuse: no trial</td><td>refuse: no trial</td><td>trial down</td><td><strong>refuse</strong></td></tr>
+<tr><td><code>cluster up</code></td><td><code>cluster up</code></td><td><code>cluster up</code> (refresh)</td><td><code>cluster up</code> (refresh)</td><td><strong>refuse</strong></td></tr>
+<tr><td><code>cluster down</code></td><td>refuse: nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td><td><strong>refuse</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>The user-facing simplification: the unscoped <code>up</code> / <code>down</code> “just work” against every shape (including v1.0.x legacy state). The phase-scoped commands (<code>bnk</code>, <code>cluster</code>) only operate when the shape allows isolation and refuse loudly with an actionable message otherwise. Refusals always point at the resolution — see <a href="#refusal-messages-catalogue">Chapter 11 §“Refusal messages”</a> for the full catalogue.</p>
+<p>The engineering version of this table — with the implementation details, the <code>ShapeUnknown</code> edge cases, and the rationale — lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#dispatch-table">PRD 06 §“Dispatch table”</a>.</p>
+<h3 id="worked-example--iterating-on-a-bnk-trial"><a class="header" href="#worked-example--iterating-on-a-bnk-trial">Worked example — iterating on a BNK trial</a></h3>
+<p>The headline workflow the v1.1.0 surface unlocks. You’re testing different <code>cne_instance</code> parameter combinations against a stable cluster.</p>
+<pre><code class="language-bash"># Step 1 — one-time cluster provision (~38 minutes)
+roksbnkctl cluster up --auto
+# → terraform apply (cluster phase: deploy_bnk=false forced)
+#   ...
+#   Apply complete! Resources: 36 added, 0 changed, 0 destroyed.
+# ✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+
+# Step 2 — first BNK trial (~7 minutes — trial only, cluster is reused)
+roksbnkctl bnk up --auto
+# → terraform plan (trial phase)
+#   Plan: 41 to add, 0 to change, 0 to destroy.
+#   ...
+#   Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+
+# Step 3 — poke at the trial, find something to tune
+roksbnkctl k get pods -n f5-bnk
+roksbnkctl test connectivity
+
+# Step 4 — destroy just the trial (~3 minutes — cluster persists)
+roksbnkctl bnk down --auto
+# → terraform destroy (trial phase)
+#   Destroy complete! Resources: 41 destroyed.
+# ✓ Trial phase destroyed. Cluster phase ~/.roksbnkctl/default/state-cluster/ is intact.
+
+# Step 5 — edit config.yaml (or a --var-file) to change cne_instance settings
+$EDITOR ~/.roksbnkctl/default/config.yaml
+
+# Step 6 — second BNK trial against the same cluster (~7 minutes; the 30-minute
+#          cluster provision from step 1 does NOT repeat)
+roksbnkctl bnk up --auto
+# → terraform plan (trial phase)
+#   ...
+#   Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
+</code></pre>
+<p>The win is in step 6: the cluster persists across the <code>bnk down</code> / <code>bnk up</code> boundary, so the second trial deploy is <strong>~7 minutes</strong> instead of the ~50 minutes a full <code>down</code> → <code>up</code> cycle would cost in v1.0.x. Across a day of iteration, that’s the difference between five trial permutations and one.</p>
+<p>When you’re done with the whole session:</p>
+<pre><code class="language-bash"># Step 7 — tear down the cluster too
+roksbnkctl cluster down --auto
+# (or `roksbnkctl down` from any starting state — see the dispatch matrix above)
+</code></pre>
 <h2 id="cross-references-3"><a class="header" href="#cross-references-3">Cross-references</a></h2>
 <ul>
 <li><a href="#quick-start-from-api-key-to-deployed-bnk">Chapter 7 — Quick start</a> — happy-path walkthrough end-to-end.</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — <code>roksbnkctl down</code> to undo a trial.</li>
+<li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — what <code>cluster up</code> provisions, the two state directories, and how to identify a legacy single-state workspace.</li>
+<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — phase-aware decision matrix; full refusal-message catalogue; orphan recovery.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — full reference for what you can override via <code>--var-file</code>.</li>
 <li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — once BNK is deployed, validating its data plane.</li>
 <li><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h1>
-<p><code>roksbnkctl down</code> and <code>roksbnkctl cluster down</code> are the destroy verbs — the inverse of <a href="#deploying-bnk-trials-on-top"><code>up</code></a> and <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a> respectively. This chapter covers what each one removes, the ordering constraint between them, what survives a destroy, the <code>--auto</code> flag for non-interactive runs, and the workspace-cleanup story.</p>
-<p>The big rule, stated up front: <strong>destroy in reverse of create</strong>. Trial first (<code>down</code>), cluster second (<code>cluster down</code>). Destroying out of order leaves orphans the upstream HCL’s resource graph can’t unwind cleanly.</p>
-<h2 id="the-two-destroys"><a class="header" href="#the-two-destroys">The two destroys</a></h2>
-<p>There are two distinct teardowns matching the two phases:</p>
-<h3 id="roksbnkctl-down--destroy-the-bnk-trial"><a class="header" href="#roksbnkctl-down--destroy-the-bnk-trial"><code>roksbnkctl down</code> — destroy the BNK trial</a></h3>
-<p>Tears down everything <code>roksbnkctl up</code> created: the <code>flo</code> Helm release, <code>cne_instance</code>, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens.</p>
+<p><code>roksbnkctl down</code>, <code>roksbnkctl bnk down</code>, and <code>roksbnkctl cluster down</code> are the three destroy verbs — the inverses of <a href="#deploying-bnk-trials-on-top"><code>up</code></a>, <a href="#the-bnk-up--bnk-down-command-group"><code>bnk up</code></a>, and <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a> respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you’ll hit if you ask for the wrong one, what survives a destroy, the <code>--auto</code> flag for non-interactive runs, and the workspace-cleanup story.</p>
+<h2 id="the-phase-aware-decision-tree"><a class="header" href="#the-phase-aware-decision-tree">The phase-aware decision tree</a></h2>
+<p>Which verb do you want? The shape of your workspace and your intent both matter. Start here:</p>
+<pre><code>I want to keep the cluster and just tear down the BNK trial:
+    → roksbnkctl bnk down
+
+I want to tear down everything (cluster + trial):
+    → roksbnkctl down
+
+I want to tear down only the cluster (no trial currently deployed):
+    → roksbnkctl cluster down
+
+I'm on a v1.0.x workspace (cluster + trial in one state):
+    → roksbnkctl down       (tears down everything in one shot)
+    → see Chapter 8 §"Legacy single-state workspaces" to confirm your shape
+</code></pre>
+<p>Quick shape check: <code>ls ~/.roksbnkctl/&lt;workspace&gt;/</code> — if you see <code>state-cluster/</code>, you’re on the v1.1.0 split shape; if you see only <code>state/</code>, you’re on legacy single-state.</p>
+<p>The big rule, stated up front: <strong>destroy in reverse of create</strong>. Trial first (<code>bnk down</code>), cluster second (<code>cluster down</code>). The unscoped <code>roksbnkctl down</code> does this ordering for you — on a split workspace it runs the trial destroy first and then the cluster destroy. On a legacy single-state workspace it runs a monolithic destroy (the v1.0.x behaviour, byte-for-byte). Either way you don’t have to think about ordering; <code>down</code> is the safe default.</p>
+<p>The phase-scoped commands (<code>bnk down</code>, <code>cluster down</code>) are the precision tools — they let you keep one phase across many cycles of the other. They also <strong>refuse loudly</strong> if you ask them to do something that would orphan resources or that the shape doesn’t allow. The full refusal catalogue is in <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> below; the rule of thumb is that the error message always names the verb that would actually work.</p>
+<h2 id="the-three-destroys"><a class="header" href="#the-three-destroys">The three destroys</a></h2>
+<p>There are three teardown verbs matching the three slices of state:</p>
+<h3 id="roksbnkctl-down--shape-aware-composite"><a class="header" href="#roksbnkctl-down--shape-aware-composite"><code>roksbnkctl down</code> — shape-aware composite</a></h3>
+<p>The unscoped <code>down</code> is a <strong>shape-aware composite</strong> in v1.1.0: it detects the on-disk shape of the workspace and dispatches to the right phase destroys in the right order.</p>
 <pre><code class="language-bash">roksbnkctl down
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Workspace shape</th><th><code>down</code> does</th></tr>
+</thead>
+<tbody>
+<tr><td>Split (cluster + trial)</td><td>trial destroy → cluster destroy</td></tr>
+<tr><td>ClusterOnly (only cluster applied)</td><td>cluster destroy</td></tr>
+<tr><td>LegacySingle (v1.0.x — both in one state)</td><td>monolithic destroy (v1.0.x behaviour, byte-for-byte)</td></tr>
+<tr><td>Empty</td><td>error: <code>nothing to destroy in this workspace</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>This is the safe default — <code>down</code> always does the right thing regardless of shape, and it’s the only verb you can run on a legacy single-state workspace.</p>
+<h3 id="roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><a class="header" href="#roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><code>roksbnkctl bnk down</code> — destroy the BNK trial only</a></h3>
+<p>New in v1.1.0. Tears down everything the trial phase created — the <code>flo</code> Helm release, <code>cne_instance</code>, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens — and leaves the cluster running.</p>
+<pre><code class="language-bash">roksbnkctl bnk down
 </code></pre>
 <p>What survives:</p>
 <ul>
@@ -1729,9 +1900,11 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <li>The registry COS instance and its bucket contents (FAR images, license artefacts)</li>
 <li>The TGW jumphost</li>
 <li>All cluster-phase Terraform state under <code>state-cluster/</code></li>
+<li><code>cluster-outputs.json</code> (the cluster is still registered)</li>
 <li>The workspace’s <code>config.yaml</code></li>
 </ul>
-<p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
+<p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>bnk down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
+<p><code>bnk down</code> <strong>refuses</strong> on Empty, ClusterOnly, and LegacySingle workspaces — there’s nothing to destroy on the first two, and the trial-only isolation isn’t possible on the third. See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
 <h3 id="roksbnkctl-cluster-down--destroy-the-cluster-phase"><a class="header" href="#roksbnkctl-cluster-down--destroy-the-cluster-phase"><code>roksbnkctl cluster down</code> — destroy the cluster phase</a></h3>
 <p>Tears down the cluster + cluster-shared services: the ROKS cluster, transit gateway, registry COS instance, cert-manager Helm release, and the TGW jumphost.</p>
 <pre><code class="language-bash">roksbnkctl cluster down
@@ -1746,11 +1919,15 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <p>The post-destroy cleanup deletes <code>cluster-outputs.json</code> automatically — the workspace no longer has a registered cluster.</p>
 <h2 id="order-matters-trial-first-then-cluster"><a class="header" href="#order-matters-trial-first-then-cluster">Order matters: trial first, then cluster</a></h2>
 <p>The upstream HCL’s resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live <em>in</em> the cluster, after all), and Terraform’s destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase’s resources are still there — finalisers block the destroy of the cluster’s namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.</p>
-<p><code>roksbnkctl cluster down</code> warns about this when run interactively — without <code>--auto</code> it prints a stderr line (“Any BNK trial state on top of this cluster will be orphaned — run <code>roksbnkctl down</code> first if needed.”) and prompts <code>Continue? [y/N]</code>. With <code>--auto</code> the warning and prompt are skipped and the destroy proceeds; correctness becomes the user’s responsibility. v1.0 does not inspect <code>state/terraform.tfstate</code> to refuse on a non-empty trial — that hard guard is tracked as a v1.x improvement (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”).</p>
-<p>So in practice, <strong>always run <code>down</code> before <code>cluster down</code></strong>, and do not skip the warning when running interactively.</p>
-<p>The clean teardown sequence:</p>
+<p>In v1.1.0 <code>roksbnkctl cluster down</code> enforces this ordering with a <strong>hard refusal</strong>: if the trial state has any resources in it, <code>cluster down</code> errors out and points you at <code>bnk down</code> (or <code>down</code>) instead. The v1.0.x “warning-but-prompt” behaviour is gone — even <code>--auto</code> won’t bypass the guard, because correctness, not confirmation, is the issue. The full refusal text:</p>
+<pre><code>$ roksbnkctl cluster down
+BNK trial state exists in this workspace; run `roksbnkctl bnk down` first
+(or `roksbnkctl down` to tear down both phases)
+</code></pre>
+<p>So in practice, <strong>always destroy the trial before the cluster</strong>. The unscoped <code>down</code> does this ordering for you on a split workspace; the phase-scoped pair is <code>bnk down</code> then <code>cluster down</code>.</p>
+<p>The clean teardown sequence — split workspace, explicit phase commands:</p>
 <pre><code class="language-bash"># 1. Destroy the BNK trial
-roksbnkctl down --auto
+roksbnkctl bnk down --auto
 
 # 2. Now safe to destroy the cluster phase
 roksbnkctl cluster down --auto
@@ -1758,7 +1935,34 @@ roksbnkctl cluster down --auto
 # 3. (Optional) Delete the workspace itself
 roksbnkctl ws delete &lt;name&gt; --force
 </code></pre>
-<p>If you <code>roksbnkctl up</code> against a registered cluster (one you didn’t <code>cluster up</code> yourself), you skip step 2 — the cluster wasn’t yours to destroy. Just <code>down</code> the trial and stop there, then optionally unregister by deleting <code>cluster-outputs.json</code>.</p>
+<p>Or the one-shot equivalent:</p>
+<pre><code class="language-bash"># 1. Tear down both phases in order
+roksbnkctl down --auto
+
+# 2. (Optional) Delete the workspace itself
+roksbnkctl ws delete &lt;name&gt; --force
+</code></pre>
+<p>If you <code>roksbnkctl up</code> against a registered cluster (one you didn’t <code>cluster up</code> yourself), step 2 doesn’t apply — the cluster wasn’t yours to destroy. Just <code>bnk down</code> the trial and stop there, then optionally unregister by deleting <code>cluster-outputs.json</code>.</p>
+<h2 id="refusal-messages-catalogue"><a class="header" href="#refusal-messages-catalogue">Refusal messages catalogue</a></h2>
+<p>The phase-scoped destroy verbs refuse loudly when the shape doesn’t allow what you’ve asked for. Every refusal names the verb that would actually work. If you hit one in the wild, grep your terminal output for the message text and you should land here:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command + shape</th><th>Refusal text</th><th>Resolution</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bnk down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; </code>bnk down<code>can't isolate the trial phase. Use</code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>; the legacy state has the trial and cluster in one file, so a trial-only destroy isn’t possible. See <a href="#legacy-single-state-workspaces">Chapter 8 §“Legacy single-state workspaces”</a>.</td></tr>
+<tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><code>no BNK trial state to destroy in this workspace</code></td><td>Nothing to do — no trial is deployed. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
+<tr><td><code>cluster down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; cluster and BNK trial share one state. Use </code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>.</td></tr>
+<tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
+<tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>
+<tr><td><code>down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the workspace has no state.</td></tr>
+<tr><td><code>cluster up</code> on <strong>LegacySingle</strong></td><td><code>this workspace was provisioned with v1.0.x single-state — its cluster lives in the trial state file. Use `roksbnkctl up` to operate on it, or migrate the state to two-phase shape first</code></td><td>Use <code>roksbnkctl up</code>. The cluster already exists in the trial state; applying the cluster phase separately would create a second one.</td></tr>
+<tr><td><code>bnk up</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; `bnk up` can't isolate the trial phase. Use `roksbnkctl up` for in-place behavior, or migrate the state first</code></td><td>Use <code>roksbnkctl up</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The “migrate the state first” references in two of the messages describe a future <code>roksbnkctl migrate</code> command that does not exist in v1.1.0. The refusals point at it so the wording stays valid once migrate ships; until then, the unscoped <code>up</code> / <code>down</code> is the working alternative for legacy workspaces.</p>
 <h2 id="what-survives-a-destroy"><a class="header" href="#what-survives-a-destroy">What survives a destroy</a></h2>
 <p>The contract: <strong><code>roksbnkctl</code> never destroys local state without explicit consent</strong>, and never destroys cloud resources outside its Terraform state.</p>
 <p>After a successful <code>down</code>:</p>
@@ -1781,21 +1985,26 @@ roksbnkctl ws delete &lt;name&gt; --force
 <p>Re-running <code>up</code> against a <code>down</code>’d workspace re-creates everything from scratch. The workspace’s <code>config.yaml</code> is preserved precisely so this re-create can use the same inputs without re-prompting.</p>
 <p>The COS bucket point is worth highlighting: the bundled HCL provisions the COS instance but generally does not provision the buckets inside it (those are written by post-apply provisioners or by the BNK runtime itself). When <code>cluster down</code> destroys the COS instance, the bucket goes with it — but if the COS instance was created out-of-band (e.g. by a registered cluster’s owner) and <code>roksbnkctl</code> is just attaching, then <code>cluster down</code> doesn’t apply and the COS survives.</p>
 <h2 id="--auto-for-non-interactive-runs"><a class="header" href="#--auto-for-non-interactive-runs"><code>--auto</code> for non-interactive runs</a></h2>
-<p>Both destroy commands prompt for confirmation by default:</p>
+<p>All three destroy commands prompt for confirmation by default:</p>
 <pre><code>$ roksbnkctl down
 This will destroy workspace "default"'s resources.
 Continue? [y/N]: 
 </code></pre>
+<pre><code>$ roksbnkctl bnk down
+This will destroy the BNK trial for workspace "default". The cluster phase
+will remain in place — run `roksbnkctl cluster down` to remove it too.
+Continue? [y/N]: 
+</code></pre>
 <pre><code>$ roksbnkctl cluster down
 This will destroy the cluster phase for workspace "default" (ROKS + transit gateway + registry COS + cert-manager + jumphost).
-Any BNK trial state on top of this cluster will be orphaned — run `roksbnkctl down` first if needed.
 Continue? [y/N]: 
 </code></pre>
 <p><code>--auto</code> skips the prompt — required for CI / scripted pipelines:</p>
 <pre><code class="language-bash">roksbnkctl down --auto
+roksbnkctl bnk down --auto
 roksbnkctl cluster down --auto
 </code></pre>
-<p><code>--auto</code> does <strong>not</strong> override the trial-then-cluster ordering check; that’s a correctness guard, not a confirmation prompt. If trial state is present, <code>cluster down --auto</code> still refuses.</p>
+<p><code>--auto</code> does <strong>not</strong> override the shape-based refusals (see <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> above) — those are correctness guards, not confirmation prompts. If trial state is present, <code>cluster down --auto</code> still refuses; on a legacy single-state workspace, <code>bnk down --auto</code> and <code>cluster down --auto</code> still refuse.</p>
 <h2 id="like-up-transient-errors-retry"><a class="header" href="#like-up-transient-errors-retry">Like <code>up</code>, transient errors retry</a></h2>
 <p><code>down</code> doesn’t share <code>up</code>’s explicit retry-on-transient-error logic, but Terraform’s destroy is naturally idempotent: re-running <code>down</code> after a partial destroy picks up where the previous run left off. If you see a transient network error during destroy, just re-run:</p>
 <pre><code class="language-bash">roksbnkctl down --auto
@@ -2594,6 +2803,28 @@ Save the key for future runs? [Y/n]: y
   warning: base64 is obfuscation, not encryption — chmod 0600 the file
 </code></pre>
 <p>Both destinations work. The keychain path is the recommended default; the config-b64 path is the documented fallback.</p>
+<h2 id="whats-new-in-v12-the-cred-tmpfile-and-trusted-profile-paths"><a class="header" href="#whats-new-in-v12-the-cred-tmpfile-and-trusted-profile-paths">What’s new in v1.2: the cred-tmpfile and trusted-profile paths</a></h2>
+<p><code>v1.2.0</code> closes the two longest-deferred items from <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#open-questions">PRD 04 §“Open questions”</a>: <code>roksbnkctl --backend docker</code> no longer leaks <code>IBMCLOUD_API_KEY</code> in <code>docker inspect</code>, and <code>roksbnkctl --backend k8s ops install</code> auto-provisions an IBM Cloud trusted profile so the ops pod never sees a static API key. Both have fallbacks for environments where the new path doesn’t apply; v1.0.x / v1.1.x workspaces continue to work without change.</p>
+<h3 id="the-tmpfile-bind-mount-pattern-docker-backend"><a class="header" href="#the-tmpfile-bind-mount-pattern-docker-backend">The tmpfile-bind-mount pattern (docker backend)</a></h3>
+<p>The docker backend writes the resolved <code>IBMCLOUD_API_KEY</code> to a <code>0600</code> tempfile on the host, bind-mounts that single file read-only at <code>/run/secrets/ibmcloud_api_key</code> inside the container, and points the container at the file via <code>IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key</code>. The value never appears in the container’s stored env metadata — <code>docker inspect &lt;id&gt;</code> shows the path, not the key. The tempfile is owned by the calling user and is removed on backend exit (and on context cancellation, so an interrupted run still cleans up).</p>
+<p>You don’t have to do anything to opt in — the pattern is the default for <code>--backend docker</code> on v1.2 and up. The engineering shape (lifecycle, the inline <code>sh -c</code> shim that re-exports the value into the legacy <code>IBMCLOUD_API_KEY</code> env name for tools that read from env, the why-not-just-use-<code>--secret</code> discussion) lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Resolved in Sprint 9” → “Cred tmpfile-bind-mount pattern (docker backend)”</a>. For most users the takeaway is one line: in <code>v1.2</code>, <code>--backend docker</code> is <code>docker inspect</code>-clean.</p>
+<h3 id="the---trusted-profile-flag-k8s-backend"><a class="header" href="#the---trusted-profile-flag-k8s-backend">The <code>--trusted-profile</code> flag (k8s backend)</a></h3>
+<p>New flag on <code>roksbnkctl ops install</code> that controls how the ops pod gets its IBM Cloud credential. Three values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>What it does</th><th>When to use</th></tr>
+</thead>
+<tbody>
+<tr><td><code>auto</code> (default)</td><td>Try to provision an IBM Cloud trusted profile (<code>roksbnkctl-ops-&lt;workspace&gt;</code>) linked to the ops pod’s ServiceAccount. The pod assumes the profile via its projected SA token and the static API key never lands in any Secret. If your workspace API key doesn’t have IAM <code>iam-identity</code> permissions, automatically fall back to the v1.0.x static-key Secret with a stderr warning that names the missing perm and how to silence it (<code>--trusted-profile=off</code>).</td><td>Default for new installs. Production users get the secure path automatically; restricted-IAM users still complete <code>ops install</code> successfully.</td></tr>
+<tr><td><code>on</code></td><td>Try to provision; fail loudly with a non-zero exit if perms don’t allow. No fallback.</td><td>CI / hardened environments where the static-key path is unacceptable and a perm-missing case should block, not warn.</td></tr>
+<tr><td><code>off</code></td><td>Skip the trusted-profile path entirely; provision the v1.0.x static-key Secret (matches v1.0.x / v1.1.x behaviour).</td><td>Compatibility / debugging — and the documented path for clusters whose IAM admin doesn’t grant <code>iam-identity</code> perms and isn’t expected to.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#trusted-profile-flow-v12">Chapter 19 — The in-cluster ops pod</a> walks through the <code>--trusted-profile=auto</code> install flow, the verification commands (<code>oc get serviceaccount roksbnkctl-ops -o yaml</code> showing the trusted-profile annotation), the fallback warning shape, and how <code>ops uninstall</code> cleans up a provisioned profile.</p>
+<h3 id="compatibility-note"><a class="header" href="#compatibility-note">Compatibility note</a></h3>
+<p>v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s <code>--trusted-profile=auto</code> default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning block on <code>ops install</code> naming the fallback and how to silence it. Setting <code>--trusted-profile=off</code> reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).</p>
 <h2 id="backend-specific-cred-propagation"><a class="header" href="#backend-specific-cred-propagation">Backend-specific cred propagation</a></h2>
 <p>The credential-propagation rules differ per backend. All four backends ship at v1.0:</p>
 <div class="table-wrapper">
@@ -4010,6 +4241,125 @@ spec:
 </ul>
 <h3 id="6-wait-for-readiness"><a class="header" href="#6-wait-for-readiness">6. Wait for readiness</a></h3>
 <p><code>roksbnkctl ops install</code> waits for <code>Pod.Status.Phase == Running</code> and the container’s <code>Ready</code> condition before returning. Default timeout is 60 seconds; longer for clusters with slow image pulls (the ghcr.io image is ~80 MiB). Failures surface a <code>kubectl describe pod roksbnkctl-ops</code> excerpt for context.</p>
+<h2 id="trusted-profile-flow-v12"><a class="header" href="#trusted-profile-flow-v12">Trusted-profile flow (v1.2+)</a></h2>
+<p>The static-key Secret described above is the v1.0.x / v1.1.x path. In <code>v1.2.0</code> it becomes the <strong>fallback</strong>: the default <code>ops install</code> invocation auto-provisions an IBM Cloud IAM <strong>trusted profile</strong> linked to the ops pod’s ServiceAccount, and the static API key no longer needs to land in any Kubernetes Secret. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#trusted-profile-auto-provisioning-k8s-backend">PRD 04 §“Resolved in Sprint 9” → “Trusted-profile auto-provisioning (k8s backend)”</a> is the design reference; this section is the operational walkthrough.</p>
+<blockquote>
+<p><strong>v1.2.0 partial closure — read this first.</strong> Sprint 9 ships the <strong>provisioning side</strong> of the trusted-profile flow: profile creation, compute-resource binding to your cluster’s OIDC issuer URL, SA annotation, and the Secret-rendered-with-empty-data manifest under <code>--trusted-profile=auto</code> success. <strong>The runtime side — the in-pod <code>ibmcloud login</code> wrap that primes stateful subcommands (<code>iam</code>, <code>ks</code>, …) — still uses <code>--apikey "$IBMCLOUD_API_KEY"</code> in v1.2.0</strong>, unchanged from v1.0.x. Under <code>--trusted-profile=auto</code> success the Secret carries empty data by design, so the in-pod wrap will fail with <code>missing API key</code> when you actually exercise <code>roksbnkctl --backend k8s ibmcloud &lt;subcommand&gt;</code>. Full closure (in-pod wrap switches to <code>ibmcloud login --trusted-profile-id "$IAM_PROFILE_ID"</code> when the SA is annotated) is Sprint 10 work — tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/issues/issue_sprint9_staff.md">staff Issue 2</a>. For v1.2.0, the security-side win is real but partial: no static API key sits at rest in any Secret in etcd under auto-success. If you need the runtime wrap to actually work today, pass <code>--trusted-profile=off</code> and the v1.0.x static-key path applies unchanged.</p>
+</blockquote>
+<h3 id="roksbnkctl-ops-install---trusted-profileauto"><a class="header" href="#roksbnkctl-ops-install---trusted-profileauto"><code>roksbnkctl ops install --trusted-profile=auto</code></a></h3>
+<p><code>--trusted-profile=auto</code> is the <strong>default</strong> as of v1.2 — running <code>roksbnkctl ops install</code> with no flag picks the auto path. Naming the flag explicitly is useful in scripts that pin behaviour or in docs that want to read unambiguously:</p>
+<pre><code class="language-bash">$ roksbnkctl ops install --trusted-profile=auto
+✓ Provisioned IAM trusted profile roksbnkctl-ops-sandbox-roks (iam-Profile-9f2…)
+✓ created namespace roksbnkctl-ops
+✓ created sa roksbnkctl-ops/roksbnkctl-ops
+✓ created secret roksbnkctl-ops/roksbnkctl-ibm-creds
+✓ created clusterrole roksbnkctl-ops
+✓ created crb roksbnkctl-ops
+✓ created pod roksbnkctl-ops/roksbnkctl-ops
+→ Waiting for ops pod to be Ready (60s timeout)
+✓ Ops pod is Ready (trusted profile roksbnkctl-ops-sandbox-roks)
+</code></pre>
+<p>Re-runs against an existing install emit <code>updated &lt;kind&gt; …</code> / <code>&lt;kind&gt; … exists</code> instead of <code>created</code> for each resource that already matches the desired state. The trusted-profile provisioning line above is the single line <code>internal/cli/ops.go</code> emits for the whole IBM IAM-side flow (perm probe + profile create + compute-resource link + SA annotation) — the work happens silently inside <code>resolveTrustedProfileForInstall</code>; the one line you see is the receipt.</p>
+<p>What just happened, in order (the binary doesn’t narrate these steps but they’re what’s actually going on):</p>
+<ol>
+<li><strong>IAM perm probe.</strong> <code>ops install</code> calls IBM IAM Identity to confirm the resolved API key has <code>iam-identity</code> perms. On <code>403</code>, the flag value drives the next step: <code>auto</code> falls back to the static-key Secret with a warning (see §“<code>--trusted-profile=auto</code> falling back” below); <code>on</code> errors out with a non-zero exit.</li>
+<li><strong>Profile creation.</strong> Names the profile <code>roksbnkctl-ops-&lt;workspace&gt;</code> so multiple workspaces against the same IBM Cloud account don’t race for a single shared name. The compute-resource link binds the profile to your cluster’s OIDC issuer URL + the <code>roksbnkctl-ops/roksbnkctl-ops</code> ServiceAccount specifically — other SAs on the same cluster can’t assume the profile.</li>
+<li><strong>Policy attachment.</strong> v1.2 ships with no default policies attached — the profile inherits whatever IAM policies your account has set up for trusted profiles in general (typically nothing, until you grant). A future cycle will surface <code>ibmcloud.trusted_profile.policies</code> as a workspace-config block; tracked under v1.x deferred. If you need the profile to actually authorise specific actions (Container Registry pulls, Cloud Object Storage reads), grant the policies via IBM Cloud Console or <code>ibmcloud iam trusted-profile-policy-create</code> after <code>ops install</code> returns.</li>
+<li><strong>SA annotation.</strong> The ServiceAccount gets <code>iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-&lt;workspace&gt;</code> plus the <code>roksbnkctl.io/trusted-profile-managed: "true"</code> marker that signals <code>ops uninstall</code> to delete the profile during cleanup.</li>
+<li><strong>Pod creation.</strong> The pod’s container always has <code>envFrom: secretRef: roksbnkctl-ibm-creds</code>; what changes between modes is the Secret’s contents. Under <code>--trusted-profile=auto</code> success the Secret is created with <strong>empty data</strong> — <code>IBMCLOUD_API_KEY</code> is the empty string. The Sprint 10 conditional-login-wrap closure (see the v1.2.0 partial-closure admonition at the top of this section) will switch the in-pod <code>ibmcloud login</code> to <code>--trusted-profile-id</code> when the SA carries the annotation; until then, exercising stateful <code>ibmcloud</code> subcommands inside the pod fails with <code>missing API key</code>. The provisioning side is real (no static key at rest in any Secret); the runtime side ships in Sprint 10.</li>
+</ol>
+<h3 id="verifying-the-profile-is-in-use"><a class="header" href="#verifying-the-profile-is-in-use">Verifying the profile is in use</a></h3>
+<p>The ServiceAccount carries the truth-of-record annotation:</p>
+<pre><code class="language-bash">$ oc get serviceaccount roksbnkctl-ops -n roksbnkctl-ops -o yaml
+# or, kubectl-equivalent via the bundled passthrough:
+$ roksbnkctl k get sa roksbnkctl-ops -n roksbnkctl-ops -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-sandbox-roks            # ← the profile name
+    roksbnkctl.io/trusted-profile-managed: "true"                             # ← ops uninstall will delete it
+    roksbnkctl.io/provisioned-at: "2026-05-13T14:08:33Z"
+  name: roksbnkctl-ops
+  namespace: roksbnkctl-ops
+</code></pre>
+<p>End-to-end smoke test of the runtime cred flow:</p>
+<pre><code class="language-bash">$ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
+</code></pre>
+<blockquote>
+<p><strong>Heads up — Sprint 10 carry-over.</strong> Under v1.2.0 + <code>--trusted-profile=auto</code> success, the command above will return <code>failed to authenticate: missing API key</code>. The in-pod <code>ibmcloud login</code> wrap still uses <code>--apikey "$IBMCLOUD_API_KEY"</code> (unchanged from v1.0.x); the Secret carries empty data under auto-success by design; the wrap fails. The runtime-cred-flow closure ships in Sprint 10 (see the v1.2.0 partial-closure admonition at the top of this section). For v1.2.0, exercise the smoke test under <code>--trusted-profile=off</code> instead (the static-key path works as in v1.0.x):</p>
+<pre><code class="language-bash">$ roksbnkctl ops install --trusted-profile=off
+$ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
+IAM token:  Bearer eyJ…
+</code></pre>
+<p>Once Sprint 10 lands, the <code>--trusted-profile=auto</code> smoke test returns the token directly — fresh-each-call from the pod’s SDK trading the projected SA token. The cluster’s OIDC issuer URL needs ~30-60 seconds to propagate through IBM IAM after <code>ops install</code> returns; if your auto-mode smoke test errors with <code>failed to assume trusted profile</code> post-Sprint-10, retry after that window.</p>
+</blockquote>
+<h3 id="--trusted-profileauto-falling-back"><a class="header" href="#--trusted-profileauto-falling-back"><code>--trusted-profile=auto</code> falling back</a></h3>
+<p><code>auto</code> falls back to the v1.0.x static-key Secret when any of three pre-conditions for trusted-profile provisioning aren’t met. The warning prints first (the fallback decision is made before any cluster-side resource is applied), then the rest of the install proceeds with the v1.0.x static-key shape:</p>
+<pre><code>$ roksbnkctl ops install
+warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass `--trusted-profile=off` to silence.
+✓ created namespace roksbnkctl-ops
+✓ created sa roksbnkctl-ops/roksbnkctl-ops
+✓ created secret roksbnkctl-ops/roksbnkctl-ibm-creds
+✓ created clusterrole roksbnkctl-ops
+✓ created crb roksbnkctl-ops
+✓ created pod roksbnkctl-ops/roksbnkctl-ops
+→ Waiting for ops pod to be Ready (60s timeout)
+✓ Ops pod is Ready (static-key Secret)
+</code></pre>
+<p>The three warning shapes (in source order — <code>internal/cli/ops.go</code> <code>resolveTrustedProfileForInstall</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Trigger</th><th>Warning</th></tr>
+</thead>
+<tbody>
+<tr><td>Workspace has no registered cluster yet (<code>cluster-outputs.json</code> missing — run <code>cluster up</code> or <code>cluster register</code> first)</td><td><code>warning: trusted-profile mode 'auto' needs a registered cluster (&lt;err&gt;); falling back to static-key Secret. Pass </code>–trusted-profile=off<code> to silence.</code></td></tr>
+<tr><td>Registered cluster lookup against the IBM Cloud API failed (network, key auth, cluster deleted out-of-band)</td><td><code>warning: trusted-profile mode 'auto' couldn't look up cluster (&lt;err&gt;); falling back to static-key Secret. Pass </code>–trusted-profile=off<code> to silence.</code></td></tr>
+<tr><td>API key lacks IAM <code>iam-identity</code> permission (the most common fallback)</td><td><code>warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass </code>–trusted-profile=off<code> to silence.</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>All three are non-fatal; the install completes and the pod works exactly as it did in v1.0.x. The warnings are terse on purpose — the actionable detail belongs in this chapter, not in every stderr line. Three ways to clear them permanently:</p>
+<ul>
+<li><strong>Run <code>cluster up</code> or <code>cluster register</code></strong> first if the warning names the missing cluster registration. <code>ops install</code> re-run after the registration completes will detect the cluster and switch to the trusted-profile path.</li>
+<li><strong>Ask your IAM admin</strong> to grant <code>iam-identity</code> Operator role on the API key (or use a different key that already has it) if the warning names the missing IAM perm. Re-run <code>ops install</code> — the install detects the changed perm posture on re-run and replaces the static-key Secret with a trusted-profile binding.</li>
+<li><strong>Opt out</strong> via <code>--trusted-profile=off</code> (next subsection) if you don’t want the warning every install.</li>
+</ul>
+<h3 id="--trusted-profileoff"><a class="header" href="#--trusted-profileoff"><code>--trusted-profile=off</code></a></h3>
+<p>Explicit opt-out. Skips the IAM perm check entirely and provisions the v1.0.x static-key Secret:</p>
+<pre><code class="language-bash">$ roksbnkctl ops install --trusted-profile=off
+✓ created namespace roksbnkctl-ops
+✓ created sa roksbnkctl-ops/roksbnkctl-ops
+✓ created secret roksbnkctl-ops/roksbnkctl-ibm-creds
+✓ created clusterrole roksbnkctl-ops
+✓ created crb roksbnkctl-ops
+✓ created pod roksbnkctl-ops/roksbnkctl-ops
+→ Waiting for ops pod to be Ready (60s timeout)
+✓ Ops pod is Ready (static-key Secret)
+</code></pre>
+<p>Use cases:</p>
+<ul>
+<li><strong>Reproducing v1.0.x behaviour exactly</strong> — for byte-for-byte parity tests against an older deployment, or for scripts whose assertions match the v1.0.x <code>ops show</code> output verbatim.</li>
+<li><strong>Air-gapped clusters</strong> that can’t reach the IBM IAM API at runtime — without that connectivity, the pod can’t trade its projected SA token for an IAM token, so the trusted-profile path is non-functional regardless of perms.</li>
+<li><strong>Cred rotation runbooks</strong> that already automate the static-key path and aren’t yet ready to switch to the projected-token model.</li>
+</ul>
+<p>The third value, <code>--trusted-profile=on</code>, is the inverse — it forces the trusted-profile path and refuses to fall back on perm-missing, returning a non-zero exit with the same warning text. Use it in CI to surface IAM-perm regressions explicitly.</p>
+<h3 id="cleanup-on-ops-uninstall"><a class="header" href="#cleanup-on-ops-uninstall">Cleanup on <code>ops uninstall</code></a></h3>
+<p><code>roksbnkctl ops uninstall --confirm</code> honors the <code>roksbnkctl.io/trusted-profile-managed: "true"</code> annotation on the SA and deletes the IBM Cloud trusted profile alongside the cluster-side objects:</p>
+<pre><code class="language-bash">$ roksbnkctl ops uninstall --confirm
+✓ deleted trusted profile roksbnkctl-ops-sandbox-roks
+✓ deleted pod roksbnkctl-ops
+✓ deleted secret roksbnkctl-ibm-creds
+✓ deleted serviceaccount roksbnkctl-ops
+✓ deleted clusterrolebinding roksbnkctl-ops
+✓ deleted clusterrole roksbnkctl-ops
+✓ deleted namespace roksbnkctl-ops
+✓ deleted namespace roksbnkctl-test
+</code></pre>
+<p>The trusted profile is deleted <strong>first</strong>, before the cluster-side objects, so even if the cluster API becomes unreachable mid-uninstall the IBM Cloud-side state isn’t left orphaned. The Secret is always deleted regardless of mode (it’s always rendered by <code>ops install</code>, just with empty data under <code>--trusted-profile=auto</code> success).</p>
+<p>The trusted-profile delete is <strong>best-effort</strong> — if the calling user’s API key has lost <code>iam-identity</code> perms in the meantime (or the key itself has rotated and the new key doesn’t have those perms), the cluster-side objects still delete and a warning line is printed instructing the user to delete the profile manually via the IBM Cloud console. The annotation remains correct documentation of what was provisioned; <code>roksbnkctl ops install</code> on a fresh cluster will pick a fresh profile name unconditionally so an orphaned profile from a prior install doesn’t collide.</p>
+<p><code>--trusted-profile=off</code> installs leave no trusted profile to clean up — <code>ops uninstall --confirm</code> just deletes the cluster-side objects + the static-key Secret as it did in v1.0.x.</p>
 <h2 id="roksbnkctl-ops-show"><a class="header" href="#roksbnkctl-ops-show"><code>roksbnkctl ops show</code></a></h2>
 <p>Reports current state without making any changes:</p>
 <pre><code class="language-bash">$ roksbnkctl ops show
@@ -4088,6 +4438,9 @@ kubectl auth can-i --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops \
   '*' '*' --all-namespaces       # should print mostly "no"
 </code></pre>
 <h2 id="credential-propagation"><a class="header" href="#credential-propagation">Credential propagation</a></h2>
+<blockquote>
+<p><strong>v1.2+ note.</strong> What follows is the <strong>static-key</strong> propagation path. As of v1.2 it’s the fallback rather than the default — <code>--trusted-profile=auto</code> installs assume an IBM Cloud trusted profile via the pod’s projected SA token and the static API key never lands in a Kubernetes Secret. See <a href="#trusted-profile-flow-v12">§“Trusted-profile flow (v1.2+)”</a> above for that path. The hop-by-hop description below still describes what happens under <code>--trusted-profile=off</code> (and under the <code>auto</code>-fallback when IAM perms don’t allow the trusted-profile path).</p>
+</blockquote>
 <p>The <code>IBMCLOUD_API_KEY</code> reaches the wrapped tool in three hops:</p>
 <pre><code>resolver chain (env → keychain → config-b64 → prompt)
        ↓                        on the laptop, at `roksbnkctl ops install` time
@@ -4105,6 +4458,9 @@ kubectl auth can-i --as=system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops \
 </ol>
 <p>The Secret carries two keys today — <code>IBMCLOUD_API_KEY</code> and the legacy <code>IC_API_KEY</code> alias older <code>ibmcloud</code> versions accept — both populated from the same resolved value. Names are stable; embedded in <code>internal/exec/k8s_install.yaml</code>. Future cluster-side credentials (an AWS access key, a GCP service-account JSON) will add new keys to the same Secret rather than spinning up new Secrets, simplifying RBAC.</p>
 <h2 id="rotation-rotating-the-api-key"><a class="header" href="#rotation-rotating-the-api-key">Rotation: rotating the API key</a></h2>
+<blockquote>
+<p><strong>v1.2+ note.</strong> Under <code>--trusted-profile=auto</code> / <code>=on</code> (default), there’s nothing to rotate — the ops pod’s IAM tokens are short-lived and the IBM IAM endpoint refreshes them transparently each time the SDK trades the projected SA token. Key rotation only matters when the install ran with <code>--trusted-profile=off</code> or fell back to the static-key Secret because the resolved key lacked <code>iam-identity</code> perms. The procedure below covers that static-key case.</p>
+</blockquote>
 <p>When the IBM Cloud API key changes (key rotation, account takeover, key compromise), you need to update the cluster-side Secret. The flow:</p>
 <pre><code class="language-bash"># 1. Update the local resolver chain — pick whichever source you populated
 #    initially (the chain order is: env &gt; keychain &gt; config-b64; see chapter 14):
