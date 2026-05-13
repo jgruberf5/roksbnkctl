@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
+            window.path_to_searchindex_js = "searchindex-6d4594f0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -184,6 +184,7 @@
 <p>A bare <code>roksbnkctl doctor</code> runs the <strong>general</strong> checks: tooling on <code>PATH</code>, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine post-Sprint 2 looks like this:</p>
 <pre><code>roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+✓  helm              /usr/local/bin/helm (v3.20.2)                                            (required for `roksbnkctl up`; terraform `local-exec` shells out to helm)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
 ✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
@@ -205,9 +206,29 @@
 <p>The <code>BackendName</code> column on the underlying <code>Check</code> struct (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/check.go"><code>internal/doctor/check.go</code></a>) is reserved for the per-backend probes that land in Sprint 4 (PRD 03). Until then it stays empty for every general check.</p>
 <h2 id="each-check-explained"><a class="header" href="#each-check-explained">Each check explained</a></h2>
 <h3 id="terraform--required"><a class="header" href="#terraform--required"><code>terraform</code> — required</a></h3>
-<p>The only <strong>hard-required</strong> binary for the <code>roksbnkctl up</code> happy path. <code>roksbnkctl</code> shells out to <code>terraform</code> via <code>terraform-exec</code> for plan/apply/destroy; without it nothing in the cluster lifecycle works.</p>
+<p>One of two <strong>hard-required</strong> binaries for the <code>roksbnkctl up</code> happy path. <code>roksbnkctl</code> shells out to <code>terraform</code> via <code>terraform-exec</code> for plan/apply/destroy; without it nothing in the cluster lifecycle works.</p>
 <p>Pass condition: a binary on <code>PATH</code>, version <code>1.5</code> or newer.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install Terraform from <a href="https://www.terraform.io/downloads">terraform.io</a>, or your distro’s package manager, then re-run <code>doctor</code>.</p>
+<h3 id="helm--required"><a class="header" href="#helm--required"><code>helm</code> — required</a></h3>
+<p>The second <strong>hard-required</strong> binary, added in v1.0.2. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code> from inside terraform’s apply phase. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
+<pre><code>Error: local-exec provisioner error
+Error running command 'helm upgrade --install cert-manager ...':
+exit status 127. Output: /bin/sh: 1: helm: not found
+</code></pre>
+<p>Pass condition: a <code>helm</code> (v3.x) binary on <code>PATH</code>. Doctor parses <code>helm version --short</code> for the version detail.</p>
+<p>Failure mode: <code>not on PATH</code>. Fix: install Helm 3 from <a href="https://helm.sh/docs/intro/install/">helm.sh/docs/intro/install/</a>, or via your distro’s package manager:</p>
+<pre><code class="language-bash"># Linux (Ubuntu/Debian — official Helm apt repo):
+curl https://baltocdn.com/helm/signing.asc | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update &amp;&amp; sudo apt-get install -y helm
+
+# macOS:
+brew install helm
+
+# Windows:
+choco install kubernetes-helm
+</code></pre>
+<p>A v1.x effort to refactor the <code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code> modules onto the <code>helm_release</code> terraform resource type (which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime) would eliminate this host requirement. Tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
 <h3 id="iperf3--informational"><a class="header" href="#iperf3--informational"><code>iperf3</code> — informational</a></h3>
 <p>Used only by <code>roksbnkctl test throughput</code> in its host-iperf3 modes. After Sprint 4 lands the k8s execution backend (PRD 03), <code>iperf3</code> moves entirely in-cluster and this row goes away for the everyday user.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.</p>
