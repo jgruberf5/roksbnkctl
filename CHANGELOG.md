@@ -225,9 +225,20 @@ git tag v1.0.2 && git push origin main --tags
 make release-publish VERSION=v1.0.2
 ```
 
+## v1.1.1 — 2026-05-13
+
+CI-recovery patch on top of `v1.1.0`. The `v1.1.0` cut passed `go build/vet/test/gofmt` locally but the CI matrix runs `staticcheck` in addition, which flagged an unused helper in the folded-in `internal/exec/` WIP. Functionally identical to `v1.1.0` — the unused function had no runtime effect. **End users should install v1.1.1**; the `v1.1.0` Release page is retained as a historical artifact only.
+
+### Fixed (CI recovery)
+
+- **Removed unused `ptrInt64` helper** in `internal/exec/k8s.go` (staticcheck `U1000`). The helper was a leftover from a draft that didn't end up using an `int64` pointer; the sibling `ptrBool` IS used (three call sites in the pod security context) and stays.
+- **Local release gate updated to include `staticcheck`** going forward so the next tag-cut doesn't repeat the gap. (Documented as the lesson — the `staticcheck` step is in CI's `.github/workflows/ci.yml` but wasn't in the local `Makefile`'s pre-tag checklist.)
+
 ## v1.1.0 — 2026-05-13
 
 The first post-v1.0 feature cycle (Sprint 8). Ships the cluster/trial phase split as a first-class command surface — `roksbnkctl bnk up/down` lets you iterate on a BNK trial without destroying its cluster, and the unscoped `roksbnkctl up/down` become shape-aware composites that preserve v1.0.x behaviour byte-for-byte on legacy single-state workspaces. See [PRD 06](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md) for the design rationale and [PLAN.md §"Sprint 8"](docs/PLAN.md) for the cycle's deliverables.
+
+> **CI note**: the `v1.1.0` tag-cut commit failed staticcheck (unused `ptrInt64` helper in `internal/exec/k8s.go`). Functionally inert; `v1.1.1` is the corrected cut. v1.1.0 binaries on the GitHub Release page work, but new installs should use v1.1.1.
 
 ### Added
 

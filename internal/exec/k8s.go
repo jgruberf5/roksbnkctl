@@ -734,8 +734,7 @@ func podReady(p *corev1.Pod) bool {
 	return false
 }
 
-func ptrBool(b bool) *bool    { return &b }
-func ptrInt64(i int64) *int64 { return &i }
+func ptrBool(b bool) *bool { return &b }
 
 func init() {
 	Register("k8s", &K8sBackend{})
