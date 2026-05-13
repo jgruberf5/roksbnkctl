@@ -4,7 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## v1.2.0 — 2026-05-13
+## v1.2.1 — 2026-05-13
+
+CI-recovery patch on top of `v1.2.0`. The `v1.2.0` cut passed the now-extended local pre-tag gate (build / vet / fmt / test / staticcheck / `-tags integration` build) but CI runs `go test -tags integration` against a live kind cluster, which surfaced an image-level gap the local gate doesn't exercise: the Sprint 9 image switch on `TestIntegration_K8sBackend_JobMode_Echo` (busybox → tools-ibmcloud, adding `USER 1000` for `RunAsNonRoot` admission) left uid 1000 without a writable `$HOME`. The ibmcloud CLI's first-run config write to `$HOME/.bluemix/` failed with `Configuration error: mkdir /.bluemix: permission denied` even for `ibmcloud --version`. Functionally identical to `v1.2.0` for the release binaries (the failure was in the tools image used by integration tests; goreleaser-built end-user binaries are unaffected). **End users should install v1.2.1**; the `v1.2.0` Release page is retained as a historical artifact only.
+
+### Fixed (CI recovery)
+
+- **`tools/docker/ibmcloud/Dockerfile`**: provision `/home/runner` owned by uid 1000 before the `USER 1000` drop; `ENV HOME=/home/runner`; `WORKDIR /home/runner`. ibmcloud's first-run config dir creation now lands at `/home/runner/.bluemix/` (writable) instead of `/.bluemix/` (root-only). The Build tools images workflow republishes `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.2.1` automatically on tag push; `TestIntegration_K8sBackend_JobMode_Echo` passes against the rebuilt image.
+- **Local pre-tag gate gap noted**: `make release` runs `go build -tags integration ./...` (compile check) but not `go test -tags integration` (which requires a kind cluster + docker daemon). Adding a kind-bringup step to the local gate is non-trivial and not yet planned; the CI-side gate continues to catch image-level integration gaps that the local gate can't. Tracked as a Sprint 10 candidate.
+
+## v1.2.0 — 2026-05-13 — SUPERSEDED by v1.2.1
+
+Intended as the headline Sprint 9 release (PRD 04 cred-passing closure + CI polish) but the local pre-tag gate passed while CI's live integration-test job surfaced a tools-image gap. See `v1.2.1` above for the corrected cut. v1.2.0 release binaries are functionally identical to v1.2.1; only the tools image used by `--backend k8s` integration tests differs.
 
 Sprint 9 closure cycle — closes the two PRD 04 §"Open questions" items that have been open since the v0.9 cycle (the cred-tmpfile-bind-mount pattern for the docker backend, and the trusted-profile auto-provisioning for the k8s backend), plus the CI / Makefile polish that prevents another v1.1.0 → v1.1.1 → v1.1.2 cascade. The headline reframe: from v1.0.x-style "static API key in env / Secret" to "no static API key on the wire when it can be avoided". Both backends get sane fallbacks for environments where the new pattern doesn't apply. See [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) for the design rationale and [PLAN.md §"Sprint 9"](docs/PLAN.md) for the cycle's deliverables.
 

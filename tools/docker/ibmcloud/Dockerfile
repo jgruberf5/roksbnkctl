@@ -95,7 +95,21 @@ COPY --from=roksbnkctl-build /out/roksbnkctl /usr/local/bin/roksbnkctl
 # colliding with OpenShift's per-namespace UID range. Sprint 9 /
 # PRD 04 §"Resolved in Sprint 9" — required for
 # TestIntegration_K8sBackend_JobMode_Echo to start the pod.
+#
+# Provision a writable HOME for uid 1000 BEFORE the USER drop. The
+# ibmcloud CLI writes its config dir (`$HOME/.bluemix/`) on first
+# invocation regardless of subcommand — even `ibmcloud --version`
+# fails with `Configuration error: mkdir /.bluemix: permission
+# denied` if HOME isn't set or points to an unwritable location.
+# Sprint 9 / v1.2.1 fix: create /home/runner owned by uid 1000 and
+# set HOME so ibmcloud's first-run config write lands there. The
+# directory survives image rebuilds because it's part of the image
+# layer; per-Pod state still works because $HOME is read-write for
+# the running user inside the container.
+RUN install -d -m 0755 -o 1000 -g 0 /home/runner
+ENV HOME=/home/runner
 USER 1000
+WORKDIR /home/runner
 
 # No ENTRYPOINT — Sprint 6 (PLAN.md row §"Code/config deliverables" +
 # `issues/resolved_sprint5_staff.md` Issue 1). The image carries
