@@ -174,6 +174,57 @@ make release-publish VERSION=v1.0.1
 
 The old `.github/workflows/book.yml build-deploy` step is gone. See `Makefile`'s `release-publish` target and the `book-publish` target it composes.
 
+## v1.0.2 — 2026-05-13
+
+Live-run validation pass. The first chained `scripts/e2e-test-full.sh` run (baseline `A-H` followed by the backend matrix `I-N`) against a real IBM Cloud ROKS cluster surfaced ten latent bugs ranging from binary correctness to test-orchestration to terraform cloud-init prep. All fixed in this release.
+
+### Fixed
+
+#### Binary correctness
+
+- **`roksbnkctl test dns` exits non-zero on any non-NOERROR Rcode.** `internal/cli/test.go::runDNSSingleVantage` now treats NXDOMAIN, SERVFAIL, REFUSED, NOTAUTH as failures (exit 1), not just transport-layer TIMEOUT/ERROR. The text rendering already classified them as `⚠` distinct from `✓`; the exit code now mirrors that classification, matching PRD 03's CI-assertion contract.
+- **SSH backend strips local-only env vars before propagation.** `internal/exec/ssh.go::mergeSSHEnv` no longer forwards `HOME`, `USER`, `LOGNAME`, `PWD`, `OLDPWD`, `SHELL`, `PATH`, `TMPDIR` from the caller's local shell to the remote shell. These are per-user / per-session values that don't make sense on a different machine — the remote sshd sets them from `/etc/passwd`. Without the filter, the remote `ibmcloud` CLI tried to `mkdir /home/<caller-local-user>` and fail-stopped with `permission denied`.
+
+#### Tools-image architecture
+
+- **`tools/docker/ibmcloud` Dockerfile bundles the `roksbnkctl` binary.** Sprint 5's k8s-backend DNS-probe Job design assumed the bundled tools image carried `/usr/local/bin/roksbnkctl` (per the inline comment at `internal/cli/test.go::runDNSProbeK8s`), but the Dockerfile until now only installed `ibmcloud`. Added a multi-stage build: Stage 1 compiles roksbnkctl from the repo source (so the image's bundled binary matches the host binary's version), Stage 2 copies it into the runtime image alongside `ibmcloud`. `tools/docker/Makefile` shifts the build context to the repo root with `--build-arg ROKSBNKCTL_VERSION/COMMIT/BUILD_DATE` so the bundled binary's `--version` output matches the host's.
+
+#### Terraform / cloud-init
+
+- **Jumphost cloud-init now logs `ibmcloud` in as the `ubuntu` user.** `terraform/modules/testing/main.tf::jumphost_user_data` ran `ibmcloud login --apikey` only as root, leaving the `ubuntu` user's `~/.bluemix/` empty. When `roksbnkctl --on jumphost ibmcloud …` SSHed in as ubuntu, ibmcloud reported `No API endpoint set` and aborted. Added a `su - ubuntu -c "ibmcloud login …"` step (plus container-service + vpc-infrastructure plugin installs under ubuntu's profile).
+
+#### E2E orchestration scripts
+
+- **`scripts/e2e-test.sh` Phases D8 and H are now env-flag-gated.** `SKIP_PHASE_D_DOWN=1` skips the `D8 down` (cluster teardown at end of Phase D); `SKIP_PHASE_H=1` skips the final workspace-delete. Defaults preserve historical behaviour (both phases run). `scripts/e2e-test-full.sh::run_baseline_AtoG` sets both flags when chaining baseline → backends so the cluster + workspace survive the transition — without this the backends driver hit Phase L (`ops install`) against a destroyed cluster.
+- **`preflight_ssh_target` in `scripts/e2e-test-backends.sh` seeds `~/.roksbnkctl/known_hosts` via `ssh-keyscan -t ecdsa`** before any SSH-using phase runs. Without this, the first SSH connection in Phase I fail-stopped with `unknown host` because the binary's `--insecure-host-key` flag is silently dropped by `exec --on jumphost` (DisableFlagParsing interaction — see Known v1.0.3 candidates below).
+- **LD3 and LD10 capture patterns fixed.** Both were `out=$(cmd || true); rc=$?` which always read `rc=0` regardless of the binary's actual exit code (the `|| true` makes the command substitution return 0 unconditionally). Switched to `set +e; out=$(cmd); rc=$?; set -e`. Side effect: these tests had been silently always-failing since they were written; this is the first release where they actually validate the binary.
+- **LD5 assertion string matches the binary's actual JSON output format.** Was `"\"backend\":\"k8s\""` (compact); the binary uses `json.Encoder.SetIndent("", "  ")` and emits `"backend": "k8s"` (with a space). Added the space.
+- **Chapter 31 (`Building from source`) — three untagged code fences explicitly tagged as `text`** so `mdbook test` doesn't try to compile them as Rust.
+
+#### CI
+
+- **`.github/workflows/book.yml` no longer runs `mdbook test`.** The step invoked rustdoc on every untagged code fence in the book; this book has zero Rust and the step generated only false positives. The `mdbook build` step still validates markdown rendering, link integrity, and structural correctness.
+- **`.goreleaser.yml` no longer references the PDF book via `release.extra_files`.** The previous comment claimed goreleaser would warn-and-continue on a missing path; in practice it fail-stops the release publish. The PDF is now uploaded separately by `make release-publish` (which runs `gh release upload` from the integrator's machine after the CI workflow finishes).
+- **`book/book.toml` marks `[output.pandoc]` as `optional = true`** so host-install mdbook (no pandoc on PATH) skips PDF rendering with a warning instead of failing the build.
+
+### Known v1.0.3 candidates
+
+Surfaced during this validation pass; not fixed in v1.0.2 because they require deeper changes:
+
+- **SSH backend `ibmcloud` session refresh.** IBM Cloud IAM tokens expire after ~60 min. Cloud-init's `ibmcloud login` happens at instance-boot time; by the time a 70+ minute cluster bring-up finishes and tests start, the jumphost's ubuntu session is past its TTL. The SSH backend doesn't currently auto-relogin from `IBMCLOUD_API_KEY` before each invocation. Workaround: trigger backend-matrix tests within the session lifetime of cluster bring-up, or manually `ibmcloud login` on the jumphost before each phase.
+- **`--insecure-host-key` flag silently dropped by `exec --on jumphost`.** `internal/cli/cluster.go::runExec` sets `DisableFlagParsing` so cobra doesn't grab flags meant for the wrapped binary; this also discards `--insecure-host-key` as a persistent flag. `extractOnFlag` pulls `--on` out manually; needs an analogous `extractInsecureHostKey` to plumb the flag through. Workaround for v1.0.2: the e2e script seeds `~/.roksbnkctl/known_hosts` via `ssh-keyscan` in preflight, sidestepping the binary path entirely.
+
+### Release-flow
+
+Integrator sequence is unchanged from v1.0.1:
+
+```sh
+make release VERSION=v1.0.2
+git tag v1.0.2 && git push origin main --tags
+# wait for .github/workflows/release.yml to publish the GitHub Release
+make release-publish VERSION=v1.0.2
+```
+
 ## Unreleased (v1.x)
 
 Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next dev cycle's CHANGELOG entries land here.
