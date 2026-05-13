@@ -700,6 +700,57 @@ None expected — v1.0 closed cleanly with the Sprint 7 integration. Sprint 8 st
 
 ---
 
+## Sprint 9 — PRD 04 cred-passing closure + CI polish (post-v1.1)
+
+### Goal
+
+Ship `v1.2.0`: close out the two PRD 04 deferred items that turned up as integration-test gaps during the v1.1.x cycle, plus the smaller CI / Makefile polish that prevents the v1.1.0 → v1.1.1 → v1.1.2 cascade from repeating.
+
+The PRD 04 items are the headline work — they unblock two `t.Skip`'d integration tests landed on `776fe56` and close §"Open questions" items in PRD 04 that have been open since the v0.9 cycle.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **Cred tmpfile-bind-mount pattern** for docker backend — write `IBMCLOUD_API_KEY` to a per-run `0600` tempfile, bind-mount read-only at `/run/secrets/ibmcloud_api_key`, set `IBMCLOUD_API_KEY_FILE=/run/secrets/ibmcloud_api_key` and a small `entrypoint-shim` (or inline `sh -c export IBMCLOUD_API_KEY=$(cat …) && exec …` wrap) so the existing dockerImageBinary["ibmcloud"] login wrap sees the key. Closes PRD 04 §"Open questions" §"M2 cred audit"; unblocks `TestIntegration_DockerBackend_NoLeakInInspect`. | `internal/exec/docker.go` (edit), `internal/exec/docker_integration_test.go` (remove `t.Skip`) |
+| 2 | **K8s trusted-profile auto-provisioning** path for the ops pod (PRD 04 §"Implementation tasks" task 8 + §"Open questions" first item) — when the resolved IBM Cloud API key has IAM perms to create a trusted profile, `roksbnkctl ops install` provisions `roksbnkctl-ops` linked to the ops pod's SA + projected SA token, and the ops pod assumes the profile at runtime so the static API key never lands in the Secret. Fall back to the v1.0.x static-key Secret when perms don't allow. New flag: `--trusted-profile=auto\|on\|off` (default `auto`). | `internal/exec/k8s.go` (edit), `internal/cli/ops.go` (edit), `internal/ibm/trusted_profile.go` (new) |
+| 3 | **Job pod `RunAsUser` strategy** (option 1 from `k8s_integration_test.go:101-119` TODO): switch the JobMode echo smoke test from `busybox:1.36` to `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:<tag>` (already runs as uid 1000). Keeps `runAsJob`'s strict `RunAsNonRoot: true` SecurityContext intact for all callers. Unblocks `TestIntegration_K8sBackend_JobMode_Echo`. | `internal/exec/k8s_integration_test.go` (edit; remove `t.Skip`) |
+| 4 | **`TESTCONTAINERS_RYUK_DISABLED=true`** in CI integration job env — kills the docker-hub `testcontainers/ryuk` pull that produced the intermittent "too many requests" flake on `TestIntegration_Connect_Whoami`. Ephemeral runners don't need the reaper. | `.github/workflows/ci.yml` (edit) |
+| 5 | **`Makefile` pre-tag checklist** additions to `release` target — run `staticcheck ./...` and `go build -tags integration ./...` as part of the local gate so the next cut catches the same shape of gap that produced v1.1.0 → v1.1.1 → v1.1.2. | `Makefile` (edit) |
+
+### Test deliverables
+
+- Skip-removal counts as the v1.2.0 acceptance: `go test -tags integration ./internal/exec/...` green for both `TestIntegration_DockerBackend_NoLeakInInspect` and `TestIntegration_K8sBackend_JobMode_Echo` against a kind cluster + local docker daemon.
+- **Live-verify** the trusted-profile path against a real IBM Cloud workspace: `roksbnkctl ops install --trusted-profile=auto` provisions the profile, the ops pod assumes it, `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` succeeds without a static-key Secret. Sandbox-permitting; document the run in the integration commit.
+- **No regression** on the static-key fallback: `roksbnkctl ops install --trusted-profile=off` produces the v1.0.x-shaped Secret + works as today.
+
+### Documentation deliverables
+
+- **PRD 04** §"Open questions" items closed → moved to a new §"Resolved in Sprint 9" subsection (mirrors PRD 03's §"Resolved in Sprint 4" pattern). Document the tmpfile-bind-mount design and the trusted-profile flow.
+- **Chapter 14 (Credentials and the resolver chain)** — short section on the tmpfile pattern (one paragraph; readers don't need to know the docker plumbing details, just that `docker inspect` no longer leaks the key) and the `--trusted-profile=auto\|on\|off` flag.
+- **Chapter 19 (The in-cluster ops pod)** — `roksbnkctl ops install --trusted-profile=auto` flow + how to verify the profile is in use (`oc get serviceaccount roksbnkctl-ops -o yaml` showing the trusted-profile annotation).
+- **CHANGELOG `v1.2.0`** entry under `## Unreleased (v1.x)`.
+
+### Gate to `v1.2.0` tag
+
+- All four agents' issue files at `Status: resolved` or `accepted`.
+- **Whole-tree** `go build/test/vet/gofmt/staticcheck` green + `go build -tags integration ./...` green (this is the new pre-tag gate item from Code deliverable 5).
+- Both previously-skipped integration tests pass under `-tags integration` against a real kind + docker setup; the skip markers are removed (not left in place).
+- `mdbook build book/` clean; chapter 14 + 19 cross-links resolve.
+- CHANGELOG `v1.2.0` entry final.
+
+### Risks
+
+- **Trusted-profile provisioning** needs IAM `iam-identity` permissions on the caller's API key. The auto path must detect missing perms and fall back cleanly — verified via a sandbox run with a deliberately-scoped key. Mitigation: the `--trusted-profile=auto` semantics include the fallback by definition; staff verifies the failure-mode against a real IAM-restricted key.
+- **Tmpfile lifetime** — the tempfile must outlive every container that needs it (long-running ops pods, terraform docker runs that can take 20+ minutes) but get cleaned up on backend exit. Pattern: `t.TempDir`-equivalent at backend-init time, registered with `runtime.SetFinalizer` or the existing context-cancel cleanup goroutine. Validator regression-checks that no `/tmp/roksbnkctl.*` files survive a normal `roksbnkctl --backend docker` invocation.
+- **Trusted-profile name collisions** — multiple workspaces against the same IBM Cloud account would race for `roksbnkctl-ops`. Either namespace by workspace (`roksbnkctl-ops-<workspace>`) or reuse the same profile across workspaces. PRD 04 update should document the chosen approach.
+
+### Carry-overs from prior sprints
+
+The two `t.Skip` markers on `776fe56` (`TestIntegration_DockerBackend_NoLeakInInspect` + `TestIntegration_K8sBackend_JobMode_Echo`) are the explicit Sprint 9 inputs. Both tests' TODO comments name the design choices Sprint 9 closes.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
@@ -708,7 +759,7 @@ These came up during the PRDs but aren't blocking v1.0:
 
 - terraform `--backend k8s` and `--backend ssh` (state-handling work — v1.1)
 - OpenShift CRDs in `roksbnkctl k get` (`Project`, `Route`, etc. — v1.1 — tracked in PRD 02 § Phase 2.1)
-- IAM trusted-profile auto-provisioning (v1.1 — PRD 04 open question)
+- ~~IAM trusted-profile auto-provisioning~~ — scheduled for Sprint 9 / `v1.2.0`
 - RHEL/CentOS/Alpine SSH apt-bootstrap (v1.x — PRD 03 explicitly out of scope)
 - Windows full TTY support (v2 — needs ssh-agent named-pipe protocol)
 - Multi-hop SSH ProxyJump (v1.1 — PRD 01 deferred)
