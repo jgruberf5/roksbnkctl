@@ -225,11 +225,9 @@ git tag v1.0.2 && git push origin main --tags
 make release-publish VERSION=v1.0.2
 ```
 
-## Unreleased (v1.x)
+## v1.1.0 — 2026-05-13
 
-Tracked in [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The next dev cycle's CHANGELOG entries land here.
-
-The first post-v1.0 cycle (Sprint 8 → `v1.1.0`) ships the cluster/trial phase split as a first-class command surface. See [PRD 06](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md) for the design rationale.
+The first post-v1.0 feature cycle (Sprint 8). Ships the cluster/trial phase split as a first-class command surface — `roksbnkctl bnk up/down` lets you iterate on a BNK trial without destroying its cluster, and the unscoped `roksbnkctl up/down` become shape-aware composites that preserve v1.0.x behaviour byte-for-byte on legacy single-state workspaces. See [PRD 06](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md) for the design rationale and [PLAN.md §"Sprint 8"](docs/PLAN.md) for the cycle's deliverables.
 
 ### Added
 
