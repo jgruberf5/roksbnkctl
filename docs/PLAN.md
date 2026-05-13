@@ -647,6 +647,59 @@ Tag `v1.0` only when **all** of the following hold:
   - Dogfood feedback integrated
   - Optional PDF artifact attached to the GitHub release
 
+## Sprint 8 — cluster/trial phase split (PRD 06; post-v1.0)
+
+### Goal
+
+Ship `v1.1.0`: make the two-phase lifecycle the default for new workspaces, add `roksbnkctl bnk up/down` so trial-only teardowns are a first-class command, and convert the unscoped `up`/`down` into shape-aware composites that preserve v1.0.x behavior for legacy single-state workspaces.
+
+Reference spike: `spike/bnk-phase-split` branch (commit `00181d0`) — proof-of-concept that the shape detector identifies the real `canada-roks` legacy state correctly. The branch is reference-only; the staff agent re-implements from PRD 06.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | `WorkspaceShape` enum, `DetectShape`, `tfstateHasResources`, `trialStateHasClusterModules` | `internal/config/tfstate.go` (new) |
+| 2 | Remove duplicate `tfstateHasResources`; drop unused `encoding/json` import | `internal/config/workspace.go` (edit) |
+| 3 | `bnk` cobra group; `bnk up` (auto-bootstrap cluster phase with confirm); `bnk down`; flag wiring matching `cluster up`/`down` | `internal/cli/bnk_phase.go` (new) |
+| 4 | Refactor: rename `runUp` body → `runTrialUp`, `runDown` body → `runTrialDown`; new composite `runUp`/`runDown` keyed on `DetectShape` | `internal/cli/lifecycle.go` (edit) |
+| 5 | `runClusterUp` refuses on `ShapeLegacySingle`; `runClusterDown` refuses on `LegacySingle`/`Split`/`Empty`; drop the v1.0.x warning-but-prompt copy | `internal/cli/cluster_phase.go` (edit) |
+
+### Test deliverables
+
+- **Unit tests for shape detection**: synthetic minimal tfstate fixtures (one per shape — `empty`, `cluster-only`, `split`, `legacy-single`) checked into `internal/config/testdata/`; `DetectShape` table-test covers all four plus the missing-file and malformed-json edge cases.
+- **Unit tests for dispatch**: `internal/cli/bnk_phase_test.go` covers the bnk refusal matrix using a faked `WorkspaceStateDir` (set `ROKSBNKCTL_HOME` to a temp dir; populate the tfstate fixtures by shape).
+- **Live verification (manual, sprint integration)**: against the existing `canada-roks` legacy workspace — `bnk down` and `cluster down` refuse with legacy-single-state errors; `down` still works monolithically (don't actually destroy — verify it gets to the confirm prompt). Against a fresh sandbox workspace — full `cluster up` → `bnk up` → `bnk down` → `bnk up` → `cluster down` cycle.
+- **E2E patch**: extend `scripts/e2e-test.sh` (or a v1.1-specific subset) with a new Phase that runs the `cluster up` → `bnk up` → `bnk down` → `cluster down` cycle and asserts cluster identity persistence via `cluster-outputs.json` across the trial down/up boundary.
+
+### Documentation deliverables
+
+- **Chapter 8 ("The cluster phase")** — reframe from "opt-in two-phase mode" to "the default for new workspaces"; cross-link to the new `bnk` chapter material.
+- **Chapter 10 ("Deploying BNK trials")** — add a `roksbnkctl bnk up`/`bnk down` section with the bootstrap-prompt sample output, the dispatch table from PRD 06 §"Dispatch table" (user-facing simplification), and worked examples for the four shapes.
+- **Chapter 11 ("Tearing down")** — add a phase-aware decision matrix: "I want to keep the cluster → `bnk down`; I want everything gone → `down`; I want only the cluster → `cluster down` (after `bnk down`)."
+- **CHANGELOG `v1.1.0`** section under `## Unreleased` → renamed to `## v1.1.0 — <date>` at tag time. Added subsection covers `bnk` group, composite up/down, shape detection, refusal logic.
+
+### Gate to `v1.1.0` tag
+
+- All four agents' issue files at `Status: resolved` or `accepted`.
+- `go build/test/vet/gofmt` green.
+- Live verification (canada-roks refusals + at least one full sandbox cycle) documented in the integration commit message or `resolved_sprint8_*.md`.
+- Chapter 8/10/11 edits render cleanly in `mdbook build`; cross-links resolve.
+- `roksbnkctl --help` lists `bnk` alongside `cluster`.
+- CHANGELOG `v1.1.0` entry final.
+
+### Risks
+
+- **Double-confirm UX in `bnk up` on empty workspace** — bootstrap prompt + apply prompt for one user command. Mitigation: `--auto` threads through; document the two-prompt shape in chapter 10.
+- **Docker backend composition gap** — composite `up` on empty/split workspaces against a docker-backend workspace would run `cluster up` locally then trial in docker. Mitigation: the composite explicitly disables itself on non-local backends for empty/split paths in this sprint; full docker-mode composition is a follow-up PRD. Document the limitation in chapter 17 (Execution backends).
+- **No automated migration for legacy single-state** — refusal messages reference a `roksbnkctl migrate` that doesn't exist. Mitigation: legacy users have the working `up`/`down` flow and aren't blocked; ship migrate when a real user asks. Document the migration story (and its absence) in chapter 11.
+
+### Carry-overs from prior sprints
+
+None expected — v1.0 closed cleanly with the Sprint 7 integration. Sprint 8 starts a new cycle against `main`.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
