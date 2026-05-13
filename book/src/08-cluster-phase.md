@@ -273,13 +273,13 @@ The refusal messages on a legacy workspace look like:
 
 ```
 $ roksbnkctl -w canada-roks cluster down
-this workspace is legacy single-state; cluster and BNK trial share one state.
-Use `roksbnkctl down` to tear down both, or migrate the state first
+this workspace is legacy single-state; cluster and BNK trial share one state. Use `roksbnkctl down` to tear down both, or migrate the state first
 
 $ roksbnkctl -w canada-roks bnk down
-this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
-Use `roksbnkctl down` to tear down both, or migrate the state first
+this workspace is legacy single-state; `bnk down` can't isolate the trial phase. Use `roksbnkctl down` to tear down both, or migrate the state first
 ```
+
+The refusals print as a single line each — wrapping is a function of your terminal width. Grep against any of the inline punctuation (e.g. `\`bnk down\` can't isolate`) lands a clean match.
 
 There is no automatic state-migration command in v1.1.0. The refusal text references migration ("or migrate the state first") because a future `roksbnkctl migrate` is planned, but until it ships, legacy workspaces stay on the unscoped `up` / `down` flow that's worked for them since v1.0. See [Chapter 11 §"The phase-aware decision tree"](./11-tearing-down.md#the-phase-aware-decision-tree) for the full destruction-time decision matrix.
 

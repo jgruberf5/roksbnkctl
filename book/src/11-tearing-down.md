@@ -21,6 +21,8 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
     → see Chapter 8 §"Legacy single-state workspaces" to confirm your shape
 ```
 
+Quick shape check: `ls ~/.roksbnkctl/<workspace>/` — if you see `state-cluster/`, you're on the v1.1.0 split shape; if you see only `state/`, you're on legacy single-state.
+
 The big rule, stated up front: **destroy in reverse of create**. Trial first (`bnk down`), cluster second (`cluster down`). The unscoped `roksbnkctl down` does this ordering for you — on a split workspace it runs the trial destroy first and then the cluster destroy. On a legacy single-state workspace it runs a monolithic destroy (the v1.0.x behaviour, byte-for-byte). Either way you don't have to think about ordering; `down` is the safe default.
 
 The phase-scoped commands (`bnk down`, `cluster down`) are the precision tools — they let you keep one phase across many cycles of the other. They also **refuse loudly** if you ask them to do something that would orphan resources or that the shape doesn't allow. The full refusal catalogue is in [§"Refusal messages catalogue"](#refusal-messages-catalogue) below; the rule of thumb is that the error message always names the verb that would actually work.

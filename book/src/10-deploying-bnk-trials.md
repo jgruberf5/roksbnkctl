@@ -227,7 +227,7 @@ Continue? [y/N]: y
 Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 ```
 
-Two prompts fire in the empty-workspace case — one for "do you want to bootstrap the cluster phase," and one for "apply this terraform plan" inside the nested `cluster up` (and a third when the trial-phase apply also prompts unless `--auto` is set). For a 30-minute operation we kept the prompts explicit rather than collapsing them. `--auto` skips all three:
+Three prompts fire in the empty-workspace case — one for "do you want to bootstrap the cluster phase," one for "apply this terraform plan" inside the nested `cluster up`, and a third when the trial-phase apply prompts. (On a non-empty workspace where `bnk up` skips the cluster bootstrap, only the latter two fire — and a `ShapeClusterOnly`/`ShapeSplit` `bnk up` is the common iteration case.) For a 30-minute operation we kept the prompts explicit rather than collapsing them. `--auto` skips all three:
 
 ```
 $ roksbnkctl bnk up --auto
