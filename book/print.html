@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
+            window.path_to_searchindex_js = "searchindex-6d4594f0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -427,18 +427,24 @@ roksbnkctl down        # tear it all back down when you're done evaluating
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
 <li><strong>Git</strong> to clone the repository (only if building from source — not needed if you grab a pre-built binary).</li>
 <li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
-<li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>. This is the only required external prerequisite at v1.0; everything else (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>, <code>docker</code>) is optional and only needed for the corresponding passthrough or backend.</li>
+<li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>.</li>
+<li><strong>Helm 3 on PATH</strong> at runtime — required during <code>roksbnkctl up</code>. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>; without <code>helm</code> the apply errors out with <code>exit status 127 — helm: not found</code>.</li>
 </ul>
+<p>The remaining tools (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>, <code>docker</code>) are optional and only needed for the corresponding passthrough or backend.</p>
 <p>You do not need Docker installed to <em>use</em> <code>roksbnkctl</code> with the default <code>local</code> backend. Docker is required only if you opt in to <code>--backend docker</code> for <code>terraform</code> / <code>ibmcloud</code>. The k8s and ssh backends are alternatives that need neither host Docker nor host Go.</p>
 <h2 id="installing-prerequisites"><a class="header" href="#installing-prerequisites">Installing prerequisites</a></h2>
-<p>Install paths per platform. <code>terraform</code> is the only one strictly required for v1.0; the rest are optional, install only what you need.</p>
+<p>Install paths per platform. <code>terraform</code> and <code>helm</code> are strictly required for v1.0 (<code>helm</code> is invoked by terraform’s <code>local-exec</code> provisioners during <code>roksbnkctl up</code>); the rest are optional, install only what you need.</p>
 <h3 id="macos--homebrew"><a class="header" href="#macos--homebrew">macOS — Homebrew</a></h3>
 <pre><code class="language-bash">brew install terraform               # required
+brew install helm                    # required — terraform `local-exec` provisioner shells out to `helm`
 brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
-brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough
+brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough (`roksbnkctl k *` is internalised)
 brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:&lt;t&gt;` throughput tests
-# kubectl-oc (Red Hat OpenShift CLI) — no brew formula; download from
-# https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz
+
+# oc (Red Hat OpenShift CLI) — optional, only for `roksbnkctl oc …` passthrough.
+# No brew formula; install via the Red Hat mirror tarball:
+curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz \
+  | sudo tar -xz -C /usr/local/bin oc
 </code></pre>
 <p>If you installed <code>ibmcloud-cli</code>, add the plugins roksbnkctl uses:</p>
 <pre><code class="language-bash">ibmcloud plugin install kubernetes-service -f
@@ -453,16 +459,29 @@ https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
   | sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update &amp;&amp; sudo apt-get install -y terraform
 
+# helm 3 — required (terraform's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`)
+curl https://baltocdn.com/helm/signing.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] \
+https://baltocdn.com/helm/stable/debian/ all main" \
+  | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update &amp;&amp; sudo apt-get install -y helm
+
 # ibmcloud CLI + plugins — optional, for `roksbnkctl ibmcloud …` passthrough with --backend local
 curl -fsSL https://clis.cloud.ibm.com/install/linux | sudo sh
 ibmcloud plugin install kubernetes-service -f
 ibmcloud plugin install cloud-object-storage -f
 
-# kubectl — optional, passthrough only (`roksbnkctl k *` is internalised and needs no host install)
+# kubectl — optional, only for `roksbnkctl kubectl &lt;args&gt;` passthrough (`roksbnkctl k *` is internalised and needs no host install)
 sudo snap install kubectl --classic
 # or via direct download:
 # curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 # chmod +x kubectl &amp;&amp; sudo mv kubectl /usr/local/bin/
+
+# oc (Red Hat OpenShift CLI) — optional, only for `roksbnkctl oc &lt;args&gt;` passthrough.
+# No apt package; install via the Red Hat mirror tarball:
+curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz \
+  | sudo tar -xz -C /usr/local/bin oc
 
 # iperf3 — optional, only for `--backend local` / `--backend ssh:&lt;t&gt;` throughput tests
 sudo apt-get install -y iperf3
@@ -470,12 +489,19 @@ sudo apt-get install -y iperf3
 <p>Instructions above target Ubuntu and Debian. For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …), a quick online search for “install terraform on <em>&lt;your distro&gt;</em>” — and the same pattern for <code>ibmcloud</code>, <code>kubectl</code>, and <code>iperf3</code> — yields the equivalent commands. HashiCorp ships an RPM repo at <a href="https://rpm.releases.hashicorp.com">https://rpm.releases.hashicorp.com</a> covering RHEL/Fedora, and most distributions package <code>kubectl</code> and <code>iperf3</code> in their official repos; the IBM Cloud CLI installer at <a href="https://clis.cloud.ibm.com/install/linux">https://clis.cloud.ibm.com/install/linux</a> is a single curl-pipe-sh that works across distros.</p>
 <h3 id="windows--chocolatey"><a class="header" href="#windows--chocolatey">Windows — Chocolatey</a></h3>
 <pre><code class="language-powershell">choco install terraform
-choco install ibmcloud-cli   # optional
-choco install kubernetes-cli # optional, provides kubectl
-choco install iperf3         # optional
+choco install kubernetes-helm  # required — terraform local-exec provisioner shells out to `helm`
+choco install ibmcloud-cli     # optional
+choco install kubernetes-cli   # optional, provides kubectl
+choco install openshift-cli    # optional, provides oc (Red Hat OpenShift CLI)
+choco install iperf3           # optional
 </code></pre>
 <p>Or via <a href="https://scoop.sh/">Scoop</a>:</p>
-<pre><code class="language-powershell">scoop install terraform ibmcloud-cli kubernetes-cli iperf3
+<pre><code class="language-powershell">scoop install terraform helm ibmcloud-cli kubernetes-cli openshift-cli iperf3
+</code></pre>
+<p>If <code>choco</code>/<code>scoop</code> don’t carry <code>openshift-cli</code> for your version, grab the Windows tarball from the Red Hat mirror directly:</p>
+<pre><code class="language-powershell">Invoke-WebRequest -Uri https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-windows.zip -OutFile oc.zip
+Expand-Archive oc.zip -DestinationPath "$env:USERPROFILE\bin\"
+# then add %USERPROFILE%\bin to your PATH
 </code></pre>
 <p>After installing <code>ibmcloud-cli</code>, add the plugins:</p>
 <pre><code class="language-powershell">ibmcloud plugin install kubernetes-service -f
@@ -577,6 +603,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 </code></pre>
 <p><code>doctor</code> runs the prereq + credentials report. Sample output on a healthy machine looks like this (yours will differ depending on which optional binaries you have installed and whether you’ve initialised a workspace):</p>
 <pre><code>✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+✓  helm              /usr/local/bin/helm (v3.20.2)                                            (required for `roksbnkctl up`; terraform `local-exec` provisioners shell out to helm)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
 ✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (optional; `roksbnkctl kubectl` passthrough)
 ✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (optional; `roksbnkctl oc` passthrough)
@@ -586,7 +613,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 ✓  ibmcloud api key  resolved via OS keychain                                                 (auth for terraform + IBM SDK calls)
 ✓  ibm cloud auth    OK (account: Main F5 Account)                                            (verifies API key works against IBM IAM)
 </code></pre>
-<p>Each row is <code>&lt;status&gt; &lt;name&gt; &lt;detail&gt; &lt;why we care&gt;</code>. Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> is the only check that’s hard-required at v1.0 — the rest are either optional passthroughs or specific to test suites. <a href="#doctor-checking-your-environment">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
+<p>Each row is <code>&lt;status&gt; &lt;name&gt; &lt;detail&gt; &lt;why we care&gt;</code>. Failures are red <code>✗</code> and exit non-zero; warnings are yellow <code>⚠</code> and don’t fail the run. <code>terraform</code> and <code>helm</code> are the hard-required checks at v1.0 — the rest are either optional passthroughs or specific to test suites. <a href="#doctor-checking-your-environment">Chapter 5</a> walks through what each check is verifying and how to fix common failures.</p>
 <h2 id="os-support-matrix"><a class="header" href="#os-support-matrix">OS support matrix</a></h2>
 <div class="table-wrapper">
 <table>
@@ -602,10 +629,11 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 </div>
 <p>“First-class” means the v1.0 acceptance criteria are validated on those platforms; “compile-only” means the binary builds and runs but interactive features (notably TTY-bound SSH) have known limitations and are not part of the v1.0 release gate.</p>
 <p>The Windows limitations are tracked in PRD 01 (the SSH client design) and largely come down to <code>golang.org/x/crypto/ssh</code>’s incomplete PTY handling on Windows and the absence of an SSH agent named-pipe protocol. File-based SSH keys work; full PTY and ssh-agent integration on Windows are on the v1.x roadmap (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”).</p>
-<h2 id="required-prerequisites--only-terraform-at-v10"><a class="header" href="#required-prerequisites--only-terraform-at-v10">Required prerequisites — only <code>terraform</code> at v1.0</a></h2>
-<p>The v1.0 surface needs exactly one binary on <code>PATH</code>:</p>
+<h2 id="required-prerequisites--terraform-and-helm-at-v10"><a class="header" href="#required-prerequisites--terraform-and-helm-at-v10">Required prerequisites — <code>terraform</code> and <code>helm</code> at v1.0</a></h2>
+<p>The v1.0 cluster lifecycle needs two binaries on <code>PATH</code>:</p>
 <ul>
 <li><strong><code>terraform</code> (&gt;= 1.5)</strong> — hard-required for any cluster lifecycle command (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>).</li>
+<li><strong><code>helm</code> (3.x)</strong> — hard-required during <code>roksbnkctl up</code>. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>. Without it, the apply fails with <code>exit status 127 — helm: not found</code>. (A v1.x effort to refactor those modules onto the <code>helm_release</code> terraform resource would eliminate the host requirement; tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.)</li>
 </ul>
 <p>Optional binaries — only needed for the corresponding passthrough or fallback path:</p>
 <ul>
@@ -633,6 +661,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>A bare <code>roksbnkctl doctor</code> runs the <strong>general</strong> checks: tooling on <code>PATH</code>, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine post-Sprint 2 looks like this:</p>
 <pre><code>roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
+✓  helm              /usr/local/bin/helm (v3.20.2)                                            (required for `roksbnkctl up`; terraform `local-exec` shells out to helm)
 ⚠  iperf3            not on PATH                                                              (needed for `roksbnkctl test throughput`)
 ✓  kubectl           /usr/local/bin/kubectl (clientVersion:)                                  (internalised in roksbnkctl k *; passthrough still works if installed)
 ✓  oc                /usr/local/bin/oc (Client Version: 4.21.10)                              (internalised in roksbnkctl k *; passthrough still works if installed)
@@ -654,9 +683,29 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>The <code>BackendName</code> column on the underlying <code>Check</code> struct (<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/doctor/check.go"><code>internal/doctor/check.go</code></a>) is reserved for the per-backend probes that land in Sprint 4 (PRD 03). Until then it stays empty for every general check.</p>
 <h2 id="each-check-explained"><a class="header" href="#each-check-explained">Each check explained</a></h2>
 <h3 id="terraform--required"><a class="header" href="#terraform--required"><code>terraform</code> — required</a></h3>
-<p>The only <strong>hard-required</strong> binary for the <code>roksbnkctl up</code> happy path. <code>roksbnkctl</code> shells out to <code>terraform</code> via <code>terraform-exec</code> for plan/apply/destroy; without it nothing in the cluster lifecycle works.</p>
+<p>One of two <strong>hard-required</strong> binaries for the <code>roksbnkctl up</code> happy path. <code>roksbnkctl</code> shells out to <code>terraform</code> via <code>terraform-exec</code> for plan/apply/destroy; without it nothing in the cluster lifecycle works.</p>
 <p>Pass condition: a binary on <code>PATH</code>, version <code>1.5</code> or newer.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install Terraform from <a href="https://www.terraform.io/downloads">terraform.io</a>, or your distro’s package manager, then re-run <code>doctor</code>.</p>
+<h3 id="helm--required"><a class="header" href="#helm--required"><code>helm</code> — required</a></h3>
+<p>The second <strong>hard-required</strong> binary, added in v1.0.2. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code> from inside terraform’s apply phase. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
+<pre><code>Error: local-exec provisioner error
+Error running command 'helm upgrade --install cert-manager ...':
+exit status 127. Output: /bin/sh: 1: helm: not found
+</code></pre>
+<p>Pass condition: a <code>helm</code> (v3.x) binary on <code>PATH</code>. Doctor parses <code>helm version --short</code> for the version detail.</p>
+<p>Failure mode: <code>not on PATH</code>. Fix: install Helm 3 from <a href="https://helm.sh/docs/intro/install/">helm.sh/docs/intro/install/</a>, or via your distro’s package manager:</p>
+<pre><code class="language-bash"># Linux (Ubuntu/Debian — official Helm apt repo):
+curl https://baltocdn.com/helm/signing.asc | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update &amp;&amp; sudo apt-get install -y helm
+
+# macOS:
+brew install helm
+
+# Windows:
+choco install kubernetes-helm
+</code></pre>
+<p>A v1.x effort to refactor the <code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code> modules onto the <code>helm_release</code> terraform resource type (which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime) would eliminate this host requirement. Tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
 <h3 id="iperf3--informational"><a class="header" href="#iperf3--informational"><code>iperf3</code> — informational</a></h3>
 <p>Used only by <code>roksbnkctl test throughput</code> in its host-iperf3 modes. After Sprint 4 lands the k8s execution backend (PRD 03), <code>iperf3</code> moves entirely in-cluster and this row goes away for the everyday user.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.</p>
@@ -7523,7 +7572,7 @@ The CLI subtree managing workspaces. <code>roksbnkctl ws new/use/list/delete</co
 <p>For users who just want to <em>install</em> the binary, <a href="#installation">Chapter 4 — Installation</a> is the right page. This chapter is the build-side companion.</p>
 <h2 id="go-version-requirement"><a class="header" href="#go-version-requirement">Go version requirement</a></h2>
 <p>The minimum Go version is the one pinned in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/go.mod"><code>go.mod</code></a>:</p>
-<pre><code>go 1.25.0
+<pre><code class="language-text">go 1.25.0
 </code></pre>
 <p>We pin to a recent toolchain for two reasons:</p>
 <ol>
@@ -7579,7 +7628,7 @@ make lint               # gofmt + vet + staticcheck (if installed)
 <p>For users who want to <em>not</em> use the embedded HCL, the <code>tf_source: github</code> or <code>tf_source: local</code> options in the workspace config bypass it entirely. See <a href="#tf_source">Chapter 12 §“tf_source:”</a>.</p>
 <h2 id="the-bundled-tools-images"><a class="header" href="#the-bundled-tools-images">The bundled tools images</a></h2>
 <p>The <code>tools/docker/</code> directory holds Dockerfiles for the images the <code>docker</code> and <code>k8s</code> backends use:</p>
-<pre><code>tools/docker/
+<pre><code class="language-text">tools/docker/
 ├── Makefile
 ├── ibmcloud/
 │   └── Dockerfile      # roksbnkctl-tools-ibmcloud
@@ -7643,7 +7692,7 @@ go run ./tools/refgen/tfvars-md &gt; book/src/29-terraform-variable-reference.md
 </div>
 <p>The Windows caveat is real: <code>golang.org/x/crypto/ssh</code>’s PTY allocation isn’t complete on Windows, so <code>roksbnkctl shell --on jumphost</code> falls back to a non-TTY shell. The other commands (exec, ibmcloud, kubectl) work fine on Windows.</p>
 <p>Output from <code>goreleaser release --snapshot --clean</code> lands in <code>dist/</code>:</p>
-<pre><code>dist/
+<pre><code class="language-text">dist/
 ├── roksbnkctl_linux_amd64_v1/
 │   └── roksbnkctl
 ├── roksbnkctl_linux_arm64/

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-12b12dfe.js";
+            window.path_to_searchindex_js = "searchindex-6d4594f0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -182,7 +182,7 @@
 <p>For users who just want to <em>install</em> the binary, <a href="./04-installation.html">Chapter 4 — Installation</a> is the right page. This chapter is the build-side companion.</p>
 <h2 id="go-version-requirement"><a class="header" href="#go-version-requirement">Go version requirement</a></h2>
 <p>The minimum Go version is the one pinned in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/go.mod"><code>go.mod</code></a>:</p>
-<pre><code>go 1.25.0
+<pre><code class="language-text">go 1.25.0
 </code></pre>
 <p>We pin to a recent toolchain for two reasons:</p>
 <ol>
@@ -238,7 +238,7 @@ make lint               # gofmt + vet + staticcheck (if installed)
 <p>For users who want to <em>not</em> use the embedded HCL, the <code>tf_source: github</code> or <code>tf_source: local</code> options in the workspace config bypass it entirely. See <a href="./12-workspace-config.html#tf_source">Chapter 12 §“tf_source:”</a>.</p>
 <h2 id="the-bundled-tools-images"><a class="header" href="#the-bundled-tools-images">The bundled tools images</a></h2>
 <p>The <code>tools/docker/</code> directory holds Dockerfiles for the images the <code>docker</code> and <code>k8s</code> backends use:</p>
-<pre><code>tools/docker/
+<pre><code class="language-text">tools/docker/
 ├── Makefile
 ├── ibmcloud/
 │   └── Dockerfile      # roksbnkctl-tools-ibmcloud
@@ -302,7 +302,7 @@ go run ./tools/refgen/tfvars-md &gt; book/src/29-terraform-variable-reference.md
 </div>
 <p>The Windows caveat is real: <code>golang.org/x/crypto/ssh</code>’s PTY allocation isn’t complete on Windows, so <code>roksbnkctl shell --on jumphost</code> falls back to a non-TTY shell. The other commands (exec, ibmcloud, kubectl) work fine on Windows.</p>
 <p>Output from <code>goreleaser release --snapshot --clean</code> lands in <code>dist/</code>:</p>
-<pre><code>dist/
+<pre><code class="language-text">dist/
 ├── roksbnkctl_linux_amd64_v1/
 │   └── roksbnkctl
 ├── roksbnkctl_linux_arm64/
