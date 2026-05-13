@@ -428,7 +428,15 @@ YAML
         yellow "  ⊘ D7 skipped — iperf3 not on PATH (install iperf3 to enable throughput test)"
     fi
 
-    step "D8 down" "$ROKSBNKCTL" down --auto -w "$WORKSPACE" --var-file "$TFVARS"
+    # SKIP_PHASE_D_DOWN=1 lets the e2e-test-full.sh wrapper keep the
+    # cluster alive after Phase D so the backends driver (Phase L
+    # ops install, L-DNS LD5-LD8, N1 mixed-mode up) sees a running
+    # cluster. Default behaviour (unset or 0) is unchanged.
+    if [[ "${SKIP_PHASE_D_DOWN:-0}" != "1" ]]; then
+        step "D8 down" "$ROKSBNKCTL" down --auto -w "$WORKSPACE" --var-file "$TFVARS"
+    else
+        yellow "  ⊘ D8 skipped (SKIP_PHASE_D_DOWN=1 — wrapper will keep the cluster alive)"
+    fi
 }
 
 phase_E_during_D() {
@@ -549,7 +557,13 @@ main() {
     should_run B && phase_B
     should_run C && phase_C
     should_run D && phase_D
-    should_run H && phase_H
+    # SKIP_PHASE_H=1 lets the e2e-test-full.sh wrapper run the baseline
+    # A-G without removing the workspace, so the backends driver can
+    # still see workspace-resolved creds when it dispatches. Default
+    # behaviour (SKIP_PHASE_H unset or 0) is unchanged.
+    if [[ "${SKIP_PHASE_H:-0}" != "1" ]]; then
+        should_run H && phase_H
+    fi
 
     echo "" >&2
     green "════════════════════════════════════════════════════════════"

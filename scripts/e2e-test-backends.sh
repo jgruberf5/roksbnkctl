@@ -259,6 +259,35 @@ preflight_ssh_target() {
     if "$ROKSBNKCTL" -w "$WORKSPACE" targets show "$SSH_TARGET" >/dev/null 2>&1; then
         SSH_READY="yes"
         log "preflight_ssh_target OK — SSH_TARGET=$SSH_TARGET"
+        # Pre-populate ~/.roksbnkctl/known_hosts via ssh-keyscan so the
+        # first SSH connection in Phase I doesn't fail with "unknown
+        # host". --insecure-host-key on the binary is supposed to handle
+        # TOFU but isn't picked up by the `exec --on` flow's flag parsing
+        # (DisableFlagParsing strips it). The ssh-keyscan workaround
+        # gives us the same effect via a different mechanism.
+        local ip
+        ip=$("$ROKSBNKCTL" -w "$WORKSPACE" targets show "$SSH_TARGET" 2>/dev/null \
+            | awk '/^host:/{print $2; exit}')
+        if [[ -n "$ip" ]] && command -v ssh-keyscan >/dev/null 2>&1; then
+            mkdir -p "$HOME/.roksbnkctl"
+            # ECDSA is what current Ubuntu cloud-init images present
+            # by default. Take just that one to avoid the binary's
+            # one-host-per-line known_hosts format conflicting.
+            if ssh-keyscan -t ecdsa "$ip" 2>/dev/null \
+                | awk '/ecdsa-sha2/{print; exit}' \
+                > "$HOME/.roksbnkctl/known_hosts.preflight.tmp"; then
+                if [[ -s "$HOME/.roksbnkctl/known_hosts.preflight.tmp" ]]; then
+                    mv "$HOME/.roksbnkctl/known_hosts.preflight.tmp" \
+                       "$HOME/.roksbnkctl/known_hosts"
+                    log "preflight_ssh_target — seeded known_hosts for $ip"
+                else
+                    rm -f "$HOME/.roksbnkctl/known_hosts.preflight.tmp"
+                    yellow "preflight_ssh_target — ssh-keyscan returned no key; Phase I may fail at first contact"
+                fi
+            else
+                rm -f "$HOME/.roksbnkctl/known_hosts.preflight.tmp"
+            fi
+        fi
     else
         SSH_READY=""
         yellow "preflight_ssh_target — \`targets show $SSH_TARGET\` failed; Phase I + M5/M6 + N3 will skip"

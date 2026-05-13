@@ -515,7 +515,33 @@ func (b *SSHBackend) runViaWrapper(ctx context.Context, client remoteClient, tem
 
 // mergeSSHEnv combines RunOpts.Env (caller-supplied) with creds.EnvVars()
 // (resolver-derived). Late entries win.
+//
+// Local-user / local-session env vars are NOT propagated to the remote
+// shell — they reference paths and identities that only exist on the
+// caller's host (e.g. HOME=/home/jgruber on the local machine doesn't
+// exist on a Ubuntu jumphost where the remote user is `ubuntu`). The
+// remote shell starts with its own login env (HOME, USER, PATH, etc.)
+// and the project-specific vars (IBMCLOUD_*, KUBECONFIG, ROKSBNKCTL_*,
+// TERM, LANG) we deliberately propagate sit on top of that.
+//
+// Without this filter, the remote ibmcloud CLI tries to mkdir the
+// caller's local HOME path and fails with "Configuration error: mkdir
+// /home/jgruber: permission denied" (e2e Phase I2 surfaced this).
 func mergeSSHEnv(env []string, creds *Credentials) []string {
+	// Env keys that are per-user or per-session on the caller's host.
+	// Stripping them lets the remote shell use its own login-derived
+	// values. Match exact key names; substrings are NOT matched (we
+	// don't want to accidentally drop IBMCLOUD_HOME or similar).
+	localOnly := map[string]bool{
+		"HOME":    true,
+		"USER":    true,
+		"LOGNAME": true,
+		"PWD":     true,
+		"OLDPWD": true,
+		"SHELL":   true,
+		"PATH":    true,
+		"TMPDIR":  true,
+	}
 	merged := make(map[string]string)
 	order := []string{}
 	add := func(kv string) {
@@ -524,6 +550,9 @@ func mergeSSHEnv(env []string, creds *Credentials) []string {
 			return
 		}
 		k := kv[:eq]
+		if localOnly[k] {
+			return
+		}
 		if _, ok := merged[k]; !ok {
 			order = append(order, k)
 		}

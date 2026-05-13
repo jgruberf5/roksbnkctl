@@ -85,6 +85,16 @@ locals {
     mkdir -p /root/.kube
     ibmcloud login --apikey "${var.ibmcloud_api_key}" -r "${var.ibmcloud_cluster_region}"${var.ibmcloud_resource_group != "" ? " -g \"${var.ibmcloud_resource_group}\"" : ""} || true
     ibmcloud ks cluster config --cluster "${var.roks_cluster_name_or_id}" --admin || true
+
+    # Also log in as the ubuntu user so roksbnkctl --on jumphost
+    # (which SSHes in as ubuntu) sees a configured API endpoint. Without
+    # this, ubuntu's ibmcloud profile is unconfigured and any call
+    # fails with "No API endpoint set". The login fork also installs
+    # the same plugins under ubuntu's profile.
+    su - ubuntu -c "ibmcloud login --apikey '${var.ibmcloud_api_key}' -r '${var.ibmcloud_cluster_region}'${var.ibmcloud_resource_group != "" ? " -g '${var.ibmcloud_resource_group}'" : ""}" || true
+    su - ubuntu -c "ibmcloud config --check-version=false" || true
+    su - ubuntu -c "ibmcloud plugin install container-service -f" || true
+    su - ubuntu -c "ibmcloud plugin install vpc-infrastructure -f" || true
     if [ -f /root/.kube/config ]; then
       chmod 600 /root/.kube/config
       mkdir -p /home/ubuntu/.kube

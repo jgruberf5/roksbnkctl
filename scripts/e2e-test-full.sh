@@ -160,14 +160,21 @@ run_baseline_AtoG() {
     # backends against it, tear down with a different backend"). The
     # baseline's Phase D + the backends' Phase N together cover both
     # the "default backend" and "mixed-backend" scenarios.
-    bold "═══ baseline driver — Phases A-H ═══"
-    log "invoking: $BASELINE_DRIVER (PHASE_FROM=$PHASE_FROM)"
+    # SKIP_PHASE_D_DOWN=1 + SKIP_PHASE_H=1 keep both the cluster (Phase
+    # D's D8) and the workspace (Phase H's ws delete) alive across the
+    # baseline → backends transition. Required so the backends driver
+    # can see a running cluster (Phase L ops install, LD5-LD8 cluster
+    # vantages, N1 mixed-mode lifecycle) and workspace-resolved creds
+    # (Phase K). When --teardown is set, the wrapper invokes Phase H
+    # separately at the very end (see main()'s post-backends block).
+    bold "═══ baseline driver — Phases A-G (D8 + H gated off) ═══"
+    log "invoking: $BASELINE_DRIVER (PHASE_FROM=$PHASE_FROM, SKIP_PHASE_D_DOWN=1, SKIP_PHASE_H=1)"
     if [[ "$DRY_RUN" == "1" ]]; then
-        DRY_RUN=1 PHASE_FROM="$PHASE_FROM" WORKSPACE="$WORKSPACE" \
+        DRY_RUN=1 SKIP_PHASE_D_DOWN=1 SKIP_PHASE_H=1 PHASE_FROM="$PHASE_FROM" WORKSPACE="$WORKSPACE" \
             TFVARS="$TFVARS" ROKSBNKCTL="$ROKSBNKCTL" LOG_DIR="$LOG_DIR/baseline" \
             "$BASELINE_DRIVER"
     else
-        PHASE_FROM="$PHASE_FROM" WORKSPACE="$WORKSPACE" \
+        SKIP_PHASE_D_DOWN=1 SKIP_PHASE_H=1 PHASE_FROM="$PHASE_FROM" WORKSPACE="$WORKSPACE" \
             TFVARS="$TFVARS" ROKSBNKCTL="$ROKSBNKCTL" LOG_DIR="$LOG_DIR/baseline" \
             "$BASELINE_DRIVER"
     fi
