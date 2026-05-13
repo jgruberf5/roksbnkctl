@@ -4,9 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased (v1.x)
+## v1.2.0 — 2026-05-13
 
-Sprint 9 closure cycle — closes the two PRD 04 §"Open questions" items that have been open since the v0.9 cycle (the cred-tmpfile-bind-mount pattern for the docker backend, and the trusted-profile auto-provisioning for the k8s backend), plus the CI / Makefile polish that prevents another v1.1.0 → v1.1.1 → v1.1.2 cascade. The headline reframe: from v1.0.x-style "static API key in env / Secret" to "no static API key on the wire when it can be avoided". Both backends get sane fallbacks for environments where the new pattern doesn't apply. See [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) for the design rationale and [PLAN.md §"Sprint 9"](docs/PLAN.md) for the cycle's deliverables. Integrator renames this section to `## v1.2.0 — <date>` at tag time.
+Sprint 9 closure cycle — closes the two PRD 04 §"Open questions" items that have been open since the v0.9 cycle (the cred-tmpfile-bind-mount pattern for the docker backend, and the trusted-profile auto-provisioning for the k8s backend), plus the CI / Makefile polish that prevents another v1.1.0 → v1.1.1 → v1.1.2 cascade. The headline reframe: from v1.0.x-style "static API key in env / Secret" to "no static API key on the wire when it can be avoided". Both backends get sane fallbacks for environments where the new pattern doesn't apply. See [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) for the design rationale and [PLAN.md §"Sprint 9"](docs/PLAN.md) for the cycle's deliverables.
 
 ### Added
 
