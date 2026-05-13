@@ -253,3 +253,10 @@ func (e ioErrTimeout) Error() string { return string(e) }
 // Silence unused-import warnings if the file's bodies are skip-only on
 // some runners.
 var _ = io.Discard
+
+// ptrInt64 is colocated with its sole caller (the SecurityContext
+// builder above) so it lives under the `integration` build tag. The
+// sibling ptrBool helper in k8s.go is used by production code; this
+// one is used by tests only — keeping it here means staticcheck on
+// the default build doesn't flag it as U1000 unused.
+func ptrInt64(i int64) *int64 { return &i }

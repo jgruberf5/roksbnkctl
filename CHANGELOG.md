@@ -225,14 +225,26 @@ git tag v1.0.2 && git push origin main --tags
 make release-publish VERSION=v1.0.2
 ```
 
-## v1.1.1 — 2026-05-13
+## v1.1.2 — 2026-05-13
 
-CI-recovery patch on top of `v1.1.0`. The `v1.1.0` cut passed `go build/vet/test/gofmt` locally but the CI matrix runs `staticcheck` in addition, which flagged an unused helper in the folded-in `internal/exec/` WIP. Functionally identical to `v1.1.0` — the unused function had no runtime effect. **End users should install v1.1.1**; the `v1.1.0` Release page is retained as a historical artifact only.
+Second CI-recovery patch on top of `v1.1.0` / `v1.1.1`. The `v1.1.1` cut fixed staticcheck (the only CI signal visible at the time) but the fix — removing the unused `ptrInt64` helper — broke a second CI job: `internal/exec/k8s_integration_test.go` uses `ptrInt64` under the `//go:build integration` tag, which staticcheck and the default-tag `go test ./...` don't compile. Functionally identical to `v1.1.0` / `v1.1.1` — release binaries are byte-near-identical (the helper's source-or-no-source state doesn't affect linker output). **End users should install v1.1.2**; `v1.1.0` and `v1.1.1` Release pages are retained as historical artifacts only.
 
-### Fixed (CI recovery)
+### Fixed (CI recovery, take 2)
 
-- **Removed unused `ptrInt64` helper** in `internal/exec/k8s.go` (staticcheck `U1000`). The helper was a leftover from a draft that didn't end up using an `int64` pointer; the sibling `ptrBool` IS used (three call sites in the pod security context) and stays.
-- **Local release gate updated to include `staticcheck`** going forward so the next tag-cut doesn't repeat the gap. (Documented as the lesson — the `staticcheck` step is in CI's `.github/workflows/ci.yml` but wasn't in the local `Makefile`'s pre-tag checklist.)
+- **Restored `ptrInt64` inside `internal/exec/k8s_integration_test.go`** (its sole caller) instead of in `k8s.go`. Lives under the `//go:build integration` tag now, so staticcheck on the default build doesn't see it AND the integration test compiles. Tighter scoping than the v1.1.1 deletion.
+- **`Makefile` pre-tag checklist** should grow a `go build -tags integration ./...` step alongside the `staticcheck` step from v1.1.1's note. CI runs three build configurations (default, integration, plus the staticcheck inheritance) and the local gate only ran one — this gap is what produced the v1.1.0 → v1.1.1 → v1.1.2 cascade. Documented here as the lesson; mechanical Makefile update tracked separately.
+
+### Not fixed in v1.1.2
+
+- **Flaky `TestIntegration_Connect_Whoami`** (`internal/remote/`) — the test pulls an sshd container via testcontainers-go, which hits Docker Hub. The runner's anonymous pull was rate-limited (`429 too many requests`) during the v1.1.1 CI run. Not a code regression and not solvable from the source side; tracked as a known intermittent on shared CI infra. Will re-run cleanly when the rate-limit window clears.
+
+## v1.1.1 — 2026-05-13 — SUPERSEDED by v1.1.2
+
+Intended as the CI-recovery patch for `v1.1.0` but turned out to be incomplete — the fix (removing unused `ptrInt64`) broke a second CI job (`internal/exec/k8s_integration_test.go` references the helper under the `//go:build integration` tag). See `v1.1.2` above for the corrected cut. v1.1.1 binaries are functionally identical to v1.1.0 / v1.1.2; only CI plumbing differs.
+
+### Fixed (CI recovery — incomplete)
+
+- **Removed unused `ptrInt64` helper** in `internal/exec/k8s.go` (staticcheck `U1000`). v1.1.2 restored the helper inside the integration test file, the only place that uses it.
 
 ## v1.1.0 — 2026-05-13
 
