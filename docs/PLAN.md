@@ -751,6 +751,59 @@ The two `t.Skip` markers on `776fe56` (`TestIntegration_DockerBackend_NoLeakInIn
 
 ---
 
+## Sprint 10 — PRD 04 in-pod closure + PRD 06 status integration + CI hardening (post-v1.2)
+
+### Goal
+
+Ship `v1.3.0`: close PRD 04's runtime-cred-flow side (the in-pod `ibmcloud login` wrap that Sprint 9 deferred), close PRD 06's `status` integration (the new requirement added post-Sprint-9 — `roksbnkctl status` shows per-phase deployment instead of the v1.0.x single "Last apply" line), tighten the local pre-tag gate against the v1.2.x cascade's remaining gap (integration-test execution vs compile-only), and fold the six tech-writer polish issues deferred from Sprint 9.
+
+Headline closure: `roksbnkctl ops install --trusted-profile=auto` followed by `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` returns a fresh IAM token end-to-end — the v1.2.0 partial-closure admonition in chapter 19 comes out.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **In-pod `ibmcloud login` wrap closure** ([PRD 04 §"Resolved in Sprint 9" carry-over](docs/prd/04-CREDENTIALS.md), staff Issue 2 from Sprint 9) — `runOnOpsPod`'s ibmcloud login wrap switches on whether the pod's SA carries `iam.cloud.ibm.com/trusted-profile`: trusted-profile-annotated pods do `ibmcloud login --trusted-profile-id "$IAM_PROFILE_ID"`; static-key pods continue the v1.0.x `--apikey "$IBMCLOUD_API_KEY"` path. `IAM_PROFILE_ID` injected into the pod spec at install time when the trusted profile is provisioned. | `internal/exec/k8s.go` (edit), `internal/exec/k8s_install.yaml` (edit — pod spec env injection), `internal/cli/ops.go` (edit — manifest renderer passes IAM_PROFILE_ID through) |
+| 2 | **`roksbnkctl status` per-phase deployment** ([PRD 06 §"`status` command integration"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition)) — `runStatus` consumes `config.DetectShape` + each phase's `terraform.tfstate` mtime; emits per-phase `Cluster phase:` / `BNK trial:` deployment lines for non-`LegacySingle` shapes; preserves the v1.0.x `Last apply` line verbatim for `ShapeLegacySingle` (script-compat). | `internal/cli/inspect.go` (edit), `internal/cli/inspect_test.go` (new or extend) |
+| 3 | **Local pre-tag gate covers integration-test *execution*, not just compilation** — the v1.2.x cascade (v1.2.0 → v1.2.1 → 76af28d) traced to `make release` running `go build -tags integration ./...` (compile check) but not `go test -tags integration` (which requires a kind cluster + docker daemon). Two options for staff to pick: (a) `make integration-test` target users run when they have kind available, with `make release` adding a strong-worded `command -v kind` check + an "are you sure?" prompt before tagging if kind isn't reachable; (b) full kind-bringup in `make release` (heavy; might be too slow for routine local tag-cuts). Validator picks the option that fits the project's tag-cut cadence. | `Makefile` (edit), maybe `scripts/integration-test.sh` (new) |
+| 4 | **Chapter polish (Sprint 9 deferred)** — five low/medium tech-writer issues from Sprint 9. Specifically: chapter 19 `ops show` shape (Issue 4); chapter 19 `<workspace>` vs `sandbox-roks` placeholder consistency (Issue 13); chapter 19 §"Credential propagation" v1.2 callout placement (Issue 9); chapter 14 "warning" vs "warning block" wording (Issue 7); chapter 14 §"What's new in v1.2" section position (Issue 8). | `book/src/14-credentials-resolver.md` (edit), `book/src/19-in-cluster-ops-pod.md` (edit) |
+
+### Test deliverables
+
+- **Live trusted-profile end-to-end** (sandbox-permitting): `cluster up` → `ops install --trusted-profile=auto` → `bnk up` → `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` returns a fresh IAM token (no `missing API key`). Validates that the in-pod login-wrap closure actually works end-to-end against a real IBM Cloud account.
+- **`status` integration**: unit test against the four-shape `internal/config/testdata/` fixtures from Sprint 8 — assert each shape produces the expected lines.
+- **Re-verify the `TestIntegration_K8sBackend_JobMode_Echo`** banner-assertion fix on `76af28d` (no t.Skip back; runs clean against the rebuilt tools-ibmcloud image with `USER 1000` + `HOME=/home/runner`).
+
+### Documentation deliverables
+
+- **Chapter 19 partial-closure admonition removal** — the §"Trusted-profile flow (v1.2+)" callout at the top now reads as historical context. The v1.3.0 closure is complete; users running `--trusted-profile=auto` get the trusted-profile path end-to-end (provisioning + runtime cred flow). Cross-link to a brief CHANGELOG note about the v1.2.x partial-closure → v1.3.0 full-closure transition.
+- **Chapter 19 §"Verifying the profile is in use"** — un-guard the `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` smoke test. The Sprint 9 `> Heads up — Sprint 10 carry-over` admonition comes out; the "fresh OAuth token returns" sample is now the v1.3.0 reality.
+- **Chapter 24 (Day-2 ops)** — new section on `roksbnkctl status`'s per-shape output, with samples for each of the four shapes per PRD 06 §"`status` command integration".
+- **CHANGELOG `v1.3.0`** entry under `## Unreleased (v1.x)`: `### Added` (status per-phase deployment), `### Changed` (in-pod login wrap is now trusted-profile-aware; status output replaces single `Last apply` for non-Legacy shapes), `### Fixed` (the five Sprint-9-deferred chapter polish issues), `### Deferred` (remove the now-closed in-pod login-wrap bullet from the post-v1.2.0 deferred list).
+
+### Gate to `v1.3.0` tag
+
+- All four agents' issue files at `Status: resolved` or `accepted`.
+- Whole-tree `go build/test/vet/gofmt/staticcheck/-tags integration build` green; **plus `-tags integration test`** if the staff's choice of code-deliverable-3 option (a) bundles `make integration-test` into the pre-tag gate, or with the kind-availability check passing if option (b).
+- Live trusted-profile end-to-end smoke test recorded in the integration commit (or `resolved_sprint10_validator.md`).
+- Chapter 19 admonition + smoke-test guard removed; chapter 24 documents `status` per-shape.
+- CHANGELOG `v1.3.0` entry final.
+
+### Risks
+
+- **In-pod login wrap closure** may surface IBM IAM-side issues that unit tests don't catch — most likely: the cluster's OIDC issuer URL propagation delay (mentioned in PRD 04 §"Resolved in Sprint 9"). The pod's first `ibmcloud login --trusted-profile-id` may fail with `failed to assume trusted profile` for 30-60s after `ops install` returns. Mitigation: staff's implementation adds a brief in-wrap retry (3 attempts, 20s apart) for the trusted-profile auth path specifically; validator's live verification documents whether the retry is sufficient.
+- **`status` output format change** breaks scripts that parsed the v1.0.x single "Last apply" line. Mitigation: ShapeLegacySingle preserves the line; ShapeEmpty/ClusterOnly/Split replace it with the new per-phase lines. CHANGELOG `### Changed` explicitly calls out the script-compat behaviour. Anyone on a non-legacy workspace running such a script was already broken by Sprint 8's phase split (the script's `Last apply` would have been the trial-only mtime, not the cluster's) — the v1.3.0 change makes this visible rather than silently misleading.
+- **`make integration-test` target** depends on each contributor having kind + docker available locally. Mitigation: keep `make release` working without the integration-test execution; surface a clear warning when kind isn't found; document the install path in CONTRIBUTING.md.
+
+### Carry-overs from prior sprints
+
+- **Sprint 9 staff Issue 2** (in-pod login wrap) — explicit Sprint 10 deliverable 1.
+- **Sprint 9 tech-writer Issues 4, 7, 8, 9, 13** — explicit Sprint 10 deliverable 4.
+- **Sprint 9 validator Issue 4** (live trusted-profile sandbox verify) — Sprint 10 validator picks this up as part of test deliverable 1.
+- **PRD 06 `status` integration** (added post-Sprint-9 per [4e5f103](https://github.com/jgruberf5/roksbnkctl/commit/4e5f103)) — explicit Sprint 10 deliverable 2.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
@@ -764,6 +817,7 @@ These came up during the PRDs but aren't blocking v1.0:
 - Windows full TTY support (v2 — needs ssh-agent named-pipe protocol)
 - Multi-hop SSH ProxyJump (v1.1 — PRD 01 deferred)
 - Long-running ops pod with kubeconfig refresh on token rotation (v1.1 — PRD 04 open question)
+- ~~In-pod `ibmcloud login` wrap closure (Sprint 9 staff Issue 2)~~ — scheduled for Sprint 10 / `v1.3.0`
 - Bash completion for `roksbnkctl k <verb> <resource-name>` with live API lookups (v1.1)
 
 ### Book
