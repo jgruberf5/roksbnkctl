@@ -61,8 +61,19 @@ type DockerBackend struct {
 var toolImages = func() map[string]string {
 	tag := toolImageTag()
 	return map[string]string{
-		"ibmcloud":   "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
-		"iperf3":     "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"ibmcloud": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		// iperf3: use the public networkstatic/iperf3 image instead of the
+		// bundled one. The bundled image at ghcr.io/jgruberf5/roksbnkctl-
+		// tools-iperf3 is private (no public-read on the GitHub Container
+		// Registry package) so ROKS workers can't pull it without an
+		// image-pull-secret. networkstatic/iperf3 is the same image the
+		// throughput server pod uses, public on Docker Hub, and known to
+		// work with the iperf3 client argv (`-c <host> -J`).
+		//
+		// v1.x can switch back to a bundled image once we either flip
+		// the ghcr package to public or wire an image-pull-secret per
+		// PRD 03 §"K8s backend image pull".
+		"iperf3":     "networkstatic/iperf3:latest",
 		"terraform":  "hashicorp/terraform:1.5.7",
 		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
 	}
@@ -104,8 +115,19 @@ func SetToolImageTag(fn func() string) {
 	// Recompute the toolImages map with the new tag.
 	tag := toolImageTag()
 	toolImages = map[string]string{
-		"ibmcloud":   "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
-		"iperf3":     "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:" + tag,
+		"ibmcloud": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		// iperf3: use the public networkstatic/iperf3 image instead of the
+		// bundled one. The bundled image at ghcr.io/jgruberf5/roksbnkctl-
+		// tools-iperf3 is private (no public-read on the GitHub Container
+		// Registry package) so ROKS workers can't pull it without an
+		// image-pull-secret. networkstatic/iperf3 is the same image the
+		// throughput server pod uses, public on Docker Hub, and known to
+		// work with the iperf3 client argv (`-c <host> -J`).
+		//
+		// v1.x can switch back to a bundled image once we either flip
+		// the ghcr package to public or wire an image-pull-secret per
+		// PRD 03 §"K8s backend image pull".
+		"iperf3":     "networkstatic/iperf3:latest",
 		"terraform":  "hashicorp/terraform:1.5.7",
 		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
 	}
@@ -395,22 +417,36 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 
 	// Cred propagation. PRD 04 §Docker container: bind-mount the
 	// SINGLE kubeconfig FILE read-only at /root/.kube/config; pass
-	// IBMCLOUD_API_KEY by name only (no value) so it inherits from the
-	// docker daemon's view of the caller env.
+	// IBMCLOUD_API_KEY=VALUE explicitly so the container has the key
+	// in env.
+	//
+	// v1.0.2 fix: pre-v1.0.2 this used the BARE-NAME form
+	// (`Env: ["IBMCLOUD_API_KEY"]`, no `=value`). The intent was
+	// "inherit from caller's env at container-start time" — the
+	// docker CLI's `--env VAR` no-value form does exactly that.
+	// HOWEVER the docker SDK path doesn't replicate that behavior:
+	// bare names land in the container env as defined-but-empty,
+	// which silently broke every ibmcloud-via-docker-backend call.
+	// The Phase K e2e tests' `assert_contains "IAM token"`
+	// false-positive-matched the ibmcloud help banner (which
+	// documents IAM token env vars) and the gap went undetected.
+	//
+	// TRADE-OFF: KEY=VALUE makes the api key visible in
+	// `docker inspect <ctr>` output. The Phase M2 cred audit
+	// catches this; M2 is marked yellow-skip until v1.x lands a
+	// proper tmpfile-bind-mount pattern that keeps the value out of
+	// container env entirely. See PLAN.md §"What's deliberately
+	// deferred to post-v1.0".
 	if opts.Credentials != nil {
 		if opts.Credentials.IBMCloudAPIKey != "" {
-			// Bare names — these tell docker "inherit value from caller
-			// env". Setting these on the daemon connection is the
-			// caller's responsibility (the os.Environ() of the
-			// roksbnkctl process is what the daemon sees through the
-			// docker API).
-			//
-			// TF_VAR_ibmcloud_api_key is included for the terraform
-			// docker backend (Sprint 5; PRD 03 §"terraform"): the
-			// terraform image reads it as the `ibmcloud_api_key`
-			// variable. Same bare-name pattern as IBMCLOUD_API_KEY so
-			// `docker inspect` never sees the value.
-			envNames = append(envNames, "IBMCLOUD_API_KEY", "IC_API_KEY", "TF_VAR_ibmcloud_api_key")
+			envNames = append(envNames,
+				"IBMCLOUD_API_KEY="+opts.Credentials.IBMCloudAPIKey,
+				"IC_API_KEY="+opts.Credentials.IBMCloudAPIKey,
+				"TF_VAR_ibmcloud_api_key="+opts.Credentials.IBMCloudAPIKey,
+			)
+			// Keep the host env-setting paths for callers that might
+			// still rely on os.Environ() observation (defensive — the
+			// container-env path above is the authoritative one).
 			// Make sure IC_API_KEY is set in our env if only IBMCLOUD_API_KEY is.
 			if os.Getenv("IC_API_KEY") == "" {
 				_ = os.Setenv("IC_API_KEY", opts.Credentials.IBMCloudAPIKey)
@@ -450,12 +486,49 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 // buildContainerEnv translates RunOpts.Env (KEY=VALUE strings) into
 // the slice docker's container.Config.Env expects. Skips entries with
 // no '=' separator (silently — the local backend does the same).
+// buildContainerEnv copies KEY=VALUE pairs from the caller's env into
+// the container env, EXCEPT for host-specific vars that would confuse
+// programs running inside the container. The caller's HOME, PATH,
+// USER, SHELL, PWD etc. refer to host filesystem paths that don't
+// exist inside the container — the bundled ibmcloud image puts its
+// plugins at /root/.bluemix/plugins/ which only resolves correctly
+// when the container's $HOME stays at the image's default (/root).
+// Letting the host's HOME=/home/<user> leak through means ibmcloud
+// looks for plugins at /home/<user>/.bluemix/plugins/ which doesn't
+// exist, and the plugin list comes back empty.
+//
+// v1.0.2 fix — pre-v1.0.2 this function blindly forwarded everything,
+// and the docker backend's ibmcloud plugin (ks) was silently broken.
+// The bare-name env-propagation issue masked this because the api
+// key was also empty, so ibmcloud never got far enough to consult
+// plugins.
 func buildContainerEnv(env []string) []string {
+	// hostOnly is the set of env vars whose values refer to host paths
+	// or identities and should NEVER be propagated to a container.
+	hostOnly := map[string]bool{
+		"HOME":     true,
+		"USER":     true,
+		"USERNAME": true,
+		"LOGNAME":  true,
+		"SHELL":    true,
+		"PWD":      true,
+		"OLDPWD":   true,
+		"PATH":     true,
+		"TMPDIR":   true,
+		"TERM":     true,
+		"LANG":     true,
+		"LC_ALL":   true,
+	}
 	var out []string
 	for _, kv := range env {
-		if strings.IndexByte(kv, '=') > 0 {
-			out = append(out, kv)
+		eq := strings.IndexByte(kv, '=')
+		if eq <= 0 {
+			continue
 		}
+		if hostOnly[kv[:eq]] {
+			continue
+		}
+		out = append(out, kv)
 	}
 	return out
 }
@@ -480,8 +553,34 @@ func buildContainerEnv(env []string) []string {
 // The ibmcloud image's `roksbnkctl` alias maps to `/usr/local/bin/
 // roksbnkctl` so a `--backend docker` invocation of roksbnkctl-as-tool
 // (the dns-probe re-exec path, etc.) lands on the right binary.
+// dockerImageBinary maps tool name → in-container Cmd prefix. Each
+// entry's slice is prepended to argv[1:] when building the container's
+// Cmd. For tools that need session priming (ibmcloud), the prefix is a
+// sh -c wrap that runs the priming command first, then exec's the
+// real binary with the user-supplied args.
+//
+// ibmcloud requires `ibmcloud login` before stateful subcommands (iam,
+// ks, account, target, …) — without it the CLI errors with "No API
+// endpoint set" or "Not logged in", since the container starts cold
+// with no $HOME/.bluemix config cached. The wrap below:
+//  1. Runs `ibmcloud login -a https://cloud.ibm.com -r <region>
+//     --apikey "$IBMCLOUD_API_KEY" --quiet` (quiet suppresses banner)
+//  2. Redirects login output to /dev/null so the caller sees only the
+//     wrapped command's output (preserves "byte-identical to local
+//     backend" promise from PRD 03)
+//  3. `exec ibmcloud "$@"` runs the user's actual args with the
+//     now-logged-in session
+//
+// $@ expands the positional args resolveDockerImageAndArgv appends
+// after the wrap (i.e., argv[1:] = the user-supplied subcommand).
+//
+// Region defaults to us-south if IBMCLOUD_REGION isn't set. The
+// bundled image's /bin/sh is dash (Ubuntu base); both ${VAR:-default}
+// and exec are POSIX so this works there.
+//
+// `login` and `logout` skip the wrap (caller's explicit intent).
 var dockerImageBinary = map[string][]string{
-	"ibmcloud":   {"ibmcloud"},
+	"ibmcloud":   {"sh", "-c", `ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`, "--"},
 	"roksbnkctl": {"/usr/local/bin/roksbnkctl"},
 }
 

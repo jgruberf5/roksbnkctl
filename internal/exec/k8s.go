@@ -205,6 +205,24 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	// entrypoint. See `buildJobSpecWithArgs` for the Args plumbing.
 	cmd := argv
 
+	// v1.0.2: ibmcloud needs `ibmcloud login` before stateful subcommands
+	// (iam, ks, account, target, …) — the ops pod's container starts
+	// cold with no $HOME/.bluemix session. Wrap argv with a sh -c
+	// login-then-exec dance so any ibmcloud invocation gets primed.
+	// Same shape as docker.go's dockerImageBinary["ibmcloud"] wrap.
+	// Skip if argv[0] != "ibmcloud" or if the user is explicitly running
+	// `ibmcloud login`/`logout` (no double-login).
+	if len(cmd) >= 1 && cmd[0] == "ibmcloud" {
+		if len(cmd) < 2 || (cmd[1] != "login" && cmd[1] != "logout") {
+			wrap := []string{
+				"sh", "-c",
+				`ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`,
+				"--",
+			}
+			cmd = append(wrap, cmd[1:]...)
+		}
+	}
+
 	req := cs.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(K8sOpsPodName).
@@ -345,17 +363,26 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 		filesSecretCreated = true
 	}
 
-	// Cmd + Args translation: for entrypoint-bypass tools, prepend
-	// the override's argv as Command (overrides image's ENTRYPOINT)
-	// and pass argv[1:] as Args. Otherwise keep the legacy shape
-	// (Command = argv[1:]; image's ENTRYPOINT picks the binary).
+	// Cmd + Args translation:
+	//   - For entrypoint-bypass tools, prepend the override's argv as
+	//     Command (overrides image's ENTRYPOINT) and pass argv[1:] as
+	//     Args (replaces image's CMD).
+	//   - Otherwise pass argv[1:] as Args so the image's ENTRYPOINT
+	//     stays in place and the supplied args flow to it. Setting
+	//     Command in the no-override path would OVERRIDE the image's
+	//     ENTRYPOINT, causing the kubelet to try exec'ing argv[1]
+	//     directly as a binary (e.g., "-c" for iperf3 → exec /-c →
+	//     CreateContainerError). This was the v1.0.2 fix for the
+	//     L2 throughput Job's CreateContainerError; pre-fix the
+	//     comment claimed "image's ENTRYPOINT picks the binary"
+	//     which contradicts actual k8s Container.Command semantics.
 	var cmdArgv []string
 	var argsArgv []string
 	if override, hasOverride := jobToolCmdOverride[tool]; hasOverride {
 		cmdArgv = append([]string(nil), override...)
 		argsArgv = argv[1:]
 	} else {
-		cmdArgv = argv[1:]
+		argsArgv = argv[1:]
 	}
 
 	job := buildJobSpecWithArgs(jobName, image, cmdArgv, argsArgv, opts, filesSecretCreated, filesSecretName)
@@ -504,7 +531,16 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 					RestartPolicy: corev1.RestartPolicyNever,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptrBool(true),
-						RunAsUser:    ptrInt64(65532),
+						// Do NOT pin RunAsUser to a specific value.
+						// OpenShift's restricted-v2 SCC assigns a UID
+						// from the namespace's allowed range (e.g.,
+						// 1000680000-1000689999); pinning 65532 collides
+						// and the Job is rejected at admission with
+						// "Invalid value: 65532: must be in the ranges
+						// [...]" — see PRD 05 §"Risks" + Sprint 5 staff
+						// Issue 2 carry-over. Leaving RunAsUser unset
+						// lets the SCC mutating-admission webhook pick
+						// a valid UID per namespace.
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
@@ -520,7 +556,10 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: ptrBool(false),
 							RunAsNonRoot:             ptrBool(true),
-							RunAsUser:                ptrInt64(65532),
+							// RunAsUser unset — see PodSecurityContext
+							// comment above. Container-level pinning
+							// to 65532 also collides with restricted-v2's
+							// dynamic UID range.
 							Capabilities: &corev1.Capabilities{
 								Drop: []corev1.Capability{"ALL"},
 							},
