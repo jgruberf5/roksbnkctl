@@ -17,6 +17,7 @@ type Issue struct {
 	Status   string
 	OpenLike bool
 	Deferred bool
+	Body     string
 }
 
 type Role struct {
@@ -214,17 +215,24 @@ func ParseBlob(r *Role, content string) {
 
 func parseBlobScanner(r *Role, sc *bufio.Scanner) {
 	var current *Issue
+	var body strings.Builder
 	foundIssue := false
 	foundNoIssuesMarker := false
+	flush := func() {
+		if current == nil {
+			return
+		}
+		current.Body = strings.TrimRight(body.String(), "\n")
+		r.Issues = append(r.Issues, *current)
+		body.Reset()
+	}
 	for sc.Scan() {
 		line := sc.Text()
 		if !foundIssue && strings.Contains(strings.ToLower(line), "no issues filed") {
 			foundNoIssuesMarker = true
 		}
 		if strings.HasPrefix(line, "## Issue ") {
-			if current != nil {
-				r.Issues = append(r.Issues, *current)
-			}
+			flush()
 			current = parseIssueHeader(line)
 			foundIssue = true
 			continue
@@ -232,6 +240,8 @@ func parseBlobScanner(r *Role, sc *bufio.Scanner) {
 		if current == nil {
 			continue
 		}
+		body.WriteString(line)
+		body.WriteByte('\n')
 		if m := sevRE.FindStringSubmatch(line); m != nil {
 			current.Severity = normalizeSeverity(m[1])
 			continue
@@ -242,9 +252,7 @@ func parseBlobScanner(r *Role, sc *bufio.Scanner) {
 			continue
 		}
 	}
-	if current != nil {
-		r.Issues = append(r.Issues, *current)
-	}
+	flush()
 	if !foundIssue && foundNoIssuesMarker {
 		r.NoIssuesFiled = true
 	}
