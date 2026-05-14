@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c265d250.js";
+            window.path_to_searchindex_js = "searchindex-2af8b102.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -2824,7 +2824,7 @@ Save the key for future runs? [Y/n]: y
 </div>
 <p><a href="#trusted-profile-flow-v12">Chapter 19 — The in-cluster ops pod</a> walks through the <code>--trusted-profile=auto</code> install flow, the verification commands (<code>oc get serviceaccount roksbnkctl-ops -o yaml</code> showing the trusted-profile annotation), the fallback warning shape, and how <code>ops uninstall</code> cleans up a provisioned profile.</p>
 <h3 id="compatibility-note"><a class="header" href="#compatibility-note">Compatibility note</a></h3>
-<p>v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s <code>--trusted-profile=auto</code> default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning block on <code>ops install</code> naming the fallback and how to silence it. Setting <code>--trusted-profile=off</code> reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).</p>
+<p>v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s <code>--trusted-profile=auto</code> default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning line on <code>ops install</code> naming the fallback and how to silence it. Setting <code>--trusted-profile=off</code> reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).</p>
 <h2 id="backend-specific-cred-propagation"><a class="header" href="#backend-specific-cred-propagation">Backend-specific cred propagation</a></h2>
 <p>The credential-propagation rules differ per backend. All four backends ship at v1.0:</p>
 <div class="table-wrapper">
@@ -4187,6 +4187,9 @@ subjects:
 </code></pre>
 <p>The full manifest lives at <code>internal/exec/k8s_install.yaml</code> (embedded into the binary). <a href="#rbac-the-clusterrole-rules">§ RBAC</a> walks through what each rule is for.</p>
 <h3 id="4-create-or-update-the-credential-secret"><a class="header" href="#4-create-or-update-the-credential-secret">4. Create or update the credential Secret</a></h3>
+<blockquote>
+<p><strong>v1.2+ note.</strong> This step describes the <strong>static-key</strong> Secret applied under <code>--trusted-profile=off</code> and under the <code>auto</code>-fallback when IAM perms don’t allow the trusted-profile path. Under <code>--trusted-profile=auto</code> success the Secret is still applied with <strong>empty data fields</strong> (placeholder so <code>envFrom: secretRef</code> always resolves); the cred propagation happens via the trusted-profile annotation on the SA + the <code>IAM_PROFILE_ID</code> env var instead. See <a href="#trusted-profile-flow-v12">§“Trusted-profile flow (v1.2+)”</a> below.</p>
+</blockquote>
 <pre><code class="language-yaml">apiVersion: v1
 kind: Secret
 metadata:
@@ -4243,13 +4246,11 @@ spec:
 <p><code>roksbnkctl ops install</code> waits for <code>Pod.Status.Phase == Running</code> and the container’s <code>Ready</code> condition before returning. Default timeout is 60 seconds; longer for clusters with slow image pulls (the ghcr.io image is ~80 MiB). Failures surface a <code>kubectl describe pod roksbnkctl-ops</code> excerpt for context.</p>
 <h2 id="trusted-profile-flow-v12"><a class="header" href="#trusted-profile-flow-v12">Trusted-profile flow (v1.2+)</a></h2>
 <p>The static-key Secret described above is the v1.0.x / v1.1.x path. In <code>v1.2.0</code> it becomes the <strong>fallback</strong>: the default <code>ops install</code> invocation auto-provisions an IBM Cloud IAM <strong>trusted profile</strong> linked to the ops pod’s ServiceAccount, and the static API key no longer needs to land in any Kubernetes Secret. <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#trusted-profile-auto-provisioning-k8s-backend">PRD 04 §“Resolved in Sprint 9” → “Trusted-profile auto-provisioning (k8s backend)”</a> is the design reference; this section is the operational walkthrough.</p>
-<blockquote>
-<p><strong>v1.2.0 partial closure — read this first.</strong> Sprint 9 ships the <strong>provisioning side</strong> of the trusted-profile flow: profile creation, compute-resource binding to your cluster’s OIDC issuer URL, SA annotation, and the Secret-rendered-with-empty-data manifest under <code>--trusted-profile=auto</code> success. <strong>The runtime side — the in-pod <code>ibmcloud login</code> wrap that primes stateful subcommands (<code>iam</code>, <code>ks</code>, …) — still uses <code>--apikey "$IBMCLOUD_API_KEY"</code> in v1.2.0</strong>, unchanged from v1.0.x. Under <code>--trusted-profile=auto</code> success the Secret carries empty data by design, so the in-pod wrap will fail with <code>missing API key</code> when you actually exercise <code>roksbnkctl --backend k8s ibmcloud &lt;subcommand&gt;</code>. Full closure (in-pod wrap switches to <code>ibmcloud login --trusted-profile-id "$IAM_PROFILE_ID"</code> when the SA is annotated) is Sprint 10 work — tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/issues/issue_sprint9_staff.md">staff Issue 2</a>. For v1.2.0, the security-side win is real but partial: no static API key sits at rest in any Secret in etcd under auto-success. If you need the runtime wrap to actually work today, pass <code>--trusted-profile=off</code> and the v1.0.x static-key path applies unchanged.</p>
-</blockquote>
+<p><code>v1.3.0</code> closes both the provisioning and the runtime sides of this flow — <code>ops install --trusted-profile=auto</code> provisions the profile, and the in-pod <code>ibmcloud login</code> wrap detects the SA’s trusted-profile annotation and authenticates via the projected SA token at runtime. The v1.2.x partial-closure history (provisioning shipped, runtime deferred) is preserved in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/CHANGELOG.md">CHANGELOG <code>v1.3.0 → ### Changed</code></a> for readers who specifically want the chronology.</p>
 <h3 id="roksbnkctl-ops-install---trusted-profileauto"><a class="header" href="#roksbnkctl-ops-install---trusted-profileauto"><code>roksbnkctl ops install --trusted-profile=auto</code></a></h3>
 <p><code>--trusted-profile=auto</code> is the <strong>default</strong> as of v1.2 — running <code>roksbnkctl ops install</code> with no flag picks the auto path. Naming the flag explicitly is useful in scripts that pin behaviour or in docs that want to read unambiguously:</p>
 <pre><code class="language-bash">$ roksbnkctl ops install --trusted-profile=auto
-✓ Provisioned IAM trusted profile roksbnkctl-ops-sandbox-roks (iam-Profile-9f2…)
+✓ Provisioned IAM trusted profile roksbnkctl-ops-canada-roks (iam-Profile-9f2…)
 ✓ created namespace roksbnkctl-ops
 ✓ created sa roksbnkctl-ops/roksbnkctl-ops
 ✓ created secret roksbnkctl-ops/roksbnkctl-ibm-creds
@@ -4257,7 +4258,7 @@ spec:
 ✓ created crb roksbnkctl-ops
 ✓ created pod roksbnkctl-ops/roksbnkctl-ops
 → Waiting for ops pod to be Ready (60s timeout)
-✓ Ops pod is Ready (trusted profile roksbnkctl-ops-sandbox-roks)
+✓ Ops pod is Ready (trusted profile roksbnkctl-ops-canada-roks)
 </code></pre>
 <p>Re-runs against an existing install emit <code>updated &lt;kind&gt; …</code> / <code>&lt;kind&gt; … exists</code> instead of <code>created</code> for each resource that already matches the desired state. The trusted-profile provisioning line above is the single line <code>internal/cli/ops.go</code> emits for the whole IBM IAM-side flow (perm probe + profile create + compute-resource link + SA annotation) — the work happens silently inside <code>resolveTrustedProfileForInstall</code>; the one line you see is the receipt.</p>
 <p>What just happened, in order (the binary doesn’t narrate these steps but they’re what’s actually going on):</p>
@@ -4266,7 +4267,7 @@ spec:
 <li><strong>Profile creation.</strong> Names the profile <code>roksbnkctl-ops-&lt;workspace&gt;</code> so multiple workspaces against the same IBM Cloud account don’t race for a single shared name. The compute-resource link binds the profile to your cluster’s OIDC issuer URL + the <code>roksbnkctl-ops/roksbnkctl-ops</code> ServiceAccount specifically — other SAs on the same cluster can’t assume the profile.</li>
 <li><strong>Policy attachment.</strong> v1.2 ships with no default policies attached — the profile inherits whatever IAM policies your account has set up for trusted profiles in general (typically nothing, until you grant). A future cycle will surface <code>ibmcloud.trusted_profile.policies</code> as a workspace-config block; tracked under v1.x deferred. If you need the profile to actually authorise specific actions (Container Registry pulls, Cloud Object Storage reads), grant the policies via IBM Cloud Console or <code>ibmcloud iam trusted-profile-policy-create</code> after <code>ops install</code> returns.</li>
 <li><strong>SA annotation.</strong> The ServiceAccount gets <code>iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-&lt;workspace&gt;</code> plus the <code>roksbnkctl.io/trusted-profile-managed: "true"</code> marker that signals <code>ops uninstall</code> to delete the profile during cleanup.</li>
-<li><strong>Pod creation.</strong> The pod’s container always has <code>envFrom: secretRef: roksbnkctl-ibm-creds</code>; what changes between modes is the Secret’s contents. Under <code>--trusted-profile=auto</code> success the Secret is created with <strong>empty data</strong> — <code>IBMCLOUD_API_KEY</code> is the empty string. The Sprint 10 conditional-login-wrap closure (see the v1.2.0 partial-closure admonition at the top of this section) will switch the in-pod <code>ibmcloud login</code> to <code>--trusted-profile-id</code> when the SA carries the annotation; until then, exercising stateful <code>ibmcloud</code> subcommands inside the pod fails with <code>missing API key</code>. The provisioning side is real (no static key at rest in any Secret); the runtime side ships in Sprint 10.</li>
+<li><strong>Pod creation.</strong> The pod’s container always has <code>envFrom: secretRef: roksbnkctl-ibm-creds</code>; what changes between modes is the Secret’s contents. Under <code>--trusted-profile=auto</code> success the Secret is created with <strong>empty data</strong> — <code>IBMCLOUD_API_KEY</code> is the empty string — plus an extra <code>IAM_PROFILE_ID</code> env var pointing at the provisioned profile’s ID, <strong>and</strong> a projected ServiceAccount-token volume mounted at <code>/var/run/secrets/tokens/token</code> (audience <code>iam</code>) so the pod has a cluster-issued JWT the IBM IAM endpoint will accept. The in-pod <code>ibmcloud login</code> wrap detects the SA’s trusted-profile annotation and runs <code>ibmcloud login -a https://cloud.ibm.com --cr-token @/var/run/secrets/tokens/token --profile "$IAM_PROFILE_ID" -r "${IBMCLOUD_REGION:-us-south}" --quiet</code> — the <code>--cr-token @&lt;path&gt;</code> form reads the projected SA token from disk; IBM IAM validates that JWT against the trusted profile’s <code>ROKS_SA</code> compute-resource link (the link <code>internal/ibm/trusted_profile.go::ensureLink</code> provisions). The static API key never transits the pod env. Under <code>--trusted-profile=off</code> (or the <code>auto</code>-fallback) the Secret carries the resolved API key, no projected token volume is mounted, and the wrap runs <code>ibmcloud login --apikey "$IBMCLOUD_API_KEY"</code> — the v1.0.x path.</li>
 </ol>
 <h3 id="verifying-the-profile-is-in-use"><a class="header" href="#verifying-the-profile-is-in-use">Verifying the profile is in use</a></h3>
 <p>The ServiceAccount carries the truth-of-record annotation:</p>
@@ -4277,23 +4278,18 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   annotations:
-    iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-sandbox-roks            # ← the profile name
-    roksbnkctl.io/trusted-profile-managed: "true"                             # ← ops uninstall will delete it
+    iam.cloud.ibm.com/trusted-profile: Profile-ccba11f2-3b1f-4b1a-b8a4-aeed2b7b3320  # ← the IBM IAM Profile ID
+    roksbnkctl.io/trusted-profile-managed: "true"                                     # ← ops uninstall will delete it
     roksbnkctl.io/provisioned-at: "2026-05-13T14:08:33Z"
   name: roksbnkctl-ops
   namespace: roksbnkctl-ops
 </code></pre>
 <p>End-to-end smoke test of the runtime cred flow:</p>
 <pre><code class="language-bash">$ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
-</code></pre>
-<blockquote>
-<p><strong>Heads up — Sprint 10 carry-over.</strong> Under v1.2.0 + <code>--trusted-profile=auto</code> success, the command above will return <code>failed to authenticate: missing API key</code>. The in-pod <code>ibmcloud login</code> wrap still uses <code>--apikey "$IBMCLOUD_API_KEY"</code> (unchanged from v1.0.x); the Secret carries empty data under auto-success by design; the wrap fails. The runtime-cred-flow closure ships in Sprint 10 (see the v1.2.0 partial-closure admonition at the top of this section). For v1.2.0, exercise the smoke test under <code>--trusted-profile=off</code> instead (the static-key path works as in v1.0.x):</p>
-<pre><code class="language-bash">$ roksbnkctl ops install --trusted-profile=off
-$ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
 IAM token:  Bearer eyJ…
 </code></pre>
-<p>Once Sprint 10 lands, the <code>--trusted-profile=auto</code> smoke test returns the token directly — fresh-each-call from the pod’s SDK trading the projected SA token. The cluster’s OIDC issuer URL needs ~30-60 seconds to propagate through IBM IAM after <code>ops install</code> returns; if your auto-mode smoke test errors with <code>failed to assume trusted profile</code> post-Sprint-10, retry after that window.</p>
-</blockquote>
+<p>The token is fresh-each-call: the in-pod wrap detects the SA’s <code>iam.cloud.ibm.com/trusted-profile</code> annotation, trades the pod’s projected SA token for an IAM token against the trusted profile, and returns it to the caller. No static API key transits the pod env.</p>
+<p>The first invocation may take 30–60 seconds after <code>ops install</code> returns because IBM IAM needs to pick up the cluster’s OIDC issuer URL before it will accept the projected SA token as proof for the profile. The wrap absorbs this with a 3-attempt × 20s-backoff retry — up to ~40s of waiting inside the wrap before it surfaces the failure. On triple-fail the wrap prints <code>trusted-profile login failed after 3 attempts: &lt;captured-stderr&gt;</code> to your terminal (the captured stderr will include the underlying <code>ibmcloud login</code> diagnostic — typically the “Unable to authenticate” / FAILED banner shape). If your first smoke test produces that line, give IAM a few more seconds and re-run. After the first successful call the wrap’s auth state is cached for the pod’s lifetime, so subsequent <code>roksbnkctl --backend k8s ibmcloud &lt;subcommand&gt;</code> invocations don’t re-pay the propagation window.</p>
 <h3 id="--trusted-profileauto-falling-back"><a class="header" href="#--trusted-profileauto-falling-back"><code>--trusted-profile=auto</code> falling back</a></h3>
 <p><code>auto</code> falls back to the v1.0.x static-key Secret when any of three pre-conditions for trusted-profile provisioning aren’t met. The warning prints first (the fallback decision is made before any cluster-side resource is applied), then the rest of the install proceeds with the v1.0.x static-key shape:</p>
 <pre><code>$ roksbnkctl ops install
@@ -4348,7 +4344,7 @@ warning: IAM perm 'iam-identity' missing; using static-key Secret. Pass `--trust
 <h3 id="cleanup-on-ops-uninstall"><a class="header" href="#cleanup-on-ops-uninstall">Cleanup on <code>ops uninstall</code></a></h3>
 <p><code>roksbnkctl ops uninstall --confirm</code> honors the <code>roksbnkctl.io/trusted-profile-managed: "true"</code> annotation on the SA and deletes the IBM Cloud trusted profile alongside the cluster-side objects:</p>
 <pre><code class="language-bash">$ roksbnkctl ops uninstall --confirm
-✓ deleted trusted profile roksbnkctl-ops-sandbox-roks
+✓ deleted trusted profile roksbnkctl-ops-canada-roks
 ✓ deleted pod roksbnkctl-ops
 ✓ deleted secret roksbnkctl-ibm-creds
 ✓ deleted serviceaccount roksbnkctl-ops
@@ -4369,6 +4365,7 @@ phase:        Running
 ready:        true
 image:        ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v0.9.0
 rbac subject: system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops
+trusted-profile: Profile-ccba11f2-3b1f-4b1a-b8a4-aeed2b7b3320
 secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
 </code></pre>
 <p>What each line surfaces:</p>
@@ -4376,9 +4373,10 @@ secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
 <li><strong>Pod phase + readiness</strong> — <code>Running</code> + <code>true</code> is green; anything else means the pod is unhealthy and <code>Backend.Run</code> calls will fail. The container count is exactly one (<code>tools</code>); <code>ready: true</code> is a single bool, not a <code>2/2</code>-style ratio.</li>
 <li><strong>Image</strong> — the <code>:v…</code> tag matches the <code>roksbnkctl</code> release the image was published with (resolved at install time from the binary’s version; see <a href="#dev-tag-resolution">Chapter 17 §<code>:dev</code> tag resolution</a>). Mismatched against your <code>roksbnkctl --version</code> means re-running <code>ops install</code> will pull the matching image.</li>
 <li><strong>RBAC subject</strong> — the SA the pod runs as. <code>kubectl describe clusterrole roksbnkctl-ops</code> prints the full ruleset (the ClusterRoleBinding is named the same as the role).</li>
-<li><strong>Secret line</strong> — the cred Secret’s name + the <code>roksbnkctl.io/rotated-at</code> annotation that <code>ops install</code> stamps each time the Secret is applied. If the Secret is missing entirely, the line reads <code>secret: (missing: …)</code>.</li>
+<li><strong>Trusted-profile line</strong> — reads the SA’s <code>iam.cloud.ibm.com/trusted-profile</code> annotation. The value is the <strong>IBM IAM Profile ID</strong> (<code>Profile-&lt;uuid&gt;</code>, the canonical IAM identifier — <code>runOpsInstall</code> annotates with <code>tp.ID</code> rather than the friendly <code>roksbnkctl-ops-&lt;workspace&gt;</code> name so the value is grep-friendly against IBM Cloud IAM audit logs; the parenthetical form on the <code>✓ Provisioned IAM trusted profile …</code> install line cross-references both). Present + non-empty means <code>ops install</code> ran with <code>--trusted-profile=auto</code> or <code>=on</code> and the provisioning succeeded; the runtime cred flow is going via the projected SA token. Under <code>--trusted-profile=off</code> (or <code>auto</code>-fallback when IAM perms were missing) the line reads <code>trusted-profile: (none — static-key Secret path)</code>.</li>
+<li><strong>Secret line</strong> — the cred Secret’s name + the <code>roksbnkctl.io/rotated-at</code> annotation that <code>ops install</code> stamps each time the Secret is applied. Always emitted (the Secret manifest is always rendered — empty data under trusted-profile success, populated under the static-key paths). If the Secret resource is missing entirely on the cluster, the line reads <code>secret: (missing: …)</code>.</li>
 </ol>
-<p>The current output is a fixed six-line key/value block; a structured <code>--output json</code> mode is on the v1.x roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
+<p>The current output is a fixed seven-line key/value block; a structured <code>--output json</code> mode is on the v1.x roadmap once <code>ops show</code> grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
 <h2 id="roksbnkctl-ops-uninstall"><a class="header" href="#roksbnkctl-ops-uninstall"><code>roksbnkctl ops uninstall</code></a></h2>
 <p>Full removal. Run when decommissioning the cluster, or when you want a clean re-install. The command is a <strong>destructive-action gate</strong>: by default it prints a preview of what <em>would</em> be deleted and exits successfully; the actual deletion only runs with <code>--confirm</code>.</p>
 <pre><code class="language-bash">$ roksbnkctl ops uninstall
@@ -5586,7 +5584,7 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="day-2-ops-status-logs-k-getapplyexec"><a class="header" href="#day-2-ops-status-logs-k-getapplyexec">Day-2 ops: status, logs, k get/apply/exec</a></h1>
-<p>This is the chapter to read after the cluster is up and BNK is deployed and you’re now living with the result. Most day-2 work is the small stuff: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all of those into native Go via <a href="https://pkg.go.dev/k8s.io/client-go"><code>client-go</code></a> so you no longer need <code>kubectl</code> on <code>PATH</code> for the everyday workflow.</p>
+<p>This is the chapter to read after the cluster is up and BNK is deployed and you’re now living with the result. It opens with <a href="#roksbnkctl-status"><code>roksbnkctl status</code></a> — the workspace-level read of what’s deployed — then covers the per-resource verbs: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all the per-resource verbs into native Go via <a href="https://pkg.go.dev/k8s.io/client-go"><code>client-go</code></a> so you no longer need <code>kubectl</code> on <code>PATH</code> for the everyday workflow.</p>
 <p>The full design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a>. This chapter is the user-facing surface — the canonical “what’s the kubectl-equivalent in <code>roksbnkctl</code>?” reference.</p>
 <h2 id="why-internalise"><a class="header" href="#why-internalise">Why internalise</a></h2>
 <p>Three reasons, in order of weight:</p>
@@ -5595,6 +5593,76 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 <li><strong>No version skew.</strong> The vendored <code>client-go</code> matches the kube API the bundled HCL targets. You can’t accidentally use <code>kubectl</code> 1.20 against a 1.28 cluster and have its print column heuristics go sideways.</li>
 <li><strong>First-class output formats.</strong> <code>cli-runtime</code> gives byte-identical <code>-o yaml</code>/<code>-o json</code>/<code>-o jsonpath</code> output to <code>kubectl</code>. The validator agent’s golden-file tests in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/k8s/golden_test.go"><code>internal/k8s/golden_test.go</code></a> assert this for representative resources.</li>
 </ol>
+<h2 id="roksbnkctl-status"><a class="header" href="#roksbnkctl-status"><code>roksbnkctl status</code></a></h2>
+<p>The one-shot read of a workspace’s posture. Always best-effort — every section reports its own missing pieces so a partial state still produces useful output rather than a hard error.</p>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        deployed (last apply 2026-05-13 14:15:01 MST)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>The header rows (workspace, region, resource group, cluster identity, TF source pin, kubeconfig path, cluster reachability) are the same across every workspace shape. The per-phase deployment lines below them are shape-dependent: <code>roksbnkctl status</code> reads each phase’s <code>terraform.tfstate</code> mtime independently and emits one line per phase. The mapping from <a href="#the-cluster-phase-cluster-updown">workspace shape</a> to per-phase output:</p>
+<p>The two <code>Cluster:</code> lines are by design: the first (in the header block) reports cluster <em>identity</em> — which cluster you’re targeting and whether the workspace creates it or attaches to an existing one. The second (the trailer line) reports cluster <em>reachability</em> — node count and ready count from a live API call. The label is reused because both pieces of information are about “the cluster”; the column to the right disambiguates.</p>
+<p><code>TF source:</code> reflects the workspace’s <code>tf_source.type</code>: <code>github</code> renders as <code>&lt;Repo&gt;@&lt;Ref&gt;</code> (the canonical happy-path shape since Sprint 5 — e.g., <code>jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0</code>); <code>local</code> renders as <code>local:&lt;Path&gt;</code>; <code>embedded</code> or unset renders as <code>(unset)</code>. The samples below use the <code>github</code> shape since it’s what most readers will see.</p>
+<h3 id="shapeempty--fresh-workspace-neither-phase-deployed"><a class="header" href="#shapeempty--fresh-workspace-neither-phase-deployed"><code>ShapeEmpty</code> — fresh workspace, neither phase deployed</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        dev
+Region:           us-south
+Resource group:   default
+Cluster:          (unset)  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    not deployed
+BNK trial:        not deployed
+Kubeconfig:       (none — run `roksbnkctl kubeconfig --download`)
+</code></pre>
+<p>Both phases report <code>not deployed</code> — the state directories either don’t exist or hold zero-resource state files. Running <code>roksbnkctl cluster up</code> (or <code>roksbnkctl up</code> for the monolithic path) advances the workspace to <code>ShapeClusterOnly</code>.</p>
+<h3 id="shapeclusteronly--cluster-phase-deployed-no-bnk-trial-yet"><a class="header" href="#shapeclusteronly--cluster-phase-deployed-no-bnk-trial-yet"><code>ShapeClusterOnly</code> — cluster phase deployed, no BNK trial yet</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        not deployed
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>The <code>Cluster phase</code> line reads the mtime of <code>&lt;state-cluster-dir&gt;/terraform.tfstate</code>; the <code>BNK trial</code> line reads <code>&lt;state-dir&gt;/terraform.tfstate</code> and falls back to <code>not deployed</code> when the trial state is empty or missing. Running <a href="#deploying-bnk-trials-on-top"><code>roksbnkctl bnk up</code></a> advances the workspace to <code>ShapeSplit</code>.</p>
+<h3 id="shapesplit--both-phases-deployed-the-v11-steady-state"><a class="header" href="#shapesplit--both-phases-deployed-the-v11-steady-state"><code>ShapeSplit</code> — both phases deployed (the v1.1+ steady state)</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        deployed (last apply 2026-05-13 14:15:01 MST)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>Each phase has its own mtime; the timestamps move independently. Re-running <a href="#tearing-down"><code>roksbnkctl bnk down</code></a> then <a href="#deploying-bnk-trials-on-top"><code>roksbnkctl bnk up</code></a> updates the <code>BNK trial</code> line without touching the <code>Cluster phase</code> line — useful for confirming which phase you most recently exercised.</p>
+<h3 id="shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><a class="header" href="#shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><code>ShapeLegacySingle</code> — v1.0.x workspace, cluster + trial in one tfstate</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        legacy-canada
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        (unset)
+Shape:            legacy single-state (cluster + trial in one tfstate)
+Last apply:       2026-05-13 14:15:01 MST  (4h22m18s ago)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<blockquote>
+<p><strong>Script-compat note.</strong> <code>ShapeLegacySingle</code> preserves the v1.0.x <code>Last apply:</code> line verbatim. Scripts that parsed <code>roksbnkctl status</code> output for the <code>Last apply</code> line on a legacy workspace continue to work unchanged. New script targets should switch to the per-phase <code>Cluster phase:</code> / <code>BNK trial:</code> lines (or to <code>roksbnkctl cluster show</code> + <code>bnk show</code> for a structured read); the per-phase lines are emitted for <code>ShapeEmpty</code>, <code>ShapeClusterOnly</code>, and <code>ShapeSplit</code>, not for <code>ShapeLegacySingle</code>. The <code>Shape:</code> line is a one-line callout so you don’t have to grep <a href="#the-cluster-phase-cluster-updown">Chapter 8</a> to figure out which shape you’re on.</p>
+</blockquote>
+<p>The shape detection logic lives in <code>internal/config/tfstate.go::DetectShape</code>; the per-phase emission in <code>runStatus</code> is in <code>internal/cli/inspect.go</code>. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition">PRD 06 §“<code>status</code> command integration”</a> for the design rationale.</p>
 <h2 id="the-k-command-tree"><a class="header" href="#the-k-command-tree">The <code>k</code> command tree</a></h2>
 <p>All internalised verbs live under <code>roksbnkctl k</code>:</p>
 <pre><code>roksbnkctl k get          # fetch resources
@@ -5839,8 +5907,12 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
+<li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — Cluster/trial phase split</a> — the workspace-shape concept that drives the per-phase <code>status</code> lines.</li>
+<li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials on top</a> — the verb that advances <code>ShapeClusterOnly</code> → <code>ShapeSplit</code> (and back via <code>bnk down</code>).</li>
+<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — independent teardown of the cluster and trial phases.</li>
 <li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The <code>--on</code> flag</a> — <code>--on</code> plus the passthroughs for customer-firewalled scenarios.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a> — the design rationale and acceptance criteria for the work in this chapter.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition">PRD 06 §“<code>status</code> command integration”</a> — the design rationale for the per-phase <code>status</code> output.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cos-supply-chain-management"><a class="header" href="#cos-supply-chain-management">COS supply chain management</a></h1>
@@ -6978,7 +7050,7 @@ upgrade verb).</p>
 KUBECONFIG, IBMCLOUD_API_KEY, IC_API_KEY, and IBMCLOUD_REGION exported so
 locally-installed kubectl / oc / ibmcloud commands work without further
 setup. Exits when the subshell does.</p>
-<h2 id="roksbnkctl-status"><a class="header" href="#roksbnkctl-status"><code>roksbnkctl status</code></a></h2>
+<h2 id="roksbnkctl-status-1"><a class="header" href="#roksbnkctl-status-1"><code>roksbnkctl status</code></a></h2>
 <p>Summary of the workspace: cluster, components, last apply</p>
 <p>roksbnkctl status reports a quick read of the workspace:</p>
 <ul>

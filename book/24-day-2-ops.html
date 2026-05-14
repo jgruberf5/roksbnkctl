@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c265d250.js";
+            window.path_to_searchindex_js = "searchindex-2af8b102.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -178,7 +178,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="day-2-ops-status-logs-k-getapplyexec"><a class="header" href="#day-2-ops-status-logs-k-getapplyexec">Day-2 ops: status, logs, k get/apply/exec</a></h1>
-<p>This is the chapter to read after the cluster is up and BNK is deployed and you’re now living with the result. Most day-2 work is the small stuff: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all of those into native Go via <a href="https://pkg.go.dev/k8s.io/client-go"><code>client-go</code></a> so you no longer need <code>kubectl</code> on <code>PATH</code> for the everyday workflow.</p>
+<p>This is the chapter to read after the cluster is up and BNK is deployed and you’re now living with the result. It opens with <a href="#roksbnkctl-status"><code>roksbnkctl status</code></a> — the workspace-level read of what’s deployed — then covers the per-resource verbs: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all the per-resource verbs into native Go via <a href="https://pkg.go.dev/k8s.io/client-go"><code>client-go</code></a> so you no longer need <code>kubectl</code> on <code>PATH</code> for the everyday workflow.</p>
 <p>The full design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a>. This chapter is the user-facing surface — the canonical “what’s the kubectl-equivalent in <code>roksbnkctl</code>?” reference.</p>
 <h2 id="why-internalise"><a class="header" href="#why-internalise">Why internalise</a></h2>
 <p>Three reasons, in order of weight:</p>
@@ -187,6 +187,76 @@
 <li><strong>No version skew.</strong> The vendored <code>client-go</code> matches the kube API the bundled HCL targets. You can’t accidentally use <code>kubectl</code> 1.20 against a 1.28 cluster and have its print column heuristics go sideways.</li>
 <li><strong>First-class output formats.</strong> <code>cli-runtime</code> gives byte-identical <code>-o yaml</code>/<code>-o json</code>/<code>-o jsonpath</code> output to <code>kubectl</code>. The validator agent’s golden-file tests in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/k8s/golden_test.go"><code>internal/k8s/golden_test.go</code></a> assert this for representative resources.</li>
 </ol>
+<h2 id="roksbnkctl-status"><a class="header" href="#roksbnkctl-status"><code>roksbnkctl status</code></a></h2>
+<p>The one-shot read of a workspace’s posture. Always best-effort — every section reports its own missing pieces so a partial state still produces useful output rather than a hard error.</p>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        deployed (last apply 2026-05-13 14:15:01 MST)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>The header rows (workspace, region, resource group, cluster identity, TF source pin, kubeconfig path, cluster reachability) are the same across every workspace shape. The per-phase deployment lines below them are shape-dependent: <code>roksbnkctl status</code> reads each phase’s <code>terraform.tfstate</code> mtime independently and emits one line per phase. The mapping from <a href="./08-cluster-phase.html">workspace shape</a> to per-phase output:</p>
+<p>The two <code>Cluster:</code> lines are by design: the first (in the header block) reports cluster <em>identity</em> — which cluster you’re targeting and whether the workspace creates it or attaches to an existing one. The second (the trailer line) reports cluster <em>reachability</em> — node count and ready count from a live API call. The label is reused because both pieces of information are about “the cluster”; the column to the right disambiguates.</p>
+<p><code>TF source:</code> reflects the workspace’s <code>tf_source.type</code>: <code>github</code> renders as <code>&lt;Repo&gt;@&lt;Ref&gt;</code> (the canonical happy-path shape since Sprint 5 — e.g., <code>jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0</code>); <code>local</code> renders as <code>local:&lt;Path&gt;</code>; <code>embedded</code> or unset renders as <code>(unset)</code>. The samples below use the <code>github</code> shape since it’s what most readers will see.</p>
+<h3 id="shapeempty--fresh-workspace-neither-phase-deployed"><a class="header" href="#shapeempty--fresh-workspace-neither-phase-deployed"><code>ShapeEmpty</code> — fresh workspace, neither phase deployed</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        dev
+Region:           us-south
+Resource group:   default
+Cluster:          (unset)  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    not deployed
+BNK trial:        not deployed
+Kubeconfig:       (none — run `roksbnkctl kubeconfig --download`)
+</code></pre>
+<p>Both phases report <code>not deployed</code> — the state directories either don’t exist or hold zero-resource state files. Running <code>roksbnkctl cluster up</code> (or <code>roksbnkctl up</code> for the monolithic path) advances the workspace to <code>ShapeClusterOnly</code>.</p>
+<h3 id="shapeclusteronly--cluster-phase-deployed-no-bnk-trial-yet"><a class="header" href="#shapeclusteronly--cluster-phase-deployed-no-bnk-trial-yet"><code>ShapeClusterOnly</code> — cluster phase deployed, no BNK trial yet</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        not deployed
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>The <code>Cluster phase</code> line reads the mtime of <code>&lt;state-cluster-dir&gt;/terraform.tfstate</code>; the <code>BNK trial</code> line reads <code>&lt;state-dir&gt;/terraform.tfstate</code> and falls back to <code>not deployed</code> when the trial state is empty or missing. Running <a href="./10-deploying-bnk-trials.html"><code>roksbnkctl bnk up</code></a> advances the workspace to <code>ShapeSplit</code>.</p>
+<h3 id="shapesplit--both-phases-deployed-the-v11-steady-state"><a class="header" href="#shapesplit--both-phases-deployed-the-v11-steady-state"><code>ShapeSplit</code> — both phases deployed (the v1.1+ steady state)</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        canada-roks
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0
+Cluster phase:    deployed (last apply 2026-05-13 14:08:33 MST)
+BNK trial:        deployed (last apply 2026-05-13 14:15:01 MST)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<p>Each phase has its own mtime; the timestamps move independently. Re-running <a href="./11-tearing-down.html"><code>roksbnkctl bnk down</code></a> then <a href="./10-deploying-bnk-trials.html"><code>roksbnkctl bnk up</code></a> updates the <code>BNK trial</code> line without touching the <code>Cluster phase</code> line — useful for confirming which phase you most recently exercised.</p>
+<h3 id="shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><a class="header" href="#shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><code>ShapeLegacySingle</code> — v1.0.x workspace, cluster + trial in one tfstate</a></h3>
+<pre><code class="language-bash">$ roksbnkctl status
+Workspace:        legacy-canada
+Region:           ca-tor
+Resource group:   default
+Cluster:          canada-roks  (attach existing)
+TF source:        (unset)
+Shape:            legacy single-state (cluster + trial in one tfstate)
+Last apply:       2026-05-13 14:15:01 MST  (4h22m18s ago)
+Kubeconfig:       /home/you/.kube/config
+Cluster:          2/2 nodes ready
+</code></pre>
+<blockquote>
+<p><strong>Script-compat note.</strong> <code>ShapeLegacySingle</code> preserves the v1.0.x <code>Last apply:</code> line verbatim. Scripts that parsed <code>roksbnkctl status</code> output for the <code>Last apply</code> line on a legacy workspace continue to work unchanged. New script targets should switch to the per-phase <code>Cluster phase:</code> / <code>BNK trial:</code> lines (or to <code>roksbnkctl cluster show</code> + <code>bnk show</code> for a structured read); the per-phase lines are emitted for <code>ShapeEmpty</code>, <code>ShapeClusterOnly</code>, and <code>ShapeSplit</code>, not for <code>ShapeLegacySingle</code>. The <code>Shape:</code> line is a one-line callout so you don’t have to grep <a href="./08-cluster-phase.html">Chapter 8</a> to figure out which shape you’re on.</p>
+</blockquote>
+<p>The shape detection logic lives in <code>internal/config/tfstate.go::DetectShape</code>; the per-phase emission in <code>runStatus</code> is in <code>internal/cli/inspect.go</code>. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition">PRD 06 §“<code>status</code> command integration”</a> for the design rationale.</p>
 <h2 id="the-k-command-tree"><a class="header" href="#the-k-command-tree">The <code>k</code> command tree</a></h2>
 <p>All internalised verbs live under <code>roksbnkctl k</code>:</p>
 <pre><code>roksbnkctl k get          # fetch resources
@@ -431,8 +501,12 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 <ul>
 <li><a href="./05-doctor.html">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="./06-workspaces.html">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
+<li><a href="./08-cluster-phase.html">Chapter 8 — Cluster/trial phase split</a> — the workspace-shape concept that drives the per-phase <code>status</code> lines.</li>
+<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials on top</a> — the verb that advances <code>ShapeClusterOnly</code> → <code>ShapeSplit</code> (and back via <code>bnk down</code>).</li>
+<li><a href="./11-tearing-down.html">Chapter 11 — Tearing down</a> — independent teardown of the cluster and trial phases.</li>
 <li><a href="./16-on-flag-ssh-jumphosts.html">Chapter 16 — The <code>--on</code> flag</a> — <code>--on</code> plus the passthroughs for customer-firewalled scenarios.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a> — the design rationale and acceptance criteria for the work in this chapter.</li>
+<li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition">PRD 06 §“<code>status</code> command integration”</a> — the design rationale for the per-phase <code>status</code> output.</li>
 </ul>
 
                     </main>
