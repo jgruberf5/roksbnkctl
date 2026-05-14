@@ -244,15 +244,64 @@ func (w *Workspace) Plan(ctx context.Context, extraVarFiles ...string) (bool, er
 // Apply runs `terraform apply`. tfexec auto-passes -auto-approve since
 // terraform-exec doesn't allow interactive prompts; roksbnkctl's own
 // confirmation gate runs at the CLI layer instead.
+//
+// After a successful apply this also writes terraform.applied.tfvars
+// (PRD 07): a snapshot of the var-file chain terraform consumed, landed
+// under the per-phase state dir at mode 0600. The snapshot write is
+// best-effort — a failure logs a warning to stderr and does NOT fail
+// the apply (the apply already succeeded and the snapshot is a
+// nice-to-have output).
 func (w *Workspace) Apply(ctx context.Context, extraVarFiles ...string) error {
+	sources := w.varFiles(extraVarFiles...)
 	var opts []tfexec.ApplyOption
-	for _, p := range w.varFiles(extraVarFiles...) {
+	for _, p := range sources {
 		opts = append(opts, tfexec.VarFile(p))
 	}
-	return w.tf.Apply(ctx, opts...)
+	if err := w.tf.Apply(ctx, opts...); err != nil {
+		return err
+	}
+	phase := w.phaseLabel(sources)
+	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write terraform.applied.tfvars: %v\n", err)
+	}
+	return nil
+}
+
+// phaseLabel classifies which workspace phase this Apply represents,
+// for the PRD 07 snapshot header + state-dir routing. Three labels:
+//
+//   - "cluster"       — Workspace's stateDir is the per-workspace
+//     state-cluster/ tree (i.e., `cluster up` flow).
+//   - "legacy-single" — Workspace's stateDir is state/ AND DetectShape
+//     reports the workspace is a v1.0.x single-state shape. Recorded so
+//     the reader doesn't mistake a legacy snapshot for trial-only.
+//   - "trial"         — anything else (the modern `bnk up` flow and the
+//     defensive fallback for unclassifiable shapes).
+//
+// DetectShape is a cheap pure-filesystem call; it's safe to make this on
+// every Apply. Errors from DetectShape fall through to "trial" — same
+// fallback PRD 07 §"Anti-patterns to avoid" #4 mandates for the snapshot
+// write itself.
+func (w *Workspace) phaseLabel(_ []string) string {
+	if filepath.Base(w.stateDir) == "state-cluster" {
+		return "cluster"
+	}
+	if shape, err := config.DetectShape(w.name); err == nil && shape == config.ShapeLegacySingle {
+		return "legacy-single"
+	}
+	return "trial"
 }
 
 // Destroy runs `terraform destroy`.
+//
+// Per PRD 07 §"Resolved design decisions" #2, Destroy intentionally does
+// NOT touch the prior apply's terraform.applied.tfvars snapshot. The
+// file represents "what was last deployed"; leaving it in place after a
+// destroy is a deliberate user-facing signal that the workspace was
+// applied at some point and the inputs that produced it are still on
+// record. The snapshot/state divergence is itself useful (the file's
+// mtime tells you when the last apply was; the absence of state tells
+// you it's since been torn down).
 func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error {
 	var opts []tfexec.DestroyOption
 	for _, p := range w.varFiles(extraVarFiles...) {

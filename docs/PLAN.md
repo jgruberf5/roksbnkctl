@@ -804,6 +804,49 @@ Headline closure: `roksbnkctl ops install --trusted-profile=auto` followed by `r
 
 ---
 
+## Sprint 11 — PRD 07 deployed-tfvars snapshot (post-v1.3)
+
+### Goal
+
+Ship `v1.4.0`: land [PRD 07](docs/prd/07-DEPLOYED-TFVARS.md) — after every successful `terraform apply` for a workspace phase, write a canonical-HCL `terraform.applied.tfvars` capturing the effective var-file inputs that produced the current state. Single small PRD, single sprint, no carry-over from prior sprints.
+
+### Drivers / why now
+
+Today's apply chain layers tfvars from three sources (`config.yaml`-derived, `terraform.tfvars.user`, cluster-phase override) but persists nothing — only `terraform.tfstate` survives, and it captures derived values rather than the inputs that produced them. Users who lose or regenerate `config.yaml`, want to re-create the workspace on a teammate's host, need to audit "what did I deploy 90 days ago?", or have a corrupted state needing `terraform import` against the same inputs have no on-disk record of the effective vars. See [PRD 07 §"Why"](docs/prd/07-DEPLOYED-TFVARS.md#why) for the full rationale. The fix is small (~150 LOC + tests) and unlocks DR, audit, and team-handoff workflows that previously required out-of-band reconstruction.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **`WriteAppliedTFVars(workspace, phase, sources []string) error`** — new helper that reads each source tfvars file in order, applies the `ibmcloud_api_key` redaction, and emits a source-attributed canonical-HCL snapshot to the phase's state dir at mode `0600`. Idempotent (same inputs → byte-identical output). Variables sorted alphabetically within each section. Returns error on write failure (callers log-and-continue per PRD 07 anti-pattern 4). | `internal/config/applied_tfvars.go` (new) |
+| 2 | **`Workspace.Apply` hook** — `internal/tf/terraform.go::Workspace.Apply` calls `WriteAppliedTFVars` after the underlying `tf.Apply` returns nil, passing the same `varFiles` slice it gave to `terraform apply`. Failure mode: log a `warn` to stderr (`could not write terraform.applied.tfvars: <err>`) and continue. A failed apply produces no snapshot; the prior successful apply's file remains in place. | `internal/tf/terraform.go` (edit) |
+| 3 | **Unit tests** — fixture-driven tests against the four-shape `internal/config/testdata/` workspaces from Sprint 8 (Empty / ClusterOnly / Split / LegacySingle), asserting: file written at the expected path with mode `0600`; source-attribution comments present; `ibmcloud_api_key` (and only that variable) emitted as `<redacted>`; alphabetic variable order within each section; re-running with identical inputs produces a byte-identical file; destroy flow does NOT modify the prior snapshot. Legacy-shape test asserts the `phase=legacy-single` header marker. | `internal/config/applied_tfvars_test.go` (new) |
+
+### Test deliverables
+
+- **Staff's four-shape unit-test sweep** covering the assertion list in code deliverable 3.
+- **Validator's live verify** against a sandbox `roksbnkctl cluster up` → `bnk up`: confirm both phase files land at the documented paths after each apply, mode `0600`, redaction correct, header timestamp parses as RFC3339. Verifies the architect-surface chapter 6 sample matches staff's actual output byte-for-byte (any drift gets fixed on the architect side per PRD 07 / chapter 6 cross-link consistency task).
+- **Tech-writer drift sweep** at end of sprint: regenerate the chapter 6 worked example from a live apply output, confirm no stale fields.
+
+### Risks
+
+- **Goroutine ordering in `Workspace.Apply`** — the hook fires after `tf.Apply` returns. If a future refactor introduces concurrent post-apply work that touches the same state dir, the snapshot write could race. Mitigation: the current `Apply` is straight-line synchronous; PRD 07 names this risk so future authors don't accidentally introduce a race.
+- **Redaction list incompleteness** — only `ibmcloud_api_key` is redacted today, which is correct for the current variable surface. If a future cycle adds a new credential-grade variable (e.g., a registry pull-secret token), the redaction list extends in code — one-line addition. Mitigated by `0600` mode and the per-user workspace dir; the snapshot doesn't world-leak even if a new sensitive var slips in temporarily.
+- **`ShapeLegacySingle` mis-attribution** — the legacy shape merges cluster and trial var-files into one snapshot. The source-attribution comments (`# === from config.yaml ===`, etc.) still cleanly separate the inputs, but readers expecting per-phase split need to see the `phase=legacy-single` header marker to know they're on a legacy workspace. Mitigated by the unit-test assertion on the header marker.
+
+### Gate to `v1.4.0` tag
+
+- All four agents' issue files at `Status: resolved`, `wontfix`, or `accepted`.
+- Whole-tree `go build / test / vet / gofmt / staticcheck / -tags integration build/test` green (the v1.3.0 pre-tag gate from Sprint 10 code deliverable 3 carries forward unchanged).
+- Live snapshot verify recorded in the integration commit or `resolved_sprint11_validator.md`: after `cluster up`, `~/.roksbnkctl/<workspace>/state-cluster/terraform.applied.tfvars` exists at mode `0600` with the expected source-attribution comments and `<redacted>` line.
+- Chapter 6 §"`terraform.applied.tfvars` — what's deployed right now" final; CHANGELOG `v1.4.0` entry final; `mdbook build book/` clean; cross-links to PRD 07 + PRD 04 resolve.
+
+### Carry-overs from prior sprints
+
+None. Sprint 11 is a single-PRD cycle. Prior-sprint deferred items (chapter 14 §"What's new in v1.2" position, chapter 19 §"5. Create the Pod" `env:` block) remain deferred — no movement this sprint.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:

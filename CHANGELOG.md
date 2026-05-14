@@ -4,6 +4,21 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased (v1.x)
+
+Sprint 11 closure cycle. Lands PRD 07's `terraform.applied.tfvars` snapshot per workspace phase — after every successful `terraform apply`, `roksbnkctl` writes a canonical-HCL var-file capturing the effective inputs that produced the current state. Re-create / audit / handoff scenarios that previously required `config.yaml` or memory now become file-driven: the snapshot is on disk at a predictable path, mode `0600`, with `ibmcloud_api_key` redacted and every other variable verbatim. The file is never read back by `roksbnkctl` (it's an output, not an input); `cluster down` / `bnk down` leave it in place so the prior `up`'s snapshot stays available for re-apply or audit. See [PRD 07](docs/prd/07-DEPLOYED-TFVARS.md) for the design rationale and [PLAN.md §"Sprint 11"](docs/PLAN.md) for the cycle's deliverables.
+
+### Added
+
+- **`terraform.applied.tfvars` snapshot per workspace phase** ([PRD 07](docs/prd/07-DEPLOYED-TFVARS.md)) — after every successful `terraform apply`, the effective var-file inputs land at `~/.roksbnkctl/<workspace>/state-cluster/terraform.applied.tfvars` (cluster phase) or `~/.roksbnkctl/<workspace>/state/terraform.applied.tfvars` (trial phase, and the union file on `ShapeLegacySingle`). Canonical HCL — one assignment per line, alphabetic within each source section, source-attribution comments for `config.yaml`-derived vars / `terraform.tfvars.user` / cluster-phase override. `ibmcloud_api_key` is rendered as `<redacted>`; every other variable is verbatim. File mode is `0600`. The file is **not** read back by `roksbnkctl` — it's an output for the user (re-create / audit / handoff workflows), never an input the tool depends on. Implementation lands in `internal/config/applied_tfvars.go` (`WriteAppliedTFVars`) and hooks into `internal/tf/terraform.go::Workspace.Apply` after a successful apply (log-and-continue on write failure — the apply's exit code reflects the apply, not the snapshot's bookkeeping). See [Chapter 6 §"`terraform.applied.tfvars` — what's deployed right now"](book/src/06-workspaces.md) for the user-facing description with a worked example.
+
+### Deferred (v1.x roadmap, post-v1.4.0)
+
+See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). Not in v1.4.0:
+
+- **`ops install` / `ops uninstall` snapshot** ([PRD 07 §"Open questions" item 1](docs/prd/07-DEPLOYED-TFVARS.md#open-questions)) — `ops install` and `ops uninstall` change cluster-side state (Kubernetes objects, IAM trusted profile bindings) but don't run Terraform, so the tfvars-shaped snapshot doesn't apply. A future cycle may add a parallel record (SA annotations, Secret state, the `--trusted-profile=…` value used). File a follow-up PRD if there's user demand.
+- All prior-cycle deferred items from [v1.3.0 §"Deferred"](#deferred-v1x-roadmap-post-v130) remain deferred.
+
 ## v1.3.0 — 2026-05-14
 
 Sprint 10 closure cycle. Closes the runtime side of PRD 04's trusted-profile flow (the in-pod `ibmcloud login` wrap Sprint 9 deferred), lands PRD 06's `roksbnkctl status` per-phase integration (Sprint 10 scope addition), and folds four of the five tech-writer polish issues deferred from Sprint 9 (the fifth — chapter 14 §"What's new in v1.2" section position — is deferred again as a v1.x polish item; see `### Deferred` below). The headline reframe: `roksbnkctl ops install --trusted-profile=auto` followed by `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` now returns a fresh IAM token end-to-end — the v1.2.x partial-closure callout in chapter 19 comes out. See [PLAN.md §"Sprint 10"](docs/PLAN.md) for cycle deliverables and [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) + [PRD 06 §"`status` command integration"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition) for the design surface.
