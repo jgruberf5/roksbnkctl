@@ -590,6 +590,107 @@ func TestK8sBackend_NoCredValueInArgv(t *testing.T) {
 	}
 }
 
+// — Sprint 10 / staff Issue 2 closure: ibmcloud login wrap branches
+// on $IAM_PROFILE_ID — //
+
+// TestIBMCloudLoginWrap_BranchesOnIAMProfileID asserts the wrap-script
+// constant carries both the trusted-profile and static-key login
+// branches, gated on `$IAM_PROFILE_ID`. The actual runtime behavior
+// (login succeeds, retries, etc.) is integration-test surface; here we
+// just check that the shell-conditional is in place — a regression to
+// the unconditional `--apikey` form would silently re-introduce Sprint
+// 9 staff Issue 2.
+//
+// We can't easily exec the wrap script under `sh` in CI without an
+// `ibmcloud` binary, so the assertions are textual: the script must
+// contain both login branches plus the conditional that selects.
+func TestIBMCloudLoginWrap_BranchesOnIAMProfileID(t *testing.T) {
+	s := ibmcloudLoginWrapScript
+
+	mustContain := []string{
+		// The shell conditional that selects the path.
+		`if [ -n "$IAM_PROFILE_ID" ]`,
+		// Trusted-profile login form (Sprint 10 / validator Issue 1
+		// closure: `ibmcloud 2.43.0` uses `--cr-token @<path>` +
+		// `--profile <id>`, NOT the non-existent `--trusted-profile-id`
+		// flag the Sprint 10 initial wrap reached for).
+		`--cr-token @/var/run/secrets/tokens/token`,
+		`--profile "$IAM_PROFILE_ID"`,
+		// IBM Cloud API endpoint — the cold ops pod has no persisted
+		// `ibmcloud api` setting, so both branches must set it
+		// explicitly.
+		`-a https://cloud.ibm.com`,
+		// Static-key login form (unchanged from v1.0.x).
+		`--apikey "$IBMCLOUD_API_KEY"`,
+		// Final exec'd command — argv flows through verbatim.
+		`exec ibmcloud "$@"`,
+	}
+	for _, frag := range mustContain {
+		if !strings.Contains(s, frag) {
+			t.Errorf("wrap script missing required fragment %q\nfull script:\n%s", frag, s)
+		}
+	}
+
+	// Validator Issue 1 regression guard: the non-existent
+	// `--trusted-profile-id` flag must NOT reappear. If it does, a live
+	// `ibmcloud 2.43.0` run will fail with
+	// `Incorrect Usage: flag provided but not defined: -trusted-profile-id`.
+	if strings.Contains(s, `--trusted-profile-id`) {
+		t.Errorf("wrap script reintroduced non-existent --trusted-profile-id flag (does not exist on ibmcloud 2.43.0; use --cr-token + --profile instead)\nfull:\n%s", s)
+	}
+
+	// The retry should be 3 attempts. Crude assertion — look for the
+	// loop bound + the sleep value.
+	if !strings.Contains(s, `"$attempt" -le 3`) {
+		t.Errorf("wrap script missing 3-attempt retry bound (Sprint 10 OIDC-propagation mitigation)\nfull:\n%s", s)
+	}
+	if !strings.Contains(s, `sleep 20`) {
+		t.Errorf("wrap script missing 20s backoff between retry attempts\nfull:\n%s", s)
+	}
+
+	// Region defaulting must still happen on both branches.
+	if !strings.Contains(s, `"${IBMCLOUD_REGION:-us-south}"`) {
+		t.Errorf("wrap script missing IBMCLOUD_REGION default (us-south)\nfull:\n%s", s)
+	}
+}
+
+// TestIBMCloudLoginWrap_TrustedProfileOmitsAPIKey asserts the trusted-
+// profile branch does NOT carry `--apikey`. The two flags being
+// mutually exclusive is core to the Sprint 10 design (trusted-profile
+// success ⇒ no static API key in any Secret at rest); a regression
+// where both flags coexist on the same `ibmcloud login` invocation
+// would partially defeat the security gain.
+func TestIBMCloudLoginWrap_TrustedProfileOmitsAPIKey(t *testing.T) {
+	s := ibmcloudLoginWrapScript
+
+	// Find the section after `if [ -n "$IAM_PROFILE_ID" ]` and before
+	// the corresponding `else`. The trusted-profile branch lives there.
+	startMarker := `if [ -n "$IAM_PROFILE_ID" ]; then`
+	endMarker := "else"
+	startIdx := strings.Index(s, startMarker)
+	endIdx := strings.Index(s, endMarker)
+	if startIdx < 0 || endIdx < 0 || endIdx <= startIdx {
+		t.Fatalf("wrap script doesn't have the expected if/else structure:\n%s", s)
+	}
+	tpBranch := s[startIdx:endIdx]
+	if strings.Contains(tpBranch, "--apikey") {
+		t.Errorf("trusted-profile branch leaks --apikey flag (must use only --cr-token + --profile):\n%s", tpBranch)
+	}
+	// Sprint 10 / validator Issue 1: the trusted-profile branch must use
+	// `--cr-token @<path>` + `--profile <id>` (the documented `ibmcloud
+	// 2.43.0` form) — NOT the non-existent `--trusted-profile-id` flag
+	// the initial Sprint 10 wrap reached for.
+	if !strings.Contains(tpBranch, "--cr-token @/var/run/secrets/tokens/token") {
+		t.Errorf("trusted-profile branch missing --cr-token @<projected-token-path>:\n%s", tpBranch)
+	}
+	if !strings.Contains(tpBranch, `--profile "$IAM_PROFILE_ID"`) {
+		t.Errorf("trusted-profile branch missing --profile \"$IAM_PROFILE_ID\":\n%s", tpBranch)
+	}
+	if strings.Contains(tpBranch, "--trusted-profile-id") {
+		t.Errorf("trusted-profile branch references non-existent --trusted-profile-id flag (must use --cr-token + --profile):\n%s", tpBranch)
+	}
+}
+
 // — splitKV table-driven coverage — //
 
 func TestSplitKV(t *testing.T) {
