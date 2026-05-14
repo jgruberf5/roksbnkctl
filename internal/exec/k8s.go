@@ -53,6 +53,51 @@ const (
 // pass tool names from toolImages and aren't affected.
 var jobNameSanitizer = strings.NewReplacer(":", "-", "/", "-", "@", "-")
 
+// ibmcloudLoginWrapScript is the sh -c body for the ops-pod ibmcloud
+// login wrap. Branches on `$IAM_PROFILE_ID`:
+//
+//   - Set: trusted-profile path. Three attempts at `ibmcloud login
+//     -a https://cloud.ibm.com --cr-token @/var/run/secrets/tokens/token
+//     --profile "$IAM_PROFILE_ID"`, 20s apart, to absorb the cluster's
+//     OIDC-issuer propagation window (30-60s after `ops install`).
+//     The `--cr-token` path reads the projected SA-token volume
+//     mounted at /var/run/secrets/tokens/token by k8s_install.yaml
+//     (audience: iam, expirationSeconds: 3600) — the projected token
+//     carries the IAM-acceptable audience so IBM IAM's ROKS_SA link
+//     (`internal/ibm/trusted_profile.go::ensureLink`) accepts it. The
+//     `-a https://cloud.ibm.com` is required on the cold ops pod
+//     (no persisted `ibmcloud api` setting).
+//     On all-three-fail, prints the final attempt's stderr to the
+//     caller's stderr before exec'ing argv (so the user sees a real
+//     diagnostic, not a silent missing-token).
+//   - Empty: v1.0.x static-key path. Single `--apikey` login;
+//     unchanged behaviour.
+//
+// Sprint 10 / validator Issue 1 closure: replaced the non-existent
+// `--trusted-profile-id` flag (Sprint 10 initial wrap) with the
+// `--cr-token @<path> --profile <id>` pair documented in `ibmcloud
+// login --help` for `ibmcloud 2.43.0`.
+//
+// Exported as a package-level var so unit tests can assert the script
+// shape without re-deriving it (Sprint 10 staff Issue 2 / k8s_test.go
+// branching-wrap test).
+const ibmcloudLoginWrapScript = `if [ -n "$IAM_PROFILE_ID" ]; then
+  attempt=1
+  last_err=""
+  while [ "$attempt" -le 3 ]; do
+    last_err="$(ibmcloud login -a https://cloud.ibm.com --cr-token @/var/run/secrets/tokens/token --profile "$IAM_PROFILE_ID" -r "${IBMCLOUD_REGION:-us-south}" --quiet 2>&1 > /dev/null)"
+    if [ $? -eq 0 ]; then break; fi
+    if [ "$attempt" -lt 3 ]; then sleep 20; fi
+    attempt=$((attempt + 1))
+  done
+  if [ "$attempt" -gt 3 ]; then
+    printf '%s\n' "trusted-profile login failed after 3 attempts: $last_err" >&2
+  fi
+else
+  ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1
+fi
+exec ibmcloud "$@"`
+
 // K8sBackend executes argv either by exec'ing into a long-lived ops pod
 // (for ibmcloud + ad-hoc shells) or by spawning a one-shot Job (for
 // iperf3 client + terraform).
@@ -212,11 +257,31 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	// Same shape as docker.go's dockerImageBinary["ibmcloud"] wrap.
 	// Skip if argv[0] != "ibmcloud" or if the user is explicitly running
 	// `ibmcloud login`/`logout` (no double-login).
+	//
+	// Sprint 10 / PRD 04 §"Resolved in Sprint 9" closure (staff Issue 2
+	// from Sprint 9): when the ops pod's SA carries the trusted-profile
+	// annotation, the manifest renderer injects `IAM_PROFILE_ID=<id>`
+	// into the pod env. The wrap branches on `$IAM_PROFILE_ID` presence
+	// at runtime: when set, `ibmcloud login --cr-token @<path>
+	// --profile "$IAM_PROFILE_ID"` is used (no static API key in the
+	// cluster at rest; the projected SA-token volume at
+	// /var/run/secrets/tokens/token, audience `iam`, supplies the JWT
+	// IAM validates against the ROKS_SA link); when empty (the v1.0.x
+	// static-key path), the existing `--apikey` form runs.
+	//
+	// Brief retry on the trusted-profile path: the cluster's OIDC issuer
+	// URL takes 30-60s to propagate through IBM IAM after `ops install`
+	// returns. The first `--cr-token` attempt may fail with "failed to
+	// assume trusted profile" during this window. Three attempts with
+	// 20s backoff; if all three fail, the wrap surfaces the final
+	// attempt's error before exec'ing the user's argv (so the caller
+	// sees a useful diagnostic, not a silent missing-token).
+	// The static-key path doesn't need this (no OIDC dependency).
 	if len(cmd) >= 1 && cmd[0] == "ibmcloud" {
 		if len(cmd) < 2 || (cmd[1] != "login" && cmd[1] != "logout") {
 			wrap := []string{
 				"sh", "-c",
-				`ibmcloud login -a https://cloud.ibm.com -r "${IBMCLOUD_REGION:-us-south}" --apikey "$IBMCLOUD_API_KEY" --quiet > /dev/null 2>&1 && exec ibmcloud "$@"`,
+				ibmcloudLoginWrapScript,
 				"--",
 			}
 			cmd = append(wrap, cmd[1:]...)

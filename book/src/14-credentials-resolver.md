@@ -267,7 +267,7 @@ New flag on `roksbnkctl ops install` that controls how the ops pod gets its IBM 
 
 ### Compatibility note
 
-v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s `--trusted-profile=auto` default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning block on `ops install` naming the fallback and how to silence it. Setting `--trusted-profile=off` reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).
+v1.0.x and v1.1.x workspaces continue to work without migration. The docker tmpfile pattern is a transparent replacement — the resolver chain is unchanged, the workspace config is unchanged, and no flag is required to opt in. The k8s `--trusted-profile=auto` default with auto-fallback means existing workspaces against an IAM-restricted key keep getting the static-key Secret as before, with one extra stderr warning line on `ops install` naming the fallback and how to silence it. Setting `--trusted-profile=off` reproduces the v1.0.x behaviour byte-for-byte (no warning, static-key Secret straight away).
 
 ## Backend-specific cred propagation
 

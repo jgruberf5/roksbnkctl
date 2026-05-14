@@ -203,10 +203,12 @@ func runOpsInstall(cmd *cobra.Command, _ []string) error {
 	// authenticates the pod); the Secret remains in the manifest only as
 	// a no-op placeholder the v1.0.x rollback path can repopulate.
 	manifestKey := apiKey
-	if useTrustedProfile {
+	manifestProfileID := ""
+	if useTrustedProfile && tp != nil {
 		manifestKey = ""
+		manifestProfileID = tp.ID
 	}
-	objs, err := decodeOpsManifests(manifestKey)
+	objs, err := decodeOpsManifests(manifestKey, manifestProfileID)
 	if err != nil {
 		return fmt.Errorf("decoding manifests: %w", err)
 	}
@@ -429,13 +431,29 @@ func runOpsUninstall(cmd *cobra.Command, _ []string) error {
 // decodeOpsManifests substitutes placeholders into the embedded YAML
 // then decodes each document into a typed runtime.Object via the
 // kubernetes scheme. Returns the objects in apply order.
-func decodeOpsManifests(apiKey string) ([]runtime.Object, error) {
+//
+// Sprint 10 / PRD 04 §"Resolved in Sprint 9" closure: when
+// `iamProfileID` is non-empty (the trusted-profile auto/on success
+// path), the renderer injects an `IAM_PROFILE_ID=<id>` env entry into
+// the ops pod spec so the in-pod `ibmcloud login` wrap branches to the
+// trusted-profile dance. Empty string (static-key path) substitutes
+// to an empty line so the env list collapses cleanly.
+func decodeOpsManifests(apiKey, iamProfileID string) ([]runtime.Object, error) {
 	apiKeyB64 := base64.StdEncoding.EncodeToString([]byte(apiKey))
 	rotated := time.Now().UTC().Format(time.RFC3339)
+	// Render the IAM_PROFILE_ID env entry at the right indent so it
+	// drops cleanly into the existing `env:` list. The placeholder
+	// itself sits at column 0 in k8s_install.yaml so substitution
+	// doesn't have to track indentation context.
+	iamProfileEnvEntry := ""
+	if iamProfileID != "" {
+		iamProfileEnvEntry = "        - name: IAM_PROFILE_ID\n          value: " + iamProfileID
+	}
 	rendered := strings.NewReplacer(
 		"${IBMCLOUD_API_KEY_B64}", apiKeyB64,
 		"${ROTATED_AT}", rotated,
 		"${OPS_IMAGE}", opsImage(),
+		"${IAM_PROFILE_ID_ENV_ENTRY}", iamProfileEnvEntry,
 	).Replace(execbackend.K8sInstallYAML())
 
 	dec := yaml.NewYAMLOrJSONDecoder(strings.NewReader(rendered), 4096)

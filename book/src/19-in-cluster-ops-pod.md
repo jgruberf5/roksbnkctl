@@ -96,6 +96,8 @@ The full manifest lives at `internal/exec/k8s_install.yaml` (embedded into the b
 
 ### 4. Create or update the credential Secret
 
+> **v1.2+ note.** This step describes the **static-key** Secret applied under `--trusted-profile=off` and under the `auto`-fallback when IAM perms don't allow the trusted-profile path. Under `--trusted-profile=auto` success the Secret is still applied with **empty data fields** (placeholder so `envFrom: secretRef` always resolves); the cred propagation happens via the trusted-profile annotation on the SA + the `IAM_PROFILE_ID` env var instead. See [§"Trusted-profile flow (v1.2+)"](#trusted-profile-flow-v12) below.
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -163,7 +165,7 @@ Three details to call out:
 
 The static-key Secret described above is the v1.0.x / v1.1.x path. In `v1.2.0` it becomes the **fallback**: the default `ops install` invocation auto-provisions an IBM Cloud IAM **trusted profile** linked to the ops pod's ServiceAccount, and the static API key no longer needs to land in any Kubernetes Secret. [PRD 04 §"Resolved in Sprint 9" → "Trusted-profile auto-provisioning (k8s backend)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#trusted-profile-auto-provisioning-k8s-backend) is the design reference; this section is the operational walkthrough.
 
-> **v1.2.0 partial closure — read this first.** Sprint 9 ships the **provisioning side** of the trusted-profile flow: profile creation, compute-resource binding to your cluster's OIDC issuer URL, SA annotation, and the Secret-rendered-with-empty-data manifest under `--trusted-profile=auto` success. **The runtime side — the in-pod `ibmcloud login` wrap that primes stateful subcommands (`iam`, `ks`, …) — still uses `--apikey "$IBMCLOUD_API_KEY"` in v1.2.0**, unchanged from v1.0.x. Under `--trusted-profile=auto` success the Secret carries empty data by design, so the in-pod wrap will fail with `missing API key` when you actually exercise `roksbnkctl --backend k8s ibmcloud <subcommand>`. Full closure (in-pod wrap switches to `ibmcloud login --trusted-profile-id "$IAM_PROFILE_ID"` when the SA is annotated) is Sprint 10 work — tracked in [staff Issue 2](https://github.com/jgruberf5/roksbnkctl/blob/main/issues/issue_sprint9_staff.md). For v1.2.0, the security-side win is real but partial: no static API key sits at rest in any Secret in etcd under auto-success. If you need the runtime wrap to actually work today, pass `--trusted-profile=off` and the v1.0.x static-key path applies unchanged.
+`v1.3.0` closes both the provisioning and the runtime sides of this flow — `ops install --trusted-profile=auto` provisions the profile, and the in-pod `ibmcloud login` wrap detects the SA's trusted-profile annotation and authenticates via the projected SA token at runtime. The v1.2.x partial-closure history (provisioning shipped, runtime deferred) is preserved in [CHANGELOG `v1.3.0 → ### Changed`](https://github.com/jgruberf5/roksbnkctl/blob/main/CHANGELOG.md) for readers who specifically want the chronology.
 
 ### `roksbnkctl ops install --trusted-profile=auto`
 
@@ -171,7 +173,7 @@ The static-key Secret described above is the v1.0.x / v1.1.x path. In `v1.2.0` i
 
 ```bash
 $ roksbnkctl ops install --trusted-profile=auto
-✓ Provisioned IAM trusted profile roksbnkctl-ops-sandbox-roks (iam-Profile-9f2…)
+✓ Provisioned IAM trusted profile roksbnkctl-ops-canada-roks (iam-Profile-9f2…)
 ✓ created namespace roksbnkctl-ops
 ✓ created sa roksbnkctl-ops/roksbnkctl-ops
 ✓ created secret roksbnkctl-ops/roksbnkctl-ibm-creds
@@ -179,7 +181,7 @@ $ roksbnkctl ops install --trusted-profile=auto
 ✓ created crb roksbnkctl-ops
 ✓ created pod roksbnkctl-ops/roksbnkctl-ops
 → Waiting for ops pod to be Ready (60s timeout)
-✓ Ops pod is Ready (trusted profile roksbnkctl-ops-sandbox-roks)
+✓ Ops pod is Ready (trusted profile roksbnkctl-ops-canada-roks)
 ```
 
 Re-runs against an existing install emit `updated <kind> …` / `<kind> … exists` instead of `created` for each resource that already matches the desired state. The trusted-profile provisioning line above is the single line `internal/cli/ops.go` emits for the whole IBM IAM-side flow (perm probe + profile create + compute-resource link + SA annotation) — the work happens silently inside `resolveTrustedProfileForInstall`; the one line you see is the receipt.
@@ -190,7 +192,7 @@ What just happened, in order (the binary doesn't narrate these steps but they're
 2. **Profile creation.** Names the profile `roksbnkctl-ops-<workspace>` so multiple workspaces against the same IBM Cloud account don't race for a single shared name. The compute-resource link binds the profile to your cluster's OIDC issuer URL + the `roksbnkctl-ops/roksbnkctl-ops` ServiceAccount specifically — other SAs on the same cluster can't assume the profile.
 3. **Policy attachment.** v1.2 ships with no default policies attached — the profile inherits whatever IAM policies your account has set up for trusted profiles in general (typically nothing, until you grant). A future cycle will surface `ibmcloud.trusted_profile.policies` as a workspace-config block; tracked under v1.x deferred. If you need the profile to actually authorise specific actions (Container Registry pulls, Cloud Object Storage reads), grant the policies via IBM Cloud Console or `ibmcloud iam trusted-profile-policy-create` after `ops install` returns.
 4. **SA annotation.** The ServiceAccount gets `iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-<workspace>` plus the `roksbnkctl.io/trusted-profile-managed: "true"` marker that signals `ops uninstall` to delete the profile during cleanup.
-5. **Pod creation.** The pod's container always has `envFrom: secretRef: roksbnkctl-ibm-creds`; what changes between modes is the Secret's contents. Under `--trusted-profile=auto` success the Secret is created with **empty data** — `IBMCLOUD_API_KEY` is the empty string. The Sprint 10 conditional-login-wrap closure (see the v1.2.0 partial-closure admonition at the top of this section) will switch the in-pod `ibmcloud login` to `--trusted-profile-id` when the SA carries the annotation; until then, exercising stateful `ibmcloud` subcommands inside the pod fails with `missing API key`. The provisioning side is real (no static key at rest in any Secret); the runtime side ships in Sprint 10.
+5. **Pod creation.** The pod's container always has `envFrom: secretRef: roksbnkctl-ibm-creds`; what changes between modes is the Secret's contents. Under `--trusted-profile=auto` success the Secret is created with **empty data** — `IBMCLOUD_API_KEY` is the empty string — plus an extra `IAM_PROFILE_ID` env var pointing at the provisioned profile's ID, **and** a projected ServiceAccount-token volume mounted at `/var/run/secrets/tokens/token` (audience `iam`) so the pod has a cluster-issued JWT the IBM IAM endpoint will accept. The in-pod `ibmcloud login` wrap detects the SA's trusted-profile annotation and runs `ibmcloud login -a https://cloud.ibm.com --cr-token @/var/run/secrets/tokens/token --profile "$IAM_PROFILE_ID" -r "${IBMCLOUD_REGION:-us-south}" --quiet` — the `--cr-token @<path>` form reads the projected SA token from disk; IBM IAM validates that JWT against the trusted profile's `ROKS_SA` compute-resource link (the link `internal/ibm/trusted_profile.go::ensureLink` provisions). The static API key never transits the pod env. Under `--trusted-profile=off` (or the `auto`-fallback) the Secret carries the resolved API key, no projected token volume is mounted, and the wrap runs `ibmcloud login --apikey "$IBMCLOUD_API_KEY"` — the v1.0.x path.
 
 ### Verifying the profile is in use
 
@@ -204,8 +206,8 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   annotations:
-    iam.cloud.ibm.com/trusted-profile: roksbnkctl-ops-sandbox-roks            # ← the profile name
-    roksbnkctl.io/trusted-profile-managed: "true"                             # ← ops uninstall will delete it
+    iam.cloud.ibm.com/trusted-profile: Profile-ccba11f2-3b1f-4b1a-b8a4-aeed2b7b3320  # ← the IBM IAM Profile ID
+    roksbnkctl.io/trusted-profile-managed: "true"                                     # ← ops uninstall will delete it
     roksbnkctl.io/provisioned-at: "2026-05-13T14:08:33Z"
   name: roksbnkctl-ops
   namespace: roksbnkctl-ops
@@ -215,17 +217,12 @@ End-to-end smoke test of the runtime cred flow:
 
 ```bash
 $ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
+IAM token:  Bearer eyJ…
 ```
 
-> **Heads up — Sprint 10 carry-over.** Under v1.2.0 + `--trusted-profile=auto` success, the command above will return `failed to authenticate: missing API key`. The in-pod `ibmcloud login` wrap still uses `--apikey "$IBMCLOUD_API_KEY"` (unchanged from v1.0.x); the Secret carries empty data under auto-success by design; the wrap fails. The runtime-cred-flow closure ships in Sprint 10 (see the v1.2.0 partial-closure admonition at the top of this section). For v1.2.0, exercise the smoke test under `--trusted-profile=off` instead (the static-key path works as in v1.0.x):
->
-> ```bash
-> $ roksbnkctl ops install --trusted-profile=off
-> $ roksbnkctl --backend k8s ibmcloud iam oauth-tokens
-> IAM token:  Bearer eyJ…
-> ```
->
-> Once Sprint 10 lands, the `--trusted-profile=auto` smoke test returns the token directly — fresh-each-call from the pod's SDK trading the projected SA token. The cluster's OIDC issuer URL needs ~30-60 seconds to propagate through IBM IAM after `ops install` returns; if your auto-mode smoke test errors with `failed to assume trusted profile` post-Sprint-10, retry after that window.
+The token is fresh-each-call: the in-pod wrap detects the SA's `iam.cloud.ibm.com/trusted-profile` annotation, trades the pod's projected SA token for an IAM token against the trusted profile, and returns it to the caller. No static API key transits the pod env.
+
+The first invocation may take 30–60 seconds after `ops install` returns because IBM IAM needs to pick up the cluster's OIDC issuer URL before it will accept the projected SA token as proof for the profile. The wrap absorbs this with a 3-attempt × 20s-backoff retry — up to ~40s of waiting inside the wrap before it surfaces the failure. On triple-fail the wrap prints `trusted-profile login failed after 3 attempts: <captured-stderr>` to your terminal (the captured stderr will include the underlying `ibmcloud login` diagnostic — typically the "Unable to authenticate" / FAILED banner shape). If your first smoke test produces that line, give IAM a few more seconds and re-run. After the first successful call the wrap's auth state is cached for the pod's lifetime, so subsequent `roksbnkctl --backend k8s ibmcloud <subcommand>` invocations don't re-pay the propagation window.
 
 ### `--trusted-profile=auto` falling back
 
@@ -288,7 +285,7 @@ The third value, `--trusted-profile=on`, is the inverse — it forces the truste
 
 ```bash
 $ roksbnkctl ops uninstall --confirm
-✓ deleted trusted profile roksbnkctl-ops-sandbox-roks
+✓ deleted trusted profile roksbnkctl-ops-canada-roks
 ✓ deleted pod roksbnkctl-ops
 ✓ deleted secret roksbnkctl-ibm-creds
 ✓ deleted serviceaccount roksbnkctl-ops
@@ -316,6 +313,7 @@ phase:        Running
 ready:        true
 image:        ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v0.9.0
 rbac subject: system:serviceaccount:roksbnkctl-ops:roksbnkctl-ops
+trusted-profile: Profile-ccba11f2-3b1f-4b1a-b8a4-aeed2b7b3320
 secret:       roksbnkctl-ibm-creds (rotated 2026-05-10T11:03:17Z)
 ```
 
@@ -324,9 +322,10 @@ What each line surfaces:
 1. **Pod phase + readiness** — `Running` + `true` is green; anything else means the pod is unhealthy and `Backend.Run` calls will fail. The container count is exactly one (`tools`); `ready: true` is a single bool, not a `2/2`-style ratio.
 2. **Image** — the `:v…` tag matches the `roksbnkctl` release the image was published with (resolved at install time from the binary's version; see [Chapter 17 §`:dev` tag resolution](./17-execution-backends.md#dev-tag-resolution)). Mismatched against your `roksbnkctl --version` means re-running `ops install` will pull the matching image.
 3. **RBAC subject** — the SA the pod runs as. `kubectl describe clusterrole roksbnkctl-ops` prints the full ruleset (the ClusterRoleBinding is named the same as the role).
-4. **Secret line** — the cred Secret's name + the `roksbnkctl.io/rotated-at` annotation that `ops install` stamps each time the Secret is applied. If the Secret is missing entirely, the line reads `secret: (missing: …)`.
+4. **Trusted-profile line** — reads the SA's `iam.cloud.ibm.com/trusted-profile` annotation. The value is the **IBM IAM Profile ID** (`Profile-<uuid>`, the canonical IAM identifier — `runOpsInstall` annotates with `tp.ID` rather than the friendly `roksbnkctl-ops-<workspace>` name so the value is grep-friendly against IBM Cloud IAM audit logs; the parenthetical form on the `✓ Provisioned IAM trusted profile …` install line cross-references both). Present + non-empty means `ops install` ran with `--trusted-profile=auto` or `=on` and the provisioning succeeded; the runtime cred flow is going via the projected SA token. Under `--trusted-profile=off` (or `auto`-fallback when IAM perms were missing) the line reads `trusted-profile: (none — static-key Secret path)`.
+5. **Secret line** — the cred Secret's name + the `roksbnkctl.io/rotated-at` annotation that `ops install` stamps each time the Secret is applied. Always emitted (the Secret manifest is always rendered — empty data under trusted-profile success, populated under the static-key paths). If the Secret resource is missing entirely on the cluster, the line reads `secret: (missing: …)`.
 
-The current output is a fixed six-line key/value block; a structured `--output json` mode is on the v1.x roadmap once `ops show` grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
+The current output is a fixed seven-line key/value block; a structured `--output json` mode is on the v1.x roadmap once `ops show` grows additional fields (image-id hash, env-hash reconciliation against the live pod, etc.). See [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
 
 ## `roksbnkctl ops uninstall`
 

@@ -31,7 +31,7 @@ clean:
 
 .PHONY: book book-pdf book-test book-serve book-clean release release-publish \
         book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
-        pages-assure staticcheck build-integration-tags
+        pages-assure staticcheck build-integration-tags integration-test
 
 # Release date stamped into CHANGELOG.md's `## v1.0.0 — 2026-MM-DD`
 # placeholder. Defaults to today; override with RELEASE_DATE=YYYY-MM-DD
@@ -177,6 +177,34 @@ staticcheck:
 build-integration-tags:
 	go build -tags integration ./...
 
+# integration-test: actually-run the `-tags integration` test sweep
+# against an ephemeral kind cluster. Sprint 10 / PLAN.md §"Sprint 10"
+# code deliverable 3: closes the v1.2.0 → v1.2.1 cascade gap where the
+# Sprint 9 local gate ran `go build -tags integration ./...` (compile
+# check, caught by build-integration-tags above) but not the actual
+# `go test -tags integration` execution — which surfaces image-level
+# issues (e.g., the v1.2.1 USER 1000 / $HOME breakage on the tools
+# ibmcloud Dockerfile) that compile-check can't see.
+#
+# Delegates to scripts/integration-test.sh, which provisions a kind
+# cluster named `roksbnkctl-it`, runs `go test -tags integration` for
+# `internal/exec/...` (k8s + docker tests) and `internal/remote/...`
+# (sshd-via-testcontainers), then tears down the cluster on exit.
+# Preflight checks for kind + docker availability; bails with a clear
+# diagnostic if either is missing.
+#
+# Env knobs (forwarded to the script):
+#
+#   KIND_CLUSTER_NAME (default: roksbnkctl-it)
+#   KEEP_KIND=1       — leave the cluster up after the run (debug)
+#   SKIP_REMOTE=1     — skip internal/remote tests
+#   SKIP_K8S=1        — skip internal/exec k8s tests (docker tests still run)
+#
+# Invoked from `make release` (Sprint 10 gate step) when kind is on
+# PATH; standalone invocation is the iterative-debug entrypoint.
+integration-test:
+	@bash scripts/integration-test.sh
+
 # release: full release-prep driver. Run before `git tag vX.Y.Z` to verify
 # every release artifact builds cleanly and every publish surface is
 # wired. Steps:
@@ -184,18 +212,38 @@ build-integration-tags:
 #   1. Stamp today's date into CHANGELOG.md's vX.Y.Z placeholder
 #   2. Run staticcheck ./... (Sprint 9 pre-tag gate)
 #   3. Compile-check under -tags integration (Sprint 9 pre-tag gate)
-#   4. Build HTML + PDF book via tools/docker/mdbook (HTML for Pages,
+#   4. Run -tags integration tests against ephemeral kind (Sprint 10
+#      pre-tag gate) — if kind+docker are reachable. If kind is missing,
+#      surfaces a strong warning + confirmation prompt rather than
+#      blocking (option (a) per PLAN.md §"Sprint 10 → Code deliverable 3":
+#      a contributor without kind can still cut a tag; they just get the
+#      warning that the integration-test execution gate didn't run).
+#   5. Build HTML + PDF book via tools/docker/mdbook (HTML for Pages,
 #      PDF for the GitHub Release page)
-#   5. Lint .goreleaser.yml via docker
-#   6. Cross-compile snapshot build via goreleaser docker (writes dist/)
-#   7. Confirm GitHub Pages is enabled (publishing from gh-pages branch)
+#   6. Lint .goreleaser.yml via docker
+#   7. Cross-compile snapshot build via goreleaser docker (writes dist/)
+#   8. Confirm GitHub Pages is enabled (publishing from gh-pages branch)
 #
 # Steps 2 + 3 are Sprint 9 additions per PLAN.md §"Sprint 9" code
 # deliverable 5 — they catch the shape of gap that produced the v1.1.0 →
 # v1.1.1 → v1.1.2 cascade (staticcheck-clean fail in CI between tags,
-# and -tags integration compile-fail in CI between tags). Running them
-# locally before the tag commit means the integrator finds the breakage
-# before goreleaser publishes the binaries, not after.
+# and -tags integration compile-fail in CI between tags).
+#
+# Step 4 is the Sprint 10 addition per PLAN.md §"Sprint 10" code
+# deliverable 3 — closes the v1.2.0 → v1.2.1 cascade gap where the
+# Sprint 9 gate ran `-tags integration` build only, missing the
+# image-level USER 1000 / $HOME issue surfaced when `go test -tags
+# integration` actually ran the ibmcloud `--version` probe inside a
+# pod. Why option (a) (warn-not-block on missing kind): the local gate
+# stays usable by contributors who don't have kind installed (e.g.
+# CI-only integration), while the warning prevents the v1.2.x cascade
+# from re-occurring silently — every contributor sees the gap before
+# they tag. Override `SKIP_INTEGRATION_TEST=1` to bypass even when kind
+# is available (useful for hotfix-cycle iteration where the change
+# clearly doesn't touch backend code).
+#
+# Running them locally before the tag commit means the integrator finds
+# the breakage before goreleaser publishes the binaries, not after.
 #
 # After this completes successfully, the integrator's tag-cut sequence is:
 #
@@ -211,26 +259,58 @@ build-integration-tags:
 # That single step pushes the locally-built HTML to the gh-pages branch
 # AND uploads book.pdf to the GitHub Release as roksbnkctl-book-vX.Y.Z.pdf.
 # No CI image pulls, no pandoc/LaTeX on the runner.
+
+# SKIP_INTEGRATION_TEST=1 lets a contributor bypass step 4 explicitly
+# (e.g., on a doc-only change where they're confident no backend code
+# moved). Default is unset — step 4 runs.
+SKIP_INTEGRATION_TEST ?=
+
 release:
-	@echo "==> [1/7] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
+	@echo "==> [1/8] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
 	@$(MAKE) stamp-changelog
 	@echo ""
-	@echo "==> [2/7] Running staticcheck ./... (Sprint 9 pre-tag gate)"
+	@echo "==> [2/8] Running staticcheck ./... (Sprint 9 pre-tag gate)"
 	@$(MAKE) staticcheck
 	@echo ""
-	@echo "==> [3/7] Compile-checking under -tags integration (Sprint 9 pre-tag gate)"
+	@echo "==> [3/8] Compile-checking under -tags integration (Sprint 9 pre-tag gate)"
 	@$(MAKE) build-integration-tags
 	@echo ""
-	@echo "==> [4/7] Building HTML + PDF book via $(BOOK_IMAGE)"
+	@echo "==> [4/8] Running integration tests against kind (Sprint 10 pre-tag gate)"
+	@if [ -n "$(SKIP_INTEGRATION_TEST)" ]; then \
+	    echo "    SKIP_INTEGRATION_TEST=$(SKIP_INTEGRATION_TEST) — skipped explicitly (contributor opt-out)"; \
+	elif ! command -v kind >/dev/null 2>&1; then \
+	    echo "    ⚠️  kind not on PATH — integration-test execution gate cannot run."; \
+	    echo "    The Sprint 10 gate (PLAN.md §\"Sprint 10 → Code deliverable 3\") wants this"; \
+	    echo "    step to run before tag-cut. The v1.2.0 → v1.2.1 cascade traced to skipping it."; \
+	    echo ""; \
+	    echo "    Install kind via:"; \
+	    echo "        go install sigs.k8s.io/kind@latest"; \
+	    echo "    or download a binary from https://kind.sigs.k8s.io/."; \
+	    echo ""; \
+	    printf "    Proceed without running integration tests? [y/N]: "; \
+	    read -r ans; \
+	    case "$$ans" in \
+	        y|Y|yes|YES) echo "    proceeding without integration-test execution (warning logged)" ;; \
+	        *)           echo "    aborting — install kind and re-run, or set SKIP_INTEGRATION_TEST=1 to bypass"; exit 2 ;; \
+	    esac; \
+	elif ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then \
+	    echo "    ⚠️  docker daemon not reachable — kind needs docker to host nodes."; \
+	    echo "    Start docker and re-run, or set SKIP_INTEGRATION_TEST=1 to bypass."; \
+	    exit 2; \
+	else \
+	    $(MAKE) integration-test; \
+	fi
+	@echo ""
+	@echo "==> [5/8] Building HTML + PDF book via $(BOOK_IMAGE)"
 	@$(MAKE) book-pdf BOOK_BACKEND=docker
 	@echo ""
-	@echo "==> [5/7] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
+	@echo "==> [6/8] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
 	@$(MAKE) goreleaser-check
 	@echo ""
-	@echo "==> [6/7] Snapshot build (multi-platform binaries → dist/)"
+	@echo "==> [7/8] Snapshot build (multi-platform binaries → dist/)"
 	@$(MAKE) goreleaser-snapshot
 	@echo ""
-	@echo "==> [7/7] Verifying GitHub Pages is enabled"
+	@echo "==> [8/8] Verifying GitHub Pages is enabled"
 	@$(MAKE) pages-assure
 	@echo ""
 	@echo "==> Release artifacts ready:"

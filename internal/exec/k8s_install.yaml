@@ -134,11 +134,33 @@ spec:
     runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault
+  # Sprint 10 / validator Issue 1 closure: projected SA-token volume
+  # whose audience matches what IBM IAM's ROKS_SA trusted-profile link
+  # validates against. The default auto-mounted SA token has audience
+  # `https://kubernetes.default.svc.cluster.local` which IAM will not
+  # accept; the projected token below carries audience `iam` so the
+  # in-pod `ibmcloud login --cr-token @/var/run/secrets/tokens/token`
+  # wrap (k8s.go::ibmcloudLoginWrapScript) can present a JWT IAM will
+  # honour against the link `internal/ibm/trusted_profile.go::ensureLink`
+  # provisions. expirationSeconds=3600 lets kubelet rotate the file in
+  # place; each fresh `ibmcloud login` reads the current contents.
+  volumes:
+    - name: ibm-iam-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: iam
+              expirationSeconds: 3600
   containers:
     - name: tools
       image: ${OPS_IMAGE}
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: ibm-iam-token
+          mountPath: /var/run/secrets/tokens
+          readOnly: true
       env:
         # The pod runs with OpenShift's SCC-assigned random non-root
         # UID, which has no /etc/passwd entry — ibmcloud's home-dir
@@ -150,6 +172,17 @@ spec:
         # invocation time (helm, kubectl, oc).
         - name: HOME
           value: /tmp
+        # Sprint 10 / PRD 04 §"Resolved in Sprint 9" closure:
+        # `ops install --trusted-profile=auto|on` (success) renders
+        # `IAM_PROFILE_ID=<profile-id>` here so the in-pod
+        # `ibmcloud login` wrap in runOnOpsPod can branch to the
+        # trusted-profile dance (`ibmcloud login --cr-token
+        # @/var/run/secrets/tokens/token --profile "$IAM_PROFILE_ID"`,
+        # consuming the projected SA token mounted above). Static-key
+        # path leaves the placeholder empty and the wrap falls back to
+        # `--apikey "$IBMCLOUD_API_KEY"`. The renderer substitutes
+        # either a full env entry or the empty string at apply time.
+${IAM_PROFILE_ID_ENV_ENTRY}
       envFrom:
         - secretRef:
             name: roksbnkctl-ibm-creds
