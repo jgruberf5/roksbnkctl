@@ -4,7 +4,7 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased (v1.x)
+## v1.3.0 — 2026-05-14
 
 Sprint 10 closure cycle. Closes the runtime side of PRD 04's trusted-profile flow (the in-pod `ibmcloud login` wrap Sprint 9 deferred), lands PRD 06's `roksbnkctl status` per-phase integration (Sprint 10 scope addition), and folds four of the five tech-writer polish issues deferred from Sprint 9 (the fifth — chapter 14 §"What's new in v1.2" section position — is deferred again as a v1.x polish item; see `### Deferred` below). The headline reframe: `roksbnkctl ops install --trusted-profile=auto` followed by `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` now returns a fresh IAM token end-to-end — the v1.2.x partial-closure callout in chapter 19 comes out. See [PLAN.md §"Sprint 10"](docs/PLAN.md) for cycle deliverables and [PRD 04 §"Resolved in Sprint 9"](docs/prd/04-CREDENTIALS.md#resolved-in-sprint-9) + [PRD 06 §"`status` command integration"](docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition) for the design surface.
 
