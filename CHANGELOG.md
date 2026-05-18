@@ -8,7 +8,7 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
      (or `## v1.5.1 — <date>` if the integrator re-designates under strict SemVer,
      since there is no API/behavior change). Version + date is a one-line edit;
      the block body is version-agnostic and needs no change on that swap. -->
-## Unreleased (v1.6.0)
+## v1.6.0 — 2026-05-18
 
 Sprint 15 — internal consolidation / debt-paydown cycle, post-`v1.5.0`. **No user-visible behavior change**: a user upgrading from `v1.5.0` sees identical `up` / `--on` / `terraform` / `targets` behavior and output. This cycle collapses the recurring "a path/env value correct in the invocation context is wrong once it crosses a boundary" defect class (Sprint 12 Issues 1/2 `--var-file`/`--tf-source`; Sprint 13 Issue 1 `KUBECONFIG` leak — each previously patched per-instance and already user-correct) to a **single invocation-time chokepoint** so the class cannot reopen, and begins phase-1 decomposition of the `internal/cli` god-package. The bug class was already fixed per-instance in `v1.4.1`/`v1.5.0`; this changes *how* those fixes hold structurally, not *whether* — there is no new user-facing fix or feature. See [PLAN.md §"Sprint 15"](docs/PLAN.md) for the design surface and gate.
 
