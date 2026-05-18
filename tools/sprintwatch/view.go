@@ -87,7 +87,7 @@ func loadCmd(root string) tea.Cmd {
 		}
 		bd := map[int][]Snapshot{}
 		for _, s := range sprints {
-			snaps, err := Burndown(ctx, root, s.Number, s.RoleNames())
+			snaps, err := Burndown(ctx, root, s.Number, s.RoleNames(), s.Archived)
 			if err == nil {
 				bd[s.Number] = snaps
 			}
@@ -398,6 +398,9 @@ func (m Model) renderCard(sp Sprint, selected bool) string {
 	}
 
 	header := stHead.Render(fmt.Sprintf("Sprint %d", sp.Number))
+	if sp.Archived {
+		header += " " + stDim.Render("(archived)")
+	}
 	if sp.Theme != "" {
 		header += stDim.Render(" — " + sp.Theme)
 	}
@@ -519,6 +522,9 @@ func humanRemaining(days float64) string {
 // in sync on which line a given issueSel lives on.
 func (m Model) detailLines(sp Sprint) (lines []string, issueRows []int) {
 	title := stHead.Render(fmt.Sprintf("Sprint %d — issue detail", sp.Number))
+	if sp.Archived {
+		title += " " + stDim.Render("(archived)")
+	}
 	if sp.Theme != "" {
 		title += stDim.Render("   (" + sp.Theme + ")")
 	}
