@@ -77,30 +77,110 @@ locals {
     ibmcloud plugin install container-service -f
     ibmcloud plugin install vpc-infrastructure -f
 
-    # Pull kubeconfig from the IBM Cloud OpenShift cluster.
-    # Runs with || true so a transient failure (network, cluster not ready) does
-    # not abort the rest of the boot script. Re-run manually if needed:
-    #   ibmcloud login --apikey <key> -r ${var.ibmcloud_cluster_region}
-    #   ibmcloud ks cluster config --cluster ${var.roks_cluster_name_or_id} --admin
+    # ----------------------------------------------------------
+    # Kubeconfig provisioning — BOUNDED RETRY + LOUD FAILURE MARKER
+    # ----------------------------------------------------------
+    # Sprint 14 / get-well (issues/issue_sprint13_architect.md Issue 2,
+    # option C part A). The ROKS cluster may not be Ready when the
+    # jumphost boots; the previous bare `|| true` swallowed *every*
+    # failure (cluster-not-ready, region/RG mismatch, transient IAM)
+    # with no retry, no log, no marker — the jumphost came up with no
+    # kubeconfig and stayed broken until a human noticed. This block:
+    #   - retries the login + `ks cluster config --admin` with backoff,
+    #     finite attempts / total timeout (cluster-Ready readiness gate),
+    #   - on exhaustion FAILS LOUDLY: a diagnostic line in
+    #     /var/log/jumphost-setup.log AND a sentinel file
+    #     /var/log/jumphost-kubeconfig-FAILED — visible, not silent,
+    #   - never aborts the rest of cloud-init (the rest of setup must
+    #     still complete; the loud marker is the fix for the silent
+    #     swallow, not a hard abort).
+    # NOTE: the script runs under `set -e`; every step here is wrapped
+    # so a non-zero attempt does not kill cloud-init mid-boot.
+    #
+    # Tunables (no terraform variables added — boot-time constants):
+    KCFG_MAX_ATTEMPTS=30        # finite attempt cap
+    KCFG_SLEEP_SECONDS=20       # backoff between attempts (~10 min total)
+    KCFG_LOG=/var/log/jumphost-setup.log
+    KCFG_FAIL_MARKER=/var/log/jumphost-kubeconfig-FAILED
+    : > "$KCFG_LOG" || true
+    rm -f "$KCFG_FAIL_MARKER" || true
+
+    kcfg_log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$KCFG_LOG" 2>/dev/null || true; }
+
     mkdir -p /root/.kube
-    ibmcloud login --apikey "${var.ibmcloud_api_key}" -r "${var.ibmcloud_cluster_region}"${var.ibmcloud_resource_group != "" ? " -g \"${var.ibmcloud_resource_group}\"" : ""} || true
-    ibmcloud ks cluster config --cluster "${var.roks_cluster_name_or_id}" --admin || true
+
+    # root profile: bounded retry of login + `ks cluster config --admin`.
+    # Success = /root/.kube/config exists after the admin config call.
+    kcfg_attempt=1
+    kcfg_ok=0
+    while [ "$kcfg_attempt" -le "$KCFG_MAX_ATTEMPTS" ]; do
+      kcfg_log "root kubeconfig attempt $kcfg_attempt/$KCFG_MAX_ATTEMPTS"
+      if ibmcloud login --apikey "${var.ibmcloud_api_key}" -r "${var.ibmcloud_cluster_region}"${var.ibmcloud_resource_group != "" ? " -g \"${var.ibmcloud_resource_group}\"" : ""} >> "$KCFG_LOG" 2>&1 \
+        && ibmcloud ks cluster config --cluster "${var.roks_cluster_name_or_id}" --admin >> "$KCFG_LOG" 2>&1 \
+        && [ -f /root/.kube/config ]; then
+        kcfg_ok=1
+        kcfg_log "root kubeconfig acquired on attempt $kcfg_attempt"
+        break
+      fi
+      kcfg_log "root kubeconfig attempt $kcfg_attempt failed (cluster may not be Ready yet); retrying in $KCFG_SLEEP_SECONDS s"
+      kcfg_attempt=$((kcfg_attempt + 1))
+      sleep "$KCFG_SLEEP_SECONDS"
+    done
 
     # Also log in as the ubuntu user so roksbnkctl --on jumphost
     # (which SSHes in as ubuntu) sees a configured API endpoint. Without
     # this, ubuntu's ibmcloud profile is unconfigured and any call
     # fails with "No API endpoint set". The login fork also installs
-    # the same plugins under ubuntu's profile.
-    su - ubuntu -c "ibmcloud login --apikey '${var.ibmcloud_api_key}' -r '${var.ibmcloud_cluster_region}'${var.ibmcloud_resource_group != "" ? " -g '${var.ibmcloud_resource_group}'" : ""}" || true
-    su - ubuntu -c "ibmcloud config --check-version=false" || true
-    su - ubuntu -c "ibmcloud plugin install container-service -f" || true
-    su - ubuntu -c "ibmcloud plugin install vpc-infrastructure -f" || true
+    # the same plugins under ubuntu's profile. An unconfigured ubuntu
+    # ibmcloud profile is its own failure mode (it gates the part-B
+    # roksbnkctl self-heal, which runs `ibmcloud ks cluster config` as
+    # ubuntu), so it gets the same bounded-retry posture.
+    kcfg_ubuntu_attempt=1
+    kcfg_ubuntu_ok=0
+    while [ "$kcfg_ubuntu_attempt" -le "$KCFG_MAX_ATTEMPTS" ]; do
+      kcfg_log "ubuntu ibmcloud login attempt $kcfg_ubuntu_attempt/$KCFG_MAX_ATTEMPTS"
+      if su - ubuntu -c "ibmcloud login --apikey '${var.ibmcloud_api_key}' -r '${var.ibmcloud_cluster_region}'${var.ibmcloud_resource_group != "" ? " -g '${var.ibmcloud_resource_group}'" : ""}" >> "$KCFG_LOG" 2>&1; then
+        kcfg_ubuntu_ok=1
+        kcfg_log "ubuntu ibmcloud profile configured on attempt $kcfg_ubuntu_attempt"
+        break
+      fi
+      kcfg_log "ubuntu ibmcloud login attempt $kcfg_ubuntu_attempt failed; retrying in $KCFG_SLEEP_SECONDS s"
+      kcfg_ubuntu_attempt=$((kcfg_ubuntu_attempt + 1))
+      sleep "$KCFG_SLEEP_SECONDS"
+    done
+    su - ubuntu -c "ibmcloud config --check-version=false" >> "$KCFG_LOG" 2>&1 || true
+    su - ubuntu -c "ibmcloud plugin install container-service -f" >> "$KCFG_LOG" 2>&1 || true
+    su - ubuntu -c "ibmcloud plugin install vpc-infrastructure -f" >> "$KCFG_LOG" 2>&1 || true
+
     if [ -f /root/.kube/config ]; then
       chmod 600 /root/.kube/config
       mkdir -p /home/ubuntu/.kube
       cp /root/.kube/config /home/ubuntu/.kube/config
       chown -R ubuntu:ubuntu /home/ubuntu/.kube
       chmod 600 /home/ubuntu/.kube/config
+      kcfg_log "copied /root/.kube/config -> /home/ubuntu/.kube/config (0600 ubuntu:ubuntu)"
+    fi
+
+    # Loud failure: if either the root kubeconfig or the ubuntu profile
+    # never came up, drop a sentinel + a clear diagnostic. Do NOT exit —
+    # the rest of cloud-init (keys, etc.) must still complete; the marker
+    # is what makes the failure visible instead of silently swallowed.
+    if [ "$kcfg_ok" -ne 1 ] || [ ! -f /home/ubuntu/.kube/config ]; then
+      kcfg_log "FAILED: /home/ubuntu/.kube/config not provisioned after $KCFG_MAX_ATTEMPTS attempts. The ROKS cluster (${var.roks_cluster_name_or_id}) was not reachable/Ready during boot, or there is a region/resource-group/IAM mismatch. Re-run: ibmcloud login --apikey <key> -r ${var.ibmcloud_cluster_region}; ibmcloud ks cluster config --cluster ${var.roks_cluster_name_or_id} --admin  — or use roksbnkctl --on <target> kubectl (self-heals)."
+      {
+        echo "jumphost kubeconfig provisioning FAILED at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "cluster=${var.roks_cluster_name_or_id} region=${var.ibmcloud_cluster_region}"
+        echo "root kubeconfig ok=$kcfg_ok; ubuntu profile ok=$kcfg_ubuntu_ok"
+        echo "see $KCFG_LOG for the per-attempt detail"
+      } > "$KCFG_FAIL_MARKER" 2>/dev/null || true
+    elif [ "$kcfg_ubuntu_ok" -ne 1 ]; then
+      kcfg_log "WARNING: /home/ubuntu/.kube/config provisioned but the ubuntu ibmcloud profile login never succeeded; roksbnkctl --on self-heal may need a fresh login."
+      {
+        echo "jumphost ubuntu ibmcloud profile NOT configured at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "kubeconfig itself is present; self-heal via roksbnkctl --on may require re-login"
+      } > "$KCFG_FAIL_MARKER" 2>/dev/null || true
+    else
+      kcfg_log "kubeconfig provisioning OK"
     fi
 
     # Write shared private key and public key files (authorized_keys already
@@ -115,7 +195,9 @@ locals {
     chmod 644 /home/ubuntu/.ssh/id_rsa.pub /root/.ssh/id_rsa.pub
     chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa.pub
 
-    echo "Setup completed at $(date)" > /var/log/jumphost-setup.log
+    # Append (do NOT truncate) — the kubeconfig retry/marker block above
+    # has already written its per-attempt diagnostic to this log.
+    echo "Setup completed at $(date)" >> /var/log/jumphost-setup.log
     EOF
 
   # ----------------------------------------------------------

@@ -25,7 +25,7 @@
 ## Issue 1: book — document reaching the per-AZ cluster jumphosts (auto-registered `jumphost-<zone>` + hop-via-`jumphost`)
 
 **Severity**: low (documentation gap / discoverability — no defect)
-**Status**: open — Sprint 13 / `v1.5.0` (carried from Sprint 12 architect Issue 9; rescope to the post-auto-registration world per the frame note above; lockstep with `issues/issue_sprint13_staff.md` Issue 3)
+**Status**: resolved — Sprint 13 / `v1.5.0`. Chapter 16 §"Working examples" gained a §"Per-AZ cluster jumphosts" subsection (auto-registered `jumphost-<zone>` headline + the zero-setup hop-via-`jumphost` pattern + orphan caveat) and the §"Environment passthrough" stale-`KUBECONFIG` claim was corrected to the post-staff-Issue-1 behaviour; §"What `--on` doesn't do" reworded (no stale "not auto-registered" claim — the per-AZ jumphosts now *are* auto-registered). Chapter 15 §"Auto-discovery from terraform outputs" gained §"Per-AZ cluster jumphosts (`jumphost-<zone>`)" (auto-registration described, orphan caveat, pre-v1.5.0 manual fallback aside) and a §"What is *not* auto-discovered" note. All five new cross-link anchors verified resolvable in the generated mdbook HTML. Written for the post-auto-registration world; lockstep status with staff code deliverable 3 recorded in Issue 4 below.
 
 > **Scope note (read first).** This is a *documentation feature*, filed
 > into the Sprint 12 ledger at user request ("add … in the next
@@ -193,42 +193,110 @@ outputs").
 
 ## Issue 2: cloud-init boot-timing race produces the same `localhost:8080` symptom — explicitly OUT of v1.5.0 scope
 
-**Severity**: low (cross-reference only — not a Sprint 13 deliverable)
-**Status**: accepted — out of scope for `v1.5.0`, filed so it is not conflated with the Issue-1 / staff-Issue-1 env-leak verify
+**Severity**: ~~low (cross-reference only)~~ → **HIGH** — escalated
+2026-05-18 by live testing. Deterministically breaks the documented
+`--on jumphost kubectl|oc` happy path; same user-visible severity the
+env-leak (staff Issue 1) carried.
+**Status**: RESOLVED 2026-05-18 (Sprint 14, option C; folded into the held `v1.5.0`). Part A (cloud-init bounded-retry + loud sentinel) + Part B (`--on` self-heal, extended to `ibmcloud login` the target). **Live-verified by the integrator 16:33** (user-authorized): `roksbnkctl exec --on jumphost kubectl get pods` self-healed on attempt 1 and reached the cluster API — `localhost:8080` gone, exit 0, no redeploy. The validation blind spot is also closed: `internal/cli/lifecycle_e2e_test.go` (13 e2e guards incl. the not-logged-in + bad-credentials cases) makes this defect class fail a test, not a human. Was: open — headline of the get-well sprint (Sprint 14). Out
+of scope for `v1.5.0` (which correctly ships the env fix + the two
+features and is not regressed by this), but the substantive remaining
+blocker. Pull into Sprint 14 as deliverable 1.
 
-### Description
+### Live confirmation (2026-05-18 14:54)
 
-`issues/issue_sprint13_staff.md` Issue 1 §"Related" notes a second,
-independent cause of the identical `connection to the server
-localhost:8080 was refused` symptom: `terraform/modules/testing/main.tf:80-104`
-writes `/home/ubuntu/.kube/config` via `ibmcloud ks cluster config
---admin` guarded by `|| true`, asynchronously during cloud-init. A
-freshly-booted jumphost can transiently lack a usable kubeconfig — the
-KUBECONFIG-leak fix (staff Issue 1) is necessary but, on its own, still
-subject to this boot-timing race.
+Not a transient boot-*timing* race as originally framed — a **silent
+permanent provisioning failure**. After the env-leak fix was
+live-verified working (`KUBECONFIG=[]` crossing the boundary), the user
+still hit `localhost:8080`. Diagnostic showed `/home/ubuntu/.kube/config:
+No such file or directory` on the jumphost — the file was **never
+created**, not "not ready yet". Re-running the explicit-path test
+minutes later still failed: it is not recovering on its own.
 
-### Why it's filed here
+### Root cause (grounded in `terraform/modules/testing/main.tf`)
 
-So the validator's env-leak verify and the tech-writer's dogfooding
-loop do not mistake a transient boot-race failure for a regression of
-the env-leak fix, and so a future cycle has a written pointer.
-Hardening the cloud-init kubeconfig provisioning (retry / readiness
-gating around `ibmcloud ks cluster config --admin`) is its own
-architect/infra change in `terraform/` — **out of scope for `v1.5.0`**
-(the Sprint 13 fix is the env leak only).
+Cloud-init does:
 
-### Disposition
+```sh
+mkdir -p /root/.kube
+ibmcloud login --apikey "…" -r "${var.ibmcloud_cluster_region}" … || true
+ibmcloud ks cluster config --cluster "${var.roks_cluster_name_or_id}" --admin || true
+…
+if [ -f /root/.kube/config ]; then
+  cp /root/.kube/config /home/ubuntu/.kube/config; chown -R ubuntu:ubuntu …
+fi
+```
 
-No action this cycle beyond this cross-reference. File a dedicated
-follow-up against `terraform/modules/testing/main.tf` if the boot-race
-is observed in live testing after the env-leak fix lands.
+`/home/ubuntu/.kube/config` is created **only if** `/root/.kube/config`
+exists, which requires `ibmcloud ks cluster config --admin` to have
+succeeded. Both that command and the preceding `ibmcloud login` are
+guarded by `|| true`: any failure (cluster not Ready at boot, region /
+resource-group mismatch, transient IAM/API error) is **swallowed with
+no retry, no log line, no failure marker, and no remediation**. The
+jumphost boots "successfully" with no kubeconfig and stays that way
+until a human manually re-runs the documented commands. This is a
+deterministic break of the canonical private-cluster workflow
+(`book/src/16-on-flag-ssh-jumphosts.md`,
+`book/src/09-registering-existing-cluster.md`), not an edge case.
+
+### Disposition / fix options for Sprint 14 (integrator chooses scope)
+
+- **A — harden cloud-init** (`terraform/modules/testing/main.tf`):
+  replace the bare `|| true` on the login + `ks cluster config --admin`
+  with a bounded retry/readiness loop; on exhaustion write a clear
+  failure marker (e.g. `/var/log/jumphost-setup.log` + a sentinel file)
+  instead of silently continuing. Fixes **new** deploys; does nothing
+  for an already-running jumphost (like the user's current one) until
+  `terraform apply` recreates it.
+- **B — roksbnkctl-side self-heal**: roksbnkctl already fetches the
+  admin kubeconfig locally post-`up` (`tryAutoKubeconfig`,
+  `internal/cli/lifecycle.go:471`). Either (b1) the post-`up` hook also
+  pushes a freshly-fetched kubeconfig to each seeded jumphost target,
+  or (b2) `--on <target> kubectl|oc` self-heals: if the target has no
+  kubeconfig, run `ibmcloud ks cluster config --admin` on the target
+  (it is already `ibmcloud login`'d as `ubuntu` per the cloud-init
+  fork) before dispatching the command. (b2) is the "layer-2 remote
+  kubeconfig remap" deferred from the original Issue 1 proposal. Fixes
+  the user's **existing** jumphost with no re-deploy — strictly better
+  UX for the get-well goal.
+- **C — both** (recommended): A for robust new deploys, B for
+  self-heal of existing/already-broken hosts. Mirrors the env-fix's own
+  two-layer (fix + defense-in-depth) posture.
+
+**Integrator decision 2026-05-18: option C (both).** Sprint 14
+(get-well) deliverable 1 = (A) harden the cloud-init login + `ibmcloud
+ks cluster config --admin` path with bounded retry/readiness gating and
+a loud failure marker replacing the silent `|| true`, **and** (B)
+roksbnkctl-side self-heal so `--on <target> kubectl|oc` provisions /
+repairs a missing remote kubeconfig on the fly (and/or the post-`up`
+hook pushes a freshly-fetched kubeconfig to seeded jumphost targets).
+Rationale: A makes new deploys robust; B unblocks already-broken
+jumphosts (like the one in the 2026-05-18 live test) with no
+`terraform` recreate. Mirrors the env-fix's two-layer fix +
+defense-in-depth posture.
+
+This issue **cannot be closed by bookkeeping** — option C must be
+implemented in Sprint 14. Tracked as the get-well headline (deliverable
+1).
+
+**Integrator decision 2026-05-18 (supersedes the "ships as a documented
+known-issue" framing above): HOLD & MERGE.** `v1.5.0` is **not** cut at
+the end of Sprint 13. The `## Unreleased (v1.5.0)` CHANGELOG block stays
+open; Sprint 14 lands option C **into the same `v1.5.0`** so the
+release that finally ships genuinely makes `--on jumphost kubectl|oc`
+work end-to-end (env-leak fix + kubeconfig provisioning together).
+Rationale: the two `localhost:8080` causes are indistinguishable to a
+user, so shipping `v1.5.0` with the symptom still reproducible would
+make the headline fix look broken. Sprint 13's three deliverables are
+complete and GREEN but remain staged in the working tree under the held
+`v1.5.0`. Carried into `issues/issue_sprint14_staff.md` Issue 1 +
+`issues/issue_sprint14_architect.md` Issue 1 as the Sprint 14 headline.
 
 ---
 
 ## Issue 3: `--tf-source` cobra help silent on relative-path resolution (Sprint 12 tech-writer §"Sprint 13 awareness" carry-forward)
 
 **Severity**: low (discoverability nudge — staff-surface hand-off)
-**Status**: open — judge during the cycle; resolve as a staff-surface diff or `accepted` if the help text is fine post-v1.4.1
+**Status**: resolved — integrator applied the proposed 2-line diff to `internal/cli/lifecycle.go:87,90` 2026-05-18; `go build ./...` + `go test ./internal/cli/` green, `gofmt` clean. Both `--tf-source` help strings now state relative-path resolution.
 
 ### Description
 
@@ -241,10 +309,140 @@ the `--var-file` help had before Sprint 12 scrutiny.
 
 ### Disposition
 
-The help string lives in `internal/` (staff write surface) — architect
-does **not** edit it. Judge whether it still misleads a user who passes
-a relative `--tf-source=./mytf`. If yes, file the one-line
-proposed-fix diff here as a staff-surface hand-off (low severity, fold
-in only if cheap and non-disruptive to the three primary deliverables).
-If the post-v1.4.1 behaviour + existing help is discoverable enough,
-mark `accepted` and record the rationale.
+**Judged: still mildly misleading by omission — filed as a staff-surface
+hand-off (low, fold-in-if-cheap).** Current strings
+(`internal/cli/lifecycle.go:87,90`):
+
+- `init`: `"override TF source (path or URL); pinned into config.yaml"`
+- `up`:   `"override TF source for this run only"`
+
+Neither says a relative local path is resolved to absolute. The
+`--var-file` help is also silent on relative resolution, so there is no
+*inconsistency between the two flags* — but `--tf-source` is the more
+surprising case: `init` **persists** the value into `config.yaml`, so a
+relative `--tf-source=./mytf` that worked at `init` time used to
+detonate on a *later* `up`/`plan`/`apply` (the v1.4.1 fix). A user who
+doesn't know the fix exists can't tell from the help that
+`./mytf` is now safe. One word resolves it.
+
+**Proposed staff-surface fix** (architect does not edit `internal/`;
+hand-off — fold in only if cheap and non-disruptive to the three
+primary deliverables):
+
+```diff
+--- a/internal/cli/lifecycle.go
++++ b/internal/cli/lifecycle.go
+-	initCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source (path or URL); pinned into config.yaml")
++	initCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml")
+@@
+-	upCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source for this run only")
++	upCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD)")
+```
+
+Line numbers approximate (drift-tolerant — match by flag name).
+Severity low; not a blocker for any primary deliverable. Staff/integrator
+owns the accept/fold call.
+
+**Status**: resolved — diff applied 2026-05-18 (see above), build/test/gofmt green.
+
+---
+
+## Issue 4: top-level terraform output is `testing_cluster_jumphost_ips`, not `…_public_ips`/`…_private_ips` (design-surface drift — staff + validator hand-off)
+
+**Severity**: medium (would have caused staff code deliverable 3 to read
+a non-existent top-level output and silently no-op)
+**Status**: resolved — staff landed deliverable 3 reading
+`testing_cluster_jumphost_ips` as the primary output name
+(`internal/cli/lifecycle.go:611`, with a `…_public_ips` fallback at
+:613), matching PRD 09 / CHANGELOG / chapters 15-16. Architect-side
+deliverables and the as-landed binary agree on the output name. Left
+here as a record; validator's doc-coupling audit should still confirm
+the name once over.
+
+### Description
+
+`issues/issue_sprint13_staff.md` Issue 3 and this file's Issue 1
+(carried from Sprint 12) instruct reading
+`testing_cluster_jumphost_public_ips`, and the Issue 1 hop example
+references `testing_cluster_jumphost_private_ips`. Those names exist
+**only inside the `testing` module**
+(`terraform/modules/testing/outputs.tf:97,102`). They are **not**
+top-level terraform outputs. The top-level outputs the post-`up` hook
+and `roksbnkctl terraform output` actually see
+(`terraform/outputs.tf:82-90`) are:
+
+- `testing_cluster_jumphost_ips` — `{zone => floating-IP}` map
+  (forwards the module's internal `…_public_ips`; `try(…, [])` default)
+- `testing_cluster_jumphost_ssh_commands` — `{zone => ssh-cmd}` map
+
+There is **no** top-level `testing_cluster_jumphost_public_ips` and
+**no** top-level `testing_cluster_jumphost_private_ips`.
+
+### Resolution in the architect deliverables
+
+PRD 09, the CHANGELOG `v1.5.0 §Added`, and chapters 15/16 are all
+written against the **real** top-level name
+`testing_cluster_jumphost_ips`, with the deviation explicitly recorded
+in PRD 09 §"Design" (the boxed "Output-name deviation" note).
+
+### Hand-off
+
+- **Staff (code deliverable 3):** read
+  `testing_cluster_jumphost_ips`, **not** `…_public_ips`. The
+  `mapOutput` no-op guard must treat the `[]`-default JSON
+  (HCL `try(…, [])` → JSON array, not a map) as the
+  skip signal. If staff genuinely needs the `…_public_ips` /
+  `…_private_ips` granularity at top level, that requires a new
+  `terraform/outputs.tf` output (terraform surface — separate change,
+  not this cycle's scope).
+- **Validator:** the doc-coupling audit must verify chapter 15/16 use
+  the as-landed output name (`testing_cluster_jumphost_ips`), not the
+  `…_public_ips` name from the original (now-superseded) staff issue
+  text.
+
+---
+
+## Issue 5: chapter 15/16 ↔ staff code deliverable 3 lockstep status
+
+**Severity**: low (process / lockstep tracking — no defect)
+**Status**: resolved — staff landed deliverables 2 + 3 in parallel
+before architect return: `internal/cli/terraform.go` (cobra `tf` alias,
+`tf.OpenReadOnly`/`RunReadOnly`) and `tryAutoClusterJumphosts` +
+`mapOutput` in `internal/cli/lifecycle.go`, reading
+`testing_cluster_jumphost_ips`. The chapter 15/16 prose and PRD 08/09
+match the as-landed behaviour (command name `roksbnkctl terraform`/`tf`,
+auto-registered `jumphost-<zone>`, output name per Issue 4). Lockstep
+confirmed at the doc-relevant level; validator's doc-coupling audit is
+the final checkpoint.
+
+### Description
+
+Per the prompt's lockstep requirement: chapter 15 §"Per-AZ cluster
+jumphosts (`jumphost-<zone>`)" and chapter 16 §"Per-AZ cluster
+jumphosts" describe binary behaviour that **staff code deliverable 3
+lands in parallel**. At architect-return time, staff had **not** yet
+landed deliverable 3 (`internal/cli/terraform.go` absent;
+`tryAutoClusterJumphosts` / `mapOutput` not present in
+`internal/cli/lifecycle.go`; `RunReadOnly` not in
+`internal/tf/terraform.go`).
+
+The chapters are written to the **intended** post-auto-registration
+behaviour as specified by PRD 08/09 + `issues/issue_sprint13_staff.md`
+Issues 2/3, with every pre-v1.5.0 fallback clearly marked as such. No
+"TODO" markers were embedded in the prose (the pre-v1.5.0 fallback
+asides already make the version boundary explicit to readers, and a raw
+`TODO` in shipped book prose is worse than the version-gated phrasing).
+
+### Hand-off / gate
+
+This is **not** a blocker for the architect deliverables but **is** a
+`v1.5.0` gate item (PLAN.md §"Sprint 13 → Gate"): the chapters must not
+ship in the `v1.5.0` tag describing behaviour absent from the binary.
+
+- If staff code deliverable 3 (and 2, for the `roksbnkctl terraform
+  output` one-liner) land as specified, the chapters are correct as
+  written — resolve this issue.
+- If staff diverges (e.g. command name, output name per Issue 4, or
+  scopes the auto-registration differently), the integrator must
+  reconcile the chapters to the as-landed behaviour before the
+  `v1.5.0` tag. Validator's doc-coupling audit is the checkpoint.

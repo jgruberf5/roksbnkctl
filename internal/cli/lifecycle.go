@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -83,10 +84,10 @@ var downCmd = &cobra.Command{
 
 func init() {
 	initCmd.Flags().BoolVar(&flagUpgradeTF, "upgrade-tf", false, "resolve and pin the latest TF release into config.yaml")
-	initCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source (path or URL); pinned into config.yaml")
+	initCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml")
 
 	upCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt before apply")
-	upCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source for this run only")
+	upCmd.Flags().StringVar(&flagTFSource, "tf-source", "", "override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD)")
 	upCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
 
 	applyCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt")
@@ -255,6 +256,7 @@ func runTrialUp(cmd *cobra.Command, _ []string) error {
 		// earlier apply, populate the workspace's targets:jumphost so
 		// `--on jumphost` works without manual config.
 		tryAutoJumphost(cmd.Context(), cctx, tfws)
+		tryAutoClusterJumphosts(cmd.Context(), cctx, tfws)
 		return nil
 	}
 	if !flagAuto && !promptYesNo("Apply this plan?", false) {
@@ -267,6 +269,7 @@ func runTrialUp(cmd *cobra.Command, _ []string) error {
 	}
 	tryAutoKubeconfig(cmd.Context(), cctx, tfws)
 	tryAutoJumphost(cmd.Context(), cctx, tfws)
+	tryAutoClusterJumphosts(cmd.Context(), cctx, tfws)
 	return nil
 }
 
@@ -322,6 +325,7 @@ func runApply(cmd *cobra.Command, _ []string) error {
 	}
 	tryAutoKubeconfig(cmd.Context(), cctx, tfws)
 	tryAutoJumphost(cmd.Context(), cctx, tfws)
+	tryAutoClusterJumphosts(cmd.Context(), cctx, tfws)
 	return nil
 }
 
@@ -564,6 +568,97 @@ func tryAutoJumphost(ctx context.Context, cctx *config.Context, tfws *tf.Workspa
 	fmt.Fprintf(os.Stderr, "✓ Auto-registered target jumphost (%s); use `roksbnkctl --on jumphost ...`\n", ip)
 }
 
+// tryAutoClusterJumphosts is the per-AZ sibling of tryAutoJumphost
+// (Sprint 13 Issue 3 / PRD 09). When the deploy provisions one cluster
+// jumphost per cluster-VPC AZ (testing_create_cluster_jumphosts = true),
+// it registers a `jumphost-<zone>` target per AZ from the
+// {zone => fip} terraform output, reusing the same shared key the TGW
+// jumphost uses (KeySource "tf-output:jumphost_shared_key" — no new
+// output needed).
+//
+// Stale-target handling is OPTION (a) UPSERT-ONLY (integrator decision,
+// prompts/sprint13/README.md): orphaned `jumphost-<oldzone>` entries
+// (zone removed / testing_create_cluster_jumphosts flipped false) linger
+// until manual `targets remove`. Option (b) reconcile/orphan-removal is
+// a deliberate post-v1.5.0 follow-up and is intentionally NOT
+// implemented here (no prefix-sweep, no `auto:` schema marker).
+//
+// Best-effort, mirroring tryAutoJumphost: any failure logs a single
+// `warning:` to stderr and does NOT fail `up` (terraform succeeded;
+// these targets are a convenience). No-op (no error, no warning noise)
+// when testing_create_cluster_jumphosts = false / the output is absent
+// or the `[]`-default empty map.
+//
+// Called immediately after tryAutoJumphost from the same post-`up`
+// hook sites. SetTarget is idempotent/upsert, so a re-`up` after a FIP
+// rotation refreshes the host values in place.
+func tryAutoClusterJumphosts(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) {
+	if cctx == nil || cctx.Workspace == nil || tfws == nil {
+		return
+	}
+	outputs, err := tfws.Output(ctx)
+	if err != nil {
+		// Not fatal — cluster may be partway up, or this is a
+		// no-cluster-jumphost configuration.
+		return
+	}
+	// The root TF output that surfaces the per-zone FIP map is
+	// `testing_cluster_jumphost_ips` (terraform/outputs.tf:82, value
+	// `try(module.testing.testing_cluster_jumphost_public_ips, [])`).
+	// The carried issue text names the *module* output
+	// (`testing_cluster_jumphost_public_ips`); read the root name with
+	// the module name as a defensive fallback (see closure note).
+	fips := mapOutput(outputs, "testing_cluster_jumphost_ips")
+	if len(fips) == 0 {
+		fips = mapOutput(outputs, "testing_cluster_jumphost_public_ips")
+	}
+	if len(fips) == 0 {
+		// No cluster jumphosts (testing_create_cluster_jumphosts=false,
+		// output absent, or the `[]`-default empty map). Skip silently —
+		// parity with the `ip == ""` guard in tryAutoJumphost.
+		return
+	}
+	keyPEM := stringOutput(outputs, "jumphost_shared_key")
+	if keyPEM == "" {
+		// Same shared key as the TGW jumphost; if it's not present we
+		// can't auth to these hosts — skip (no warning noise; the TGW
+		// path already reported the same condition).
+		return
+	}
+
+	// Stable order so the summary line + any warnings are deterministic.
+	zones := make([]string, 0, len(fips))
+	for z := range fips {
+		zones = append(zones, z)
+	}
+	sort.Strings(zones)
+
+	registered := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		fip := fips[zone]
+		if fip == "" {
+			continue
+		}
+		name := "jumphost-" + zone
+		cfg := config.TargetCfg{
+			Host:      fip,
+			User:      "ubuntu", // upstream HCL provisions Ubuntu cloud-init users
+			KeySource: "tf-output:jumphost_shared_key",
+		}
+		if err := remote.SetTarget(cctx.WorkspaceName, name, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: writing %s target: %v\n", name, err)
+			continue
+		}
+		registered = append(registered, name)
+	}
+	if len(registered) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"✓ Auto-registered %d per-AZ cluster jumphost target(s) (%s); use `roksbnkctl --on jumphost-<zone> ...`\n",
+		len(registered), strings.Join(registered, ", "))
+}
+
 // resolveClusterIdentity figures out which cluster to fetch the
 // kubeconfig for. Order:
 //
@@ -754,6 +849,7 @@ func runTerraformLifecycleDocker(cmd *cobra.Command, spec, phase string) error {
 		// local path.
 		tryAutoKubeconfig(cmd.Context(), cctx, tfws)
 		tryAutoJumphost(cmd.Context(), cctx, tfws)
+		tryAutoClusterJumphosts(cmd.Context(), cctx, tfws)
 		return nil
 	default:
 		return fmt.Errorf("internal: unknown terraform phase %q", phase)
