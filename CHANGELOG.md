@@ -4,7 +4,7 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased (v1.x)
+## v1.4.1 — 2026-05-18
 
 Sprint 12 closure cycle — `v1.4.1`. Focused patch closing **two** sibling relative-path-resolution bugs surfaced post-v1.4.0, both instances of the same shell-CWD-vs-state-dir trap. The headline fix: when a user passed `--var-file=./terraform.tfvars` from a directory containing that file, terraform reported `Failed to read variables file. Given variables file ./terraform.tfvars does not exist.` because the flag value was forwarded verbatim to a terraform invocation whose working directory is the per-phase state dir, not the user's shell PWD. Relative `--var-file` paths now resolve against the invocation CWD before reaching either backend. The second fix (pulled forward from the Sprint 13 backlog per integrator decision) closes the analogous trap for a relative `--tf-source=./...` local path, which was persisted relative into `config.yaml` at `init` and detonated on a later `up` / `plan` / `apply` run. No new PRDs this cycle. See [PLAN.md §"Sprint 12"](docs/PLAN.md), [`issues/issue_sprint12_staff.md` Issue 1](issues/issue_sprint12_staff.md), and [`issues/issue_sprint12_validator.md` Issue 5](issues/issue_sprint12_validator.md) for the design surface.
 
@@ -19,6 +19,8 @@ See [PLAN.md §"What's deliberately deferred to post-v1.0"](docs/PLAN.md). The c
 
 - **`ops install` / `ops uninstall` snapshot** ([PRD 07 §"Open questions" item 1](docs/prd/07-DEPLOYED-TFVARS.md#open-questions)) — carry-forward from v1.4.0.
 - All prior-cycle deferred items from [v1.4.0 §"Deferred"](#deferred-v1x-roadmap-post-v140) and [v1.3.0 §"Deferred"](#deferred-v1x-roadmap-post-v130) remain deferred.
+
+**Known issue (fix targeted for v1.4.2):** after a successful local `up`, a subsequent `roksbnkctl --on <target> kubectl|oc …` can fail with `connection to the server localhost:8080 was refused`. The local `KUBECONFIG` path is forwarded into the SSH target's environment where it is meaningless, shadowing the target's own provisioned kubeconfig. Workaround: `unset KUBECONFIG` before the `--on` invocation, or pass an explicit `--kubeconfig` valid on the target. Tracked in `issues/issue_sprint12_staff.md` Issue 3; v1.4.2 fast-follow.
 
 ## v1.4.0 — 2026-05-14
 
