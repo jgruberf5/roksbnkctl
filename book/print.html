@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2af8b102.js";
+            window.path_to_searchindex_js = "searchindex-84d0d0d0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -845,6 +845,72 @@ fi
 <li><strong><code>cluster-outputs.json</code></strong> is the persisted identity of the workspace’s ROKS cluster — written by <code>cluster up</code> or <a href="#registering-an-existing-cluster"><code>cluster register</code></a>, read by <code>roksbnkctl up</code> so BNK trials don’t have to re-state cluster identity in every tfvars.</li>
 </ul>
 <p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var. Test fixtures use this; everyday users shouldn’t need it.</p>
+<h2 id="terraformappliedtfvars--whats-deployed-right-now"><a class="header" href="#terraformappliedtfvars--whats-deployed-right-now"><code>terraform.applied.tfvars</code> — what’s deployed right now</a></h2>
+<p><code>v1.4.0</code> adds a per-phase snapshot of the effective Terraform var-file inputs that produced the workspace’s current state. After every successful <code>terraform apply</code> — <code>roksbnkctl cluster up</code>, <code>roksbnkctl bnk up</code>, or the legacy single-shape <code>roksbnkctl up</code> — <code>roksbnkctl</code> writes a canonical-HCL summary of “what var-files said” to the phase’s state directory. Re-create / audit / handoff workflows that previously needed <code>config.yaml</code> (or memory) now have a file-on-disk record of the inputs.</p>
+<h3 id="where-it-lives"><a class="header" href="#where-it-lives">Where it lives</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Workspace shape</th><th>Phase</th><th>Path</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ShapeSplit</code> / <code>ShapeClusterOnly</code></td><td>Cluster phase</td><td><code>~/.roksbnkctl/&lt;workspace&gt;/state-cluster/terraform.applied.tfvars</code></td></tr>
+<tr><td><code>ShapeSplit</code></td><td>Trial phase</td><td><code>~/.roksbnkctl/&lt;workspace&gt;/state/terraform.applied.tfvars</code></td></tr>
+<tr><td><code>ShapeLegacySingle</code></td><td>both phases (collapsed)</td><td><code>~/.roksbnkctl/&lt;workspace&gt;/state/terraform.applied.tfvars</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>On <code>ShapeLegacySingle</code>, the file is a union of all sources (since the legacy shape doesn’t separate cluster and trial state) and the header comment records <code>phase=legacy-single</code> so the reader doesn’t mistake it for either a cluster-only or trial-only snapshot. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/07-DEPLOYED-TFVARS.md#design">PRD 07 §“Design”</a> for the format spec.</p>
+<h3 id="what-it-captures"><a class="header" href="#what-it-captures">What it captures</a></h3>
+<p>A canonical HCL var-file: one assignment per line, variables sorted alphabetically within each source section. Each section is preceded by a comment line documenting which source contributed the values:</p>
+<ul>
+<li><code># === from config.yaml ===</code> — vars derived from the workspace’s <code>config.yaml</code> (written to <code>terraform.tfvars</code> on disk).</li>
+<li><code># === from terraform.tfvars.user ===</code> — the workspace-local user override file. If the file doesn’t exist, the section header is <code># === from terraform.tfvars.user (missing) ===</code> and the body is empty.</li>
+<li><code># === from cluster-phase override ===</code> — <code>state-cluster/cluster-phase-override.tfvars</code> (cluster-phase snapshots only).</li>
+</ul>
+<p>Source-attribution comments matter because the same variable can appear in multiple sources; the “winner” — the value Terraform actually used — is the last section to mention it. The comments let the reader trace why a particular value ended up live.</p>
+<h3 id="lifecycle"><a class="header" href="#lifecycle">Lifecycle</a></h3>
+<ul>
+<li><strong>Written</strong> after every successful <code>terraform apply</code>. Plan flows don’t write the snapshot — the name <code>terraform.applied.tfvars</code> would mislead if a plan-time write existed.</li>
+<li><strong>Overwritten</strong> each apply. If you want history, copy the file aside before re-running <code>up</code> or wire <code>restic</code> / a git commit hook against <code>~/.roksbnkctl/&lt;workspace&gt;/</code>.</li>
+<li><strong>Untouched by destroy.</strong> <code>cluster down</code> / <code>bnk down</code> leave the prior <code>up</code>’s snapshot in place; that’s what was last deployed. The file’s mtime + the absence of Terraform state is the “torn down on <code>&lt;date&gt;</code>” signal.</li>
+<li><strong>Never read by <code>roksbnkctl</code> itself.</strong> The snapshot is an output for the user — never an input the tool depends on. Making it an input would create a feedback loop where redacted values get written back as the literal string <code>&lt;redacted&gt;</code>.</li>
+</ul>
+<h3 id="redaction"><a class="header" href="#redaction">Redaction</a></h3>
+<p>Exactly one variable is redacted: <code>ibmcloud_api_key</code>. It’s the only var whose value comes from the <a href="#credentials-and-the-resolver-chain">cred resolver</a> rather than being authored by the user in <code>config.yaml</code> or a tfvars file — so it’s the only value the snapshot would expose that the user didn’t put there themselves. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
+<pre><code class="language-hcl">ibmcloud_api_key = "&lt;redacted&gt;"  # source: cred resolver, not persisted
+</code></pre>
+<p>For team-handoff scenarios (a teammate receives this file out-of-band and wants to re-create the workspace): replace the <code>&lt;redacted&gt;</code> value with the teammate’s own API key, or simply remove the <code>ibmcloud_api_key</code> line so the <a href="#credentials-and-the-resolver-chain">cred resolver</a> supplies it from the teammate’s own environment (keychain, shell env, <code>~/.bluemix/api_key</code>, etc.) at apply time. Every other line round-trips verbatim.</p>
+<p>The file mode is <code>0600</code> regardless. The non-redacted contents (workspace identifiers, region, resource group, cluster name, tunable values) aren’t credential-grade secrets, but aren’t world-readable-grade either. Tight permissions are the cheap default.</p>
+<h3 id="what-its-not"><a class="header" href="#what-its-not">What it’s <strong>not</strong></a></h3>
+<ul>
+<li><strong>Not an input</strong> to subsequent applies. The <code>-var-file</code> chain on the next apply is unchanged: <code>config.yaml</code>-derived → <code>terraform.tfvars.user</code> → phase overrides.</li>
+<li><strong>Not a record of Terraform defaults.</strong> If <code>variable "foo" { default = "bar" }</code> and the user never set <code>foo</code>, the snapshot omits <code>foo</code> entirely. Capturing defaults would require running <code>terraform output</code> against the variables block — separate concern.</li>
+<li><strong>Not a state-derived value capture.</strong> Computed expressions, resource references, locals, and data-source values aren’t var-file inputs and don’t appear. <code>terraform console</code> against the live state dir is the right tool for those.</li>
+<li><strong>Not a <code>TF_VAR_*</code> env capture.</strong> <code>roksbnkctl</code> doesn’t set <code>TF_VAR_*</code> today — everything goes via <code>-var-file</code> — so the snapshot covers the complete input surface. A future cycle that starts using <code>TF_VAR_*</code> will need to extend this file.</li>
+</ul>
+<h3 id="safe-to-commit-guidance"><a class="header" href="#safe-to-commit-guidance">Safe-to-commit guidance</a></h3>
+<p>The file is suitable for git commit alongside <code>config.yaml</code> <strong>after</strong> the user verifies the redaction matches their threat model. The standard reminder applies: the workspace dir may contain other semi-sensitive material — <code>cluster-outputs.json</code> records the cluster’s <code>crn</code> and admin identity hints; the <code>state/</code> and <code>state-cluster/</code> trees include <code>terraform.tfstate</code> (which contains resource IDs, IAM bindings, and any value Terraform’s provider exposed); the <code>kubeconfig</code> files are mode <code>0600</code> for a reason. Review the whole workspace dir with the same lens before committing.</p>
+<p><code>roksbnkctl</code> does not touch <code>.gitignore</code>. If you commit the workspace, you commit the workspace; if you don’t, you don’t. The tool stays out of that decision.</p>
+<h3 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h3>
+<p>For a <code>ShapeSplit</code> cluster phase apply, <code>~/.roksbnkctl/canada-roks/state-cluster/terraform.applied.tfvars</code> looks like:</p>
+<pre><code class="language-hcl"># Generated by roksbnkctl v1.4.0 at 2026-05-14T10:23:17Z after terraform apply on phase=cluster.
+# Re-generated each apply. Do not edit by hand — your changes will be overwritten.
+
+# === from config.yaml ===
+cluster_name = "canada-roks"
+ibmcloud_api_key = "&lt;redacted&gt;"  # source: cred resolver, not persisted
+region = "ca-tor"
+resource_group_name = "default"
+
+# === from terraform.tfvars.user ===
+worker_count = 4
+
+# === from cluster-phase override ===
+deploy_bnk = false
+</code></pre>
+<p>Re-applying from this snapshot alone reconstructs the inputs the user wrote; embedded Terraform module defaults are <strong>not</strong> captured (see <a href="#what-its-not">§“What it’s <strong>not</strong>”</a> above for the full list of what’s out of scope).</p>
+<p>The header records the binary version and apply timestamp so the reader can correlate the snapshot to a specific <code>roksbnkctl</code> invocation. Alphabetic ordering within each section means re-running <code>apply</code> with identical inputs produces a byte-identical file (idempotency — handy for diffing snapshots across applies).</p>
 <h2 id="the-everyday-workspace-routine"><a class="header" href="#the-everyday-workspace-routine">The everyday workspace routine</a></h2>
 <p>The minimum daily routine:</p>
 <pre><code class="language-bash"># Initialise (creates ~/.roksbnkctl/&lt;name&gt;/config.yaml; defaults to "default")
