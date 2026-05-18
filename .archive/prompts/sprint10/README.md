@@ -1,0 +1,16 @@
+# Sprint 10
+
+**Theme:** PRD 04 in-pod closure + PRD 06 status integration + CI hardening — `v1.3.0`
+
+_Drafted from `docs/PLAN.md` Sprint 10 section. Sprint 10 ships the four explicit carry-overs from Sprint 9 + the post-Sprint-9 PRD 06 addition: the **in-pod `ibmcloud login` wrap** that closes PRD 04's runtime cred flow (staff Issue 2 from Sprint 9 — under v1.2.x `--trusted-profile=auto` success, the in-pod wrap still uses `--apikey "$IBMCLOUD_API_KEY"` against an empty Secret, fails `missing API key`); the **`roksbnkctl status` per-phase deployment integration** per PRD 06 §"`status` command integration" (the v1.0.x single "Last apply" line conflates the two phases under the new shape); a **local-gate hardening pass** against the v1.2.x cascade's remaining gap (the local `make release` runs `go build -tags integration` but not `go test -tags integration`); and the **five chapter polish items** deferred from Sprint 9 tech-writer's review._
+
+Headline closure for Sprint 10: `roksbnkctl ops install --trusted-profile=auto` followed by `roksbnkctl --backend k8s ibmcloud iam oauth-tokens` returns a fresh IAM token end-to-end. The v1.2.0 partial-closure admonition at the top of chapter 19 §"Trusted-profile flow" comes out — closure is now complete.
+
+The four-agent dispatch shape is the same as Sprints 1-9:
+
+- **Architect** — chapter 19 partial-closure admonition removal + smoke-test un-guarding (the v1.2.x reality is gone in v1.3); chapter 24 (Day-2 ops) new section on per-shape `status` output samples; the five Sprint-9-deferred polish issues (chapter 14/19 wording, section placement, placeholder consistency); CHANGELOG `v1.3.0` entry under `## Unreleased (v1.x)`; PRD 04 + PRD 06 + PLAN.md refinement only if staff or validator surfaces a design gap.
+- **Staff engineer** — implement the in-pod login wrap (conditional on `iam.cloud.ibm.com/trusted-profile` SA annotation: `ibmcloud login --trusted-profile-id "$IAM_PROFILE_ID"` for annotated pods, v1.0.x `--apikey` path for static-key pods); inject `IAM_PROFILE_ID` into the pod spec at install time; brief in-wrap retry for the OIDC issuer propagation delay; implement `runStatus` per-phase deployment per PRD 06 §"`status` command integration"; unit tests against the four-shape testdata fixtures.
+- **Validator** — full seven-step regression sweep (Sprint 9's extended gate); live trusted-profile end-to-end smoke test against sandbox IBM Cloud (`ops install --trusted-profile=auto` → `ibmcloud iam oauth-tokens` returns fresh token); local-gate hardening — pick between (a) `make integration-test` separate target + kind-availability check in `make release`, or (b) full kind-bringup in `make release`; cross-link audit on architect's chapter edits.
+- **Tech-writer** — read-only review at end of sprint; dogfooding loop ("I want to verify the v1.3.0 trusted-profile path actually works now"); drift sweep between PRD 04/06 ↔ staff source ↔ chapter quotes ↔ CHANGELOG; launch-readiness verdict for `v1.3.0`.
+
+The release tag itself (`v1.3.0`) is **integrator-owned** — Sprint 10 lands all the prep; the integrator runs the now-fully-extended `make release` pre-tag gate (including whichever integration-test execution shape staff and validator landed in deliverable 3), cuts the tag, kicks off goreleaser, and pushes.

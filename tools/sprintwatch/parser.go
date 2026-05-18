@@ -30,9 +30,10 @@ type Role struct {
 }
 
 type Sprint struct {
-	Number int
-	Theme  string
-	Roles  map[string]*Role
+	Number   int
+	Theme    string
+	Archived bool
+	Roles    map[string]*Role
 }
 
 func (r *Role) HardOpen() int {
@@ -100,61 +101,86 @@ var (
 	themeRE     = regexp.MustCompile(`(?i)^\s*\*\*Theme:?\*\*:?\s*(.+?)\s*$`)
 )
 
+// SprintBases lists the (prompts, issues, archived) tuples LoadSprints scans,
+// in priority order — if the same sprint number appears in more than one base,
+// the first wins. Live sprints come before archived so an in-flight sprint
+// number can't be shadowed by a stale archived copy.
+var SprintBases = []struct {
+	Prompts  string
+	Issues   string
+	Archived bool
+}{
+	{Prompts: "prompts", Issues: "issues", Archived: false},
+	{Prompts: ".archive/prompts", Issues: ".archive/issues", Archived: true},
+}
+
 func LoadSprints(root string) ([]Sprint, error) {
-	promptsDir := filepath.Join(root, "prompts")
-	entries, err := os.ReadDir(promptsDir)
-	if err != nil {
-		return nil, fmt.Errorf("read prompts/: %w", err)
+	type loc struct {
+		n        int
+		roles    []string
+		archived bool
+		prompts  string
+		issues   string
 	}
+	var locs []loc
+	seen := map[int]bool{}
 
-	type key struct {
-		n     int
-		roles []string
-	}
-	var keys []key
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		m := sprintDirRE.FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		var n int
-		fmt.Sscanf(m[1], "%d", &n)
-		roleEntries, err := os.ReadDir(filepath.Join(promptsDir, e.Name()))
+	for _, base := range SprintBases {
+		promptsDir := filepath.Join(root, base.Prompts)
+		entries, err := os.ReadDir(promptsDir)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", base.Prompts, err)
 		}
-		var roles []string
-		for _, re := range roleEntries {
-			if re.IsDir() {
+		for _, e := range entries {
+			if !e.IsDir() {
 				continue
 			}
-			name := re.Name()
-			if !strings.HasSuffix(name, ".md") {
+			m := sprintDirRE.FindStringSubmatch(e.Name())
+			if m == nil {
 				continue
 			}
-			if name == "README.md" {
+			var n int
+			fmt.Sscanf(m[1], "%d", &n)
+			if seen[n] {
 				continue
 			}
-			roles = append(roles, strings.TrimSuffix(name, ".md"))
+			roleEntries, err := os.ReadDir(filepath.Join(promptsDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			var roles []string
+			for _, re := range roleEntries {
+				if re.IsDir() {
+					continue
+				}
+				name := re.Name()
+				if !strings.HasSuffix(name, ".md") {
+					continue
+				}
+				if name == "README.md" {
+					continue
+				}
+				roles = append(roles, strings.TrimSuffix(name, ".md"))
+			}
+			sort.Strings(roles)
+			seen[n] = true
+			locs = append(locs, loc{n: n, roles: roles, archived: base.Archived, prompts: base.Prompts, issues: base.Issues})
 		}
-		sort.Strings(roles)
-		keys = append(keys, key{n: n, roles: roles})
 	}
 
-	sort.Slice(keys, func(i, j int) bool { return keys[i].n < keys[j].n })
+	sort.Slice(locs, func(i, j int) bool { return locs[i].n < locs[j].n })
 
 	var sprints []Sprint
-	for _, k := range keys {
-		sp := Sprint{Number: k.n, Roles: map[string]*Role{}}
-		sp.Theme = readTheme(filepath.Join(promptsDir, fmt.Sprintf("sprint%d", k.n), "README.md"))
-		for _, role := range k.roles {
+	for _, l := range locs {
+		sp := Sprint{Number: l.n, Archived: l.archived, Roles: map[string]*Role{}}
+		sp.Theme = readTheme(filepath.Join(root, l.prompts, fmt.Sprintf("sprint%d", l.n), "README.md"))
+		for _, role := range l.roles {
 			r := &Role{Name: role}
-			issuePath := filepath.Join(root, "issues", fmt.Sprintf("issue_sprint%d_%s.md", k.n, role))
-			resolvedPath := filepath.Join(root, "issues", fmt.Sprintf("resolved_sprint%d_%s.md", k.n, role))
+			issuePath := filepath.Join(root, l.issues, fmt.Sprintf("issue_sprint%d_%s.md", l.n, role))
+			resolvedPath := filepath.Join(root, l.issues, fmt.Sprintf("resolved_sprint%d_%s.md", l.n, role))
 			if _, err := os.Stat(issuePath); err == nil {
 				r.IssueFile = issuePath
 				if err := parseIssueFile(r, issuePath); err != nil {
@@ -353,7 +379,7 @@ func classifyStatus(raw string) (bool, bool) {
 	if strings.Contains(s, "⏸") || strings.Contains(s, "deferred") {
 		return false, true
 	}
-	if strings.Contains(s, "✅") || strings.Contains(s, "resolved") || strings.Contains(s, "wontfix") || strings.Contains(s, "won't fix") {
+	if strings.Contains(s, "✅") || strings.Contains(s, "resolved") || strings.Contains(s, "wontfix") || strings.Contains(s, "won't fix") || strings.Contains(s, "accepted") {
 		return false, false
 	}
 	if strings.Contains(s, "informational") {

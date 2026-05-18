@@ -15,6 +15,7 @@ import (
 func main() {
 	pathFlag := flag.String("path", "", "Path to the repo (default: detect via git)")
 	onceFlag := flag.Bool("once", false, "Render once to stdout and exit (no TTY needed)")
+	candFlag := flag.Bool("archive-candidates", false, "Print sprint numbers of live, fully-resolved sprints (one per line) and exit. Designed for archive-completed-sprints.sh.")
 	flag.Parse()
 
 	root, err := resolveRoot(*pathFlag)
@@ -25,6 +26,27 @@ func main() {
 	if _, err := os.Stat(filepath.Join(root, "issues")); err != nil {
 		fmt.Fprintf(os.Stderr, "sprintwatch: no issues/ directory under %s\n", root)
 		os.Exit(1)
+	}
+
+	if *candFlag {
+		sprints, err := LoadSprints(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "sprintwatch:", err)
+			os.Exit(1)
+		}
+		for _, s := range sprints {
+			if s.Archived {
+				continue
+			}
+			if !s.IsComplete() {
+				continue
+			}
+			if s.HardOpen() != 0 {
+				continue
+			}
+			fmt.Println(s.Number)
+		}
+		return
 	}
 
 	if *onceFlag {

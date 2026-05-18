@@ -16,13 +16,27 @@ type Snapshot struct {
 	Open int
 }
 
-func Burndown(ctx context.Context, root string, sprintNum int, roles []string) ([]Snapshot, error) {
+// issueBases lists the issue-dir candidates Burndown/openAt probe, in the
+// order they should be tried. Includes both the live and archived locations
+// so a sprint that moved to .archive still picks up its full pre-move git
+// history without losing the post-move commit.
+var issueBases = []string{"issues", ".archive/issues"}
+
+func issuePathsFor(sprintNum int, role string) []string {
+	var out []string
+	for _, base := range issueBases {
+		out = append(out,
+			filepath.Join(base, fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role)),
+			filepath.Join(base, fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role)),
+		)
+	}
+	return out
+}
+
+func Burndown(ctx context.Context, root string, sprintNum int, roles []string, archived bool) ([]Snapshot, error) {
 	var paths []string
 	for _, role := range roles {
-		paths = append(paths,
-			filepath.Join("issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role)),
-			filepath.Join("issues", fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role)),
-		)
+		paths = append(paths, issuePathsFor(sprintNum, role)...)
 	}
 
 	args := []string{"-C", root, "log", "--reverse", "--format=%H %ct", "--"}
@@ -47,7 +61,7 @@ func Burndown(ctx context.Context, root string, sprintNum int, roles []string) (
 		snaps = append(snaps, Snapshot{Time: time.Unix(ts, 0), Open: openAt(ctx, root, sha, sprintNum, roles)})
 	}
 
-	nowOpen := openNow(root, sprintNum, roles)
+	nowOpen := openNow(root, sprintNum, roles, archived)
 	if len(snaps) == 0 || snaps[len(snaps)-1].Open != nowOpen {
 		snaps = append(snaps, Snapshot{Time: time.Now(), Open: nowOpen})
 	}
@@ -56,30 +70,50 @@ func Burndown(ctx context.Context, root string, sprintNum int, roles []string) (
 	return snaps, nil
 }
 
+// showAtSha returns the first non-empty content found at any of `paths`
+// for the given commit. Paths are tried in order so the caller controls
+// precedence (typically live location before archive).
+func showAtSha(ctx context.Context, root, sha string, paths []string) []byte {
+	for _, p := range paths {
+		out, _ := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+p).Output()
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
 func openAt(ctx context.Context, root, sha string, sprintNum int, roles []string) int {
 	open := 0
 	for _, role := range roles {
-		issuePath := filepath.Join("issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
-		resolvedPath := filepath.Join("issues", fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role))
-		issue, _ := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+issuePath).Output()
+		var issuePaths, resolvedPaths []string
+		for _, base := range issueBases {
+			issuePaths = append(issuePaths, filepath.Join(base, fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role)))
+			resolvedPaths = append(resolvedPaths, filepath.Join(base, fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role)))
+		}
+		issue := showAtSha(ctx, root, sha, issuePaths)
 		if len(issue) == 0 {
 			continue
 		}
-		resolved, _ := exec.CommandContext(ctx, "git", "-C", root, "show", sha+":"+resolvedPath).Output()
+		resolved := showAtSha(ctx, root, sha, resolvedPaths)
 		open += countRoleOpen(string(issue), string(resolved))
 	}
 	return open
 }
 
-func openNow(root string, sprintNum int, roles []string) int {
+func openNow(root string, sprintNum int, roles []string, archived bool) int {
+	base := filepath.Join(root, "issues")
+	if archived {
+		base = filepath.Join(root, ".archive", "issues")
+	}
 	open := 0
 	for _, role := range roles {
-		issuePath := filepath.Join(root, "issues", fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
+		issuePath := filepath.Join(base, fmt.Sprintf("issue_sprint%d_%s.md", sprintNum, role))
 		issue, err := os.ReadFile(issuePath)
 		if err != nil {
 			continue
 		}
-		resolvedPath := filepath.Join(root, "issues", fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role))
+		resolvedPath := filepath.Join(base, fmt.Sprintf("resolved_sprint%d_%s.md", sprintNum, role))
 		resolved, _ := os.ReadFile(resolvedPath) // ignore missing
 		open += countRoleOpen(string(issue), string(resolved))
 	}
