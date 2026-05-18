@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-84d0d0d0.js";
+            window.path_to_searchindex_js = "searchindex-2a99a888.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0b604fea.js"></script>
@@ -324,18 +324,48 @@ roksbnkctl kubectl --on jumphost get pods -A
 # oc passthrough
 roksbnkctl oc --on jumphost projects
 </code></pre>
+<h3 id="per-az-cluster-jumphosts"><a class="header" href="#per-az-cluster-jumphosts">Per-AZ cluster jumphosts</a></h3>
+<p>When your deploy sets <code>testing_create_cluster_jumphosts = true</code>, the upstream HCL builds <strong>one cluster jumphost per cluster-VPC availability zone</strong> in addition to the single TGW jumphost. Since v1.5.0 these are <strong>auto-registered</strong> by <code>roksbnkctl up</code> as <code>jumphost-&lt;zone&gt;</code> targets (alongside the singular <code>jumphost</code>) — see <a href="./15-ssh-targets.html#auto-discovery-from-terraform-outputs">Chapter 15 §“Auto-discovery from terraform outputs”</a>. They are first-class <code>--on</code> targets: full passthrough, no hop.</p>
+<pre><code class="language-bash"># verify what `up` registered:
+roksbnkctl targets list
+# → jumphost, jumphost-ca-tor-1, jumphost-ca-tor-2, jumphost-ca-tor-3
+
+# run directly on a specific per-AZ cluster jumphost (no hop, full passthrough):
+roksbnkctl kubectl --on jumphost-ca-tor-2 get nodes
+roksbnkctl shell --on jumphost-ca-tor-1
+</code></pre>
+<blockquote>
+<p><strong>Pre-v1.5.0 fallback.</strong> On a release before v1.5.0 the per-AZ jumphosts are <em>not</em> auto-registered. Look up their floating IPs and register each by hand — <code>roksbnkctl terraform output testing_cluster_jumphost_ips</code> (v1.5.0’s read-only <code>terraform</code>, <a href="./15-ssh-targets.html#auto-discovery-from-terraform-outputs">Chapter 15</a>), or on an even older release <code>cd ~/.roksbnkctl/&lt;ws&gt;/state &amp;&amp; TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips</code> — then <code>roksbnkctl targets add jumphost-&lt;zone&gt; --host &lt;fip&gt; --user ubuntu --key-source tf-output:jumphost_shared_key</code> per zone. Chapter 15 §“Auto-discovery from terraform outputs” documents this fallback in full.</p>
+</blockquote>
+<h4 id="hopping-to-a-cluster-jumphost-via-the-registered-jumphost-zero-setup-no-roksbnkctl-state"><a class="header" href="#hopping-to-a-cluster-jumphost-via-the-registered-jumphost-zero-setup-no-roksbnkctl-state">Hopping to a cluster jumphost <em>via</em> the registered <code>jumphost</code> (zero-setup, no roksbnkctl state)</a></h4>
+<p>The shared key is installed on <strong>every</strong> jumphost and the private key file is present on each box at <code>/home/ubuntu/.ssh/id_rsa</code>. So from the auto-registered TGW <code>jumphost</code> you can hop to <em>any</em> cluster jumphost by its <strong>private</strong> IP (the TGW jumphost reaches the cluster VPC over the Transit Gateway) with no key copying and nothing added to roksbnkctl state — handy for a one-off against a host you don’t want to register:</p>
+<pre><code class="language-bash"># the per-AZ private IPs are not a top-level terraform output; read them
+# from inside the TGW jumphost (it sits in the routed network):
+roksbnkctl exec --on jumphost -- \
+  curl -s http://169.254.169.254/...   # or your own inventory source
+
+# run a command on a cluster jumphost, hopping through the TGW jumphost,
+# using the shared key already on the box (no scp):
+roksbnkctl exec --on jumphost -- \
+  ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=accept-new \
+  ubuntu@&lt;cluster-jumphost-private-ip&gt; kubectl get nodes
+</code></pre>
+<p>The inner <code>ssh</code> uses the on-box <code>/home/ubuntu/.ssh/id_rsa</code> (the same shared key the auto-registered targets use — one key for all jumphosts), so no key material is copied. <code>StrictHostKeyChecking=accept-new</code> on the inner hop avoids an interactive prompt the outer non-PTY session can’t answer. This is the zero-setup path: nothing is written to <code>~/.roksbnkctl/</code>. For first-class repeated access prefer the auto-registered <code>jumphost-&lt;zone&gt;</code> targets above.</p>
+<blockquote>
+<p><strong>Orphaned-target caveat.</strong> The auto-registered <code>jumphost-&lt;zone&gt;</code> targets use option-(a) upsert-only registration: if a destroy removes a zone (or <code>testing_create_cluster_jumphosts</code> is flipped to <code>false</code>), the stale <code>jumphost-&lt;oldzone&gt;</code> entry lingers in your config until you <code>roksbnkctl targets remove jumphost-&lt;oldzone&gt;</code> by hand. A re-created host on a recycled floating IP will also trip the host-key TOFU mismatch — see <a href="./15-ssh-targets.html#host-key-tofu-and-roksbnkctlknown_hosts">Chapter 15 §“Host-key TOFU and <code>~/.roksbnkctl/known_hosts</code>”</a>. An automatic-prune (reconcile) mode is a tracked post-v1.5.0 follow-up.</p>
+</blockquote>
 <p>Behaviour details worth knowing:</p>
 <ul>
 <li><strong>Streaming I/O.</strong> stdout, stderr, stdin all stream in real time — the same as running the command locally. Long-running commands (<code>oc adm top nodes</code>, <code>ibmcloud ks cluster get</code> on a slow API call) work normally.</li>
 <li><strong>Exit code propagation.</strong> The remote command’s exit code is the local exit code. A failing remote command produces a non-zero <code>roksbnkctl</code> exit; a succeeding remote command produces <code>0</code>. CI scripts can rely on this.</li>
 <li><strong>TTY auto-detection.</strong> <code>roksbnkctl shell --on</code> auto-allocates a PTY. Other verbs (<code>exec</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>) run without a PTY at v1.0; if you need a PTY for <code>top</code> or another <code>isatty()</code>-sensitive command, fall back to <code>roksbnkctl shell --on jumphost</code> and run the command from the interactive shell.</li>
-<li><strong>Environment passthrough.</strong> <code>IBMCLOUD_API_KEY</code>, <code>IBMCLOUD_REGION</code>, and <code>KUBECONFIG</code> are propagated to the remote session via SSH <code>SetEnv</code>, so <code>ibmcloud iam oauth-tokens</code> on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept <code>AcceptEnv IBMCLOUD_*</code> etc. for this to work; the upstream HCL’s jumphost is already configured for it.</li>
+<li><strong>Environment passthrough.</strong> Only <em>machine-portable</em> values cross the SSH boundary: <code>IBMCLOUD_API_KEY</code>, <code>IC_API_KEY</code>, <code>IBMCLOUD_REGION</code>, and <code>IBMCLOUD_VERSION_CHECK</code> are propagated to the remote session via SSH <code>SetEnv</code>, so <code>ibmcloud iam oauth-tokens</code> on the jumphost authenticates with the same key your local workspace uses. The remote sshd must be configured to accept <code>AcceptEnv IBMCLOUD_*</code> etc. for this to work; the upstream HCL’s jumphost is already configured for it. <code>KUBECONFIG</code> is <strong>not</strong> forwarded — it is a <em>local filesystem path</em>, meaningless on the target, and forwarding it would shadow the jumphost’s own cloud-init-provisioned <code>/home/ubuntu/.kube/config</code>. Passthrough <code>kubectl</code>/<code>oc</code> on the target therefore use the target’s own kubeconfig, which is the correct behaviour. (Before v1.5.0 the local <code>KUBECONFIG</code> path <em>was</em> forwarded; after a successful local <code>up</code> that deterministically broke <code>--on jumphost kubectl|oc</code> with <code>connection to the server localhost:8080 was refused</code> — see the v1.5.0 changelog. Local <code>roksbnkctl kubectl</code> without <code>--on</code> still resolves <code>KUBECONFIG</code> via the local chain, unchanged.)</li>
 </ul>
 <h2 id="what---on-doesnt-do-yet"><a class="header" href="#what---on-doesnt-do-yet">What <code>--on</code> doesn’t do (yet)</a></h2>
 <p>A few things deliberately deferred to later phases:</p>
 <ul>
 <li><strong>Lifecycle commands</strong> (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>) reject <code>--on</code> with a clear error at v1.0. Running terraform on a remote host has different state-handling considerations and is the job of the SSH execution backend (<a href="./17-execution-backends.html">Chapter 17</a>) — <code>terraform</code> over <code>--backend ssh:&lt;target&gt;</code> is itself deferred to v1.x (state-file portability).</li>
-<li><strong>ProxyJump / multi-hop SSH.</strong> If your jumphost itself is reached through another bastion, that’s not directly supported at v1.0. The upstream HCL’s jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don’t need multi-hop in practice. ProxyJump support is on the v1.x roadmap.</li>
+<li><strong>ProxyJump / multi-hop SSH.</strong> If your jumphost itself is reached through another bastion, that’s not directly supported at v1.0. The upstream HCL’s jumphost design lets the TGW jumphost reach cluster-internal VMs natively, so you usually don’t need multi-hop in practice. ProxyJump support is on the v1.x roadmap. (The per-AZ cluster jumphosts themselves <em>are</em> auto-registered as first-class <code>jumphost-&lt;zone&gt;</code> targets since v1.5.0 — see <a href="#per-az-cluster-jumphosts">§“Per-AZ cluster jumphosts”</a> above; the manual <code>ssh -i … via the registered jumphost</code> hop there is the zero-setup alternative for one-offs, not a <code>roksbnkctl</code>-native multi-hop.)</li>
 <li><strong><code>~/.ssh/config</code> parsing.</strong> Targets must be defined explicitly in workspace config; <code>roksbnkctl</code> does not read your existing <code>~/.ssh/config</code>.</li>
 <li><strong>Password auth.</strong> Keys + agent only. Passwords are not supported and won’t be.</li>
 <li><strong>SCP / SFTP.</strong> File transfer is the SSH execution backend’s job (handled via <code>RunOpts.Files</code> materialisation; see <a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a>). <code>--on</code> does one-shot remote exec only.</li>
