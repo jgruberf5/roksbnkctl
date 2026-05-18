@@ -111,7 +111,7 @@ func fastSelfHeal(t *testing.T) {
 // before Sprint 13.
 func TestE2E_RemoteVsLocalEnvComposition(t *testing.T) {
 	stageEnvSplitWorkspace(t)
-	t.Setenv("KUBECONFIG", "/home/tester/.kube/config")
+	stageRealKubeconfig(t)
 
 	_, remoteEnv, err := workspaceEnvCore()
 	if err != nil {

@@ -1,11 +1,30 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
+
+// stageRealKubeconfig writes a minimal kubeconfig to a temp file and
+// points $KUBECONFIG at it. DefaultKubeconfigPath() only returns a path
+// that actually exists, so a non-existent KUBECONFIG value makes
+// "local env keeps KUBECONFIG" assertions host-dependent — they passed
+// on a dev box with a real ~/.kube/config but failed on clean CI
+// runners (no ~/.kube/config). A real temp file makes them hermetic.
+func stageRealKubeconfig(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "kubeconfig")
+	const minimal = "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n"
+	if err := os.WriteFile(p, []byte(minimal), 0o600); err != nil {
+		t.Fatalf("write temp kubeconfig: %v", err)
+	}
+	t.Setenv("KUBECONFIG", p)
+	return p
+}
 
 // stageEnvSplitWorkspace stages a minimal workspace whose API key
 // resolves from the environment (api_key_source: env), so workspaceEnv()
@@ -47,7 +66,7 @@ func TestWorkspaceEnvCore_OmitsKubeconfig_KeepsIBMCloud(t *testing.T) {
 	stageEnvSplitWorkspace(t)
 	// Make sure a KUBECONFIG is present in the host env so the only way
 	// it stays out of core is the split (not its absence).
-	t.Setenv("KUBECONFIG", "/home/tester/.kube/config")
+	stageRealKubeconfig(t)
 
 	_, core, err := workspaceEnvCore()
 	if err != nil {
@@ -67,7 +86,7 @@ func TestWorkspaceEnvCore_OmitsKubeconfig_KeepsIBMCloud(t *testing.T) {
 // carries KUBECONFIG (local kubectl/oc behaviour unchanged).
 func TestWorkspaceEnv_LocalKeepsKubeconfig(t *testing.T) {
 	stageEnvSplitWorkspace(t)
-	t.Setenv("KUBECONFIG", "/home/tester/.kube/config")
+	stageRealKubeconfig(t)
 
 	_, env, err := workspaceEnv()
 	if err != nil {
