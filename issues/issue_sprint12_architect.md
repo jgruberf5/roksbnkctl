@@ -220,3 +220,158 @@ Sprint 12 architect surface is GREEN for the `v1.4.1` tag, conditional on:
 The CHANGELOG `v1.4.1` block reads naturally and cross-links `docs/PLAN.md §"Sprint 12"` + `issues/issue_sprint12_staff.md` Issue 1. The PLAN.md Sprint 12 section is roughly 1/3 the length of Sprint 11's (patch scope). Chapter 6 polish nudges land at sensible spots — the defaults caveat surfaces in the worked-example reading path; the team-handoff sentence surfaces in the redaction reading path. `mdbook build book/` HTML backend is clean. No `internal/` / `cmd/` files touched.
 
 Nothing escalated to staff/validator surface this cycle — both nudges were architect-prose nudges and the PRD 07 audit came up clean.
+
+---
+
+## Issue 9: book — document reaching the per-AZ cluster jumphosts (hop-via-`jumphost` + direct registration) — feature request
+
+**Severity**: low (documentation gap / discoverability — no defect)
+**Status**: accepted — deferred to Sprint 13 (integrator triage 2026-05-18)
+
+> **Scope note (read first).** This is a *documentation feature*, filed
+> into the Sprint 12 ledger at user request ("add … in the next
+> sprint"). Sprint 12 is a strict bugfix-only patch (`v1.4.1`) — see
+> Issue 1 above and `docs/PLAN.md:854-858`. A new instructional book
+> section is **not** a patch-cycle deliverable. Recommendation:
+> schedule for the next *minor* (`v1.5.0` / Sprint 13). Logged here so
+> it isn't lost; the integrator owns the accept/defer call. Suggested
+> triaged status: `accepted` (defer to Sprint 13). Pairs naturally
+> with `issues/issue_sprint12_staff.md` Issue 4 (read-only `roksbnkctl
+> terraform` escape hatch) — the doc below should use that command for
+> the IP lookups and ship in the **same** release.
+
+### Motivation
+
+Surfaced in the same user-testing thread as staff Issues 3-4. With
+`testing_create_cluster_jumphosts = true` (this user's tfvars) the
+deploy builds **one cluster jumphost per cluster-VPC AZ** in addition
+to the single TGW jumphost (`ibm_is_instance.cluster_jumphost`,
+`for_each = local.cluster_zones`, `terraform/modules/testing/main.tf:404`;
+each gets its own floating IP, `ibm_is_floating_ip.cluster_jumphost_fip:430`).
+`tryAutoJumphost` (`internal/cli/lifecycle.go:540-565`) only auto-seeds
+the singular TGW jumphost as the `jumphost` target — the per-AZ cluster
+jumphosts are reachable but **undocumented**: a user who sees "4
+jumphosts created" has no instructions for the other three. The book's
+jumphost chapters (15, 16) currently describe only the auto-seeded
+single target.
+
+Two complementary documentation deliverables (the user asked for
+both):
+
+#### 9a. Running commands on the in-AZ cluster jumphosts *via* the registered `jumphost` (SSH hop)
+
+The shared key (`tls_private_key.jumphost_shared_key`) is installed on
+**every** jumphost, and the private key file is present on each box at
+`/home/ubuntu/.ssh/id_rsa` (`terraform/modules/testing/main.tf:108-111`).
+So from the auto-seeded TGW `jumphost` a user can hop to any cluster
+jumphost by its **private** IP (the TGW jumphost reaches the cluster
+VPC over the Transit Gateway) with no key copying:
+
+```bash
+# private IPs of the per-AZ cluster jumphosts (one-liner once staff Issue 4 lands):
+roksbnkctl terraform output testing_cluster_jumphost_private_ips
+#   (pre-Issue-4 fallback: cd ~/.roksbnkctl/<ws>/state && \
+#    TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_private_ips)
+
+# run a command on the ca-tor-2 cluster jumphost, hopping through the TGW jumphost:
+roksbnkctl --on jumphost ssh -o StrictHostKeyChecking=accept-new \
+  ubuntu@<ca-tor-2-private-ip> kubectl get nodes
+```
+
+Document: where the private IPs come from, that the on-box
+`~/.ssh/id_rsa` is the same shared key (no scp needed), the
+StrictHostKeyChecking note for the inner hop, and that this is the
+zero-setup path (nothing added to roksbnkctl state).
+
+#### 9b. Registering the in-AZ cluster jumphosts directly into roksbnkctl state
+
+For first-class `--on` access (no hop, full passthrough — `kubectl` /
+`oc` / `ibmcloud` / `shell`), register each cluster jumphost as its own
+target using the **same shared-key tf-output** the auto-seeded
+`jumphost` already uses (`key_source: tf-output:jumphost_shared_key`):
+
+```bash
+# public (floating) IPs + ready-made ssh commands, keyed by AZ:
+roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
+roksbnkctl terraform output testing_cluster_jumphost_public_ips
+
+# register one target per AZ (name carries the zone for disambiguation):
+roksbnkctl targets add jumphost-ca-tor-1 \
+  --host <ca-tor-1-fip> --user ubuntu \
+  --key-source tf-output:jumphost_shared_key
+# …repeat per zone…
+
+roksbnkctl --on jumphost-ca-tor-1 kubectl get pods
+roksbnkctl targets list      # shows jumphost + jumphost-ca-tor-{1,2,3}
+```
+
+Document: the `targets add` invocation, why `key-source:
+tf-output:jumphost_shared_key` is correct (one key for all jumphosts —
+cross-link ch15 §"`key_source: tf-output:<output-name>`"), a naming
+convention (`jumphost-<zone>`), the known-hosts TOFU implication for
+each new IP (cross-link ch15 §"Host-key TOFU"), and that these entries
+are **not** auto-managed — a destroy+recreate rotates the FIPs and the
+user must re-`targets add` (contrast with the auto-seeded `jumphost`,
+which `up` re-seeds; cross-link ch15 §"Auto-discovery from terraform
+outputs").
+
+### Where it lands (book)
+
+- **Chapter 16** (`book/src/16-on-flag-ssh-jumphosts.md`) — new
+  subsection under §"Working examples" (after line 200) for 9a (the
+  hop pattern), and a bullet in §"What `--on` doesn't do (yet)" (line
+  211) noting per-AZ jumphosts are not auto-registered, pointing to 9b.
+- **Chapter 15** (`book/src/15-ssh-targets.md`) — extend §"Auto-discovery
+  from terraform outputs" (line 265) with a "what is *not*
+  auto-discovered" note, and add a worked 9b example under/after
+  §"`roksbnkctl targets add <name> ...`" (line 224).
+- Both subsections cross-link each other and the relevant
+  `testing_cluster_jumphost_*` outputs (`terraform/outputs.tf:82-89`).
+
+### Acceptance criteria
+
+- A reader who sees N>1 jumphosts can, from chapter 15/16 alone:
+  (a) run a command on a specific per-AZ cluster jumphost via the
+  registered `jumphost` hop, and (b) register each cluster jumphost as
+  its own `--on` target.
+- Every command shown is copy-pasteable and uses only documented
+  outputs / flags; the IP-lookup step uses `roksbnkctl terraform
+  output …` (staff Issue 4) with the raw-`terraform` fallback noted
+  for releases before that lands.
+- The not-auto-managed caveat (FIP rotation on destroy+recreate →
+  re-`targets add`) is stated where 9b is documented.
+- All new cross-links resolve on the mdbook HTML backend; chapter
+  15/16 prose still flows (no run-ons at the insertion points);
+  `mdbook build book/` clean.
+- `CHANGELOG.md` `### Added`/`### Changed` (docs) bullet **in whichever
+  release ships it** — NOT the `v1.4.1` bugfix-only block (see Issue 1
+  + Scope note).
+
+### Related
+
+- `issues/issue_sprint12_staff.md` Issue 4 (read-only `terraform`
+  escape hatch) — hard dependency for the clean IP-lookup one-liners;
+  ship together. Until then the doc must show the raw-`terraform`
+  fallback.
+- `issues/issue_sprint12_staff.md` Issue 5 — the "auto-register
+  `jumphost-<zone>` from `testing_cluster_jumphost_public_ips`" code
+  enhancement (now filed). **Hard doc coupling:** if Issue 5 lands,
+  9b's manual `targets add` steps collapse to "verify with `targets
+  list`" and this doc must be revised in lockstep — ship together or
+  sequence Issue 9 to follow Issue 5 so the two don't drift.
+- Code/output facts: `terraform/modules/testing/main.tf:404,430`
+  (per-AZ instance + FIP), `:108-111` (shared key on-box),
+  `terraform/outputs.tf:82-89` (`testing_cluster_jumphost_public_ips`
+  / `_ssh_commands`), `internal/cli/lifecycle.go:540-565`
+  (`tryAutoJumphost` seeds only the TGW jumphost),
+  `internal/cli/targets.go` (`targets add`).
+
+### Out of scope
+
+- The auto-registration code change itself (potential separate
+  Sprint 13 staff enhancement; this issue is docs-only and explicitly
+  documents the *manual* path, with a coupling note if the code lands).
+- Pulling this into `v1.4.1` absent an explicit integrator decision
+  (patch scope — see Scope note).
+- Any change to `tryAutoJumphost` behaviour (documentation describes
+  current behaviour as-is).
