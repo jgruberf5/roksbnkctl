@@ -19,6 +19,7 @@ import (
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -104,56 +105,15 @@ func init() {
 	rootCmd.AddCommand(initCmd, upCmd, planCmd, applyCmd, downCmd)
 }
 
-// resolveVarFiles normalizes --var-file entries to absolute paths
-// against the *invocation* CWD. Terraform runs with CWD = the per-phase
-// state directory (~/.roksbnkctl/<workspace>/state[-cluster]/), so a
-// user's `--var-file=./terraform.tfvars` would otherwise resolve there
-// instead of in the shell directory they typed it from (PRD/issue
-// "v1.4.1 --var-file relative-path resolution").
-//
-// Order:
-//  1. `~` / `~/...` expansion via os.UserHomeDir — matches the project
-//     convention used by `install.go` for --dir.
-//  2. Absolute paths pass through unchanged (just cleaned).
-//  3. Relative paths join against os.Getwd().
-//  4. os.Stat against the resolved absolute, so a typo or wrong-CWD
-//     surfaces *before* terraform runs with a clearer message that
-//     names *both* the user-supplied input and the resolved absolute.
-//
-// Idempotent on already-absolute slices, so calling it once per RunE
-// (composite *and* leaf) is safe; the leaf's re-normalization is a
-// no-op when the composite already ran it.
+// resolveVarFiles is the cli-layer thin wrapper over the single
+// path-normalization chokepoint (orchestration.NormalizeVarFiles). It
+// exists so the in-package tests that pin the --var-file relative-path
+// behavior (Sprint 12 Issue 1) call a stable local symbol; the
+// canonical normalization lives in orchestration and is applied exactly
+// once at command entry (the root PersistentPreRunE →
+// resolveInvocationContext), NOT re-derived per RunE.
 func resolveVarFiles(vfs []string) ([]string, error) {
-	if len(vfs) == 0 {
-		return vfs, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("resolve --var-file: %w", err)
-	}
-	out := make([]string, len(vfs))
-	for i, vf := range vfs {
-		expanded := vf
-		if expanded == "~" || strings.HasPrefix(expanded, "~/") {
-			if home, herr := os.UserHomeDir(); herr == nil {
-				if expanded == "~" {
-					expanded = home
-				} else {
-					expanded = filepath.Join(home, expanded[2:])
-				}
-			}
-		}
-		if filepath.IsAbs(expanded) {
-			out[i] = filepath.Clean(expanded)
-			continue
-		}
-		abs := filepath.Join(cwd, expanded)
-		if _, err := os.Stat(abs); err != nil {
-			return nil, fmt.Errorf("--var-file %q (resolved to %q): %w", vf, abs, err)
-		}
-		out[i] = abs
-	}
-	return out, nil
+	return orchestration.NormalizeVarFiles(vfs)
 }
 
 // ── lifecycle implementations ───────────────────────────────────────
@@ -175,16 +135,10 @@ func runUp(cmd *cobra.Command, args []string) error {
 	if err := rejectOnFlag("up"); err != nil {
 		return err
 	}
-	// Resolve --var-file against the invocation CWD once at the top.
-	// Downstream leaves (runClusterUp / runTrialUp) re-resolve as a
-	// defensive idempotent pass — they're also direct entry points for
-	// `cluster up` / `bnk up`, so they can't assume the composite ran.
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
-
+	// --var-file is already normalized to absolute paths against the
+	// invocation CWD by the single chokepoint (root PersistentPreRunE →
+	// resolveInvocationContext). No per-RunE re-derivation (Sprint 12
+	// Issue 1, retired as a class in Sprint 15).
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -226,11 +180,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 // non-local terraform backend dispatches through
 // runTerraformLifecycleDocker before any state-dir prep.
 func runTrialUp(cmd *cobra.Command, _ []string) error {
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "up")
 	}
@@ -278,11 +228,7 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("plan"); err != nil {
 		return err
 	}
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "plan")
 	}
@@ -304,11 +250,7 @@ func runApply(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("apply"); err != nil {
 		return err
 	}
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "apply")
 	}
@@ -347,12 +289,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 	if err := rejectOnFlag("down"); err != nil {
 		return err
 	}
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
-
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -386,11 +323,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 // Preserves the v1.0.x docker-backend short-circuit — non-local
 // backends dispatch through runTerraformLifecycleDocker.
 func runTrialDown(cmd *cobra.Command, _ []string) error {
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(); ok && spec != "local" {
 		return runTerraformLifecycleDocker(cmd, spec, "destroy")
 	}

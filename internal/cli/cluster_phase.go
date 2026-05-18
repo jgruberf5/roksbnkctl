@@ -283,15 +283,10 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 func runClusterUp(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	// Resolve --var-file against the invocation CWD before openClusterTF
-	// folds them into the varFiles slice. Idempotent on already-absolute
-	// inputs (so when called from the composite `runUp` the second pass
-	// is a no-op).
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized to absolute paths
+	// against the invocation CWD (root PersistentPreRunE →
+	// resolveInvocationContext) before openClusterTF folds them into the
+	// varFiles slice. No per-RunE re-derivation (Sprint 12 Issue 1).
 
 	// Refuse on legacy single-state per PRD 06 §"Refusal messages" —
 	// the cluster modules live in the *trial* state file there, so
@@ -351,13 +346,7 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 func runClusterDown(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	// Resolve --var-file against the invocation CWD up front (idempotent
-	// if the composite `runDown` already ran us through it).
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 
 	// Shape gating per PRD 06 §"Refusal messages": `cluster down`
 	// operates strictly on the cluster phase. Hard-refuse if the trial

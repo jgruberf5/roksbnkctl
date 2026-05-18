@@ -44,13 +44,19 @@ func rejectOnFlag(cmdName string) error {
 //
 // envExtra MUST be machine-portable (values, not local filesystem
 // paths): IBMCLOUD_API_KEY / IC_API_KEY / IBMCLOUD_REGION /
-// IBMCLOUD_VERSION_CHECK. Callers should source workspaceEnvCore() (NOT
-// workspaceEnv(), which appends the local-only KUBECONFIG path). As a
-// defense-in-depth backstop against a future caller reintroducing the
-// Sprint 13 Issue 1 leak, dispatchRemote scrubs every local-path-valued
-// var (remoteSafeEnv / localPathEnvKeys) here before anything crosses
-// the wire — correctness comes from never sending a local path, not
-// from the target sshd's AcceptEnv dropping it.
+// IBMCLOUD_VERSION_CHECK. Callers source workspaceEnvCore() (NOT
+// workspaceEnv(), which appends the local-only KUBECONFIG path).
+//
+// Sprint 15 chokepoint: the core-vs-local-only split now has exactly
+// ONE classification (orchestration.LocalOnlyEnvKeys), consumed by both
+// workspaceEnvCore (the local-side scrub of os.Environ) and this single
+// boundary assertion at the SSH wire. The previous scattered
+// defense-in-depth scrub list is gone; this one assertion — applied at
+// the single point every --on dispatch funnels through, just before
+// bytes cross the wire — is the structural guarantee that no local path
+// is ever sent, cheaper than proving every DisableFlagParsing
+// passthrough caller can't construct one. Correctness comes from never
+// sending a local path, not from the target sshd's AcceptEnv.
 //
 // The remote sshd's AcceptEnv config decides which of the remaining
 // (machine-portable) vars actually pass through; users who hit
@@ -61,9 +67,14 @@ func rejectOnFlag(cmdName string) error {
 // On success this function does NOT return — it calls os.Exit. The
 // remote-side exit code is the only useful thing for scripts and CI.
 func dispatchRemote(ctx context.Context, target string, argv []string, envExtra []string, tty bool) error {
-	// Defense-in-depth backstop: strip any local-path-valued var that
-	// slipped in (Sprint 13 Issue 1). No-op when callers already pass
-	// workspaceEnvCore().
+	// THE single SSH-boundary assertion (Sprint 15 chokepoint): strip
+	// every local-path-valued var per the one
+	// orchestration.LocalOnlyEnvKeys classification, here at the one
+	// point every --on dispatch funnels through, just before bytes cross
+	// the wire. No-op when callers pass workspaceEnvCore() (the common
+	// case); the guarantee against the Sprint 13 Issue 1 class is
+	// structural — it does not depend on proving every passthrough
+	// caller's env construction.
 	envExtra = remoteSafeEnv(envExtra)
 
 	cctx, err := config.New(flagWorkspace)

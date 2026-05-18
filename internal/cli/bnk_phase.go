@@ -84,15 +84,9 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("bnk up"); err != nil {
 		return err
 	}
-	// Resolve --var-file against the invocation CWD before we hand off
-	// to runClusterUp / runTrialUp (each of which also resolves
-	// defensively — idempotent on already-absolute inputs).
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
-
+	// flagVarFiles is already chokepoint-normalized (root
+	// PersistentPreRunE → resolveInvocationContext); no per-RunE
+	// re-derivation (Sprint 12 Issue 1, retired as a class).
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -130,12 +124,7 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("bnk down"); err != nil {
 		return err
 	}
-	resolved, err := resolveVarFiles(flagVarFiles)
-	if err != nil {
-		return err
-	}
-	flagVarFiles = resolved
-
+	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err

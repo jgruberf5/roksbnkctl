@@ -16,6 +16,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 )
 
 // Build metadata, populated via -ldflags at link time.
@@ -53,7 +54,56 @@ The 4-command lifecycle:
 
 See https://jgruberf5.github.io/roksbnkctl/book/ for the canonical user guide.`,
 	SilenceUsage:      true,
-	PersistentPreRunE: warnLegacyState,
+	PersistentPreRunE: rootPersistentPreRunE,
+}
+
+// resolvedFlags is the single resolved-invocation context for this
+// process, computed exactly once by resolveInvocationContext from the
+// root PersistentPreRunE before any RunE runs. Downstream code reads
+// the chokepoint-normalized globals (flagVarFiles / flagTFSource) it
+// produced; nothing re-derives a path. nil until the PersistentPreRunE
+// has run (e.g. in unit tests that call helpers directly — those pin
+// the wrapper symbols, which delegate to orchestration regardless).
+var resolvedFlags *orchestration.ResolvedFlags
+
+// rootPersistentPreRunE is the single chokepoint entry point. Cobra
+// runs exactly one PersistentPreRunE (the most-specific in the chain,
+// here always the root's — no subcommand overrides it) before every
+// command's RunE, including DisableFlagParsing passthrough commands.
+// This is the smallest correct surface for "normalize every path-valued
+// flag exactly once": one function, one call, every command.
+//
+// It (1) keeps the legacy-state nudge, then (2) builds the single
+// ResolvedFlags — normalizing --var-file and the local --tf-source
+// against the invocation CWD exactly once (orchestration.Resolve) — and
+// writes the resolved values back into the flag globals so every
+// downstream RunE / dispatch consumes already-absolute paths without
+// re-deriving them (Sprint 12 Issues 1/2 + Sprint 13 Issue 1, retired
+// as a class, not patched as instances).
+//
+// Resolution is over the raw flag globals cobra has already populated
+// by PersistentPreRunE time. Passthrough commands (DisableFlagParsing)
+// don't register --var-file/--tf-source, so for them this is a no-op on
+// empty inputs. Note: an invalid --var-file now surfaces here (before
+// RunE) rather than at the RunE top — same error text, one step
+// earlier; the lifecycle `--on` reject is unaffected for valid inputs.
+func rootPersistentPreRunE(cmd *cobra.Command, args []string) error {
+	if err := warnLegacyState(cmd, args); err != nil {
+		return err
+	}
+	rf, err := orchestration.Resolve(flagVarFiles, flagTFSource)
+	if err != nil {
+		return err
+	}
+	resolvedFlags = rf
+	// Write the chokepoint-normalized values back into the flag globals
+	// so every downstream consumer reads absolute paths. This is the
+	// single mutation site — replacing the 8+ per-RunE `flagVarFiles =
+	// resolved` fan-out and the 2 per-init-site --tf-source
+	// normalizations that previously each re-derived.
+	flagVarFiles = rf.VarFiles
+	flagTFSource = rf.TFSource
+	return nil
 }
 
 // warnLegacyState nudges users with leftover ~/.bnkctl/ state from
