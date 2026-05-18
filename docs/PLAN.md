@@ -891,6 +891,181 @@ Small surface, high user-visible value — both fixes patch cleanly into `v1.4.1
 
 ---
 
+## Sprint 13 — `--on` kubeconfig leak fix + read-only `terraform` + per-AZ jumphost auto-registration (minor cycle, post-v1.4.1)
+
+### Theme
+
+Minor release (`v1.5.0`) bundling the high-severity `--on`-env kubeconfig-leak fix (originally designated a `v1.4.2` fast-follow) with two ergonomic features that came out of the same post-v1.4.0 per-AZ-jumphost user-testing thread: a read-only `roksbnkctl terraform` escape hatch and automatic registration of the per-AZ cluster jumphosts as `jumphost-<zone>` targets, plus the book documentation that ties them together. The integrator decided to ship the bugfix in the same cycle as the features rather than cut a standalone `v1.4.2` patch and a later `v1.5.0` — the three items are tightly related (all surfaced in one user session, all about reaching/operating the deployed cluster from the workstation) and the bugfix is not regressed by or coupled to the feature code, so a single `v1.5.0` closes the whole thread at once. This re-targets the CHANGELOG `v1.4.1 §Deferred` "fix targeted for v1.4.2" note to `v1.5.0`.
+
+This is a multi-deliverable feature cycle (shape closer to Sprint 10 than the single-PRD Sprint 11 or the patch Sprint 12). Two new PRDs are authored this cycle: [PRD 08](docs/prd/08-TERRAFORM-READONLY.md) (read-only `terraform` escape hatch) and [PRD 09](docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md) (per-AZ jumphost auto-registration). The implementation-ready design surface is the carried-forward [`issues/issue_sprint13_staff.md`](../issues/issue_sprint13_staff.md) Issues 1–3 (Sprint 12 staff Issues 3/4/5 verbatim) — staff is not blocked on PRD prose; the architect formalizes the PRDs in parallel.
+
+### Drivers / why now
+
+All three items were surfaced in a single post-v1.4.0 live user-testing session (the same thread that produced Sprint 12's `--var-file`/`--tf-source` fixes), against the documented private-cluster `--on jumphost` workflow:
+
+- **KUBECONFIG leak (high)** — after any successful local `roksbnkctl up` (which writes the admin kubeconfig to local `~/.kube/config`), `roksbnkctl --on <target> kubectl|oc …` deterministically fails with `connection to the server localhost:8080 was refused`. `workspaceEnv()` appends `KUBECONFIG=<local path>` and `runPassthrough` forwards the *same* env slice to both the local exec path and the SSH-target path; the local filesystem path is meaningless on the target and shadows the cloud-init-provisioned `/home/ubuntu/.kube/config`. This breaks the canonical private-cluster workflow ([Chapter 16](book/src/16-on-flag-ssh-jumphosts.md), [Chapter 9 §"…existing cluster"](book/src/09-registering-existing-cluster.md)). Same "a path correct for the local machine is wrong once it crosses a boundary" family as Sprint 12's fixes — here the boundary is local-host → SSH-target.
+- **No read-only `terraform` escape hatch (feature)** — there is no supported way to run read-only terraform (`output`, `state list`, `show`, `providers`, `version`) against a workspace's managed state. The only workaround is the fragile, undocumented `cd ~/.roksbnkctl/<ws>/state[-cluster] && TF_DATA_DIR=$PWD/terraform terraform …`, which leaks internal layout and is one fat-fingered `apply`/`state rm` from corrupting managed state. Real cases hit this in user testing (looking up per-AZ jumphost FIPs, inspecting a partial apply). See [PRD 08](docs/prd/08-TERRAFORM-READONLY.md).
+- **Per-AZ jumphosts not auto-registered (feature)** — with `testing_create_cluster_jumphosts = true` the deploy builds one cluster jumphost per cluster-VPC AZ, each on its own FIP with the shared key, but `tryAutoJumphost` only seeds the singular TGW `jumphost`. The user must discover the others exist, look up FIPs, and `targets add` each by hand. See [PRD 09](docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md). Hard doc coupling with the architect's book deliverable (below): if the auto-registration lands, the manual `targets add` walkthrough collapses to "verify with `targets list`" — the two ship in lockstep.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **KUBECONFIG-leak fix** ([`issues/issue_sprint13_staff.md` Issue 1](../issues/issue_sprint13_staff.md)) — the env that crosses the SSH boundary must not carry local-only filesystem paths. Split `workspaceEnv()` into a machine-portable value-only core (`IBMCLOUD_*`) + a local-only addendum (`KUBECONFIG`); `runPassthrough` forwards only the core on the `on != ""` branch, the full env on the local branch. Sweep **all** `dispatchRemote(` call sites (`runExec` and any other) for the same treatment; add a defense-in-depth sanitize/assert in `dispatchRemote` so every caller is covered. Correctness must come from never *sending* the local path, not from the target sshd's `AcceptEnv` rejecting it. | `internal/cli/cluster.go`, `internal/cli/remote.go`, `internal/cli/` tests |
+| 2 | **Read-only `terraform` escape hatch** ([PRD 08](docs/prd/08-TERRAFORM-READONLY.md); [`issues/issue_sprint13_staff.md` Issue 2](../issues/issue_sprint13_staff.md)) — new `roksbnkctl terraform` (alias `tf`) passthrough, **read-only by allowlist** (`output`, `show`, `state list`, `state show`, `providers`, `version`, `graph`, `validate`, `fmt -check`, `state pull`), with a sub-verb guard so `state rm`/`mv`/etc. cannot slip through a permitted top-level `state`, and a mutation-flag scrub. Phase-correct cwd + env reusing `tf.Open`/`config.Workspace[Cluster]StateDir` — **no path/env re-derivation at the CLI layer** (that is exactly the Issue-1 / Sprint-12 bug class). Side-effect-free against a never-applied workspace (no source fetch / `init`; clear "run `roksbnkctl up` first" error). `--on` explicitly rejected (managed state is workstation-local). | `internal/cli/terraform.go` (new), `internal/cli/cluster.go` (register), `internal/tf/terraform.go` (`RunReadOnly`, and an `OpenReadOnly`/option if `tf.Open` isn't side-effect-safe for never-applied) |
+| 3 | **Per-AZ jumphost auto-registration** ([PRD 09](docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md); [`issues/issue_sprint13_staff.md` Issue 3](../issues/issue_sprint13_staff.md)) — extend the post-`up` hook (sibling `tryAutoClusterJumphosts` next to `tryAutoJumphost`) to read `testing_cluster_jumphost_public_ips` (a `{zone => fip}` map; add a `mapOutput` helper beside `stringOutput`), reuse the existing `jumphost_shared_key` tf-output, and upsert one `jumphost-<zone>` target per AZ via the idempotent `SetTarget`. Best-effort/non-fatal, mirroring `tryAutoJumphost`. **Integrator decision: stale-target handling = option (a) upsert-only** with a documented caveat (orphaned `jumphost-<oldzone>` entries linger until manual `targets remove`); option (b) reconcile is a deliberate post-v1.5.0 follow-up (it needs prefix-ownership semantics or an `auto:` schema marker, out of scope this cycle). | `internal/cli/lifecycle.go` (extend post-`up` hook + `mapOutput`), `internal/cli/lifecycle_test.go` |
+| 4 | **Unit tests** — Issue-1: remote-dispatch env asserts `IBMCLOUD_*` present and `KUBECONFIG` absent; local passthrough env still has `KUBECONFIG`. Issue-2: allowlist accept/reject matrix + `state <mutating-subverb>` guard + never-applied-workspace error + `--on` rejection. Issue-3: map-output parse, empty/`[]`/absent → no-op, multi-zone → N upserts, key-PEM-missing → skip. | `internal/cli/*_test.go`, `internal/tf/*_test.go` |
+
+### Documentation deliverables (architect / book)
+
+| Item | Detail |
+|---|---|
+| [PRD 08](docs/prd/08-TERRAFORM-READONLY.md) | New canonical design doc for the read-only `terraform` escape hatch (allowlist policy, sub-verb guard, phase resolution via existing plumbing, side-effect-free open, `--on` rejection, the "roksbnkctl owns terraform's cwd + `TF_DATA_DIR`" invariant). Authored from `issues/issue_sprint13_staff.md` Issue 2. |
+| [PRD 09](docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md) | New canonical design doc for per-AZ jumphost auto-registration (the `{zone => fip}` map output, shared-key reuse, idempotent upsert, the stale-target option-(a) decision + its caveat, parity with `tryAutoJumphost`'s best-effort posture). Authored from `issues/issue_sprint13_staff.md` Issue 3. |
+| Chapter 16 + Chapter 15 (architect Issue 1) | Per-AZ cluster-jumphost reachability docs ([`issues/issue_sprint13_architect.md` Issue 1](../issues/issue_sprint13_architect.md), carried from Sprint 12 architect Issue 9): 16 §"Working examples" gets the hop-via-`jumphost` pattern + a §"What `--on` doesn't do" pointer; 15 §"Auto-discovery from terraform outputs" gets the per-AZ auto-registration described. **Hard coupling with code deliverable 3**: written for the *post-Issue-3* world (auto-registered targets → "verify with `targets list`"); the IP-lookup one-liners use `roksbnkctl terraform output …` (code deliverable 2) with the raw-`terraform` fallback noted only for the pre-v1.5.0 reader. Ship in lockstep. |
+| CHANGELOG `v1.5.0` | `### Added` (read-only `terraform`, per-AZ auto-registration), `### Fixed` (KUBECONFIG leak — the re-targeted `v1.4.1 §Deferred` known-issue), `### Deferred` (carry-forward + the option-(b) reconcile follow-up). Re-point the `v1.4.1 §Deferred` known-issue note from `v1.4.2` to `v1.5.0`. |
+| Chapter 6 / lifecycle help (tech-writer follow-up) | Sprint 12 tech-writer §"Sprint 13 awareness": now that `--tf-source` resolves relative paths, the `init` / `up --tf-source` cobra help (`internal/cli/lifecycle.go:86,89`, "override TF source (path or URL)") wants the same relative-path-resolution scrutiny the `--var-file` help got. Low-severity discoverability nudge — architect surface, fold in if the help text still misleads. |
+
+### Test deliverables
+
+- **Staff's three unit-test suites** per code deliverable 4.
+- **Validator's seven-step regression sweep** (build / vet / fmt / test / staticcheck / `-tags integration` build / `-tags integration` test against ephemeral kind) — unchanged gate from Sprints 10–12.
+- **Validator's bug reproduction** for Issue 1: confirm the `up` → `--on <target> kubectl` `localhost:8080` symptom against pre-fix `main` (or, since the agent shell can't drive a live `--on` against a real jumphost, a focused unit test asserting the remote-dispatch env composition), then confirm the fix makes it pass. Live `--on jumphost kubectl` verify is the user's out-of-band action (same hand-off shape as Sprint 11 Issue 2 / Sprint 12).
+- **Validator's feature acceptance checks** for PRD 08 (allowlist matrix, never-applied error, `--on` rejection) and PRD 09 (map-parse no-op cases, multi-zone upsert) via the unit suites + a doc-coupling audit that the architect's chapter 15/16 edits match the *as-landed* auto-registration behaviour (no manual-`targets-add` drift).
+- **Tech-writer drift sweep** at end of sprint across `issues/issue_sprint13_staff.md` ↔ code ↔ PRD 08/09 ↔ CHANGELOG `v1.5.0` ↔ chapters 15/16, plus a dogfooding pass on the now-working `--on jumphost kubectl` flow and the `roksbnkctl terraform output` one-liner.
+
+### Risks
+
+- **Env-split blast radius** — splitting `workspaceEnv()` and sweeping every `dispatchRemote(` caller risks missing a call site or accidentally dropping a value-grade var (`IBMCLOUD_*`) from the *local* path. Mitigation: the unit test asserts both directions (remote = no KUBECONFIG, local = KUBECONFIG present) and `grep -n "dispatchRemote(" internal/cli/` enumerates the call sites for the sweep.
+- **`tf.Open` side effects on a never-applied workspace** — PRD 08 requires read-only invocations to *not* trigger a source fetch / `init`. If `tf.Open` is not side-effect-safe, an `OpenReadOnly` (or option) is required — scope it in PRD 08, not discovered mid-implementation.
+- **Cloud-init boot-timing race (out of scope, cross-referenced)** — `terraform/modules/testing/main.tf:80-104` writes `/home/ubuntu/.kube/config` via `ibmcloud ks cluster config --admin` guarded by `|| true`, asynchronously; a freshly-booted jumphost can transiently lack a kubeconfig and produce the *same* `localhost:8080` symptom independent of the env leak. The Issue-1 fix is necessary but not sufficient against this race; it is a separate architect/infra hardening item, explicitly **not** in v1.5.0 scope — cross-reference in `issues/issue_sprint13_architect.md` so it isn't conflated with the env-leak verify.
+- **Stale `jumphost-<zone>` orphans** — option (a) upsert-only leaves orphaned targets after a zone removal / `testing_create_cluster_jumphosts=false` flip. Accepted for v1.5.0 with a documented caveat; option (b) reconcile is a tracked post-v1.5.0 follow-up.
+- **Doc/code lockstep** — architect Issue 1's chapter 15/16 prose is written for the post-auto-registration world; if code deliverable 3 slips, the chapters must not ship describing behaviour that isn't in the binary. Gate criterion below enforces lockstep.
+
+### Gate to `v1.5.0` tag
+
+- Seven-step regression sweep green; Issue-1 symptom reproduces against pre-fix `main` and the fix makes it pass (unit-level; live `--on` verify is the user's out-of-band action).
+- PRD 08 allowlist accept/reject matrix + sub-verb guard + never-applied + `--on`-rejection tests green; PRD 09 map-parse / no-op / multi-zone-upsert / key-missing tests green.
+- All four agents' issue files at `Status: resolved`, `wontfix`, or `accepted`.
+- PRD 08 + PRD 09 final under `docs/prd/`; `docs/prd/00-OVERVIEW.md` references them if it indexes PRDs; CHANGELOG `v1.5.0` block final (Added/Fixed/Deferred) with the `v1.4.1 §Deferred` known-issue note re-pointed to `v1.5.0`; PLAN.md §"Sprint 13" final.
+- Chapter 15/16 per-AZ-jumphost docs match the as-landed auto-registration behaviour (no manual-`targets-add` drift); all new cross-links resolve; `mdbook build book/` HTML backend exit 0.
+
+### Carry-overs from prior sprints
+
+- **Sprint 12 staff Issue 3** (KUBECONFIG leak) — Sprint 13 code deliverable 1; carried verbatim into `issues/issue_sprint13_staff.md` Issue 1.
+- **Sprint 12 staff Issues 4 + 5** (read-only `terraform`; per-AZ auto-registration) — code deliverables 2 + 3 / PRD 08 + PRD 09; carried into `issues/issue_sprint13_staff.md` Issues 2 + 3.
+- **Sprint 12 architect Issue 9** (per-AZ jumphost book docs) — architect documentation deliverable; carried into `issues/issue_sprint13_architect.md` Issue 1.
+- **Sprint 12 tech-writer §"Sprint 13 awareness"** (`--tf-source` cobra-help relative-path scrutiny) — folded into the architect documentation deliverables as a low-severity nudge.
+- Prior-sprint deferred items (chapter 14 §"What's new in v1.2" position, chapter 19 §"5. Create the Pod" `env:` block, `ops install`/`ops uninstall` snapshot) remain deferred — no movement this sprint.
+
+---
+
+## Sprint 14 — get-well: jumphost kubeconfig provisioning fix + close the validation blind spot (get-well cycle, folds into the held `v1.5.0`)
+
+### Theme
+
+**Get-well cycle.** Sprint 13 fixed the KUBECONFIG env leak (live-verified) but the canonical private-cluster workflow — `roksbnkctl up` then `roksbnkctl --on jumphost kubectl|oc` — is **still broken** because the jumphost has no kubeconfig at all: cloud-init's `ibmcloud login` + `ibmcloud ks cluster config --cluster … --admin` are guarded by `|| true`, so any boot-time failure is swallowed and `/home/ubuntu/.kube/config` is never written (live-confirmed 2026-05-18 14:54: `KUBECONFIG=[]` on the wire — env fix working — but `/home/ubuntu/.kube/config: No such file or directory`). The two `localhost:8080` causes are indistinguishable to a user, so per the integrator **hold-and-merge** decision `v1.5.0` is **not** cut at Sprint 13 close: the `## Unreleased (v1.5.0)` CHANGELOG block stays open and this sprint lands the kubeconfig fix **into the same `v1.5.0`**, so the release that finally ships makes `--on jumphost kubectl|oc` work end-to-end. Integrator decision: **option C** (both layers). Plus one structural deliverable pulled forward from the Sprint 15 consolidation analysis: the e2e + `--on` integration test that closes the **validation blind spot** — this high-severity defect reached a human in live testing, not the four-agent gate, because no test composes the full `up → --on <target>` path.
+
+### Drivers / why now
+
+- **The documented happy path is still broken.** `book/src/16-on-flag-ssh-jumphosts.md` / `09-registering-existing-cluster.md` advertise `--on jumphost kubectl|oc` as the private-cluster workflow; it deterministically fails on any jumphost where the silent cloud-init step didn't land a kubeconfig. Root cause + the option-A/B/C analysis are in [`issues/issue_sprint13_architect.md` Issue 2](../issues/issue_sprint13_architect.md) (escalated low→**HIGH** from live testing).
+- **The gate has an integration blind spot.** A *high*-severity defect was found by the user running live against IBM Cloud, not by the validation gate — the unit suites never compose `up → --on <target>` env + kubeconfig resolution. The slowest possible feedback loop is catching high-sev bugs in human live-testing. Closing it here (not deferring the whole consolidation) makes the kubeconfig fix itself gate-verifiable rather than live-verified-by-the-user.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **Option C part A — harden cloud-init kubeconfig provisioning.** Replace the bare `|| true` on the jumphost `ibmcloud login` + `ibmcloud ks cluster config --cluster "${var.roks_cluster_name_or_id}" --admin` with a bounded retry/readiness loop (cluster may not be Ready at boot); on exhaustion write a loud failure marker (`/var/log/jumphost-setup.log` + a sentinel file) instead of silently continuing; ensure `/home/ubuntu/.kube/config` (and `/root/.kube/config`) is reliably produced when the cluster eventually becomes reachable. Fixes **new** deploys robustly. | `terraform/modules/testing/main.tf` |
+| 2 | **Option C part B — roksbnkctl `--on` kubeconfig self-heal.** When an `--on <target>` dispatch (`kubectl`/`oc`) targets a host with no usable kubeconfig, repair it on the fly: run `ibmcloud ks cluster config --cluster <id> --admin` on the target (it is already `ibmcloud login`'d as `ubuntu` per the cloud-init fork) before the wrapped command, and/or have the post-`up` hook push a freshly-fetched admin kubeconfig to each seeded jumphost target. Unblocks **already-broken / already-running** jumphosts with no `terraform` recreate (the user's current host). Idempotent; must not mask a genuinely down cluster (surface the real error, don't loop forever). | `internal/cli/cluster.go`, `internal/cli/remote.go`, `internal/cli/lifecycle.go` (post-`up` hook), `internal/cli/` tests |
+| 3 | **E2e + `--on` integration smoke (pulled forward from the Sprint 15 consolidation plan, deliverable 2).** A behavior-level test that drives `up → --on <target>` and asserts the remote-vs-local env composition **and** the kubeconfig self-heal path (the exact surface the Sprint 13 Issue 1 leak slipped through); plus a `-tags integration` smoke for the `--on`/passthrough path against ephemeral kind. The Sprint 13 Issue 1 + this sprint's kubeconfig fix become permanent regression guards: an Issue-1-class or missing-remote-kubeconfig defect must fail a test, not a human. | `internal/cli/lifecycle_e2e_test.go` (new), `internal/cli/` integration-tagged test |
+
+### Test deliverables
+
+- **Staff's e2e + `--on` integration suites** per code deliverable 3 — the headline gate addition.
+- **Validator's seven-step regression sweep** (build / vet / fmt / test / staticcheck / `-tags integration` build / `-tags integration` test against ephemeral kind) — unchanged; the new e2e/`--on` test runs inside it.
+- **Validator's live-verify hand-off**: `roksbnkctl up` then `roksbnkctl --on jumphost kubectl get pods` must succeed **end-to-end** (no `localhost:8080`) — the user's out-of-band action, but now backed by the e2e/integration gate so it is no longer the *only* signal (closes the blind spot). The 2026-05-18 14:54 diagnostic command is the repro baseline.
+- **Tech-writer drift sweep + caveat removal**: the `v1.5.0`/`v1.4.1 §Deferred` known-issue notes and the book ch15/16/09 "may still fail / pre-v1.5.0 caveat" prose must be **removed/flipped to resolved** (not merely re-pointed) once the flow works — the central doc deliverable of this cycle.
+
+### Risks
+
+- **Cloud-init is not unit-testable.** Part A runs at instance boot; it can only be validated by the `-tags integration` smoke + the user's live `up`. Mitigation: keep the retry/readiness logic small and shell-lint-clean; the loud failure marker means a future failure is *visible*, not silent (the actual defect being fixed).
+- **Self-heal masking a real outage.** Part B must distinguish "jumphost has no kubeconfig" (heal) from "cluster is genuinely down" (surface the error, bounded retry, don't spin). Mitigation: bounded attempts + pass through the real `ibmcloud ks cluster config` error on exhaustion.
+- **Hold-and-merge changelog hygiene.** The `v1.5.0` block must end up describing *one* coherent release (env leak + kubeconfig both fixed), not two half-stories. Mitigation: tech-writer drift sweep owns reconciling the `v1.5.0` §Fixed + deleting the carried known-issue notes.
+
+### Gate to the (finally tag-ready) `v1.5.0`
+
+- Live `roksbnkctl up` → `roksbnkctl --on jumphost kubectl get pods` succeeds end-to-end (user out-of-band) **and** the new e2e + `--on` integration test is green in the seven-step sweep (the bug is now caught by the gate, not only by a human).
+- All four agents' Sprint 14 issue files at `Status: resolved`, `wontfix`, or `accepted`; `issues/issue_sprint13_architect.md` Issue 2 flips to `resolved`.
+- CHANGELOG `## Unreleased (v1.5.0)` `### Fixed` includes the kubeconfig provisioning fix; the `v1.4.1 §Deferred` + `v1.5.0` carried known-issue notes are **removed/resolved** (not re-pointed); book ch15/16/09 caveats deleted; `mdbook build book/` exit 0.
+- Only after this gate is `v1.5.0` integrator-tag-ready (the held release now genuinely makes `--on jumphost kubectl|oc` work).
+
+### Carry-overs / explicitly out of scope
+
+- **Sprint 13 architect Issue 2** (cloud-init kubeconfig failure) — this sprint's headline; carried into `issues/issue_sprint14_staff.md` Issue 1 + `issues/issue_sprint14_architect.md` Issue 1.
+- **Structural consolidation** (single path/env chokepoint refactor, `internal/cli` god-package decomposition, sprint-process tiering) — preserved as [§"Sprint 15"](#sprint-15--consolidation-root-cause-the-boundary-bug-class--decompose-the-cli-god-package-consolidation-cycle-post-v150) below; deliberately **not** this sprint (a get-well cycle ships the fix; the refactor is its own cycle). Only the consolidation plan's e2e/blind-spot test (its old deliverable 2) is pulled forward here.
+- **Option-(b) per-AZ stale-target reconcile** — unchanged; still a deliberate post-`v1.5.0` follow-up.
+
+---
+
+## Sprint 15 — consolidation: root-cause the boundary-bug class + decompose the `cli` god-package (consolidation cycle, post-`v1.5.0`)
+
+### Theme
+
+A **debt-paydown / consolidation cycle** (`v1.6.0`, after the held `v1.5.0` ships via Sprint 14; **no user-visible behavior change** — the integrator may re-designate `v1.5.1` under strict SemVer since no API/behavior changes, but the structural surface is large enough to warrant a minor). Zero new features. Two coupled structural fixes that together stop the velocity decay observed across Sprints 11–13: (1) collapse the recurring "a path/env correct locally is wrong once it crosses a boundary" bug class to a single chokepoint, (2) begin decomposing the `internal/cli` god-package. (The third original goal — closing the integration-test blind spot that let a *high*-severity bug reach a human — was **pulled forward into Sprint 14** as its e2e/`--on` test, since it makes the kubeconfig fix gate-verifiable; Sprint 15 *consumes* that suite as the behavior-parity harness rather than building it.) Plus a **process deliverable**: tier the sprint process by change size so fixed per-sprint ceremony stops dominating small changes (mirrored into `NEW_PROJECT_STARTING_POINT.md` so the next project doesn't reproduce the slowdown).
+
+### Drivers / why now
+
+Evidence-based, from the Sprint-13-close project-health review:
+
+- **The bug class is recurring, not incidental.** Sprint 12 Issues 1 + 2 (`--var-file`, `--tf-source`) and Sprint 13 Issue 1 (KUBECONFIG leak) are the *same* defect shape — a value correct in the invocation context is consumed in a different context (terraform's per-phase state-dir CWD; the SSH target). Each was patched as an instance: `resolveVarFiles` wired at **8+ RunE call sites**, `--tf-source` normalized separately in `init.go`, and `workspaceEnv()` split into `workspaceEnvCore`/`remoteSafeEnv` with a `localPathEnvKeys` scrub list. All idempotent and correct, but there is **no single chokepoint** — the next path/env-valued flag or the next `dispatchRemote` caller is one omission away from re-opening the class. Patching instances is now a recurring per-sprint tax.
+- **The validator blind spot — addressed in Sprint 14, leveraged here.** The Sprint 13 Issue 1 KUBECONFIG leak (severity **high**) was discovered by the user running `roksbnkctl up` then `--on jumphost kubectl` live against IBM Cloud — *not* by the four-agent validation gate; the unit suites never composed the full `up → --on <target>` path. Sprint 14 closed that gap with the e2e + `--on` integration suite. Sprint 15 does **not** rebuild it — it relies on that suite as the behavior-parity gate for the refactor below (any diff in it during the consolidation is a drift signal). The remaining structural debt is the recurring bug class itself and the god-package.
+- **`internal/cli` is a god-package.** 16,218 LOC / 29 files = **61% of all internal code**; `lifecycle.go` 1,058 LOC, `cluster.go` 739, `ops.go` 701. The Sprint-13 health read projects refactoring becomes the binding constraint by ~1.5× current LOC. Marginal change cost is already visible in the Sprint 11→13 cadence decay (32 commits/day → a four-calendar-day two-bug patch).
+
+Build/vet are clean (`go build`/`go vet ./...` rc=0) and features still ship — this is structural strain, not rot, so consolidation (not a greenfield restart) is the correct response.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **Single path/env normalization chokepoint.** Introduce one resolved-invocation context (working name `cli.ResolvedFlags`, computed once in a cobra `PersistentPreRunE` or a single `resolveInvocationContext()` at command entry) that: normalizes every path-valued flag (`--var-file`, `--tf-source`, any future one) against `os.Getwd()` exactly once; and classifies process env into a machine-portable core (`IBMCLOUD_*`) vs. local-only (`KUBECONFIG`, any future local-path-valued var). Downstream code consumes the resolved struct; **no RunE and no `dispatchRemote` caller re-derives**. Delete the now-unreachable per-RunE `resolveVarFiles` fan-out and the defensive `remoteSafeEnv`/`localPathEnvKeys` scrub (or demote the scrub to a single assertion at the boundary). This structurally retires Sprint 12 Issues 1/2 + Sprint 13 Issue 1 as a *class*. | `internal/cli/root.go`, `internal/cli/lifecycle.go`, `internal/cli/cluster.go`, `internal/cli/cluster_phase.go`, `internal/cli/bnk_phase.go`, `internal/cli/remote.go`, `internal/cli/init.go` |
+| 2 | **`internal/cli` decomposition — phase 1 (behavior-preserving).** Extract lifecycle orchestration + remote/passthrough dispatch out of `cli` into a service layer (working name `internal/orchestration`); `cli` becomes a thin cobra adapter (flag binding + the new `ResolvedFlags`). **Phase 1 scope is exactly `lifecycle.go` + `cluster.go`** — the two hottest files — moved without behavior change; the deliverable-1 chokepoint lands in the new layer. Explicitly phased: the remaining 27 `cli` files are a tracked follow-up, not this sprint. | `internal/orchestration/` (new), `internal/cli/lifecycle.go`, `internal/cli/cluster.go` |
+| 3 | **Regression / guard tests + cheap-win coverage.** (a) Behavior-parity: the entire pre-existing suite — **including the Sprint 14 e2e + `--on` integration suite** — passes **unchanged** (no golden `-update` churn; that suite is the refactor's parity harness). (b) A guard test that fails if any RunE or `dispatchRemote` caller re-derives a path/env instead of consuming `ResolvedFlags` (greppable invariant, asserted in CI). (c) Fold in `internal/cos` unit tests (currently **0%**, 408 LOC) as a low-cost coverage win while the consolidation is open. | `internal/cli/*_test.go`, `internal/orchestration/*_test.go`, `internal/cos/*_test.go` (new) |
+
+### Process deliverable
+
+- **Tier the sprint process by change size.** Codify patch / minor-feature / consolidation / greenfield tiers, each with *proportionate* ceremony (which of the four agents run, ledger depth, gate weight). Sprint 12 shipped a ~50-line helper but generated ~2,053 lines of four-agent ledger + drift-sweep tables + re-review passes — fixed per-sprint overhead now dominates small changes. The tiering applies to roksbnkctl's own remaining maintenance sprints **and** is written into [`NEW_PROJECT_STARTING_POINT.md`](../NEW_PROJECT_STARTING_POINT.md) §"Tiering the sprint process by change size" so the next project doesn't reproduce this curve. This sprint itself runs at the *consolidation* tier (full staff + validator, light architect/tech-writer — it's internal, no PRD, no book surface).
+
+### Test deliverables
+
+- **Staff's guard suite + `internal/cos` coverage** per code deliverable 3. The **Sprint 14 e2e + `--on` integration suite is reused unchanged as the refactor's behavior-parity harness** — not rebuilt here.
+- **Validator's seven-step regression sweep** (build / vet / fmt / test / staticcheck / `-tags integration` build / `-tags integration` test against ephemeral kind) — unchanged gate, but now the **behavior-parity assertion is the headline gate**: the full pre-existing suite (incl. the Sprint 14 e2e/`--on` suite) must pass with zero diffs (no test edited to accommodate the refactor; a changed test is a behavior change and fails the gate).
+- **Validator's chokepoint-invariant audit**: `grep` proves zero per-RunE / per-`dispatchRemote` path-or-env re-derivation; the deleted `remoteSafeEnv`/`localPathEnvKeys` scrub is provably unreachable (or demoted to one boundary assertion).
+- **No new feature acceptance** (there are no features) — the Sprint 14 Issue-1 + kubeconfig regression guards must stay **green and unedited** through the refactor (proof the consolidation preserved the boundary-bug + remote-kubeconfig fixes structurally).
+
+### Risks
+
+- **Refactor blast radius / silent behavior drift.** Moving 1,800 LOC of orchestration risks subtle behavior change. Mitigation: the behavior-parity gate (entire pre-existing suite green *unchanged*); any test that needs editing to pass is treated as a drift signal, not a test fix.
+- **`cli` split scope creep.** "Decompose the god-package" invites a big-bang. Mitigation: phase-1 boundary is *exactly* `lifecycle.go` + `cluster.go`, written into the gate; the other 27 files are an explicitly deferred tracked follow-up.
+- **E2e test infra cost / flake.** A full-lifecycle test can be slow/flaky. Mitigation: docker/stubbed-terraform deterministic core in the unit gate; the kind-backed `--on` smoke is `-tags integration`, separate from the fast gate (same split Sprints 10–13 already use).
+- **Chokepoint regressions an edge case.** Centralizing path/env handling could mis-handle a flag a scattered site handled specially. Mitigation: deliverable-4 guard + the parity gate; enumerate every current `resolveVarFiles`/`workspaceEnv*`/`dispatchRemote` site before deleting it.
+
+### Gate to `v1.6.0` tag
+
+- **Behavior parity:** entire pre-existing unit + integration suite green with **zero test-file diffs**; no user-visible behavior change (a manual `up`/`--on`/`terraform`/`targets` smoke matches v1.5.0 output).
+- **Single chokepoint proven:** `grep` shows no RunE / `dispatchRemote` caller re-deriving a path or env; the defensive `remoteSafeEnv`/`localPathEnvKeys` scrub is deleted or demoted to one unreachable-by-construction assertion; the Sprint 14 e2e Issue-1 + kubeconfig regression guards remain green and unedited through the refactor.
+- **`cli` phase-1 boundary clean:** `internal/cli` no longer owns lifecycle orchestration; no upward imports from `orchestration`/`tf`/`remote`/`config` into `cli`; `lifecycle.go` + `cluster.go` are thin adapters or gone.
+- All four agents' issue files at `Status: resolved`, `wontfix`, or `accepted`.
+- CHANGELOG `v1.6.0` block final — `### Changed` (internal consolidation; explicitly "no user-visible behavior change"), `### Removed` (the defensive env-scrub now obviated by the chokepoint); PLAN.md §"Sprint 15" final; `NEW_PROJECT_STARTING_POINT.md` §"Tiering the sprint process by change size" final; `mdbook build book/` exit 0 (no book surface this cycle — clean by no-op).
+
+### Carry-overs / explicitly out of scope
+
+- **`cli` decomposition phases 2+** (the remaining ~27 `cli` files) — tracked follow-up, deliberately not this sprint.
+- **Option-(b) per-AZ stale-target reconcile** — unchanged from Sprint 13; still a deliberate post-v1.5.0 follow-up.
+- **Cloud-init kubeconfig provisioning fix** (`terraform/modules/testing/main.tf` + roksbnkctl `--on` self-heal, option C) — **landed in Sprint 14**, not here; Sprint 15 must not regress it (its e2e/`--on` guard is part of the parity gate).
+- **Any user-visible feature or behavior change** — out of scope by definition; this is strictly internal hardening.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:

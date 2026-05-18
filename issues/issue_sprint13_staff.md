@@ -23,7 +23,7 @@
 ## Issue 1: local `KUBECONFIG` filesystem path leaks into the `--on <target>` remote environment
 
 **Severity**: high
-**Status**: open — Sprint 13 / `v1.5.0` (carried from Sprint 12 staff Issue 3; the Sprint 12 CHANGELOG `§Deferred` note named a standalone `v1.4.2` fast-follow — integrator re-targeted to `v1.5.0`, shipped alongside the two features below)
+**Status**: resolved — Sprint 13 / `v1.5.0`, **LIVE-VERIFIED 2026-05-18 14:54**. Diagnostic `roksbnkctl exec --on jumphost sh -c 'id; echo KUBECONFIG=[$KUBECONFIG]; ls -la /home/ubuntu/.kube/config'` returned `uid=1000(ubuntu)`, **`KUBECONFIG=[]`** (pre-fix this was `/home/jgruber/.kube/config`), `/home/ubuntu/.kube/config: No such file or directory`. The env-leak fix is correct and effective on the wire — the local path no longer crosses the SSH boundary. The residual `localhost:8080` symptom the user still sees is a **separate, independent root cause**: the jumphost has no kubeconfig because the cloud-init `ibmcloud ks cluster config --admin || true` provisioning failed silently — tracked as `issues/issue_sprint13_architect.md` Issue 2, which this live data **escalates** from low/out-of-scope to the high-severity headline of the get-well sprint (Sprint 14). Carried from Sprint 12 staff Issue 3 / integrator re-targeted to `v1.5.0`.
 
 **Integrator triage (2026-05-18)**: surfaced by live v1.4.0 user
 testing *after* v1.4.1's two path-resolution fixes (Issues 1 + 2) were
@@ -217,13 +217,64 @@ roksbnkctl --on jumphost kubectl get pods
   known set (`KUBECONFIG` is the only local-path-valued var
   `workspaceEnv` currently emits; revisit if more are added).
 
+### Closure
+
+> Recorded by the integrator from direct working-tree verification —
+> the staff agent landed the code but its dispatch was interrupted
+> before it wrote this block. Symbols, test names, and gate results
+> below were read out of the landed tree, not transcribed from an
+> agent report.
+
+**Layer 1 — env split.** `workspaceEnv()` (`internal/cli/cluster.go`)
+refactored: it now calls the new `workspaceEnvCore()` (machine-portable
+subset — `IBMCLOUD_API_KEY` / `IC_API_KEY` / `IBMCLOUD_REGION` /
+`IBMCLOUD_VERSION_CHECK`) and then appends the local-only `KUBECONFIG`
+addendum. Every `dispatchRemote(` caller on an `on != ""` branch
+(`runPassthrough`, the `ibmcloud` path, the generic tool path) now
+sources `workspaceEnvCore()` and forwards `core`, never the
+KUBECONFIG-bearing slice. The local-exec branches keep the full
+`workspaceEnv()`.
+
+**Layer 2 — defense in depth.** `internal/cli/remote.go` adds
+`remoteSafeEnv` + `localPathEnvKeys`; `dispatchRemote` runs
+`envExtra = remoteSafeEnv(envExtra)` so a future caller that forgets to
+use the core cannot reintroduce the leak. Correctness comes from never
+*sending* the local path, not from the target sshd's `AcceptEnv`
+dropping it (the existing `ssh.go` `AcceptEnv` comment is referenced in
+the new doc comments).
+
+**Tests** — `internal/cli/env_split_test.go`, all PASS:
+`TestWorkspaceEnvCore_OmitsKubeconfig_KeepsIBMCloud`,
+`TestWorkspaceEnv_LocalKeepsKubeconfig`,
+`TestRemoteSafeEnv_StripsLocalPathVars`,
+`TestRemoteSafeEnv_NilAndMalformed`.
+
+**Gates** (whole module, integrator-run): `go build ./...`,
+`go vet ./...`, `gofmt -l .`, `go test ./...`, `make staticcheck`
+(falls back to `$(go env GOPATH)/bin/staticcheck` — no network needed),
+`go build -tags integration ./...` — all clean/green.
+
+**Out-of-band live verify — PERFORMED 2026-05-18 14:54, env-leak PASS.**
+User ran `roksbnkctl exec --on jumphost sh -c 'id; echo
+KUBECONFIG=[$KUBECONFIG]; ls -la /home/ubuntu/.kube/config; KUBECONFIG=
+/home/ubuntu/.kube/config kubectl get pods'`. Result: `uid=1000(ubuntu)`,
+**`KUBECONFIG=[]`** (the leak is gone — pre-fix this carried the local
+`/home/jgruber/.kube/config`), `/home/ubuntu/.kube/config: No such file
+or directory`. The env-split fix is confirmed working end-to-end. The
+user-visible `localhost:8080` error the user still sees is **not** this
+issue — it is the jumphost having no kubeconfig at all (cloud-init
+provisioning failure), a distinct root cause now escalated to the
+headline of the get-well sprint via `issues/issue_sprint13_architect.md`
+Issue 2. This issue (the env leak) is fully closed with no hanging
+obligation.
+
 ---
 
 
 ## Issue 2: no read-only `terraform` escape hatch — feature request
 
 **Severity**: low (ergonomic enhancement, not a defect)
-**Status**: open — Sprint 13 / `v1.5.0` (carried from Sprint 12 staff Issue 4; integrator accepted as a `v1.5.0` feature — formalized as PRD 08. The Sprint 12 "strict bugfix-only patch" scope note below is historical context for *why it was deferred then*; it is now in scope.)
+**Status**: resolved — Sprint 13 / `v1.5.0` (carried from Sprint 12 staff Issue 4; integrator accepted as a `v1.5.0` feature — formalized as PRD 08. The Sprint 12 "strict bugfix-only patch" scope note below is historical context for *why it was deferred then*; it is now in scope.)
 
 > **Scope note (read first).** This is a *feature*, filed into the
 > Sprint 12 ledger at user request ("add it to the next sprint"). The
@@ -417,13 +468,54 @@ roksbnkctl terraform version
 - Pulling this into `v1.4.1` (patch scope) absent an explicit
   integrator decision — see Scope note.
 
+### Closure
+
+> Recorded by the integrator from direct working-tree verification
+> (staff dispatch interrupted before self-reporting).
+
+**Command.** `internal/cli/terraform.go` (new): `terraformCmd`
+(`Aliases: []string{"tf"}`, `DisableFlagParsing: true`) +
+`runTerraformPassthrough`, registered in `cluster.go`'s
+`rootCmd.AddCommand(… ibmcloudCmd, terraformCmd)`. No SSH dispatch
+path.
+
+**Policy.** `validateTerraformReadOnly(argv)` enforces the allowlist +
+the `state` sub-verb guard + the mutation-flag scrub;
+`terraformFmtIsReadOnly(args)` gates `fmt` to `-check`. `--on` is
+rejected with a pointer that managed state is workstation-local
+(`TestRunTerraformPassthrough_RejectsOn`). `extractPhaseFlag(args)`
+does the manual `--phase` parse under `DisableFlagParsing`;
+`terraformReadOnlyStateDir(workspace, phase)` resolves the per-phase
+state dir via the existing `config.Workspace[Cluster]StateDir`.
+
+**Side-effect-free open.** `internal/tf/terraform.go` adds
+`OpenReadOnly` + `RunReadOnly`: a never-applied workspace phase fails
+with a clear "no state; run `roksbnkctl up` first" and triggers **no**
+source fetch / `init`
+(`TestOpenReadOnly_NeverApplied_NoStateNoSideEffects`,
+`TestOpenReadOnly_NilConfig`, `TestRunReadOnly_NotOpened`). cwd +
+`TF_DATA_DIR` are reused from the existing plumbing — not re-derived at
+the CLI layer.
+
+**Tests** — all PASS: `internal/cli/terraform_test.go`
+(`TestValidateTerraformReadOnly_AllowlistMatrix`,
+`TestTerraformReadOnlyStateDir_RoutesByPhase`,
+`TestRunTerraformPassthrough_RejectsOn`); `internal/tf/readonly_test.go`
+(`TestOpenReadOnly_NeverApplied_NoStateNoSideEffects`,
+`TestOpenReadOnly_NilConfig`, `TestRunReadOnly_NotOpened`,
+`TestRenderTFVars_KubeconfigDir`). Whole-module gate green (see Issue 1
+§"Closure").
+
+**Doc surface:** PRD 08 (`docs/prd/08-TERRAFORM-READONLY.md`) authored
+by the architect this cycle; consistent with the as-landed allowlist.
+
 ---
 
 
 ## Issue 3: auto-register per-AZ cluster jumphosts as `jumphost-<zone>` targets — feature request
 
 **Severity**: low (ergonomic enhancement, not a defect)
-**Status**: open — Sprint 13 / `v1.5.0` (carried from Sprint 12 staff Issue 5; integrator accepted as a `v1.5.0` feature — formalized as PRD 09. **Stale-target handling = option (a) upsert-only** with a documented orphan caveat; option (b) reconcile is an explicit post-`v1.5.0` follow-up — do **not** implement (b) this cycle. The Sprint 12 "strict bugfix-only patch" scope note below is historical context.)
+**Status**: resolved — Sprint 13 / `v1.5.0` (carried from Sprint 12 staff Issue 5; integrator accepted as a `v1.5.0` feature — formalized as PRD 09. **Stale-target handling = option (a) upsert-only** with a documented orphan caveat; option (b) reconcile is an explicit post-`v1.5.0` follow-up — do **not** implement (b) this cycle. The Sprint 12 "strict bugfix-only patch" scope note below is historical context.)
 
 > **Scope note (read first).** Feature, filed into the Sprint 12 ledger
 > at user request ("file … for the next sprint"). Sprint 12 is a strict
@@ -569,3 +661,45 @@ follow-up if orphaned-target confusion is reported.
   feature, not a lazy resolver).
 - Pulling into `v1.4.1` (patch scope) absent explicit integrator
   decision — see Scope note.
+
+### Closure
+
+> Recorded by the integrator from direct working-tree verification
+> (staff dispatch interrupted before self-reporting).
+
+**Implementation.** `tryAutoClusterJumphosts(ctx, cctx, tfws)`
+(`internal/cli/lifecycle.go`) added beside `tryAutoJumphost` and wired
+into the **three** post-`up` hook sites that already call
+`tryAutoJumphost` (top-level `up`, `cluster up`, `bnk up`). The
+`mapOutput(outputs, key) map[string]string` helper
+(`internal/cli/cluster_phase.go`) mirrors the `stringOutput` /
+`json.Unmarshal` model and treats a missing output / unmarshal failure
+/ the `[]`-default JSON terraform emits for an empty map as
+"nothing to do".
+
+**Output-name robustness.** The Sprint 12 design named the output
+`testing_cluster_jumphost_public_ips`; the real root output is
+`testing_cluster_jumphost_ips` (`terraform/outputs.tf:82`, value
+`try(module.testing.testing_cluster_jumphost_public_ips, [])`). Staff
+reads `testing_cluster_jumphost_ips` first and falls back to the legacy
+name — robust to the drift the architect independently flagged
+(`issues/issue_sprint13_architect.md` Issue 4). Key reuse: the existing
+`stringOutput(outputs, "jumphost_shared_key")` presence check; targets
+upserted with `KeySource: "tf-output:jumphost_shared_key"`.
+
+**Option (a) confirmed.** Per-zone `remote.SetTarget(cctx.WorkspaceName,
+"jumphost-"+zone, cfg)` — idempotent upsert, so a re-`up` after a FIP
+rotation refreshes in place. **No** reconcile / orphan-removal /
+`auto:` schema marker landed (option (b) deliberately not implemented —
+post-`v1.5.0` follow-up). Best-effort/non-fatal, mirroring
+`tryAutoJumphost`.
+
+**Tests** — `internal/cli/auto_cluster_jumphosts_test.go`, all PASS:
+`TestMapOutput_ParseMatrix` (parse / empty / `[]` / absent),
+`TestTryAutoClusterJumphosts_GuardsAreNonFatal` (key-PEM-missing skip,
+non-fatal on parse failure). Whole-module gate green (see Issue 1
+§"Closure").
+
+**Doc surface:** PRD 09 (`docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md`) +
+the architect's chapter 15/16 edits land the option-(a) orphan caveat
+in lockstep.

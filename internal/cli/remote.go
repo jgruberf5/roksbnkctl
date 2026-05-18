@@ -5,13 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
+
+// clientRunner adapts *remote.Client to the remoteRunner seam the
+// kubeconfig self-heal (selfheal.go) uses, so the heal-vs-outage logic
+// is unit-testable without a real SSH connection. It runs short
+// non-interactive probe/heal commands (no stdin, no TTY).
+type clientRunner struct{ c *remote.Client }
+
+func (cr clientRunner) Run(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, error) {
+	return cr.c.Run(ctx, argv, remote.RunOpts{Stdout: stdout, Stderr: stderr})
+}
 
 // rejectOnFlag is the "lifecycle commands don't support --on" gate. Used
 // by up/down/plan/apply/init's RunE so the user gets a clear pointer to
@@ -30,16 +42,30 @@ func rejectOnFlag(cmdName string) error {
 // remotely, streams I/O, and exits roksbnkctl with the remote process's
 // exit code (or with 126/127 on auth/connect failures per PRD 01).
 //
-// envExtra is the workspace-derived KEY=VALUE list (IBMCLOUD_API_KEY,
-// KUBECONFIG, etc.) that workspaceEnv() would have applied locally. The
-// remote sshd's AcceptEnv config decides which actually pass through;
-// users who hit "ibmcloud not logged in" on the remote should configure
-// AcceptEnv on the jumphost (see chapter 16, "Behaviour details" in
+// envExtra MUST be machine-portable (values, not local filesystem
+// paths): IBMCLOUD_API_KEY / IC_API_KEY / IBMCLOUD_REGION /
+// IBMCLOUD_VERSION_CHECK. Callers should source workspaceEnvCore() (NOT
+// workspaceEnv(), which appends the local-only KUBECONFIG path). As a
+// defense-in-depth backstop against a future caller reintroducing the
+// Sprint 13 Issue 1 leak, dispatchRemote scrubs every local-path-valued
+// var (remoteSafeEnv / localPathEnvKeys) here before anything crosses
+// the wire — correctness comes from never sending a local path, not
+// from the target sshd's AcceptEnv dropping it.
+//
+// The remote sshd's AcceptEnv config decides which of the remaining
+// (machine-portable) vars actually pass through; users who hit
+// "ibmcloud not logged in" on the remote should configure AcceptEnv on
+// the jumphost (see chapter 16, "Behaviour details" in
 // book/src/16-on-flag-ssh-jumphosts.md).
 //
 // On success this function does NOT return — it calls os.Exit. The
 // remote-side exit code is the only useful thing for scripts and CI.
 func dispatchRemote(ctx context.Context, target string, argv []string, envExtra []string, tty bool) error {
+	// Defense-in-depth backstop: strip any local-path-valued var that
+	// slipped in (Sprint 13 Issue 1). No-op when callers already pass
+	// workspaceEnvCore().
+	envExtra = remoteSafeEnv(envExtra)
+
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -77,6 +103,50 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 		os.Exit(remote.ExitConnectFailed)
 	}
 	defer client.Close()
+
+	// Sprint 14 / option C part B — remote kubeconfig self-heal. For an
+	// `--on <target> kubectl|oc` dispatch, ensure the target actually
+	// has a usable kubeconfig before running the wrapped command;
+	// repair it on the fly if missing (the part-A cloud-init hardening
+	// only helps NEW deploys — this unblocks already-broken/already-
+	// running jumphosts with no `terraform` recreate). No-op for
+	// non-kubectl/oc argv. Cluster id comes from the same workspace
+	// plumbing tryAutoKubeconfig uses — NOT re-derived at the CLI layer
+	// (the Sprint 12/13 path-re-derivation bug class). A heal failure
+	// (genuine outage) aborts with a clear error rather than letting
+	// kubectl fall back to localhost:8080.
+	if kubectlOrOC(argv) {
+		clusterID := clusterFromTFOutput(ctx, cctx)
+		if clusterID == "" && cctx.Workspace != nil {
+			clusterID = cctx.Workspace.Cluster.Name
+		}
+		// Resolve the workspace credentials so the self-heal can
+		// (re)authenticate the target's ibmcloud CLI before `ks cluster
+		// config --admin` — an already-broken jumphost whose cloud-init
+		// login fork failed silently needs the login healed too, not just
+		// the kubeconfig (Sprint 14 / issues/issue_sprint14_staff.md
+		// Issue 1, 2026-05-18 live finding). Same resolver workspaceEnvCore
+		// uses. Best-effort: a resolve failure passes an empty key (the
+		// heal then falls back to assume-pre-logged-in and, if that's
+		// false, surfaces the real ibmcloud error — no worse than before,
+		// and an optional self-heal must not abort the dispatch).
+		var apiKey, region, resourceGroup string
+		if cctx.Workspace != nil {
+			region = cctx.Workspace.IBMCloud.Region
+			resourceGroup = cctx.Workspace.IBMCloud.ResourceGroup
+			resolver := &cred.Resolver{
+				Workspace: cctx.WorkspaceName,
+				Source:    cctx.Workspace.IBMCloud.APIKeySource,
+			}
+			if k, kerr := resolver.IBMCloudAPIKey(ctx); kerr == nil {
+				apiKey = k
+			}
+		}
+		if herr := maybeSelfHealRemoteKubeconfig(ctx, clientRunner{client}, argv, clusterID, apiKey, region, resourceGroup); herr != nil {
+			fmt.Fprintf(os.Stderr, "roksbnkctl: remote kubeconfig self-heal: %v\n", herr)
+			os.Exit(remote.ExitAuthFailed)
+		}
+	}
 
 	code, err := client.Run(ctx, argv, remote.RunOpts{
 		Stdin:  os.Stdin,

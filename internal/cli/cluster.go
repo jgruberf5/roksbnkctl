@@ -76,7 +76,7 @@ func init() {
 	kubeconfigCmd.Flags().BoolVar(&flagExportKubeconfig, "export", false, "print kubeconfig contents instead of path")
 	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigDownload, "download", false, "fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config")
 	kubeconfigCmd.Flags().StringVar(&flagKubeconfigCluster, "cluster", "", "cluster name or ID for --download (default: workspace cluster.name)")
-	rootCmd.AddCommand(shellCmd, execCmd, kubeconfigCmd, kubectlCmd, ocCmd, ibmcloudCmd)
+	rootCmd.AddCommand(shellCmd, execCmd, kubeconfigCmd, kubectlCmd, ocCmd, ibmcloudCmd, terraformCmd)
 }
 
 // ── runE implementations ────────────────────────────────────────────
@@ -109,12 +109,18 @@ func runExec(cmd *cobra.Command, args []string) error {
 	if on == "" {
 		on = flagOn
 	}
+	if on != "" {
+		// Remote: machine-portable core only — never forward the local
+		// KUBECONFIG path across the SSH boundary (Sprint 13 Issue 1).
+		_, core, cerr := workspaceEnvCore()
+		if cerr != nil {
+			return cerr
+		}
+		return dispatchRemote(cmd.Context(), on, argv, core, false)
+	}
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
-	}
-	if on != "" {
-		return dispatchRemote(cmd.Context(), on, argv, env, false)
 	}
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {
@@ -318,21 +324,27 @@ func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
 	if be == "" {
 		be = flagBackend
 	}
-	cctx, env, err := workspaceEnv()
-	if err != nil {
-		return err
-	}
 	if on != "" {
 		// Remote ibmcloud — skip the local-session ensureLoggedIn
 		// dance; the remote sshd / target manages its own state. Pass
 		// IBMCLOUD_API_KEY via env so the remote `ibmcloud` CLI does
-		// non-interactive apikey login on first call.
+		// non-interactive apikey login on first call. Machine-portable
+		// core only — never forward the local KUBECONFIG path across
+		// the SSH boundary (Sprint 13 Issue 1).
 		//
 		// PRD 03 + PLAN.md note: --on (Sprint 1's SSH dispatch) and
 		// --backend (Sprint 3's backend selector) are independent
 		// flags in v0.8; --on takes the legacy SSH path here. Sprint
 		// 4 folds the two together under a real `ssh` backend.
-		return dispatchRemote(cmd.Context(), on, append([]string{"ibmcloud"}, argv...), env, false)
+		_, core, cerr := workspaceEnvCore()
+		if cerr != nil {
+			return cerr
+		}
+		return dispatchRemote(cmd.Context(), on, append([]string{"ibmcloud"}, argv...), core, false)
+	}
+	cctx, env, err := workspaceEnv()
+	if err != nil {
+		return err
 	}
 
 	// Resolve the execution backend for ibmcloud. Per PLAN.md Sprint 3
@@ -541,12 +553,18 @@ func runPassthrough(cmd *cobra.Command, tool string, args []string) error {
 	if on == "" {
 		on = flagOn
 	}
+	if on != "" {
+		// Remote: machine-portable core only — never forward the local
+		// KUBECONFIG path across the SSH boundary (Sprint 13 Issue 1).
+		_, core, cerr := workspaceEnvCore()
+		if cerr != nil {
+			return cerr
+		}
+		return dispatchRemote(cmd.Context(), on, append([]string{tool}, argv...), core, false)
+	}
 	_, env, err := workspaceEnv()
 	if err != nil {
 		return err
-	}
-	if on != "" {
-		return dispatchRemote(cmd.Context(), on, append([]string{tool}, argv...), env, false)
 	}
 	bin, err := exec.LookPath(tool)
 	if err != nil {
@@ -557,13 +575,47 @@ func runPassthrough(cmd *cobra.Command, tool string, args []string) error {
 
 // ── helpers ─────────────────────────────────────────────────────────
 
-// workspaceEnv composes the env a child process should inherit:
-// host env + workspace's IBMCLOUD_API_KEY / IC_API_KEY / IBMCLOUD_REGION
-// + KUBECONFIG (from the host's lookup chain — v1 doesn't auto-fetch).
+// workspaceEnv composes the env a child process should inherit when run
+// LOCALLY: host env + the machine-portable core (IBMCLOUD_API_KEY /
+// IC_API_KEY / IBMCLOUD_REGION / IBMCLOUD_VERSION_CHECK) + the local-only
+// addendum (KUBECONFIG, resolved from the host's lookup chain — v1
+// doesn't auto-fetch).
+//
+// IMPORTANT: this slice is correct for LOCAL exec only. KUBECONFIG is a
+// local filesystem path that is meaningless on an SSH target — forwarding
+// it across the --on boundary points remote kubectl/oc at a nonexistent
+// file and shadows the target's cloud-init kubeconfig (Sprint 13 Issue 1,
+// the "a path correct locally is wrong across a boundary" bug class).
+// Callers that cross the SSH boundary MUST use workspaceEnvCore() (or
+// pass through dispatchRemote, which sanitizes defensively). See
+// remoteSafeEnv / dispatchRemote.
 //
 // Returns the resolved Context too in case the caller wants to log
 // "loaded workspace foo" before exec'ing.
 func workspaceEnv() (*config.Context, []string, error) {
+	cctx, core, err := workspaceEnvCore()
+	if err != nil {
+		return nil, nil, err
+	}
+	env := core
+	// Local-only addendum: KUBECONFIG is a host filesystem path. Never
+	// forward this across an SSH boundary (see doc comment above).
+	if path := k8s.DefaultKubeconfigPath(); path != "" {
+		env = append(env, "KUBECONFIG="+path)
+	}
+	return cctx, env, nil
+}
+
+// workspaceEnvCore composes the machine-portable subset of the workspace
+// env — values, not local filesystem paths: IBMCLOUD_API_KEY /
+// IC_API_KEY / IBMCLOUD_REGION / IBMCLOUD_VERSION_CHECK, on top of the
+// host env. This is the ONLY workspace-derived env that is safe to cross
+// the --on SSH boundary; it deliberately omits KUBECONFIG (a local path).
+//
+// Callers that dispatch remotely (dispatchRemote) source this; callers
+// that exec locally use workspaceEnv() which adds the KUBECONFIG
+// addendum on top.
+func workspaceEnvCore() (*config.Context, []string, error) {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return nil, nil, err
@@ -581,20 +633,55 @@ func workspaceEnv() (*config.Context, []string, error) {
 		return nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}
 
-	env := os.Environ()
+	// Start from the host env MINUS any local-path-valued var. os.Environ()
+	// can already carry a KUBECONFIG the user exported in their shell;
+	// inheriting it here would re-leak a local path across the --on
+	// boundary even though workspaceEnvCore() never *appends* one
+	// (Sprint 13 Issue 1 — correctness is "never send a local path",
+	// which includes inherited ones, not just the workspaceEnv() addendum).
+	env := remoteSafeEnv(os.Environ())
 	env = append(env, "IBMCLOUD_API_KEY="+apiKey)
 	env = append(env, "IC_API_KEY="+apiKey)
 	if r := cctx.Workspace.IBMCloud.Region; r != "" {
 		env = append(env, "IBMCLOUD_REGION="+r)
-	}
-	if path := k8s.DefaultKubeconfigPath(); path != "" {
-		env = append(env, "KUBECONFIG="+path)
 	}
 	// Silence the "New plug-in version available" / "TIP: --check-version"
 	// banner the ibmcloud CLI prints on every invocation. It's noise the
 	// user can't act on inside the roksbnkctl flow.
 	env = append(env, "IBMCLOUD_VERSION_CHECK=false")
 	return cctx, env, nil
+}
+
+// localPathEnvKeys is the set of workspace-emitted env vars whose VALUE
+// is a local filesystem path — meaningless (and harmful) on an SSH
+// target. dispatchRemote scrubs these as a defense-in-depth backstop so
+// a future caller that forgets to use workspaceEnvCore() can't
+// reintroduce the Sprint 13 Issue 1 leak. KUBECONFIG is the only such
+// var workspaceEnv currently emits; extend this set if more are added.
+var localPathEnvKeys = map[string]struct{}{
+	"KUBECONFIG": {},
+}
+
+// remoteSafeEnv returns a copy of env with every local-path-valued var
+// (localPathEnvKeys) removed. Correctness of the --on path comes from
+// NEVER sending a local path across the boundary — not from hoping the
+// target sshd's AcceptEnv drops it. Applied inside dispatchRemote so all
+// call sites are covered regardless of which env constructor they used.
+func remoteSafeEnv(env []string) []string {
+	if len(env) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		idx := strings.IndexByte(kv, '=')
+		if idx > 0 {
+			if _, bad := localPathEnvKeys[kv[:idx]]; bad {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // runWithEnv runs bin with args + env, wired to the host's stdin/out/err,

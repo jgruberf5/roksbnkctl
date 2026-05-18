@@ -288,6 +288,63 @@ The auto-population is **idempotent** — re-running `up` against an already-jum
 
 If `testing_create_tgw_jumphost = false` in tfvars, the upstream HCL skips creating the jumphost VM and emits the sentinel output. Auto-population is then a no-op, and you're free to create your own `jumphost` (or differently-named) entry via `targets add`.
 
+### Per-AZ cluster jumphosts (`jumphost-<zone>`)
+
+When `testing_create_cluster_jumphosts = true`, the deploy builds **one cluster jumphost per cluster-VPC availability zone** in addition to the single TGW jumphost — each on its own floating IP, all sharing the *same* key as the TGW jumphost. Since **v1.5.0**, the same post-`up` hook that seeds the singular `jumphost` also auto-registers one target per AZ:
+
+1. After a successful `up`, `roksbnkctl` reads the `testing_cluster_jumphost_ips` terraform output — a map `{ zone => floating-IP }`.
+2. For each `zone => fip`, it upserts a target named `jumphost-<zone>`, reusing the same shared key the singular `jumphost` uses:
+
+   ```yaml
+   targets:
+     jumphost-ca-tor-1:
+       host: <ca-tor-1-fip>
+       user: ubuntu
+       key_source: tf-output:jumphost_shared_key
+     # …one per AZ…
+   ```
+
+3. A summary line is printed:
+
+   ```
+   ✓ Auto-registered 3 per-AZ cluster jumphost targets (jumphost-ca-tor-1, jumphost-ca-tor-2, jumphost-ca-tor-3); use `roksbnkctl --on jumphost-<zone> ...`
+   ```
+
+Verify with `roksbnkctl targets list` — you should see `jumphost` plus one `jumphost-<zone>` per AZ. Each is a first-class `--on` target (full `kubectl`/`oc`/`ibmcloud`/`shell` passthrough, no SSH hop): `roksbnkctl --on jumphost-ca-tor-2 kubectl get pods`. Like the singular `jumphost`, registration is **best-effort and idempotent** — a parse/write failure logs a single `warning:` and does not fail `up`, and re-running `up` after a floating-IP rotation refreshes each `jumphost-<zone>` host in place. When `testing_create_cluster_jumphosts = false` (or the output is absent/empty), this is a silent no-op — only `jumphost` is seeded, with no warning noise.
+
+> **Orphaned-target caveat (option (a) upsert-only).** Auto-registration upserts but never prunes. If a later apply removes a zone, or `testing_create_cluster_jumphosts` is flipped to `false`, the now-orphaned `jumphost-<oldzone>` target points at a destroyed host and lingers in your config until you remove it by hand:
+>
+> ```bash
+> roksbnkctl targets remove jumphost-ca-tor-3
+> ```
+>
+> A host re-created on a recycled floating IP will also trip the host-key mismatch refusal — see [§"Host-key TOFU and `~/.roksbnkctl/known_hosts`"](#host-key-tofu-and-roksbnkctlknown_hosts) and clear the stale `known_hosts` line with `ssh-keygen -R <fip> -f ~/.roksbnkctl/known_hosts`. An automatic-prune (reconcile) mode that removes orphans on the next `up` is a deliberate post-v1.5.0 follow-up (it needs unambiguous "this target is auto-managed" ownership semantics so a hand-named `jumphost-mybox` is never deleted). See [PRD 09](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md).
+
+> **Pre-v1.5.0 fallback.** On a release before v1.5.0 the per-AZ jumphosts are not auto-registered — register each by hand. Look up the floating IPs with the read-only `terraform` command (v1.5.0+; [Chapter 16 §"Per-AZ cluster jumphosts"](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts)):
+>
+> ```bash
+> roksbnkctl terraform output testing_cluster_jumphost_ips
+> roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
+> ```
+>
+> …or, on an even older release without `roksbnkctl terraform`, the raw form `cd ~/.roksbnkctl/<ws>/state && TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips`. Then register one target per AZ — note `--key-source tf-output:jumphost_shared_key` is correct because one shared key covers *all* jumphosts (see [§"`key_source: tf-output:<output-name>`"](#key_source-tf-outputoutput-name)):
+>
+> ```bash
+> roksbnkctl targets add jumphost-ca-tor-1 \
+>   --host <ca-tor-1-fip> --user ubuntu \
+>   --key-source tf-output:jumphost_shared_key
+> # …repeat per zone…
+> ```
+>
+> Each new IP triggers a one-time host-key TOFU prompt on first connect (see [§"Host-key TOFU and `~/.roksbnkctl/known_hosts`"](#host-key-tofu-and-roksbnkctlknown_hosts)). Manually-added targets are not auto-managed: a destroy+recreate rotates the FIPs and you must re-`targets add` (contrast the v1.5.0 auto-registered targets, which `up` refreshes in place).
+
+### What is *not* auto-discovered
+
+The auto-discovery flow registers the TGW `jumphost` (always) and, since v1.5.0, the per-AZ `jumphost-<zone>` targets when `testing_create_cluster_jumphosts = true`. It does **not** register:
+
+- **Per-AZ jumphosts by *private* IP.** There is no top-level `testing_cluster_jumphost_private_ips` terraform output; the private-IP hop pattern in [Chapter 16 §"Per-AZ cluster jumphosts"](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts) is a documented zero-setup technique, not an auto-registered target.
+- **Any non-jumphost host.** Bastions, ops boxes, and the like are always `targets add` by hand.
+
 ### Inspecting what the post-`up` flow saw
 
 When the auto-population doesn't happen and you expected it to, check:

@@ -483,6 +483,31 @@ func stringOutput(outputs map[string]tfexec.OutputMeta, key string) string {
 	return s
 }
 
+// mapOutput extracts a string-keyed, string-valued terraform output
+// (e.g. {zone => fip}). Returns nil for a missing output, an unmarshal
+// failure, or the `[]`-default JSON terraform emits for an empty map
+// (`value = try(..., [])` renders `[]`, not `{}`, when the resource set
+// is empty). Callers treat a nil/empty map as "nothing to do" — the
+// same emptiness-shaping contract as stringOutput. Mirrors the
+// json.Unmarshal model used by stringOutput / resolveClusterIdentity.
+func mapOutput(outputs map[string]tfexec.OutputMeta, key string) map[string]string {
+	v, ok := outputs[key]
+	if !ok || len(v.Value) == 0 {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(v.Value, &m); err != nil {
+		// `[]` (terraform's empty-map default here) and any non-object
+		// JSON fail to unmarshal into map[string]string — treat as
+		// "no entries", exactly like the `ip == ""` guard.
+		return nil
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
 // promptForCluster asks the user for a cluster name/id when one wasn't
 // passed on the command line. Returns def unchanged if stdin isn't a
 // TTY — non-interactive invocations without an arg surface as a clean

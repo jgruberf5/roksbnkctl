@@ -1,7 +1,9 @@
 package tf
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +14,14 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
+
+// ErrNoState is returned by OpenReadOnly when the workspace phase has no
+// terraform.tfstate — i.e. the phase was never applied. The read-only
+// `roksbnkctl terraform` command surfaces this as a clean
+// "run `roksbnkctl up` first" message and exits non-zero WITHOUT a
+// source fetch or `terraform init` side effect (Sprint 13 Issue 2,
+// hard requirement 4).
+var ErrNoState = errors.New("workspace has no terraform state for this phase")
 
 // Workspace ties together the terraform working directory (resolved TF
 // source), the per-roksbnkctl-workspace state directory, and a configured
@@ -313,4 +323,81 @@ func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error 
 // Output reads terraform outputs (raw values + sensitivity flags).
 func (w *Workspace) Output(ctx context.Context) (map[string]tfexec.OutputMeta, error) {
 	return w.tf.Output(ctx)
+}
+
+// OpenReadOnly prepares a Workspace for a READ-ONLY terraform invocation
+// (the `roksbnkctl terraform` escape hatch, Sprint 13 Issue 2 / PRD 08).
+//
+// Side-effect contract for a NEVER-APPLIED workspace phase: if
+// <stateDir>/terraform.tfstate is absent, this returns ErrNoState
+// BEFORE any source fetch or `terraform init` — the read-only command
+// must not silently fetch source or init a phase the user never applied.
+//
+// When state IS present the phase was necessarily applied at least once,
+// so the TF source was already fetched into <stateDir>/tf-source by that
+// `up`/`apply`. We then delegate to Open, which is side-effect-safe for
+// an already-applied workspace: embedded source re-extract is a cheap
+// idempotent file write (no init, no network), `local` source is only
+// re-validated, `github` source cache-hits the already-downloaded tree
+// (fetch.go: "Already present? Reuse"). Open never runs `terraform init`
+// itself (that is the separate Init() method, which OpenReadOnly /
+// RunReadOnly deliberately never call). apiKey is empty — read-only
+// operations don't need credentials and we must not trigger a prompt.
+func OpenReadOnly(
+	ctx context.Context,
+	name string,
+	wsCfg *config.Workspace,
+	stateDir string,
+) (*Workspace, error) {
+	if wsCfg == nil {
+		return nil, fmt.Errorf("workspace config is nil (run `roksbnkctl init`)")
+	}
+	statePath := filepath.Join(stateDir, "terraform.tfstate")
+	if _, err := os.Stat(statePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNoState
+		}
+		return nil, fmt.Errorf("checking terraform state %s: %w", statePath, err)
+	}
+	// State exists ⇒ source was already fetched by the prior apply ⇒
+	// Open is side-effect-safe (no init, no network). Reuse it so the
+	// read-only run inherits the exact same sourceDir cwd + TF_DATA_DIR
+	// side-effect (Sprint 13: the CLI layer must NOT re-derive these).
+	return Open(ctx, name, wsCfg, stateDir, "", nil, nil)
+}
+
+// RunReadOnly shells the prepared terraform binary with argv, running in
+// the resolved source dir (w.sourceDir) with the process env that Open
+// already configured (TF_DATA_DIR points at <stateDir>/terraform). The
+// argv allowlist / mutation-flag policy is enforced by the CLI layer
+// (internal/cli/terraform.go) — the tf package owns only the safe exec.
+//
+// Shelling the binary (rather than tfexec's typed methods) lets the CLI
+// allowlist cover heterogeneous read-only verbs — output / show /
+// state list / providers / graph / validate / fmt -check — uniformly.
+//
+// Returns terraform's combined stdout. stderr is streamed straight to
+// the process stderr so progress/errors stay visible.
+func (w *Workspace) RunReadOnly(ctx context.Context, argv []string) (string, error) {
+	if w == nil || w.tf == nil {
+		return "", errors.New("terraform workspace not opened")
+	}
+	if len(argv) == 0 {
+		return "", errors.New("no terraform subcommand given")
+	}
+	tfBin, err := exec.LookPath("terraform")
+	if err != nil {
+		return "", fmt.Errorf("terraform not found on PATH — install terraform >= 1.5 (https://developer.hashicorp.com/terraform/install)")
+	}
+	cmd := exec.CommandContext(ctx, tfBin, argv...)
+	cmd.Dir = w.sourceDir
+	// Open already set TF_DATA_DIR on the roksbnkctl process env; inherit
+	// it (and the rest of the env) — do NOT re-derive it at the CLI
+	// layer. That re-derivation is exactly the Sprint 13 bug class.
+	cmd.Env = os.Environ()
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+	runErr := cmd.Run()
+	return stdout.String(), runErr
 }

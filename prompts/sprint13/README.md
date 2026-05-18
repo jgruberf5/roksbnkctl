@@ -1,0 +1,27 @@
+# Sprint 13
+
+**Theme:** minor cycle — `--on` KUBECONFIG-leak fix + read-only `roksbnkctl terraform` (PRD 08) + per-AZ jumphost auto-registration (PRD 09) + the book docs that tie them together — `v1.5.0`
+
+_Drafted from the carried-forward `issues/issue_sprint13_*.md` ledgers (Sprint 12 staff Issues 3/4/5 + architect Issue 9 + tech-writer §"Sprint 13 awareness", verbatim). Sprint 13 is a **feature cycle** — two new PRDs, one high-severity bugfix, coupled book docs. Shape is closer to Sprint 10 (multi-deliverable) than the single-PRD Sprint 11 or the patch Sprint 12._
+
+Integrator decisions baked into this cycle (recorded in `docs/PLAN.md` §"Sprint 13"):
+
+1. **Scope = `v1.5.0`, not a standalone `v1.4.2`.** Sprint 12's CHANGELOG `v1.4.1 §Deferred` designated the KUBECONFIG-leak fix an "immediate v1.4.2 fast-follow". The integrator instead ships it in the same `v1.5.0` cycle as the two features — all three surfaced in one user-testing thread, all about reaching/operating the deployed cluster from the workstation, and the bugfix is not coupled to or regressed by the feature code. The `v1.4.1 §Deferred` known-issue note is re-pointed `v1.4.2 → v1.5.0` (architect surface).
+2. **Per-AZ stale-target handling = option (a) upsert-only**, with a documented caveat (orphaned `jumphost-<oldzone>` entries linger until manual `targets remove`). Option (b) reconcile is a deliberate post-`v1.5.0` follow-up — it needs prefix-ownership semantics or a `config.TargetCfg` `auto:` schema marker, out of scope this cycle.
+
+The four-agent dispatch shape mirrors Sprints 1–12, scaled for a multi-deliverable feature cycle:
+
+- **Architect** — author **PRD 08** (`docs/prd/08-TERRAFORM-READONLY.md`, read-only `terraform` escape hatch) and **PRD 09** (`docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md`, per-AZ jumphost auto-registration) from the carried staff design surface; CHANGELOG `v1.5.0` block + re-point the `v1.4.1 §Deferred` known-issue to `v1.5.0`; chapter 16 + chapter 15 per-AZ-jumphost docs (`issues/issue_sprint13_architect.md` Issue 1, written for the *post-auto-registration* world, lockstep with staff code deliverable 3); optional `--tf-source` cobra-help nudge. **`docs/PLAN.md` §"Sprint 13" is integrator-authored — refine only for drift, do not rewrite.** Does not touch `internal/`, `cmd/`.
+- **Staff engineer** — three code deliverables: (1) the KUBECONFIG-leak fix (`workspaceEnv()` split + `dispatchRemote` call-site sweep), (2) the read-only `roksbnkctl terraform` command per PRD 08 / `issues/issue_sprint13_staff.md` Issue 2, (3) per-AZ jumphost auto-registration per PRD 09 / Issue 3 (option (a) upsert-only). Unit tests for all three. Closes `issue_sprint13_staff.md` Issues 1–3.
+- **Validator** — seven-step regression sweep (unchanged from Sprints 10–12, kind-integration step intact); Issue-1 symptom reproduction at unit level + fix confirmation; PRD 08/09 feature-acceptance checks; doc-coupling audit that the architect's chapter 15/16 edits match the *as-landed* auto-registration behaviour (no manual-`targets-add` drift); analogous-gotcha sweep continued from Sprint 12.
+- **Tech-writer** — read-only review at end of sprint; drift sweep across `issue_sprint13_staff.md` ↔ code ↔ PRD 08/09 ↔ CHANGELOG `v1.5.0` ↔ chapters 15/16; dogfooding the now-working `--on jumphost kubectl` flow and the `roksbnkctl terraform output` one-liner.
+
+The release tag itself (`v1.5.0`) is **integrator-owned** — Sprint 13 lands all the prep; the integrator runs the `make release` pre-tag gate, cuts the tag, kicks off goreleaser, and runs `make release-publish`.
+
+## Carry-over considerations from Sprint 12
+
+- The KUBECONFIG-leak, read-only-`terraform`, and per-AZ-jumphost items are Sprint 12 staff Issues 3/4/5 and architect Issue 9, carried verbatim into the `issues/issue_sprint13_*.md` ledgers as the implementation-ready design surface. Staff is **not** blocked on PRD prose — the issue ledgers have complete proposed-fix/acceptance-criteria sections; the architect formalizes PRD 08/09 in parallel.
+- **Hard doc/code coupling:** architect Issue 1's chapter 15/16 prose is written for the *post-auto-registration* world (auto-seeded `jumphost-<zone>` → "verify with `targets list`"; IP-lookup one-liners use `roksbnkctl terraform output …` with the raw-`terraform` fallback noted only for pre-`v1.5.0` readers). If staff code deliverable 3 slips, the chapters must not ship describing behaviour not in the binary — the `v1.5.0` gate enforces lockstep.
+- Cloud-init boot-timing race (`terraform/modules/testing/main.tf:80-104`, async `ibmcloud ks cluster config --admin || true`) produces the *same* `localhost:8080` symptom as the env leak but is independent — explicitly **out of v1.5.0 scope**, cross-referenced in `issues/issue_sprint13_architect.md` so validator doesn't conflate it with the env-leak verify.
+- `resolved_sprint*_*.md`, `A_Project_Managers_Guide_to_Agentic_Developed_Products.pdf`, `NEW_PROJECT_STARTING_POINT.md`, `make_PM_Guide_book_pdf.sh`, and the `.archive/` moves remain untracked/uncommitted in the working tree from prior sessions — out of scope for Sprint 13; the integrator decides what (if anything) to fold in during the `v1.5.0` tag-cut commit.
+- Live `--on jumphost kubectl|oc` verify against a real deployed cluster is the user's out-of-band action (same hand-off shape as Sprint 11 Issue 2 / Sprint 12) — the agent shell cannot drive `--on` against a live jumphost; validator covers it at unit level.
