@@ -401,3 +401,19 @@ already-performed user out-of-band live verify. Architect Issue 2
 get-well headline, NOT a v1.5.0 blocker — v1.5.0 correctly ships the
 env-leak fix + read-only `terraform` + per-AZ auto-registration and is
 neither coupled to nor regressed by that separate root cause.
+
+---
+
+## Sprint 13 ledger closeout — `v1.5.0` shipped 2026-05-18
+
+**Status: CLOSED.** All 8 issues terminal — Issues 1–5,7,8 resolved; Issue 6 accepted → carried to Sprint 14 and resolved there.
+
+`v1.5.0` is cut, released, and published:
+
+- **Tag:** annotated `v1.5.0` on `5113b74` (the `chore: prep v1.5.0 release` commit — matches the `v1.4.1`/`v1.3.0`/`v1.2.1` tag-placement convention).
+- **CI gate green pre-tag:** `ci.yml` (vet/fmt/staticcheck/test, ubuntu+macos, goreleaser-check) ✅; `book.yml` (`mdbook build`) ✅ on the book-touching commit `d6c8bf8`; plus the integrator's live `roksbnkctl --on jumphost kubectl` verify 2026-05-18 16:33 (self-healed attempt 1, `localhost:8080` gone, exit 0, no redeploy).
+- **GitHub Release:** live, not draft — 8 assets (6 platform archives + `checksums.txt` + `roksbnkctl-book-v1.5.0.pdf`); `release.yml`/goreleaser run completed success.
+- **Book:** HTML → `gh-pages` live at <https://jgruberf5.github.io/roksbnkctl/book/> (HTTP 200); PDF attached to the Release.
+- **Release notes:** curated `v1.5.0` announcement published (headline = the end-to-end `--on jumphost` fix; Fixed / Added / Install).
+
+All Sprint 13 + Sprint 14 gate criteria met (Sprint 13 §"Gate to `v1.5.0`" + Sprint 14 §"Gate to the (finally tag-ready) `v1.5.0`"). The post-v1.4.0 jumphost thread is closed end-to-end. The only forward items are the explicitly-tracked post-`v1.5.0` follow-ups: per-AZ stale-target reconcile option (b), and the path/env chokepoint + `cli` consolidation (`docs/PLAN.md` §"Sprint 15"). **Ledger closed 2026-05-18.**
