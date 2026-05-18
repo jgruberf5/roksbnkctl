@@ -30,3 +30,7 @@ book/book/
 .env
 .env.local
 .env.*.local
+
+# Local terraform var-file used for live `--var-file=./terraform.tfvars`
+# verification — contains ibmcloud_api_key / bigip_password. NEVER commit.
+/terraform.tfvars
