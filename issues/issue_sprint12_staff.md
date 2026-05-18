@@ -12,7 +12,7 @@ them up as kickoff context.
 ## Issue 1: `--var-file` relative paths don't resolve against the shell CWD
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 ### Symptom
 
@@ -157,3 +157,203 @@ roksbnkctl -w <existing-workspace> cluster up --var-file=./terraform.tfvars --au
   enough for v1.4.x; the deeper rework (bind-mount each parent so
   arbitrary host paths flow into the container) stays deferred per the
   existing comment at `lifecycle.go:714-717`.
+
+### Closure
+
+**Helper location & signature**
+
+`internal/cli/lifecycle.go` (just above the lifecycle implementations,
+before `runUp`):
+
+```go
+func resolveVarFiles(vfs []string) ([]string, error)
+```
+
+Kept in `lifecycle.go` because it's the most natural home — that file
+owns `flagVarFiles` and all but two consumer RunEs. The cluster/bnk
+phase RunEs import it implicitly via the shared `cli` package. No new
+file or package was warranted for one helper.
+
+**Wire-up pattern**
+
+Per-RunE normalization at the top of every entry point that consumes
+`flagVarFiles` — composites *and* leaves — with the slice reassigned
+back into `flagVarFiles` after resolution. Idempotent on already-
+absolute slices, so the composite's pass and the leaf's pass don't
+fight when `roksbnkctl up` calls into `runClusterUp` → `runTrialUp`.
+
+Sites wired:
+
+- `runUp` (composite) — `internal/cli/lifecycle.go`
+- `runTrialUp` (leaf for `up` / `bnk up`)
+- `runPlan`
+- `runApply`
+- `runDown` (composite)
+- `runTrialDown` (leaf for `down` / `bnk down`)
+- `runClusterUp` — `internal/cli/cluster_phase.go`
+- `runClusterDown`
+- `runBnkUp` — `internal/cli/bnk_phase.go`
+- `runBnkDown`
+
+All five `tfws.Plan` / `applyWithRetry` / `tfws.Destroy` call sites the
+issue listed (`lifecycle.go:178, 198, 222, 243, 319` in the original
+file) now receive the already-absolute slice via the normalized
+package-level `flagVarFiles`. The docker-backend reject loop at
+`lifecycle.go:712-721` stays in place as a defensive guard — every
+reachable path is now absolute by the time control gets there, but the
+reject still catches a programming-error regression cheaply.
+
+**Unit tests** — `internal/cli/lifecycle_test.go` (new file)
+
+Five tests, all passing:
+
+- `TestResolveVarFiles_AbsolutePassThrough` — absolute paths
+  round-trip cleaned but otherwise unchanged.
+- `TestResolveVarFiles_RelativeResolvedAgainstCWD` — `./foo.tfvars`
+  from a `t.TempDir()` CWD resolves to `<tmp>/foo.tfvars`
+  (EvalSymlinks-normalized to survive macOS `/var → /private/var`).
+- `TestResolveVarFiles_MissingFileErrorNamesBoth` — error message
+  contains both the user-supplied input and `"resolved to"` plus the
+  filename component of the resolved abs.
+- `TestResolveVarFiles_TildeExpansion` — `~/<rel>` expands to
+  `<home>/<rel>`. Skipped on Windows.
+- `TestResolveVarFiles_EmptyInput` — `nil` / `[]string{}` are no-op
+  (no `os.Getwd` call, no error). Important because every RunE calls
+  the helper unconditionally.
+
+**`~`-expansion convention found elsewhere**
+
+`grep -rn '"~/' internal/cli/` surfaced `internal/cli/install.go:76`,
+which handles `--dir=~/...` for `roksbnkctl install` by checking
+`destDir == "~"` and `strings.HasPrefix(destDir, "~/")` then joining
+with `os.UserHomeDir()`. `resolveVarFiles` mirrors that pattern
+exactly so the two surfaces stay consistent. The `TestTildeExpansion`
+test pins that compatibility.
+
+**Build / test sweep**
+
+- `go build ./...` — clean
+- `go vet ./...` — clean
+- `gofmt -l .` — empty
+- `go test ./internal/cli/...` — PASS (existing tests unaffected;
+  five new tests green)
+- `go test ./...` — PASS across the whole module
+- `make staticcheck` — clean (exit 0)
+
+**Surface oddities**
+
+The composite RunEs (`runUp`, `runDown`) and the leaf RunEs
+(`runClusterUp`, `runTrialUp`, `runTrialDown`, `runClusterDown`,
+`runBnkUp`, `runBnkDown`) are both reachable directly through cobra
+dispatch — there's no single `preRun` chain that all paths fall
+through. Per-RunE normalization is the smallest correct surface; a
+shared `preRun` hook would have required a deeper refactor of how the
+flag flows through the phase commands and was explicitly out of scope.
+The idempotence of `resolveVarFiles` on absolute inputs makes the
+duplication safe.
+
+---
+
+## Issue 2: `--tf-source` local relative paths persist unresolved into config.yaml
+
+**Severity**: low
+**Status**: resolved
+
+(Pulled into Sprint 12 by integrator decision — originally deferred to
+Sprint 13 as validator Issue 5. Same shell-CWD-vs-state-dir class as
+Issue 1, surfaced by the analogous-gotcha sweep.)
+
+### Description
+
+`--tf-source` (`internal/cli/lifecycle.go:86,89`, registered on `init`
+and `up`, help text "override TF source (path or URL)") accepts a
+local-path override. A local value flows verbatim into
+`config.TFSourceCfg{Type: "local", Path: flagTFSource}` and is
+**persisted into config.yaml** at the two `init.go` build sites
+(`runUpgradeTF` and `promptTFSource`). It's later consumed by
+`internal/tf/fetch.go` `FetchSource` `case "local"`, which `os.Stat`s
+`src.Path` and hands it to terraform unmodified.
+
+A relative `--tf-source=./mytf` passes the `os.Stat` at `init` time
+(CWD = shell PWD), is persisted *relative* into config.yaml, and is
+later handed to terraform whose effective CWD is the per-phase state dir
+(`~/.roksbnkctl/<workspace>/state[-cluster]/`). Worse than the
+`--var-file` case: it survives into config.yaml and detonates on a
+*later* `up`/`plan`/`apply`, not the same invocation.
+
+### Root cause
+
+No normalization between the `--tf-source` ingestion in `init.go` and
+the persisted `config.TFSourceCfg.Path`. The same shell-CWD-vs-state-dir
+trap Issue 1 fixed for `--var-file`, but it's pinned into config.yaml so
+it also bites configs written before any fix.
+
+### Proposed fix
+
+Two layers, both landed:
+
+1. **Init-time normalization** — a small `resolveLocalTFSource(path
+   string) (string, error)` helper in `internal/cli/init.go` (placed
+   beside `looksLikeGitHubRepo`, the existing `--tf-source`
+   type-detection sibling), called at *both*
+   `config.TFSourceCfg{Type: "local", Path: …}` build sites
+   (`runUpgradeTF` ~line 209, `promptTFSource` ~line 265). Mirrors
+   `resolveVarFiles` conventions exactly: empty-input short-circuit,
+   `~`/`~/` expansion via `os.UserHomeDir` (the `install.go`
+   convention), absolute pass-through via `filepath.Clean`, relative
+   absolutized via `filepath.Abs`, error-wrapped
+   `resolve --tf-source %q: %w`.
+
+   The validator's draft used a hypothetical `isURLish(src)` guard.
+   That is unnecessary at these sites: the embedded/github forms are
+   already split off *upstream* (the `"embedded"` literal check and
+   `looksLikeGitHubRepo` in `promptTFSource`; the `--upgrade-tf`
+   branching in `runUpgradeTF`). By the time control reaches a
+   `Type: "local"` build site the value is unambiguously a local path,
+   so no URL/owner-repo input ever reaches the helper. No new
+   type-detection helper invented — the existing mechanism is reused.
+
+2. **`FetchSource` self-heal** — `internal/tf/fetch.go` `case "local"`
+   now `filepath.Abs`-normalizes a non-absolute `src.Path` before the
+   `os.Stat`/dir checks, so config.yaml files written *before* layer 1
+   self-heal on the next `up`/`plan`/`apply`. Idempotent: layer 1 pins
+   absolute for freshly-written configs, so this is a no-op for them.
+
+### Acceptance criteria
+
+- Relative `--tf-source` local path → persisted **absolute** in the
+  resulting `config.TFSourceCfg.Path`.
+- Absolute `--tf-source` local path → unchanged (cleaned).
+- github "owner/repo" / URL form → never routed through the helper (no
+  `filepath.Abs` applied); structurally untouched if it ever were.
+- Pre-existing relative config.yaml `local` Path → self-heals to
+  absolute at `FetchSource` time.
+- `go build ./...` clean; `go test ./internal/cli/... ./internal/tf/...`
+  green; `gofmt`/`go vet` clean.
+
+### Closure
+
+**Helper**: `internal/cli/init.go::resolveLocalTFSource(path string)
+(string, error)` — beside `looksLikeGitHubRepo`. Wired at both local
+build sites in `runUpgradeTF` and `promptTFSource`. **Self-heal**:
+`internal/tf/fetch.go` `FetchSource` `case "local"` absolutizes a
+relative `src.Path` (error-wrapping kept as the existing
+`local TF source %s: %w` form).
+
+**Tests** — all PASS:
+
+- `internal/cli/lifecycle_test.go` (same package/file as the
+  `resolveVarFiles` suite, keeping the `--tf-source` analogue beside
+  its `--var-file` sibling):
+  `TestResolveLocalTFSource_RelativeResolvedToAbs`,
+  `TestResolveLocalTFSource_AbsolutePassThrough`,
+  `TestResolveLocalTFSource_EmptyInput`,
+  `TestResolveLocalTFSource_GitHubFormUntouched`.
+- `internal/tf/fetch_test.go`:
+  `TestFetchSource_Local_RelativePathSelfHeals`.
+
+5 new tests, 5/5 PASS (`go test -run
+'ResolveLocalTFSource|FetchSource_Local_RelativePathSelfHeals'
+-count=1 -v ./internal/cli/ ./internal/tf/`). Full
+`go test ./internal/cli/... ./internal/tf/...` green; `go build ./...`,
+`gofmt -l`, `go vet` all clean.

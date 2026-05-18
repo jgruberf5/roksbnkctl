@@ -77,6 +77,8 @@ Exactly one variable is redacted: `ibmcloud_api_key`. It's the only var whose va
 ibmcloud_api_key = "<redacted>"  # source: cred resolver, not persisted
 ```
 
+For team-handoff scenarios (a teammate receives this file out-of-band and wants to re-create the workspace): replace the `<redacted>` value with the teammate's own API key, or simply remove the `ibmcloud_api_key` line so the [cred resolver](./14-credentials-resolver.md) supplies it from the teammate's own environment (keychain, shell env, `~/.bluemix/api_key`, etc.) at apply time. Every other line round-trips verbatim.
+
 The file mode is `0600` regardless. The non-redacted contents (workspace identifiers, region, resource group, cluster name, tunable values) aren't credential-grade secrets, but aren't world-readable-grade either. Tight permissions are the cheap default.
 
 ### What it's **not**
@@ -112,6 +114,8 @@ worker_count = 4
 # === from cluster-phase override ===
 deploy_bnk = false
 ```
+
+Re-applying from this snapshot alone reconstructs the inputs the user wrote; embedded Terraform module defaults are **not** captured (see [§"What it's **not**"](#what-its-not) above for the full list of what's out of scope).
 
 The header records the binary version and apply timestamp so the reader can correlate the snapshot to a specific `roksbnkctl` invocation. Alphabetic ordering within each section means re-running `apply` with identical inputs produces a byte-identical file (idempotency — handy for diffing snapshots across applies).
 

@@ -46,14 +46,29 @@ func FetchSource(ctx context.Context, src config.TFSourceCfg, baseDir string) (s
 		if src.Path == "" {
 			return "", fmt.Errorf("local TF source has empty path")
 		}
-		info, err := os.Stat(src.Path)
+		// Self-heal: a config.yaml written before the init-time
+		// normalization (internal/cli/init.go::resolveLocalTFSource)
+		// may carry a *relative* path. terraform-exec runs with
+		// CWD = per-phase state dir, so a relative source path would
+		// resolve there instead of where the user ran `init`. Absolutize
+		// here so legacy configs keep working; init.go already pins
+		// absolute for freshly-written ones, making this idempotent.
+		path := src.Path
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("local TF source %s: %w", path, err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
 		if err != nil {
-			return "", fmt.Errorf("local TF source %s: %w", src.Path, err)
+			return "", fmt.Errorf("local TF source %s: %w", path, err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("local TF source %s is not a directory", src.Path)
+			return "", fmt.Errorf("local TF source %s is not a directory", path)
 		}
-		return src.Path, nil
+		return path, nil
 
 	case "github":
 		if src.Repo == "" || src.Ref == "" {

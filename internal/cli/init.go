@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -26,6 +27,50 @@ var githubRepoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0
 // Anything else (paths, URLs, blank) is treated as a local path.
 func looksLikeGitHubRepo(s string) bool {
 	return githubRepoPattern.MatchString(strings.TrimSpace(s))
+}
+
+// resolveLocalTFSource normalizes a local-type --tf-source path to an
+// absolute path before it is pinned into config.yaml.
+//
+// Why this exists: a relative --tf-source (e.g. `./mytf`) is resolved by
+// `runInit` / `runUpgradeTF` against the *shell* CWD, but the path is
+// then persisted verbatim into config.yaml and later handed to terraform
+// via tf.FetchSource, whose effective CWD is the per-phase state dir
+// (`~/.roksbnkctl/<workspace>/state[-cluster]/`). That's the same
+// shell-CWD-vs-state-dir trap resolveVarFiles fixes for --var-file, but
+// worse: it survives into config.yaml and detonates on a *later*
+// up/plan/apply, not the same invocation. Pinning the absolute path at
+// init time keeps the source stable regardless of where later commands
+// run from.
+//
+// Only reached for the local TF source form — the embedded/github
+// branches (split off upstream via the "embedded" literal and
+// looksLikeGitHubRepo) never build a local Path, so there is no URL or
+// owner/repo input to guard against here. Mirrors resolveVarFiles:
+// `~`/`~/` expansion via os.UserHomeDir (the install.go convention),
+// absolute pass-through cleaned, relative joined against os.Getwd().
+func resolveLocalTFSource(path string) (string, error) {
+	if path == "" {
+		return path, nil
+	}
+	expanded := path
+	if expanded == "~" || strings.HasPrefix(expanded, "~/") {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			if expanded == "~" {
+				expanded = home
+			} else {
+				expanded = filepath.Join(home, expanded[2:])
+			}
+		}
+	}
+	if filepath.IsAbs(expanded) {
+		return filepath.Clean(expanded), nil
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", fmt.Errorf("resolve --tf-source %q: %w", path, err)
+	}
+	return abs, nil
 }
 
 // envHasAPIKey reports whether any of the env vars the resolution chain
@@ -197,8 +242,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 // reinstall) rather than --upgrade-tf.
 func runUpgradeTF(ctx context.Context, cctx *config.Context) error {
 	if flagTFSource != "" {
-		// Local-path override.
-		tfCfg := config.TFSourceCfg{Type: "local", Path: flagTFSource}
+		// Local-path override. Normalize to absolute before pinning into
+		// config.yaml so a relative path doesn't later resolve against
+		// the per-phase terraform state dir.
+		src, err := resolveLocalTFSource(flagTFSource)
+		if err != nil {
+			return err
+		}
+		tfCfg := config.TFSourceCfg{Type: "local", Path: src}
 		return saveTFSourceUpdate(cctx, tfCfg)
 	}
 	switch cctx.Workspace.TFSource.Type {
@@ -255,8 +306,15 @@ func saveTFSourceUpdate(cctx *config.Context, tfCfg config.TFSourceCfg) error {
 // CLI + TF together with no separate fetch step.
 func promptTFSource(ctx context.Context, cctx *config.Context) (config.TFSourceCfg, error) {
 	if flagTFSource != "" {
-		cfg := config.TFSourceCfg{Type: "local", Path: flagTFSource}
-		fmt.Fprintf(os.Stderr, "✓ TF source: local path %s\n", flagTFSource)
+		// Normalize to absolute before pinning into config.yaml so a
+		// relative path doesn't later resolve against the per-phase
+		// terraform state dir.
+		src, err := resolveLocalTFSource(flagTFSource)
+		if err != nil {
+			return config.TFSourceCfg{}, err
+		}
+		cfg := config.TFSourceCfg{Type: "local", Path: src}
+		fmt.Fprintf(os.Stderr, "✓ TF source: local path %s\n", src)
 		return cfg, nil
 	}
 

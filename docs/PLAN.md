@@ -847,6 +847,50 @@ None. Sprint 11 is a single-PRD cycle. Prior-sprint deferred items (chapter 14 �
 
 ---
 
+## Sprint 12 — relative-path resolution fixes (patch cycle, post-v1.4.0)
+
+### Theme
+
+Focused patch release (`v1.4.1`) closing **two sibling relative-path-resolution bugs** surfaced post-v1.4.0, both instances of the same shell-CWD-vs-state-dir trap: the headline `--var-file` fix and the analogous `--tf-source` local-path fix. No new PRDs; the design surfaces are `issues/issue_sprint12_staff.md` Issue 1 §"Root cause" + §"Proposed fix" (var-file) and `issues/issue_sprint12_validator.md` Issue 5 (tf-source).
+
+### Scope expansion — Issue 5 pulled forward from Sprint 13
+
+The cycle opened as a strict single-bug patch (the `--var-file` fix). The validator's analogous-gotcha sweep surfaced [`issues/issue_sprint12_validator.md` Issue 5](../issues/issue_sprint12_validator.md): a relative `--tf-source=./...` local path hits the *same* class of bug — it passes the `init`-time existence check (shell CWD) but is persisted relative into `config.yaml` and detonates on a *later* `up` / `plan` / `apply` run (terraform's CWD = per-phase state dir). It was originally filed as a Sprint 13 follow-up; the integrator decided to pull it into Sprint 12 so `v1.4.1` closes both siblings of the trap together rather than shipping a half-fix and revisiting the same code path one patch cycle later. Still patch-scope — a second small normalization mirroring the var-file helper, not a feature.
+
+### Drivers / why now
+
+- **`--var-file`** — user reported `Failed to read variables file. Given variables file ./terraform.tfvars does not exist.` on `roksbnkctl up --var-file=./terraform.tfvars --auto` invoked from a directory containing the named file — the exact flow surfaced as the out-of-band action in [validator Sprint 11 Issue 2](../issues/issue_sprint11_validator.md). Root cause: `flagVarFiles` values flow verbatim to a terraform invocation whose CWD is the per-phase state dir (`~/.roksbnkctl/<workspace>/state[-cluster]/`), not the shell PWD.
+- **`--tf-source`** — a relative local `--tf-source=./...` is persisted verbatim into `config.yaml` at `init` and later handed to terraform whose CWD is the per-phase state dir; the source directory then can't be found on the next lifecycle run. Same trap, but persisted across invocations rather than failing in-place — strictly worse user experience, so worth closing in the same patch.
+
+Small surface, high user-visible value — both fixes patch cleanly into `v1.4.1` without disturbing the v1.4.0 PRD 07 surface.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **`resolveVarFiles(vfs []string) ([]string, error)`** — small helper that walks the `--var-file` slice, joins relative entries against `os.Getwd()`, pre-flight `os.Stat`s the resolved path so the error message names both the user-supplied and resolved-absolute forms, and pass-throughs absolute entries via `filepath.Clean`. Called once per command at the top of each `RunE` that consumes `flagVarFiles` (the five sites named in `issues/issue_sprint12_staff.md` Issue 1 §"Files affected"). | `internal/cli/lifecycle.go`, `internal/cli/cluster_phase.go`, `internal/cli/bnk_phase.go` |
+| 2 | **Unit tests** — `lifecycle_test.go` table covering: absolute path pass-through (unchanged), relative path against CWD (joined + cleaned), missing-file error message (names both user-supplied + resolved path), and the `~`-expansion question (validator decides whether the project's existing convention already handles `~` or whether the helper needs explicit `os.UserHomeDir`-based expansion — staff records the decision in the test names). | `internal/cli/lifecycle_test.go` |
+| 3 | **`--tf-source` local-path normalization** (Issue 5, pulled forward from Sprint 13) — resolve a relative local `--tf-source` value to an absolute path before it is persisted into `config.yaml` at `init`, so a later `up` / `plan` / `apply` resolves it correctly regardless of invocation CWD. Mirrors the var-file fix's posture; absolute paths and the URL / GitHub source forms are pass-through. Exact placement and helper naming are staff's call (landing in parallel). | `internal/cli/` (init / lifecycle source-config path) |
+
+### Test deliverables
+
+- **Staff's unit-test trio** per code-deliverable 2.
+- **Validator's seven-step regression sweep** (build / vet / fmt / test / staticcheck / `-tags integration` build / `-tags integration` test against ephemeral kind) confirms no regression in the wider surface.
+- **Validator's pre-fix bug reproduction** against `main` at HEAD~1 confirming the symptom, plus post-fix confirmation that the same reproduce script succeeds.
+
+### Risks
+
+- **`~`-expansion semantics** — `filepath.Join(cwd, "~/foo.tfvars")` does NOT expand `~`; if the project's existing convention is to rely on the shell for expansion (which is the standard Go posture), the helper's behavior is correct as written. Staff verifies via `grep -rn '"~/' internal/cli/` and records the decision in the unit-test name.
+- **Other path-shaped flags with the same gotcha** — any flag whose value flows verbatim to a terraform invocation (e.g., `--backend-config=<path>` if `init` exposes it) is vulnerable to the same shell-CWD-vs-state-dir trap. Validator's regression sweep should surface any; out-of-scope flags get filed as architect-surface follow-ups for v1.4.2 / v1.5.
+
+### Gate to `v1.4.1` tag
+
+- Seven-step regression sweep green; both bugs (`--var-file`, `--tf-source`) reproduce against pre-fix `main`; both fixes make them pass.
+- All four agents' issue files at `Status: resolved`, `wontfix`, or `accepted` (validator Issue 5 moves from `open`/Sprint-13-deferred to `resolved` once staff's `--tf-source` fix lands).
+- CHANGELOG `v1.4.1` block final (two `### Fixed` bullets); PLAN.md §"Sprint 12" final; chapter 6 polish nudges land cleanly; `mdbook build book/` exit 0.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
