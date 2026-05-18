@@ -28,4 +28,16 @@
 
 ---
 
-_No issues filed yet — seeded at kickoff. The tech-writer agent fills this ledger during dispatch._
+## Issue 1 — drift sweep + launch verdict (light read-only cycle)
+
+`Status: resolved` — recorded by the integrator (light read-only tier; the tech-writer agent was not separately dispatched, consistent with the consolidation-tier dispatch in `prompts/sprint15/README.md`).
+
+**Drift sweep — clean.** Internal-only refactor; **no user-visible / doc / book surface**. The three surfaces that exist this cycle agree:
+
+- **CHANGELOG `v1.6.0` ↔ as-landed code:** `### Changed` = internal consolidation, explicitly "no user-visible behavior change" — true (behavior-parity gate: zero pre-existing test-file diffs, Sprint 14 harness byte-identical, full hermetic `go test -race ./...` green). `### Removed` reconciled to the as-landed disposition (scattered `localPathEnvKeys` deleted; `remoteSafeEnv`/`workspaceEnv[Core]` demoted to one-line delegators) — matches the code and architect Issue 2.
+- **CHANGELOG ↔ `docs/PLAN.md` §"Sprint 15":** consistent, including the integrator §"Scope decision" (deliverable 2 → phase-1a done / 1b→Sprint 16) and the Sprint 16 carry-over.
+- **No book/PRD surface** (correct for an internal consolidation) — nothing to drift.
+
+**Dogfooding:** N/A — zero user-facing change by design; the "no behavior change" claim is the gate itself and it passed.
+
+**Launch verdict: GREEN for `v1.6.0`** (no user-visible change; parity proven; all four ledgers terminal). Tag/version designation (`v1.6.0` vs `v1.5.1`) remains integrator-owned at cut.

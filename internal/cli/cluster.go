@@ -16,6 +16,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -575,113 +576,37 @@ func runPassthrough(cmd *cobra.Command, tool string, args []string) error {
 
 // ── helpers ─────────────────────────────────────────────────────────
 
-// workspaceEnv composes the env a child process should inherit when run
-// LOCALLY: host env + the machine-portable core (IBMCLOUD_API_KEY /
-// IC_API_KEY / IBMCLOUD_REGION / IBMCLOUD_VERSION_CHECK) + the local-only
-// addendum (KUBECONFIG, resolved from the host's lookup chain — v1
-// doesn't auto-fetch).
-//
-// IMPORTANT: this slice is correct for LOCAL exec only. KUBECONFIG is a
-// local filesystem path that is meaningless on an SSH target — forwarding
-// it across the --on boundary points remote kubectl/oc at a nonexistent
-// file and shadows the target's cloud-init kubeconfig (Sprint 13 Issue 1,
-// the "a path correct locally is wrong across a boundary" bug class).
-// Callers that cross the SSH boundary MUST use workspaceEnvCore() (or
-// pass through dispatchRemote, which sanitizes defensively). See
-// remoteSafeEnv / dispatchRemote.
-//
-// Returns the resolved Context too in case the caller wants to log
-// "loaded workspace foo" before exec'ing.
+// workspaceEnv / workspaceEnvCore / remoteSafeEnv are the cli-layer
+// thin wrappers over the single env-classification chokepoint in
+// internal/orchestration. They exist so the cobra adapter (and the
+// in-package tests that pin the core-vs-local-only split) call a stable
+// local symbol while the canonical composition + the one
+// LocalOnlyEnvKeys classification live in orchestration. They read the
+// resolved persistent --workspace flag and forward it; they add NO
+// logic of their own (the Sprint 13 Issue 1 boundary correctness is the
+// orchestration package's single ScrubLocalOnly classification).
+
+// workspaceEnv composes the LOCAL-exec env (machine-portable core +
+// the local-only KUBECONFIG addendum). KUBECONFIG is a host filesystem
+// path that is meaningless on an SSH target — callers crossing the --on
+// boundary MUST use workspaceEnvCore().
 func workspaceEnv() (*config.Context, []string, error) {
-	cctx, core, err := workspaceEnvCore()
-	if err != nil {
-		return nil, nil, err
-	}
-	env := core
-	// Local-only addendum: KUBECONFIG is a host filesystem path. Never
-	// forward this across an SSH boundary (see doc comment above).
-	if path := k8s.DefaultKubeconfigPath(); path != "" {
-		env = append(env, "KUBECONFIG="+path)
-	}
-	return cctx, env, nil
+	return orchestration.WorkspaceEnv(flagWorkspace)
 }
 
-// workspaceEnvCore composes the machine-portable subset of the workspace
-// env — values, not local filesystem paths: IBMCLOUD_API_KEY /
-// IC_API_KEY / IBMCLOUD_REGION / IBMCLOUD_VERSION_CHECK, on top of the
-// host env. This is the ONLY workspace-derived env that is safe to cross
-// the --on SSH boundary; it deliberately omits KUBECONFIG (a local path).
-//
-// Callers that dispatch remotely (dispatchRemote) source this; callers
-// that exec locally use workspaceEnv() which adds the KUBECONFIG
-// addendum on top.
+// workspaceEnvCore composes the machine-portable subset that is the
+// ONLY workspace-derived env safe to cross the --on SSH boundary; it
+// deliberately omits KUBECONFIG (a local path), including any inherited
+// from the shell (Sprint 13 Issue 1).
 func workspaceEnvCore() (*config.Context, []string, error) {
-	cctx, err := config.New(flagWorkspace)
-	if err != nil {
-		return nil, nil, err
-	}
-	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
-	}
-
-	resolver := &cred.Resolver{
-		Workspace: cctx.WorkspaceName,
-		Source:    cctx.Workspace.IBMCloud.APIKeySource,
-	}
-	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolving API key: %w", err)
-	}
-
-	// Start from the host env MINUS any local-path-valued var. os.Environ()
-	// can already carry a KUBECONFIG the user exported in their shell;
-	// inheriting it here would re-leak a local path across the --on
-	// boundary even though workspaceEnvCore() never *appends* one
-	// (Sprint 13 Issue 1 — correctness is "never send a local path",
-	// which includes inherited ones, not just the workspaceEnv() addendum).
-	env := remoteSafeEnv(os.Environ())
-	env = append(env, "IBMCLOUD_API_KEY="+apiKey)
-	env = append(env, "IC_API_KEY="+apiKey)
-	if r := cctx.Workspace.IBMCloud.Region; r != "" {
-		env = append(env, "IBMCLOUD_REGION="+r)
-	}
-	// Silence the "New plug-in version available" / "TIP: --check-version"
-	// banner the ibmcloud CLI prints on every invocation. It's noise the
-	// user can't act on inside the roksbnkctl flow.
-	env = append(env, "IBMCLOUD_VERSION_CHECK=false")
-	return cctx, env, nil
+	return orchestration.WorkspaceEnvCore(flagWorkspace)
 }
 
-// localPathEnvKeys is the set of workspace-emitted env vars whose VALUE
-// is a local filesystem path — meaningless (and harmful) on an SSH
-// target. dispatchRemote scrubs these as a defense-in-depth backstop so
-// a future caller that forgets to use workspaceEnvCore() can't
-// reintroduce the Sprint 13 Issue 1 leak. KUBECONFIG is the only such
-// var workspaceEnv currently emits; extend this set if more are added.
-var localPathEnvKeys = map[string]struct{}{
-	"KUBECONFIG": {},
-}
-
-// remoteSafeEnv returns a copy of env with every local-path-valued var
-// (localPathEnvKeys) removed. Correctness of the --on path comes from
-// NEVER sending a local path across the boundary — not from hoping the
-// target sshd's AcceptEnv drops it. Applied inside dispatchRemote so all
-// call sites are covered regardless of which env constructor they used.
+// remoteSafeEnv strips every local-path-valued var (the single
+// orchestration.LocalOnlyEnvKeys classification) from env. It is the
+// one boundary assertion applied at the SSH wire in dispatchRemote.
 func remoteSafeEnv(env []string) []string {
-	if len(env) == 0 {
-		return env
-	}
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		idx := strings.IndexByte(kv, '=')
-		if idx > 0 {
-			if _, bad := localPathEnvKeys[kv[:idx]]; bad {
-				continue
-			}
-		}
-		out = append(out, kv)
-	}
-	return out
+	return orchestration.ScrubLocalOnly(env)
 }
 
 // runWithEnv runs bin with args + env, wired to the host's stdin/out/err,
