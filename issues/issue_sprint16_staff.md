@@ -267,8 +267,10 @@ without completing this handoff).
 ## Issue 2 (round 2) — corrected phase-architecture fix
 
 **Severity**: high
-**Status**: open — pending the integrator's fresh live `!` verify
-(closure stays gated on it; hermetic GREEN is proven insufficient for
+**Status**: resolved — live `!` verify GREEN run-id `20260519-202202`
+(cluster phase `72 added`; bnk phase `60 added`; A1–A4 ✓; two-phase
+teardown ✓; canada-* residue: 0). Shipped as `v1.6.2`. Hermetic GREEN
+proven insufficient for
 this issue — round 1 was hermetic-GREEN and live-RED).
 
 **Why round 1 was wrong.** The live `!` verify (run-id

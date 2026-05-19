@@ -30,7 +30,7 @@
 ## Issue 2 — `up` second phase recreates cluster VPC / transit gateway / client VPC → IBM Cloud duplicate-name failure (phase handoff incomplete)
 
 **Severity**: high
-**Status**: open
+**Status**: resolved (round-2 fix `0db0ad6`; live-verified GREEN run-id `20260519-202202`; see §"Issue 2 — live `!` verify result: GREEN — RESOLVED" below)
 
 **Description.** Live `roksbnkctl up` on the `canada-roks` workspace
 (2026-05-19, IBM provider 1.89.0) failed at the end with:
@@ -108,7 +108,7 @@ design blind to this); memory `live-verify-high-issues`.
 
 ### Issue 2 — validator closure (Sprint 16 follow-up dispatch)
 
-`Status: open — pending live \`!\` verify`
+`Status: superseded — round-1 fix proven RED by live verify (run-id 20260519-181511); round-2 GREEN closure is the authoritative one (below)`
 
 Per README decision 3 and the `live-verify-high-issues` memory, a `high`
 issue cannot be closed on unit/hermetic tests alone. The validator
@@ -180,8 +180,8 @@ real account and only then flips Issue 2 to `resolved`.
 
 ### Issue 2 — live `!` verify result: **RED — reopened & expanded** (2026-05-19)
 
-`Status: open (reopened — first fix attempt necessary-but-insufficient;
-high)`
+`Status: superseded — round-2 fix shipped & live-verified GREEN; see
+§"Issue 2 — live \`!\` verify result: GREEN — RESOLVED" below`
 
 The integrator ran the live driver against a real account. **Run-id
 `20260519-181511` came back RED.** The hermetic-GREEN first fix
