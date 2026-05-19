@@ -261,3 +261,148 @@ regression `internal/tf/secondphase_handoff_test.go` + operator-run
 `scripts/e2e-phase-handoff.sh`. Correlates with staff Issue 1
 (phase-1b lifecycle/cluster split — the boundary was introduced
 without completing this handoff).
+
+---
+
+## Issue 2 (round 2) — corrected phase-architecture fix
+
+**Severity**: high
+**Status**: open — pending the integrator's fresh live `!` verify
+(closure stays gated on it; hermetic GREEN is proven insufficient for
+this issue — round 1 was hermetic-GREEN and live-RED).
+
+**Why round 1 was wrong.** The live `!` verify (run-id
+`20260519-181511`) proved the per-resource-toggle model
+(`use_existing_cluster_vpc` / `create_roks_transit_gateway=false` /
+`testing_create_client_vpc=false`) necessary-but-insufficient: VPC
+reuse worked but the second/bnk phase still re-created the cluster
+subnets, cluster public gateways, transit gateway, client VPC, jumphost
+subnets, and jumphost SG. Root cause is architectural: `up` runs the
+**same root terraform** across two independent states; the cluster
+phase forces `deploy_bnk=false` (via `cluster-phase-override.tfvars`)
+and builds the entire cluster-shared network, but the second phase runs
+the same root with `deploy_bnk=true` while `create_roks_cluster` + the
+`testing_create_*` toggles are still on — so it re-plans every
+cluster-shared resource against its own state. Chasing per-resource
+flags across two modules is the wrong model.
+
+**Chosen design — symmetric forced phase-override (lowest risk).**
+Mirror the existing, live-proven `cluster-phase-override.tfvars`
+mechanism. Just as the cluster phase has a forced override that turns
+the bnk-layer OFF, the second/bnk phase now writes a forced
+`bnk-phase-override.tfvars` (appended LAST to the plan/apply var-file
+chain, winning over config.yaml tfvars + `terraform.tfvars.user`) —
+ONLY when the workspace already has a `cluster-outputs.json` — that
+turns ALL cluster-shared CREATE off:
+
+```
+create_roks_cluster              = false   # → existing-cluster data lookup; 0 subnet/PGW/cluster creates; cluster_ready count→0
+roks_cluster_id_or_name          = "<cluster-outputs.json id|name>"
+use_existing_cluster_vpc         = true    # ibm_is_vpc.cluster_vpc count→0 (NOT gated by create_cluster) — the one round-1 piece still needed
+existing_cluster_vpc_id          = "<cluster-outputs.json vpc_id>"
+create_roks_transit_gateway      = false   # ibm_tg_gateway count→0
+testing_create_cluster_jumphosts = false   # no cluster-jumphost subnets/SG
+testing_create_tgw_jumphost      = false   # no jumphost subnet/SG/instance
+testing_create_client_vpc        = false   # no client VPC
+```
+
+Net: the second/bnk-phase plan contains the bnk-layer modules
+(`cert_manager`/`flo`/`cne_instance`/`license`) + existing-cluster
+**data** lookups only — **no** `module.roks_cluster` /
+`module.testing` cluster-shared **create** at all. The second phase no
+longer *manages* cluster-shared infra; it is not toggle whack-a-mole.
+
+**Options rejected.** (a) More per-resource "use existing" toggles —
+the disproven round-1 model; the live RED shows two of three toggles
+didn't even suppress their resources and the subnets/PGWs/jumphost
+subnets/SG had no toggle at all. (b) Single shared state across both
+phases — large, invasive change to the state-dir split + shape
+detection (`state-cluster/` vs `state/`, `DetectShape`), high
+regression surface on `cluster`/`bnk` sub-flows; rejected as
+disproportionate. (c) `terraform -target` the bnk modules — fragile,
+target sets drift with the module graph, terraform discourages it for
+routine flows. The forced-override mirrors a mechanism already proven
+live in this exact codebase (cluster phase) — smallest blast radius,
+no new terraform design.
+
+**Static dataflow trace.** Fresh `up` → `RunUp` (Empty/Split) →
+`in.RunClusterUp` runs the cluster phase with
+`cluster-phase-override.tfvars` (`deploy_bnk=false`) → creates the
+cluster + cluster-shared network in `state-cluster/`, writes
+`cluster-outputs.json` (`cluster_id`/`vpc_id`) → `RunTrialUp` →
+`writeAndInitSecondPhase` reads `cluster-outputs.json` (via
+`config.ReadClusterOutputs`, no `internal/cli` import) → since
+`co.VPCID != ""`, writes `state/bnk-phase-override.tfvars` with the
+block above and returns its path → appended to `varFiles` for
+`tfws.Plan`/`applyWithRetry` → root `module.roks_cluster`:
+`create_roks_cluster=false` → `data.ibm_container_vpc_cluster.existing_cluster`
+count=1, all `var.create_cluster?1:0` resources count=0,
+`null_resource.cluster_ready` count=0; `use_existing_cluster_vpc=true`
+→ `ibm_is_vpc.cluster_vpc` count=0,
+`data.ibm_is_vpc.existing_cluster_vpc` count=1;
+`create_roks_transit_gateway=false` → `ibm_tg_gateway.transit_gateway`
+count=0 → root `module.testing`: all three `testing_create_*` false →
+`ibm_is_vpc.client_vpc` / `ibm_is_subnet.*jumphost*` /
+`ibm_is_security_group.*jumphost*` count=0/for_each={} → second-phase
+plan = bnk-layer + data lookups only → **zero duplicate-name
+collisions**. No `cluster-outputs.json` (fresh / legacy single-state /
+cluster-only) → `extraVF` nil → byte-identical to the prior create
+path (validator Issue 1 parity gate unaffected; `cluster`/`bnk`
+sub-flows unchanged).
+
+**Files changed.**
+- `internal/orchestration/second_phase_reuse.go` — rewritten: removed
+  the round-1 per-toggle preamble; `writeAndInitSecondPhase` now
+  renders the unchanged create-path tfvars, then (only when
+  `cluster-outputs.json` with a `vpc_id` exists) writes
+  `bnk-phase-override.tfvars` and returns its path;
+  `writeBnkPhaseOverride[At]` + `clusterIdentity` helpers.
+- `internal/orchestration/lifecycle.go` — `RunTrialUp` / `RunApply`
+  consume the returned extra var-file and append it to the
+  plan/apply chain.
+- `internal/orchestration/second_phase_reuse_test.go` — NEW additive
+  regression (no pre-existing `_test.go` edited): asserts the override
+  forces every cluster-shared create off and that a workspace without
+  `cluster-outputs.json` gets no override.
+- `scripts/e2e-phase-handoff.sh` — **Task B / Issue 4** (own only
+  `teardown()` + new `down_phase`/`residual_check` helpers per the
+  coordination note): `teardown()` now runs `roksbnkctl down` (trial)
+  THEN `roksbnkctl cluster down` (cluster phase), each tolerating a
+  clean no-op, then a loud post-teardown residual assertion that no
+  `canada-*` VPC / `canada-roks-tgw` / `canada-roks` cluster remains.
+  This stops the verify loop from stranding a billing ROKS cluster.
+
+**Round-1 plumbing kept.** The terraform vars
+`use_existing_cluster_vpc` / `existing_cluster_vpc_id` and the
+submodule `data.ibm_is_vpc.existing_cluster_vpc` are RETAINED — they
+are exactly how the override flips the cluster-VPC create off (count
+not gated by `create_cluster`), and the unused round-1 renderer
+`tf.RenderTFVarsWithClusterOutputs` is left in place so the round-1
+hermetic test `internal/tf/secondphase_handoff_test.go` (added in
+`27f7a02`, post-`v1.6.0`) stays green & unedited per the parity
+guardrail. No terraform module wiring was removed.
+
+**Coordination note for the integrator/validator.**
+`scripts/e2e-phase-handoff.sh` assertion **A3** (in `main()`, which I
+did NOT touch per the coordination note — validator-owned) still
+greps `state/terraform.tfvars` for `use_existing_cluster_vpc = true`.
+Under the corrected design that toggle now lives in
+`state/bnk-phase-override.tfvars`, not `state/terraform.tfvars`, so A3
+will need re-pointing (to the override file, or to assert
+`create_roks_cluster = false` in the override) before the live verify.
+Flagging, not fixing — A3 is outside `teardown()`.
+
+**Verification.** `go build ./...` clean; `go vet ./...` clean;
+`gofmt -l internal/` → 0; `go test ./...` → all 14 packages `ok`
+(incl. `internal/orchestration` with the new regression and
+`internal/tf` with the retained round-1 test). `go test` was **NOT**
+sandbox-denied in this session. `bash -n scripts/e2e-phase-handoff.sh`
+clean; `DRY_RUN=1` run shows teardown declaring both phase-downs + the
+residual check and exits 0 with no cloud calls. **Closure stays gated
+on the integrator's fresh live `!` verify** (not hermetic GREEN). Did
+**not** commit; did **not** tag (`v1.6.2` was reverted).
+
+**Related**: validator Issue 2 §"live `!` verify result: RED —
+reopened & expanded" + Issue 4 (e2e-driver teardown);
+`prompts/sprint16/followup2-issue2-staff.md`; round-1 commit
+`27f7a02`; memory `live-verify-high-issues`.

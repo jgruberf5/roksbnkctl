@@ -67,3 +67,40 @@ expanded and staff re-dispatched for the corrected (not-per-toggle)
 fix. See `issues/issue_sprint16_validator.md` §"Issue 2 — live `!`
 verify result: RED — reopened & expanded" and new Issue 4
 (e2e-driver teardown strands the cluster phase).
+
+---
+
+## 2026-05-19 — Issue 2 round-2 fix INTEGRATED (closure still gated on fresh live `!` verify)
+
+Staff round-2 (`prompts/sprint16/followup2-issue2-staff.md`) delivered
+the corrected, not-per-toggle architecture: `writeAndInitSecondPhase`
+now writes a forced `state/bnk-phase-override.tfvars` (only when
+`cluster-outputs.json` exists) — `create_roks_cluster=false` +
+`roks_cluster_id_or_name` + `use_existing_cluster_vpc=true` +
+`existing_cluster_vpc_id` + `create_roks_transit_gateway=false` + all
+three `testing_create_*=false` — appended LAST to the plan/apply
+var-file chain (`RunTrialUp`/`RunApply`). Symmetric with the
+already-proven `cluster-phase-override.tfvars`. The second/bnk phase no
+longer manages the cluster-shared network at all; no
+cluster-outputs.json → nil → fresh/legacy path byte-identical (round-1
+hermetic test stays green & unedited). Task B done: driver `teardown()`
+now runs trial `down` THEN `cluster down` + a loud `canada-*` residual
+assertion (Issue 4).
+
+**Integrator actions.** Repointed driver assertion **A3**
+(validator-owned, staff correctly did not touch) from
+`state/terraform.tfvars` → `state/bnk-phase-override.tfvars`, now also
+asserting `create_roks_cluster = false` (the real architectural
+guarantee, not just the VPC toggle).
+
+**Gates (integrator-run, NOT sandbox-denied):** `go build`/`vet` clean;
+`gofmt -l internal/` empty; `internal/orchestration` ⊄ `internal/cli`;
+`go test -race ./...` all packages `ok`; zero pre-existing `_test.go`
+diffs (only the new additive `second_phase_reuse_test.go`);
+`bash -n` clean; `DRY_RUN=1` driver shows A3 + the two-phase teardown +
+residual check, exits 0, no key leak.
+
+**Status: round-2 fix integrated; Issue 2 + Issue 4 remain `open`.**
+Per `live-verify-high-issues`, closure (and any version tag) is gated
+on a FRESH live `!` re-run of `scripts/e2e-phase-handoff.sh` — hermetic
+GREEN is proven insufficient for this issue (round-1 precedent).

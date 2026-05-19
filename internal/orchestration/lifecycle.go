@@ -158,18 +158,22 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	// Second-phase preamble: renders tfvars with the existing-resource
-	// reuse toggles when this workspace already has a cluster-outputs.json
-	// (the cluster phase created the cluster VPC / transit gateway /
-	// client VPC). Byte-identical to writeAndInit when there is no
-	// cluster-outputs.json, so a first-phase / fresh workspace run is
-	// unchanged (Issue 2 — phase handoff).
-	if err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace); err != nil {
+	// Second-phase preamble: renders tfvars and, when this workspace
+	// already has a cluster-outputs.json (the cluster phase created the
+	// entire cluster-shared network), writes a forced bnk-phase override
+	// that turns ALL cluster-shared creation OFF and returns its path so
+	// it is appended to the plan/apply var-file chain. No
+	// cluster-outputs.json → extraVF is nil and the run is byte-identical
+	// to the create path (fresh/legacy single-state unchanged) — Issue 2
+	// round 2, symmetric with cluster-phase-override.tfvars.
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace)
+	if err != nil {
 		return err
 	}
+	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 
 	fmt.Fprintln(os.Stderr, "→ terraform plan")
-	changes, err := tfws.Plan(ctx, in.VarFiles...)
+	changes, err := tfws.Plan(ctx, varFiles...)
 	if err != nil {
 		return err
 	}
@@ -190,7 +194,7 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
-	if err := applyWithRetry(ctx, tfws, in.VarFiles); err != nil {
+	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
 		return err
 	}
 	tryAutoKubeconfig(ctx, in, cctx, tfws)
@@ -234,13 +238,16 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	// Second-phase preamble (Issue 2 — phase handoff). See RunTrialUp.
-	// Byte-identical to writeAndInit when there is no cluster-outputs.json.
-	if err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace); err != nil {
+	// Second-phase preamble (Issue 2 round 2 — phase handoff). See
+	// RunTrialUp. extraVF is nil (byte-identical to the create path)
+	// when there is no cluster-outputs.json.
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace)
+	if err != nil {
 		return err
 	}
+	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
-	if err := applyWithRetry(ctx, tfws, in.VarFiles); err != nil {
+	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
 		return err
 	}
 	tryAutoKubeconfig(ctx, in, cctx, tfws)

@@ -105,24 +105,95 @@ fail() {
 # transit gateway billing for hours. We always attempt `down`; we do
 # not let its exit status mask the real failure.
 TORN_DOWN=0
+
+# down_phase runs one phase-down verb and tolerates a clean no-op
+# (nothing-to-destroy / no-such-state) so a partially-applied or
+# already-clean workspace does not look like a teardown failure. Real
+# destroy failures (live infra not removed) return non-zero. $1 = human
+# label; $2... = the roksbnkctl verb + args.
+down_phase() {
+    local label=$1; shift
+    log "→ teardown: $label — $* --auto -w $WORKSPACE --var-file <tfvars>"
+    local out rc
+    out=$("$@" --auto -w "$WORKSPACE" --var-file "$TFVARS" 2>&1); rc=$?
+    printf '%s\n' "$out" >> "$RUN_LOG"
+    if [[ $rc -eq 0 ]]; then
+        green "  ✓ $label: destroyed (or already clean)"
+        return 0
+    fi
+    # A phase with nothing to tear down is expected on a run that failed
+    # before that phase applied — treat as a no-op, not a failure.
+    if grep -qiE 'nothing to destroy|no .*state|not initialised|no BNK trial state' <<<"$out"; then
+        yellow "  • $label: no-op (nothing provisioned for this phase)"
+        return 0
+    fi
+    red "  ✗ $label: destroy FAILED — infra for this phase MAY still be live."
+    return 1
+}
+
+# residual_check fails LOUDLY if any canada-* VPC / canada-roks-tgw /
+# canada-roks cluster is still present after both phase-downs, so a
+# silent strand can never masquerade as a clean teardown. Best-effort:
+# if the IBM CLI is unavailable we say so rather than green-lighting.
+residual_check() {
+    if ! command -v ibmcloud >/dev/null 2>&1; then
+        yellow "  • residual check skipped: ibmcloud CLI not on PATH — verify the"
+        yellow "    account by hand for leftover canada-* VPC / canada-roks-tgw / canada-roks."
+        return 0
+    fi
+    local leftover=0
+    if ibmcloud is vpcs --output json 2>/dev/null | grep -qE '"name": *"canada-[^"]*"'; then
+        red "  ✗ residual: a canada-* VPC still exists"
+        leftover=1
+    fi
+    if ibmcloud tg gateways 2>/dev/null | grep -q 'canada-roks-tgw'; then
+        red "  ✗ residual: transit gateway canada-roks-tgw still exists"
+        leftover=1
+    fi
+    if ibmcloud oc cluster ls 2>/dev/null | grep -q 'canada-roks'; then
+        red "  ✗ residual: ROKS cluster canada-roks still exists"
+        leftover=1
+    fi
+    if [[ $leftover -ne 0 ]]; then
+        red "  ✗ RESIDUAL INFRA DETECTED — destroy did not fully complete."
+        red "  Inspect the IBM Cloud console and remove leftover canada-* VPC /"
+        red "  canada-roks-tgw / canada-roks cluster manually."
+        return 1
+    fi
+    green "  ✓ residual check: no canada-* VPC / canada-roks-tgw / canada-roks cluster remains"
+    return 0
+}
+
 teardown() {
     local prev_rc=$?
     [[ "$TORN_DOWN" == "1" ]] && return
     TORN_DOWN=1
     if [[ "$DRY_RUN" == "1" ]]; then
-        log "→ teardown (dry-run): $ROKSBNKCTL down --auto -w $WORKSPACE --var-file $TFVARS"
+        log "→ teardown (dry-run): $ROKSBNKCTL down (trial phase) THEN $ROKSBNKCTL cluster down (cluster phase), then a canada-* residual check"
         return
     fi
     echo "" >&2
     bold "════════════════════════════════════════════════════════════"
-    yellow "TEARDOWN — destroying workspace $WORKSPACE so no billable infra is stranded"
+    yellow "TEARDOWN — destroying BOTH phases of workspace $WORKSPACE so no billable infra is stranded"
     bold "════════════════════════════════════════════════════════════"
-    if "$ROKSBNKCTL" down --auto -w "$WORKSPACE" --var-file "$TFVARS" 2>&1 | tee -a "$RUN_LOG"; then
-        green "  ✓ teardown complete"
+    # `roksbnkctl down` destroys only the trial/bnk phase (state/). The
+    # cluster phase (state-cluster/: the ROKS cluster, both VPCs, the
+    # transit gateway — the bulk of the billing) is a SEPARATE
+    # `roksbnkctl cluster down`. The Issue 2 verify loop progresses past
+    # the cluster phase, so without the second down a failed run strands
+    # a running ROKS cluster + networking (Issue 4). Tear down in reverse
+    # creation order: trial first, then cluster.
+    local td_rc=0
+    down_phase "trial/bnk phase down" "$ROKSBNKCTL" down            || td_rc=1
+    down_phase "cluster phase down"   "$ROKSBNKCTL" cluster down     || td_rc=1
+    residual_check                                                   || td_rc=1
+    if [[ $td_rc -eq 0 ]]; then
+        green "  ✓ teardown complete — both phases destroyed, no canada-* residue"
     else
-        red "  ✗ TEARDOWN FAILED — infra MAY still be live."
+        red "  ✗ TEARDOWN INCOMPLETE — infra MAY still be live."
         red "  Manually run:  $ROKSBNKCTL down --auto -w $WORKSPACE --var-file $TFVARS"
-        red "  and/or check the IBM Cloud console for a leftover ROKS cluster /"
+        red "             and: $ROKSBNKCTL cluster down --auto -w $WORKSPACE --var-file $TFVARS"
+        red "  then check the IBM Cloud console for a leftover ROKS cluster /"
         red "  transit gateway / client VPC in this account."
     fi
     if [[ "$prev_rc" != "0" ]]; then
@@ -156,6 +227,7 @@ WS_DIR="$HOME/.roksbnkctl/$WORKSPACE"
 CLUSTER_STATE="$WS_DIR/state-cluster/terraform.tfstate"   # cluster phase
 SECOND_STATE="$WS_DIR/state/terraform.tfstate"            # bnk/testing phase
 SECOND_TFVARS="$WS_DIR/state/terraform.tfvars"            # rendered 2nd-phase tfvars
+SECOND_OVERRIDE="$WS_DIR/state/bnk-phase-override.tfvars" # forced 2nd-phase override (Issue 2 round-2)
 CLUSTER_OUTPUTS="$WS_DIR/cluster-outputs.json"
 
 # ── the reproduction ────────────────────────────────────────────────
@@ -188,7 +260,7 @@ main() {
     if [[ "$DRY_RUN" == "1" ]]; then
         log "→ A1 cluster phase tracked the VPC/TG: grep ibm_is_vpc.cluster_vpc in $CLUSTER_STATE"
         log "→ A2 second-phase state does NOT manage a duplicate cluster_vpc/transit_gateway/client_vpc: $SECOND_STATE"
-        log "→ A3 rendered second-phase tfvars carries use_existing_cluster_vpc = true: $SECOND_TFVARS"
+        log "→ A3 forced bnk-phase override turns cluster-shared creation OFF (create_roks_cluster=false + use_existing_cluster_vpc=true): $SECOND_OVERRIDE"
         log "→ A4 run log free of 'not unique' / 'already exists'"
         green "DRY-RUN complete — steps rendered, no cloud calls, no key printed."
         return 0
@@ -235,12 +307,18 @@ main() {
     done
     green "  ✓ A2 second-phase state reuses (no managed duplicate cluster_vpc / transit_gateway / client_vpc)"
 
-    # A3 — the rendered second-phase tfvars must carry the reuse toggle.
-    [[ -f "$SECOND_TFVARS" ]] || fail "A3 rendered second-phase tfvars missing: $SECOND_TFVARS"
-    if ! grep -q 'use_existing_cluster_vpc[[:space:]]*=[[:space:]]*true' "$SECOND_TFVARS"; then
-        fail "A3 second-phase terraform.tfvars missing use_existing_cluster_vpc = true — handoff toggle not wired"
+    # A3 — the forced bnk-phase override must exist and turn cluster-shared
+    # creation OFF. Round-2 architecture: the second phase no longer manages
+    # cluster-shared infra at all (create_roks_cluster=false), so the toggle
+    # now lives in bnk-phase-override.tfvars, not the rendered terraform.tfvars.
+    [[ -f "$SECOND_OVERRIDE" ]] || fail "A3 forced bnk-phase override missing: $SECOND_OVERRIDE (handoff not wired)"
+    if ! grep -q 'create_roks_cluster[[:space:]]*=[[:space:]]*false' "$SECOND_OVERRIDE"; then
+        fail "A3 bnk-phase-override.tfvars missing create_roks_cluster = false — 2nd phase still manages the cluster-shared network"
     fi
-    green "  ✓ A3 second-phase tfvars carries use_existing_cluster_vpc = true"
+    if ! grep -q 'use_existing_cluster_vpc[[:space:]]*=[[:space:]]*true' "$SECOND_OVERRIDE"; then
+        fail "A3 bnk-phase-override.tfvars missing use_existing_cluster_vpc = true — handoff toggle not wired"
+    fi
+    green "  ✓ A3 bnk-phase override turns cluster-shared creation off (create_roks_cluster=false + use_existing_cluster_vpc=true)"
 
     # A4 — the run log must be free of the IBM Cloud duplicate-name
     # rejections that are Issue 2's fingerprint.
