@@ -39,7 +39,7 @@
 ### Finding 1 — CHANGELOG/PLAN cross-link uses a section label, not a resolvable anchor
 
 **Severity**: low (cosmetic / pre-existing house convention)
-**Status: open**
+**Status: accepted** — matches the established CHANGELOG linking convention across all prior entries; not drift. Closed without doc change per `resolved_sprint16_tech-writer.md`.
 **Description.** The new `v1.6.2` CHANGELOG block and the PLAN follow-up
 note both link "PLAN.md §"Sprint 16"" / Issue 2 as bare file links
 (`docs/PLAN.md`, `issues/issue_sprint16_validator.md`,
@@ -60,7 +60,7 @@ repo-wide; out of scope here.
 
 **Severity**: low (doc-precision; the code behavior is correct and the
 Go doc-comment already explains it)
-**Status: open**
+**Status: accepted** — the authoritative Go doc-comment (`tf.RenderTFVarsWithClusterOutputs`, retained at `0db0ad6`) and the Issue 2 closure precisely explain the TG handling; CHANGELOG intentionally user-facing (no module-internal detail). Closed without doc change per `resolved_sprint16_tech-writer.md`.
 **Description.** The CHANGELOG bullet says the second phase "reuses the
 already-created cluster VPC, transit gateway, and client VPC" and lists
 `use_existing_cluster_vpc` + `existing_cluster_vpc_id` +

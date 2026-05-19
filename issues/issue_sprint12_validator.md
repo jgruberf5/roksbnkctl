@@ -44,7 +44,7 @@ normalization is additive and idempotent; no existing suite moved.
 ## Issue 2: Bug reproduce + fix verification
 
 **Severity**: high (headline)
-**Status**: resolved (in-tree test surface), open (out-of-band live verify — user)
+**Status**: resolved — out-of-band live `--var-file` verify implicitly satisfied many times since (every Sprint 13/14/15/16 live verify used `--var-file ./terraform.tfvars` successfully, most recently the `v1.6.2` Issue 2 live verify run-id `20260519-202202`)
 
 ### Pre-fix sanity
 
