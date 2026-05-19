@@ -178,6 +178,101 @@ run the live driver (real spend; integrator/operator-owned) and did
 verify`.** The integrator runs `scripts/e2e-phase-handoff.sh` against a
 real account and only then flips Issue 2 to `resolved`.
 
+### Issue 2 — live `!` verify result: **RED — reopened & expanded** (2026-05-19)
+
+`Status: open (reopened — first fix attempt necessary-but-insufficient;
+high)`
+
+The integrator ran the live driver against a real account. **Run-id
+`20260519-181511` came back RED.** The hermetic-GREEN first fix
+(`27f7a02`) is broken in practice — exactly what the
+`live-verify-high-issues` gate exists to catch.
+
+**What the live run proved.** The cluster phase fully succeeded
+(`Apply complete! Resources: 72 added`). The fix's Go path fired
+(`→ Second-phase handoff: reusing cluster-phase VPC r038-ef6305af… +
+transit gateway + client VPC (cluster-outputs.json)`). The VPC-reuse
+part worked — `module.roks_cluster.module.cluster.ibm_is_vpc.cluster_vpc[0]`
+is **absent** from the second-phase failure set. **But the second-phase
+apply still failed**, re-creating everything the handoff model does not
+cover:
+
+| Re-created by 2nd phase → "is not unique" / "already exists" | Covered by `27f7a02`? |
+|---|---|
+| `…cluster.ibm_is_subnet.cluster_subnet_zone{1,2,3}` | ❌ not gated by any toggle |
+| `…cluster.ibm_is_public_gateway.cluster_gateway_zone{1,2,3}` | ❌ not gated |
+| `…cluster.ibm_tg_gateway.transit_gateway[0]` | ⚠️ `create_roks_transit_gateway=false` did **not** suppress it |
+| `module.testing.ibm_is_vpc.client_vpc[0]` | ⚠️ `testing_create_client_vpc=false` did **not** suppress it |
+| `module.testing.ibm_is_subnet.cluster_jumphost_subnet["ca-tor-{1,2,3}"]` | ❌ never in scope |
+| `module.testing.ibm_is_security_group.cluster_jumphost_sg[0]` | ❌ never in scope |
+
+**Corrected root cause / scope.** Issue 2's original analysis
+under-scoped the defect. The second/bnk phase does not merely duplicate
+the cluster *VPC* — it re-runs the **entire cluster-shared network**
+(cluster subnets + cluster public gateways + transit gateway +
+`module.testing` client VPC + jumphost subnets + jumphost SG) against
+its own state. Per-resource "use existing" toggles are the wrong model:
+`use_existing_cluster_vpc` only suppresses `ibm_is_vpc.cluster_vpc`;
+the other two toggles staff added did **not** suppress their resources
+(wiring or module-gating gap, live-confirmed). The correct fix direction
+is for the second phase to **not manage the cluster-shared modules at
+all** (consume the cluster identity from `cluster-outputs.json` via data
+sources / a single shared state), not to chase a growing list of
+per-resource reuse flags.
+
+**The committed fix is invalid as a fix.** `27f7a02`'s code is retained
+as a partial foundation (VPC reuse works), but the `v1.6.2`
+CHANGELOG `### Fixed` claim was **reverted as premature** and the
+PLAN §"Sprint 16" follow-up corrected. No `v1.6.2` tagged. Issue 2
+**reopened/expanded**; staff **re-dispatched** for the corrected
+(not-per-toggle) fix.
+
+**Secondary defect found — e2e-driver teardown (filed as Issue 4).**
+`scripts/e2e-phase-handoff.sh`'s EXIT trap runs `roksbnkctl down`
+(trial phase only) and never `roksbnkctl cluster down`, so a run that
+gets past the cluster phase **strands the entire cluster phase**
+(this run left a running ROKS cluster + VPCs + TGW billing; the
+integrator cleaned it via the intact `state-cluster` state). The driver
+must `roksbnkctl cluster down` (and the trial down) in teardown before
+it is safe to re-run for the corrected-fix verify.
+
+---
+
+## Issue 4 — `scripts/e2e-phase-handoff.sh` teardown only destroys the trial phase, strands the cluster phase
+
+**Severity**: high
+**Status**: open
+
+**Description.** The Issue 2 live driver's self-teardown (`teardown()`
+EXIT trap) runs `roksbnkctl down --auto -w <ws> --var-file <tfvars>`.
+`roksbnkctl down` destroys only the **trial/bnk** phase (`state/`).
+The cluster phase (`state-cluster/`, ~49 managed resources incl. the
+ROKS cluster, both VPCs, the transit gateway) is destroyed by the
+separate `roksbnkctl cluster down`, which the driver never calls. On the
+2026-05-19 Issue 2 verify (run `20260519-181511`) the cluster phase
+created 72 resources; the trap destroyed 3; a running ROKS cluster +
+networking were left billing until the integrator manually tore them
+down via the (luckily intact) `state-cluster` state. Any e2e run that
+progresses past the cluster phase strands billable infra — directly
+contrary to the driver's "self-tears-down so no billable infra is
+stranded" guarantee.
+
+**Files affected**: `scripts/e2e-phase-handoff.sh` (`teardown()` —
+must also `roksbnkctl cluster down --auto -w <ws> --var-file <tfvars>`,
+after the trial `down`, and verify both phases gone before declaring
+teardown complete).
+
+**Proposed fix.** In `teardown()`: run `roksbnkctl bnk down` (or the
+existing `down`) then `roksbnkctl cluster down`, both `--auto`, tolerate
+either being a no-op, and add a post-teardown assertion that no
+`canada-*` VPC / `canada-roks-tgw` / `canada-roks` cluster remains
+(fail loudly if so). Must be in place before the corrected Issue 2 fix
+is live-verified, or every verify attempt strands a cluster.
+
+**Related**: Issue 2 (its verify loop depends on this); the broader
+`down` phase-awareness gap is the same family as Issue 3 (lifecycle
+commands not doing what the operator reasonably expects).
+
 ---
 
 ## Issue 3 — `terraform.applied.tfvars` snapshot is write-only; `down`/`plan`/`apply -w <ws>` don't replay it, so they fail on required vars without `--var-file`

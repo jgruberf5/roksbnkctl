@@ -36,3 +36,19 @@ regression test + the live driver are integrated; the live `!` run on a
 real account and the final flip to `resolved` are integrator/
 operator-owned and not done in this dispatch. The validator correctly
 did not mark it resolved.
+
+---
+
+## 2026-05-19 — SUPERSEDED by live `!` verify RED (Issue 2 reopened)
+
+The Issue 2 disposition above is **superseded**. The live `!` verify
+(run-id `20260519-181511`) came back **RED**: the first fix attempt
+(`27f7a02`) is necessary-but-insufficient — the second/bnk phase
+re-creates the *entire* cluster-shared network (cluster subnets +
+public gateways + transit gateway + testing client VPC + jumphost
+subnets/SG), not just the cluster VPC. The `v1.6.2` CHANGELOG
+`### Fixed` claim was reverted; no tag cut. Issue 2 is reopened &
+expanded and staff re-dispatched for the corrected (not-per-toggle)
+fix. See `issues/issue_sprint16_validator.md` §"Issue 2 — live `!`
+verify result: RED — reopened & expanded" and new Issue 4
+(e2e-driver teardown strands the cluster phase).

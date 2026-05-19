@@ -51,3 +51,19 @@ dataflow traced end to end — sound.
 **Status: integrated; final close gated on the live `!` verify** of
 validator Issue 2 per `live-verify-high-issues` (a `high` issue is not
 closed on hermetic green alone).
+
+---
+
+## 2026-05-19 — SUPERSEDED by live `!` verify RED (Issue 2 reopened)
+
+The Issue 2 disposition above is **superseded**. The live `!` verify
+(run-id `20260519-181511`) came back **RED**: the first fix attempt
+(`27f7a02`) is necessary-but-insufficient — the second/bnk phase
+re-creates the *entire* cluster-shared network (cluster subnets +
+public gateways + transit gateway + testing client VPC + jumphost
+subnets/SG), not just the cluster VPC. The `v1.6.2` CHANGELOG
+`### Fixed` claim was reverted; no tag cut. Issue 2 is reopened &
+expanded and staff re-dispatched for the corrected (not-per-toggle)
+fix. See `issues/issue_sprint16_validator.md` §"Issue 2 — live `!`
+verify result: RED — reopened & expanded" and new Issue 4
+(e2e-driver teardown strands the cluster phase).
