@@ -177,3 +177,84 @@ run the live driver (real spend; integrator/operator-owned) and did
 **Verdict: hermetic GREEN; Issue 2 stays `open — pending live \`!\`
 verify`.** The integrator runs `scripts/e2e-phase-handoff.sh` against a
 real account and only then flips Issue 2 to `resolved`.
+
+---
+
+## Issue 3 — `terraform.applied.tfvars` snapshot is write-only; `down`/`plan`/`apply -w <ws>` don't replay it, so they fail on required vars without `--var-file`
+
+**Severity**: medium
+**Status**: open
+
+**Description.** Found in live use (2026-05-19) while tearing down the
+`canada-roks` workspace. `roksbnkctl down -w canada-roks` failed; the
+same command with `--var-file ./terraform.tfvars` succeeded.
+
+Expected (operator mental model): once a workspace's cluster + bnk
+phases are applied, the full terraform variable environment is
+preserved in the workspace so later lifecycle ops (`down`, `plan`,
+`apply`) against `-w <ws>` match the stored state without re-supplying
+the original `--var-file`.
+
+Actual: roksbnkctl writes `terraform.applied.tfvars` — a snapshot of
+the var-file inputs terraform actually consumed on a *successful* apply
+(`internal/config/applied_tfvars.go`, PRD 07 / Sprint 11) — but the
+snapshot is **write-only**. `WriteAppliedTFVars` is called post-apply
+(`internal/tf/terraform.go:291`); there is **no reader** anywhere in
+the codebase (grep-confirmed — only the writer, the version-stamp
+setter, and `internal/tf/terraform.go:325` which documents that destroy
+deliberately does *not* touch it). `RunDown` →
+`tfws.Destroy(ctx, in.VarFiles...)` feeds terraform only (a) the small
+`config.yaml`-derived auto-rendered `state/terraform.tfvars` (~11 lines:
+region, RG, `create_roks_cluster`, cluster name/version, workers, dirs),
+(b) `terraform.tfvars.user` if present, and (c) the `--var-file` flags
+passed *on that invocation*. `terraform destroy` still evaluates the
+whole config, which has required no-default variables
+(`ibmcloud_api_key`, plus the `testing_*` / `roks_*` / `f5_*` set) that
+the auto-rendered subset does not contain → "No value for required
+variable" failures. Supplying `--var-file ./terraform.tfvars` restores
+the full set, so destroy proceeds.
+
+Compounding (workspace-specific): only `state-cluster/` had a
+`terraform.applied.tfvars` here; the bnk/testing phase never got one
+because its apply failed on the Issue 2 duplicate-name error — so even
+a hypothetical replay would have been incomplete for the second phase.
+
+This is the designed contract today, not a crash bug: `down`/`plan`/
+`apply -w <ws>` require the *same* `--var-file` used for `up`, and
+`ibmcloud_api_key` is intentionally never persisted (secret; env /
+`--var-file` only). But the tool already has a near-complete applied
+snapshot on disk and the operator expectation that `-w <ws>` "just
+works" is reasonable — PRD 07's snapshot appears to have been building
+toward replay but the destroy/plan path was never wired to consume it.
+Recurring-confusion-class UX gap in the same phase-lifecycle family as
+Issue 2.
+
+**Files affected**:
+- `internal/config/applied_tfvars.go` (snapshot is written; no
+  read/replay API)
+- `internal/tf/terraform.go` (`:291` writes snapshot post-apply;
+  `:325` destroy explicitly does not consume it)
+- `internal/orchestration/lifecycle.go` (`RunDown`/`RunTrialDown` →
+  `Destroy(in.VarFiles...)`; no applied-snapshot layering)
+- `docs/prd/` PRD 07 (deployed-tfvars snapshot — intent vs the
+  write-only reality)
+
+**Proposed fix (not for the Issue 2 release — log only).** Either
+(a) auto-layer the phase's `terraform.applied.tfvars` as a lowest-
+precedence var-file in `down`/`plan`/`apply` when no explicit
+`--var-file` is given (secret still required via env/flag), with a clear
+"replaying applied snapshot from <path>" stderr line and a guard for the
+missing-snapshot / failed-prior-apply case; or (b) if replay is
+explicitly out of scope, make the bare `-w <ws>` failure a roksbnkctl-
+level actionable error ("this workspace was applied with a --var-file;
+re-supply it or run with --var-file <…>") instead of a raw terraform
+"No value for required variable", and document the contract in
+`docs/E2E_TEST.md` / the `down` help text. Decide (a) vs (b) as a
+scoped follow-up; **must be live-`!`-verified** on a real
+multi-var-file workspace before close (`live-verify-high-issues`) —
+unit tests will not surface the required-var gap.
+
+**Related**: Issue 2 (same phase-lifecycle/handoff family; the failed
+bnk-phase apply is why no second-phase applied snapshot existed here);
+PRD 07 (deployed-tfvars snapshot, Sprint 11); memory
+`live-verify-high-issues`.
