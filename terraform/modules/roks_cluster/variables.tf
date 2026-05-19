@@ -86,3 +86,19 @@ variable "roks_transit_gateway_name" {
   type        = string
   default     = "tf-tgw"
 }
+
+# Existing-cluster-VPC reuse passthrough — fed from the root
+# use_existing_cluster_vpc / existing_cluster_vpc_id and forwarded into
+# module "cluster". Default false keeps the cluster phase creating the
+# VPC; the bnk/testing phase sets true to look up the cluster-phase VPC.
+variable "use_existing_cluster_vpc" {
+  description = "Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster)."
+  type        = bool
+  default     = false
+}
+
+variable "existing_cluster_vpc_id" {
+  description = "ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster)."
+  type        = string
+  default     = ""
+}

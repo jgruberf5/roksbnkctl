@@ -130,3 +130,134 @@ empty after both commits); the Sprint 14 e2e/`--on` suite + the Sprint
 other `cli` file, `selfheal.go`, or the chokepoint/env layer was
 touched; `book/`/`CHANGELOG.md`/`docs/`/`prompts/` and the prior-session
 `.archive`/PM-guide artifacts were not committed; no tag pushed.
+
+---
+
+## Issue 2 — phase-handoff fix
+
+**Severity**: high
+
+**Status**: resolved-pending-live-verify (fix + hermetic regression GREEN;
+high-sev close is gated on the operator `!` live run per memory
+`live-verify-high-issues` + README decision 3 — integrator/operator-owned).
+
+**Description.** Closed both halves of the incomplete existing-resource
+handoff that made the `up` second (bnk/testing) phase re-create the
+cluster-phase VPC / transit gateway / client VPC (IBM Cloud
+duplicate-name failure).
+
+- **Half A — terraform module passthrough.** Added root variables
+  `use_existing_cluster_vpc` (bool, default `false`) and
+  `existing_cluster_vpc_id` (string, default `""`) to
+  `terraform/variables.tf`; threaded them root `module "roks_cluster"`
+  (`terraform/main.tf`) → wrapper variables
+  (`terraform/modules/roks_cluster/variables.tf`) → `module "cluster"`
+  (`terraform/modules/roks_cluster/main.tf`), where the submodule's
+  pre-existing `use_existing_cluster_vpc` / `existing_cluster_vpc_id` /
+  `data.ibm_is_vpc.existing_cluster_vpc` count-toggle plumbing was
+  already implemented but unreachable. Defaults keep the first/cluster
+  phase byte-identical (create). **Transit-gateway reuse decision:** the
+  cluster submodule has *no* existing-TG data lookup (only the
+  `create_transit_gateway` count toggle), so the smaller-surface,
+  symmetric option is for the second phase to *not manage* the TG —
+  `create_roks_transit_gateway = false` (already flows root →
+  roks_cluster → cluster). The cluster phase created + connected the TG;
+  `module.testing` looks it up by name
+  (`data.ibm_tg_gateway.transit_gateway`) for its own client-VPC
+  connection, so phase 2 needs the TG to *exist*, not be managed. No new
+  existing-TG data branch added (avoids parity surface).
+
+- **Half B — Go phase handoff.** Added the additive renderer
+  `tf.RenderTFVarsWithClusterOutputs` + `tf.Workspace.WriteTFVarsWithClusterOutputs`
+  (the cross-agent seam the validator's hermetic regression test pins —
+  `RenderTFVars`/`WriteTFVars` signatures untouched, so the frozen
+  `internal/tf/vars_test.go` stays valid). New
+  `internal/orchestration/second_phase_reuse.go` adds
+  `writeAndInitSecondPhase`, which reads `config.ReadClusterOutputs`
+  (same struct `internal/cli/cluster_phase.go` writes via
+  `config.WriteClusterOutputs`) and re-renders tfvars with
+  `use_existing_cluster_vpc = true` + `existing_cluster_vpc_id =
+  <outputs.VPCID>` + `create_roks_transit_gateway = false` +
+  `testing_create_client_vpc = false` when a cluster-outputs.json
+  exists. `RunTrialUp` / `RunApply` call it instead of `writeAndInit`;
+  the cluster phase keeps the unchanged `writeAndInit` / `WriteAndInit`
+  seam, so it is byte-identical. `testing_client_vpc_name` is
+  deliberately not emitted — ClusterOutputs/config carry no client-VPC
+  name, and the same user-tfvars/default name flows in both phases, so
+  flipping only `testing_create_client_vpc = false` looks up the
+  existing client VPC by the correct name without guessing.
+
+**Files affected**:
+- `terraform/variables.tf` (root `use_existing_cluster_vpc` /
+  `existing_cluster_vpc_id`)
+- `terraform/main.tf` (`module "roks_cluster"` passthrough)
+- `terraform/modules/roks_cluster/variables.tf` (wrapper vars)
+- `terraform/modules/roks_cluster/main.tf` (`module "cluster"` passthrough)
+- `internal/tf/vars.go` (additive `RenderTFVarsWithClusterOutputs`)
+- `internal/tf/terraform.go` (additive `WriteTFVarsWithClusterOutputs`)
+- `internal/orchestration/second_phase_reuse.go` (new — second-phase
+  preamble + outputs read)
+- `internal/orchestration/lifecycle.go` (`RunTrialUp`/`RunApply` use
+  the second-phase preamble)
+
+**Approach chosen + why (vs the no-re-apply alternative).** Chose the
+handoff (reuse-toggle render) per README decision 5: the toggles, the
+`data` lookups, and `cluster-outputs.json`'s `vpc_id` already exist — it
+is wiring, not new design, and is parity-safe (additive renderer; nil
+cluster-outputs ⇒ byte-identical create path). The alternative —
+second phase does not re-apply the infra-creating modules at all —
+would need a new module-targeting / state-surgery mechanism (terraform
+`-target`, or splitting the HCL), a larger and riskier surface that
+also breaks the existing single-tree apply the parity gate pins; the
+named failure is exactly three create-vs-reuse toggles, which the
+existing plumbing already supports, so the handoff is both smaller and
+safe here.
+
+**Verification.**
+- `go build ./...` clean; `go vet ./...` clean; `gofmt -l internal/`
+  → 0; `go test ./...` → all packages `ok` (incl. `internal/tf` with
+  the validator's `secondphase_handoff_test.go` 3 Issue-2 cases, and
+  `internal/orchestration`).
+- `internal/tf` Issue-2 + frozen `RenderTFVars` parity tests pass
+  verbosely (8/8); chokepoint guard tests
+  (`TestChokepointInvariant_*` in `internal/cli` +
+  `internal/orchestration`) GREEN & unedited.
+- Boundary: `go list -f '{{.Imports}}' ./internal/orchestration` has
+  no `internal/cli` — one-directional boundary held.
+- No pre-existing `_test.go` edited (`git status --porcelain
+  '*_test.go'` shows only the untracked validator-owned
+  `internal/tf/secondphase_handoff_test.go`).
+- `terraform fmt -recursive -check` → RC 0 (all HCL edits canonical).
+  `terraform validate` could NOT run: `terraform init` requires the
+  provider registry and was sandbox-terminated —
+  exact denied command: `terraform init -backend=false -input=false`
+  (in `terraform/`, RC 143 / timeout-kill; documented Sprint 15/16
+  toolchain-deny precedent). Module wiring eyeballed for arity/type
+  correctness instead (bool/string types match end to end; submodule
+  var names match the pre-existing
+  `roks_cluster/modules/cluster/variables.tf`).
+
+End-to-end dataflow trace: `cluster-outputs.json.vpc_id` →
+`config.ReadClusterOutputs` (orchestration `writeAndInitSecondPhase`,
+second phase only) → `tf.RenderTFVarsWithClusterOutputs` emits
+`use_existing_cluster_vpc=true` + `existing_cluster_vpc_id=<vpc_id>` +
+`create_roks_transit_gateway=false` + `testing_create_client_vpc=false`
+into `state/terraform.tfvars` → root `module.roks_cluster` →
+`module.cluster`: `data.ibm_is_vpc.existing_cluster_vpc` count=1,
+`ibm_is_vpc.cluster_vpc[0]` count=0, `local.cluster_vpc_id` =
+`var.existing_cluster_vpc_id` (no name-mismatch) → no
+`CreateVPCWithContext` for the cluster VPC; `ibm_tg_gateway`/
+`ibm_tg_connection.cluster_vpc_connection` count=0 (no duplicate TG);
+`module.testing.data.ibm_is_vpc.existing_client_vpc` count=1 /
+`ibm_is_vpc.client_vpc[0]` count=0 (no duplicate client VPC), TGW
+connection via the existing `data.ibm_tg_gateway.transit_gateway`. No
+duplicate-name collision.
+
+**Related**: validator Issue 2
+(`issues/issue_sprint16_validator.md` §"Issue 2" — same root cause +
+evidence + Files affected + Proposed fix; this resolves it pending the
+operator live `!` verify). Cross-agent seam: the validator's hermetic
+regression `internal/tf/secondphase_handoff_test.go` + operator-run
+`scripts/e2e-phase-handoff.sh`. Correlates with staff Issue 1
+(phase-1b lifecycle/cluster split — the boundary was introduced
+without completing this handoff).

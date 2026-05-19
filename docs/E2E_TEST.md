@@ -269,6 +269,81 @@ Validates that a cluster brought up via one backend can be inspected + torn down
 | N5 | `down --backend <other>` tears down (cross-backend state-file compat) | — |
 | N6 | post-teardown: `cluster-outputs.json` removed; no orphan resources | — |
 
+## Phase-handoff regression (Issue 2)
+
+`scripts/e2e-phase-handoff.sh` is a **gated live-verify** driver for
+`issues/issue_sprint16_validator.md` Issue 2 — the regression where the
+second (bnk/testing) phase of `roksbnkctl up` re-created the cluster
+VPC / transit gateway / client VPC the cluster phase already made, and
+IBM Cloud rejected the duplicate names (`Provided Name (<ws>-vpc) is not
+unique` / `A gateway with the same name already exists`).
+
+### Why a separate driver, and why NOT CI
+
+The behavior-parity gate (validator Issue 1) is GREEN and *correct* — it
+proves the phase-1b refactor is behavior-identical at the unit level. It
+is structurally blind to Issue 2 because no hermetic test exercises a
+workspace that has already completed the cluster phase. That blind spot
+is closed at two levels:
+
+- **Hermetic** — `internal/tf/secondphase_handoff_test.go` asserts the
+  second-phase tfvars contract directly (cluster outputs present →
+  `use_existing_cluster_vpc = true` + `existing_cluster_vpc_id` +
+  `create_roks_transit_gateway = false` + `testing_create_client_vpc =
+  false`; no outputs → byte-identical create path). It runs in the
+  normal `go test ./...` suite — no cloud, no key.
+- **Live** — this driver, run by an operator against the real account.
+
+Per the Sprint 16 follow-up integrator decision, e2e for this fix is
+**operator-run via `!`, never a CI job**. It is intentionally NOT a
+GitHub workflow and has no `workflow_dispatch` trigger — a real
+`terraform apply` is real spend, so it is opt-in and self-tears-down.
+The driver never echoes, logs, or scrapes the IBM Cloud API key, and
+the project `./terraform.tfvars` (which holds a live key) is referenced
+for structure only — its contents are never printed.
+
+### How and when an operator runs it
+
+After the fix has landed (and before the integrator marks Issue 2
+`resolved`), an operator runs:
+
+```bash
+# Plan-only walkthrough — no cloud, no key needed (CI-safe self-check):
+DRY_RUN=1 ./scripts/e2e-phase-handoff.sh
+
+# Live verify — REAL SPEND (~$5-8, ~70+ min). Key in the ENV, not tfvars:
+IBMCLOUD_API_KEY=... ./scripts/e2e-phase-handoff.sh
+```
+
+Knobs mirror `scripts/e2e-test.sh`: `TFVARS` (default
+`./terraform.tfvars`), `WORKSPACE` (default `e2e-handoff`), `DRY_RUN`,
+`LOG_DIR`, `ROKSBNKCTL`. The driver runs `up` end to end (cluster phase
+then bnk/testing phase — the exact path Issue 2 fails on) and always
+tears the workspace down via an EXIT trap so a failed run does not
+strand billable infra (loud + best-effort: a teardown failure prints
+the manual `down` command and a console-check reminder).
+
+### What GREEN means
+
+The run exits `0` and prints the GREEN banner only when **all** of:
+
+- **A1/A1b** — the cluster phase created + tracked the cluster VPC /
+  transit gateway, and `cluster-outputs.json` carries a `vpc_id` (the
+  handoff data exists). Establishes the reproduction premise.
+- **A2** — the second-phase state
+  (`~/.roksbnkctl/<ws>/state/terraform.tfstate`) does NOT *manage* a
+  duplicate `module.roks_cluster.module.cluster.ibm_is_vpc.cluster_vpc`
+  / `ibm_tg_gateway.transit_gateway` / `module.testing.ibm_is_vpc.client_vpc`
+  (a `data` reuse lookup is fine; a `"mode": "managed"` duplicate fails
+  the run).
+- **A3** — the rendered second-phase `terraform.tfvars` carries
+  `use_existing_cluster_vpc = true`.
+- **A4** — `up` exited `0` and the run log is free of
+  `is not unique` / `already exists`.
+
+Any failed assertion exits non-zero with the failing check named. A red
+A2/A3/A4 means the phase handoff is still broken — Issue 2 stays open.
+
 ## Failure recovery
 
 If a phase fails:

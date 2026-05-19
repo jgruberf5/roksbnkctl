@@ -31,6 +31,14 @@ module "cluster" {
   transit_gateway_name = var.roks_transit_gateway_name
   cos_instance_name    = var.roks_cos_instance_name
 
+  # Existing-cluster-VPC reuse handoff (issue_sprint16_validator.md
+  # Issue 2). Default false → cluster phase creates the VPC unchanged.
+  # The bnk/testing phase passes true + the cluster-phase VPC id so the
+  # submodule resolves data.ibm_is_vpc.existing_cluster_vpc[0] instead of
+  # planning ibm_is_vpc.cluster_vpc[0] (duplicate-name failure).
+  use_existing_cluster_vpc = var.use_existing_cluster_vpc
+  existing_cluster_vpc_id  = var.existing_cluster_vpc_id
+
   openshift_cluster_name    = var.openshift_cluster_name
   openshift_cluster_version = var.openshift_cluster_version
   workers_per_zone          = var.roks_workers_per_zone

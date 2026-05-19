@@ -105,3 +105,75 @@ creation.
 **Related**: staff Issue 1 (phase-1b lifecycle+cluster move, commits
 `e7cc7e7`/`99b45cc`/`ce35f09`); validator Issue 1 (parity GREEN — by
 design blind to this); memory `live-verify-high-issues`.
+
+### Issue 2 — validator closure (Sprint 16 follow-up dispatch)
+
+`Status: open — pending live \`!\` verify`
+
+Per README decision 3 and the `live-verify-high-issues` memory, a `high`
+issue cannot be closed on unit/hermetic tests alone. The validator
+delivered the regression test + the gated live-verify driver; the live
+`!` run and the final flip to `resolved` are integrator/operator-owned.
+**Do not mark Issue 2 `resolved` on the hermetic GREEN.**
+
+**Hermetic regression test that would have caught it.**
+`internal/tf/secondphase_handoff_test.go` (new, additive — no
+pre-existing `_test.go` edited; `git diff --stat -- '*_test.go'` shows
+only this untracked file; `vars_test.go` + the Sprint 14/15 guards
+byte-identical to `v1.6.0`). It is the cross-agent seam named in
+`tf.RenderTFVarsWithClusterOutputs`'s doc comment (staff owns the
+renderer; validator owns the test). It asserts the second-phase tfvars
+contract:
+
+- `co != nil, VPCID != ""` → output carries `use_existing_cluster_vpc =
+  true`, `existing_cluster_vpc_id = "<vpc id>"`,
+  `create_roks_transit_gateway = false`, `testing_create_client_vpc =
+  false`; explicitly fails if `use_existing_cluster_vpc = false` slips
+  through (the duplicate-create signature); asserts no `api_key` leak.
+- `co == nil` → byte-identical to `RenderTFVars` (first/cluster-phase
+  create-path parity — keeps validator Issue 1's gate GREEN).
+- `co != nil, VPCID == ""` → defensive: byte-identical create path (a
+  half-written `cluster-outputs.json` must not flip reuse on with an
+  empty id that would fail the submodule's `data.ibm_is_vpc` lookup).
+
+Verified: `go test ./internal/tf/` PASS (3/3); full hermetic
+`HOME=<tmp> go test -race ./...` → **all packages `ok`, RACE_EXIT=0**
+(parity gate not regressed). `go test` was **not** sandbox-denied in
+this session.
+
+**Gated live-verify e2e driver.** `scripts/e2e-phase-handoff.sh` (new;
+mirrors `e2e-test.sh` style — `set -euo pipefail`, colored
+`log/green/red`, `DRY_RUN=1`, `LOG_DIR`, exits non-zero on first failed
+assertion). Operator-run via `!`, **NOT CI** — no `.github/workflows`
+added or modified (`git status -- .github/` clean), no
+`workflow_dispatch`. Runs the real reproduction (`roksbnkctl up <ws>` —
+cluster phase then bnk/testing phase) and asserts: A1/A1b cluster phase
+created + tracked the VPC/TG and `cluster-outputs.json` carries
+`vpc_id`; **A2** second-phase state does not *manage* a duplicate
+`module.roks_cluster.module.cluster.ibm_is_vpc.cluster_vpc` /
+`ibm_tg_gateway.transit_gateway` / `module.testing.ibm_is_vpc.client_vpc`
+(a `data` lookup is fine); **A3** rendered second-phase
+`terraform.tfvars` carries `use_existing_cluster_vpc = true`; **A4**
+`up` exits 0 and the run log has no `is not unique` / `already exists`.
+Self-tears-down via an EXIT trap (loud, best-effort). The API key is
+never echoed/logged and is required from the env (not scraped from
+`./terraform.tfvars`, whose contents are never printed).
+
+Operator invocation (after the fix lands, before integrator closes):
+
+```bash
+DRY_RUN=1 ./scripts/e2e-phase-handoff.sh                 # plan-only self-check
+IBMCLOUD_API_KEY=... ./scripts/e2e-phase-handoff.sh      # live; ~$5-8, ~70+ min
+```
+
+Verified by the validator: `bash -n scripts/e2e-phase-handoff.sh`
+clean; `DRY_RUN=1` run prints the intended steps + assertions, exits 0,
+makes no cloud call, and leaks no key (0 occurrences of a planted key
+sentinel in stdout/stderr and in the run log). The validator did **not**
+run the live driver (real spend; integrator/operator-owned) and did
+**not** commit. `docs/E2E_TEST.md` gained a §"Phase-handoff regression
+(Issue 2)" describing how/when an operator runs it and what GREEN means.
+
+**Verdict: hermetic GREEN; Issue 2 stays `open — pending live \`!\`
+verify`.** The integrator runs `scripts/e2e-phase-handoff.sh` against a
+real account and only then flips Issue 2 to `resolved`.

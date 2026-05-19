@@ -34,3 +34,9 @@ book/book/
 # Local terraform var-file used for live `--var-file=./terraform.tfvars`
 # verification — contains ibmcloud_api_key / bigip_password. NEVER commit.
 /terraform.tfvars
+
+# terraform init cache (provider/module downloads) — e.g. left by a
+# `terraform validate` during a sprint. Never source; never commit.
+.terraform/
+*.tfstate
+*.tfstate.backup

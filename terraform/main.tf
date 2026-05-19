@@ -47,6 +47,8 @@ module "roks_cluster" {
   roks_min_worker_memory_gb         = var.roks_min_worker_memory_gb
   roks_cos_instance_name            = var.roks_cos_instance_name
   roks_transit_gateway_name         = var.roks_transit_gateway_name
+  use_existing_cluster_vpc          = var.use_existing_cluster_vpc
+  existing_cluster_vpc_id           = var.existing_cluster_vpc_id
 }
 
 
