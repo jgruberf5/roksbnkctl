@@ -4,10 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-<!-- Heading is integrator-owned: at cut, swap the line below to `## v1.6.0 — <date>`
-     (or `## v1.5.1 — <date>` if the integrator re-designates under strict SemVer,
-     since there is no API/behavior change). Version + date is a one-line edit;
-     the block body is version-agnostic and needs no change on that swap. -->
+<!-- Heading is integrator-owned: at cut, swap the line below to
+     `## v1.6.1 — <date>` (strict SemVer — no API/behavior change) or
+     `## v1.7.0 — <date>` if the structural surface is judged minor-worthy.
+     Version + date is a one-line edit; the block body is version-agnostic. -->
+## Unreleased (v1.6.1 / v1.7.0)
+
+Sprint 16 — internal consolidation **phase-1b**, post-`v1.6.0`. **No user-visible behavior change**: a user upgrading from `v1.6.0` sees identical `up` / `--on` / `terraform` / `targets` behavior and output. This completes the `internal/cli` god-package decomposition begun in Sprint 15: the lifecycle / cluster / remote-passthrough RunE orchestration (~1,655 LOC) is relocated out of `internal/cli/{lifecycle,cluster}.go` into the `internal/orchestration` service layer, leaving `internal/cli` a thin cobra adapter. Behavior is preserved byte-for-byte (verified: zero pre-existing test-file diffs, full hermetic `go test -race ./...` green, Sprint 14 `--on` + Sprint 15 chokepoint guards green & unedited). See [PLAN.md §"Sprint 16"](docs/PLAN.md) for the design surface and gate.
+
+### Changed
+
+- **`internal/cli` decomposition — phase-1b (no user-visible behavior change).** The lifecycle (`up`/`plan`/`apply`/`down` family + `openTF`/`applyWithRetry`/`tryAuto*`/docker-terraform helpers) and cluster/remote-passthrough (`shell`/`exec`/`kubeconfig`/`kubectl|oc|ibmcloud` passthroughs + `dispatchBackend`/`ensureIBMCloudLoggedIn`/…) orchestration moved from `internal/cli/{lifecycle,cluster}.go` into `internal/orchestration/{lifecycle,cluster}.go`; `internal/cli` is now a thin cobra adapter (command defs, flag binding, the Sprint-15 chokepoint wrappers, RunE shims). `cli`-resident collaborators are injected as function fields on `orchestration.LifecycleInputs`/`ClusterInputs` so `internal/orchestration` never imports `internal/cli` (one-directional boundary, asserted). Completes the Sprint-15 phase-1a chokepoint work; the remaining ~27 `cli` files are a tracked phase-2 follow-up. Strictly internal — no flag, output, or error-text change. See [PLAN.md §"Sprint 16"](docs/PLAN.md).
+
 ## v1.6.0 — 2026-05-18
 
 Sprint 15 — internal consolidation / debt-paydown cycle, post-`v1.5.0`. **No user-visible behavior change**: a user upgrading from `v1.5.0` sees identical `up` / `--on` / `terraform` / `targets` behavior and output. This cycle collapses the recurring "a path/env value correct in the invocation context is wrong once it crosses a boundary" defect class (Sprint 12 Issues 1/2 `--var-file`/`--tf-source`; Sprint 13 Issue 1 `KUBECONFIG` leak — each previously patched per-instance and already user-correct) to a **single invocation-time chokepoint** so the class cannot reopen, and begins phase-1 decomposition of the `internal/cli` god-package. The bug class was already fixed per-instance in `v1.4.1`/`v1.5.0`; this changes *how* those fixes hold structurally, not *whether* — there is no new user-facing fix or feature. See [PLAN.md §"Sprint 15"](docs/PLAN.md) for the design surface and gate.

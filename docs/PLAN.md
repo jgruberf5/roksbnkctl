@@ -1071,6 +1071,51 @@ Once deliverable 1 landed it was clear the consolidation **value** — structura
 
 ---
 
+## Sprint 16 — consolidation phase-1b: empty `lifecycle.go` + `cluster.go` into `internal/orchestration` (consolidation cycle, post-`v1.6.0`)
+
+### Theme
+
+The deferred second half of the Sprint 15 `cli` decomposition. Sprint 15 phase-1a landed the `internal/orchestration` service layer + the single path/env chokepoint and made `internal/cli` consume it via delegators; the integrator re-scoped the **bulk move** of the two hottest files out of that sprint (see [§"Sprint 15 → Scope decision"](#scope-decision-integrator-2026-05-18)). Sprint 16 is exactly that bulk move: relocate the lifecycle / cluster / remote-passthrough **RunE orchestration** (~1,655 LOC across `internal/cli/lifecycle.go` + `internal/cli/cluster.go`) into `internal/orchestration`, leaving `internal/cli` a thin cobra adapter (flag binding + `PersistentPreRunE` + delegating RunEs). **Strictly internal — zero user-visible behavior change**, identical posture to Sprint 15. Consolidation tier (full staff + validator, light architect + tech-writer; no PRD, no book surface). Version is integrator-owned at cut: `v1.6.1` under strict SemVer (no API/behavior change), or `v1.7.0` if the structural surface is judged minor-worthy.
+
+### Drivers / why now
+
+`internal/cli` remains the god-package (`lifecycle.go` 991 LOC, `cluster.go` 664 — the two hottest files, ~per the Sprint-13 health read the binding constraint on change cost). Phase-1a proved the orchestration boundary is sound (one-directional import, chokepoint guard CI-asserted, behavior parity held). Phase-1b pays down the remaining structural debt while the boundary is fresh and the parity harness (Sprint 14 e2e/`--on` suite) is in place to backstop it. Deferring further only lets the two files keep accreting.
+
+### Code deliverables
+
+| Order | Item | Files |
+|---|---|---|
+| 1 | **Move lifecycle orchestration → `internal/orchestration`.** Relocate `runUp`/`runTrialUp`/`runPlan`/`runApply`/`runDown`/`runTrialDown` + their helpers (`openTF`, `applyWithRetry`, `tryAuto*`, `runTerraformLifecycleDocker`/`dockerTerraform*`, `resolveClusterIdentity`, …) into the service layer. `internal/cli/lifecycle.go` shrinks to thin cobra `RunE` shims that bind flags and call `orchestration`. Behavior-preserving; flag globals passed in (no orchestration→cli import). | `internal/orchestration/` (new files), `internal/cli/lifecycle.go` |
+| 2 | **Move cluster / remote-passthrough orchestration → `internal/orchestration`.** Relocate `runShell`/`runExec`/`runKubeconfig*`/`run*Passthrough`/`dispatchBackend`/`ensureIBMCloudLoggedIn`/`runWithEnv`/`clusterFromTFOutput` + the `extract*Flag` helpers; `internal/cli/cluster.go` → thin shims. The Sprint 14 `--on` self-heal (`selfheal.go`) and the chokepoint/env layer stay where they are (already in the right place). | `internal/orchestration/` (new files), `internal/cli/cluster.go` |
+| 3 | **Coverage that travels with the move.** Any test that referenced moved unexported symbols is handled by keeping the public seam in `orchestration` and the thin shim in `cli` — **no pre-existing test file may be edited** (parity gate). New `internal/orchestration/*_test.go` may be added for newly-exported orchestration entry points. | `internal/orchestration/*_test.go` (new) |
+
+### Test deliverables
+
+- **Behavior-parity assertion is the headline gate** (unchanged from Sprint 15): the entire pre-existing unit + integration suite — **including the Sprint 14 e2e + `--on` integration suite** — passes with **zero test-file diffs** vs the `v1.6.0` baseline. A pre-existing test edited to accommodate the move is drift, not a fix, and fails the gate.
+- **Validator's seven-step regression sweep** + the full hermetic `go test -race ./...` (CI's exact command), run by whoever has a working toolchain (integrator-run if the validator agent's session is toolchain-denied, per the Sprint 15 precedent).
+- **`cli` phase-1b boundary audit:** `internal/cli` no longer owns lifecycle/cluster orchestration; `lifecycle.go` + `cluster.go` are thin adapters; `internal/orchestration` still does **not** import `internal/cli`; the Sprint 15 chokepoint guard test stays green & unedited.
+
+### Risks
+
+- **Refactor blast radius.** ~1,655 LOC of orchestration moving packages; subtle behavior drift is the main risk. Mitigation: the behavior-parity gate (entire pre-existing suite + Sprint 14 `--on` harness green *unedited*); move in two staged commits (lifecycle, then cluster) re-running the gate after each.
+- **Flag-global recoupling.** `cli` RunEs read package-level `flag*` vars; the moved code must take them as parameters/struct, not import `cli`. Mitigation: pass an explicit inputs struct; the one-directional import is audited.
+- **Scope creep into the other ~27 `cli` files.** Phase-1b is *exactly* `lifecycle.go` + `cluster.go`; the rest stay a tracked phase-2 follow-up.
+
+### Gate to the (integrator-owned) `v1.6.1`/`v1.7.0` tag
+
+- Behavior parity: entire pre-existing suite + Sprint 14 `--on` harness green with **zero test-file diffs** vs `v1.6.0`; full hermetic `go test -race ./...` green; build/vet/gofmt/staticcheck/integration-build clean.
+- `cli` phase-1b boundary clean: `lifecycle.go` + `cluster.go` are thin adapters; `internal/orchestration` does not import `internal/cli`; chokepoint guard green & unedited; Sprint 14 kubeconfig fix not regressed.
+- All four agents' Sprint 16 issue files terminal (`resolved`/`accepted`/`wontfix`); CHANGELOG block final (`### Changed` = internal decomposition, explicitly "no user-visible behavior change"); PLAN §"Sprint 16" final.
+
+### Carry-overs / explicitly out of scope
+
+- **`cli` decomposition phases 2+** (the remaining ~27 `cli` files) — tracked follow-up, deliberately not this sprint.
+- **Option-(b) per-AZ stale-target reconcile** — unchanged; still a deliberate post-`v1.5.0` follow-up.
+- **Sprint 14 kubeconfig fix + Sprint 15 chokepoint** — must not regress; their guards are part of the parity gate.
+- **Any user-visible feature or behavior change** — out of scope by definition.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
