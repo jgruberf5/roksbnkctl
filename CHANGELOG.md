@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.6.2 — 2026-05-19
+
+Sprint 16 follow-up — post-`v1.6.1` get-well. A live verification surfaced a regression in the two-phase `up` flow that the hermetic test suite could not see. This patch restores `up` so a single run provisions a cluster and its bnk/testing resources without a duplicate-name collision. See [PLAN.md §"Sprint 16"](docs/PLAN.md) and [`issues/issue_sprint16_validator.md` Issue 2](issues/issue_sprint16_validator.md).
+
+### Fixed
+
+- **`up` no longer fails partway through with an IBM Cloud duplicate-name error when the bnk/testing phase runs after the cluster phase** ([`issues/issue_sprint16_validator.md` Issue 2](issues/issue_sprint16_validator.md)) — a full `roksbnkctl up` first provisions the cluster (creating the cluster VPC, the transit gateway, and the client VPC) and then provisions the bnk/testing resources. The second phase was attempting to **re-create** those same-named resources rather than reuse the ones the cluster phase had just made, so IBM Cloud rejected the run with `Provided Name … is not unique` (cluster VPC / client VPC) and `A gateway with the same name already exists` (transit gateway), leaving the workspace half-deployed. The bnk/testing phase now reads the cluster phase's handoff data (`cluster-outputs.json`) and reuses the already-created cluster VPC, transit gateway, and client VPC instead of re-creating them (`use_existing_cluster_vpc` + `existing_cluster_vpc_id` and `testing_create_client_vpc=false` are now wired end to end into the second phase). `up` against a fresh workspace, and the cluster-only / bnk-only sub-flows, are unchanged. This is the live-verify gap the [PLAN.md §"Sprint 16"](docs/PLAN.md) phase-1b boundary work was blind to — the hermetic parity gate stayed green because no test exercised a workspace that had already completed the cluster phase.
+
 ## v1.6.1 — 2026-05-19
 
 Sprint 16 — internal consolidation **phase-1b**, post-`v1.6.0`. **No user-visible behavior change**: a user upgrading from `v1.6.0` sees identical `up` / `--on` / `terraform` / `targets` behavior and output. This completes the `internal/cli` god-package decomposition begun in Sprint 15: the lifecycle / cluster / remote-passthrough RunE orchestration (~1,655 LOC) is relocated out of `internal/cli/{lifecycle,cluster}.go` into the `internal/orchestration` service layer, leaving `internal/cli` a thin cobra adapter. Behavior is preserved byte-for-byte (verified: zero pre-existing test-file diffs, full hermetic `go test -race ./...` green, Sprint 14 `--on` + Sprint 15 chokepoint guards green & unedited). See [PLAN.md §"Sprint 16"](docs/PLAN.md) for the design surface and gate.

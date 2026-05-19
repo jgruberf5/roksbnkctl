@@ -1114,6 +1114,10 @@ The deferred second half of the Sprint 15 `cli` decomposition. Sprint 15 phase-1
 - **Sprint 14 kubeconfig fix + Sprint 15 chokepoint** — must not regress; their guards are part of the parity gate.
 - **Any user-visible feature or behavior change** — out of scope by definition.
 
+### Follow-up (post-`v1.6.1`): phase-handoff regression — validator Issue 2
+
+A live `!` verify after the `v1.6.1` cut surfaced a regression the phase-1b parity gate was correct-but-blind to: a full `up` second (bnk/testing) phase re-created the cluster phase's already-made cluster VPC / transit gateway / client VPC, so IBM Cloud rejected the run with duplicate-name errors ([`issues/issue_sprint16_validator.md` Issue 2](../issues/issue_sprint16_validator.md)). The parity gate stayed GREEN by design — no hermetic test exercises a workspace that has already completed the cluster phase, so the missing existing-resource handoff introduced alongside the phase-1b lifecycle/cluster split was not test-observable. Fix: the existing-resource handoff is completed end to end in terraform + Go (the bnk/testing phase consumes `cluster-outputs.json` and applies with `use_existing_cluster_vpc` / `existing_cluster_vpc_id` / `testing_create_client_vpc=false` instead of re-creating same-named resources), shipped as the `v1.6.2` patch. Per the `live-verify-high-issues` discipline, Issue 2 is `high` and its closure (and the `v1.6.2` tag) is gated on a live `!` run, not on the hermetic suite.
+
 ---
 
 ## What's deliberately deferred to post-v1.0

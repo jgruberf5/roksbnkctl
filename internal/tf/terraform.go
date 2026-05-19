@@ -218,6 +218,23 @@ func (w *Workspace) WriteTFVars(wsCfg *config.Workspace) error {
 	return WriteTFVars(w.TFVarsPath(), wsCfg, w.KubeconfigDir(), w.ScratchDir())
 }
 
+// WriteTFVarsWithClusterOutputs is the second-phase variant of
+// WriteTFVars: it renders the same workspace tfvars but, when co carries
+// a cluster-phase VPC id, appends the existing-resource reuse toggles
+// (issue_sprint16_validator.md Issue 2 — phase handoff). co == nil (or a
+// co with an empty VPCID) renders byte-identically to WriteTFVars, so the
+// first/cluster phase is unperturbed. Only the orchestration second/trial
+// phase calls this; the cluster phase keeps calling WriteTFVars via the
+// unchanged WriteAndInit seam.
+func (w *Workspace) WriteTFVarsWithClusterOutputs(wsCfg *config.Workspace, co *config.ClusterOutputs) error {
+	f, err := os.Create(w.TFVarsPath())
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", w.TFVarsPath(), err)
+	}
+	defer f.Close()
+	return RenderTFVarsWithClusterOutputs(f, wsCfg, co, w.KubeconfigDir(), w.ScratchDir())
+}
+
 // KubeconfigDir is the path threaded through to the root TF's
 // kubeconfig_dir variable (v0.6.8+). Each submodule appends its own
 // name as a subdir; roksbnkctl pre-creates them in Open.

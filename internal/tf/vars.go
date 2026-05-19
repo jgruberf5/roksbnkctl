@@ -25,6 +25,85 @@ func WriteTFVars(path string, ws *config.Workspace, kubeconfigDir, scratchDir st
 	return RenderTFVars(f, ws, kubeconfigDir, scratchDir)
 }
 
+// RenderTFVarsWithClusterOutputs renders the workspace tfvars and, when
+// a cluster-phase ClusterOutputs is present, appends the second-phase
+// existing-resource reuse toggles (issues/issue_sprint16_validator.md
+// Issue 2 — phase handoff).
+//
+// The `up` flow applies the same roks_cluster/testing terraform across
+// two independent state files. The cluster phase (state-cluster/) creates
+// the cluster VPC / transit gateway / client VPC and records vpc_id in
+// cluster-outputs.json. Without a handoff, the second (bnk/testing) phase
+// runs the same modules against its own state/ and plans to *create*
+// those same-named resources — IBM Cloud rejects the duplicates. These
+// toggles make the second phase REUSE them (the terraform reuse plumbing
+// already exists; this is wiring, not new design — README decision 5).
+//
+// Contract (asserted by internal/tf/secondphase_handoff_test.go, the
+// validator's hermetic Issue 2 regression — the cross-agent seam):
+//
+//   - co == nil               → output is byte-identical to
+//     RenderTFVars(w, ws, kubeconfigDir, scratchDir). The first/cluster
+//     phase (no cluster-outputs.json yet) is unperturbed, keeping
+//     validator Issue 1's parity gate GREEN.
+//   - co != nil, co.VPCID==""  → defensive create path: a half-written
+//     cluster-outputs.json must NOT silently flip
+//     use_existing_cluster_vpc=true (an empty existing_cluster_vpc_id
+//     would fail the submodule's data.ibm_is_vpc lookup).
+//   - co != nil, co.VPCID!=""  → append the reuse toggles:
+//     use_existing_cluster_vpc  = true
+//     existing_cluster_vpc_id   = "<co.VPCID>"
+//     create_roks_transit_gateway = false
+//     testing_create_client_vpc = false
+//
+// Transit-gateway reuse: the cluster submodule has NO existing-TG data
+// lookup (only the create_transit_gateway count toggle), so the smaller-
+// surface, symmetric option is for the second phase to NOT manage the TG
+// (create_roks_transit_gateway = false). The cluster phase already
+// created the gateway and connected the cluster VPC; the testing module
+// looks the gateway up by name (data.ibm_tg_gateway.transit_gateway) for
+// its own client-VPC connection, so phase 2 needs the TG to *exist*, not
+// to be managed here.
+//
+// testing_client_vpc_name is intentionally NOT emitted: ClusterOutputs
+// carries no client-VPC name and config.Workspace has no field for it.
+// The name only ever comes from the user's terraform.tfvars.user (or the
+// module default) and that same value flows in BOTH phases, so flipping
+// only testing_create_client_vpc = false makes module.testing look up
+// the existing client VPC by the same name the cluster phase created it
+// with — correct without guessing a name.
+func RenderTFVarsWithClusterOutputs(w io.Writer, ws *config.Workspace, co *config.ClusterOutputs, kubeconfigDir, scratchDir string) error {
+	if err := RenderTFVars(w, ws, kubeconfigDir, scratchDir); err != nil {
+		return err
+	}
+	// No usable handoff (first/cluster phase, fresh workspace, or a
+	// half-written cluster-outputs.json without a vpc_id) → leave the
+	// render byte-identical to the create path.
+	if co == nil || co.VPCID == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "# Second-phase existing-resource handoff (issue_sprint16_validator.md Issue 2):"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "# cluster-outputs.json exists, so the cluster phase already created the"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "# cluster VPC / transit gateway / client VPC. Reuse them instead of"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "# planning duplicate same-named resources (IBM Cloud duplicate-name failure)."); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "use_existing_cluster_vpc = true\n")
+	fmt.Fprintf(w, "existing_cluster_vpc_id = %q\n", co.VPCID)
+	fmt.Fprintf(w, "create_roks_transit_gateway = false\n")
+	fmt.Fprintf(w, "testing_create_client_vpc = false\n")
+	return nil
+}
+
 // RenderTFVars writes the tfvars body to w. Exposed for tests / callers
 // that want to inspect the rendering before committing it to disk.
 //

@@ -119,6 +119,27 @@ variable "roks_transit_gateway_name" {
   default     = "tf-tgw"
 }
 
+# Existing-cluster-VPC reuse (phase-handoff). When the bnk/testing phase
+# runs against a workspace whose cluster phase already created the cluster
+# VPC, roksbnkctl renders these (use_existing_cluster_vpc = true +
+# existing_cluster_vpc_id = <cluster-outputs.json vpc_id>) so the cluster
+# submodule looks the VPC up via data.ibm_is_vpc.existing_cluster_vpc
+# instead of re-creating ibm_is_vpc.cluster_vpc[0] (which IBM Cloud
+# rejects as a duplicate name). Default false keeps the FIRST/cluster
+# phase byte-identical (create). See issues/issue_sprint16_validator.md
+# Issue 2.
+variable "use_existing_cluster_vpc" {
+  description = "Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create)."
+  type        = bool
+  default     = false
+}
+
+variable "existing_cluster_vpc_id" {
+  description = "ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id."
+  type        = string
+  default     = ""
+}
+
 
 # ============================================================
 # cert_manager

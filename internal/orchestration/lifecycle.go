@@ -158,7 +158,13 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
+	// Second-phase preamble: renders tfvars with the existing-resource
+	// reuse toggles when this workspace already has a cluster-outputs.json
+	// (the cluster phase created the cluster VPC / transit gateway /
+	// client VPC). Byte-identical to writeAndInit when there is no
+	// cluster-outputs.json, so a first-phase / fresh workspace run is
+	// unchanged (Issue 2 — phase handoff).
+	if err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace); err != nil {
 		return err
 	}
 
@@ -228,7 +234,9 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
+	// Second-phase preamble (Issue 2 — phase handoff). See RunTrialUp.
+	// Byte-identical to writeAndInit when there is no cluster-outputs.json.
+	if err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
