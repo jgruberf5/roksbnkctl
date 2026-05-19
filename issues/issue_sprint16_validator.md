@@ -241,7 +241,14 @@ it is safe to re-run for the corrected-fix verify.
 ## Issue 4 — `scripts/e2e-phase-handoff.sh` teardown only destroys the trial phase, strands the cluster phase
 
 **Severity**: high
-**Status**: open
+**Status**: resolved (round-2 fix `0db0ad6`; live-verified run-id `20260519-202202`)
+
+**Resolution.** `teardown()` now runs trial `down` THEN `cluster down`,
+each tolerating a no-op, plus a loud post-teardown assertion that no
+`canada-*` VPC / `canada-roks-tgw` / `canada-roks` cluster remains
+(`✓ teardown complete — both phases destroyed, no canada-* residue`,
+plus an independent live recheck: 0/0/0/0). Verified end to end by the
+Issue 2 GREEN run.
 
 **Description.** The Issue 2 live driver's self-teardown (`teardown()`
 EXIT trap) runs `roksbnkctl down --auto -w <ws> --var-file <tfvars>`.
@@ -353,3 +360,38 @@ unit tests will not surface the required-var gap.
 bnk-phase apply is why no second-phase applied snapshot existed here);
 PRD 07 (deployed-tfvars snapshot, Sprint 11); memory
 `live-verify-high-issues`.
+
+---
+
+### Issue 2 — live `!` verify result: **GREEN — RESOLVED** (round-2 fix, 2026-05-19)
+
+`Status: resolved` — round-2 fix (commit `0db0ad6`) live-verified clean.
+
+The integrator re-ran `scripts/e2e-phase-handoff.sh` with the round-2
+binary against a real account. **Run-id `20260519-202202` came back
+GREEN, all assertions pass, both-phase self-teardown clean, zero
+`canada-*` residue:**
+
+| | result |
+|---|---|
+| Cluster phase apply | `Apply complete! Resources: 72 added` |
+| Bnk phase apply (the failing point in every prior run) | `Apply complete! Resources: 60 added` |
+| A1 — cluster phase tracked cluster VPC + TG | ✓ |
+| A1b — `cluster-outputs.json` carries `vpc_id` | ✓ |
+| A2 — second-phase state reuses (no managed duplicate `cluster_vpc` / `transit_gateway` / `client_vpc`) | ✓ |
+| A3 — `bnk-phase-override.tfvars` turns cluster-shared creation off (`create_roks_cluster=false` + `use_existing_cluster_vpc=true`) | ✓ |
+| A4 — run log free of "is not unique" / "already exists" | ✓ |
+| Two-phase teardown + `canada-*` residual assertion (Issue 4) | ✓ |
+| Live recheck post-teardown (cluster/VPCs/TGW/COS) | 0 / 0 / 0 / 0 |
+
+The round-2 architecture (forced `bnk-phase-override.tfvars` —
+`create_roks_cluster=false` + `roks_cluster_id_or_name` +
+`use_existing_cluster_vpc=true` + `existing_cluster_vpc_id` +
+`create_roks_transit_gateway=false` + `testing_create_*=false`,
+appended last to the var-file chain; symmetric with the proven
+`cluster-phase-override.tfvars`) makes the second/bnk phase deploy only
+the bnk-layer modules + existing-cluster data lookups. The
+hermetic-GREEN round-1 toggle approach (proven RED in run
+`20260519-181511`) is superseded; this is the real fix. Unblocks the
+`v1.6.2` tag.
+
