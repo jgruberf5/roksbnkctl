@@ -49,6 +49,45 @@ import (
 // terraform.
 const appliedReplayFile = ".applied-replay.tfvars"
 
+// RequireSnapshotOrVarFile pre-empts terraform's bare "No value for
+// required variable" failure with a roksbnkctl-level actionable error
+// when the caller has neither an applied-tfvars snapshot to replay nor
+// an explicit `--var-file`. The check belongs in the verbs the operator
+// expects to work against `-w <ws>` alone on a previously-applied
+// workspace — `plan`, `apply`, `down`, `cluster down` — and is a no-op
+// in every other case:
+//
+//   - replayed has a path  → a snapshot exists; round-3 replay covers it.
+//   - userVarFiles has any → the user supplied the inputs explicitly.
+//
+// Only when *both* are empty does the call resolve to terraform plan/apply
+// with the small `config.yaml`-derived `state/terraform.tfvars` as the
+// sole var-file, which doesn't carry `ibmcloud_api_key` /
+// `testing_*` / `roks_*` / `f5_*` — so terraform errors with a stack of
+// unrelated-looking "No value for required variable" lines that don't
+// name a remedy. This helper names the remedy.
+//
+// `phase` ("cluster" / "trial" / "legacy-single") and `verb`
+// (`"down"` / `"plan"` / `"apply"` / `"cluster down"`) shape the
+// message so the user can copy/paste it.
+//
+// Escape hatch: pass `--var-file <any-file>` (even an empty one) to
+// bypass — the caller's `userVarFiles` slice is non-empty so this
+// helper returns nil.
+func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, phase, verb string) error {
+	if len(replayed) > 0 || len(userVarFiles) > 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"this workspace has no terraform.applied.tfvars snapshot for the %s phase yet,\n"+
+			"  so `roksbnkctl %s -w <workspace>` alone can't supply the required terraform\n"+
+			"  variables (ibmcloud_api_key, testing_*/roks_*/f5_* — none have defaults).\n"+
+			"  Re-run with `--var-file <path/to/your/terraform.tfvars>` once; on the first\n"+
+			"  successful `roksbnkctl up --var-file <path>` the snapshot is written\n"+
+			"  automatically and subsequent `-w <ws>` lifecycle ops will pick it up",
+		phase, verb)
+}
+
 // LayerAppliedTFVars returns the phase's deduped applied-tfvars replay
 // file as a single-element var-file slice when a snapshot exists. The
 // returned path is `<phase state dir>/.applied-replay.tfvars`, a freshly

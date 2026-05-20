@@ -225,6 +225,12 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	// Returns nil when no snapshot exists → byte-identical to prior
 	// behaviour.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	// Pre-empt terraform's bare "No value for required variable" with an
+	// actionable roksbnkctl-level message when neither a snapshot nor a
+	// --var-file is available (validator Issue 3 option (b)).
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "plan"); err != nil {
+		return err
+	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform plan")
 	_, err = tfws.Plan(ctx, varFiles...)
@@ -259,6 +265,15 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// appended LAST so phase-architectural values (create_roks_cluster=
 	// false, …) still win over the replay.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	// Option (b): when neither a snapshot nor a --var-file is available,
+	// pre-empt terraform's raw missing-required-var error with the
+	// actionable roksbnkctl-level message. extraVF (bnk-phase-override)
+	// only exists on the *second* phase of a `up` and contains no
+	// secrets / user inputs, so it doesn't count as "the user supplied
+	// the inputs" for this gate.
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "apply"); err != nil {
+		return err
+	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
 	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
@@ -346,6 +361,11 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// doesn't carry. Returns nil when no snapshot exists → byte-
 	// identical to prior behaviour.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	// Option (b): no snapshot AND no --var-file → actionable error
+	// before terraform sees a stack of bare missing-required-var lines.
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "down"); err != nil {
+		return err
+	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform destroy")
 	return tfws.Destroy(ctx, varFiles...)

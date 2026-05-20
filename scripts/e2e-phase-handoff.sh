@@ -250,6 +250,30 @@ main() {
 
     step "S1 init -w $WORKSPACE" "$ROKSBNKCTL" init -w "$WORKSPACE"
 
+    # A6 — validator Issue 3 option (b) live probe. Before any apply
+    # (the workspace is post-init, pre-up; NO applied-tfvars snapshot
+    # yet), bare `roksbnkctl plan -w <ws>` must FAIL with the
+    # roksbnkctl-level actionable error, NOT with terraform's raw stack
+    # of "No value for required variable" lines. Read-only — no cloud
+    # side-effects. Skipped in dry-run because the gate fires before
+    # any cloud call regardless.
+    if [[ "$DRY_RUN" != "1" ]]; then
+        log "→ A6 bare \`plan -w $WORKSPACE\` (NO --var-file, no snapshot) — Issue 3 option (b) actionable error"
+        A6_LOG="$LOG_DIR/a6-no-snapshot-$RUN_TS.log"
+        if "$ROKSBNKCTL" plan -w "$WORKSPACE" >"$A6_LOG" 2>&1; then
+            fail "A6 bare \`plan -w $WORKSPACE\` (pre-up, no snapshot, no --var-file) UNEXPECTEDLY succeeded — Issue 3 option (b) gate not engaged (log: $A6_LOG)"
+        fi
+        if ! grep -qE 'has no terraform\.applied\.tfvars snapshot.*phase yet' "$A6_LOG"; then
+            fail "A6 bare plan failed without the roksbnkctl-level actionable error — terraform's raw missing-required-var leaked instead (log: $A6_LOG)"
+        fi
+        if ! grep -qE 'Re-run with .--var-file' "$A6_LOG"; then
+            fail "A6 actionable error missing the --var-file remedy hint (log: $A6_LOG)"
+        fi
+        green "  ✓ A6 bare plan -w $WORKSPACE (no snapshot) refused with the actionable error (Issue 3 option (b))"
+    else
+        log "→ A6 (dry-run): bare \`plan -w $WORKSPACE\` pre-up returns the actionable Issue 3 option (b) error"
+    fi
+
     # S2 — the real reproduction. `up` runs the cluster phase, then the
     # bnk/testing phase, end to end. Pre-fix this is exactly where IBM
     # Cloud rejects the duplicate VPC / transit gateway / client VPC.
@@ -263,6 +287,7 @@ main() {
         log "→ A3 forced bnk-phase override turns cluster-shared creation OFF (create_roks_cluster=false + use_existing_cluster_vpc=true): $SECOND_OVERRIDE"
         log "→ A4 run log free of 'not unique' / 'already exists'"
         log "→ A5 bare \`plan -w $WORKSPACE\` (NO --var-file) succeeds via applied-tfvars replay — validator Issue 3"
+        log "→ A6 (already exercised above pre-S2): bare plan with no snapshot returns the actionable Issue 3 option (b) error"
         green "DRY-RUN complete — steps rendered, no cloud calls, no key printed."
         return 0
     fi

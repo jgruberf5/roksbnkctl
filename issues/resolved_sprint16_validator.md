@@ -82,3 +82,30 @@ Issue 3 → `resolved`; v1.6.2 superset (Issue 2 + 3 + 4 all live-verified
 GREEN). `live-verify-high-issues` discipline cycled twice for Issue 3
 (round-2 RED → round-3 GREEN) — proving the rule for medium-severity
 issues too once they touch the same lifecycle code path.
+
+## 2026-05-20 — Issue 3 option (b) LIVE-VERIFIED GREEN (held before release per `no-piling-into-active-release`)
+
+Round-3 closed the *snapshot-exists* case; option (b) closes the
+*no-snapshot* case for the same `-w <ws>` UX promise. Pre-empts
+terraform's raw `No value for required variable` stack with an
+actionable roksbnkctl-level message that names the `--var-file <path>`
+remedy. New exported `orchestration.RequireSnapshotOrVarFile`; wired
+into `RunPlan` / `RunApply` / `RunTrialDown` / `runClusterDown` (the
+latter strips the `cluster-phase-override.tfvars` architectural file
+from the gate input so only user-supplied var-files count as
+"operator provided inputs"). Hermetic test
+`TestRequireSnapshotOrVarFile` (5 subtests) pins both branches + the
+message contract; e2e gained assertion **A6** that runs bare
+`roksbnkctl plan -w "$WORKSPACE"` *post-init / pre-up* (no snapshot
+exists yet) and asserts it returns non-zero with the actionable phrase
++ the `--var-file` remedy hint.
+
+**Live-verified GREEN run-id `20260520-035616`** — A1–A6 ✓ (incl. A6 ✓
+pre-up bare plan refused with the actionable error; A1 cluster `72
+added`; bnk `60 added`; A5 bare plan -w succeeded via the applied-tfvars
+replay); two-phase self-teardown ✓; canada-* residual check ✓; live
+recheck post-teardown cluster/VPCs/TGW/COS = 0/0/0/0. Held *before*
+the GitHub Release of `v1.6.2` per the `no-piling-into-active-release`
+discipline (the round-2 Issue 3 attempt's burn — a wasted billable run
++ stranded-cluster cleanup — is exactly the cost the rule exists to
+avoid). v1.6.2 (re-tagged) is the superset.
