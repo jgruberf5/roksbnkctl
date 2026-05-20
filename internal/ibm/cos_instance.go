@@ -39,14 +39,34 @@ func (c *Client) ensureRC() (*resourcecontrollerv2.ResourceControllerV2, error) 
 	return rc, nil
 }
 
-// ListCOSInstances enumerates every COS service instance the API key has
-// access to in the current account. Handles pagination — IBM's default
-// page size is 100 so most accounts list in one round trip, but we
-// follow next_url just in case.
+// COSCatalogOfferingID is the IBM Cloud global-catalog offering UUID for
+// the `cloud-object-storage` service. Resource Controller v2's
+// /v2/resource_instances endpoint accepts this as the `resource_id`
+// query parameter to narrow the response to COS instances only —
+// turning an unfiltered O(thousands)-resources scan (the original
+// 76s+ wall-clock observed in round-5 profiling) into an O(tens)-COS-
+// instances response (sub-second in practice).
 //
-// Server-side filtering by service ID is possible but requires hardcoding
-// the COS service catalog UUID; client-side CRN-substring filtering
-// produces the same result without the version-pinning concern.
+// Source: IBM Cloud global catalog. Confirmed live 2026-05-20 by
+// `ListResourceInstances(Name=<our-COS-instance>)` returning a
+// `resource_id` of `dff97f5c-bc5e-4455-b470-411c3edbe49c`, and the
+// reverse query `ListResourceInstances(ResourceID=<this UUID>)`
+// returning every COS instance in the account in ~317ms. The value is
+// stable across years; if IBM ever rotates it, the SDK call returns
+// the new id in any COS-instance record, and the same name-filter
+// fallback in GetCOSInstanceByName remains correct.
+const COSCatalogOfferingID = "dff97f5c-bc5e-4455-b470-411c3edbe49c"
+
+// ListCOSInstances enumerates every COS service instance the API key has
+// access to in the current account. Uses Resource Controller v2's
+// server-side `resource_id` filter (see COSCatalogOfferingID) so the
+// response carries only COS instances; the unfiltered variant paginated
+// over every resource type in the account and was the dominant cost in
+// `cos object list` wall-clock (round-5 profile: 76.4s of 88s total).
+//
+// Pagination is still followed via next_url — IBM's default page size
+// is 100 and our largest production account has ~30 COS instances, so
+// in practice this is one round trip.
 func (c *Client) ListCOSInstances(ctx context.Context) ([]COSInstance, error) {
 	rc, err := c.ensureRC()
 	if err != nil {
@@ -58,6 +78,7 @@ func (c *Client) ListCOSInstances(ctx context.Context) ([]COSInstance, error) {
 
 	for {
 		opts := rc.NewListResourceInstancesOptions()
+		opts.SetResourceID(COSCatalogOfferingID)
 		if startToken != nil {
 			opts.SetStart(*startToken)
 		}
@@ -72,6 +93,10 @@ func (c *Client) ListCOSInstances(ctx context.Context) ([]COSInstance, error) {
 
 		for i := range res.Resources {
 			r := &res.Resources[i]
+			// Belt-and-braces CRN substring check: the server-side
+			// resource_id filter already restricts to COS, but if IBM
+			// ever changes the filter semantics we'd rather drop a
+			// stray non-COS record than mis-route an S3 call to one.
 			if r.CRN == nil || !strings.Contains(*r.CRN, ":cloud-object-storage:") {
 				continue
 			}
@@ -172,18 +197,64 @@ func looksLikeUUID(s string) bool {
 // GetCOSInstanceByName returns the first COS instance with the given name.
 // Returns a clear "not found" error when nothing matches — common when
 // users typo the name.
+//
+// Implementation note: uses Resource Controller v2's server-side `name`
+// AND `resource_id` (COS catalog UUID) filters together. Both alone
+// narrow the response dramatically — `name` typically to ≤2 records
+// (name collisions across services are rare); `resource_id` to just
+// the account's COS instances. Combined, the response is normally a
+// single record returned in well under a second. Before this filter
+// the call paginated every resource in the account — the dominant
+// cost of `cos object list --instance <name>` wall-clock (round-5
+// profile: 76.4s of 88s total).
 func (c *Client) GetCOSInstanceByName(ctx context.Context, name string) (*COSInstance, error) {
 	if name == "" {
 		return nil, fmt.Errorf("instance name is empty")
 	}
-	all, err := c.ListCOSInstances(ctx)
+	rc, err := c.ensureRC()
 	if err != nil {
 		return nil, err
 	}
-	for i := range all {
-		if all[i].Name == name {
-			return &all[i], nil
+
+	var startToken *string
+	for {
+		opts := rc.NewListResourceInstancesOptions()
+		opts.SetName(name)
+		opts.SetResourceID(COSCatalogOfferingID)
+		if startToken != nil {
+			opts.SetStart(*startToken)
 		}
+
+		res, _, err := rc.ListResourceInstancesWithContext(ctx, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing resource instances: %w", err)
+		}
+		if res == nil {
+			break
+		}
+
+		for i := range res.Resources {
+			r := &res.Resources[i]
+			// Defence in depth: confirm both name match and COS CRN
+			// even though the API already narrowed both fields.
+			if r.Name == nil || *r.Name != name {
+				continue
+			}
+			if r.CRN == nil || !strings.Contains(*r.CRN, ":cloud-object-storage:") {
+				continue
+			}
+			inst := toCOSInstance(r)
+			return &inst, nil
+		}
+
+		if res.NextURL == nil || *res.NextURL == "" {
+			break
+		}
+		next := extractStartFromURL(*res.NextURL)
+		if next == nil {
+			break
+		}
+		startToken = next
 	}
 	return nil, fmt.Errorf("COS instance %q not found in current account", name)
 }
