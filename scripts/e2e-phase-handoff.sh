@@ -262,6 +262,7 @@ main() {
         log "→ A2 second-phase state does NOT manage a duplicate cluster_vpc/transit_gateway/client_vpc: $SECOND_STATE"
         log "→ A3 forced bnk-phase override turns cluster-shared creation OFF (create_roks_cluster=false + use_existing_cluster_vpc=true): $SECOND_OVERRIDE"
         log "→ A4 run log free of 'not unique' / 'already exists'"
+        log "→ A5 bare \`plan -w $WORKSPACE\` (NO --var-file) succeeds via applied-tfvars replay — validator Issue 3"
         green "DRY-RUN complete — steps rendered, no cloud calls, no key printed."
         return 0
     fi
@@ -326,6 +327,24 @@ main() {
         fail "A4 run log contains a duplicate-name rejection ('not unique' / 'already exists') — Issue 2 reproduced"
     fi
     green "  ✓ A4 no duplicate-name rejection in the run log"
+
+    # A5 — validator Issue 3 live probe. Bare `plan -w <ws>` (NO
+    # --var-file) must succeed via the applied-tfvars replay the prior
+    # apply wrote (round-3: dedup + secret-stripped at replay time).
+    # Pre-fix this errored on required no-default vars; round-2 failed
+    # on duplicate-key snapshot; round-3 closes both. Read-only — doesn't
+    # perturb state or the EXIT trap teardown that follows.
+    log "→ A5 bare \`plan -w $WORKSPACE\` (NO --var-file) — Issue 3 applied-tfvars replay"
+    A5_LOG="$LOG_DIR/a5-bare-plan-$RUN_TS.log"
+    if "$ROKSBNKCTL" plan -w "$WORKSPACE" >"$A5_LOG" 2>&1; then
+        if ! grep -q 'Replaying applied tfvars from' "$A5_LOG"; then
+            fail "A5 bare plan succeeded but did NOT replay the applied-tfvars snapshot — Issue 3 fix not engaged (log: $A5_LOG)"
+        fi
+        green "  ✓ A5 bare plan -w $WORKSPACE succeeded via applied-tfvars replay (Issue 3 closed)"
+    else
+        red "  ✗ A5 bare plan failed (log: $A5_LOG)"
+        fail "A5 bare \`plan -w $WORKSPACE\` (no --var-file) failed — Issue 3 NOT fixed"
+    fi
 
     echo "" >&2
     green "════════════════════════════════════════════════════════════"
