@@ -85,6 +85,15 @@ ifeq ($(BOOK_BACKEND),docker)
 	@echo ""
 	@echo "PDF written to:  book/book/pandoc/pdf/book.pdf"
 	@echo "HTML written to: book/book/html/index.html"
+	@echo ""
+	@echo "==> mermaid-label regression guard (validator Sprint 18 Issue 2)"
+	@# Fail the build if a future docker-image / Lua-filter / mermaid-cli
+	@# change silently regresses the architect Sprint 18 Issue 1 fix
+	@# (shapes-but-no-text mermaid in the PDF). pdftotext-driven; runs
+	@# on the host. If pdftotext is missing on the host, the script
+	@# warns but does not fail — the release-cut path runs inside the
+	@# docker image which bundles pdftotext.
+	@bash scripts/check-pdf-mermaid-labels.sh
 else
 	@echo "make book-pdf requires BOOK_BACKEND=docker:" >&2
 	@echo "  PDF generation needs pandoc + LaTeX + mermaid-cli, all of" >&2
