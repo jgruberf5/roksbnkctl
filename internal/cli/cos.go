@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +25,7 @@ var (
 	flagCOSClass     string
 	flagCOSTarget    string
 	flagCOSRecursive bool
+	flagCOSNoClobber bool
 )
 
 var cosCmd = &cobra.Command{
@@ -95,6 +97,29 @@ var cosBucketListCmd = &cobra.Command{
 	RunE:  runCOSBucketList,
 }
 
+var cosBucketGetCmd = &cobra.Command{
+	Use:   "get <bucket> <local-dir>",
+	Short: "Recursively download every object in a bucket to a local directory",
+	Long: `Recursively download every object in <bucket> to <local-dir>.
+
+<local-dir> is created if it does not exist (mkdir -p semantics, mode
+0755). Object keys map to nested subdirectories — a key foo/bar/baz.json
+lands at <local-dir>/foo/bar/baz.json. Streaming download per object
+(no whole-object in-memory buffering); text and binary are both copied
+through verbatim.
+
+Default behavior is overwrite (the operator just asked to download);
+pass --no-clobber to skip objects whose local target already exists,
+matching cp -n.
+
+With --output json, emits one JSON object per file completed:
+{"key","local_path","size","outcome"}. The final counts line goes to
+stderr in text mode; the JSON stream concludes with one summary record
+of shape {"counts":{...}}.`,
+	Args: cobra.ExactArgs(2),
+	RunE: runCOSBucketGet,
+}
+
 // ── object ──────────────────────────────────────────────────────────
 
 var cosObjectCmd = &cobra.Command{
@@ -141,11 +166,12 @@ func init() {
 	cosBucketCmd.PersistentFlags().StringVar(&flagCOSInstance, "instance", "", "COS instance name or CRN (required)")
 	cosBucketCreateCmd.Flags().StringVar(&flagCOSRegion, "region", "", "bucket region (default: workspace region)")
 	cosBucketCreateCmd.Flags().StringVar(&flagCOSClass, "class", "standard", "storage class (standard, vault, cold, smart)")
+	cosBucketGetCmd.Flags().BoolVar(&flagCOSNoClobber, "no-clobber", false, "skip objects whose local target already exists (cp -n semantics)")
 
 	cosObjectCmd.PersistentFlags().StringVar(&flagCOSInstance, "instance", "", "COS instance name or CRN (required)")
 
 	cosInstanceCmd.AddCommand(cosInstanceCreateCmd, cosInstanceDeleteCmd, cosInstanceListCmd)
-	cosBucketCmd.AddCommand(cosBucketCreateCmd, cosBucketDeleteCmd, cosBucketListCmd)
+	cosBucketCmd.AddCommand(cosBucketCreateCmd, cosBucketDeleteCmd, cosBucketListCmd, cosBucketGetCmd)
 	cosObjectCmd.AddCommand(cosObjectPutCmd, cosObjectGetCmd, cosObjectDeleteCmd, cosObjectListCmd)
 
 	cosCmd.AddCommand(cosInstanceCmd, cosBucketCmd, cosObjectCmd)
@@ -271,6 +297,78 @@ func runCOSBucketList(cmd *cobra.Command, _ []string) error {
 	}
 	for _, n := range names {
 		fmt.Println(n)
+	}
+	return nil
+}
+
+func runCOSBucketGet(cmd *cobra.Command, args []string) error {
+	bucket := args[0]
+	destDir := args[1]
+	// openCOSClient enforces --instance and resolves it to a CRN; if
+	// --instance is missing the error text matches the other cos bucket
+	// verbs (acceptance criterion 6) because it comes out of the same
+	// helper they all share.
+	if flagCOSInstance == "" {
+		return fmt.Errorf("--instance is required (name or CRN)")
+	}
+	cc, err := openCOSClient(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	jsonMode := flagOutput == "json"
+	enc := json.NewEncoder(os.Stdout)
+
+	// onItem is invoked once per object after its outcome is known.
+	// Text mode: one line per file to stderr (kept off stdout so the
+	// `--output text` channel stays free for piping). JSON mode: one
+	// JSON record per file streamed to stdout, terminated by a summary
+	// record below.
+	onItem := func(it cos.GetBucketItem) {
+		if jsonMode {
+			_ = enc.Encode(it)
+			return
+		}
+		if flagQuiet {
+			return
+		}
+		switch it.Outcome {
+		case "skipped":
+			fmt.Fprintf(os.Stderr, "  skip %s (exists)\n", it.LocalPath)
+		default:
+			fmt.Fprintf(os.Stderr, "  get  %s/%s → %s (%d bytes)\n", bucket, it.Key, it.LocalPath, it.Size)
+		}
+	}
+
+	if !jsonMode && !flagQuiet {
+		fmt.Fprintf(os.Stderr, "→ Downloading bucket %s to %s\n", bucket, destDir)
+	}
+
+	opts := cos.ClientGetBucketOptions(cc)
+	opts.NoClobber = flagCOSNoClobber
+	opts.OnItem = onItem
+
+	counts, err := cos.GetBucket(cmd.Context(), flagCOSInstance, bucket, destDir, opts)
+	if err != nil {
+		return err
+	}
+
+	if jsonMode {
+		// Trailing summary record so JSON consumers can pick up final
+		// counters without parsing stderr.
+		_ = enc.Encode(struct {
+			Counts cos.GetBucketCounts `json:"counts"`
+		}{Counts: counts})
+		return nil
+	}
+
+	if counts.Objects == 0 && counts.Skipped == 0 {
+		fmt.Fprintln(os.Stderr, "no objects in bucket")
+		return nil
+	}
+	if !flagQuiet {
+		fmt.Fprintf(os.Stderr, "✓ %d objects, %d bytes, %d skipped (no-clobber)\n",
+			counts.Objects, counts.Bytes, counts.Skipped)
 	}
 	return nil
 }
