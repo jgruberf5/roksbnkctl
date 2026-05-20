@@ -13,7 +13,7 @@
 ## Issue 1 — bug: mermaid diagrams in the PDF book render shapes/arrows but no text (e.g. page 120)
 
 **Severity**: high
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 ## Symptom
 

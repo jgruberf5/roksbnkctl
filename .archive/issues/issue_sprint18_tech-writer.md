@@ -14,7 +14,7 @@
 ## Issue 1 — Post-integration drift / consistency review for the integrated `cos bucket get` + mermaid PDF fix
 
 **Severity**: low
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 **Description.** Once the three-way integration commit for staff +
 architect + validator lands on `main`, the tech-writer reviews it

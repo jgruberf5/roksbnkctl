@@ -13,7 +13,7 @@
 ## Issue 1 — feat: `roksbnkctl cos bucket get` — recursive download of a COS bucket to a local directory
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 ## Motivation
 
@@ -306,7 +306,7 @@ IO; the new bucket-level verb iterates and calls into the existing
 ## Issue 2 — bug: all `roksbnkctl cos *` commands are ~10× slower than the equivalent `ibmcloud cos` CLI
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 **Description.** Manual testing of `v1.6.2`+Sprint-18-in-flight shows
 every `roksbnkctl cos *` command (list, get, etc.) takes roughly an
@@ -363,7 +363,7 @@ setup is the suspect for the 404 too).
 ## Issue 3 — bug: `roksbnkctl cos object list <bucket> --instance <inst>` returns 404 on a real, populated bucket
 
 **Severity**: high
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 **Description.** Manual testing reproducer (verbatim):
 
