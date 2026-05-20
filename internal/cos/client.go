@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/IBM/ibm-cos-sdk-go/aws"
-	"github.com/IBM/ibm-cos-sdk-go/aws/awserr"
 	"github.com/IBM/ibm-cos-sdk-go/aws/credentials"
 	"github.com/IBM/ibm-cos-sdk-go/aws/credentials/ibmiam"
 	"github.com/IBM/ibm-cos-sdk-go/aws/session"
@@ -287,90 +286,92 @@ func LocationConstraint(region, class string) string {
 }
 
 // DefaultBucketRegionResolver is the production region resolver. It
-// issues a SINGLE `s3:GetBucketLocation` call against the Client's
-// home-region endpoint; IBM COS answers from the home-region endpoint
-// regardless of the bucket's true region (the call is instance-scoped
-// via IAM, not bucket-region-scoped), returning the bucket's real
-// region in the `LocationConstraint` response body.
+// probes a small ordered list of candidate regions via the
+// always-cheap HeadBucket S3 op, starting with the home region; the
+// first region whose endpoint returns success (or returns a
+// region-specific 301 redirect whose Location header names the actual
+// region) wins.
 //
-// Why single-call (Sprint 18 Issue 2 round-3): the round-2 cut shipped
-// a HeadBucket probe sweep across a fixed fallback region list. Live
-// verify on `cos object list bnk-schematics-resources` measured ~89s
-// wall-clock (most of it spent waiting on per-probe retry/backoff
-// before the bucket's actual region was found). GetBucketLocation
-// collapses that N-call sweep into one round-trip, taking the
-// resolver's contribution from ~80s down to ~1s and putting the
-// command back inside Issue 2 AC #1's ≤2× target vs `ibmcloud cos`.
+// The Sprint 18 round-2 cut ships a minimal probe — home-region first,
+// then a fixed fallback list of public IBM COS regions. The CLI wires
+// this resolver at openCOSClient time; tests inject simpler fakes.
 //
-// IBM COS's `LocationConstraint` payload comes back in a few shapes:
-//
-//	"us-south-standard"  // region + storage class
-//	"us-south-smart"     // region + smart-tier
-//	"us-south-vault"     // region + vault-tier
-//	"us-south-cold"      // region + cold-tier
-//	"us-south"           // bare region (older buckets / cross-region)
-//
-// We strip the trailing storage-class suffix to yield the canonical
-// region string ("us-south") that EndpointForRegion expects.
-//
-// On a genuine miss IBM COS returns `NoSuchBucket` (404). We wrap that
-// into an error naming the bucket AND the instance CRN so the operator
-// can distinguish "wrong bucket name" from "wrong --instance" — Issue
-// 3 AC #3's clarity goal.
+// The probe uses HeadBucket because (a) it's the cheapest S3 op that
+// actually exercises the bucket's existence, (b) IBM COS returns the
+// bucket's real region in `x-amz-bucket-region` even on a misdirected
+// request, and (c) it requires no special permissions beyond what
+// `cos object list` already needs.
 func DefaultBucketRegionResolver(c *Client) BucketRegionResolver {
 	return func(ctx context.Context, _ string, bucket string) (string, error) {
-		// Use the home-region S3 handle directly. This avoids any
-		// recursion through s3ForBucket (which would call back into
-		// the resolver) and pins the call to the instance-scoped
-		// home-region endpoint where IBM COS will answer.
-		out, err := c.s3.GetBucketLocationWithContext(ctx, &s3.GetBucketLocationInput{
-			Bucket: aws.String(bucket),
-		})
-		if err != nil {
-			if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchBucket {
-				return "", fmt.Errorf("bucket %q not found in COS instance %s: %w", bucket, c.instanceCRN, err)
+		// Try the home region first (single-region workspaces are the
+		// majority case and avoid the cross-region probe entirely).
+		if r, ok := probeBucketRegion(ctx, c, c.region, bucket); ok {
+			return r, nil
+		}
+		// Fall back to a fixed ordered list of public IBM COS regions.
+		// Order is rough popularity: us-south then us-east cover the
+		// bulk of BNK installs; eu-* and ap-* round out the list.
+		for _, candidate := range fallbackRegions {
+			if candidate == c.region {
+				continue
 			}
-			return "", fmt.Errorf("GetBucketLocation %q (instance %s): %w", bucket, c.instanceCRN, err)
+			if r, ok := probeBucketRegion(ctx, c, candidate, bucket); ok {
+				return r, nil
+			}
 		}
-		raw := aws.StringValue(out.LocationConstraint)
-		region := parseLocationConstraint(raw)
-		if region == "" {
-			// Empty LocationConstraint historically meant us-east-1 on
-			// AWS S3; on IBM COS this should not occur for a normally
-			// provisioned bucket, but fall back to the Client's home
-			// region so the call still gets a working endpoint rather
-			// than a blank string downstream.
-			region = c.region
-		}
-		return region, nil
+		return "", fmt.Errorf("bucket %q not found in any probed IBM COS region (instance %s)", bucket, c.instanceCRN)
 	}
 }
 
-// locationStorageClassSuffixes are the storage-class suffixes IBM COS
-// appends to the LocationConstraint string returned by GetBucketLocation.
-// Stripping the longest matching suffix from the raw constraint yields
-// the canonical IBM Cloud region string (e.g. "us-south-standard" →
-// "us-south"). Bare region constraints (no suffix) pass through unchanged.
-var locationStorageClassSuffixes = []string{
-	"-standard",
-	"-smart",
-	"-vault",
-	"-cold",
+// fallbackRegions is the ordered probe list for the default resolver.
+// Not exported because it's a tuning knob, not a public API.
+var fallbackRegions = []string{
+	"us-south", "us-east", "eu-de", "eu-gb", "ca-tor", "jp-tok", "au-syd", "br-sao",
 }
 
-// parseLocationConstraint extracts the canonical region from an IBM COS
-// LocationConstraint payload by stripping the trailing storage-class
-// suffix (-standard, -smart, -vault, -cold) if present. Bare region
-// strings pass through. Whitespace is trimmed defensively.
-func parseLocationConstraint(raw string) string {
-	r := strings.TrimSpace(raw)
-	if r == "" {
-		return ""
-	}
-	for _, suf := range locationStorageClassSuffixes {
-		if strings.HasSuffix(r, suf) {
-			return strings.TrimSuffix(r, suf)
+// probeBucketRegion does a single HeadBucket against the region's
+// endpoint. Returns the resolved region (which may differ from the
+// probed region if IBM COS responded with an `x-amz-bucket-region`
+// hint) and a boolean indicating success.
+//
+// The implementation is deliberately defensive: a 200 says "yes, here";
+// a 301/400/403 with `x-amz-bucket-region` says "wrong region, try
+// this one"; any other failure says "skip this candidate".
+func probeBucketRegion(ctx context.Context, c *Client, probeRegion, bucket string) (string, bool) {
+	// Build (or fetch from cache) the per-region S3 handle for the
+	// probe. We intentionally bypass s3ForBucket here to avoid an
+	// infinite loop (s3ForBucket calls regionFor calls resolver calls
+	// probeBucketRegion).
+	var cli *s3.S3
+	if v, ok := c.regionalS3.Load(probeRegion); ok {
+		cli = v.(*s3.S3)
+	} else {
+		conf := aws.NewConfig().
+			WithRegion(probeRegion).
+			WithEndpoint(EndpointForRegion(probeRegion)).
+			WithCredentials(c.creds).
+			WithS3ForcePathStyle(true)
+		sess, err := session.NewSession()
+		if err != nil {
+			return "", false
 		}
+		cli = s3.New(sess, conf)
+		actual, _ := c.regionalS3.LoadOrStore(probeRegion, cli)
+		cli = actual.(*s3.S3)
 	}
-	return r
+
+	req, _ := cli.HeadBucketRequest(&s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	req.SetContext(ctx)
+	if err := req.Send(); err != nil {
+		// Inspect the response for IBM COS's region hint. The header
+		// is set by COS even on a 301/400 misdirection response.
+		if req.HTTPResponse != nil {
+			if hint := req.HTTPResponse.Header.Get("x-amz-bucket-region"); hint != "" {
+				return strings.TrimSpace(hint), true
+			}
+		}
+		return "", false
+	}
+	// HeadBucket 200 → the bucket exists in this region.
+	return probeRegion, true
 }
