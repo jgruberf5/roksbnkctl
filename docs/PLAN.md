@@ -1122,6 +1122,27 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 18 — `cos bucket get` + mermaid PDF text-missing fix (first regular work sprint post-`v1.6.2`)
+
+_Drafted 2026-05-20 after Sprint 17's backlog-grooming attempt was abandoned and the two GitHub Issues (`#1 cos bucket get`, `#2 mermaid PDF rendering`) were captured into local ledgers and deleted from GitHub. **Source of truth for Sprint 18 work = `issues/issue_sprint18_*.md`**, not GitHub Issues — GitHub remains the destination for external-user reports via `.github/ISSUE_TEMPLATE/`, not a parallel queue for in-flight roksbnkctl work._
+
+Two scope items, partitioned by role per the Sprint 15/16 work-sprint shape:
+
+| Role | Scope |
+|---|---|
+| **Staff** Issue 1 | Implement `roksbnkctl cos bucket get --instance <inst> <bucket> <local-dir>` — recursive streaming download, symmetric with the existing `cos bucket {create,list,delete}` group. Reuses `cos object get`'s per-object streaming path. Sequential download (concurrency deferred). Files: `internal/cos/bucket.go`, `internal/cli/cos.go`, new `internal/cos/bucket_get_test.go`. |
+| **Architect** Issue 1 | Diagnose + fix the mermaid PDF text-missing rendering bug (most likely a font-availability or SVG→PDF conversion issue inside `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev`'s `/opt/render-mermaid.lua` Lua filter). Three ranked hypotheses in the issue spec; diagnostic-then-fix. HTML book pipeline must keep working. |
+| **Validator** Issues 1 + 2 | Hermetic `bucket_get_test.go` cases (a)–(g) covering sha256 round-trip / nested-key subdirs / `--no-clobber` / error paths; opt-in `scripts/e2e-cos-bucket-get.sh` for the live sha256 round-trip on a real bucket. Separate regression smoke check on the mermaid fix (`pdftotext`-driven label assertion wired into the PDF build so a future regression in the docker image's fonts fails the build, not silently ships). |
+| **Tech-writer** Issue 1 (light, read-only, runs after) | Drift sweep over the integrated tree: `--help` text matches sibling COS verbs, CHANGELOG bullets are user-facing, COS chapter pins the new verb example, mermaid fix mentioned in §Diagnostics not as a feature. GREEN / RED launch verdict ends the closure. |
+
+`live-verify-high-issues` discipline applies to the staff feature — the validator builds the gated-live driver; integrator runs the live `!` verify (real COS bucket, sha256 round-trip) before flipping staff Issue 1 to `resolved`.
+
+Version at cut (integrator-owned): expected shape is a combined `v1.6.3` patch (both items are user-facing — one new command, one user-observable bug fix), but `v1.7.0` is on the table if the integrator judges minor-worthy at gate close. No PRD for either item — both are straight from the deleted GitHub-issues-now-local-ledgers.
+
+Sprint launch: integrator dispatches architect + staff + validator in parallel (single message, three `Agent` tool calls reading the four `prompts/sprint18/*.md` files), aggregates + commits + runs gates + runs the live verify, then dispatches tech-writer over the integrated tree.
+
+---
+
 ## Sprint 17 — backlog-grooming attempt — **abandoned** (post-`v1.6.2`)
 
 Briefly attempted 2026-05-20 immediately after the `v1.6.2` cut: each of the four roles was dispatched to survey its area and draft GitHub-ready issue markdown files into `prompts/sprint17/staging/<role>/`, with the integrator filing the accepted set via `gh issue create`. **Abandoned mid-flight by integrator decision** — the review was taking disproportionate time relative to the signal in the drafts, and the working tree was carrying more in-process artifacts than the rest of the backlog process warranted. No GitHub issues were filed from this sprint; the 19 staff/architect/validator drafts + the 1 partial tech-writer draft + the dispatch prompts + the issue ledgers were moved to [`.archive/prompts/sprint17/`](../.archive/prompts/sprint17/) and [`.archive/issues/`](../.archive/issues/) for auditability. Future backlog-grooming will use a smaller, ad-hoc shape (file issues directly as they're noticed, via the templates at `.github/ISSUE_TEMPLATE/`) rather than the four-role parallel-dispatch the consolidation/code sprints use.
