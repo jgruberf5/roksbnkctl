@@ -391,6 +391,21 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	// `cluster down -w <ws>` (no --var-file) destroys cleanly. Returns
 	// nil when no snapshot exists → caller behaviour unchanged.
 	appliedVF := orchestration.LayerAppliedTFVars(cctx.WorkspaceName, "cluster")
+	// Option (b): no snapshot AND no --var-file → actionable error
+	// instead of bubbling up terraform's raw missing-required-var lines.
+	// `varFiles` here is the cluster-phase chain assembled by
+	// openClusterTF (flagVarFiles + cluster-phase-override.tfvars).
+	// Strip the architectural override before the gate so the user's
+	// explicit --var-file is what counts as "supplied inputs".
+	userVF := make([]string, 0, len(varFiles))
+	for _, vf := range varFiles {
+		if filepath.Base(vf) != "cluster-phase-override.tfvars" {
+			userVF = append(userVF, vf)
+		}
+	}
+	if err := orchestration.RequireSnapshotOrVarFile(appliedVF, userVF, "cluster", "cluster down"); err != nil {
+		return err
+	}
 	varFiles = append(append([]string{}, appliedVF...), varFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform destroy (cluster phase)")
 	if err := tfws.Destroy(ctx, varFiles...); err != nil {
