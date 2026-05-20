@@ -1122,6 +1122,25 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 17 — backlog grooming: draft GitHub issues for the next development cycle (planning sprint, post-`v1.6.2`)
+
+_Drafted from the integrator decision 2026-05-20 immediately after the `v1.6.2` cut: the `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md` chooser is now live (verified server-side), the in-repo `issues/` ledger closed out for Sprint 16, and there's no PRD to implement next. Before any further code, **enumerate the backlog properly**: each of the four roles surveys its area and drafts GitHub-ready issue markdown files (one per proposed issue, using the new template shapes verbatim) into `prompts/sprint17/staging/<role>/`. The integrator reviews and files via `gh issue create` — agents do not run `gh issue create` and do not commit, matching the long-standing "agents propose, integrator commits" rule from `prompts/README.md`._
+
+**No PRD, no book chapter, no CHANGELOG entry, no release tag.** This sprint's only deliverable is the GitHub backlog the *next* development cycle pulls from. Soft caps per role: staff ≤8, architect ≤6, validator ≤6, tech-writer ≤5 — light totals ≤25, deliberately small. Quality > volume; the integrator will reject low-signal drafts at file time, so overshooting the cap actively hurts.
+
+Per-role survey scope is in `prompts/sprint17/README.md` §"Per-role survey scope + cap":
+
+- **Staff** — Go code (`TODO`/`FIXME`), PRD "Implementation tasks" gaps, `CHANGELOG ### Deferred`, `docs/PLAN.md` post-v1.0 Code subsection, structural gaps in the Sprint 16 applied-replay / second-phase-reuse / cluster-down override-stripping code.
+- **Architect** — book "out of scope" / "future work" promises, broken cross-references, `.github/workflows/**` CI/release coverage gaps, infra-y `CHANGELOG ### Deferred`.
+- **Validator** — per-package + e2e test coverage holes, `scripts/**` driver gaps, CI-matrix gaps (hermetic shape, gofmt enforcement, the orchestration ⊄ cli boundary grep), live-verify-discipline gaps surfaced by the Sprint 16 lessons (`live-verify-high-issues`, `no-piling-into-active-release`).
+- **Tech-writer (light, read-only, runs after)** — cross-cutting drift between code ↔ book ↔ `--help`, doc-only fixes, **plus** a consolidation pass over the other three roles' staged drafts (dedupe, drift, acceptance-criteria quality, template compliance).
+
+Dedupe rule binding every role: cross-check each candidate against (a) `gh issue list -L 100 --state all` (currently #1 `cos bucket get`, #2 `mermaid PDF rendering`) and (b) the in-tree `issues/issue_sprint*_*.md` ledger items marked `accepted`/`deferred`/`wontfix`. A near-duplicate is a non-deliverable.
+
+Sprint close: integrator reviews `prompts/sprint17/staging/`, rejects low-signal drafts, consolidates near-duplicates across roles, files the accepted set via `gh issue create`, records every resulting `https://github.com/jgruberf5/roksbnkctl/issues/<N>` URL beside its draft, and commits the staging tree as an audit trail.
+
+---
+
 ## What's deliberately deferred to post-v1.0
 
 These came up during the PRDs but aren't blocking v1.0:
