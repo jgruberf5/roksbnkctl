@@ -16,7 +16,7 @@
 ## Issue 1 — Hermetic + gated-live tests for `cos bucket get`
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 **Description.** Sprint 18 staff Issue 1 introduces
 `roksbnkctl cos bucket get --instance <inst> <bucket> <local-dir>`
@@ -81,7 +81,7 @@ as the gated-live-verify reference pattern.
 ## Issue 2 — Regression check on the mermaid PDF fix
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved (live-verified GREEN 2026-05-20; shipped in v1.6.3)
 
 **Description.** Sprint 18 architect Issue 1 fixes the mermaid PDF
 text-missing rendering (most likely a docker-image font / SVG-to-PDF
