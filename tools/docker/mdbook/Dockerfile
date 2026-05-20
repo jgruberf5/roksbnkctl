@@ -5,7 +5,7 @@
 #
 #   - mdbook + mdbook-mermaid             (HTML book build with rendered diagrams)
 #   - mdbook-pandoc + pandoc + texlive    (PDF book build via XeLaTeX)
-#   - @mermaid-js/mermaid-cli + Chromium  (pre-renders Mermaid blocks to SVG
+#   - @mermaid-js/mermaid-cli + Chromium  (pre-renders Mermaid blocks to PNG
 #                                          so the PDF has real diagrams rather
 #                                          than literal `sequenceDiagram ...`
 #                                          code-block fallback text)
@@ -66,7 +66,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # highlighting.
 #
 # nodejs + chromium are for @mermaid-js/mermaid-cli's puppeteer-based
-# rendering of Mermaid diagrams to SVG. We pin to system Chromium and
+# rendering of Mermaid diagrams to PNG. We pin to system Chromium and
 # tell puppeteer not to download its own (the bundled Chromium ships
 # ~280 MB; the system package is ~200 MB and reusable for other
 # headless-browser work).
@@ -107,9 +107,9 @@ COPY --from=builder /out/bin/mdbook /usr/local/bin/mdbook
 COPY --from=builder /out/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 COPY --from=builder /out/bin/mdbook-pandoc /usr/local/bin/mdbook-pandoc
 
-# Pandoc Lua filter that pre-renders Mermaid code blocks to SVG via
+# Pandoc Lua filter that pre-renders Mermaid code blocks to PNG via
 # mmdc during the PDF build. Configured via book.toml's
-# [output.pandoc.profile.pdf]::lua-filter setting (which references the
+# [output.pandoc.profile.pdf]::filters array (which references the
 # in-container path `/opt/render-mermaid.lua`).
 COPY render-mermaid.lua /opt/render-mermaid.lua
 

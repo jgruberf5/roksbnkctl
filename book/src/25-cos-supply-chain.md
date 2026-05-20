@@ -26,7 +26,7 @@ The bucket structure is defined by the upstream HCL — concretely by the `ibmcl
 
 ```bash
 roksbnkctl cos instance {create|delete|list}
-roksbnkctl cos bucket   {create|delete|list} --instance <name-or-CRN>
+roksbnkctl cos bucket   {create|delete|list|get} --instance <name-or-CRN>
 roksbnkctl cos object   {put|get|delete|list} --instance <name-or-CRN>
 ```
 
@@ -76,6 +76,11 @@ roksbnkctl cos bucket list --instance bnk-orchestration
 
 # Delete (the bucket must be empty first; cos object delete --recursive isn't implemented yet)
 roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+
+# Snapshot the entire bucket to a local directory (recursive, streaming, byte-for-byte).
+# Useful before rotating supply-chain artefacts — keeps a known-good set you can roll back to.
+roksbnkctl cos bucket get bnk-schematics-resources ./snapshot \
+  --instance bnk-orchestration
 ```
 
 | Flag | Default | Notes |
@@ -83,6 +88,7 @@ roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestrati
 | `--instance` | (required) | Instance name or CRN — the CRN starts with `crn:v1:` and is used as-is; a bare name is looked up via Resource Controller. |
 | `--region` | workspace region | The IBM Cloud region the bucket is pinned to. Override only when you're crossing regions deliberately. |
 | `--class` | `standard` | Storage class: `standard` (frequently accessed), `vault` (infrequent), `cold` (archive), `smart` (auto-tiered). The BNK supply chain uses `standard` because FLO reads at install + every restart. |
+| `--no-clobber` | (off) | On `cos bucket get`: skip any object whose local path already exists. Default overwrites. Files-only flag; ignored by other `cos bucket` verbs. |
 
 ### `cos object`
 
