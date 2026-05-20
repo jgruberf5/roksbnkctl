@@ -286,62 +286,166 @@ func LocationConstraint(region, class string) string {
 }
 
 // DefaultBucketRegionResolver is the production region resolver. It
-// probes a small ordered list of candidate regions via the
-// always-cheap HeadBucket S3 op, starting with the home region; the
-// first region whose endpoint returns success (or returns a
-// region-specific 301 redirect whose Location header names the actual
-// region) wins.
+// fans out HeadBucket probes against every candidate IBM COS region
+// **concurrently**, returning as soon as one region's endpoint answers
+// success — the parallel-probe shape the official `ibmcloud cos` CLI's
+// `bucket-location-get` uses (see github.com/IBM/ibmcloud-cos-cli,
+// functions/bucket_class_location.go: `getBucketLocationCoordinator`
+// dispatches one goroutine per known region, first non-error wins).
 //
-// The Sprint 18 round-2 cut ships a minimal probe — home-region first,
-// then a fixed fallback list of public IBM COS regions. The CLI wires
-// this resolver at openCOSClient time; tests inject simpler fakes.
+// Why this shape and not the alternatives:
 //
-// The probe uses HeadBucket because (a) it's the cheapest S3 op that
-// actually exercises the bucket's existence, (b) IBM COS returns the
-// bucket's real region in `x-amz-bucket-region` even on a misdirected
-// request, and (c) it requires no special permissions beyond what
-// `cos object list` already needs.
+//   - Resource Controller v2 has no `service_instances/{id}/buckets`
+//     endpoint — its scope ends at instance metadata. (Verified against
+//     the platform-services-go-sdk resourcecontrollerv2 surface; the
+//     only per-instance ops are GetResourceInstance / Update / Delete.)
+//   - The IBM COS SDK has no `s3control` / `configmanager` package
+//     that surfaces per-bucket location without an S3-API call.
+//   - IBM COS's S3 surface is endpoint-scoped: a single
+//     `GetBucketLocation` (or any other S3 op) against the home-region
+//     endpoint 404s when the bucket lives elsewhere. (Round-3 verified
+//     this the hard way at commit 39a9af5: us-south bucket vs ca-tor
+//     endpoint → 404.) There is no region-agnostic IBM COS S3 op.
+//   - The `x-amz-bucket-region` redirect-hint header that AWS S3
+//     returns on a misdirected HeadBucket is unreliable on IBM COS in
+//     practice — round-2's sequential probe relied on it and still
+//     measured 89s wall-clock against a cross-region bucket, which is
+//     only explainable if the hint isn't populated and every wrong
+//     region runs to error timeout before the next candidate starts.
+//
+// So: parallelise the probes. The wall-clock collapses from
+// sum(per-region-RTT) to ~max(per-region-RTT) ≈ a single RTT plus a
+// short ceiling timeout for the slowest non-matching region. First
+// successful HeadBucket wins, ctx-cancel terminates the rest.
+//
+// HeadBucket (not GetBucketLocation) is used because (a) it's the
+// cheapest S3 op that exercises bucket existence, (b) it needs no
+// special IAM permission beyond `cos object list`, and (c) the CLI's
+// choice of `GetBucketLocation` is incidental — its only differentiator
+// (returning the LocationConstraint body) is moot here because the
+// probe region is already known from which goroutine fired.
 func DefaultBucketRegionResolver(c *Client) BucketRegionResolver {
 	return func(ctx context.Context, _ string, bucket string) (string, error) {
-		// Try the home region first (single-region workspaces are the
-		// majority case and avoid the cross-region probe entirely).
-		if r, ok := probeBucketRegion(ctx, c, c.region, bucket); ok {
-			return r, nil
-		}
-		// Fall back to a fixed ordered list of public IBM COS regions.
-		// Order is rough popularity: us-south then us-east cover the
-		// bulk of BNK installs; eu-* and ap-* round out the list.
-		for _, candidate := range fallbackRegions {
-			if candidate == c.region {
-				continue
-			}
-			if r, ok := probeBucketRegion(ctx, c, candidate, bucket); ok {
-				return r, nil
-			}
-		}
-		return "", fmt.Errorf("bucket %q not found in any probed IBM COS region (instance %s)", bucket, c.instanceCRN)
+		return resolveBucketRegionParallel(ctx, c, bucket, candidateProbeRegions(c.region))
 	}
 }
 
-// fallbackRegions is the ordered probe list for the default resolver.
-// Not exported because it's a tuning knob, not a public API.
+// candidateProbeRegions returns the ordered candidate list with the
+// home region first. Home-first matters for the (common) same-region
+// case where the goroutine pool can still finish in one RTT, but the
+// dispatch ordering also tightens latency by ~milliseconds.
+func candidateProbeRegions(home string) []string {
+	out := make([]string, 0, len(fallbackRegions)+1)
+	out = append(out, home)
+	for _, r := range fallbackRegions {
+		if r == home {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// fallbackRegions is the static probe set for the default resolver.
+// Mirrors the public IBM COS region list as of v1.6.x; new regions can
+// be added without touching callers. Not exported because it's a tuning
+// knob, not a public API.
 var fallbackRegions = []string{
 	"us-south", "us-east", "eu-de", "eu-gb", "ca-tor", "jp-tok", "au-syd", "br-sao",
 }
 
-// probeBucketRegion does a single HeadBucket against the region's
+// bucketRegionProbeFn is the per-region probe seam. Swapped by the
+// hermetic test in `client_default_resolver_test.go` to inject a fake
+// probe that doesn't hit the network. Production wires the real
+// HeadBucket call in `realProbeBucketRegion`.
+//
+// Signature: given a Client (for shared creds + regional-handle cache),
+// a probe region, and a bucket name, return the resolved region (which
+// may differ from `probeRegion` if IBM COS volunteered a hint header)
+// and ok=true on success, or "" + false on any failure.
+var bucketRegionProbeFn = realProbeBucketRegion
+
+// resolveBucketRegionParallel fans out one probe per candidate region
+// in parallel goroutines and returns the first success. ctx-cancel
+// terminates the remaining goroutines as soon as a winner is found,
+// so the wall-clock is bounded by the slowest single-region RTT, not
+// the sum across the whole candidate list.
+//
+// Returns a bucket-named error if no candidate succeeds (Issue 3
+// AC #3: the operator can distinguish "wrong region" from
+// "wrong bucket name" because the bucket name is in the error string).
+func resolveBucketRegionParallel(ctx context.Context, c *Client, bucket string, candidates []string) (string, error) {
+	type result struct {
+		region string
+		ok     bool
+	}
+
+	probeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Snapshot the probe seam ONCE per resolver call so every sibling
+	// goroutine reads the same function pointer. The hermetic test
+	// swaps `bucketRegionProbeFn` between resolver invocations; without
+	// this snapshot a deferred restore in the test could race with a
+	// late sibling's read of the global. Snapshot-then-pass is the
+	// canonical way to take a per-call view of a swappable seam.
+	probe := bucketRegionProbeFn
+
+	ch := make(chan result, len(candidates))
+	var wg sync.WaitGroup
+	wg.Add(len(candidates))
+	for _, candidate := range candidates {
+		go func(probeRegion string) {
+			defer wg.Done()
+			r, ok := probe(probeCtx, c, probeRegion, bucket)
+			ch <- result{region: r, ok: ok}
+		}(candidate)
+	}
+	// Closer goroutine drains the channel once all probes report back —
+	// guarantees the for-range below terminates even if every probe
+	// fails (in which case we'll have received len(candidates)
+	// {ok:false} entries).
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	var winner string
+	for r := range ch {
+		if winner == "" && r.ok && r.region != "" {
+			winner = r.region
+			// Found one — cancel the still-running siblings so they
+			// stop their network I/O early. We continue draining `ch`
+			// (not returning early) so all goroutines finish their
+			// probe call before this function returns. That matters for
+			// the hermetic test, which swaps the probe seam after the
+			// resolver returns: leaving sibling goroutines reading the
+			// seam pointer would race with the test's restore.
+			cancel()
+		}
+	}
+	if winner != "" {
+		return winner, nil
+	}
+	return "", fmt.Errorf("bucket %q not found in any probed IBM COS region (instance %s)", bucket, c.instanceCRN)
+}
+
+// realProbeBucketRegion does a single HeadBucket against the region's
 // endpoint. Returns the resolved region (which may differ from the
 // probed region if IBM COS responded with an `x-amz-bucket-region`
-// hint) and a boolean indicating success.
+// hint header) and a boolean indicating success.
 //
 // The implementation is deliberately defensive: a 200 says "yes, here";
-// a 301/400/403 with `x-amz-bucket-region` says "wrong region, try
-// this one"; any other failure says "skip this candidate".
-func probeBucketRegion(ctx context.Context, c *Client, probeRegion, bucket string) (string, bool) {
+// a 301/400/403 with `x-amz-bucket-region` says "wrong region, this
+// one"; any other failure says "skip this candidate". The hint-header
+// path is best-effort — round-2 measured that IBM COS does not reliably
+// populate it, which is why the parallel fan-out is the load-bearing
+// optimisation, not the hint.
+func realProbeBucketRegion(ctx context.Context, c *Client, probeRegion, bucket string) (string, bool) {
 	// Build (or fetch from cache) the per-region S3 handle for the
 	// probe. We intentionally bypass s3ForBucket here to avoid an
 	// infinite loop (s3ForBucket calls regionFor calls resolver calls
-	// probeBucketRegion).
+	// realProbeBucketRegion).
 	var cli *s3.S3
 	if v, ok := c.regionalS3.Load(probeRegion); ok {
 		cli = v.(*s3.S3)
@@ -364,7 +468,9 @@ func probeBucketRegion(ctx context.Context, c *Client, probeRegion, bucket strin
 	req.SetContext(ctx)
 	if err := req.Send(); err != nil {
 		// Inspect the response for IBM COS's region hint. The header
-		// is set by COS even on a 301/400 misdirection response.
+		// is set by COS on a 301/400 misdirection response sometimes;
+		// when it is, we get a free shortcut. When it isn't, we just
+		// return ok=false and let a sibling goroutine's success win.
 		if req.HTTPResponse != nil {
 			if hint := req.HTTPResponse.Header.Get("x-amz-bucket-region"); hint != "" {
 				return strings.TrimSpace(hint), true
