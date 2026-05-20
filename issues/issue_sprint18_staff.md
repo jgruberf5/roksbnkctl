@@ -433,3 +433,108 @@ verify against `bnk-schematics-resources` will 404 too. Fixing Issue
 **Related**: Issue 1 live verify is blocked on this. Issue 2 (same
 shared client-setup path; the perf and the 404 are likely in the
 same file `internal/cos/client.go`).
+
+---
+
+## Round-2 Closure (Issues 2 + 3, 2026-05-20)
+
+Round-1 (commit `4da221a`) shipped Issue 1 hermetically green. Manual
+testing surfaced two pre-existing defects in the shared COS client setup
+that block Issue 1's live `!` verify (the new `cos bucket get` inherits
+the same client). Round-2 fixes them; round-1's `cos bucket get` and
+`cos object get` callsites inherit the fix unchanged (`internal/cos/bucket.go`
+and the `runCOSBucketGet` cobra entrypoint were both untouched per the
+round-2 prompt).
+
+### Code changes
+
+- `internal/cos/client.go` — added `BucketRegionResolver` seam +
+  `regionFor` cache + per-region `regionalS3 sync.Map` + shared
+  `*credentials.Credentials` field + `s3ForBucket` lazy regional-handle
+  builder + `NewWithResolver` / `WithResolver` injection points +
+  `NewCallCount` atomic for the hermetic single-construction assertion.
+- `internal/cos/object.go` — `PutObjectFromFile` and `GetObjectToFile`
+  now route through `c.s3ForBucket(ctx, bucket)` so per-bucket operations
+  land at the bucket's actual region, not the workspace cluster's.
+- `internal/cli/cos.go` — `openCOSClient` memoizes the
+  per-(workspace, --instance) `*cos.Client` so a single roksbnkctl
+  invocation builds one client even across cobra subcommand
+  re-entries; production-side `BucketRegionResolver` wired (default
+  HeadBucket probe).
+
+### Option chosen per issue
+
+- **Issue 3** — chose **(a) auto-resolve via the COS extension API**
+  over (b) `--region` flag. Rationale: the operator already knows the
+  bucket name; making them re-state its region is a UX regression,
+  and the resource controller's HeadBucket-probe is cheap enough to
+  cache once per bucket per invocation.
+- **Issue 2** — chose **single-invocation client reuse + shared IAM
+  credentials across regional handles**. Rationale: this is the
+  smallest surface that closes the 10× gap without touching the
+  per-CLI-invocation token cache (out of scope per the spec). The
+  hermetic perf test pins both.
+
+### Hermetic tests added (additive; no edits to any pre-existing _test.go)
+
+- `internal/cos/client_region_test.go` — Issue 3 AC #2 (fake
+  resolver → us-south endpoint, not ca-tor) + AC #3 (error names the
+  bucket on resolver failure) + cache-hit invariant + nil-resolver
+  home-region fallback. Four sub-tests, all green.
+- `internal/cos/client_perf_test.go` — Issue 2 AC #2 (one Client
+  construction across 100 s3ForBucket calls across two regions) +
+  per-region cache-reuse invariant (same `*s3.S3` for two different
+  buckets in the same region) + shared-creds invariant (same
+  `*credentials.Credentials` pointer across regional handles, equal to
+  the Client's `c.creds`). Three sub-tests, all green.
+
+### Acceptance criteria by name
+
+Issue 2:
+1. **AC #1 wall-clock ≤ 2× `ibmcloud cos`** — pending live `!`
+   verify (integrator-owned; the hermetic suite cannot exercise the
+   real IAM round-trip latency).
+2. **AC #2 single-construction-per-invocation** — ✓ (hermetic test
+   pins delta = 1 across 100 s3ForBucket calls).
+3. **AC #3 benchmark micro-test** — partially fulfilled by the
+   single-construction + regional-cache + shared-creds invariants;
+   a stub-driven p50/p95 benchmark is deferred (the three hermetic
+   pin tests cover the same root cause, and the live verify is the
+   real perf gate).
+
+Issue 3:
+1. **AC #1 cos object list of `bnk-schematics-resources` returns
+   the real listing** — pending live `!` verify.
+2. **AC #2 fake-resolver test pins us-south endpoint** — ✓.
+3. **AC #3 error names the bucket on lookup failure** — ✓.
+
+### Verification (integrator-run, not sandbox-denied)
+
+- `go build ./...` clean · `go vet ./...` clean ·
+  `gofmt -l internal/` empty.
+- `go test -race -timeout=30s ./internal/cos/` → ok 1.225s; the 7
+  new sub-tests + every pre-existing cos test green.
+- `git diff --stat -- '*_test.go'` shows ONLY the two new files
+  (parity discipline holds).
+- `internal/orchestration` does not import `internal/cli` (round-1
+  boundary still clean).
+
+### Dataflow trace (the bug → fix → expected behaviour)
+
+`roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration`
+→ cobra `runCOSObjectList` → `openCOSClient` (round-2: memoized;
+constructs `*cos.Client` exactly once per invocation) → ListObjects
+on the Client → `s3ForBucket(ctx, "bnk-schematics-resources")` →
+`regionFor` cache miss → production `BucketRegionResolver`
+(HeadBucket probe) returns `"us-south"` → `regionalS3` cache miss →
+build S3 handle with endpoint `https://s3.us-south.cloud-object-storage.appdomain.cloud`
++ the Client's shared `creds` → cache it on the Client → ListObjects
+hits the us-south endpoint and returns the bucket's contents
+(pre-fix: hit ca-tor, 404).
+
+### Status
+
+Issues 2 + 3 **integrated hermetically green**; both stay `open` until
+the integrator's fresh live `!` verify on a real us-south bucket. The
+Issue 1 live verify is now unblocked (it inherits the round-2 client
+fixes via `bucket.go`'s unchanged callsites).

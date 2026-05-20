@@ -465,12 +465,58 @@ func openIBMClient() (*config.Context, *ibm.Client, error) {
 	return cctx, ic, nil
 }
 
+// cachedCOSClient + cachedCOSInstance memoize the per-invocation
+// `*cos.Client` so the second-and-subsequent calls to openCOSClient
+// inside a single roksbnkctl run reuse the IAM-authenticated handle
+// the first call constructed.
+//
+// Sprint 18 Issue 2 acceptance criterion #2: a single roksbnkctl
+// invocation constructs the COS client exactly once (no
+// re-construction per verb / per object-iteration page). Cobra runE
+// implementations typically call openCOSClient once already, but the
+// recursive `cos bucket get` path may interleave list + get + ... and
+// any caller that re-enters openCOSClient (now or in future) is
+// protected by this cache.
+//
+// Keyed on (workspace, --instance) so a test or scripted driver that
+// swaps the flag between invocations doesn't smuggle stale credentials
+// across.
+var (
+	cachedCOSClient   *cos.Client
+	cachedCOSInstance string
+	cachedCOSWS       string
+)
+
+// resetCOSClientCacheForTests is the hermetic hook the
+// internal/cos/client_perf_test.go-equivalent test in internal/cli
+// would use if it needed a fresh start. Sprint 18 ships the perf test
+// in internal/cos against cos.NewCallCount; this helper is here for
+// the integrator's optional CLI-level coverage and to keep the
+// caching contract observable.
+func resetCOSClientCacheForTests() {
+	cachedCOSClient = nil
+	cachedCOSInstance = ""
+	cachedCOSWS = ""
+}
+
 // openCOSClient resolves --instance into a CRN and returns a *cos.Client
-// scoped to that instance + the workspace region.
+// scoped to that instance + the workspace region. The returned Client
+// is region-aware (Sprint 18 Issue 3): its per-bucket S3 handles are
+// resolved against the bucket's actual region via the default
+// HeadBucket probe, not pinned to the workspace cluster region.
 func openCOSClient(ctx context.Context) (*cos.Client, error) {
 	if flagCOSInstance == "" {
 		return nil, fmt.Errorf("--instance is required (name or CRN)")
 	}
+	// Cache hit: same workspace + same --instance → reuse the existing
+	// Client (and its already-authenticated IAM bearer token). Issue 2
+	// AC #1 and #2.
+	if cachedCOSClient != nil &&
+		cachedCOSInstance == flagCOSInstance &&
+		cachedCOSWS == flagWorkspace {
+		return cachedCOSClient, nil
+	}
+
 	cctx, ic, err := openIBMClient()
 	if err != nil {
 		return nil, err
@@ -479,7 +525,19 @@ func openCOSClient(ctx context.Context) (*cos.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cos.New(ic.APIKey(), cctx.Workspace.IBMCloud.Region, crn)
+	c, err := cos.New(ic.APIKey(), cctx.Workspace.IBMCloud.Region, crn)
+	if err != nil {
+		return nil, err
+	}
+	// Wire the default bucket-region resolver so per-bucket S3 ops
+	// target the bucket's actual region (Issue 3). The resolver
+	// closes over the Client so its probe re-uses the same IAM creds.
+	c.WithResolver(cos.DefaultBucketRegionResolver(c))
+
+	cachedCOSClient = c
+	cachedCOSInstance = flagCOSInstance
+	cachedCOSWS = flagWorkspace
+	return c, nil
 }
 
 // resolveCOSInstance accepts either a CRN (used as-is) or a name (looked
