@@ -1137,9 +1137,20 @@ Two scope items, partitioned by role per the Sprint 15/16 work-sprint shape:
 
 `live-verify-high-issues` discipline applies to the staff feature — the validator builds the gated-live driver; integrator runs the live `!` verify (real COS bucket, sha256 round-trip) before flipping staff Issue 1 to `resolved`.
 
-Version at cut (integrator-owned): expected shape is a combined `v1.6.3` patch (both items are user-facing — one new command, one user-observable bug fix), but `v1.7.0` is on the table if the integrator judges minor-worthy at gate close. No PRD for either item — both are straight from the deleted GitHub-issues-now-local-ledgers.
+### Closure (2026-05-20)
 
-Sprint launch: integrator dispatches architect + staff + validator in parallel (single message, three `Agent` tool calls reading the four `prompts/sprint18/*.md` files), aggregates + commits + runs gates + runs the live verify, then dispatches tech-writer over the integrated tree.
+All four scope items live-GREEN against a real IBM Cloud account; shipped as `v1.6.3`. Two additional pre-existing defects in the shared `cos` command path (filed as Sprint 18 staff Issues 2 + 3 after the three-way integration landed and manual testing surfaced them) were folded into the same release per integrator decision — same release-cost-of-time, ships working.
+
+- **Staff Issue 1** (`cos bucket get`) — live GREEN, recursive download of `bnk-schematics-resources` (us-south, 9 objects) into a local directory with sha256 round-trip on every file.
+- **Staff Issue 3** (`cos *` 404 on cross-region buckets) — live GREEN. The COS S3 API is endpoint-scoped, so a single home-region S3 handle 404s on out-of-region buckets; round-2 introduced a `BucketRegionResolver` + per-bucket region cache + per-region S3-handle cache. (Round-3 was an integrator-prescribed `s3:GetBucketLocation`-shortcut attempt that shipped + live-verified RED + was reverted on `main`; round-4 swapped in a parallel HeadBucket fan-out mirroring `ibmcloud cos`'s own coordinator. Both rounds' hermetic invariants kept passing byte-unchanged through the revert/replacement cycle.)
+- **Staff Issue 2** (`cos *` ~10× slower than `ibmcloud cos`) — live GREEN. Three integrator-prescribed rounds (2/3/4) of `internal/cos/client.go` hardening hermetic-passed but moved the live wall-clock by ~1 second total; round-5 was dispatched investigate-first (with live-cloud-call authority) and the profile data was unambiguous — 76.4s of the 88s lived in `internal/ibm/cos_instance.go::ListCOSInstances`'s unfiltered Resource Controller v2 pagination over every resource in the account, not in `internal/cos/`. Round-6 narrowed the SDK call server-side via the COS service-catalog offering UUID; live wall-clock dropped to **1.86s** (under the 1.4s `ibmcloud cos` baseline; ~47× speedup on the user-reported defect). The cos client work in rounds 2 + 4 was correct; it just wasn't where the cost was.
+- **Architect Issue 1** (mermaid PDF text-missing) — live GREEN. mermaid-cli v11 emits node/edge labels via SVG `<foreignObject>` + embedded XHTML; librsvg (pandoc's SVG-to-PDF rasteriser) does not implement `<foreignObject>`, so the previous SVG-output Lua filter produced text-less diagrams. The filter pivoted to mermaid-cli's PNG path (Puppeteer + Chromium, which renders `<foreignObject>` natively and has the mermaid browser-font stack baked in). New regression smoke check at `scripts/check-pdf-mermaid-labels.sh` fails the build if a future contributor regresses the docker image's font set.
+- **Validator Issues 1 + 2** — all hermetic + gated-live tests landed; live drivers verified against the real account; smoke check wired into `make book-pdf`.
+- **Tech-writer Issue 1** — 3 findings (cobra-md regen, chapter 25 pinning, SVG→PNG comment drift across 4 files) addressed in the integration commit; GREEN verdict.
+
+Lessons banked for the integrator's memory (`live-verify-high-issues`, `no-piling-into-active-release`): three integrator-prescribed rounds on Issue 2 moved nothing — the only one that did was the one that started with instrumentation + data. **Default to investigate-first prompts on bugs whose root cause isn't obvious from the symptom.**
+
+Version at cut: `v1.6.3` shipped 2026-05-20. No `v1.7.0` bump — the new `cos bucket get` is additive and the other three are bug fixes, all under the strict-SemVer patch envelope.
 
 ---
 
