@@ -1122,6 +1122,27 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 19 — `roksbnkctl init --var-file <path>` — workspace-persistent tfvars at init time (first regular work sprint post-`v1.6.3`)
+
+_Drafted 2026-05-20 after live use of `v1.6.3` surfaced the residual gap that v1.6.2's `.applied-replay.tfvars` mechanism couldn't reach: between `init` and the first successful `up`, there is no `terraform.applied.tfvars` snapshot yet, so bare `roksbnkctl <verb> -w <ws>` still refuses with the Sprint 16 option-(b) actionable error. The plumbing to close the gap already exists in the tree (`tfws.HasUserTFVars()` already auto-layers `state/terraform.tfvars.user` if present); Sprint 19's work is `init`-side only — add a `--var-file <path>` flag that automates the file copy + skips the corresponding interview prompts. The operator's `./terraform.tfvars` (or equivalent) becomes the workspace's persisted variable identity at init time._
+
+Single scope item, partitioned by role per the regular work-sprint shape:
+
+| Role | Scope |
+|---|---|
+| **Staff** Issue 1 | `internal/cli/init.go`: bind `--var-file <path>` to the `init` cobra command; on supply, parse via `internal/config/applied_tfvars.go`'s existing `readTFVarsAssignments`, seed the interview-targeted `config.yaml` fields (region / cluster name / version / workers / etc.), skip the corresponding prompts, copy the file verbatim to both `<WorkspaceStateDir>/terraform.tfvars.user` and `<WorkspaceClusterStateDir>/terraform.tfvars.user` at mode `0600`. Lifecycle / orchestration / cos / ibm explicitly out of scope — Sprint 18 hardened them; the existing `HasUserTFVars()` layering does the work for free. |
+| **Architect** Issue 1 | Update the init book chapter (verify path via `book/src/SUMMARY.md`) with a §"Skip the interview: `init --var-file`" subsection (when, flow, what's persisted, why-it-matters, secrets-on-disk note, diagnostics paragraph). Regenerate `book/src/27-command-reference.md` via `go run ./tools/refgen/cobra-md` so the new flag is in the canonical reference (Sprint 18's tech-writer caught this regen drift post-integration — Sprint 19 lands it up front). Cross-chapter sweep to point existing "supply `--var-file` on every command" prose at the new flow. |
+| **Validator** Issue 1 | Additive `internal/cli/init_var_file_test.go` covering the five sub-cases (happy path, config seeding, missing file, malformed file, no-flag byte-identical behaviour). Opt-in `scripts/e2e-init-var-file.sh` mirroring the Sprint 18 driver shape: `init --var-file` then bare `plan -w <ws>` — should succeed because `HasUserTFVars()` picks up the seeded file. Assertion A3 verifies the actual layering log line, not just exit-0 proxy. |
+| **Tech-writer** Issue 1 (light, runs after) | Drift sweep — `init --help` output matches the regenerated chapter 27; init chapter has all five subsection components; cross-chapter sweep landed; no stale "supply `--var-file` on every command" survived. GREEN/RED launch verdict ends the closure. |
+
+`live-verify-high-issues` applies — integrator runs `roksbnkctl init -w <ws> --var-file ./terraform.tfvars` then bare `plan` / `down` and confirms they succeed without re-supplying `--var-file`. Closure on the live `!` GREEN.
+
+Version at cut: integrator-owned. Pure-additive flag → expected shape `v1.6.4` under strict-SemVer; `v1.7.0` only if integrator judges minor-worthy. No PRD — straight from the integrator's live-use observation that closes a real user-reported friction.
+
+Sprint launch: integrator dispatches architect + staff + validator in parallel (single message, three `Agent` tool calls reading `prompts/sprint19/*.md`); aggregates + commits + runs gates + runs the live verify; then dispatches tech-writer over the integrated tree.
+
+---
+
 ## Sprint 18 — `cos bucket get` + mermaid PDF text-missing fix (first regular work sprint post-`v1.6.2`)
 
 _Drafted 2026-05-20 after Sprint 17's backlog-grooming attempt was abandoned and the two GitHub Issues (`#1 cos bucket get`, `#2 mermaid PDF rendering`) were captured into local ledgers and deleted from GitHub. **Source of truth for Sprint 18 work = `issues/issue_sprint18_*.md`**, not GitHub Issues — GitHub remains the destination for external-user reports via `.github/ISSUE_TEMPLATE/`, not a parallel queue for in-flight roksbnkctl work._
