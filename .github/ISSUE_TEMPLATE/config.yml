@@ -1,0 +1,19 @@
+# Controls the "New issue" chooser on github.com/jgruberf5/roksbnkctl/issues/new/choose.
+#
+# blank_issues_enabled: false forces every new issue to start from one
+# of the templates in this directory (bug_report.md / feature_request.md),
+# so we don't get unstructured filings.
+#
+# contact_links surface alongside the template buttons — non-issue
+# destinations for traffic that doesn't belong as a GitHub Issue. Keep
+# the list small: each link adds noise to the chooser.
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: 📖 Read the book
+    url: https://jgruberf5.github.io/roksbnkctl/book/
+    about: |
+      How-to questions about deploying or using roksbnkctl are usually
+      answered in the book — read first; file an issue if the book is
+      wrong or missing something.
