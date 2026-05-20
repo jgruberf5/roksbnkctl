@@ -47,6 +47,73 @@ roksbnkctl apply [flags]
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
+## `roksbnkctl bnk`
+
+BNK trial lifecycle (sits on top of a cluster)
+
+Manage the BNK trial resources (flo, cne_instance, license) as a
+short-lived layer on top of a shared, durable cluster.
+
+Commands:
+  roksbnkctl bnk up    Deploy the BNK trial (auto-provisions the cluster if missing)
+  roksbnkctl bnk down  Destroy the BNK trial, leaving the cluster in place
+
+Use `roksbnkctl cluster ...` to manage the cluster phase itself.
+
+### `roksbnkctl bnk down`
+
+Destroy the BNK trial, leaving the cluster in place
+
+```
+roksbnkctl bnk down [flags]
+```
+
+Destroys only the BNK trial resources, leaving the cluster phase
+intact for the next `bnk up` to attach to. The common iteration loop:
+
+  roksbnkctl bnk down && roksbnkctl bnk up   # ~5 min trial reset
+  roksbnkctl down                            # full teardown, ~30 min
+
+Refuses when there's no trial state to destroy, and on legacy
+single-state workspaces (use `roksbnkctl down` there).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
+
+### `roksbnkctl bnk up`
+
+Deploy the BNK trial; provisions the cluster first if missing
+
+```
+roksbnkctl bnk up [flags]
+```
+
+Provisions the BNK trial against the existing cluster phase. If
+the workspace has no cluster registered yet, `bnk up` bootstraps the
+cluster phase first (with a confirmation prompt — the cluster
+provision takes ~30 min) before the trial apply.
+
+Refuses on legacy single-state workspaces (those provisioned with
+v1.0.x `roksbnkctl up`): cluster + trial share one state file there,
+so the trial can't be applied in isolation without state migration.
+Use `roksbnkctl up` on those workspaces.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip confirmation prompts (cluster-bootstrap + apply) |
+| `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
+
 ## `roksbnkctl cluster`
 
 ROKS cluster lifecycle (separate from BNK trials)
@@ -194,6 +261,39 @@ Delete a bucket (must be empty)
 ```
 roksbnkctl cos bucket delete <bucket>
 ```
+
+← back to [`roksbnkctl cos bucket`](#roksbnkctl-cos-bucket)
+
+#### `roksbnkctl cos bucket get`
+
+Recursively download every object in a bucket to a local directory
+
+```
+roksbnkctl cos bucket get <bucket> <local-dir> [flags]
+```
+
+Recursively download every object in `<bucket>` to `<local-dir>`.
+
+`<local-dir>` is created if it does not exist (mkdir -p semantics, mode
+0755). Object keys map to nested subdirectories — a key foo/bar/baz.json
+lands at `<local-dir>`/foo/bar/baz.json. Streaming download per object
+(no whole-object in-memory buffering); text and binary are both copied
+through verbatim.
+
+Default behavior is overwrite (the operator just asked to download);
+pass --no-clobber to skip objects whose local target already exists,
+matching cp -n.
+
+With --output json, emits one JSON object per file completed:
+{"key","local_path","size","outcome"}. The final counts line goes to
+stderr in text mode; the JSON stream concludes with one summary record
+of shape {"counts":{...}}.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--no-clobber` | `bool` | `false` | skip objects whose local target already exists (cp -n semantics) |
 
 ← back to [`roksbnkctl cos bucket`](#roksbnkctl-cos-bucket)
 
@@ -424,7 +524,7 @@ release.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--tf-source` | `string` | — | override TF source (path or URL); pinned into config.yaml |
+| `--tf-source` | `string` | — | override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml |
 | `--upgrade-tf` | `bool` | `false` | resolve and pin the latest TF release into config.yaml |
 
 ## `roksbnkctl install`
@@ -793,9 +893,30 @@ Subcommands:
 
 Apply (or update) the in-cluster ops fixtures
 
+```
+roksbnkctl ops install [flags]
+```
+
 Applies the embedded namespaces, ServiceAccount, Secret, ClusterRole,
 ClusterRoleBinding, and ops Pod. Idempotent: re-running with a new
 API key updates the Secret and rolls the Pod.
+
+Credential mode is selected via --trusted-profile (auto|on|off):
+
+  auto (default) — provision an IBM Cloud IAM trusted profile linked
+                   to the ops pod's ServiceAccount when the resolved
+                   API key has 'iam-identity' perms; otherwise fall
+                   back to the static-key Secret with a stderr warning.
+  on             — require the trusted-profile path; fail loudly if
+                   perms don't allow.
+  off            — skip the trusted-profile path; install the v1.0.x
+                   static-key Secret.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--trusted-profile` | `string` | `auto` | IBM IAM trusted profile mode: auto (default; provision when perms allow, fall back to static-key Secret), on (require trusted profile), off (static-key Secret only) |
 
 ← back to [`roksbnkctl ops`](#roksbnkctl-ops)
 
@@ -874,7 +995,8 @@ roksbnkctl status reports a quick read of the workspace:
   - workspace name + region
   - configured cluster name
   - pinned Terraform source
-  - last terraform apply timestamp (mtime of terraform.tfstate)
+  - per-phase deployment status (cluster phase + BNK trial)
+  - v1.0.x `Last apply` line preserved for legacy single-state workspaces
   - kubeconfig path (if any)
   - cluster reachability (node count + ready count)
 
@@ -937,6 +1059,44 @@ roksbnkctl targets show <name>
 ```
 
 ← back to [`roksbnkctl targets`](#roksbnkctl-targets)
+
+## `roksbnkctl terraform`
+
+Read-only passthrough to terraform against the workspace's managed state
+
+**Aliases**: `tf`
+
+```
+roksbnkctl terraform [subcommand] [args...]
+```
+
+roksbnkctl terraform runs a READ-ONLY terraform subcommand against the
+workspace's managed state, with terraform's working directory and
+TF_DATA_DIR resolved for you (no need to cd into ~/.roksbnkctl/... or
+export TF_DATA_DIR).
+
+This command is read-only by allowlist. Permitted subcommands:
+  output, show, state list, state show, state pull, providers,
+  version, graph, validate, fmt -check
+
+Everything else — including apply, destroy, init, plan, import, taint,
+untaint, state rm/mv/replace-provider, and any -auto-approve — is
+rejected before terraform runs. Mutations go exclusively through
+roksbnkctl up / plan / apply / down (or cluster/bnk up/down); running
+terraform apply/destroy outside the orchestration skips the rendered
+tfvars, the apply-retry wrapper, the post-apply kubeconfig fetch, the
+applied-tfvars snapshot, and the auto-jumphost seeding, and desyncs the
+managed state.
+
+Use --phase cluster to target the cluster-phase state
+(~/.roksbnkctl/`<ws>`/state-cluster/); the default is the trial/single
+state (~/.roksbnkctl/`<ws>`/state/). --on is not supported: the managed
+terraform state lives on this workstation, not on a jumphost.
+
+Examples:
+  roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
+  roksbnkctl terraform state list
+  roksbnkctl --phase cluster terraform show
 
 ## `roksbnkctl test`
 
@@ -1089,7 +1249,7 @@ resumable: a partial failure is recovered by re-running 'roksbnkctl up'.
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
-| `--tf-source` | `string` | — | override TF source for this run only |
+| `--tf-source` | `string` | — | override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD) |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ## `roksbnkctl version`

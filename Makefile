@@ -75,7 +75,7 @@ endif
 #
 # The `[output.pandoc.profile.pdf]` block in book/book.toml defines the
 # PDF profile; mdbook-pandoc walks the rendered markdown, the Lua filter
-# at /opt/render-mermaid.lua pre-renders Mermaid blocks to SVG via mmdc,
+# at /opt/render-mermaid.lua pre-renders Mermaid blocks to PNG via mmdc,
 # pandoc invokes XeLaTeX to produce the final PDF.
 #
 # Output lands at book/book/pandoc/pdf/book.pdf.

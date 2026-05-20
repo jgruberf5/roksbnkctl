@@ -32,9 +32,13 @@ command = "mdbook-mermaid"
 # exit 101 with "the command `mdbook-pandoc` wasn't found" and the
 # entire build fails.
 #
-# The Lua filter pre-renders Mermaid code blocks to SVG via mermaid-cli
-# so the PDF embeds real diagrams (rather than literal `sequenceDiagram
-# ...` text). The filter path is the in-container location from
+# The Lua filter pre-renders Mermaid code blocks to PNG via mermaid-cli's
+# Puppeteer + Chromium path so the PDF embeds real diagrams (rather than
+# literal `sequenceDiagram ...` text). PNG (not SVG) because librsvg —
+# pandoc's SVG-to-PDF rasteriser — does not implement <foreignObject>,
+# which mermaid-cli v11 uses for every node/edge label; SVGs would
+# render with geometry but no text. The filter path is the in-container
+# location from
 # tools/docker/mdbook/Dockerfile.
 [output.pandoc]
 optional = true
