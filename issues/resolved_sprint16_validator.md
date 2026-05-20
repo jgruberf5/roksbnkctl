@@ -64,3 +64,21 @@ cluster/VPCs/TGW/COS = 0/0/0/0. Issue 2 + Issue 4 → `resolved`.
 `v1.6.2` CHANGELOG `### Fixed` reinstated (revised for the round-2
 architecture) and tagged. See `issues/issue_sprint16_validator.md`
 §"Issue 2 — live `!` verify result: GREEN — RESOLVED".
+
+## 2026-05-20 — Issue 3 LIVE-VERIFIED GREEN (round-3 fix, folded into `v1.6.2`)
+
+The round-2 fold-in of Issue 3 (point terraform at the canonical
+snapshot) was caught broken by live verify run-id `20260519-220236`:
+terraform rejected the snapshot's multi-section duplicate keys
+(`Each argument may be set only once`), and the redacted-secret line
+would have overridden `TF_VAR_ibmcloud_api_key` from env. Round-3
+derives a deduped, secret-free `<phase state dir>/.applied-replay.tfvars`
+at lifecycle-op time (canonical snapshot unchanged) and points
+terraform at that. **Live-verified GREEN run-id `20260519-234554`**
+(A1–A5 ✓ including A5 bare `plan -w e2e-handoff` succeeded via the
+replay; cluster phase `72 added`; bnk phase `60 added`; two-phase
+self-teardown ✓; canada-* residual check ✓; live recheck 0/0/0/0).
+Issue 3 → `resolved`; v1.6.2 superset (Issue 2 + 3 + 4 all live-verified
+GREEN). `live-verify-high-issues` discipline cycled twice for Issue 3
+(round-2 RED → round-3 GREEN) — proving the rule for medium-severity
+issues too once they touch the same lifecycle code path.

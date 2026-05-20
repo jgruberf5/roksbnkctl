@@ -219,8 +219,15 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
 		return err
 	}
+	// Auto-layer the trial phase's applied-tfvars replay (validator
+	// Issue 3, round-3) as the lowest-precedence var-file so bare
+	// `plan -w <ws>` succeeds against a workspace that has been applied.
+	// Returns nil when no snapshot exists → byte-identical to prior
+	// behaviour.
+	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform plan")
-	_, err = tfws.Plan(ctx, in.VarFiles...)
+	_, err = tfws.Plan(ctx, varFiles...)
 	return err
 }
 
@@ -245,7 +252,14 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
+	// Auto-layer the trial-phase applied-tfvars replay (validator
+	// Issue 3, round-3) as the lowest-precedence var-file so bare
+	// `apply -w <ws>` re-applies with the var-file environment the
+	// prior apply consumed. The Issue 2 round-2 override (extraVF) is
+	// appended LAST so phase-architectural values (create_roks_cluster=
+	// false, …) still win over the replay.
+	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
 	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
 		return err
@@ -325,8 +339,16 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
 		return err
 	}
+	// Auto-layer the trial phase's applied-tfvars replay (validator
+	// Issue 3, round-3) as the lowest-precedence var-file so bare
+	// `down -w <ws>` (no --var-file) destroys cleanly. Pre-fix this
+	// errored on required no-default vars the auto-rendered tfvars
+	// doesn't carry. Returns nil when no snapshot exists → byte-
+	// identical to prior behaviour.
+	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
+	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform destroy")
-	return tfws.Destroy(ctx, in.VarFiles...)
+	return tfws.Destroy(ctx, varFiles...)
 }
 
 // ── exported helper seams (consumed by the cli cluster-phase adapter) ─

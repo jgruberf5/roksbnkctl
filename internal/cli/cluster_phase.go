@@ -14,6 +14,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -385,6 +386,12 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Auto-layer the cluster phase's applied-tfvars replay (validator
+	// Issue 3, round-3) as the lowest-precedence var-file so bare
+	// `cluster down -w <ws>` (no --var-file) destroys cleanly. Returns
+	// nil when no snapshot exists → caller behaviour unchanged.
+	appliedVF := orchestration.LayerAppliedTFVars(cctx.WorkspaceName, "cluster")
+	varFiles = append(append([]string{}, appliedVF...), varFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform destroy (cluster phase)")
 	if err := tfws.Destroy(ctx, varFiles...); err != nil {
 		return err

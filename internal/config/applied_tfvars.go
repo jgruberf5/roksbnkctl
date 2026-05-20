@@ -81,6 +81,48 @@ func WriteAppliedTFVars(workspace, phase string, sources []string) error {
 	return nil
 }
 
+// ReadAppliedTFVarsReplayAssignments parses the workspace+phase
+// snapshot at `terraform.applied.tfvars` into a flat key→raw-value map
+// suitable for re-feeding to terraform as a single var-file (validator
+// Issue 3 / `live-verify-high-issues`). The snapshot's on-disk shape
+// (per PRD 07 / Sprint 11) is intentionally multi-section — one
+// `# === from <source> ===` block per consumed var-file with sorted
+// `key = value` lines — so the same key can appear in multiple sections.
+// Terraform rejects intra-file duplicate keys ("Each argument may be set
+// only once"), so a naive replay errors out; this helper produces the
+// deduped later-source-wins shape the replay needs while leaving the
+// canonical snapshot on disk unchanged.
+//
+// `phase` is one of "cluster" / "trial" / "legacy-single" (matching
+// `AppliedTFVarsPath`). Returns (nil, nil) when the snapshot file does
+// not exist (workspace never applied — caller falls back to its prior
+// behaviour, which is terraform's own missing-required-var error).
+//
+// Redacted keys (`ibmcloud_api_key` per `redactedVarNames`) are
+// **dropped**: the snapshot records them as `"<redacted>"` for audit
+// visibility, but feeding that literal back into terraform would
+// override the real value from `TF_VAR_*` env / explicit `--var-file`
+// (terraform precedence: var-file > env) and break IAM auth. The secret
+// must come from env / explicit `--var-file` exactly as before — Issue 3
+// closes the missing-var gap, not the secret-handoff.
+func ReadAppliedTFVarsReplayAssignments(workspace, phase string) (map[string]string, error) {
+	p, err := AppliedTFVarsPath(workspace, phase)
+	if err != nil {
+		return nil, err
+	}
+	assigns, missing, err := readTFVarsAssignments(p)
+	if err != nil {
+		return nil, err
+	}
+	if missing {
+		return nil, nil
+	}
+	for k := range redactedVarNames {
+		delete(assigns, k)
+	}
+	return assigns, nil
+}
+
 // AppliedTFVarsPath returns the snapshot path for (workspace, phase)
 // without writing anything. Exposed so callers (or tests) can locate the
 // file the same way WriteAppliedTFVars would.
