@@ -43,6 +43,16 @@ const (
 	// EKS component constants (slice 3).
 	CompEKSCluster   = "eks-cluster"
 	CompEKSNodeGroup = "eks-nodegroup"
+
+	// BNK data-path component constants (slice 7).
+	CompSubnetBNKExt   = "subnet-bnk-ext"
+	CompSubnetBNKInt   = "subnet-bnk-int"
+	CompSGBNKData      = "sg-bnk-data"
+	CompLaunchTemplate = "launch-template"
+	CompENIInternal    = "eni-internal"
+	CompENIExternal    = "eni-external"
+	CompOIDCProvider   = "oidc-provider"
+	CompIRSARole       = "irsa-cne-controller"
 )
 
 // Required returns the four mandatory awsbnkctl tags for a resource.

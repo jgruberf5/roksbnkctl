@@ -1,0 +1,15 @@
+apiVersion: k8s.f5net.com/v1
+kind: License
+metadata:
+  name: bnk-license
+  namespace: f5-cne-core
+  labels:
+    app.kubernetes.io/name: bnk-license
+    app.kubernetes.io/managed-by: bnk-deploy
+    app.kubernetes.io/instance: {{ .LabName }}
+spec:
+  operationMode: connected
+  jwt: {{ .JWT }}
+  teemCertUrl: https://product.apis.f5.com/ee/v1
+  teemEntitlementUrl: https://product-s.apis.f5.com/ee/v1
+  teemInitialConfigUrl: https://product-s.apis.f5.com/ee/v1

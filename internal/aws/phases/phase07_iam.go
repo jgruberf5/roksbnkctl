@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 
@@ -45,14 +47,18 @@ func Phase07IAM(ctx context.Context, cl *intent.Cluster, st *state.State, client
 	nodeRoleName := name + "-eks-node-role"
 	profileName := name + "-node-instance-profile"
 
+	sgName := name + "-bnk-data"
+
 	if dryRun {
 		fmt.Fprintf(os.Stderr, "[phase 07] dry-run: would create cluster role %s\n", clusterRoleName)
 		fmt.Fprintf(os.Stderr, "[phase 07] dry-run: would create node role %s\n", nodeRoleName)
 		fmt.Fprintf(os.Stderr, "[phase 07] dry-run: would create instance profile %s\n", profileName)
+		fmt.Fprintf(os.Stderr, "[phase 07] dry-run: would create security group %s (bnk-data-plane)\n", sgName)
 		st.Set("EKS_CLUSTER_ROLE_ARN", "arn:aws:iam::dry-run:role/"+clusterRoleName)
 		st.Set("EKS_NODE_ROLE_ARN", "arn:aws:iam::dry-run:role/"+nodeRoleName)
 		st.Set("NODE_INSTANCE_PROFILE_NAME", profileName)
 		st.Set("NODE_INSTANCE_PROFILE_ARN", "arn:aws:iam::dry-run:instance-profile/"+profileName)
+		st.Set("SG_BNK_DATA", "sg-dry-run-bnk-data")
 		return nil
 	}
 
@@ -111,6 +117,17 @@ func Phase07IAM(ctx context.Context, cl *intent.Cluster, st *state.State, client
 	st.Set("NODE_INSTANCE_PROFILE_NAME", profileName)
 	st.Set("NODE_INSTANCE_PROFILE_ARN", profileARN)
 
+	// --- SG_BNK_DATA security group (BNK data-plane) ---
+	vpcID := st.Get("VPC_ID")
+	if vpcID == "" {
+		return fmt.Errorf("phase07: VPC_ID not in state (run phase02 first)")
+	}
+	sgID, err := ensureBNKDataSG(ctx, clients.EC2, name, vpcID, cl.Tags, cl.Metadata.Labels)
+	if err != nil {
+		return fmt.Errorf("phase07: SG_BNK_DATA: %w", err)
+	}
+	st.Set("SG_BNK_DATA", sgID)
+
 	return st.Save()
 }
 
@@ -168,7 +185,138 @@ func Phase07IAMDown(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	}
 	st.Set("EKS_CLUSTER_ROLE_ARN", "")
 
+	// 9. Delete SG_BNK_DATA security group.
+	sgID := st.Get("SG_BNK_DATA")
+	if sgID == "" {
+		// Name-based lookup fallback.
+		sgID = lookupSGByName(ctx, clients.EC2, name+"-bnk-data")
+	}
+	if sgID != "" {
+		fmt.Fprintf(os.Stderr, "[phase 07 down] deleting security group %s (SG_BNK_DATA)\n", sgID)
+		_, err := clients.EC2.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: ptr(sgID)})
+		if err := ignoreNotFound(err); err != nil {
+			return fmt.Errorf("phase07 down: DeleteSecurityGroup SG_BNK_DATA: %w", err)
+		}
+	}
+	st.Set("SG_BNK_DATA", "")
+
 	return st.Save()
+}
+
+// ensureBNKDataSG creates the SG_BNK_DATA security group (bnk-data-plane) in
+// the VPC with an intra-VPC ingress rule (allow all from VPC CIDR). Idempotent.
+func ensureBNKDataSG(ctx context.Context, ec2c EC2API, clusterName, vpcID string,
+	extraTags, labels map[string]string) (string, error) {
+
+	sgName := clusterName + "-bnk-data"
+
+	// Idempotency: look up by name+VPC.
+	existing, err := findSGByName(ctx, ec2c, clusterName, vpcID, sgName)
+	if err != nil {
+		return "", fmt.Errorf("looking up SG_BNK_DATA: %w", err)
+	}
+	if existing != "" {
+		fmt.Fprintf(os.Stderr, "[phase 07] SG_BNK_DATA %s already exists, skipping\n", existing)
+		return existing, nil
+	}
+
+	sgTags := tags.Merge(
+		tags.Required(clusterName, tags.CompSGBNKData),
+		extraTags,
+		labels,
+	)
+	out, err := ec2c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   ptr(sgName),
+		Description: ptr("bnk-data-plane"),
+		VpcId:       ptr(vpcID),
+		TagSpecifications: []ec2types.TagSpecification{
+			tagSpecification(ec2types.ResourceTypeSecurityGroup, sgTags),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("ec2:CreateSecurityGroup %s: %w", sgName, err)
+	}
+	sgID := *out.GroupId
+	fmt.Fprintf(os.Stderr, "[phase 07] created SG_BNK_DATA %s (%s)\n", sgID, sgName)
+
+	// Add intra-VPC ingress: allow all traffic from VPC CIDR.
+	// This enables TMM secondary ENIs to communicate with the EKS control plane
+	// and other in-VPC resources. The cluster-SG ingress from SG_BNK_DATA is
+	// added in Phase 18 (depends on EKS cluster SG).
+	_, err = ec2c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: ptr(sgID),
+		IpPermissions: []ec2types.IpPermission{
+			{
+				IpProtocol: ptr("-1"),
+				UserIdGroupPairs: []ec2types.UserIdGroupPair{
+					{GroupId: ptr(sgID), Description: ptr("intra-sg-self")},
+				},
+			},
+		},
+	})
+	if err != nil {
+		// Tolerate duplicate-rule errors (DuplicatePermission).
+		if !isEC2DuplicatePermission(err) {
+			return "", fmt.Errorf("ec2:AuthorizeSecurityGroupIngress SG_BNK_DATA self: %w", err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[phase 07] added intra-SG ingress rule to %s\n", sgID)
+	return sgID, nil
+}
+
+// findSGByName looks up a security group by name within the cluster's VPC using
+// the awsbnkctl:cluster tag as the primary filter.
+func findSGByName(ctx context.Context, ec2c EC2API, clusterName, vpcID, sgName string) (string, error) {
+	out, err := ec2c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{
+			tags.ClusterFilter(clusterName),
+			{Name: ptr("vpc-id"), Values: []string{vpcID}},
+			{Name: ptr("group-name"), Values: []string{sgName}},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(out.SecurityGroups) == 0 {
+		return "", nil
+	}
+	return *out.SecurityGroups[0].GroupId, nil
+}
+
+// lookupSGByName does a best-effort name-based lookup for the down-path
+// fallback. Returns "" on any error (down continues).
+func lookupSGByName(ctx context.Context, ec2c EC2API, sgName string) string {
+	out, err := ec2c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{
+			{Name: ptr("group-name"), Values: []string{sgName}},
+		},
+	})
+	if err != nil || len(out.SecurityGroups) == 0 {
+		return ""
+	}
+	return *out.SecurityGroups[0].GroupId
+}
+
+// isEC2DuplicatePermission returns true for the EC2 DuplicatePermission error
+// code (rule already exists).
+func isEC2DuplicatePermission(err error) bool {
+	if err == nil {
+		return false
+	}
+	type coder interface{ ErrorCode() string }
+	e := err
+	for e != nil {
+		if ce, ok := e.(coder); ok {
+			return ce.ErrorCode() == "InvalidPermission.Duplicate"
+		}
+		type unwrapper interface{ Unwrap() error }
+		if u, ok := e.(unwrapper); ok {
+			e = u.Unwrap()
+		} else {
+			break
+		}
+	}
+	return false
 }
 
 // --- helpers ---

@@ -20,12 +20,24 @@ func testClientsIAM(iamMock IAMAPI) *Clients {
 	}
 }
 
+// stateWithVPCID returns a state with VPC_ID pre-seeded, required since
+// Phase07IAM now creates the SG_BNK_DATA security group which needs VPC_ID.
+func stateWithVPCIDOnly(t *testing.T) (*state.State, string) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	st.Set("VPC_ID", "vpc-0abc")
+	return st, dir
+}
+
 // TestPhase07IAM_CreatesClusterRole verifies the cluster role is created with
 // the correct trust principal and both managed policies attached.
 func TestPhase07IAM_CreatesClusterRole(t *testing.T) {
 	awsmw.ResetForTest()
-	dir := t.TempDir()
-	st, _ := state.Load(dir)
+	st, _ := stateWithVPCIDOnly(t)
 	mock := newMockIAM()
 	cl := testCluster()
 
@@ -65,8 +77,7 @@ func TestPhase07IAM_CreatesClusterRole(t *testing.T) {
 // service-role/ ARN path for AmazonEBSCSIDriverPolicy.
 func TestPhase07IAM_CreatesNodeRole(t *testing.T) {
 	awsmw.ResetForTest()
-	dir := t.TempDir()
-	st, _ := state.Load(dir)
+	st, _ := stateWithVPCIDOnly(t)
 	mock := newMockIAM()
 	cl := testCluster()
 
@@ -121,8 +132,7 @@ func TestPhase07IAM_CreatesNodeRole(t *testing.T) {
 // created and the node role is added to it.
 func TestPhase07IAM_CreatesInstanceProfile(t *testing.T) {
 	awsmw.ResetForTest()
-	dir := t.TempDir()
-	st, _ := state.Load(dir)
+	st, _ := stateWithVPCIDOnly(t)
 	mock := newMockIAM()
 	cl := testCluster()
 
@@ -152,8 +162,7 @@ func TestPhase07IAM_CreatesInstanceProfile(t *testing.T) {
 // mock produces zero CreateRole and CreateInstanceProfile calls.
 func TestPhase07IAM_Idempotent(t *testing.T) {
 	awsmw.ResetForTest()
-	dir := t.TempDir()
-	st, _ := state.Load(dir)
+	st, dir := stateWithVPCIDOnly(t)
 	mock := newMockIAM()
 	cl := testCluster()
 	ctx := context.Background()
@@ -192,8 +201,7 @@ func TestPhase07IAM_Idempotent(t *testing.T) {
 // profile, deletes profile, detaches policies, and deletes both roles.
 func TestPhase07IAMDown_DestroysInOrder(t *testing.T) {
 	awsmw.ResetForTest()
-	dir := t.TempDir()
-	st, _ := state.Load(dir)
+	st, _ := stateWithVPCIDOnly(t)
 	mock := newMockIAM()
 	cl := testCluster()
 	ctx := context.Background()
@@ -291,10 +299,30 @@ func TestPhase07IAM_DryRun(t *testing.T) {
 		"EKS_NODE_ROLE_ARN":          "arn:aws:iam::dry-run:role/" + name + "-eks-node-role",
 		"NODE_INSTANCE_PROFILE_NAME": name + "-node-instance-profile",
 		"NODE_INSTANCE_PROFILE_ARN":  "arn:aws:iam::dry-run:instance-profile/" + name + "-node-instance-profile",
+		"SG_BNK_DATA":                "sg-dry-run-bnk-data",
 	}
 	for key, want := range checks {
 		if got := st.Get(key); got != want {
 			t.Errorf("dry-run state[%s] = %q, want %q", key, got, want)
 		}
+	}
+}
+
+// TestPhase07IAM_CreatesSGBNKData verifies the SG_BNK_DATA security group is
+// created in the cluster's VPC and persisted in state.
+func TestPhase07IAM_CreatesSGBNKData(t *testing.T) {
+	awsmw.ResetForTest()
+	st, _ := stateWithVPCIDOnly(t)
+	mock := newMockIAM()
+	cl := testCluster()
+
+	if err := Phase07IAM(context.Background(), cl, st, testClientsIAM(mock), false); err != nil {
+		t.Fatalf("Phase07IAM: %v", err)
+	}
+
+	// SG_BNK_DATA must be set in state with an sg- prefix.
+	sgID := st.Get("SG_BNK_DATA")
+	if !strings.HasPrefix(sgID, "sg-") {
+		t.Errorf("SG_BNK_DATA = %q, want sg-... prefix", sgID)
 	}
 }

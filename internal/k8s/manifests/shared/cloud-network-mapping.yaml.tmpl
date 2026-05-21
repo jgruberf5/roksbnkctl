@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-network-mapping
+  namespace: f5-cne-system
+  labels:
+    app: f5-cne-controller
+    component: network-config
+data:
+  config.yaml: |
+    availability_zones:
+      - name: "{{ .AZ }}"
+        subnets:
+          - cidr: "{{ .MGMTCidr }}"
+            subnet_id: "{{ .MGMTSubnet }}"
+          - cidr: "{{ .BNKExtCidr }}"
+            subnet_id: "{{ .BNKExtSubnet }}"
+          - cidr: "{{ .BNKIntCidr }}"
+            subnet_id: "{{ .BNKIntSubnet }}"

@@ -33,6 +33,10 @@ Last Updated: 2026-05-21
 - SSO mid-run expiry: without the sentinel middleware (D-005), downstream phases silently no-op and produce a false-positive `up` success. Port `lib/lab-core.sh`'s `aws_q` + `check_auth_or_die` pattern into Go before shipping any multi-phase work.
 - NAT GW deletion: EIP must be unassociated before release. Port `aws-gpu-setup/down.sh`'s `wait_gone` post-condition for EIP AssociationId clearing.
 
+## Handoffs
+
+- [handoff] 2026-05-22 05:00 — slices 01-06 shipped; slice 07 is next — `.agent/handoff/2026-05-22-0500-slice-07-next.md`
+
 ## Preferences
 
 - Operator prefers imperative, sequential, log-friendly code over reconciler/graph abstractions. Per grill session 2026-05-21: explicit pushback on "reconciler with WaitUntilReady interface" as overengineering.

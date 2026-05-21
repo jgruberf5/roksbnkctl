@@ -1,0 +1,239 @@
+package k8s
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+)
+
+// cneGVR is the GVR for CNEInstance, used across wait tests.
+var cneGVR = schema.GroupVersionResource{
+	Group:    "k8s.f5.com",
+	Version:  "v1",
+	Resource: "cneinstances",
+}
+
+// buildCNEInstance constructs an unstructured CNEInstance with the given
+// status.state value.
+func buildCNEInstance(name, ns, state string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5.com/v1",
+			"kind":       "CNEInstance",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": ns,
+			},
+		},
+	}
+	if state != "" {
+		obj.Object["status"] = map[string]interface{}{
+			"state": state,
+		}
+	}
+	return obj
+}
+
+// buildFakeDynamicClient builds a dynamicfake client seeded with the given objects.
+func buildFakeDynamicClient(scheme *runtime.Scheme, gvr schema.GroupVersionResource, listKind string, objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
+	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		gvr: listKind,
+	}, objs...)
+}
+
+// waitScheme returns a minimal runtime.Scheme for the dynamic fake client.
+func waitScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group:   "k8s.f5.com",
+		Version: "v1",
+		Kind:    "CNEInstance",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group:   "k8s.f5.com",
+		Version: "v1",
+		Kind:    "CNEInstanceList",
+	}, &unstructured.UnstructuredList{})
+	return s
+}
+
+// ─── WaitForUnstructuredCondition tests ────────────────────────────────────
+
+// TestWaitForUnstructuredCondition_SuccessOnMatch verifies that the function
+// returns nil when the field value already matches the expected value.
+func TestWaitForUnstructuredCondition_SuccessOnMatch(t *testing.T) {
+	scheme := waitScheme()
+	cne := buildCNEInstance("my-bnk", "f5-cne-system", "Ready")
+	dyn := buildFakeDynamicClient(scheme, cneGVR, "CNEInstanceList", cne)
+
+	err := WaitForUnstructuredCondition(
+		context.Background(), dyn, cneGVR,
+		"f5-cne-system", "my-bnk",
+		"status.state", "Ready",
+		10*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("WaitForUnstructuredCondition: expected nil, got: %v", err)
+	}
+}
+
+// TestWaitForUnstructuredCondition_TimeoutOnNoMatch verifies that the function
+// returns an error when the field never reaches the expected value before timeout.
+func TestWaitForUnstructuredCondition_TimeoutOnNoMatch(t *testing.T) {
+	scheme := waitScheme()
+	cne := buildCNEInstance("my-bnk", "f5-cne-system", "Pending")
+	dyn := buildFakeDynamicClient(scheme, cneGVR, "CNEInstanceList", cne)
+
+	err := WaitForUnstructuredCondition(
+		context.Background(), dyn, cneGVR,
+		"f5-cne-system", "my-bnk",
+		"status.state", "Ready",
+		100*time.Millisecond, // very short timeout
+	)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+// TestWaitForUnstructuredCondition_CtxCancellation verifies that cancelling the
+// context causes the function to return promptly with an error.
+func TestWaitForUnstructuredCondition_CtxCancellation(t *testing.T) {
+	scheme := waitScheme()
+	cne := buildCNEInstance("my-bnk", "f5-cne-system", "Pending")
+	dyn := buildFakeDynamicClient(scheme, cneGVR, "CNEInstanceList", cne)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately.
+	cancel()
+
+	err := WaitForUnstructuredCondition(
+		ctx, dyn, cneGVR,
+		"f5-cne-system", "my-bnk",
+		"status.state", "Ready",
+		10*time.Second,
+	)
+	if err == nil {
+		t.Fatal("expected error from ctx cancellation, got nil")
+	}
+}
+
+// ─── splitDotPath tests ─────────────────────────────────────────────────────
+
+func TestSplitDotPath(t *testing.T) {
+	cases := []struct {
+		input string
+		want  []string
+	}{
+		{"status.state", []string{"status", "state"}},
+		{"status", []string{"status"}},
+		{"a.b.c", []string{"a", "b", "c"}},
+		{"", nil},
+	}
+	for _, tc := range cases {
+		got := splitDotPath(tc.input)
+		if len(got) != len(tc.want) {
+			t.Errorf("splitDotPath(%q): got %v, want %v", tc.input, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("splitDotPath(%q)[%d]: got %q, want %q", tc.input, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// ─── unstructured.NestedString helper test ─────────────────────────────────
+
+// TestUnstructuredNestedString_MissingFieldReturnsEmpty verifies that NestedString
+// returns an empty string (not an error) for a missing field.
+func TestUnstructuredNestedString_MissingFieldReturnsEmpty(t *testing.T) {
+	obj := map[string]interface{}{
+		"status": map[string]interface{}{},
+	}
+	val, found, err := unstructured.NestedString(obj, "status", "state")
+	if err != nil {
+		t.Fatalf("NestedString: unexpected error: %v", err)
+	}
+	if found {
+		t.Errorf("NestedString: found=true for missing key, got %q", val)
+	}
+	if val != "" {
+		t.Errorf("NestedString: val=%q, want empty string", val)
+	}
+}
+
+// ─── WaitForCRDExists + WaitForCertificateReady smoke ─────────────────────
+
+// TestWaitForCRDExists_ImmediatelyPresent verifies the happy path: CRD exists
+// in the dynamic client and WaitForCRDExists returns nil without waiting.
+func TestWaitForCRDExists_ImmediatelyPresent(t *testing.T) {
+	crdGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+	s := runtime.NewScheme()
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group:   "apiextensions.k8s.io",
+		Version: "v1",
+		Kind:    "CustomResourceDefinition",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group:   "apiextensions.k8s.io",
+		Version: "v1",
+		Kind:    "CustomResourceDefinitionList",
+	}, &unstructured.UnstructuredList{})
+
+	crd := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata": map[string]interface{}{
+				"name": "cneinstances.k8s.f5.com",
+			},
+		},
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(s, map[schema.GroupVersionResource]string{
+		crdGVR: "CustomResourceDefinitionList",
+	}, crd)
+
+	err := WaitForCRDExists(context.Background(), dyn, "cneinstances.k8s.f5.com", 10*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForCRDExists: %v", err)
+	}
+}
+
+// TestWaitForCRDExists_Timeout verifies that WaitForCRDExists times out when
+// the CRD is absent.
+func TestWaitForCRDExists_Timeout(t *testing.T) {
+	crdGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+	s := runtime.NewScheme()
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group:   "apiextensions.k8s.io",
+		Version: "v1",
+		Kind:    "CustomResourceDefinitionList",
+	}, &unstructured.UnstructuredList{})
+
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(s, map[schema.GroupVersionResource]string{
+		crdGVR: "CustomResourceDefinitionList",
+	})
+
+	err := WaitForCRDExists(context.Background(), dyn, "licenses.k8s.f5net.com", 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+// Ensure metav1 import is used (for GetOptions in the production code path).
+var _ = metav1.GetOptions{}

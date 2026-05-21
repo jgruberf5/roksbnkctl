@@ -30,6 +30,34 @@ type BnkSpec struct {
 	// CertManagerVersion pins the embedded cert-manager YAML version.
 	// Default "1.16.1". Must match the embedded YAML or phase 12 errors.
 	CertManagerVersion string `yaml:"certManagerVersion,omitempty"`
+
+	// --- slice 7 operator-knobs (all optional; defaults match aws-gpu-setup vars.env) ---
+
+	// DeploymentSize is the BNK CNEInstance deployment size. Default "Small".
+	// Mirrors aws-gpu-setup DEPLOYMENT_SIZE variable.
+	DeploymentSize string `yaml:"deploymentSize,omitempty"`
+	// StorageClassName for BNK persistent volumes. Default "gp3".
+	StorageClassName string `yaml:"storageClassName,omitempty"`
+	// ManifestVersion is the BNK manifest/chart version. Default "2.21.13".
+	ManifestVersion string `yaml:"manifestVersion,omitempty"`
+	// TmmMtu is the TMM interface MTU. Default 9000.
+	TmmMtu int `yaml:"tmmMtu,omitempty"`
+	// TmmCpu is the TMM CPU request (string form for k8s ResourceList). Default "4".
+	TmmCpu string `yaml:"tmmCpu,omitempty"`
+	// TmmMemory is the TMM memory request. Default "16Gi".
+	TmmMemory string `yaml:"tmmMemory,omitempty"`
+	// TmmHugepages is the TMM hugepages request. Default "8Gi".
+	TmmHugepages string `yaml:"tmmHugepages,omitempty"`
+	// PalCpuSet is the PAL CPU set string. Default "0-3".
+	PalCpuSet string `yaml:"palCpuSet,omitempty"`
+}
+
+// DataPathSpec describes the two TMM data-plane subnets required when
+// pattern: host-device is set. External is the TMM client-side (public-ish)
+// subnet; Internal is the TMM backend-side (private) subnet.
+type DataPathSpec struct {
+	External SubnetSpec `yaml:"external"` // BNK_EXT — TMM client-side subnet
+	Internal SubnetSpec `yaml:"internal"` // BNK_INT — TMM backend-side subnet
 }
 
 // nodeGroupNameRE enforces Kubernetes label/name rules for node group names:
@@ -116,6 +144,9 @@ type Network struct {
 	Subnets Subnets  `yaml:"subnets"`
 	// NatGateways is 1 (cost-optimised) or the number of AZs (HA).
 	NatGateways int `yaml:"natGateways"`
+	// DataPath declares the two TMM data-plane subnets (slice 7+).
+	// Required when pattern: host-device is set.
+	DataPath *DataPathSpec `yaml:"dataPath,omitempty"`
 }
 
 // Subnets groups the public and private subnet definitions.
@@ -282,9 +313,50 @@ func applyDefaults(c *Cluster) {
 				ng.DiskSize = 50
 			}
 		}
+
+		// host-device pattern: auto-inject role=bnk into the first node group's
+		// labels if not already set. Phase 16 reads `kubectl get nodes -l role=bnk`
+		// to find the TMM-target node — missing this label causes a "no nodes found"
+		// failure at Phase 16 entry. Preserve an explicitly-set value.
+		if c.Pattern == "host-device" && len(c.ClusterSpec.NodeGroups) > 0 {
+			ng := &c.ClusterSpec.NodeGroups[0]
+			if ng.Labels == nil {
+				ng.Labels = make(map[string]string)
+			}
+			if _, ok := ng.Labels["role"]; !ok {
+				ng.Labels["role"] = "bnk"
+			}
+		}
 	}
-	if c.Bnk != nil && c.Bnk.CertManagerVersion == "" {
-		c.Bnk.CertManagerVersion = EmbeddedCertManagerVersion
+	if c.Bnk != nil {
+		if c.Bnk.CertManagerVersion == "" {
+			c.Bnk.CertManagerVersion = EmbeddedCertManagerVersion
+		}
+		// Slice-7 BnkSpec defaults.
+		if c.Bnk.DeploymentSize == "" {
+			c.Bnk.DeploymentSize = "Small"
+		}
+		if c.Bnk.StorageClassName == "" {
+			c.Bnk.StorageClassName = "gp3"
+		}
+		if c.Bnk.ManifestVersion == "" {
+			c.Bnk.ManifestVersion = "2.21.13"
+		}
+		if c.Bnk.TmmMtu == 0 {
+			c.Bnk.TmmMtu = 9000
+		}
+		if c.Bnk.TmmCpu == "" {
+			c.Bnk.TmmCpu = "4"
+		}
+		if c.Bnk.TmmMemory == "" {
+			c.Bnk.TmmMemory = "16Gi"
+		}
+		if c.Bnk.TmmHugepages == "" {
+			c.Bnk.TmmHugepages = "8Gi"
+		}
+		if c.Bnk.PalCpuSet == "" {
+			c.Bnk.PalCpuSet = "0-3"
+		}
 	}
 }
 
@@ -322,6 +394,37 @@ func validate(c *Cluster) error {
 		if err := validateBnk(c.Bnk); err != nil {
 			return err
 		}
+	}
+	if err := validatePattern(c); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePattern checks pattern-specific constraints.
+// host-device: network.dataPath is required; both external/internal AZs must
+// appear in network.azs.
+func validatePattern(c *Cluster) error {
+	if c.Pattern == "" {
+		return nil
+	}
+	if c.Pattern != "host-device" {
+		return fmt.Errorf("pattern %q is not a recognised value (expected host-device)", c.Pattern)
+	}
+	// host-device requires dataPath.
+	if c.Network.DataPath == nil {
+		return fmt.Errorf("pattern host-device requires network.dataPath to be set")
+	}
+	dp := c.Network.DataPath
+	azSet := make(map[string]bool, len(c.Network.AZs))
+	for _, az := range c.Network.AZs {
+		azSet[az] = true
+	}
+	if !azSet[dp.External.AZ] {
+		return fmt.Errorf("network.dataPath.external.az %q is not in network.azs %v", dp.External.AZ, c.Network.AZs)
+	}
+	if !azSet[dp.Internal.AZ] {
+		return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
 	}
 	return nil
 }

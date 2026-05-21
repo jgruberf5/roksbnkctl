@@ -597,6 +597,11 @@ func resolveGVR(apiVersion, kind string) (schema.GroupVersionResource, bool, err
 		"cert-manager.io/v1/ClusterIssuer": {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}, false},
 		"cert-manager.io/v1/Issuer":        {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "issuers"}, true},
 		"cert-manager.io/v1/Certificate":   {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, true},
+		// Multus NADs (slice 7b — host-device NADs)
+		"k8s.cni.cncf.io/v1/NetworkAttachmentDefinition": {schema.GroupVersionResource{Group: "k8s.cni.cncf.io", Version: "v1", Resource: "network-attachment-definitions"}, true},
+		// BNK CRs (slice 7c — CNEInstance + License)
+		"k8s.f5.com/v1/CNEInstance": {schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}, true},
+		"k8s.f5net.com/v1/License":  {schema.GroupVersionResource{Group: "k8s.f5net.com", Version: "v1", Resource: "licenses"}, true},
 	}
 
 	key := apiVersion + "/" + kind

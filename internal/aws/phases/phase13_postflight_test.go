@@ -591,6 +591,180 @@ func TestPhase13_FLODisabled_SkipsFLOChecks(t *testing.T) {
 	}
 }
 
+// ─── Test 13: CNEInstance + License checks pass when CNEINSTANCE_READY_AT set ─
+
+// p13FullHappyClientsWithActivation returns a Clients struct seeded with
+// CNEInstance (Ready) + License (Active) in addition to the full base set.
+// Used by the slice-7c postflight tests.
+func p13FullHappyClientsWithActivation(t *testing.T) *Clients {
+	t.Helper()
+	base := p13FullHappyClients(t)
+
+	// Build an additional dynamic client that also includes CNEInstance + License.
+	// We need to include the base dynamic client's objects plus the new ones.
+	cl := sydTracerCluster()
+	vars := render.CertChainVarsFromCluster(cl)
+
+	crdGVR := schema.GroupVersionResource{
+		Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions",
+	}
+	cneCRD := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]interface{}{"name": cneCRDName},
+		},
+	}
+	cneInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5.com/v1",
+			"kind":       "CNEInstance",
+			"metadata":   map[string]interface{}{"name": cl.Metadata.Name + "-bnk", "namespace": InstanceNamespace},
+			"status":     map[string]interface{}{"state": "Ready"},
+		},
+	}
+	licInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5net.com/v1",
+			"kind":       "License",
+			"metadata":   map[string]interface{}{"name": licenseCRName, "namespace": OperatorNamespace},
+			"status":     map[string]interface{}{"state": "Active"},
+		},
+	}
+
+	scheme := buildScheme()
+	// Register CNEInstance + License kinds in scheme.
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstance",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstanceList",
+	}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "k8s.f5net.com", Version: "v1", Kind: "License",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "k8s.f5net.com", Version: "v1", Kind: "LicenseList",
+	}, &unstructured.UnstructuredList{})
+
+	dynObjects := []runtime.Object{
+		buildReadyCertificate(vars.CACertName, certManagerNS),
+		cneCRD,
+		buildReadyCertificate(otelSvrCertName, operatorNS),
+		buildReadyCertificate(otelF5IngCertName, operatorNS),
+		cneInst,
+		licInst,
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8swait.CertificateGVR: "CertificateList",
+		crdGVR:                 "CustomResourceDefinitionList",
+		cneinstanceGVR:         "CNEInstanceList",
+		licenseGVR:             "LicenseList",
+	}, dynObjects...)
+
+	return &Clients{K8s: base.K8s, Dynamic: dyn, Profile: "test"}
+}
+
+func TestPhase13_CNEInstanceAndLicense_HappyPath(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := sydTracerCluster()
+	st, _ := state.Load(dir)
+	// Simulate Phase 25 success.
+	st.Set("CNEINSTANCE_READY_AT", "2026-05-22T10:00:00Z")
+
+	clients := p13FullHappyClientsWithActivation(t)
+
+	if err := Phase13Postflight(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase13Postflight with activation: %v", err)
+	}
+}
+
+// TestPhase13_CNEInstanceNotReady verifies that postflight fails when
+// CNEInstance.status.state is not Ready/Running.
+func TestPhase13_CNEInstanceNotReady(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := sydTracerCluster()
+	st, _ := state.Load(dir)
+	st.Set("CNEINSTANCE_READY_AT", "2026-05-22T10:00:00Z")
+
+	// Override CNEInstance with Pending state.
+	base := p13FullHappyClientsWithActivation(t)
+	// Patch the CNEInstance in the dynamic client with Pending state.
+	// Re-build with a not-ready CNEInstance.
+	vars := render.CertChainVarsFromCluster(cl)
+	crdGVR := schema.GroupVersionResource{
+		Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions",
+	}
+	cneCRD := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]interface{}{"name": cneCRDName},
+		},
+	}
+	cneInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5.com/v1",
+			"kind":       "CNEInstance",
+			"metadata":   map[string]interface{}{"name": cl.Metadata.Name + "-bnk", "namespace": InstanceNamespace},
+			"status":     map[string]interface{}{"state": "Pending"}, // NOT ready
+		},
+	}
+	licInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5net.com/v1",
+			"kind":       "License",
+			"metadata":   map[string]interface{}{"name": licenseCRName, "namespace": OperatorNamespace},
+			"status":     map[string]interface{}{"state": "Active"},
+		},
+	}
+	scheme := buildScheme()
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstance"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstanceList"}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5net.com", Version: "v1", Kind: "License"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5net.com", Version: "v1", Kind: "LicenseList"}, &unstructured.UnstructuredList{})
+	dynObjects := []runtime.Object{
+		buildReadyCertificate(vars.CACertName, certManagerNS),
+		cneCRD,
+		buildReadyCertificate(otelSvrCertName, operatorNS),
+		buildReadyCertificate(otelF5IngCertName, operatorNS),
+		cneInst,
+		licInst,
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8swait.CertificateGVR: "CertificateList",
+		crdGVR:                 "CustomResourceDefinitionList",
+		cneinstanceGVR:         "CNEInstanceList",
+		licenseGVR:             "LicenseList",
+	}, dynObjects...)
+	clients := &Clients{K8s: base.K8s, Dynamic: dyn, Profile: "test"}
+
+	err := Phase13Postflight(context.Background(), cl, st, clients, false)
+	if err == nil {
+		t.Fatal("expected error for CNEInstance not Ready, got nil")
+	}
+	if !strings.Contains(err.Error(), "Pending") {
+		t.Errorf("error should mention Pending state: %v", err)
+	}
+}
+
+// TestPhase13_SkipActivationPoll_Warning verifies that when CNEINSTANCE_READY_AT
+// is absent (--skip-activation-poll), postflight logs a warning but succeeds.
+func TestPhase13_SkipActivationPoll_Warning(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := sydTracerCluster()
+	st, _ := state.Load(dir)
+	// CNEINSTANCE_READY_AT not set — simulates --skip-activation-poll.
+
+	clients := p13FullHappyClients(t)
+	if err := Phase13Postflight(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase13Postflight (skip-poll): %v", err)
+	}
+}
+
 // ─── Helpers for import of k8swait in test (indirect use) ──────────────────
 
 // Ensure the CertificateGVR is importable via k8swait alias.

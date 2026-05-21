@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
+	"github.com/JLCode-tech/awsbnkctl/internal/k8s/manifests"
 )
 
 func clusterFixture(name string) *intent.Cluster {
@@ -198,5 +199,454 @@ func TestRender_DefaultValues(t *testing.T) {
 	}
 	if !strings.HasPrefix(v.CACertName, "tracer-") {
 		t.Errorf("CACertName should start with 'tracer-': got %q", v.CACertName)
+	}
+}
+
+// ─── CloudNetworkMapping render tests ─────────────────────────────────────────
+
+// cloudNetworkMappingTmpl is a minimal template that exercises all substitution
+// variables of cloud-network-mapping.yaml.tmpl.
+var cloudNetworkMappingTmpl = []byte(`az: {{ .AZ }}
+mgmtSubnet: {{ .MGMTSubnet }}
+bnkExtSubnet: {{ .BNKExtSubnet }}
+bnkIntSubnet: {{ .BNKIntSubnet }}
+mgmtCidr: {{ .MGMTCidr }}
+bnkExtCidr: {{ .BNKExtCidr }}
+bnkIntCidr: {{ .BNKIntCidr }}
+`)
+
+// hostDeviceClusterForRender returns a cluster fixture with the host-device
+// pattern and the required dataPath block.
+func hostDeviceClusterForRender(name string) *intent.Cluster {
+	return &intent.Cluster{
+		Metadata: intent.Metadata{Name: name, Region: "ap-southeast-2"},
+		Pattern:  "host-device",
+		Network: intent.Network{
+			VPCCidr: "10.0.0.0/16",
+			AZs:     []string{"ap-southeast-2a", "ap-southeast-2b"},
+			Subnets: intent.Subnets{
+				Public:  []intent.SubnetSpec{{CIDR: "10.0.1.0/24", AZ: "ap-southeast-2a"}},
+				Private: []intent.SubnetSpec{{CIDR: "10.0.11.0/24", AZ: "ap-southeast-2a"}},
+			},
+			DataPath: &intent.DataPathSpec{
+				External: intent.SubnetSpec{CIDR: "10.0.20.0/24", AZ: "ap-southeast-2a"},
+				Internal: intent.SubnetSpec{CIDR: "10.0.21.0/24", AZ: "ap-southeast-2a"},
+			},
+		},
+	}
+}
+
+// populatedStateGetter simulates st.Get for a populated state.
+func populatedStateGetter(m map[string]string) func(string) string {
+	return func(key string) string { return m[key] }
+}
+
+func TestRenderCloudNetworkMapping_Substitution(t *testing.T) {
+	cl := hostDeviceClusterForRender("syd-tracer")
+	getter := populatedStateGetter(map[string]string{
+		"MGMT_SUBNET":    "subnet-pub-001",
+		"BNK_EXT_SUBNET": "subnet-ext-001",
+		"BNK_INT_SUBNET": "subnet-int-001",
+	})
+
+	out, err := RenderCloudNetworkMapping(cloudNetworkMappingTmpl, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCloudNetworkMapping: %v", err)
+	}
+	rendered := string(out)
+
+	checks := map[string]string{
+		"az":           "ap-southeast-2a", // first AZ
+		"mgmtSubnet":   "subnet-pub-001",
+		"bnkExtSubnet": "subnet-ext-001",
+		"bnkIntSubnet": "subnet-int-001",
+		"mgmtCidr":     "10.0.1.0/24",
+		"bnkExtCidr":   "10.0.20.0/24",
+		"bnkIntCidr":   "10.0.21.0/24",
+	}
+	for field, want := range checks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered cloud-network-mapping missing %s=%q:\n%s", field, want, rendered)
+		}
+	}
+}
+
+func TestRenderCloudNetworkMapping_MultipleAZsUsesFirst(t *testing.T) {
+	cl := hostDeviceClusterForRender("multi-az")
+	// cl.Network.AZs has two entries — verify first is used.
+	getter := populatedStateGetter(map[string]string{
+		"MGMT_SUBNET":    "subnet-pub-001",
+		"BNK_EXT_SUBNET": "subnet-ext-001",
+		"BNK_INT_SUBNET": "subnet-int-001",
+	})
+
+	out, err := RenderCloudNetworkMapping(cloudNetworkMappingTmpl, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCloudNetworkMapping multi-az: %v", err)
+	}
+	if !strings.Contains(string(out), "ap-southeast-2a") {
+		t.Errorf("expected first AZ ap-southeast-2a in output:\n%s", out)
+	}
+	if strings.Contains(string(out), "ap-southeast-2b") {
+		t.Errorf("second AZ ap-southeast-2b should not appear in output:\n%s", out)
+	}
+}
+
+func TestRenderCloudNetworkMapping_MissingMGMTSubnet_Errors(t *testing.T) {
+	cl := hostDeviceClusterForRender("syd-tracer")
+	// Empty state getter — MGMT_SUBNET missing.
+	getter := func(string) string { return "" }
+
+	_, err := RenderCloudNetworkMapping(cloudNetworkMappingTmpl, cl, getter)
+	if err == nil {
+		t.Fatal("expected error when MGMT_SUBNET missing, got nil")
+	}
+}
+
+func TestRenderCloudNetworkMapping_NilDataPath_Errors(t *testing.T) {
+	cl := hostDeviceClusterForRender("syd-tracer")
+	cl.Network.DataPath = nil
+	getter := populatedStateGetter(map[string]string{
+		"MGMT_SUBNET":    "subnet-pub-001",
+		"BNK_EXT_SUBNET": "subnet-ext-001",
+		"BNK_INT_SUBNET": "subnet-int-001",
+	})
+
+	_, err := RenderCloudNetworkMapping(cloudNetworkMappingTmpl, cl, getter)
+	if err == nil {
+		t.Fatal("expected error when dataPath is nil, got nil")
+	}
+}
+
+// TestRenderCloudNetworkMapping_EmbeddedShape verifies that the real embedded
+// cloud-network-mapping.yaml.tmpl uses the YAML-under-config.yaml schema that
+// the CNE controller expects (data key "config.yaml", top-level
+// "availability_zones" list).
+func TestRenderCloudNetworkMapping_EmbeddedShape(t *testing.T) {
+	raw, err := manifests.FS.ReadFile("shared/cloud-network-mapping.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read embedded template: %v", err)
+	}
+	cl := hostDeviceClusterForRender("syd-tracer")
+	getter := populatedStateGetter(map[string]string{
+		"MGMT_SUBNET":    "subnet-pub-001",
+		"BNK_EXT_SUBNET": "subnet-ext-001",
+		"BNK_INT_SUBNET": "subnet-int-001",
+	})
+
+	out, err := RenderCloudNetworkMapping(raw, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCloudNetworkMapping with embedded template: %v", err)
+	}
+	rendered := string(out)
+
+	// CNE controller reads data["config.yaml"] — assert the key is present.
+	if !strings.Contains(rendered, "config.yaml:") {
+		t.Errorf("embedded template missing data key 'config.yaml:':\n%s", rendered)
+	}
+	// CNE controller parses availability_zones[] — assert the structure is present.
+	if !strings.Contains(rendered, "availability_zones:") {
+		t.Errorf("embedded template missing top-level 'availability_zones:':\n%s", rendered)
+	}
+	// Verify the old wrong key is not present.
+	if strings.Contains(rendered, "cloud-network-mapping.json") {
+		t.Errorf("embedded template must not contain old key 'cloud-network-mapping.json':\n%s", rendered)
+	}
+}
+
+// ─── IRSA SA render tests ──────────────────────────────────────────────────────
+
+var irsaSATmpl = []byte(`name: f5-cne-controller-{{ .InstanceNameCR }}-serviceaccount
+roleArn: {{ .CneIRSARoleARN }}
+`)
+
+func TestRenderIRSASA_Substitution(t *testing.T) {
+	cl := clusterFixture("syd-tracer")
+	roleARN := "arn:aws:iam::111122223333:role/syd-tracer-cne-controller-irsa"
+	getter := populatedStateGetter(map[string]string{
+		"CNE_IRSA_ROLE_ARN": roleARN,
+	})
+
+	out, err := RenderIRSASA(irsaSATmpl, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderIRSASA: %v", err)
+	}
+	rendered := string(out)
+
+	if !strings.Contains(rendered, "syd-tracer-bnk-serviceaccount") {
+		t.Errorf("SA name not rendered correctly:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, roleARN) {
+		t.Errorf("role ARN not rendered correctly:\n%s", rendered)
+	}
+}
+
+func TestRenderIRSASA_MissingRoleARN_Errors(t *testing.T) {
+	cl := clusterFixture("syd-tracer")
+	getter := func(string) string { return "" }
+
+	_, err := RenderIRSASA(irsaSATmpl, cl, getter)
+	if err == nil {
+		t.Fatal("expected error when CNE_IRSA_ROLE_ARN missing, got nil")
+	}
+}
+
+func TestRenderIRSASA_InstanceNameCRConvention(t *testing.T) {
+	cl := clusterFixture("my-cluster")
+	roleARN := "arn:aws:iam::123:role/my-role"
+	getter := populatedStateGetter(map[string]string{"CNE_IRSA_ROLE_ARN": roleARN})
+
+	out, err := RenderIRSASA(irsaSATmpl, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderIRSASA: %v", err)
+	}
+	// InstanceNameCR = my-cluster-bnk.
+	if !strings.Contains(string(out), "my-cluster-bnk-serviceaccount") {
+		t.Errorf("InstanceNameCR not set to <cluster>-bnk:\n%s", out)
+	}
+}
+
+// ─── NADs render tests ─────────────────────────────────────────────────────────
+
+var nadsTmpl = []byte(`ns: {{ .Namespace }}
+ext: {{ .ExternalNADName }}
+int: {{ .InternalNADName }}
+extIF: {{ .ExternalIFName }}
+intIF: {{ .InternalIFName }}
+`)
+
+func TestRenderNADs_Substitution(t *testing.T) {
+	out, err := RenderNADs(nadsTmpl, "f5-cne-system")
+	if err != nil {
+		t.Fatalf("RenderNADs: %v", err)
+	}
+	rendered := string(out)
+
+	checks := map[string]string{
+		"ns":    "f5-cne-system",
+		"ext":   "external-netdevice",
+		"int":   "internal-netdevice",
+		"extIF": "ens8",
+		"intIF": "ens7",
+	}
+	for field, want := range checks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered NADs missing %s=%q:\n%s", field, want, rendered)
+		}
+	}
+}
+
+func TestRenderNADs_DefaultNamespace(t *testing.T) {
+	out, err := RenderNADs(nadsTmpl, "default")
+	if err != nil {
+		t.Fatalf("RenderNADs default ns: %v", err)
+	}
+	if !strings.Contains(string(out), "default") {
+		t.Errorf("expected 'default' namespace in output:\n%s", out)
+	}
+}
+
+func TestRenderNADs_Constants(t *testing.T) {
+	// Verify the hardcoded constants are correct (these are architecture constraints).
+	tmpl := []byte(`{{ .ExternalIFName }} {{ .InternalIFName }} {{ .ExternalNADName }} {{ .InternalNADName }}`)
+	out, err := RenderNADs(tmpl, "f5-cne-system")
+	if err != nil {
+		t.Fatalf("RenderNADs constants: %v", err)
+	}
+	rendered := string(out)
+	for _, want := range []string{"ens8", "ens7", "external-netdevice", "internal-netdevice"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("constant %q missing from output: %s", want, rendered)
+		}
+	}
+}
+
+// ─── RenderCNEInstance tests ──────────────────────────────────────────────────
+
+// cneInstanceCluster returns a cluster with BnkSpec fully populated for CNEInstance tests.
+func cneInstanceCluster() *intent.Cluster {
+	return &intent.Cluster{
+		Metadata: intent.Metadata{Name: "syd-tracer", Region: "ap-southeast-2"},
+		Bnk: &intent.BnkSpec{
+			FARArchive:       "/dev/null",
+			JWT:              "/dev/null",
+			DeploymentSize:   "Small",
+			StorageClassName: "gp3",
+			ManifestVersion:  "2.21.13",
+			TmmMtu:           9000,
+			TmmCpu:           "4",
+			TmmMemory:        "16Gi",
+			TmmHugepages:     "8Gi",
+			PalCpuSet:        "0-3",
+		},
+	}
+}
+
+func TestRenderCNEInstance_HappyPath(t *testing.T) {
+	tmplBytes, err := manifests.FS.ReadFile("shared/cneinstance.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read cneinstance template: %v", err)
+	}
+	cl := cneInstanceCluster()
+	getter := func(key string) string {
+		if key == "VPC_ID" {
+			return "vpc-0abc12345"
+		}
+		return ""
+	}
+
+	out, err := RenderCNEInstance(tmplBytes, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCNEInstance: %v", err)
+	}
+	rendered := string(out)
+
+	// State-derived substitutions.
+	stateChecks := []string{
+		"name: syd-tracer-bnk",
+		"namespace: f5-cne-system",
+		"instance: syd-tracer",
+		"clusterIssuer: syd-tracer-ca-cluster-issuer",
+		"name: far-secret",
+		"- external-netdevice",
+		"- internal-netdevice",
+		"value: \"vpc-0abc12345\"",
+		"value: \"ap-southeast-2\"",
+		"value: \"ens8\"",          // CLOUD_HOST_DEVICE_NAME
+		"value: \"f5-cne-device\"", // CLOUD_HOST_DEVICE_TAG
+	}
+	for _, want := range stateChecks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered CNEInstance missing %q:\n%s", want, rendered)
+		}
+	}
+
+	// Operator-knob substitutions.
+	opChecks := []string{
+		`deploymentSize: "Small"`,
+		"storageClassName: gp3",
+		`manifestVersion: "2.21.13"`,
+		`cpu: "4"`,
+		"memory: \"16Gi\"",
+		"hugepages-2Mi: \"8Gi\"",
+		`value: "0-3"`, // PAL_CPU_SET
+	}
+	for _, want := range opChecks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered CNEInstance missing operator-knob %q:\n%s", want, rendered)
+		}
+	}
+
+	// Hardcoded constants (NOT substituted — present verbatim in template).
+	constChecks := []string{
+		"gatewayAPI: true",
+		"type: BNK",
+		"wholeCluster: true",
+		"tmmReplicas: 1",
+		"imagePullPolicy: Always",
+		`value: "true"`,  // CLOUD_ENV
+		"value: \"aws\"", // CLOUD_PROVIDER
+		"value: \"AWS\"", // PLATFORM_TYPE
+	}
+	for _, want := range constChecks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered CNEInstance missing constant %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderCNEInstance_NilBnk_ReturnsError(t *testing.T) {
+	tmpl := []byte(`{{ .InstanceNameCR }}`)
+	cl := clusterFixture("syd-tracer")
+	// cl.Bnk is nil.
+	_, err := RenderCNEInstance(tmpl, cl, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("expected error for nil Bnk, got nil")
+	}
+}
+
+func TestRenderCNEInstance_MissingVPCID_ReturnsError(t *testing.T) {
+	tmpl := []byte(`{{ .VPCID }}`)
+	cl := cneInstanceCluster()
+	// getter returns empty for VPC_ID.
+	_, err := RenderCNEInstance(tmpl, cl, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("expected error for missing VPC_ID, got nil")
+	}
+}
+
+// TestRenderCNEInstance_EmbeddedShape verifies the real embedded template
+// renders without errors and contains no leftover $VAR placeholders.
+func TestRenderCNEInstance_EmbeddedShape(t *testing.T) {
+	tmplBytes, err := manifests.FS.ReadFile("shared/cneinstance.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read cneinstance template: %v", err)
+	}
+	cl := cneInstanceCluster()
+	getter := func(key string) string {
+		switch key {
+		case "VPC_ID":
+			return "vpc-test"
+		}
+		return ""
+	}
+
+	out, err := RenderCNEInstance(tmplBytes, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCNEInstance (embedded): %v", err)
+	}
+	if strings.Contains(string(out), "$") {
+		t.Errorf("rendered output still contains $ placeholder:\n%s", out)
+	}
+}
+
+// ─── RenderLicenseCR tests ────────────────────────────────────────────────────
+
+func TestRenderLicenseCR_HappyPath(t *testing.T) {
+	tmplBytes, err := manifests.FS.ReadFile("shared/license-cr.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read license-cr template: %v", err)
+	}
+	cl := clusterFixture("syd-tracer")
+	jwt := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test-payload.test-sig"
+
+	out, err := RenderLicenseCR(tmplBytes, cl, jwt)
+	if err != nil {
+		t.Fatalf("RenderLicenseCR: %v", err)
+	}
+	rendered := string(out)
+
+	checks := []string{
+		"name: bnk-license",
+		"namespace: f5-cne-core",
+		"instance: syd-tracer",
+		"operationMode: connected",
+		jwt, // JWT inlined verbatim
+		"https://product.apis.f5.com/ee/v1",
+		"https://product-s.apis.f5.com/ee/v1",
+	}
+	for _, want := range checks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered License CR missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderLicenseCR_JWTInlinedVerbatim(t *testing.T) {
+	// Verify the raw JWT string (not base64, not escaped) is inlined.
+	tmplBytes, err := manifests.FS.ReadFile("shared/license-cr.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read license-cr template: %v", err)
+	}
+	cl := clusterFixture("syd-test")
+	// #nosec G101 -- this is a test JWT placeholder value, not a credential
+	jwt := "test-jwt-raw-string-12345"
+
+	out, err := RenderLicenseCR(tmplBytes, cl, jwt)
+	if err != nil {
+		t.Fatalf("RenderLicenseCR: %v", err)
+	}
+	if !strings.Contains(string(out), jwt) {
+		t.Errorf("JWT not inlined verbatim: %s", out)
 	}
 }

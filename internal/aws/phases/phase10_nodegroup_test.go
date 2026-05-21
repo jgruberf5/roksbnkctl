@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
@@ -156,5 +158,106 @@ func TestPhase10NodeGroup_DryRun(t *testing.T) {
 	}
 	if st.Get("NODEGROUP_DEFAULT_NAME") == "" {
 		t.Error("dry-run: NODEGROUP_DEFAULT_NAME not populated")
+	}
+}
+
+// TestPhase10NodeGroup_CreatesLaunchTemplate verifies the launch template is
+// created before the node group and LT_ID is persisted in state.
+func TestPhase10NodeGroup_CreatesLaunchTemplate(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := testClusterWithEKS()
+	st, _ := stateWithIAMAndSubnets(t)
+	st.Set("EKS_CLUSTER_NAME", cl.Metadata.Name)
+	eksMock := newMockEKS()
+	ec2m := &mockEC2{} // createLTCalls will be incremented
+
+	clients := &Clients{
+		EC2:     ec2m,
+		STS:     &mockSTSImpl{accountID: "111122223333"},
+		IAM:     newMockIAM(),
+		EKS:     eksMock,
+		Profile: "test",
+	}
+
+	if err := Phase10NodeGroup(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase10NodeGroup: %v", err)
+	}
+
+	// Launch template must have been created.
+	if ec2m.createLTCalls != 1 {
+		t.Errorf("createLTCalls = %d, want 1", ec2m.createLTCalls)
+	}
+	if st.Get("LT_ID") == "" {
+		t.Error("LT_ID not set in state after node group create")
+	}
+}
+
+// TestPhase10NodeGroup_LTIdempotent verifies no re-create of LT on second run.
+func TestPhase10NodeGroup_LTIdempotent(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := testClusterWithEKS()
+	st, _ := stateWithIAMAndSubnets(t)
+	st.Set("EKS_CLUSTER_NAME", cl.Metadata.Name)
+	eksMock := newMockEKS()
+
+	// Pre-populate DescribeLaunchTemplates to return existing LT.
+	ltID := "lt-mock-existing"
+	ltName := cl.Metadata.Name + "-bnk-lt"
+	ec2m := &mockEC2{
+		describeLTsOut: &ec2.DescribeLaunchTemplatesOutput{
+			LaunchTemplates: []ec2types.LaunchTemplate{
+				{LaunchTemplateId: &ltID, LaunchTemplateName: &ltName},
+			},
+		},
+	}
+
+	clients := &Clients{
+		EC2:     ec2m,
+		STS:     &mockSTSImpl{accountID: "111122223333"},
+		IAM:     newMockIAM(),
+		EKS:     eksMock,
+		Profile: "test",
+	}
+
+	if err := Phase10NodeGroup(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase10NodeGroup idempotent: %v", err)
+	}
+
+	// No new LT created when one already exists.
+	if ec2m.createLTCalls != 0 {
+		t.Errorf("idempotent: createLTCalls = %d, want 0", ec2m.createLTCalls)
+	}
+}
+
+// TestPhase10NodeGroupDown_DeletesLT verifies the launch template is deleted
+// during node group teardown.
+func TestPhase10NodeGroupDown_DeletesLT(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := testClusterWithEKS()
+	st, _ := stateWithIAMAndSubnets(t)
+	st.Set("EKS_CLUSTER_NAME", cl.Metadata.Name)
+	st.Set("LT_ID", "lt-mock-1")
+	eksMock := newMockEKS()
+	ec2m := &mockEC2{}
+
+	clients := &Clients{
+		EC2:     ec2m,
+		STS:     &mockSTSImpl{accountID: "111122223333"},
+		IAM:     newMockIAM(),
+		EKS:     eksMock,
+		Profile: "test",
+	}
+
+	if err := Phase10NodeGroupDown(context.Background(), cl, st, clients); err != nil {
+		t.Fatalf("Phase10NodeGroupDown: %v", err)
+	}
+
+	// LT deleted.
+	if ec2m.deleteLTCalls != 1 {
+		t.Errorf("deleteLTCalls = %d, want 1", ec2m.deleteLTCalls)
+	}
+	// LT_ID cleared.
+	if st.Get("LT_ID") != "" {
+		t.Error("LT_ID not cleared after down")
 	}
 }

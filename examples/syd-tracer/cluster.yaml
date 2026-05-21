@@ -10,11 +10,11 @@
 #                                     for BNK-side workers when slices 3/5 land)
 #               10.0.12.0/24 in -2b (second-AZ private symmetry)
 #
-# Note on BNK-specific subnets (BNK_EXT 10.0.10.0/24, BNK_INT 10.0.20.0/24):
-# aws-gpu-setup also creates dedicated TMM data-plane subnets. Those are
-# pattern-specific (host-device vs sr-iov-tmm) and will be modelled in slice 5
-# when the variant manifest layer lands. For the tracer slice (VPC + IGW + NAT
-# + RTs only) the schema's public/private split is sufficient.
+# BNK data-plane subnets (host-device pattern, slice 7+):
+#   BNK_EXT: 10.0.10.0/24 in -2a — external TMM VLAN (matches aws-gpu-setup BNK_EXT_CIDR)
+#   BNK_INT: 10.0.20.0/24 in -2a — internal TMM VLAN (matches aws-gpu-setup BNK_INT_CIDR)
+#   These are created by Phase 03 when pattern=host-device and network.dataPath is set.
+#   They are dedicated to the TMM data path; they do not carry worker/EKS traffic.
 #
 # Prerequisites before `up`:
 #   export AWS_PROFILE=Users-292785712872
@@ -25,6 +25,7 @@
 #   awsbnkctl up   --config examples/syd-tracer/cluster.yaml --dry-run
 #   awsbnkctl up   --config examples/syd-tracer/cluster.yaml
 #   awsbnkctl down --config examples/syd-tracer/cluster.yaml --yes
+#   awsbnkctl down --config examples/syd-tracer/cluster.yaml --yes --keep-irsa
 #
 # State written to: .awsbnkctl/syd-tracer/state.env
 
@@ -39,8 +40,14 @@ metadata:
   region: ap-southeast-2
   labels:
     owner: jarrod
-    purpose: tracer-bullet-slice-01
+    purpose: tracer-bullet-slice-07
     sourced-from: aws-gpu-setup/vars.syd-test-lab.env
+
+# pattern selects the data-path variant.
+# host-device: TMM runs directly on EC2 host NIC interfaces (no SR-IOV vfio).
+#              Requires network.dataPath for BNK ext/int subnet creation (phase 03).
+#              Activates phases 16 (TMM node label), 17 (secondary ENIs), 18 (IRSA).
+pattern: host-device
 
 network:
   vpcCidr: 10.0.0.0/16
@@ -67,6 +74,20 @@ network:
         az: ap-southeast-2a
       - cidr: 10.0.12.0/24
         az: ap-southeast-2b
+
+  # dataPath: BNK data-plane subnet definitions (host-device pattern only).
+  # Phase 03 creates these subnets and writes BNK_EXT_SUBNET / BNK_INT_SUBNET to
+  # state.env. Phase 17 attaches secondary ENIs from these subnets to the TMM node.
+  # CIDRs match aws-gpu-setup's BNK_EXT_CIDR / BNK_INT_CIDR so both tools can
+  # coexist in the same account (distinct tag:awsbnkctl:cluster values prevent
+  # tag-discovery collisions).
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
 
   # 1 NAT GW = cost-optimised (single point of egress in the first public subnet).
   # For HA multi-AZ, set to len(azs). Per-AZ NAT is a slice 2+ option.

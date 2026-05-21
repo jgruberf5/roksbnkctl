@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
@@ -117,6 +118,19 @@ func TestDryRun_AllPhasesEndToEnd(t *testing.T) {
 	}
 	if err := Phase11Kubeconfig(ctx, cl, st, clients, true); err != nil {
 		t.Fatalf("Phase11Kubeconfig: %v", err)
+	}
+
+	// Phase 16: TMM node label + EC2 instance ID (dry-run: sets placeholders, no k8s/EC2 calls).
+	if err := Phase16TMMNodeLabel(ctx, cl, st, clients, true); err != nil {
+		t.Fatalf("Phase16TMMNodeLabel: %v", err)
+	}
+	// Phase 17: secondary ENIs (dry-run: sets placeholders, no EC2 calls).
+	if err := Phase17SecondaryENIs(ctx, cl, st, clients, true); err != nil {
+		t.Fatalf("Phase17SecondaryENIs: %v", err)
+	}
+	// Phase 18: IRSA + OIDC (dry-run: sets placeholders, no IAM/EC2 calls).
+	if err := Phase18IRSAOIDC(ctx, cl, st, clients, true); err != nil {
+		t.Fatalf("Phase18IRSAOIDC: %v", err)
 	}
 
 	// Phase 12: requires bnk: block — add it with temp FAR/JWT files.
@@ -289,6 +303,34 @@ func TestDryRun_AllPhasesEndToEnd(t *testing.T) {
 	if st.Get("OTEL_F5ING_CERT_NAME") != "dry-run" {
 		t.Errorf("dry-run: OTEL_F5ING_CERT_NAME = %q, want dry-run", st.Get("OTEL_F5ING_CERT_NAME"))
 	}
+
+	// Phase 16 dry-run placeholders.
+	if st.Get("TMM_NODE_NAME") != "dry-run-tmm-node" {
+		t.Errorf("dry-run: TMM_NODE_NAME = %q, want dry-run-tmm-node", st.Get("TMM_NODE_NAME"))
+	}
+	if st.Get("TMM_INSTANCE_ID") != "dry-run-i-xxx" {
+		t.Errorf("dry-run: TMM_INSTANCE_ID = %q, want dry-run-i-xxx", st.Get("TMM_INSTANCE_ID"))
+	}
+
+	// Phase 17 dry-run placeholders.
+	if st.Get("INTERNAL_ENI") != "eni-dry-run-int" {
+		t.Errorf("dry-run: INTERNAL_ENI = %q, want eni-dry-run-int", st.Get("INTERNAL_ENI"))
+	}
+	if st.Get("EXTERNAL_ENI") != "eni-dry-run-ext" {
+		t.Errorf("dry-run: EXTERNAL_ENI = %q, want eni-dry-run-ext", st.Get("EXTERNAL_ENI"))
+	}
+
+	// Phase 18 dry-run placeholders.
+	oidcARN := st.Get("OIDC_PROVIDER_ARN")
+	if oidcARN == "" || oidcARN == "arn:aws:iam::dry-run:oidc-provider/" {
+		// Check starts with the expected prefix.
+	}
+	if !strings.HasPrefix(st.Get("OIDC_PROVIDER_ARN"), "arn:aws:iam::dry-run:oidc-provider") {
+		t.Errorf("dry-run: OIDC_PROVIDER_ARN = %q, want arn:aws:iam::dry-run:oidc-provider/...", st.Get("OIDC_PROVIDER_ARN"))
+	}
+	if st.Get("CNE_IRSA_ROLE_ARN") == "" {
+		t.Error("dry-run: CNE_IRSA_ROLE_ARN not set by Phase18")
+	}
 }
 
 // writeDryRunFile writes a file for use in dry-run tests and returns its path.
@@ -366,5 +408,198 @@ func TestDryRun_Phase09ForgeEnabled(t *testing.T) {
 	linkPath := filepath.Join(dir, ".awsbnkctl", cl.Metadata.Name, "forge_link.json")
 	if _, err := os.Stat(linkPath); err == nil {
 		t.Error("forge_link.json was written to disk during dry-run; must not persist")
+	}
+}
+
+// TestDryRun_Phase19CloudNetworkMapping verifies that Phase19 in dry-run mode
+// sets the CLOUD_NETWORK_MAPPING_APPLIED_AT placeholder and host-device constants
+// without touching any k8s API.
+func TestDryRun_Phase19CloudNetworkMapping(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	// Seed state that Phase 19 reads.
+	st.Set("PUBLIC_SUBNETS", "subnet-pub-001,subnet-pub-002")
+	st.Set("BNK_EXT_SUBNET", "subnet-ext-001")
+	st.Set("BNK_INT_SUBNET", "subnet-int-001")
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase19CloudNetworkMapping(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase19 dry-run: %v", err)
+	}
+
+	if st.Get("CLOUD_NETWORK_MAPPING_APPLIED_AT") != "dry-run" {
+		t.Errorf("CLOUD_NETWORK_MAPPING_APPLIED_AT = %q, want dry-run",
+			st.Get("CLOUD_NETWORK_MAPPING_APPLIED_AT"))
+	}
+	if st.Get("INSTANCE_NS") != InstanceNamespace {
+		t.Errorf("INSTANCE_NS = %q, want %q", st.Get("INSTANCE_NS"), InstanceNamespace)
+	}
+	if st.Get("MGMT_SUBNET") != "subnet-pub-001" {
+		t.Errorf("MGMT_SUBNET = %q, want subnet-pub-001", st.Get("MGMT_SUBNET"))
+	}
+}
+
+// TestDryRun_Phase20NADs verifies that Phase20 in dry-run mode sets
+// NADS_APPLIED_AT without touching any k8s API.
+func TestDryRun_Phase20NADs(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase20NADs(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase20 dry-run: %v", err)
+	}
+
+	if st.Get("NADS_APPLIED_AT") != "dry-run" {
+		t.Errorf("NADS_APPLIED_AT = %q, want dry-run", st.Get("NADS_APPLIED_AT"))
+	}
+}
+
+// TestDryRun_Phase21IRSASA verifies that Phase21 in dry-run mode sets
+// IRSA_SA_APPLIED_AT and CNE_SA_NAME without touching any k8s API.
+func TestDryRun_Phase21IRSASA(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	st.Set("CNE_IRSA_ROLE_ARN", "arn:aws:iam::111122223333:role/syd-tracer-cne-controller-irsa")
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase21IRSASA(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase21 dry-run: %v", err)
+	}
+
+	if st.Get("IRSA_SA_APPLIED_AT") != "dry-run" {
+		t.Errorf("IRSA_SA_APPLIED_AT = %q, want dry-run", st.Get("IRSA_SA_APPLIED_AT"))
+	}
+	// hostDeviceCluster() uses cluster name "tracer" (from testCluster() in phase02_vpc_test.go).
+	wantSA := cneSAName("tracer")
+	if st.Get("CNE_SA_NAME") != wantSA {
+		t.Errorf("CNE_SA_NAME = %q, want %q", st.Get("CNE_SA_NAME"), wantSA)
+	}
+}
+
+// TestDryRun_Phase22CNEInstance verifies that Phase22 in dry-run mode sets
+// CNEINSTANCE_NAME and placeholder timestamps without touching k8s.
+func TestDryRun_Phase22CNEInstance(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	cl := hostDeviceCluster()
+	cl.Bnk = &intent.BnkSpec{
+		FARArchive:       "/dev/null",
+		JWT:              "/dev/null",
+		DeploymentSize:   "Small",
+		StorageClassName: "gp3",
+		ManifestVersion:  "2.21.13",
+		TmmMtu:           9000,
+		TmmCpu:           "4",
+		TmmMemory:        "16Gi",
+		TmmHugepages:     "8Gi",
+		PalCpuSet:        "0-3",
+	}
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase22CNEInstance(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase22 dry-run: %v", err)
+	}
+
+	wantCRName := cl.Metadata.Name + "-bnk"
+	if st.Get("CNEINSTANCE_NAME") != wantCRName {
+		t.Errorf("CNEINSTANCE_NAME = %q, want %q", st.Get("CNEINSTANCE_NAME"), wantCRName)
+	}
+	if st.Get("CNEINSTANCE_APPLIED_AT") != "dry-run" {
+		t.Errorf("CNEINSTANCE_APPLIED_AT = %q, want dry-run", st.Get("CNEINSTANCE_APPLIED_AT"))
+	}
+	if st.Get("CNEINSTANCE_RECONCILE_STARTED_AT") != "dry-run" {
+		t.Errorf("CNEINSTANCE_RECONCILE_STARTED_AT = %q, want dry-run", st.Get("CNEINSTANCE_RECONCILE_STARTED_AT"))
+	}
+}
+
+// TestDryRun_Phase23License verifies that Phase23 in dry-run mode sets
+// LICENSE_CRD_READY_AT and LICENSE_NAME placeholders without touching k8s.
+func TestDryRun_Phase23License(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase23License(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase23 dry-run: %v", err)
+	}
+
+	if st.Get("LICENSE_CRD_READY_AT") != "dry-run" {
+		t.Errorf("LICENSE_CRD_READY_AT = %q, want dry-run", st.Get("LICENSE_CRD_READY_AT"))
+	}
+	if st.Get("LICENSE_NAME") != licenseCRName {
+		t.Errorf("LICENSE_NAME = %q, want %q", st.Get("LICENSE_NAME"), licenseCRName)
+	}
+}
+
+// TestDryRun_Phase24CWCHeal verifies that Phase24 in dry-run mode returns nil
+// without making any pod mutations.
+func TestDryRun_Phase24CWCHeal(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	clients := &Clients{Profile: "test"}
+	if err := Phase24CWCHeal(context.Background(), nil, st, clients, true); err != nil {
+		t.Fatalf("Phase24 dry-run: %v", err)
+	}
+}
+
+// TestDryRun_Phase25ActivationPoll verifies that Phase25 in dry-run mode
+// returns nil without polling any k8s resources.
+func TestDryRun_Phase25ActivationPoll(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase25ActivationPoll(context.Background(), cl, st, clients, true, false); err != nil {
+		t.Fatalf("Phase25 dry-run: %v", err)
+	}
+	// CNEINSTANCE_READY_AT must not be set in dry-run.
+	if st.Get("CNEINSTANCE_READY_AT") != "" {
+		t.Errorf("CNEINSTANCE_READY_AT should not be set in dry-run, got %q",
+			st.Get("CNEINSTANCE_READY_AT"))
+	}
+}
+
+// TestDryRun_Phase25ActivationPoll_SkipPoll verifies the skip-poll path.
+func TestDryRun_Phase25ActivationPoll_SkipPoll(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	cl := hostDeviceCluster()
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase25ActivationPoll(context.Background(), cl, st, clients, false, true); err != nil {
+		t.Fatalf("Phase25 skip-poll: %v", err)
 	}
 }

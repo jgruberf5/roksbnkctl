@@ -571,3 +571,299 @@ func containsRune(s, sub string) bool {
 	}
 	return false
 }
+
+// ─── Pattern + DataPath tests (slice 7) ──────────────────────────────────────
+
+const hostDeviceMinimalYAML = `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+pattern: host-device
+cluster:
+  nodeGroups:
+    - name: ng
+`
+
+// TestLoad_HostDevicePattern_RequiresDataPath verifies that host-device without
+// network.dataPath returns an error.
+func TestLoad_HostDevicePattern_RequiresDataPath(t *testing.T) {
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+pattern: host-device
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error when pattern=host-device and dataPath is absent, got nil")
+	}
+	if !containsStr(err.Error(), "dataPath") {
+		t.Errorf("error should mention 'dataPath': %v", err)
+	}
+}
+
+// TestLoad_HostDevicePattern_AZMismatch verifies that a dataPath AZ not in
+// network.azs returns an error.
+func TestLoad_HostDevicePattern_AZMismatch(t *testing.T) {
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2b
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+pattern: host-device
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error when dataPath.external.az is not in network.azs, got nil")
+	}
+	if !containsStr(err.Error(), "ap-southeast-2b") {
+		t.Errorf("error should mention the mismatched AZ: %v", err)
+	}
+}
+
+// TestLoad_HostDevicePattern_AutoInjectsRoleBnk verifies that when pattern is
+// host-device and no role label is set, role=bnk is auto-injected.
+func TestLoad_HostDevicePattern_AutoInjectsRoleBnk(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", hostDeviceMinimalYAML)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ClusterSpec == nil || len(c.ClusterSpec.NodeGroups) == 0 {
+		t.Fatal("expected ClusterSpec with at least one node group")
+	}
+	ng := c.ClusterSpec.NodeGroups[0]
+	if ng.Labels["role"] != "bnk" {
+		t.Errorf("expected role=bnk auto-injected, got labels=%v", ng.Labels)
+	}
+}
+
+// TestLoad_HostDevicePattern_PreservesExplicitRoleBnk verifies that an
+// explicitly-set role label is preserved (not overwritten).
+func TestLoad_HostDevicePattern_PreservesExplicitRoleBnk(t *testing.T) {
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+pattern: host-device
+cluster:
+  nodeGroups:
+    - name: ng
+      labels:
+        role: bnk
+        custom: value
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ng := c.ClusterSpec.NodeGroups[0]
+	if ng.Labels["role"] != "bnk" {
+		t.Errorf("role label overwritten: %v", ng.Labels)
+	}
+	if ng.Labels["custom"] != "value" {
+		t.Errorf("custom label lost: %v", ng.Labels)
+	}
+}
+
+// TestLoad_HostDevicePattern_DataPathParsed verifies the dataPath block is
+// parsed correctly.
+func TestLoad_HostDevicePattern_DataPathParsed(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", hostDeviceMinimalYAML)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Network.DataPath == nil {
+		t.Fatal("DataPath: nil, want populated struct")
+	}
+	if c.Network.DataPath.External.CIDR != "10.0.10.0/24" {
+		t.Errorf("External.CIDR: got %q, want 10.0.10.0/24", c.Network.DataPath.External.CIDR)
+	}
+	if c.Network.DataPath.External.AZ != "ap-southeast-2a" {
+		t.Errorf("External.AZ: got %q, want ap-southeast-2a", c.Network.DataPath.External.AZ)
+	}
+	if c.Network.DataPath.Internal.CIDR != "10.0.20.0/24" {
+		t.Errorf("Internal.CIDR: got %q, want 10.0.20.0/24", c.Network.DataPath.Internal.CIDR)
+	}
+}
+
+// TestLoad_BnkSpec_Defaults verifies that BnkSpec slice-7 fields get defaults
+// applied when omitted.
+func TestLoad_BnkSpec_Defaults(t *testing.T) {
+	dir := t.TempDir()
+	farPath := writeFile(t, dir, "far.json", `{"auths":{}}`)
+	jwtPath := writeFile(t, dir, "license.jwt", "jwt-token")
+
+	yaml := minimalYAML + `
+bnk:
+  farArchive: ` + farPath + `
+  jwt: ` + jwtPath + `
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Bnk.DeploymentSize != "Small" {
+		t.Errorf("DeploymentSize: got %q, want Small", c.Bnk.DeploymentSize)
+	}
+	if c.Bnk.StorageClassName != "gp3" {
+		t.Errorf("StorageClassName: got %q, want gp3", c.Bnk.StorageClassName)
+	}
+	if c.Bnk.ManifestVersion != "2.21.13" {
+		t.Errorf("ManifestVersion: got %q, want 2.21.13", c.Bnk.ManifestVersion)
+	}
+	if c.Bnk.TmmMtu != 9000 {
+		t.Errorf("TmmMtu: got %d, want 9000", c.Bnk.TmmMtu)
+	}
+	if c.Bnk.TmmCpu != "4" {
+		t.Errorf("TmmCpu: got %q, want 4", c.Bnk.TmmCpu)
+	}
+	if c.Bnk.TmmMemory != "16Gi" {
+		t.Errorf("TmmMemory: got %q, want 16Gi", c.Bnk.TmmMemory)
+	}
+	if c.Bnk.TmmHugepages != "8Gi" {
+		t.Errorf("TmmHugepages: got %q, want 8Gi", c.Bnk.TmmHugepages)
+	}
+	if c.Bnk.PalCpuSet != "0-3" {
+		t.Errorf("PalCpuSet: got %q, want 0-3", c.Bnk.PalCpuSet)
+	}
+}
+
+// TestLoad_BnkSpec_ExplicitValuesPreserved verifies that explicitly-set
+// slice-7 BnkSpec values are not overwritten by defaults.
+func TestLoad_BnkSpec_ExplicitValuesPreserved(t *testing.T) {
+	dir := t.TempDir()
+	farPath := writeFile(t, dir, "far.json", `{"auths":{}}`)
+	jwtPath := writeFile(t, dir, "license.jwt", "jwt-token")
+
+	yaml := minimalYAML + `
+bnk:
+  farArchive: ` + farPath + `
+  jwt: ` + jwtPath + `
+  deploymentSize: Medium
+  storageClassName: gp2
+  manifestVersion: "2.20.0"
+  tmmMtu: 1500
+  tmmCpu: "8"
+  tmmMemory: "32Gi"
+  tmmHugepages: "16Gi"
+  palCpuSet: "0-7"
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Bnk.DeploymentSize != "Medium" {
+		t.Errorf("DeploymentSize: got %q, want Medium", c.Bnk.DeploymentSize)
+	}
+	if c.Bnk.StorageClassName != "gp2" {
+		t.Errorf("StorageClassName: got %q, want gp2", c.Bnk.StorageClassName)
+	}
+	if c.Bnk.ManifestVersion != "2.20.0" {
+		t.Errorf("ManifestVersion: got %q, want 2.20.0", c.Bnk.ManifestVersion)
+	}
+	if c.Bnk.TmmMtu != 1500 {
+		t.Errorf("TmmMtu: got %d, want 1500", c.Bnk.TmmMtu)
+	}
+	if c.Bnk.TmmCpu != "8" {
+		t.Errorf("TmmCpu: got %q, want 8", c.Bnk.TmmCpu)
+	}
+	if c.Bnk.PalCpuSet != "0-7" {
+		t.Errorf("PalCpuSet: got %q, want 0-7", c.Bnk.PalCpuSet)
+	}
+}

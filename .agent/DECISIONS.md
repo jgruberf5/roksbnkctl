@@ -174,6 +174,57 @@ Last Updated: 2026-05-21
 
 ---
 
+## D-010 — OIDC Provider Scope: Per-Cluster, Tagged, Torn Down with Cluster
+
+**Date:** 2026-05-22
+**Status:** Accepted
+**Recorded during:** slice-07 Pass 3 (Architect mandate)
+
+**Context.** Phase 18 creates an IAM OIDC Identity Provider (OIDC IdP) for the EKS cluster to enable IRSA (IAM Roles for Service Accounts). The question was whether to use a shared OIDC provider across multiple clusters or a per-cluster provider.
+
+**Decision.** OIDC provider scope is **per-cluster, torn down with the cluster**.
+
+Rationale:
+1. Each EKS cluster has a unique OIDC issuer URL (`https://oidc.eks.<region>.amazonaws.com/id/<unique-id>`) guaranteed by AWS — there is no shared-provider case to engineer.
+2. The per-cluster provider is tagged with `awsbnkctl:cluster=<name>` so it is discoverable and can be torn down via tag-discovery fallback (D-003).
+3. `--keep-irsa` flag is available for operators who want to retain the OIDC provider across `down`/`up` cycles (e.g. iterative cluster rebuilds during development). Default: delete on `down`.
+4. No multi-tenant OIDC sharing pattern is needed in the current architecture; if required in future, model it as a new cluster.yaml field (`sharedOIDC: true`) in a separate slice.
+
+**Consequences.**
+- Phase 18 (`Phase18IRSAOIDC`) always creates a new OIDC provider for the cluster.
+- Phase 18 down (`Phase18IrsaOidcDown`) deletes it unless `--keep-irsa` is passed.
+- Operators rebuilding a cluster quickly can use `--keep-irsa` to avoid OIDC provider churn.
+- No shared-provider engineering needed now; scope this ADR as a constraint on future slice design.
+
+**See:** `internal/aws/phases/phase18_irsa_oidc.go`
+
+---
+
+## D-011 — CWC DNS-Warmup Heal Threshold Hardcoded at restartCount >= 3
+
+**Date:** 2026-05-22
+**Status:** Accepted
+**Recorded during:** slice-07 Pass 3 (Architect mandate)
+
+**Context.** The `f5-spk-cwc` pod (CWC = Connection Watchdog Component) in `f5-cne-core` sometimes crash-loops during initial DNS warmup on fresh EKS clusters. Phase 24 implements a heuristic heal: if the restart count reaches a threshold, force-delete the pod to break the loop and allow the scheduler to restart it cleanly.
+
+**Decision.** The restart threshold is **hardcoded at `restartCount >= 3`** (constant `cwcRestartThreshold` in `phase24_cwc_heal.go`).
+
+Rationale:
+1. **Empirical data:** syd-test-lab 2026-05-19 observed CWC stabilising after a force-delete at `restartCount=3`. Values 1 or 2 would trigger unnecessary restarts during normal slow start; values > 5 delay recovery.
+2. **Not a user-tunable knob:** The DNS-warmup crash loop is an infrastructure pathology, not a workload configuration. Exposing the threshold in `cluster.yaml` would be false complexity — operators cannot meaningfully choose a different value without deep CWC internals knowledge.
+3. **Best-effort semantics:** Phase 24 returns nil regardless of outcome. If the heal does not help, Phase 25's activation poll will time out and provide a clear error for human diagnosis. The threshold is not a hard guarantee.
+
+**Consequences.**
+- `phase24_cwc_heal.go` exports the constant `cwcRestartThreshold = 3` (package-internal, accessible to tests).
+- If future BNK releases change the DNS-warmup behaviour (e.g. CWC no longer crash-loops), Phase 24 becomes a no-op (pod is Ready on first iter).
+- If the threshold needs adjustment, it is a one-line change in `phase24_cwc_heal.go` with a test update — reviewers see the intent clearly.
+- Phase 24 is a heuristic heal, NOT a verification gate. It always returns nil. Phase 25 is the authoritative gate.
+
+**See:** `internal/aws/phases/phase24_cwc_heal.go`, constant `cwcRestartThreshold`
+
+---
+
 ## Superseded Decisions
 
 (None)

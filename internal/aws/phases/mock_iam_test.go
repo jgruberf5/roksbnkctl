@@ -2,6 +2,7 @@ package phases
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -15,6 +16,7 @@ type mockIAM struct {
 	profiles         map[string]*iamtypes.InstanceProfile // profile name → profile
 	attachedPolicies map[string]map[string]bool           // role name → set of attached policy ARNs
 	inlinePolicies   map[string][]string                  // role name → slice of inline policy names
+	oidcProviders    map[string]string                    // oidc provider ARN → url
 
 	// Per-method call counts.
 	createRoleCalls               int
@@ -26,12 +28,16 @@ type mockIAM struct {
 	detachRolePolicyCalls         int
 	putRolePolicyCalls            int
 	deleteRolePolicyCalls         int
+	createOIDCCalls               int
+	deleteOIDCCalls               int
 
 	// Configurable errors.
 	createRoleErr               error
 	getRoleErr                  error
 	getInstanceProfileErr       error
 	addRoleToInstanceProfileErr error
+	getOIDCErr                  error
+	createOIDCErr               error
 }
 
 func newMockIAM() *mockIAM {
@@ -40,6 +46,7 @@ func newMockIAM() *mockIAM {
 		profiles:         make(map[string]*iamtypes.InstanceProfile),
 		attachedPolicies: make(map[string]map[string]bool),
 		inlinePolicies:   make(map[string][]string),
+		oidcProviders:    make(map[string]string),
 	}
 }
 
@@ -217,4 +224,50 @@ func (m *mockIAM) TagRole(_ context.Context, _ *iam.TagRoleInput, _ ...func(*iam
 
 func (m *mockIAM) TagInstanceProfile(_ context.Context, _ *iam.TagInstanceProfileInput, _ ...func(*iam.Options)) (*iam.TagInstanceProfileOutput, error) {
 	return &iam.TagInstanceProfileOutput{}, nil
+}
+
+// OIDC provider stubs (slice 7+).
+
+func (m *mockIAM) CreateOpenIDConnectProvider(_ context.Context, in *iam.CreateOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.CreateOpenIDConnectProviderOutput, error) {
+	m.createOIDCCalls++
+	if m.createOIDCErr != nil {
+		return nil, m.createOIDCErr
+	}
+	url := ""
+	if in.Url != nil {
+		url = *in.Url
+	}
+	arn := "arn:aws:iam::111122223333:oidc-provider/" + url
+	m.oidcProviders[arn] = url
+	return &iam.CreateOpenIDConnectProviderOutput{OpenIDConnectProviderArn: &arn}, nil
+}
+
+func (m *mockIAM) GetOpenIDConnectProvider(_ context.Context, in *iam.GetOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.GetOpenIDConnectProviderOutput, error) {
+	if m.getOIDCErr != nil {
+		return nil, m.getOIDCErr
+	}
+	arn := ""
+	if in.OpenIDConnectProviderArn != nil {
+		arn = *in.OpenIDConnectProviderArn
+	}
+	url, ok := m.oidcProviders[arn]
+	if !ok {
+		msg := fmt.Sprintf("OIDC provider not found: %s", arn)
+		return nil, &iamtypes.NoSuchEntityException{Message: &msg}
+	}
+	return &iam.GetOpenIDConnectProviderOutput{Url: &url}, nil
+}
+
+func (m *mockIAM) DeleteOpenIDConnectProvider(_ context.Context, in *iam.DeleteOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.DeleteOpenIDConnectProviderOutput, error) {
+	m.deleteOIDCCalls++
+	arn := ""
+	if in.OpenIDConnectProviderArn != nil {
+		arn = *in.OpenIDConnectProviderArn
+	}
+	delete(m.oidcProviders, arn)
+	return &iam.DeleteOpenIDConnectProviderOutput{}, nil
+}
+
+func (m *mockIAM) TagOpenIDConnectProvider(_ context.Context, _ *iam.TagOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.TagOpenIDConnectProviderOutput, error) {
+	return &iam.TagOpenIDConnectProviderOutput{}, nil
 }

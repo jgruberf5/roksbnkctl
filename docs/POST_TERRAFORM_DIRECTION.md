@@ -239,9 +239,26 @@ up
 │       fires on EKS-Active, before node group; MCP-first with REST fallback;
 │       soft-fail with 4-attempt 1s/3s/9s backoff; pending-link on give-up
 ├─ 10. eks node group (Phase10NodeGroup)     ◄── slice 3 (shipped)
+│       creates EC2 launch template (<cluster>-bnk-lt) before the node group (idempotent);
 │       wait until ACTIVE (~7 min); subnets: public only; AMI: AL2_x86_64
 ├─ 11. kubeconfig (Phase11Kubeconfig)        ◄── slice 3 (shipped)
 │       write .awsbnkctl/<name>/kubeconfig (exec-auth via `aws eks get-token`)
+├─ 16. tmm node label (Phase16TMMNodeLabel)  ◄── slice 7 (schema + prereqs, activation-inert)
+│       discovers the first worker node (K8s node list); stamps node label
+│       awsbnkctl.f5.com/tmm-node=true; captures EC2 instance ID → TMM_INSTANCE_ID state key
+│       skipped when pattern ≠ host-device; dry-run sets placeholder TMM_INSTANCE_ID
+├─ 17. secondary ENIs (Phase17SecondaryENIs) ◄── slice 7 (schema + prereqs, activation-inert)
+│       creates one ENI in BNK_EXT_SUBNET + one in BNK_INT_SUBNET (SG: SG_BNK_DATA);
+│       attaches both to TMM_INSTANCE_ID at device index 1 (ext) / 2 (int);
+│       idempotent: tag-discovery finds existing ENIs before create;
+│       state keys: ENI_EXT_ID, ENI_INT_ID
+├─ 18. IRSA / OIDC (Phase18IRSAOIDC)        ◄── slice 7 (schema + prereqs, activation-inert)
+│       per-cluster OIDC provider (thumbprint via crypto/tls — NO openssl exec, D-001);
+│       IRSA role f5-cne-controller-irsa-<cluster> with CneControllerVpcRead inline policy
+│       (EC2 read/write: DescribeVpcs, DescribeSubnets, DescribeNetworkInterfaces,
+│        CreateNetworkInterface, DeleteNetworkInterface, ModifyNetworkInterfaceAttribute, …);
+│       adds cluster SG ingress from SG_BNK_DATA; state keys: OIDC_PROVIDER_ARN, IRSA_ROLE_ARN
+│       --keep-irsa flag on down retains the OIDC provider (role always deleted)
 ├─ 12. k8s install foundation (Phase12K8sFoundation) ◄── slice 5 (shipped)
 │       12.1 create namespaces: cert-manager, f5-cne-core, f5-bnk-instance, f5-utils
 │       12.2 load FAR archive + license JWT as k8s Secrets (4× dockerconfigjson + 1× opaque)
@@ -257,14 +274,53 @@ up
 ├─ 15. OTEL Certificate CRs (Phase15OTELCerts) ◄── slice 6 (shipped)
 │       external-otelsvr + external-f5ingotelsvr in f5-cne-core
 │       signed by <cluster>-ca-cluster-issuer; wait Ready=True
-└─ 13. postflight smoke (Phase13Postflight) ◄── slice 5 (shipped); extended slice 6
+├─ 19. cloud-network-mapping CM (Phase19CloudNetworkMapping) ◄── slice 7b (Pass 2, activation-inert)
+│       ConfigMap cloud-network-mapping in f5-cne-system
+│       maps AZ → mgmt/external/internal subnet-id + CIDR
+│       reads MGMT_SUBNET (alias for PUBLIC_SUBNETS[0]), BNK_EXT_SUBNET, BNK_INT_SUBNET from state
+│       persists host-device constants to state: INSTANCE_NS, OPERATOR_NS, EXTERNAL_IFNAME,
+│         INTERNAL_IFNAME, EXTERNAL_PCI, INTERNAL_PCI, CLOUD_HOST_DEVICE_TAG, CLOUD_HOST_DEVICE_NAME
+├─ 20. host-device NADs (Phase20NADs) ◄── slice 7b (Pass 2, activation-inert)
+│       NetworkAttachmentDefinitions external-netdevice (ens8) + internal-netdevice (ens7)
+│       applied into BOTH f5-cne-system AND default namespaces
+│       (per aws-gpu-setup/deploy-bnk.sh:143 NAD_NS_SET)
+├─ 21. IRSA ServiceAccount pre-creation (Phase21IRSASA) ◄── slice 7b (Pass 2, activation-inert)
+│       ServiceAccount f5-cne-controller-<cluster>-bnk-serviceaccount in f5-cne-system
+│       annotation: eks.amazonaws.com/role-arn=<CNE_IRSA_ROLE_ARN>
+│       persists CNE_SA_NAME to state
+├─ 22. CNEInstance CR (Phase22CNEInstance) ◄── slice 7c (Pass 3) *** BURNS F5 LICENSE ***
+│       render + SSA-apply cneinstances.k8s.f5.com/v1/CNEInstance <cluster>-bnk in f5-cne-system
+│       2-min "reconcile started" gate: polls status.conditions non-empty before proceeding
+│       (catches "reconcile never started" pathology early per Architect mandate)
+│       --dry-run: logs plan, skips apply+poll, sets placeholder state
+│       state keys: CNEINSTANCE_NAME, CNEINSTANCE_APPLIED_AT, CNEINSTANCE_RECONCILE_STARTED_AT
+├─ 23. License CR (Phase23License) ◄── slice 7c (Pass 3) *** BURNS F5 LICENSE ***
+│       wait up to 10 min for licenses.k8s.f5net.com CRD (installed by FLO operator)
+│       render + SSA-apply k8s.f5net.com/v1/License bnk-license in f5-cne-core
+│       JWT file is read from cl.Bnk.JWT, trimmed, and inlined as spec.jwt string value
+│       state keys: LICENSE_CRD_READY_AT, LICENSE_APPLIED_AT, LICENSE_NAME
+├─ 24. CWC DNS-warmup heal (Phase24CWCHeal) ◄── slice 7c (Pass 3)
+│       best-effort heuristic: polls cwc pod (app=cwc, f5-cne-core) up to 12× / 15s
+│       if restartCount >= 3 (ADR D-011): force-delete pod (GracePeriodSeconds=0) to break loop
+│       returns nil regardless — this is a recovery action, not a verification gate
+│       --dry-run: logs plan, skips loop, returns nil
+├─ 25. Activation poll (Phase25ActivationPoll) ◄── slice 7c (Pass 3) *** LONG WAIT ***
+│       initial sleep 30s; poll up to 40× / 30s (= 20 min cap)
+│       per iteration: reads cneinstance.status.state + license.status.state + pod counts
+│       success: cne ∈ {Ready, Running} AND license=Active → sets CNEINSTANCE_READY_AT
+│       timeout: hard error with last-seen states + kubectl diagnostic hint
+│       --skip-activation-poll: returns nil immediately (for reviewer re-runs)
+│       --dry-run: logs plan, skips poll, returns nil
+└─ 13. postflight smoke (Phase13Postflight) ◄── slice 5 (shipped); extended slice 7c
         verify: namespaces, cert-manager ready, CA cert Ready, FAR secrets present
         + FLO Deployment ready, cneinstances.k8s.f5.com CRD, OTEL certs Ready
+        + CNEInstance status.state ∈ {Ready, Running} (when CNEINSTANCE_READY_AT set)
+        + License bnk-license status.state=Active (when CNEINSTANCE_READY_AT set)
+        + warning log when --skip-activation-poll used (CNEINSTANCE_READY_AT absent)
         optional: forge scan_cluster (best-effort)
-        NOTE: Phase 13 runs LAST in the up chain (after 14 + 15) so postflight
-              covers the full installed set. Phase numbering is identity-stable;
-              call-site ordering is Phase12 → Phase14 → Phase15 → Phase13.
-        ◄── CURRENT IMPLEMENTATION ENDS HERE (slice 6)
+        NOTE: Phase 13 runs LAST so postflight covers the full installed set.
+              call-site ordering: Phase12 → Phase14 → Phase15 → Phase19 → Phase20 → Phase21
+                                  → Phase22 → Phase23 → Phase24 → Phase25 → Phase13.
 ```
 
 > **Removed from the roadmap:** the original TF graph had `terraform/modules/ecr_mirror/`
@@ -303,13 +359,41 @@ down
 │   ├─ load state.env; if missing, tag-discovery / name-based fallback
 │   └─ unless --keep-forge-link: forge unregister
 │
+├─ 15. OTEL certs down (Phase15OTELCertsDown) ◄── slice 6 (shipped)
+│       delete external-otelsvr + external-f5ingotelsvr Certificates; tolerates NotFound
+├─ 25. Activation poll down (Phase25ActivationPollDown) ◄── slice 7c (Pass 3) — no-op
+├─ 24. CWC heal down (Phase24CWCHealDown) ◄── slice 7c (Pass 3) — no-op
+├─ 23. License CR down (Phase23LicenseDown) ◄── slice 7c (Pass 3)
+│       delete k8s.f5net.com/v1/License bnk-license from f5-cne-core; tolerates NotFound
+│       (CRD cleanup happens at FLO/CNEInstance down time, not here)
+├─ 22. CNEInstance CR down (Phase22CNEInstanceDown) ◄── slice 7c (Pass 3)
+│       delete cneinstances.k8s.f5.com/v1/CNEInstance <cluster>-bnk from f5-cne-system
+│       tolerates NotFound; waits 30s for finalizer cleanup before returning
+├─ 21. IRSA SA down (Phase21IRSASADown) ◄── slice 7b (Pass 2, activation-inert)
+│       delete f5-cne-controller-<cluster>-bnk-serviceaccount from f5-cne-system; tolerates NotFound
+├─ 20. NADs down (Phase20NADsDown) ◄── slice 7b (Pass 2, activation-inert)
+│       delete external-netdevice + internal-netdevice NADs from f5-cne-system + default
+│       tolerates NotFound in both namespaces
+├─ 19. cloud-network-mapping CM down (Phase19CloudNetworkMappingDown) ◄── slice 7b (Pass 2)
+│       delete cloud-network-mapping ConfigMap from f5-cne-system; tolerates NotFound
+├─ 14. FLO Helm down (Phase14FLOHelmDown) ◄── slice 6 (shipped)
+│       helm uninstall f5-lifecycle-operator from f5-cne-core
 ├─ 12. k8s foundation down (Phase12K8sFoundationDown) ◄── slice 5 (shipped)
 │       cert chain CRs → cert-manager resources → FAR secret from default ns → F5 namespaces
-│       (runs FIRST while kubeconfig is still valid; tolerates NotFound everywhere)
+│       (tolerates NotFound everywhere)
 ├─ 11. kubeconfig down (Phase11KubeconfigDown) ◄── slice 3 (shipped)
 │       delete .awsbnkctl/<name>/kubeconfig (best-effort; tolerates absent)
+├─ 18. IRSA / OIDC down (Phase18IrsaOidcDown) ◄── slice 7a (Pass 1)
+│       delete IRSA role + inline policy; delete OIDC provider (unless --keep-irsa);
+│       tolerates "not found" for both; clears OIDC_PROVIDER_ARN + IRSA_ROLE_ARN from state
+├─ 17. secondary ENIs down (Phase17SecondaryENIsDown) ◄── slice 7
+│       detach ENI_EXT_ID + ENI_INT_ID from TMM instance; delete both ENIs;
+│       tolerates missing attachment or absent ENI; clears state keys
+├─ 16. tmm node label down (Phase16TMMNodeLabelDown)  ◄── slice 7
+│       removes awsbnkctl.f5.com/tmm-node label from the node; clears TMM_INSTANCE_ID;
+│       tolerates node-not-found; no-op when K8s client is nil
 ├─ 10. node group down (Phase10NodeGroupDown) ◄── slice 3 (shipped)
-│       delete EKS managed node group; wait until gone
+│       delete EKS managed node group + launch template (<cluster>-bnk-lt); wait until gone
 ├─ 09. forge unregister (Phase09ForgeRegisterDown) ◄── slice 4 (shipped)
 │       MCP delete first; REST fallback on catalog gap; --keep-forge-link
 │       opt-out preserves the project record
@@ -520,14 +604,17 @@ internal/k8s/manifests/
 - `awsbnkctl down --yes` removes everything; second `down` is a no-op.
 - Mid-run SSO expiry produces the auth-sentinel hard-exit with the `aws sso login` hint, not silent no-op.
 
-**Slice roadmap (updated 2026-05-21 post slice-04 merge):**
+**Slice roadmap (updated 2026-05-22 post slice-07c Pass 3):**
 - ✅ Slice 1 — VPC + subnets + IGW + NAT + RTs (tracer bullet) **[shipped, PR #8]**
 - ✅ Slice 2 — IAM cluster role + node role + instance profile **[shipped, PR #8]**
 - ✅ Slice 3 — EKS cluster + node group + kubeconfig **[shipped, PR #11]**
 - ✅ Slice 4 — Phase 09 forge register (MCP-first, REST fallback, soft-fail) **[shipped, PR #11]**
 - ✅ Slice 5 — K8s install foundation (shipped): namespaces + FAR/JWT Secrets + cert-manager v1.16.1 + BNK cert chain. Phase 12 (foundation) + Phase 13 (postflight) in up order; Phase12K8sFoundationDown first in destroy order. Variant manifest scaffold `internal/k8s/manifests/{shared,host-device,sr-iov-tmm}/` in place.
-- ✅ Slice 6 — FLO Helm install + OTEL certs (shipped): Phase 14 (FLO Helm install via OCI FAR-key auth) + Phase 15 (OTEL Certificate CRs). Phase ordering: Phase12 → Phase14 → Phase15 → Phase13. Down order: Phase15Down → Phase14Down → Phase12Down. Adds `helm.sh/helm/v3` as a direct dep. Deferred to slice 7+: CNEInstance CR, F5SPKVlan, License CR, DNS-warmup heal, 20-min polling, cloud-network-mapping, NADs, IRSA SA.
-- ⏳ Slice 6 — Polish: `inspect` / `doctor` / `status` reading the new state.env + tag scheme. Deletion of `terraform/` + `internal/tf/` + `embedded.go`. Optionally split commands per kindbnkctl pattern (D-009).
+- ✅ Slice 6 — FLO Helm install + OTEL certs (shipped, PR #14): Phase 14 (FLO Helm install via OCI FAR-key auth) + Phase 15 (OTEL Certificate CRs). Phase ordering: Phase12 → Phase14 → Phase15 → Phase13. Down order: Phase15Down → Phase14Down → Phase12Down. Adds `helm.sh/helm/v3` as a direct dep.
+- ✅ Slice 7a — BNK activation prerequisites Pass 1 (shipped): Phase 16 (TMM node label), Phase 17 (secondary ENIs for host-device data path), Phase 18 (OIDC provider + IRSA role for f5-cne-controller). Activation-inert. Adds `network.dataPath` to cluster.yaml schema, `--keep-irsa` down flag.
+- ✅ Slice 7b — BNK k8s prerequisites Pass 2 (shipped): Phase 19 (cloud-network-mapping CM), Phase 20 (host-device NADs in f5-cne-system + default), Phase 21 (IRSA SA pre-creation). Activation-inert.
+- ✅ Slice 7c — BNK activation Pass 3 (shipped, in review): Phase 22 (CNEInstance CR + 2-min reconcile gate), Phase 23 (License CRD wait + License CR), Phase 24 (CWC DNS-warmup heal), Phase 25 (20-min activation poll). **THIS IS THE ONLY PASS THAT BURNS A REAL F5 LICENSE.** Adds `--skip-activation-poll` up flag. Phase ordering: ... → Phase21 → Phase22 → Phase23 → Phase24 → Phase25 → Phase13. Down order: Phase25Down → Phase24Down → Phase23Down → Phase22Down → Phase21Down → ...
+- ⏳ Slice 8 — Polish: `inspect`/`doctor`/`status` reading state.env + tag scheme. Deletion of `terraform/` + `internal/tf/` + `embedded.go`. SR-IOV TMM pattern (variant manifests). Optionally split commands per kindbnkctl pattern (D-009).
 - ⏳ Future (separately scoped, not in the slice plan):
   - Air-gap / ECR mirror — opt-in via cluster.yaml `airGap: true`; only build if/when a deployment requires it.
   - Multi-cluster workspace

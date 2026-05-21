@@ -457,7 +457,15 @@
     "kindest",
     "dockerconfigjson",
     "otelsvr",
-    "ingotelsvr"
+    "ingotelsvr",
+    "IRSAOIDC",
+    "IRSASA",
+    "IFNAME",
+    "ifname",
+    "MGMT",
+    "mgmt",
+    "netdevice",
+    "spkvlans"
   ],
   "ignorePaths": [
     "book/book/**",

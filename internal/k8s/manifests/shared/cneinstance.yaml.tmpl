@@ -1,0 +1,112 @@
+apiVersion: k8s.f5.com/v1
+kind: CNEInstance
+metadata:
+  name: {{ .InstanceNameCR }}
+  namespace: {{ .InstanceNS }}
+  labels:
+    app.kubernetes.io/name: {{ .InstanceNameCR }}
+    app.kubernetes.io/managed-by: bnk-deploy
+    app.kubernetes.io/instance: {{ .LabName }}
+spec:
+  product:
+    gatewayAPI: true
+    type: BNK
+  manifestVersion: "{{ .ManifestVersion }}"
+  # wholeCluster: true means TMM is allowed to schedule on any worker node.
+  # The role=bnk label (Phase 16) targets the specific node; wholeCluster
+  # enables the CNEInstance to see all cluster namespaces.
+  # Note: watchNamespaces must be omitted when wholeCluster=true — the CRD
+  # CEL rule rejects that combination (semantically redundant).
+  wholeCluster: true
+  telemetry:
+    loggingSubsystem:
+      enabled: true
+    metricSubsystem:
+      enabled: true
+  certificate:
+    clusterIssuer: {{ .CAIssuer }}
+  deploymentSize: "{{ .DeploymentSize }}"
+  storageClassName: {{ .StorageClassName }}
+  registry:
+    uri: repo.f5.com
+    imagePullSecrets:
+      - name: {{ .FARSecretName }}
+    imagePullPolicy: Always
+  networkAttachments:
+    - {{ .ExternalNAD }}
+    - {{ .InternalNAD }}
+  dynamicRouting:
+    enabled: true
+  firewallACL:
+    enabled: true
+  pseudoCNI:
+    enabled: true
+  coreCollection:
+    enabled: false
+  intelligentLB:
+    enabled: true
+  tmmReplicas: 1
+  advanced:
+    # envDiscovery disabled on EKS: F5 checks expect DPU/SR-IOV (OVN annotations,
+    # VF interfaces, sriovdp-config CM, SRIOV CNI). None apply on AWS host-device.
+    # With enabled=true + stopOnFail=false the per-node EnvDiscoveryFailed conditions
+    # still propagated to CNEInstance.Available=False on BNK 2.3 images.
+    envDiscovery:
+      enabled: false
+    cneController:
+      env:
+        - name: TMM_DEFAULT_MTU
+          value: "{{ .TmmMtu }}"
+        - name: CLOUD_ENV
+          value: "true"
+        - name: CLOUD_PROVIDER
+          value: "aws"
+        - name: CLOUD_NETWORK_CONFIGMAP
+          value: "cloud-network-mapping"
+        - name: PLATFORM_TYPE
+          value: "AWS"
+        - name: CLOUD_VPC
+          value: "{{ .VPCID }}"
+        - name: CLOUD_REGION
+          value: "{{ .AWSRegion }}"
+        - name: CLOUD_HOST_DEVICE_NAME
+          value: "{{ .CloudHostDeviceName }}"
+        - name: CLOUD_HOST_DEVICE_TAG
+          value: "{{ .CloudHostDeviceTag }}"
+    demoMode:
+      enabled: false
+    maintenanceMode:
+      enabled: false
+    tmm:
+      resources:
+        limits:
+          cpu: "{{ .TmmCpu }}"
+          memory: "{{ .TmmMemory }}"
+          hugepages-2Mi: "{{ .TmmHugepages }}"
+        requests:
+          cpu: "{{ .TmmCpu }}"
+          memory: "{{ .TmmMemory }}"
+          hugepages-2Mi: "{{ .TmmHugepages }}"
+      env:
+        - name: TMM_CALICO_ROUTER
+          value: "default"
+        - name: TMM_DEFAULT_MTU
+          value: "{{ .TmmMtu }}"
+        - name: PAL_CPU_SET
+          value: "{{ .PalCpuSet }}"
+        - name: TMM_MAPRES_ADDL_VETHS_ON_DP
+          value: "TRUE"
+        - name: TMM_GENERIC_SOCKET_DRIVER
+          value: "true"
+        # Pattern B (F5 Multi-AZ PDF p.27): ROBIN_VFIO_RESOURCE_N binds to the Nth NAD
+        # listed in CNEInstance.spec.networkAttachments. Order is external, internal
+        # → trunk 1.1 = ens8 (BNK_EXT), trunk 1.2 = ens7 (BNK_INT).
+        # PCIDEVICE_INTEL_COM_<UPPERCASE_IFNAME> provides the PCI BDF for each ifname.
+        - name: ROBIN_VFIO_RESOURCE_1
+          value: "{{ .ExternalIFName }}"
+        - name: ROBIN_VFIO_RESOURCE_2
+          value: "{{ .InternalIFName }}"
+        - name: PCIDEVICE_INTEL_COM_ENS8
+          value: "{{ .ExternalPCI }}"
+        - name: PCIDEVICE_INTEL_COM_ENS7
+          value: "{{ .InternalPCI }}"

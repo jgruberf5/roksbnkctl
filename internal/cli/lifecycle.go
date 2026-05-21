@@ -113,6 +113,19 @@ var (
 	// forge-link.json so the operator can manage the forge project manually.
 	// Default false (unregister on down).
 	flagKeepForgeLink bool
+
+	// flagKeepIRSA is bound ONLY to downCmd. When true, Phase18IrsaOidcDown
+	// skips deletion of the OIDC provider and retains the IRSA role ARN in
+	// state so a subsequent `up` can reuse the same OIDC provider. The IRSA
+	// role itself is always deleted (it must be recreated with the new cluster's
+	// federated trust policy). Default false (delete OIDC provider on down).
+	flagKeepIRSA bool
+
+	// flagSkipActivationPoll is bound ONLY to upCmd. When true, Phase25 returns
+	// immediately after logging intent, skipping the 20-min CNEInstance+License
+	// poll. Designed for reviewers who need to re-run up without re-burning a
+	// real F5 license activation each round. Default false (always poll).
+	flagSkipActivationPoll bool
 )
 
 var initCmd = &cobra.Command{
@@ -180,6 +193,7 @@ func init() {
 	upCmd.Flags().BoolVar(&flagUpDryRun, "dry-run", false, "for --config: print the phased plan and exit 0 with no AWS mutations; for legacy TF path: terraform plan only")
 	upCmd.Flags().BoolVar(&flagRegisterWithForge, "register-with-forge", false, "after a successful apply, register the EKS cluster with bnk-forge over MCP (no-op in --dry-run)")
 	upCmd.Flags().StringVar(&flagConfig, "config", "", "path to cluster.yaml; activates Go-SDK phased path (bypasses TF)")
+	upCmd.Flags().BoolVar(&flagSkipActivationPoll, "skip-activation-poll", false, "skip the 20-min CNEInstance+License activation poll (for reviewer re-runs that must not re-burn the F5 license)")
 
 	applyCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt")
 	applyCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
@@ -188,6 +202,7 @@ func init() {
 	downCmd.Flags().StringVar(&flagConfig, "config", "", "path to cluster.yaml; activates Go-SDK phased path (bypasses TF)")
 	downCmd.Flags().BoolVar(&flagYes, "yes", false, "skip the interactive destroy confirmation (required with --config)")
 	downCmd.Flags().BoolVar(&flagKeepForgeLink, "keep-forge-link", false, "preserve forge-link.json on down (skips Phase 09 forge unregister)")
+	downCmd.Flags().BoolVar(&flagKeepIRSA, "keep-irsa", false, "retain the OIDC provider and IRSA role on down (both are kept for reuse across cluster iterations)")
 	planCmd.Flags().BoolVar(&flagLifecycleDryRun, "dry-run", true, "alias for `awsbnkctl up --dry-run` (always plans, never applies)")
 
 	for _, c := range []*cobra.Command{upCmd, planCmd, applyCmd, downCmd} {
@@ -261,7 +276,7 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	if flagConfig != "" {
 		// flagUpDryRun is upCmd-only so planCmd's shared-var poisoning of
 		// flagLifecycleDryRun cannot affect us.
-		return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun)
+		return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun, flagSkipActivationPoll)
 	}
 
 	// --- Legacy Terraform path ---
@@ -401,11 +416,13 @@ func runDown(cmd *cobra.Command, _ []string) error {
 // runPhasedUp is the Go-SDK phased provisioning path activated by
 // `awsbnkctl up --config <file>`. It reads the cluster.yaml intent,
 // constructs AWS clients with the SSO sentinel middleware, then runs
-// phases 00 → 06 in order.
+// phases 00 → 25 in order.
 //
 // When dryRun is true the phase functions print planned actions but make
 // zero AWS API mutations.
-func runPhasedUp(ctx context.Context, configPath string, dryRun bool) error {
+// When skipActivationPoll is true, Phase 25 returns immediately (for reviewers
+// who must not re-burn a real F5 license each round).
+func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActivationPoll bool) error {
 	cl, err := intent.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("up: %w", err)
@@ -464,9 +481,9 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool) error {
 		return fmt.Errorf("up: %w", err)
 	}
 
-	// Attach k8s clients now that Phase11 has written the kubeconfig.
-	// In dry-run, the kubeconfig file doesn't exist — skip AttachK8s (phases 12/13
-	// handle dryRun=true internally without needing a real k8s connection).
+	// Phase 16: label the TMM-target node + resolve EC2 instance ID.
+	// Requires K8s client (attached below for dryRun=false); dry-run
+	// path is handled inside Phase16TMMNodeLabel.
 	if !dryRun {
 		kubeconfigPath := st.Get("KUBECONFIG_PATH")
 		if kubeconfigPath == "" {
@@ -475,6 +492,15 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool) error {
 		if err := clients.AttachK8s(kubeconfigPath); err != nil {
 			return fmt.Errorf("up: attaching k8s clients: %w", err)
 		}
+	}
+	if err := phases.Phase16TMMNodeLabel(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	if err := phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	if err := phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
 	}
 
 	if err := phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun); err != nil {
@@ -486,7 +512,36 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool) error {
 	if err := phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
-	// Phase 13 postflight runs LAST so it can verify FLO + OTEL state installed by 14/15.
+	// Phase 19: cloud-network-mapping ConfigMap (required by cne-controller pre-CNEInstance).
+	if err := phases.Phase19CloudNetworkMapping(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 20: host-device NADs in f5-cne-system + default (required by CNEInstance webhook).
+	if err := phases.Phase20NADs(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 21: IRSA ServiceAccount pre-creation with eks.amazonaws.com/role-arn annotation.
+	if err := phases.Phase21IRSASA(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 22: CNEInstance CR apply + reconcile-started gate (2 min).
+	if err := phases.Phase22CNEInstance(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 23: License CRD wait + License CR apply.
+	if err := phases.Phase23License(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 24: CWC DNS-warmup heal (best-effort; never returns error).
+	if err := phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 25: Activation poll — CNEInstance + License status (up to 20 min).
+	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
+	if err := phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+	// Phase 13 postflight runs LAST so it can verify FLO + OTEL + activation state.
 	if err := phases.Phase13Postflight(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
@@ -549,6 +604,29 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
+	// Phase 25/24/23/22: activation teardown (reverse of up order).
+	if err := phases.Phase25ActivationPollDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase24CWCHealDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase23LicenseDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase22CNEInstanceDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	// Phase 21/20/19: k8s BNK prerequisites teardown (reverse of up order).
+	if err := phases.Phase21IRSASADown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase20NADsDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase19CloudNetworkMappingDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
 	if err := phases.Phase14FLOHelmDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
@@ -556,6 +634,17 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase11KubeconfigDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	// Phase 18/17/16: AWS-side BNK teardown (ENIs, OIDC/IRSA, node label).
+	// Runs after kubeconfig down (TMM node already gone with node group teardown).
+	if err := phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase17SecondaryENIsDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase16TMMNodeLabelDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase10NodeGroupDown(ctx, cl, st, clients); err != nil {

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: f5-cne-controller-{{ .InstanceNameCR }}-serviceaccount
+  namespace: f5-cne-system
+  annotations:
+    eks.amazonaws.com/role-arn: {{ .CneIRSARoleARN }}

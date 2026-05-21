@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithy "github.com/aws/smithy-go"
 )
@@ -58,6 +59,44 @@ type mockEC2 struct {
 	createRouteCalls int
 	assocRTBCalls    int
 	disassocRTBCalls int
+
+	// Security Groups (slice 7+)
+	describeSGsOut        *ec2.DescribeSecurityGroupsOutput
+	describeSGsErr        error
+	createSGOut           *ec2.CreateSecurityGroupOutput
+	createSGErr           error
+	createSGCalls         int
+	deleteSGCalls         int
+	deleteSGErr           error
+	authorizeIngressCalls int
+	authorizeIngressErr   error
+	authorizeIngressInput *ec2.AuthorizeSecurityGroupIngressInput
+
+	// Network Interfaces (slice 7+)
+	describeENIsOut *ec2.DescribeNetworkInterfacesOutput
+	describeENIsErr error
+	createENIOut    *ec2.CreateNetworkInterfaceOutput
+	createENIErr    error
+	createENICalls  int
+	deleteENICalls  int
+	deleteENIErr    error
+	attachENICalls  int
+	attachENIErr    error
+	detachENICalls  int
+	detachENIErr    error
+
+	// Instances (slice 7+)
+	describeInstancesOut *ec2.DescribeInstancesOutput
+	describeInstancesErr error
+
+	// Launch Templates (slice 7+)
+	describeLTsOut *ec2.DescribeLaunchTemplatesOutput
+	describeLTsErr error
+	createLTOut    *ec2.CreateLaunchTemplateOutput
+	createLTErr    error
+	createLTCalls  int
+	deleteLTCalls  int
+	deleteLTErr    error
 }
 
 func (m *mockEC2) DescribeVpcs(_ context.Context, _ *ec2.DescribeVpcsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
@@ -175,6 +214,102 @@ func (m *mockEC2) DisassociateRouteTable(_ context.Context, _ *ec2.DisassociateR
 }
 func (m *mockEC2) DescribeAvailabilityZones(_ context.Context, _ *ec2.DescribeAvailabilityZonesInput, _ ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 	return &ec2.DescribeAvailabilityZonesOutput{}, nil
+}
+
+// mockEC2 slice-7 additions: security groups, network interfaces, instances, LTs.
+
+func (m *mockEC2) DescribeSecurityGroups(_ context.Context, _ *ec2.DescribeSecurityGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+	if m.describeSGsOut == nil {
+		return &ec2.DescribeSecurityGroupsOutput{}, m.describeSGsErr
+	}
+	return m.describeSGsOut, m.describeSGsErr
+}
+func (m *mockEC2) CreateSecurityGroup(_ context.Context, _ *ec2.CreateSecurityGroupInput, _ ...func(*ec2.Options)) (*ec2.CreateSecurityGroupOutput, error) {
+	m.createSGCalls++
+	if m.createSGErr != nil {
+		return nil, m.createSGErr
+	}
+	if m.createSGOut != nil {
+		return m.createSGOut, nil
+	}
+	id := "sg-mock-" + fmt.Sprintf("%d", m.createSGCalls)
+	return &ec2.CreateSecurityGroupOutput{GroupId: &id}, nil
+}
+func (m *mockEC2) DeleteSecurityGroup(_ context.Context, _ *ec2.DeleteSecurityGroupInput, _ ...func(*ec2.Options)) (*ec2.DeleteSecurityGroupOutput, error) {
+	m.deleteSGCalls++
+	return &ec2.DeleteSecurityGroupOutput{}, m.deleteSGErr
+}
+func (m *mockEC2) AuthorizeSecurityGroupIngress(_ context.Context, in *ec2.AuthorizeSecurityGroupIngressInput, _ ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupIngressOutput, error) {
+	m.authorizeIngressCalls++
+	m.authorizeIngressInput = in
+	return &ec2.AuthorizeSecurityGroupIngressOutput{}, m.authorizeIngressErr
+}
+func (m *mockEC2) AuthorizeSecurityGroupEgress(_ context.Context, _ *ec2.AuthorizeSecurityGroupEgressInput, _ ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupEgressOutput, error) {
+	return &ec2.AuthorizeSecurityGroupEgressOutput{}, nil
+}
+func (m *mockEC2) DescribeNetworkInterfaces(_ context.Context, _ *ec2.DescribeNetworkInterfacesInput, _ ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+	if m.describeENIsOut == nil {
+		return &ec2.DescribeNetworkInterfacesOutput{}, m.describeENIsErr
+	}
+	return m.describeENIsOut, m.describeENIsErr
+}
+func (m *mockEC2) CreateNetworkInterface(_ context.Context, _ *ec2.CreateNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.CreateNetworkInterfaceOutput, error) {
+	m.createENICalls++
+	if m.createENIErr != nil {
+		return nil, m.createENIErr
+	}
+	if m.createENIOut != nil {
+		return m.createENIOut, nil
+	}
+	id := "eni-mock-" + fmt.Sprintf("%d", m.createENICalls)
+	return &ec2.CreateNetworkInterfaceOutput{NetworkInterface: &ec2types.NetworkInterface{NetworkInterfaceId: &id}}, nil
+}
+func (m *mockEC2) DeleteNetworkInterface(_ context.Context, _ *ec2.DeleteNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.DeleteNetworkInterfaceOutput, error) {
+	m.deleteENICalls++
+	return &ec2.DeleteNetworkInterfaceOutput{}, m.deleteENIErr
+}
+func (m *mockEC2) ModifyNetworkInterfaceAttribute(_ context.Context, _ *ec2.ModifyNetworkInterfaceAttributeInput, _ ...func(*ec2.Options)) (*ec2.ModifyNetworkInterfaceAttributeOutput, error) {
+	return &ec2.ModifyNetworkInterfaceAttributeOutput{}, nil
+}
+func (m *mockEC2) AttachNetworkInterface(_ context.Context, _ *ec2.AttachNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.AttachNetworkInterfaceOutput, error) {
+	m.attachENICalls++
+	if m.attachENIErr != nil {
+		return nil, m.attachENIErr
+	}
+	attachID := "eni-attach-mock"
+	return &ec2.AttachNetworkInterfaceOutput{AttachmentId: &attachID}, nil
+}
+func (m *mockEC2) DetachNetworkInterface(_ context.Context, _ *ec2.DetachNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.DetachNetworkInterfaceOutput, error) {
+	m.detachENICalls++
+	return &ec2.DetachNetworkInterfaceOutput{}, m.detachENIErr
+}
+func (m *mockEC2) DescribeInstances(_ context.Context, _ *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	if m.describeInstancesOut == nil {
+		return &ec2.DescribeInstancesOutput{}, m.describeInstancesErr
+	}
+	return m.describeInstancesOut, m.describeInstancesErr
+}
+func (m *mockEC2) DescribeLaunchTemplates(_ context.Context, _ *ec2.DescribeLaunchTemplatesInput, _ ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	if m.describeLTsOut == nil {
+		return &ec2.DescribeLaunchTemplatesOutput{}, m.describeLTsErr
+	}
+	return m.describeLTsOut, m.describeLTsErr
+}
+func (m *mockEC2) CreateLaunchTemplate(_ context.Context, _ *ec2.CreateLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error) {
+	m.createLTCalls++
+	if m.createLTErr != nil {
+		return nil, m.createLTErr
+	}
+	if m.createLTOut != nil {
+		return m.createLTOut, nil
+	}
+	id := "lt-mock-1"
+	ver := int64(1)
+	return &ec2.CreateLaunchTemplateOutput{LaunchTemplate: &ec2types.LaunchTemplate{LaunchTemplateId: &id, LatestVersionNumber: &ver}}, nil
+}
+func (m *mockEC2) DeleteLaunchTemplate(_ context.Context, _ *ec2.DeleteLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.DeleteLaunchTemplateOutput, error) {
+	m.deleteLTCalls++
+	return &ec2.DeleteLaunchTemplateOutput{}, m.deleteLTErr
 }
 
 // mockSTSImpl implements STSAPI for tests.

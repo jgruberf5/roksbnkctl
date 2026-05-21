@@ -24,6 +24,12 @@ import (
 //  3. CA Certificate has Ready condition True.
 //  4. FAR secret exists in all four target namespaces.
 //  5. (Optional) If forge enabled, trigger scan_cluster best-effort.
+//  6. FLO Deployment ready (when FLO enabled).
+//  7. cneinstances.k8s.f5.com CRD exists (when FLO enabled).
+//  8. OTEL certs Ready (when FLO enabled).
+//  9. CNEInstance exists with status.state ∈ {Ready, Running} (when Phase 25 ran).
+//
+// 10. License bnk-license exists with status.state=Active (when Phase 25 ran).
 //
 // D-005: CheckAuthOrDie is called at entry per convention.
 func Phase13Postflight(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
@@ -32,7 +38,7 @@ func Phase13Postflight(ctx context.Context, cl *intent.Cluster, st *state.State,
 	fmt.Fprintf(os.Stderr, "[phase 13] postflight: cluster=%s\n", name)
 
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "[phase 13] dry-run: would verify: namespaces, cert-manager Deployments, CA cert, FAR secrets, FLO Deployment, CNEInstance CRD, OTEL certs")
+		fmt.Fprintln(os.Stderr, "[phase 13] dry-run: would verify: namespaces, cert-manager Deployments, CA cert, FAR secrets, FLO Deployment, CNEInstance CRD, OTEL certs, CNEInstance state, License state")
 		return nil
 	}
 
@@ -131,8 +137,60 @@ func Phase13Postflight(ctx context.Context, cl *intent.Cluster, st *state.State,
 		}
 	}
 
+	// 9–10. CNEInstance + License postflight (only when Phase 25 polling succeeded).
+	// When --skip-activation-poll was used, CNEINSTANCE_READY_AT is absent — log a warning only.
+	cneReadyAt := st.Get("CNEINSTANCE_READY_AT")
+	if cneReadyAt != "" {
+		if err := checkCNEInstanceActive(ctx, cl, clients); err != nil {
+			return fmt.Errorf("phase13: %w", err)
+		}
+		if err := checkLicenseActive(ctx, clients); err != nil {
+			return fmt.Errorf("phase13: %w", err)
+		}
+	} else {
+		fmt.Fprintln(os.Stderr,
+			"[phase 13] warning: CNEINSTANCE_READY_AT not set — activation poll skipped or did not complete; CNEInstance/License state not verified")
+	}
+
 	fmt.Fprintf(os.Stderr, "✓ postflight OK: cert-manager v%s ready, CA cert active, FAR secret in 4 ns\n",
 		intent.EmbeddedCertManagerVersion)
+	return nil
+}
+
+// checkCNEInstanceActive reads the CNEInstance CR and verifies status.state ∈ {Ready, Running}.
+// Read-only; does not write state.
+func checkCNEInstanceActive(ctx context.Context, cl *intent.Cluster, clients *Clients) error {
+	crName := cl.Metadata.Name + "-bnk"
+	obj, err := clients.Dynamic.Resource(cneinstanceGVR).Namespace(InstanceNamespace).Get(ctx, crName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("CNEInstance %s/%s: %w", InstanceNamespace, crName, err)
+	}
+	var state string
+	if rawStatus, ok := obj.Object["status"].(map[string]interface{}); ok {
+		state, _ = rawStatus["state"].(string)
+	}
+	if !isCNEReady(state) {
+		return fmt.Errorf("CNEInstance %s/%s status.state=%q, want Ready or Running", InstanceNamespace, crName, state)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 13] CNEInstance %s/%s state=%s OK\n", InstanceNamespace, crName, state)
+	return nil
+}
+
+// checkLicenseActive reads the License CR and verifies status.state=Active.
+// Read-only; does not write state.
+func checkLicenseActive(ctx context.Context, clients *Clients) error {
+	obj, err := clients.Dynamic.Resource(licenseGVR).Namespace(OperatorNamespace).Get(ctx, licenseCRName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("license %s/%s: %w", OperatorNamespace, licenseCRName, err)
+	}
+	state := ""
+	if rawStatus, ok := obj.Object["status"].(map[string]interface{}); ok {
+		state, _ = rawStatus["state"].(string)
+	}
+	if state != "Active" {
+		return fmt.Errorf("license %s/%s status.state=%q, want Active", OperatorNamespace, licenseCRName, state)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 13] License %s/%s state=Active OK\n", OperatorNamespace, licenseCRName)
 	return nil
 }
 

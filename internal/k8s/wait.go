@@ -6,6 +6,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
@@ -123,6 +124,61 @@ func WaitForCRDExists(ctx context.Context, dyn dynamic.Interface, crdName string
 		}
 		return true, nil
 	})
+}
+
+// WaitForUnstructuredCondition polls a namespaced CR via the dynamic client until
+// the string field at jsonPath (e.g. "status.state") equals expectedValue.
+// jsonPath must use dot notation, e.g. "status.state" → unstructured.NestedString(obj, "status", "state").
+// Only single-level nesting under status is supported (sufficient for BNK CRs).
+//
+// Polls every 5 s. Returns nil on match; returns an error containing the last-seen
+// value if the context deadline / timeout expires.
+//
+// Compatible with WaitForCRDExists / WaitForCertificateReady patterns.
+func WaitForUnstructuredCondition(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name, jsonPath, expectedValue string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Parse jsonPath into nested field keys (e.g. "status.state" → ["status","state"]).
+	fields := splitDotPath(jsonPath)
+
+	var lastSeen string
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		obj, err := client.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil //nolint:nilerr
+		}
+		val, _, _ := unstructured.NestedString(obj.Object, fields...)
+		lastSeen = val
+		return val == expectedValue, nil
+	})
+	if err != nil {
+		return fmt.Errorf("WaitForUnstructuredCondition: %s/%s %s: timeout waiting for %q, last seen %q: %w",
+			namespace, name, jsonPath, expectedValue, lastSeen, err)
+	}
+	return nil
+}
+
+// splitDotPath splits a dot-separated jsonPath string into field segments.
+// "status.state" → ["status", "state"].
+func splitDotPath(path string) []string {
+	if path == "" {
+		return nil
+	}
+	var parts []string
+	start := 0
+	for i := 0; i < len(path); i++ {
+		if path[i] == '.' {
+			if i > start {
+				parts = append(parts, path[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(path) {
+		parts = append(parts, path[start:])
+	}
+	return parts
 }
 
 // certReplicaStatus is used by Phase 13 postflight check (pure read).
