@@ -385,35 +385,64 @@ book-publish:
 # has finished creating the GitHub Release for $(VERSION). Does the work
 # we deliberately keep off CI:
 #
-#   1. Push the locally-built HTML book to the gh-pages branch
-#   2. Upload the locally-built PDF book to the GitHub Release as
+#   1. Clean + rebuild the HTML book, push it to the gh-pages branch
+#   2. Clean + rebuild the PDF book, upload it to the GitHub Release as
 #      roksbnkctl-book-$(VERSION).pdf
 #
 # Requires VERSION to match the tag you cut (e.g. VERSION=v1.0.0). Will
 # refuse to run with VERSION=dev to prevent accidental publishes.
 #
+# This target is the **publish-contract gate**, NOT the build-contract
+# gate. Build correctness is `book-pdf`'s problem (and `book`'s for HTML);
+# `release-publish` is responsible for guaranteeing "the artifacts pushed
+# to gh-pages and uploaded to the GitHub Release match the tagged tree".
+# To honour that contract we always clean + rebuild here before either
+# upload — a developer iterating locally may legitimately have a stale
+# `book/book/` tree lying around, and the publish gate must not propagate
+# it.
+#
+# Why the `rm -rf` preambles: the Sprint 19 v1.6.4 cut (2026-05-21)
+# uploaded a stale `book/book/pandoc/pdf/book.pdf` (v1.6.3 vintage) under
+# the v1.6.4 asset name because the in-cycle `book-pdf` build had failed
+# silently and the publish step's check was `[ -f book.pdf ]`, not "is it
+# current?". The HTML side reported "nothing to push" for the same
+# reason — `book/book/html/` was stale-but-present. Removing the output
+# tree first forces the rebuild to fail loudly (and `release-publish`
+# along with it) instead of letting last cycle's bytes survive into this
+# cycle's upload. See `prompts/sprint20/README.md` for the full event
+# narrative.
+#
 # Prereqs:
-#   - book/book/html/ and book/book/pandoc/pdf/book.pdf exist (i.e.
-#     `make release` was run from the repo root)
 #   - tag $(VERSION) exists on origin and has an associated GitHub Release
 #   - `gh` is authenticated (gh auth status)
+#   - BOOK_BACKEND=docker prerequisites (docker daemon + the
+#     tools/docker/mdbook image) — same as `make release` step [5/8]
 release-publish:
 	@if [ "$(VERSION)" = "dev" ]; then \
 	    echo "VERSION=dev refuses to publish — re-run as 'make release-publish VERSION=v1.0.0'" >&2; \
-	    exit 2; \
-	fi
-	@if [ ! -f book/book/pandoc/pdf/book.pdf ]; then \
-	    echo "book/book/pandoc/pdf/book.pdf missing — run 'make book-pdf BOOK_BACKEND=docker' first" >&2; \
 	    exit 2; \
 	fi
 	@if ! gh release view $(VERSION) >/dev/null 2>&1; then \
 	    echo "No GitHub Release found for tag $(VERSION) — wait for release.yml to finish, then retry" >&2; \
 	    exit 2; \
 	fi
-	@echo "==> [1/2] Pushing HTML book to gh-pages"
+	@echo "==> [1/2] Rebuilding + pushing HTML book to gh-pages"
+	@# Sprint 20 hardening: clean book/book/html/ first so a stale tree
+	@# from a prior cycle (the v1.6.4 "nothing to push" event) cannot
+	@# survive into this cycle's gh-pages push. `book` rebuilds via the
+	@# docker backend; failure here propagates and aborts the publish.
+	rm -rf book/book/html/
+	$(MAKE) book BOOK_BACKEND=docker
 	@$(MAKE) book-publish
 	@echo ""
-	@echo "==> [2/2] Uploading PDF book to GitHub Release $(VERSION)"
+	@echo "==> [2/2] Rebuilding + uploading PDF book to GitHub Release $(VERSION)"
+	@# Sprint 20 hardening: clean book/book/pandoc/ first so a stale
+	@# book.pdf from a prior cycle (the v1.6.4 stale-PDF-upload event)
+	@# cannot survive into this cycle's GitHub Release asset. `book-pdf`
+	@# rebuilds via the docker backend; failure here propagates and
+	@# aborts the publish before any `gh release upload` runs.
+	rm -rf book/book/pandoc/
+	$(MAKE) book-pdf BOOK_BACKEND=docker
 	@# The asset's filename (not just display label) needs to be
 	@# roksbnkctl-book-$(VERSION).pdf so the download URL is predictable
 	@# and unique-per-release. gh release upload's `path#label` syntax

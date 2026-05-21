@@ -12,7 +12,7 @@
 ## Issue 1 — No architect deliverables for Sprint 20
 
 **Severity**: low (informational)
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 
@@ -45,3 +45,7 @@ section, sometimes not; integrator's judgement).
 
 - Sprint 20 staff Issue 1 — the actual code change this sprint
   ships.
+
+### Closure — architect, 2026-05-21
+
+Confirmed: no architect deliverables for Sprint 20. The sprint's surface is `Makefile`'s `release-publish` target — release-tooling-only, with no user-facing behaviour change, no new flag or output, no CLI surface touched (so `book/src/27-command-reference.md` is unaffected), no book chapter relevant (the staleness hardening is invisible to readers), no PRD coverage (no PRD documents `release-publish`), and no CHANGELOG bullet at architect's hand (any `### Internal` mention is the integrator's call at cut time). Architect's role this sprint is exactly this closure note so sprintwatch records a terminal state. Status flipped `open → resolved`.
