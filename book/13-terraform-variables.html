@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a99a888.js";
+            window.path_to_searchindex_js = "searchindex-2869698b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -309,6 +309,7 @@ $ roksbnkctl apply
 <tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
 <tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
 <tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td><code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code> — drops the file at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="./06-workspaces.html#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</td></tr>
 <tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
 <tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
 </tbody>

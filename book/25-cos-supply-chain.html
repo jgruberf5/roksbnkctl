@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a99a888.js";
+            window.path_to_searchindex_js = "searchindex-2869698b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -203,7 +203,7 @@
 <p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable, which defaults to <code>bnk-schematics-resources</code>. The instance defaults to <code>bnk-orchestration</code>.</p>
 <h2 id="the-three-command-levels"><a class="header" href="#the-three-command-levels">The three command levels</a></h2>
 <pre><code class="language-bash">roksbnkctl cos instance {create|delete|list}
-roksbnkctl cos bucket   {create|delete|list} --instance &lt;name-or-CRN&gt;
+roksbnkctl cos bucket   {create|delete|list|get} --instance &lt;name-or-CRN&gt;
 roksbnkctl cos object   {put|get|delete|list} --instance &lt;name-or-CRN&gt;
 </code></pre>
 <p>All three layers resolve credentials through the standard <a href="./14-credentials-resolver.html">credential resolver chain</a> — env var, OS keychain, workspace <code>api_key_b64</code>, prompt. There’s no separate “COS credential”; the IBM API key authenticates against Resource Controller (instance ops) and IAM-signed S3 requests (bucket and object ops).</p>
@@ -249,6 +249,11 @@ roksbnkctl cos bucket list --instance bnk-orchestration
 
 # Delete (the bucket must be empty first; cos object delete --recursive isn't implemented yet)
 roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+
+# Snapshot the entire bucket to a local directory (recursive, streaming, byte-for-byte).
+# Useful before rotating supply-chain artefacts — keeps a known-good set you can roll back to.
+roksbnkctl cos bucket get bnk-schematics-resources ./snapshot \
+  --instance bnk-orchestration
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -259,6 +264,7 @@ roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestrati
 <tr><td><code>--instance</code></td><td>(required)</td><td>Instance name or CRN — the CRN starts with <code>crn:v1:</code> and is used as-is; a bare name is looked up via Resource Controller.</td></tr>
 <tr><td><code>--region</code></td><td>workspace region</td><td>The IBM Cloud region the bucket is pinned to. Override only when you’re crossing regions deliberately.</td></tr>
 <tr><td><code>--class</code></td><td><code>standard</code></td><td>Storage class: <code>standard</code> (frequently accessed), <code>vault</code> (infrequent), <code>cold</code> (archive), <code>smart</code> (auto-tiered). The BNK supply chain uses <code>standard</code> because FLO reads at install + every restart.</td></tr>
+<tr><td><code>--no-clobber</code></td><td>(off)</td><td>On <code>cos bucket get</code>: skip any object whose local path already exists. Default overwrites. Files-only flag; ignored by other <code>cos bucket</code> verbs.</td></tr>
 </tbody>
 </table>
 </div>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a99a888.js";
+            window.path_to_searchindex_js = "searchindex-2869698b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -225,6 +225,63 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-bnk"><a class="header" href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></h2>
+<p>BNK trial lifecycle (sits on top of a cluster)</p>
+<p>Manage the BNK trial resources (flo, cne_instance, license) as a
+short-lived layer on top of a shared, durable cluster.</p>
+<p>Commands:
+roksbnkctl bnk up    Deploy the BNK trial (auto-provisions the cluster if missing)
+roksbnkctl bnk down  Destroy the BNK trial, leaving the cluster in place</p>
+<p>Use <code>roksbnkctl cluster ...</code> to manage the cluster phase itself.</p>
+<h3 id="roksbnkctl-bnk-down"><a class="header" href="#roksbnkctl-bnk-down"><code>roksbnkctl bnk down</code></a></h3>
+<p>Destroy the BNK trial, leaving the cluster in place</p>
+<pre><code>roksbnkctl bnk down [flags]
+</code></pre>
+<p>Destroys only the BNK trial resources, leaving the cluster phase
+intact for the next <code>bnk up</code> to attach to. The common iteration loop:</p>
+<p>roksbnkctl bnk down &amp;&amp; roksbnkctl bnk up   # ~5 min trial reset
+roksbnkctl down                            # full teardown, ~30 min</p>
+<p>Refuses when there’s no trial state to destroy, and on legacy
+single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h3 id="roksbnkctl-bnk-up"><a class="header" href="#roksbnkctl-bnk-up"><code>roksbnkctl bnk up</code></a></h3>
+<p>Deploy the BNK trial; provisions the cluster first if missing</p>
+<pre><code>roksbnkctl bnk up [flags]
+</code></pre>
+<p>Provisions the BNK trial against the existing cluster phase. If
+the workspace has no cluster registered yet, <code>bnk up</code> bootstraps the
+cluster phase first (with a confirmation prompt — the cluster
+provision takes ~30 min) before the trial apply.</p>
+<p>Refuses on legacy single-state workspaces (those provisioned with
+v1.0.x <code>roksbnkctl up</code>): cluster + trial share one state file there,
+so the trial can’t be applied in isolation without state migration.
+Use <code>roksbnkctl up</code> on those workspaces.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip confirmation prompts (cluster-bootstrap + apply)</td></tr>
+<tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
 <h2 id="roksbnkctl-cluster"><a class="header" href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></h2>
 <p>ROKS cluster lifecycle (separate from BNK trials)</p>
 <p>Manage the ROKS cluster as a durable, reusable resource that
@@ -354,6 +411,35 @@ ibmcloud CLI dependency.</p>
 <p>Delete a bucket (must be empty)</p>
 <pre><code>roksbnkctl cos bucket delete &lt;bucket&gt;
 </code></pre>
+<p>← back to <a href="#roksbnkctl-cos-bucket"><code>roksbnkctl cos bucket</code></a></p>
+<h4 id="roksbnkctl-cos-bucket-get"><a class="header" href="#roksbnkctl-cos-bucket-get"><code>roksbnkctl cos bucket get</code></a></h4>
+<p>Recursively download every object in a bucket to a local directory</p>
+<pre><code>roksbnkctl cos bucket get &lt;bucket&gt; &lt;local-dir&gt; [flags]
+</code></pre>
+<p>Recursively download every object in <code>&lt;bucket&gt;</code> to <code>&lt;local-dir&gt;</code>.</p>
+<p><code>&lt;local-dir&gt;</code> is created if it does not exist (mkdir -p semantics, mode
+0755). Object keys map to nested subdirectories — a key foo/bar/baz.json
+lands at <code>&lt;local-dir&gt;</code>/foo/bar/baz.json. Streaming download per object
+(no whole-object in-memory buffering); text and binary are both copied
+through verbatim.</p>
+<p>Default behavior is overwrite (the operator just asked to download);
+pass –no-clobber to skip objects whose local target already exists,
+matching cp -n.</p>
+<p>With –output json, emits one JSON object per file completed:
+{“key”,“local_path”,“size”,“outcome”}. The final counts line goes to
+stderr in text mode; the JSON stream concludes with one summary record
+of shape {“counts”:{…}}.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--no-clobber</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip objects whose local target already exists (cp -n semantics)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-cos-bucket"><code>roksbnkctl cos bucket</code></a></p>
 <h4 id="roksbnkctl-cos-bucket-list"><a class="header" href="#roksbnkctl-cos-bucket-list"><code>roksbnkctl cos bucket list</code></a></h4>
 <p>List buckets on the named instance</p>
@@ -538,8 +624,9 @@ release.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source (path or URL); pinned into config.yaml</td></tr>
+<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml</td></tr>
 <tr><td><code>--upgrade-tf</code></td><td><code>bool</code></td><td><code>false</code></td><td>resolve and pin the latest TF release into config.yaml</td></tr>
+<tr><td><code>--var-file</code></td><td><code>string</code></td><td>—</td><td>path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases)</td></tr>
 </tbody>
 </table>
 </div>
@@ -856,9 +943,31 @@ show       print pod + Secret + RBAC status
 uninstall  delete every roksbnkctl.io/managed object created by install</p>
 <h3 id="roksbnkctl-ops-install"><a class="header" href="#roksbnkctl-ops-install"><code>roksbnkctl ops install</code></a></h3>
 <p>Apply (or update) the in-cluster ops fixtures</p>
+<pre><code>roksbnkctl ops install [flags]
+</code></pre>
 <p>Applies the embedded namespaces, ServiceAccount, Secret, ClusterRole,
 ClusterRoleBinding, and ops Pod. Idempotent: re-running with a new
 API key updates the Secret and rolls the Pod.</p>
+<p>Credential mode is selected via –trusted-profile (auto|on|off):</p>
+<p>auto (default) — provision an IBM Cloud IAM trusted profile linked
+to the ops pod’s ServiceAccount when the resolved
+API key has ‘iam-identity’ perms; otherwise fall
+back to the static-key Secret with a stderr warning.
+on             — require the trusted-profile path; fail loudly if
+perms don’t allow.
+off            — skip the trusted-profile path; install the v1.0.x
+static-key Secret.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--trusted-profile</code></td><td><code>string</code></td><td><code>auto</code></td><td>IBM IAM trusted profile mode: auto (default; provision when perms allow, fall back to static-key Secret), on (require trusted profile), off (static-key Secret only)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-ops"><code>roksbnkctl ops</code></a></p>
 <h3 id="roksbnkctl-ops-show"><a class="header" href="#roksbnkctl-ops-show"><code>roksbnkctl ops show</code></a></h3>
 <p>Print the ops pod’s status, image, RBAC subject, and Secret rotation timestamp</p>
@@ -920,7 +1029,8 @@ setup. Exits when the subshell does.</p>
 <li>workspace name + region</li>
 <li>configured cluster name</li>
 <li>pinned Terraform source</li>
-<li>last terraform apply timestamp (mtime of terraform.tfstate)</li>
+<li>per-phase deployment status (cluster phase + BNK trial)</li>
+<li>v1.0.x <code>Last apply</code> line preserved for legacy single-state workspaces</li>
 <li>kubeconfig path (if any)</li>
 <li>cluster reachability (node count + ready count)</li>
 </ul>
@@ -966,6 +1076,34 @@ when the upstream HCL provisions one (testing_tgw_jumphost outputs).</p>
 <pre><code>roksbnkctl targets show &lt;name&gt;
 </code></pre>
 <p>← back to <a href="#roksbnkctl-targets"><code>roksbnkctl targets</code></a></p>
+<h2 id="roksbnkctl-terraform"><a class="header" href="#roksbnkctl-terraform"><code>roksbnkctl terraform</code></a></h2>
+<p>Read-only passthrough to terraform against the workspace’s managed state</p>
+<p><strong>Aliases</strong>: <code>tf</code></p>
+<pre><code>roksbnkctl terraform [subcommand] [args...]
+</code></pre>
+<p>roksbnkctl terraform runs a READ-ONLY terraform subcommand against the
+workspace’s managed state, with terraform’s working directory and
+TF_DATA_DIR resolved for you (no need to cd into ~/.roksbnkctl/… or
+export TF_DATA_DIR).</p>
+<p>This command is read-only by allowlist. Permitted subcommands:
+output, show, state list, state show, state pull, providers,
+version, graph, validate, fmt -check</p>
+<p>Everything else — including apply, destroy, init, plan, import, taint,
+untaint, state rm/mv/replace-provider, and any -auto-approve — is
+rejected before terraform runs. Mutations go exclusively through
+roksbnkctl up / plan / apply / down (or cluster/bnk up/down); running
+terraform apply/destroy outside the orchestration skips the rendered
+tfvars, the apply-retry wrapper, the post-apply kubeconfig fetch, the
+applied-tfvars snapshot, and the auto-jumphost seeding, and desyncs the
+managed state.</p>
+<p>Use –phase cluster to target the cluster-phase state
+(<del>/.roksbnkctl/<code>&lt;ws&gt;</code>/state-cluster/); the default is the trial/single
+state (</del>/.roksbnkctl/<code>&lt;ws&gt;</code>/state/). –on is not supported: the managed
+terraform state lives on this workstation, not on a jumphost.</p>
+<p>Examples:
+roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
+roksbnkctl terraform state list
+roksbnkctl –phase cluster terraform show</p>
 <h2 id="roksbnkctl-test"><a class="header" href="#roksbnkctl-test"><code>roksbnkctl test</code></a></h2>
 <p>Run deployment validation tests (default: all)</p>
 <pre><code>roksbnkctl test [suite] [flags]
@@ -1097,7 +1235,7 @@ resumable: a partial failure is recovered by re-running ‘roksbnkctl up’.</p>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
-<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source for this run only</td></tr>
+<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD)</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>

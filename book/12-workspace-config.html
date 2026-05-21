@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a99a888.js";
+            window.path_to_searchindex_js = "searchindex-2869698b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -444,6 +444,7 @@ cos:             # optional COS supply-chain config
 </code></pre>
 <p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
 <p>The <code>terraform.tfvars.user</code> middle layer is for when you want a workspace-local override that survives across runs without modifying <code>config.yaml</code> — it’s typically used for fields the YAML schema doesn’t model (rare; the schema covers the common knobs). <a href="./13-terraform-variables.html">Chapter 13</a> goes deep on this.</p>
+<p>If you already have a complete <code>./terraform.tfvars</code> (your own, or from a colleague’s hand-off) and want this workspace to always use it without re-passing <code>--var-file</code> on every command, run <code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code>. That seeds <code>config.yaml</code> from the file <strong>and</strong> drops a verbatim copy at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (mode <code>0600</code>, sibling to <code>config.yaml</code>), so subsequent <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> against bare <code>-w &lt;ws&gt;</code> pick it up automatically — for both the trial and cluster phases. The full walkthrough is in <a href="./06-workspaces.html#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</p>
 <p>The <code>IBMCLOUD_API_KEY</code> is the one exception that <strong>never</strong> goes through tfvars on disk. It’s passed as a <code>TF_VAR_ibmcloud_api_key</code> env var on the terraform invocation. <code>--var-file</code> cannot supply the API key — the resolver chain in <a href="./14-credentials-resolver.html">Chapter 14</a> is the only path.</p>
 <h2 id="editing-by-hand-vs-helpers"><a class="header" href="#editing-by-hand-vs-helpers">Editing by hand vs helpers</a></h2>
 <p>Several commands manage subsets of <code>config.yaml</code> so you don’t have to:</p>

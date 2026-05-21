@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a99a888.js";
+            window.path_to_searchindex_js = "searchindex-2869698b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -923,6 +923,33 @@ roksbnkctl ws use prod
 roksbnkctl ws list
 </code></pre>
 <p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control.</p>
+<h2 id="skip-the-interview-init---var-file"><a class="header" href="#skip-the-interview-init---var-file">Skip the interview: <code>init --var-file</code></a></h2>
+<p>If you already have a <code>terraform.tfvars</code> in hand — from a prior run, a colleague’s hand-off, or <code>cp terraform.tfvars.example terraform.tfvars &amp;&amp; $EDITOR terraform.tfvars</code> — you don’t need to retype its values into the interactive prompts. Pass the file to <code>init</code> and the interview is short-circuited for every field the file already answers:</p>
+<pre><code class="language-bash">roksbnkctl init -w myws --var-file ./terraform.tfvars
+</code></pre>
+<p>What that one command persists:</p>
+<ul>
+<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine.</li>
+<li><strong><code>~/.roksbnkctl/myws/terraform.tfvars.user</code></strong> — a verbatim copy of your var-file at the workspace root (sibling to <code>config.yaml</code>), mode <code>0600</code>. This is the workspace-persistent override the lifecycle auto-layers on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> the trial and the cluster phases. One file serves both — internally, <code>tf.Workspace.UserTFVarsPath()</code> resolves to <code>&lt;workspace-dir&gt;/terraform.tfvars.user</code> regardless of which phase opened the workspace.</li>
+</ul>
+<h3 id="why-it-matters-subsequent-commands-just-work-on-bare--w-ws"><a class="header" href="#why-it-matters-subsequent-commands-just-work-on-bare--w-ws">Why it matters: subsequent commands Just Work on bare <code>-w &lt;ws&gt;</code></a></h3>
+<p>Once <code>init --var-file</code> has dropped the workspace-root <code>terraform.tfvars.user</code>, you can run the rest of the lifecycle without re-passing the var-file:</p>
+<pre><code class="language-bash">roksbnkctl up    -w myws --auto    # var-file already on disk; no flag needed
+roksbnkctl plan  -w myws
+roksbnkctl apply -w myws --auto
+roksbnkctl down  -w myws --auto    # bare -w; no "No value for required variable" error
+</code></pre>
+<p>This closes the UX gap where a fresh workspace’s first <code>up --var-file &lt;path&gt;</code> was followed later by a bare <code>down -w &lt;ws&gt;</code> that errored out because the var-file was nowhere on disk for the destroy. With <code>init --var-file</code>, the file is on disk from the moment the workspace exists.</p>
+<p>Passing <code>--var-file &lt;path&gt;</code> on a later command still wins — the precedence chain is unchanged: rendered <code>terraform.tfvars</code> → <code>terraform.tfvars.user</code> (this section’s deliverable) → caller’s <code>--var-file</code> flags → phase overrides. To swap credentials or knobs for a single invocation, pass <code>--var-file ./alt.tfvars</code> on that one call; the persisted <code>terraform.tfvars.user</code> is untouched.</p>
+<h3 id="secrets-on-disk"><a class="header" href="#secrets-on-disk">Secrets on disk</a></h3>
+<p>The operator’s <code>ibmcloud_api_key</code> from <code>./terraform.tfvars</code> lands at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>, mode <code>0600</code>. This is the same security posture as the repo-root <code>./terraform.tfvars</code> you copied from — just relocated under the workspace dir. The standard tfvars guidance applies (see <a href="#the-ibmcloud_api_key-exception">Chapter 13 §“The <code>IBMCLOUD_API_KEY</code> exception”</a>): if you’d prefer not to have the key on disk at all, omit <code>ibmcloud_api_key</code> from <code>./terraform.tfvars</code> before running <code>init --var-file</code>, and let the <a href="#credentials-and-the-resolver-chain">cred resolver</a> supply it from env / keychain / <code>~/.bluemix/api_key</code> at apply time. The persisted <code>terraform.tfvars.user</code> then carries every other knob but no credential.</p>
+<h3 id="diagnostics"><a class="header" href="#diagnostics">Diagnostics</a></h3>
+<p>If <code>roksbnkctl down -w &lt;ws&gt;</code> (no <code>--var-file</code> flag) errors with <code>No value for required variable …</code>, you’re in one of two states:</p>
+<ol>
+<li><strong>The workspace was <code>init</code>-ed without <code>--var-file</code>.</strong> No <code>terraform.tfvars.user</code> was dropped, so the lifecycle has nothing to layer in for the required variable. Re-run <code>roksbnkctl init -w &lt;ws&gt; --var-file &lt;path&gt;</code> to seed the workspace-root copy and retry the <code>down</code>.</li>
+<li><strong>The <code>terraform.tfvars.user</code> was removed.</strong> Either by hand, by a <code>ws delete --force</code> that took the dir out from under you, or by an out-of-band cleanup. Re-run <code>roksbnkctl init -w &lt;ws&gt; --var-file &lt;path&gt;</code> to re-drop it, or pass <code>--var-file &lt;path&gt;</code> on the <code>down</code> for a one-shot fix.</li>
+</ol>
+<p>The fastest verification that the file is in the right place: <code>ls -l ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>. It should exist at mode <code>0600</code>. (Earlier development drafts of this feature wrote two copies into <code>state/</code> and <code>state-cluster/</code>; the shipped design uses one file at the workspace root that serves both phases — if you have stale copies in those state dirs from an early build, they’re harmless and can be removed.)</p>
 <h2 id="the-full-command-tree"><a class="header" href="#the-full-command-tree">The full command tree</a></h2>
 <pre><code class="language-bash">roksbnkctl workspaces ...     # canonical name
 roksbnkctl ws ...              # alias
@@ -1765,10 +1792,10 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <p>The var-file chain is, in order:</p>
 <ol>
 <li>The auto-generated <code>terraform.tfvars</code> (rendered from <code>config.yaml</code>).</li>
-<li><code>~/.roksbnkctl/&lt;workspace&gt;/terraform.tfvars.user</code> if present.</li>
+<li><code>~/.roksbnkctl/&lt;workspace&gt;/terraform.tfvars.user</code> if present — sibling to <code>config.yaml</code>, serving both the trial and cluster phases (seeded automatically by <code>roksbnkctl init -w &lt;ws&gt; --var-file &lt;path&gt;</code> — see <a href="#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a> for the recommended path when you already have a <code>./terraform.tfvars</code> in hand).</li>
 <li>Each <code>--var-file</code> flag, left-to-right.</li>
 </ol>
-<p>Later wins on conflict — same as Terraform’s own ordering.</p>
+<p>Later wins on conflict — same as Terraform’s own ordering. If you find yourself passing the same <code>--var-file</code> on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>, <code>init --var-file</code> is the persistence path that lets you drop the flag from subsequent calls.</p>
 <h2 id="apply-retries-on-transient-errors"><a class="header" href="#apply-retries-on-transient-errors">Apply retries on transient errors</a></h2>
 <p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>cne_instance</code>, <code>license</code>, and <code>cert-manager</code> modules all curl the master directly; on a fresh cluster, they sometimes race propagation and fail with <code>exit status 7</code> (curl couldn’t connect) or <code>Connection refused</code>.</p>
 <p><code>roksbnkctl up</code> has built-in retry: up to 3 apply attempts, with a 60-second sleep between attempts, on any of these heuristic patterns:</p>
@@ -2444,6 +2471,7 @@ cos:             # optional COS supply-chain config
 </code></pre>
 <p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
 <p>The <code>terraform.tfvars.user</code> middle layer is for when you want a workspace-local override that survives across runs without modifying <code>config.yaml</code> — it’s typically used for fields the YAML schema doesn’t model (rare; the schema covers the common knobs). <a href="#terraform-variables-terraformtfvars">Chapter 13</a> goes deep on this.</p>
+<p>If you already have a complete <code>./terraform.tfvars</code> (your own, or from a colleague’s hand-off) and want this workspace to always use it without re-passing <code>--var-file</code> on every command, run <code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code>. That seeds <code>config.yaml</code> from the file <strong>and</strong> drops a verbatim copy at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (mode <code>0600</code>, sibling to <code>config.yaml</code>), so subsequent <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> against bare <code>-w &lt;ws&gt;</code> pick it up automatically — for both the trial and cluster phases. The full walkthrough is in <a href="#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</p>
 <p>The <code>IBMCLOUD_API_KEY</code> is the one exception that <strong>never</strong> goes through tfvars on disk. It’s passed as a <code>TF_VAR_ibmcloud_api_key</code> env var on the terraform invocation. <code>--var-file</code> cannot supply the API key — the resolver chain in <a href="#credentials-and-the-resolver-chain">Chapter 14</a> is the only path.</p>
 <h2 id="editing-by-hand-vs-helpers"><a class="header" href="#editing-by-hand-vs-helpers">Editing by hand vs helpers</a></h2>
 <p>Several commands manage subsets of <code>config.yaml</code> so you don’t have to:</p>
@@ -2662,6 +2690,7 @@ $ roksbnkctl apply
 <tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
 <tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
 <tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td><code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code> — drops the file at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</td></tr>
 <tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
 <tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
 </tbody>
@@ -6085,7 +6114,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 <p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable, which defaults to <code>bnk-schematics-resources</code>. The instance defaults to <code>bnk-orchestration</code>.</p>
 <h2 id="the-three-command-levels"><a class="header" href="#the-three-command-levels">The three command levels</a></h2>
 <pre><code class="language-bash">roksbnkctl cos instance {create|delete|list}
-roksbnkctl cos bucket   {create|delete|list} --instance &lt;name-or-CRN&gt;
+roksbnkctl cos bucket   {create|delete|list|get} --instance &lt;name-or-CRN&gt;
 roksbnkctl cos object   {put|get|delete|list} --instance &lt;name-or-CRN&gt;
 </code></pre>
 <p>All three layers resolve credentials through the standard <a href="#credentials-and-the-resolver-chain">credential resolver chain</a> — env var, OS keychain, workspace <code>api_key_b64</code>, prompt. There’s no separate “COS credential”; the IBM API key authenticates against Resource Controller (instance ops) and IAM-signed S3 requests (bucket and object ops).</p>
@@ -6131,6 +6160,11 @@ roksbnkctl cos bucket list --instance bnk-orchestration
 
 # Delete (the bucket must be empty first; cos object delete --recursive isn't implemented yet)
 roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+
+# Snapshot the entire bucket to a local directory (recursive, streaming, byte-for-byte).
+# Useful before rotating supply-chain artefacts — keeps a known-good set you can roll back to.
+roksbnkctl cos bucket get bnk-schematics-resources ./snapshot \
+  --instance bnk-orchestration
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -6141,6 +6175,7 @@ roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestrati
 <tr><td><code>--instance</code></td><td>(required)</td><td>Instance name or CRN — the CRN starts with <code>crn:v1:</code> and is used as-is; a bare name is looked up via Resource Controller.</td></tr>
 <tr><td><code>--region</code></td><td>workspace region</td><td>The IBM Cloud region the bucket is pinned to. Override only when you’re crossing regions deliberately.</td></tr>
 <tr><td><code>--class</code></td><td><code>standard</code></td><td>Storage class: <code>standard</code> (frequently accessed), <code>vault</code> (infrequent), <code>cold</code> (archive), <code>smart</code> (auto-tiered). The BNK supply chain uses <code>standard</code> because FLO reads at install + every restart.</td></tr>
+<tr><td><code>--no-clobber</code></td><td>(off)</td><td>On <code>cos bucket get</code>: skip any object whose local path already exists. Default overwrites. Files-only flag; ignored by other <code>cos bucket</code> verbs.</td></tr>
 </tbody>
 </table>
 </div>
@@ -6506,6 +6541,63 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-bnk"><a class="header" href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></h2>
+<p>BNK trial lifecycle (sits on top of a cluster)</p>
+<p>Manage the BNK trial resources (flo, cne_instance, license) as a
+short-lived layer on top of a shared, durable cluster.</p>
+<p>Commands:
+roksbnkctl bnk up    Deploy the BNK trial (auto-provisions the cluster if missing)
+roksbnkctl bnk down  Destroy the BNK trial, leaving the cluster in place</p>
+<p>Use <code>roksbnkctl cluster ...</code> to manage the cluster phase itself.</p>
+<h3 id="roksbnkctl-bnk-down-1"><a class="header" href="#roksbnkctl-bnk-down-1"><code>roksbnkctl bnk down</code></a></h3>
+<p>Destroy the BNK trial, leaving the cluster in place</p>
+<pre><code>roksbnkctl bnk down [flags]
+</code></pre>
+<p>Destroys only the BNK trial resources, leaving the cluster phase
+intact for the next <code>bnk up</code> to attach to. The common iteration loop:</p>
+<p>roksbnkctl bnk down &amp;&amp; roksbnkctl bnk up   # ~5 min trial reset
+roksbnkctl down                            # full teardown, ~30 min</p>
+<p>Refuses when there’s no trial state to destroy, and on legacy
+single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h3 id="roksbnkctl-bnk-up-1"><a class="header" href="#roksbnkctl-bnk-up-1"><code>roksbnkctl bnk up</code></a></h3>
+<p>Deploy the BNK trial; provisions the cluster first if missing</p>
+<pre><code>roksbnkctl bnk up [flags]
+</code></pre>
+<p>Provisions the BNK trial against the existing cluster phase. If
+the workspace has no cluster registered yet, <code>bnk up</code> bootstraps the
+cluster phase first (with a confirmation prompt — the cluster
+provision takes ~30 min) before the trial apply.</p>
+<p>Refuses on legacy single-state workspaces (those provisioned with
+v1.0.x <code>roksbnkctl up</code>): cluster + trial share one state file there,
+so the trial can’t be applied in isolation without state migration.
+Use <code>roksbnkctl up</code> on those workspaces.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip confirmation prompts (cluster-bootstrap + apply)</td></tr>
+<tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
 <h2 id="roksbnkctl-cluster"><a class="header" href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></h2>
 <p>ROKS cluster lifecycle (separate from BNK trials)</p>
 <p>Manage the ROKS cluster as a durable, reusable resource that
@@ -6635,6 +6727,35 @@ ibmcloud CLI dependency.</p>
 <p>Delete a bucket (must be empty)</p>
 <pre><code>roksbnkctl cos bucket delete &lt;bucket&gt;
 </code></pre>
+<p>← back to <a href="#roksbnkctl-cos-bucket"><code>roksbnkctl cos bucket</code></a></p>
+<h4 id="roksbnkctl-cos-bucket-get"><a class="header" href="#roksbnkctl-cos-bucket-get"><code>roksbnkctl cos bucket get</code></a></h4>
+<p>Recursively download every object in a bucket to a local directory</p>
+<pre><code>roksbnkctl cos bucket get &lt;bucket&gt; &lt;local-dir&gt; [flags]
+</code></pre>
+<p>Recursively download every object in <code>&lt;bucket&gt;</code> to <code>&lt;local-dir&gt;</code>.</p>
+<p><code>&lt;local-dir&gt;</code> is created if it does not exist (mkdir -p semantics, mode
+0755). Object keys map to nested subdirectories — a key foo/bar/baz.json
+lands at <code>&lt;local-dir&gt;</code>/foo/bar/baz.json. Streaming download per object
+(no whole-object in-memory buffering); text and binary are both copied
+through verbatim.</p>
+<p>Default behavior is overwrite (the operator just asked to download);
+pass –no-clobber to skip objects whose local target already exists,
+matching cp -n.</p>
+<p>With –output json, emits one JSON object per file completed:
+{“key”,“local_path”,“size”,“outcome”}. The final counts line goes to
+stderr in text mode; the JSON stream concludes with one summary record
+of shape {“counts”:{…}}.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--no-clobber</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip objects whose local target already exists (cp -n semantics)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-cos-bucket"><code>roksbnkctl cos bucket</code></a></p>
 <h4 id="roksbnkctl-cos-bucket-list"><a class="header" href="#roksbnkctl-cos-bucket-list"><code>roksbnkctl cos bucket list</code></a></h4>
 <p>List buckets on the named instance</p>
@@ -6819,8 +6940,9 @@ release.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source (path or URL); pinned into config.yaml</td></tr>
+<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml</td></tr>
 <tr><td><code>--upgrade-tf</code></td><td><code>bool</code></td><td><code>false</code></td><td>resolve and pin the latest TF release into config.yaml</td></tr>
+<tr><td><code>--var-file</code></td><td><code>string</code></td><td>—</td><td>path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases)</td></tr>
 </tbody>
 </table>
 </div>
@@ -7137,9 +7259,31 @@ show       print pod + Secret + RBAC status
 uninstall  delete every roksbnkctl.io/managed object created by install</p>
 <h3 id="roksbnkctl-ops-install-1"><a class="header" href="#roksbnkctl-ops-install-1"><code>roksbnkctl ops install</code></a></h3>
 <p>Apply (or update) the in-cluster ops fixtures</p>
+<pre><code>roksbnkctl ops install [flags]
+</code></pre>
 <p>Applies the embedded namespaces, ServiceAccount, Secret, ClusterRole,
 ClusterRoleBinding, and ops Pod. Idempotent: re-running with a new
 API key updates the Secret and rolls the Pod.</p>
+<p>Credential mode is selected via –trusted-profile (auto|on|off):</p>
+<p>auto (default) — provision an IBM Cloud IAM trusted profile linked
+to the ops pod’s ServiceAccount when the resolved
+API key has ‘iam-identity’ perms; otherwise fall
+back to the static-key Secret with a stderr warning.
+on             — require the trusted-profile path; fail loudly if
+perms don’t allow.
+off            — skip the trusted-profile path; install the v1.0.x
+static-key Secret.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--trusted-profile</code></td><td><code>string</code></td><td><code>auto</code></td><td>IBM IAM trusted profile mode: auto (default; provision when perms allow, fall back to static-key Secret), on (require trusted profile), off (static-key Secret only)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-ops"><code>roksbnkctl ops</code></a></p>
 <h3 id="roksbnkctl-ops-show-1"><a class="header" href="#roksbnkctl-ops-show-1"><code>roksbnkctl ops show</code></a></h3>
 <p>Print the ops pod’s status, image, RBAC subject, and Secret rotation timestamp</p>
@@ -7201,7 +7345,8 @@ setup. Exits when the subshell does.</p>
 <li>workspace name + region</li>
 <li>configured cluster name</li>
 <li>pinned Terraform source</li>
-<li>last terraform apply timestamp (mtime of terraform.tfstate)</li>
+<li>per-phase deployment status (cluster phase + BNK trial)</li>
+<li>v1.0.x <code>Last apply</code> line preserved for legacy single-state workspaces</li>
 <li>kubeconfig path (if any)</li>
 <li>cluster reachability (node count + ready count)</li>
 </ul>
@@ -7247,6 +7392,34 @@ when the upstream HCL provisions one (testing_tgw_jumphost outputs).</p>
 <pre><code>roksbnkctl targets show &lt;name&gt;
 </code></pre>
 <p>← back to <a href="#roksbnkctl-targets"><code>roksbnkctl targets</code></a></p>
+<h2 id="roksbnkctl-terraform"><a class="header" href="#roksbnkctl-terraform"><code>roksbnkctl terraform</code></a></h2>
+<p>Read-only passthrough to terraform against the workspace’s managed state</p>
+<p><strong>Aliases</strong>: <code>tf</code></p>
+<pre><code>roksbnkctl terraform [subcommand] [args...]
+</code></pre>
+<p>roksbnkctl terraform runs a READ-ONLY terraform subcommand against the
+workspace’s managed state, with terraform’s working directory and
+TF_DATA_DIR resolved for you (no need to cd into ~/.roksbnkctl/… or
+export TF_DATA_DIR).</p>
+<p>This command is read-only by allowlist. Permitted subcommands:
+output, show, state list, state show, state pull, providers,
+version, graph, validate, fmt -check</p>
+<p>Everything else — including apply, destroy, init, plan, import, taint,
+untaint, state rm/mv/replace-provider, and any -auto-approve — is
+rejected before terraform runs. Mutations go exclusively through
+roksbnkctl up / plan / apply / down (or cluster/bnk up/down); running
+terraform apply/destroy outside the orchestration skips the rendered
+tfvars, the apply-retry wrapper, the post-apply kubeconfig fetch, the
+applied-tfvars snapshot, and the auto-jumphost seeding, and desyncs the
+managed state.</p>
+<p>Use –phase cluster to target the cluster-phase state
+(<del>/.roksbnkctl/<code>&lt;ws&gt;</code>/state-cluster/); the default is the trial/single
+state (</del>/.roksbnkctl/<code>&lt;ws&gt;</code>/state/). –on is not supported: the managed
+terraform state lives on this workstation, not on a jumphost.</p>
+<p>Examples:
+roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
+roksbnkctl terraform state list
+roksbnkctl –phase cluster terraform show</p>
 <h2 id="roksbnkctl-test"><a class="header" href="#roksbnkctl-test"><code>roksbnkctl test</code></a></h2>
 <p>Run deployment validation tests (default: all)</p>
 <pre><code>roksbnkctl test [suite] [flags]
@@ -7378,7 +7551,7 @@ resumable: a partial failure is recovered by re-running ‘roksbnkctl up’.</p>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
-<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source for this run only</td></tr>
+<tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD)</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
