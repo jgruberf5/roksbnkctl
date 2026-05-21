@@ -30,17 +30,23 @@ import (
 // These match aws-gpu-setup's vars.env: OPERATOR_NS, INSTANCE_NS, UTILS_NS.
 // cert-manager must come first (cert-manager YAML depends on it pre-existing or
 // lets the static YAML create it — we create it explicitly for idempotency).
+// f5-cne-system is the slice-7 INSTANCE_NS target for the CNEInstance CR and
+// related resources (cloud-network-mapping CM, NADs, IRSA SA).
 var bnkNamespaces = []string{
 	"cert-manager",
 	"f5-cne-core",
+	"f5-cne-system",
 	"f5-bnk-instance",
 	"f5-utils",
 }
 
 // farSecretNamespaces is the set of namespaces that receive the FAR pull secret
 // (12.2). The `default` ns is included because some pull controllers run there.
+// f5-cne-system is included because the CNEInstance.spec.registry.imagePullSecrets
+// references far-secret in its own namespace for image pulls.
 var farSecretNamespaces = []string{
 	"f5-cne-core",
+	"f5-cne-system",
 	"f5-bnk-instance",
 	"f5-utils",
 	"default",
@@ -66,7 +72,7 @@ const (
 )
 
 // Phase12K8sFoundation installs the BNK k8s foundation:
-//  1. Creates the four namespaces (cert-manager, f5-cne-core, f5-bnk-instance, f5-utils)
+//  1. Creates the BNK namespaces (cert-manager, f5-cne-core, f5-cne-system, f5-bnk-instance, f5-utils)
 //  2. Loads FAR archive + JWT as k8s Secrets
 //  3. Applies cert-manager via embedded upstream YAML; waits for rollout
 //  4. Applies the BNK cert chain (ClusterIssuer→Certificate→CAIssuer); waits for CA cert Ready
@@ -249,7 +255,7 @@ func Phase12K8sFoundationDown(ctx context.Context, cl *intent.Cluster, st *state
 
 	// 4. Delete the three F5 namespaces (cascades secrets within them).
 	// Do NOT delete cert-manager (deleted with YAML in step 2) or default.
-	f5Namespaces := []string{"f5-cne-core", "f5-bnk-instance", "f5-utils"}
+	f5Namespaces := []string{"f5-cne-core", "f5-cne-system", "f5-bnk-instance", "f5-utils"}
 	for _, ns := range f5Namespaces {
 		fmt.Fprintf(os.Stderr, "[phase 12 down] deleting namespace %s\n", ns)
 		err := clients.K8s.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{})
