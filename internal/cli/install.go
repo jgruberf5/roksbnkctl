@@ -41,6 +41,7 @@ Examples:
 
 Note: this is distinct from ` + "`roksbnkctl self update`" + `, which
 pulls the latest GitHub release tarball over the network.`,
+	Args: cobra.NoArgs,
 	RunE: runInstall,
 }
 

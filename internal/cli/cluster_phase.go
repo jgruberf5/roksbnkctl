@@ -67,6 +67,7 @@ value).`,
 var clusterShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the registered cluster (cluster-outputs.json)",
+	Args:  cobra.NoArgs,
 	RunE:  runClusterShow,
 }
 
@@ -82,6 +83,7 @@ runs can deploy BNK trials onto this cluster.
 
 Uses a separate state directory (~/.roksbnkctl/<workspace>/state-cluster/)
 so it doesn't tangle with BNK-trial state.`,
+	Args: cobra.NoArgs,
 	RunE: runClusterUp,
 }
 
@@ -91,6 +93,7 @@ var clusterDownCmd = &cobra.Command{
 	Long: `Tears down everything roksbnkctl cluster up created. Refuses to run
 if any BNK trial state exists for this workspace — destroy those first
 with ` + "`roksbnkctl down`" + ` to avoid orphaned BNK resources.`,
+	Args: cobra.NoArgs,
 	RunE: runClusterDown,
 }
 

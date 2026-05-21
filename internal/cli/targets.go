@@ -36,6 +36,7 @@ when the upstream HCL provisions one (testing_tgw_jumphost outputs).`,
 var targetsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all targets in the current workspace",
+	Args:  cobra.NoArgs,
 	RunE:  runTargetsList,
 }
 

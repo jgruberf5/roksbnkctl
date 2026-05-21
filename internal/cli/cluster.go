@@ -42,6 +42,7 @@ var shellCmd = &cobra.Command{
 KUBECONFIG, IBMCLOUD_API_KEY, IC_API_KEY, and IBMCLOUD_REGION exported so
 locally-installed kubectl / oc / ibmcloud commands work without further
 setup. Exits when the subshell does.`,
+	Args: cobra.NoArgs,
 	RunE: runShell,
 }
 
@@ -56,6 +57,7 @@ var execCmd = &cobra.Command{
 var kubeconfigCmd = &cobra.Command{
 	Use:   "kubeconfig",
 	Short: "Print the kubeconfig path (or contents with --export)",
+	Args:  cobra.NoArgs,
 	RunE:  runKubeconfig,
 }
 

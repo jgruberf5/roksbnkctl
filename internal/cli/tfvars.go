@@ -33,6 +33,7 @@ Workflow:
   roksbnkctl tfvars          # writes ./terraform.tfvars from the upstream example
   $EDITOR ./terraform.tfvars
   roksbnkctl up --var-file ./terraform.tfvars`,
+	Args: cobra.NoArgs,
 	RunE: runTFVars,
 }
 

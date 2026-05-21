@@ -67,6 +67,7 @@ var cosInstanceDeleteCmd = &cobra.Command{
 var cosInstanceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List COS instances in the current account",
+	Args:  cobra.NoArgs,
 	RunE:  runCOSInstanceList,
 }
 
@@ -94,6 +95,7 @@ var cosBucketDeleteCmd = &cobra.Command{
 var cosBucketListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List buckets on the named instance",
+	Args:  cobra.NoArgs,
 	RunE:  runCOSBucketList,
 }
 
