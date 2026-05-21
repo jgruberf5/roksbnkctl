@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -78,6 +79,12 @@ const (
 //   - If --upgrade-tf and the workspace exists, just bumps tf_source.ref.
 //   - If the workspace exists and --upgrade-tf is not set, prompts to
 //     overwrite (existing values become the default for each prompt).
+//   - If --var-file <path> is supplied (Sprint 19 Issue 1), the file
+//     seeds the interview-targeted config.yaml fields and is copied
+//     verbatim to BOTH phase state dirs as `terraform.tfvars.user`
+//     (mode 0600). Prompts the file answered are skipped; fields it
+//     doesn't carry still prompt (or default) exactly as today. Without
+//     --var-file, behaviour is byte-identical to pre-Sprint-19.
 //   - If stdin is not a TTY, accepts every default — usable from CI as
 //     long as IBMCLOUD_API_KEY and the existing config (or workspace
 //     name) provide enough context.
@@ -100,6 +107,27 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return runUpgradeTF(ctx, cctx)
 	}
 
+	// Sprint 19 Issue 1 — `--var-file <path>` parsed up-front so a
+	// missing/malformed file surfaces an actionable error BEFORE the
+	// interview runs (acceptance #4, #5). Resolution to an absolute path
+	// is done here at the var-file branch entry — init's single-string
+	// `--var-file` is not the lifecycle's chokepoint-normalized
+	// flagVarFiles array, and the chokepoint guard test pins zero
+	// per-RunE re-derivations of THAT name. This is a separate flag,
+	// resolved once, at its own seam.
+	var seeds varFileSeeds
+	varFilePath := ""
+	if flagInitVarFile != "" {
+		varFilePath, err = absVarFilePath(flagInitVarFile)
+		if err != nil {
+			return err
+		}
+		seeds, err = loadInitVarFile(varFilePath)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Existing workspace + interactive overwrite confirmation.
 	if cctx.Workspace != nil {
 		fmt.Fprintf(os.Stderr, "Workspace %q already exists.\n", cctx.WorkspaceName)
@@ -120,7 +148,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("resolving API key: %w", err)
 	}
 
-	region := promptString("Region", dRegion)
+	region := dRegion
+	if seeds.HasRegion {
+		region = seeds.Region
+	} else {
+		region = promptString("Region", dRegion)
+	}
 
 	// Network ops below — bound to a timeout.
 	ctx, cancel := contextWithTimeout(initTimeout)
@@ -137,22 +170,48 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ %s\n\n", id)
 
-	rgName := promptString("Resource group", dRG)
+	rgName := dRG
+	if seeds.HasResourceGroup {
+		rgName = seeds.ResourceGroup
+	} else {
+		rgName = promptString("Resource group", dRG)
+	}
 	rgID, err := ic.ResolveResourceGroup(ctx, rgName)
 	if err != nil {
 		return fmt.Errorf("verifying resource group: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Resource group %q (id %s)\n\n", rgName, rgID)
 
-	create := promptYesNo("Create new ROKS cluster?", dCreate)
+	create := dCreate
+	if seeds.HasCreateCluster {
+		create = seeds.CreateCluster
+	} else {
+		create = promptYesNo("Create new ROKS cluster?", dCreate)
+	}
 
 	cluster := config.ClusterCfg{Create: create}
 	if create {
-		cluster.Name = promptString("Cluster name", dCluster)
-		cluster.OpenShiftVersion = promptString("OpenShift version", dOCP)
-		cluster.WorkersPerZone = promptInt("Workers per zone", dWorkers)
+		if seeds.HasClusterName {
+			cluster.Name = seeds.ClusterName
+		} else {
+			cluster.Name = promptString("Cluster name", dCluster)
+		}
+		if seeds.HasOCPVersion {
+			cluster.OpenShiftVersion = seeds.OCPVersion
+		} else {
+			cluster.OpenShiftVersion = promptString("OpenShift version", dOCP)
+		}
+		if seeds.HasWorkersPerZone {
+			cluster.WorkersPerZone = seeds.WorkersPerZone
+		} else {
+			cluster.WorkersPerZone = promptInt("Workers per zone", dWorkers)
+		}
 	} else {
-		cluster.Name = promptString("Existing cluster name or ID", dCluster)
+		if seeds.HasClusterName {
+			cluster.Name = seeds.ClusterName
+		} else {
+			cluster.Name = promptString("Existing cluster name or ID", dCluster)
+		}
 		if cluster.Name == "" {
 			return errors.New("existing cluster name is required when not creating")
 		}
@@ -176,6 +235,39 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "\n✓ Wrote %s\n", cfgPath)
+
+	// Sprint 19 Issue 1 — `--var-file <path>`. Copy the operator's file
+	// verbatim to both phase state dirs as `terraform.tfvars.user`
+	// (mode 0600). This is the file the existing tfws.HasUserTFVars()
+	// codepath auto-layers between the auto-rendered tfvars and any
+	// caller's `--var-file <…>` flag on every subsequent lifecycle op —
+	// no further code change needed. Pre-existing files are overwritten
+	// (acceptance #7) with a brief stderr note so the operator sees
+	// what landed.
+	if varFilePath != "" {
+		// AC #7 — a re-init that supplies a different var-file overwrites
+		// the existing terraform.tfvars.user copies; note on stderr so
+		// the operator sees the replacement happened. Detection is a
+		// pre-copy stat at both destinations because the helper is
+		// atomic-rename (the old file vanishes as the new one lands —
+		// no chance to check post-hoc).
+		trialDir, _ := config.WorkspaceStateDir(cctx.WorkspaceName)
+		clusterDir, _ := config.WorkspaceClusterStateDir(cctx.WorkspaceName)
+		for _, prior := range []string{
+			filepath.Join(trialDir, "terraform.tfvars.user"),
+			filepath.Join(clusterDir, "terraform.tfvars.user"),
+		} {
+			if _, statErr := os.Stat(prior); statErr == nil {
+				fmt.Fprintf(os.Stderr, "note: replacing existing %s\n", prior)
+			}
+		}
+		trialDest, clusterDest, copyErr := writeUserTFVarsCopies(cctx.WorkspaceName, varFilePath)
+		if copyErr != nil {
+			return copyErr
+		}
+		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", trialDest)
+		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", clusterDest)
+	}
 
 	// Persist the API key for future runs. ResolveAPIKey may have
 	// already saved to the keychain during the prompt path, but if it

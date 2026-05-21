@@ -84,3 +84,69 @@ roksbnkctl init -w <workspace> --var-file <path>
 - Sprint 16 validator Issue 3 (applied-tfvars replay) — this issue closes the residual gap between `init` and the first successful apply.
 - Sprint 16 round-2 option (b) actionable-error — its hint at "workspace has no snapshot yet" remains for the genuine never-initialized case; `init --var-file` provides the explicit remedy the message currently lacks.
 - The existing `HasUserTFVars()` + `UserTFVarsPath()` helpers in `internal/tf/terraform.go` — staff confirms they're already wired into the lifecycle, no edits there.
+
+---
+
+### Closure — staff, 2026-05-21
+
+**Status**: resolved (pending integrator live `!` verify per `live-verify-high-issues`).
+
+**Files changed (staff scope)**:
+
+- `internal/cli/init.go` — added `--var-file` parse-up-front + per-prompt seed-skip + post-`SaveWorkspace` copy-to-both-phase-state-dirs.
+- `internal/cli/init_var_file.go` (new sibling helper) — `flagInitVarFile` flag binding (additional `func init()` so `lifecycle.go` stays untouched), `varFileSeeds` carrier, `loadInitVarFile`, `writeUserTFVarsCopies` (atomic-rename, mode 0600), `absVarFilePath`, `unquoteTFVarString`.
+- `internal/config/applied_tfvars.go` — one-line exported wrapper `ReadTFVarsAssignments(path)` over the existing private `readTFVarsAssignments` so init can reuse the snapshot writer's tolerant parser without re-implementation (per the issue spec: "parse via `internal/config/applied_tfvars.go`'s existing `readTFVarsAssignments` … don't re-implement"). No behaviour change to the snapshot writer.
+- `internal/cli/init_var_file_helpers_test.go` (new additive) — hermetic positive-path coverage (load/copy/abs-path helpers tested directly so AC #1 / #7 do not rely on live IBM credentials, complementing the validator-shipped `internal/cli/init_var_file_test.go`).
+
+**tfvars → config.yaml key mapping** (line per mapped key):
+
+- `ibmcloud_cluster_region` → `IBMCloud.Region` (`cluster.region`).
+- `ibmcloud_resource_group` → `IBMCloud.ResourceGroup` (`cluster.resource_group`).
+- `openshift_cluster_name` → `Cluster.Name` (`cluster.name`).
+- `openshift_cluster_version` → `Cluster.OpenShiftVersion` (`cluster.version`).
+- `roks_workers_per_zone` → `Cluster.WorkersPerZone` (`cluster.workers_per_zone`).
+- `create_roks_cluster` → `Cluster.Create` (`cluster.create`).
+- `ibmcloud_api_key` — intentionally NOT mapped into `config.yaml`; lands verbatim on disk via the file copy, owned by the cred resolver.
+- `kubeconfig_dir`, `scratch_dir` — intentionally NOT taken from the var-file (workspace-local computed paths per the spec).
+
+**Destination paths the file lands at** (mode 0600, atomic-rename):
+
+- `<config.WorkspaceStateDir(name)>/terraform.tfvars.user`
+- `<config.WorkspaceClusterStateDir(name)>/terraform.tfvars.user`
+
+**Gates run + results**:
+
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `gofmt -l internal/` — empty.
+- `go test -race ./internal/cli/` — PASS. Helper-direct positive-path tests (AC #1 / #7) GREEN hermetically; cobra-driven positive-path tests (AC #1 / #2 via the validator file) SKIP without live `IBMCLOUD_API_KEY` (gated by the pre-existing `ic.Verify` step which is out of staff scope to refactor); cobra-driven negative-path tests (AC #4 / #5) GREEN hermetically.
+- `go test -race ./internal/config/` — PASS (no regression in the snapshot writer despite the new exported wrapper).
+- `git diff --stat -- '*_test.go'` — no edits to any pre-existing `_test.go` (parity discipline carries forward).
+
+**Acceptance criteria pass list**:
+
+- AC #1 — both `terraform.tfvars.user` copies land at mode 0600 byte-identical to the input → covered by `TestWriteUserTFVarsCopies_BothPhaseDirs` (hermetic) + the validator's `TestInitVarFile_HappyPath_BothCopiesLand` (live `!` per integrator).
+- AC #2 — `config.yaml` seeded from var-file fields, interview skips them → covered by `TestLoadInitVarFile_FullMapping` + the per-field `runInit` seeds-Has* branches; end-to-end pinning in the validator's `TestInitVarFile_ConfigSeeding` (live `!`).
+- AC #3 — bare `init` byte-identical to today → no code path entered when `flagInitVarFile == ""`; validator's `TestInitVarFile_NoFlagByteIdentical` pins no `terraform.tfvars.user` is created.
+- AC #4 — missing-file actionable error names the path → `TestInitVarFile_MissingFile_Fails` + `TestLoadInitVarFile_*` (`MissingFile` case in the validator file).
+- AC #5 — malformed-file actionable error points at `terraform.tfvars.example` → `TestInitVarFile_MalformedFile_Fails`.
+- AC #6 — bare `plan -w ws1` picks up the file via `HasUserTFVars()` without further code change → covered by the dataflow trace below + integrator's live `!`. No staff edit to `internal/tf/terraform.go` or `internal/orchestration/`.
+- AC #7 — re-init overwrites both copies, brief stderr "replacing existing" note → `TestWriteUserTFVarsCopies_OverwriteExisting` + the pre-copy `os.Stat` + `note: replacing existing …` line in `runInit`.
+- AC #8 — new hermetic test file `internal/cli/init_var_file_test.go` ships (validator-authored) + companion helper-direct tests in `init_var_file_helpers_test.go` (staff-authored); no edits to any pre-existing `_test.go`.
+- AC #9 — `--var-file` flag is cobra-bound on `initCmd` (single-line description matching the codebase shape); architect's `book/src/27-command-reference.md` regen consumes it.
+
+**Dataflow trace — `init --var-file ./tfvars -w ws1` then bare `plan -w ws1`**:
+
+1. `roksbnkctl init -w ws1 --var-file ./terraform.tfvars` →
+2. `runInit` (`internal/cli/init.go`) calls `absVarFilePath` → `loadInitVarFile` → `config.ReadTFVarsAssignments` (exported wrapper over the pre-existing `readTFVarsAssignments` parser in `internal/config/applied_tfvars.go`) → returns `varFileSeeds` with the six interview-targeted fields populated.
+3. `runInit` short-circuits the corresponding `promptString` / `promptYesNo` / `promptInt` calls when each `seeds.Has*` is true; remaining prompts run as today.
+4. `config.SaveWorkspace` writes `~/.roksbnkctl/ws1/config.yaml` carrying the seeded fields.
+5. `writeUserTFVarsCopies(ws1, <abs>./terraform.tfvars)` copies the file verbatim (atomic-rename, mode 0600) to BOTH `<WorkspaceStateDir>/terraform.tfvars.user` and `<WorkspaceClusterStateDir>/terraform.tfvars.user`. `✓ Wrote …` printed per copy.
+6. Later: bare `roksbnkctl plan -w ws1` →
+7. `orchestration.RunPlan` (`internal/orchestration/lifecycle.go`, **staff did not touch**) builds a `tf.Workspace` and calls the pre-existing `tfws.HasUserTFVars()` codepath in `internal/tf/terraform.go` (**staff did not touch**).
+8. `HasUserTFVars` sees `state/terraform.tfvars.user` exists → `UserTFVarsPath()` is layered into the var-file chain after the auto-rendered `state/terraform.tfvars`, ahead of any caller `--var-file` flag (none here).
+9. `terraform plan` runs with the operator's persisted assignments — no Sprint 16 option-(b) "no snapshot yet" actionable error fires, no re-supply of `--var-file` needed.
+
+The whole post-init lifecycle wiring was already in place from Sprint 16; staff's contribution is exclusively the file-drop at `init` time at the path the existing `HasUserTFVars()` / `UserTFVarsPath()` helpers (both in `internal/tf/terraform.go`, untouched) already look for.
+
+**Out-of-scope packages NOT touched**: `internal/tf/`, `internal/orchestration/`, `internal/cos/`, `internal/ibm/`, `internal/cli/cos.go`. No commits, no pushes, no `gh issue create`.

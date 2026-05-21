@@ -130,6 +130,20 @@ func AppliedTFVarsPath(workspace, phase string) (string, error) {
 	return appliedTFVarsPath(workspace, phase)
 }
 
+// ReadTFVarsAssignments parses a tfvars file at path and returns the
+// supported `name = value` assignments as a flat map (value strings are
+// kept verbatim — quoted strings retain their quotes, bare bools/numbers
+// stay bare). Sprint 19 thin export of the package-private parser so
+// `roksbnkctl init --var-file <path>` can reuse the exact same tolerant
+// parsing the applied-tfvars snapshot writer uses (same shape as
+// `terraform.tfvars.example`, same skip-unsupported-HCL behaviour). The
+// boolean return is true when the file was missing — callers that treat
+// a missing var-file as a hard error (like init's `--var-file`) check
+// this and surface an actionable message naming the path.
+func ReadTFVarsAssignments(path string) (assigns map[string]string, missing bool, err error) {
+	return readTFVarsAssignments(path)
+}
+
 func appliedTFVarsPath(workspace, phase string) (string, error) {
 	switch phase {
 	case "cluster":
