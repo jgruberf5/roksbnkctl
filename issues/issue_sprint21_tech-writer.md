@@ -14,7 +14,7 @@
 **Severity**: medium (argv strictness is a behavioural change
 visible to every operator; drift here surfaces immediately in
 the next person's shell)
-**Status**: resolved (pending integrator)
+**Status**: resolved
 
 ### Motivation
 

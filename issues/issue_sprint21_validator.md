@@ -13,7 +13,7 @@
 ## Issue 1 — Hermetic tests for argv strictness + `cobra.NoArgs` pinning
 
 **Severity**: medium
-**Status**: resolved (pending integrator gate)
+**Status**: resolved
 
 ### Motivation
 
