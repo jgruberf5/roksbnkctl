@@ -16,7 +16,7 @@
 **Severity**: medium (the contract is a small change but
 operator-facing; a stale example in the book would confuse
 any operator who tried to follow it)
-**Status**: resolved (pending integrator gate)
+**Status**: resolved
 
 ### Motivation
 

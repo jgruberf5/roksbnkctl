@@ -14,7 +14,7 @@
 **Severity**: high (silent argv misparse can drive
 resource-heavy commands against the wrong workspace — see
 `argv-strictness-prevents-resource-damage` memory)
-**Status**: resolved (pending integrator gate)
+**Status**: resolved
 
 ### Motivation
 
