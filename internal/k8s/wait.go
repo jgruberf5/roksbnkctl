@@ -105,6 +105,29 @@ func WaitForNamespaceGone(ctx context.Context, clientset kubernetes.Interface, n
 	})
 }
 
+// WaitForDaemonSetReady polls apps/v1 DaemonSet in ns/name until
+// Status.NumberReady == Status.DesiredNumberScheduled (both > 0).
+// Returns an error if the deadline passes before the DaemonSet is ready.
+//
+// Interval is 5 s. timeout is the caller-supplied deadline.
+func WaitForDaemonSetReady(ctx context.Context, clientset kubernetes.Interface, ns, name string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		ds, err := clientset.AppsV1().DaemonSets(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil //nolint:nilerr
+		}
+		desired := ds.Status.DesiredNumberScheduled
+		ready := ds.Status.NumberReady
+		if desired > 0 && ready == desired {
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
 // WaitForCRDExists polls apiextensions.k8s.io/v1 CustomResourceDefinition until
 // the named CRD is visible in the API server. Used to confirm cert-manager CRDs
 // are established before applying the cert chain.

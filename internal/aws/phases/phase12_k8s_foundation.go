@@ -61,6 +61,10 @@ const (
 
 	certManagerYAMLPath = "cert-manager/cert-manager-v1.16.1.yaml"
 	certChainYAMLPath   = "shared/bnk-cert-chain.yaml"
+	multusYAMLPath      = "multus/multus-daemonset-v4.2.4.yaml"
+	multusDaemonSet     = "kube-multus-ds"
+	multusNamespace     = "kube-system"
+	multusVersion       = "v4.2.4"
 
 	phase12FieldManager = "awsbnkctl-phase12"
 
@@ -68,6 +72,7 @@ const (
 	certManagerDeployTimeout = 5 * time.Minute
 	certManagerCRDTimeout    = 2 * time.Minute
 	caCertReadyTimeout       = 3 * time.Minute
+	multusDaemonSetTimeout   = 5 * time.Minute
 	nsTerminateTimeout       = 5 * time.Minute
 )
 
@@ -198,6 +203,26 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	}
 	fmt.Fprintf(os.Stderr, "[phase 12] CA certificate %s is Ready\n", vars.CACertName)
 
+	// 12.5 — Multus CNI install (slice 7+). Required before Phase 20 NADs apply.
+	// NetworkAttachmentDefinition CRD (k8s.cni.cncf.io/v1) is registered by Multus.
+	multusYAML, err := k8smanifests.FS.ReadFile(multusYAMLPath)
+	if err != nil {
+		return fmt.Errorf("phase12: reading embedded multus YAML: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 12] applying Multus CNI %s (%d bytes)\n", multusVersion, len(multusYAML))
+	if err := applyRawYAML(ctx, clients.Dynamic, multusYAML); err != nil {
+		return fmt.Errorf("phase12: applying multus YAML: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 12] waiting for Multus DaemonSet %s/%s\n", multusNamespace, multusDaemonSet)
+	if err := k8swait.WaitForDaemonSetReady(ctx, clients.K8s, multusNamespace, multusDaemonSet, multusDaemonSetTimeout); err != nil {
+		return fmt.Errorf("phase12: multus DaemonSet not ready: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "[phase 12] Multus DaemonSet ready")
+	fmt.Fprintln(os.Stderr, "[phase 12] waiting for NetworkAttachmentDefinition CRD")
+	if err := k8swait.WaitForCRDExists(ctx, clients.Dynamic, "network-attachment-definitions.k8s.cni.cncf.io", certManagerCRDTimeout); err != nil {
+		return fmt.Errorf("phase12: NetworkAttachmentDefinition CRD not established: %w", err)
+	}
+
 	// Persist state.
 	st.Set("BNK_NAMESPACES_CREATED", strings.Join(bnkNamespaces, ","))
 	st.Set("BNK_FAR_SECRET_NAME", farSecretName)
@@ -207,6 +232,7 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	st.Set("BNK_CA_CERT_NAME", vars.CACertName)
 	st.Set("BNK_CA_SECRET_NAME", vars.CASecretName)
 	st.Set("BNK_CA_ISSUER", vars.CAIssuer)
+	st.Set("MULTUS_VERSION", multusVersion)
 	return st.Save()
 }
 
@@ -228,6 +254,12 @@ func Phase12K8sFoundationDown(ctx context.Context, cl *intent.Cluster, st *state
 	}
 
 	vars := render.CertChainVarsFromCluster(cl)
+
+	// 0. Delete Multus CNI (DaemonSet + RBAC + CRD). Tolerate errors so we don't block.
+	fmt.Fprintln(os.Stderr, "[phase 12 down] deleting Multus CNI resources")
+	if mErr := deleteMultusResources(ctx, clients); mErr != nil {
+		fmt.Fprintf(os.Stderr, "[phase 12 down] warning: multus delete had errors: %v\n", mErr)
+	}
 
 	// 1. Delete cert chain CRs via dynamic client (tolerate NotFound).
 	fmt.Fprintln(os.Stderr, "[phase 12 down] deleting BNK cert chain CRs")
@@ -695,6 +727,52 @@ func deleteCertManagerResources(ctx context.Context, clients *Clients) error {
 	return nil
 }
 
+// deleteMultusResources parses the embedded Multus YAML and deletes each object
+// in reverse order. Tolerates NotFound and unknown-resource errors so partial
+// state doesn't block the rest of Phase 12 down.
+func deleteMultusResources(ctx context.Context, clients *Clients) error {
+	multusYAML, err := k8smanifests.FS.ReadFile(multusYAMLPath)
+	if err != nil {
+		return fmt.Errorf("reading embedded multus YAML: %w", err)
+	}
+	objs, err := parseYAMLDocs(multusYAML)
+	if err != nil {
+		return fmt.Errorf("parsing multus YAML: %w", err)
+	}
+	for i := len(objs) - 1; i >= 0; i-- {
+		obj := objs[i]
+		kind, _ := obj["kind"].(string)
+		meta, _ := obj["metadata"].(map[string]interface{})
+		objName, _ := meta["name"].(string)
+		objNS, _ := meta["namespace"].(string)
+		apiVersion, _ := obj["apiVersion"].(string)
+
+		if kind == "" || objName == "" {
+			continue
+		}
+
+		gvr, namespaced, err := resolveGVR(apiVersion, kind)
+		if err != nil {
+			continue
+		}
+
+		var delErr error
+		if namespaced {
+			ns := objNS
+			if ns == "" {
+				ns = multusNamespace
+			}
+			delErr = clients.Dynamic.Resource(gvr).Namespace(ns).Delete(ctx, objName, metav1.DeleteOptions{})
+		} else {
+			delErr = clients.Dynamic.Resource(gvr).Delete(ctx, objName, metav1.DeleteOptions{})
+		}
+		if delErr != nil && !k8serrors.IsNotFound(delErr) {
+			fmt.Fprintf(os.Stderr, "[phase 12 down] warning: delete multus %s %s: %v\n", kind, objName, delErr)
+		}
+	}
+	return nil
+}
+
 // clearPhase12State zeroes all phase 12 state keys.
 func clearPhase12State(st *state.State) {
 	keys := []string{
@@ -706,6 +784,7 @@ func clearPhase12State(st *state.State) {
 		"BNK_CA_CERT_NAME",
 		"BNK_CA_SECRET_NAME",
 		"BNK_CA_ISSUER",
+		"MULTUS_VERSION",
 	}
 	for _, k := range keys {
 		st.Set(k, "")
