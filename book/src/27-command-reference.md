@@ -526,7 +526,7 @@ release.
 |---|---|---|---|
 | `--tf-source` | `string` | — | override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml |
 | `--upgrade-tf` | `bool` | `false` | resolve and pin the latest TF release into config.yaml |
-| `--var-file` | `string` | — | path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to both phase state dirs as terraform.tfvars.user |
+| `--var-file` | `string` | — | path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases) |
 
 ## `roksbnkctl install`
 

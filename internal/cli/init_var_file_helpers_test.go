@@ -193,41 +193,45 @@ func TestWriteUserTFVarsCopies_BothPhaseDirs(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	trialDest, clusterDest, err := writeUserTFVarsCopies(ws, src)
+	dest, err := writeUserTFVarsCopies(ws, src)
 	if err != nil {
 		t.Fatalf("writeUserTFVarsCopies: %v", err)
 	}
 
-	for _, dest := range []string{trialDest, clusterDest} {
-		got, err := os.ReadFile(dest)
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read %s: %v", dest, err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("%s: body mismatch — copy must be byte-identical to the source", dest)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dest)
 		if err != nil {
-			t.Fatalf("read %s: %v", dest, err)
+			t.Fatalf("stat %s: %v", dest, err)
 		}
-		if string(got) != string(body) {
-			t.Errorf("%s: body mismatch — copy must be byte-identical to the source", dest)
-		}
-		if runtime.GOOS != "windows" {
-			info, err := os.Stat(dest)
-			if err != nil {
-				t.Fatalf("stat %s: %v", dest, err)
-			}
-			if mode := info.Mode().Perm(); mode != 0o600 {
-				t.Errorf("%s: mode %o; want 0600", dest, mode)
-			}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s: mode %o; want 0600", dest, mode)
 		}
 	}
 
-	// Destinations must be the canonical paths the existing
-	// tfws.HasUserTFVars() codepath looks for.
-	trialDir, _ := config.WorkspaceStateDir(ws)
-	clusterDir, _ := config.WorkspaceClusterStateDir(ws)
-	wantTrial := filepath.Join(trialDir, "terraform.tfvars.user")
-	wantCluster := filepath.Join(clusterDir, "terraform.tfvars.user")
-	if trialDest != wantTrial {
-		t.Errorf("trial dest: got %q; want %q", trialDest, wantTrial)
+	// Destination must be the canonical path the existing
+	// tfws.HasUserTFVars() codepath looks for —
+	// <workspace-root>/terraform.tfvars.user (sibling to config.yaml).
+	// `tf.Workspace.UserTFVarsPath()` returns
+	// `filepath.Dir(stateDir)/terraform.tfvars.user`, which collapses to
+	// the SAME workspace-root path for both the trial and cluster phases.
+	wsDir, _ := config.WorkspaceDir(ws)
+	want := filepath.Join(wsDir, "terraform.tfvars.user")
+	if dest != want {
+		t.Errorf("dest: got %q; want %q", dest, want)
 	}
-	if clusterDest != wantCluster {
-		t.Errorf("cluster dest: got %q; want %q", clusterDest, wantCluster)
+	// And no leftover in-state-dir copies — those are the round-1 bug.
+	for _, sub := range []string{"state", "state-cluster"} {
+		stale := filepath.Join(wsDir, sub, "terraform.tfvars.user")
+		if _, err := os.Stat(stale); err == nil {
+			t.Errorf("stale copy at %s — HasUserTFVars() does not look here", stale)
+		}
 	}
 }
 
@@ -251,21 +255,19 @@ func TestWriteUserTFVarsCopies_OverwriteExisting(t *testing.T) {
 		t.Fatalf("write src2: %v", err)
 	}
 
-	if _, _, err := writeUserTFVarsCopies(ws, src1); err != nil {
+	if _, err := writeUserTFVarsCopies(ws, src1); err != nil {
 		t.Fatalf("first writeUserTFVarsCopies: %v", err)
 	}
-	trialDest, clusterDest, err := writeUserTFVarsCopies(ws, src2)
+	dest, err := writeUserTFVarsCopies(ws, src2)
 	if err != nil {
 		t.Fatalf("second writeUserTFVarsCopies: %v", err)
 	}
-	for _, dest := range []string{trialDest, clusterDest} {
-		got, err := os.ReadFile(dest)
-		if err != nil {
-			t.Fatalf("read %s: %v", dest, err)
-		}
-		if string(got) != string(body2) {
-			t.Errorf("%s: got %q; want %q (the second source must overwrite the first)", dest, got, body2)
-		}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read %s: %v", dest, err)
+	}
+	if string(got) != string(body2) {
+		t.Errorf("%s: got %q; want %q (the second source must overwrite the first)", dest, got, body2)
 	}
 }
 
