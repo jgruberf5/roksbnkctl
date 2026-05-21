@@ -1122,6 +1122,27 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 21 — Cobra/pflag argv-parser strictness — reject stuck-together short-flag-values + `cobra.NoArgs` audit (first regular work sprint post-`v1.6.4`, runs in parallel with Sprint 20)
+
+_Drafted 2026-05-21 from the integrator's live-use observation. The operator typed `roksbnkctl init -ws canada-roks --var-file ./terraform.tfvars` intending `--workspace canada-roks`. Cobra/pflag's stuck-together-shorthand parser interpreted `-ws` as `-w s`; the positional `canada-roks` was silently dropped because `init` didn't declare `Args: cobra.NoArgs`. A workspace named `s` was created carrying the correct `canada-roks` cluster identity inside it; a follow-on bare `cluster up` then resolved to `current_workspace: default` and produced a 25-resource-destroy / 41-resource-add plan against real cloud state. The plan was caught at review, but the user explicitly signalled this is the priority class to close: "I don't want to see any more foolish syntax errors, like I made, messing up a resource heavy task." Captured as the `argv-strictness-prevents-resource-damage` integrator memory._
+
+Tiny scope, mostly argv preflight; partitioned the regular way:
+
+| Role | Scope |
+|---|---|
+| **Staff** Issue 1 | (a) Argv preflight in `cmd/roksbnkctl/main.go` that walks the cobra tree at process start, collects value-requiring short flags, scans `os.Args[1:]` for stuck-together short-flag-value tokens (`-X<suffix>` where `X` is value-requiring and `<suffix>[0] != '='`), exits non-zero with an actionable error before `Execute()`. (b) Audit every cobra command under `internal/cli/`; add `Args: cobra.NoArgs` to every command that doesn't take positionals. Commands that DO take positionals (`ws delete`, `cos object get`, `cos bucket get`, `cluster register`, etc.) keep their existing `Args:`. |
+| **Architect** Issue 1 | One short paragraph in the first-run / command-line chapter naming the strictness contract; quote the binary's verbatim error text for `-ws foo`. Regen `book/src/27-command-reference.md` if any `Args:` change affects per-command Usage. Cross-chapter sweep for stuck-together-shorthand examples. |
+| **Validator** Issue 1 | Hermetic test under `internal/cli/` covering: (a) stuck-together short-flag-value rejected with actionable error; (b) canonical forms (space + equals) accepted byte-identically; (c) `cobra.NoArgs` pins per command staff added the constraint to. Additive file only; no edits to any pre-existing `_test.go`. |
+| **Tech-writer** Issue 1 (light, runs after) | Drift sweep — book paragraph matches binary verbatim output, chapter 27 regen'd, no stuck-together examples survive, CHANGELOG entry calls out the BREAKING aspect prominently. GREEN/RED launch verdict. |
+
+`live-verify-high-issues` does NOT apply — argv shape doesn't need cloud validation; hermetic tests are sufficient closure. The whole point of this sprint is to surface typos BEFORE any cloud call.
+
+Version at cut: integrator-owned. Behavioural change for any operator using `-fvalue` stuck-together → minor bump (`v1.7.0`) is defensible; integrator can also choose patch (`v1.6.5`) if the disruption is judged low. CHANGELOG entry must call out the change in `### Changed` (and arguably `### BREAKING`).
+
+Sprint launch: integrator dispatches staff + architect + validator in parallel (single message, three `Agent` calls reading `prompts/sprint21/*.md`); aggregates + commits + runs gates; then dispatches tech-writer over the integrated tree.
+
+---
+
 ## Sprint 20 — `make release-publish` stale-PDF hardening (first regular work sprint post-`v1.6.4`)
 
 _Drafted 2026-05-21 immediately after the Sprint 19 v1.6.4 cut surfaced a real defect in the release pipeline: `make release-publish` uploaded a stale `book/book/pandoc/pdf/book.pdf` from the prior cycle under the v1.6.4 asset name, because the target's prereq check was "does the PDF exist?" not "is it current?". The current cycle's `book-pdf` had failed silently (missing `ulem.sty` in the docker image — that's commit `a46fb53`, unrelated to this sprint), and the publish target was happy with whatever `book.pdf` was on disk. Sprint 19's integrator caught the stale-upload manually via a grep against the gh-pages-published HTML; this sprint makes that manual recovery unnecessary._
