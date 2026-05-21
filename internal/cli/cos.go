@@ -489,18 +489,6 @@ var (
 	cachedCOSWS       string
 )
 
-// resetCOSClientCacheForTests is the hermetic hook the
-// internal/cos/client_perf_test.go-equivalent test in internal/cli
-// would use if it needed a fresh start. Sprint 18 ships the perf test
-// in internal/cos against cos.NewCallCount; this helper is here for
-// the integrator's optional CLI-level coverage and to keep the
-// caching contract observable.
-func resetCOSClientCacheForTests() {
-	cachedCOSClient = nil
-	cachedCOSInstance = ""
-	cachedCOSWS = ""
-}
-
 // openCOSClient resolves --instance into a CRN and returns a *cos.Client
 // scoped to that instance + the workspace region. The returned Client
 // is region-aware (Sprint 18 Issue 3): its per-bucket S3 handles are

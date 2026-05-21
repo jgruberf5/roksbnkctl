@@ -96,7 +96,7 @@ func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, hasUserT
 			"      automatically and subsequent `-w <ws>` lifecycle ops will pick it up, OR\n"+
 			"    - re-init with `roksbnkctl init --var-file <path> -w <workspace>` to\n"+
 			"      seed a workspace-persistent terraform.tfvars.user, then every bare\n"+
-			"      `-w <ws>` verb layers it automatically.",
+			"      `-w <ws>` verb layers it automatically",
 		phase, verb)
 }
 
