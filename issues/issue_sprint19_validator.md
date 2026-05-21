@@ -13,7 +13,7 @@
 ## Issue 1 — Hermetic + gated-live tests for `init --var-file`
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 
@@ -105,6 +105,38 @@ Drives the `init` cobra command via its public surface (whatever non-interactive
 Asserts: S1 init exits 0 → A1 both `terraform.tfvars.user` copies land at mode 0600 with sha256 byte-equal to input → A2 `config.yaml` carries the tfvars-seeded `region` / `cluster name` / `openshift_version` / `workers_per_zone` fields → S2 bare `plan -w <ws>` exits 0 → **A3 the bare-plan stderr carries the literal `→ Layering user tfvars from` line** (pins the actual `HasUserTFVars()`-true codepath, NOT a "did `plan` exit 0" proxy) → A4 planted-sentinel + API-key-head scan over the run log = 0 hits → EXIT trap removes the throwaway workspace.
 
 **Live-`!`-verify expected shape (per `live-verify-high-issues`):** integrator runs the driver on a real workspace; on GREEN, flips this issue + staff Issue 1 from `open` to `resolved` and tags the sprint for cut. On RED, the failing assertion is named in the driver's stderr and the integrator routes a follow-up.
+
+---
+
+### Closure round 2 — assertion shape corrected, 2026-05-21
+
+**Status**: resolved (live `!` GREEN, run-id `20260521-031343`).
+
+The round-1 live `!` cycle caught two independent defects (see staff ledger's round-2 closure for the full root-cause). Validator-side fallout:
+
+1. **A1 path expectation was wrong.** This ledger said "both `state/terraform.tfvars.user` AND `state-cluster/terraform.tfvars.user`" — that's where staff dutifully wrote, and where the validator's A1 dutifully asserted. The actual canonical path is `<workspace-root>/terraform.tfvars.user` (sibling to `config.yaml`) — one copy, serving both phases. Same root cause as staff: ledger claim made without reading `tf.Workspace.UserTFVarsPath()`'s one-line body.
+2. **Validator-shipped assertion grep was too strict.** `yaml.v3` quotes string values that look like floats (`openshift_version: "4.18"`), but A2's grep patterns required bare unquoted values. Widened the four field patterns to `field:[[:space:]]*"?VALUE"?` so both quoted and bare shapes match.
+
+**Files updated**:
+
+- `scripts/e2e-init-var-file.sh` — A1 now asserts a single workspace-root copy AND that the stale in-state-dir paths do NOT exist (so any regression to round-1's mis-located copies trips the test); A2 grep patterns tolerate yaml.v3's optional-quote shape; GREEN banner copy updated to "lands at workspace root".
+- `internal/cli/init_var_file_test.go` — happy-path now asserts the workspace-root path + the absence of the stale in-state-dir copies; no-flag parity test extended to also assert no workspace-root copy (round-1 only checked the state dirs).
+
+**Live `!` run-id 20260521-031343 — all-GREEN**:
+
+```
+✓ S1 init -w e2e-init-vf-20260521-031343 --var-file ./terraform.tfvars
+✓ A1 workspace-root terraform.tfvars.user exists + mode 0600 + byte-identical
+   (no stale state-dir copies)
+✓ A2 config.yaml reflects the tfvars-seeded fields
+✓ S2 bare plan -w <ws> exited 0 — no --var-file re-supplied
+✓ A3 bare plan log carries the user-tfvars layering line (codepath confirmed)
+✓ A4 leak scan: sentinel + API-key head both absent
+✓ teardown: workspace removed
+DRIVER_RC=0
+```
+
+A3's `→ Layering user tfvars from /home/jgruber/.roksbnkctl/<ws>/terraform.tfvars.user` line was emitted from `internal/orchestration/lifecycle.go`'s `writeAndInit` — the very codepath this driver was authored to pin — confirming the Sprint 19 deliverable closes the v1.6.3 UX gap end-to-end.
 
 **Discovered gap (informational, NOT blocking):** staff's shipped `runInit` calls `ibm.Verify()` before the var-file copy step, so the AC1 + AC2 hermetic positive cases cannot reach the assertion surface without live creds. The live driver covers both AC1 and AC2 end-to-end, so this is not a closure blocker — but a v1.7 follow-up could expose a `--skip-verify` (or analogous test seam) to lift the two SKIPs to PASS in CI without re-organising staff's design.
 

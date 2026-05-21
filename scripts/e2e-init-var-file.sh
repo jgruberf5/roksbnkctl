@@ -15,9 +15,11 @@
 #     gap-closure assertion v1.6.3 surfaced — between `init` and the
 #     first successful `up`, bare commands couldn't pick up the
 #     operator's var-file before this sprint.
-#   * A1 — both `state/terraform.tfvars.user` AND
-#     `state-cluster/terraform.tfvars.user` exist + mode 0600 +
-#     byte-identical to the input file.
+#   * A1 — `<workspace-root>/terraform.tfvars.user` (sibling to
+#     config.yaml) exists + mode 0600 + byte-identical to the input
+#     file. ONE copy at the workspace root — `tf.Workspace.UserTFVarsPath`
+#     resolves to that single path for BOTH the trial and cluster phases.
+#     The stale in-state-dir paths (the round-1 bug) must NOT exist.
 #   * A2 — `config.yaml` reflects the tfvars-seeded fields (region,
 #     cluster name, OpenShift version, workers-per-zone) — the
 #     interview prompts the file answered were skipped.
@@ -201,8 +203,14 @@ main() {
     # logs. ROKSBNKCTL_HOME wins if set (test envs); otherwise the
     # canonical ~/.roksbnkctl.
     local base="${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}"
-    local ws_trial_user="$base/$WORKSPACE/state/terraform.tfvars.user"
-    local ws_cluster_user="$base/$WORKSPACE/state-cluster/terraform.tfvars.user"
+    # Canonical Sprint 19 destination — sibling to config.yaml. The
+    # same path serves both the trial and cluster phases via
+    # tf.Workspace.UserTFVarsPath() = filepath.Dir(stateDir)/tfvars.user.
+    local ws_user="$base/$WORKSPACE/terraform.tfvars.user"
+    # The round-1 mis-located paths. A1 also asserts these DO NOT exist
+    # so a regression back to the in-state-dir locations trips the check.
+    local stale_trial="$base/$WORKSPACE/state/terraform.tfvars.user"
+    local stale_cluster="$base/$WORKSPACE/state-cluster/terraform.tfvars.user"
 
     # S1 — init --var-file on a fresh throwaway workspace.
     # Stdin is /dev/null so any prompt the var-file didn't answer
@@ -213,8 +221,8 @@ main() {
 
     bold "──── assertions ────"
     if [[ "$DRY_RUN" == "1" ]]; then
-        log "→ A1 both terraform.tfvars.user copies exist + mode 0600 + byte-identical"
-        log "    paths: $ws_trial_user, $ws_cluster_user"
+        log "→ A1 workspace-root terraform.tfvars.user exists + mode 0600 + byte-identical"
+        log "    path: $ws_user (stale: $stale_trial, $stale_cluster — must NOT exist)"
         log "→ A2 config.yaml reflects the tfvars-seeded fields (region, cluster name, …)"
         log "→ A3 bare plan -w $WORKSPACE log carries the '→ Layering user tfvars from <path>' line"
         log "→ A4 run log free of API-key leak (sentinel scan + sentinel echo proof)"
@@ -222,22 +230,27 @@ main() {
         return 0
     fi
 
-    # A1 — both copies present, mode 0600, byte-identical to the input.
+    # A1 — single workspace-root copy present, mode 0600, byte-identical
+    # to the input. And the stale in-state-dir paths from the round-1 bug
+    # must NOT exist (HasUserTFVars() does not look at them).
     local want_sha; want_sha=$(sha256sum "$TFVARS" | awk '{print $1}')
-    for path in "$ws_trial_user" "$ws_cluster_user"; do
-        if [[ ! -f "$path" ]]; then
-            fail "A1: missing $path"
-        fi
-        local got_mode; got_mode=$(stat -c '%a' "$path")
-        if [[ "$got_mode" != "600" ]]; then
-            fail "A1: $path mode = $got_mode, want 600"
-        fi
-        local got_sha; got_sha=$(sha256sum "$path" | awk '{print $1}')
-        if [[ "$got_sha" != "$want_sha" ]]; then
-            fail "A1: $path sha256 differs from input ($got_sha vs $want_sha)"
+    if [[ ! -f "$ws_user" ]]; then
+        fail "A1: missing $ws_user"
+    fi
+    local got_mode; got_mode=$(stat -c '%a' "$ws_user")
+    if [[ "$got_mode" != "600" ]]; then
+        fail "A1: $ws_user mode = $got_mode, want 600"
+    fi
+    local got_sha; got_sha=$(sha256sum "$ws_user" | awk '{print $1}')
+    if [[ "$got_sha" != "$want_sha" ]]; then
+        fail "A1: $ws_user sha256 differs from input ($got_sha vs $want_sha)"
+    fi
+    for stale in "$stale_trial" "$stale_cluster"; do
+        if [[ -f "$stale" ]]; then
+            fail "A1: stale copy at $stale — HasUserTFVars() does not look here (round-1 regression)"
         fi
     done
-    green "  ✓ A1 both terraform.tfvars.user copies exist + mode 0600 + byte-identical"
+    green "  ✓ A1 workspace-root terraform.tfvars.user exists + mode 0600 + byte-identical (no stale state-dir copies)"
 
     # A2 — config.yaml reflects the tfvars-seeded fields. Read the
     # tfvars values by passing the file's basenames through awk so we
@@ -253,16 +266,20 @@ main() {
     want_ocp=$(awk -F'=' '/^[[:space:]]*openshift_cluster_version[[:space:]]*=/ {gsub(/[[:space:]"]/,"",$2); print $2; exit}' "$TFVARS")
     want_workers=$(awk -F'=' '/^[[:space:]]*roks_workers_per_zone[[:space:]]*=/ {gsub(/[[:space:]"]/,"",$2); print $2; exit}' "$TFVARS")
     # Required: region + cluster (others optional in the operator's file).
-    if [[ -n "$want_region" ]] && ! grep -q "region:[[:space:]]*$want_region\$" "$cfg"; then
+    # Patterns allow optional surrounding quotes — yaml.v3 quotes string
+    # values that look like floats/numbers (e.g. openshift_version: "4.18")
+    # to preserve the string type; bare strings (e.g. region: ca-tor) are
+    # unquoted. The optional-quote shape matches both.
+    if [[ -n "$want_region" ]] && ! grep -qE "region:[[:space:]]*\"?${want_region}\"?[[:space:]]*\$" "$cfg"; then
         fail "A2: config.yaml missing region: $want_region"
     fi
-    if [[ -n "$want_cluster" ]] && ! grep -q "name:[[:space:]]*$want_cluster\$" "$cfg"; then
+    if [[ -n "$want_cluster" ]] && ! grep -qE "name:[[:space:]]*\"?${want_cluster}\"?[[:space:]]*\$" "$cfg"; then
         fail "A2: config.yaml missing cluster name: $want_cluster"
     fi
-    if [[ -n "$want_ocp" ]] && ! grep -q "openshift_version:[[:space:]]*$want_ocp\$" "$cfg"; then
+    if [[ -n "$want_ocp" ]] && ! grep -qE "openshift_version:[[:space:]]*\"?${want_ocp}\"?[[:space:]]*\$" "$cfg"; then
         fail "A2: config.yaml missing openshift_version: $want_ocp"
     fi
-    if [[ -n "$want_workers" ]] && ! grep -q "workers_per_zone:[[:space:]]*$want_workers\$" "$cfg"; then
+    if [[ -n "$want_workers" ]] && ! grep -qE "workers_per_zone:[[:space:]]*\"?${want_workers}\"?[[:space:]]*\$" "$cfg"; then
         fail "A2: config.yaml missing workers_per_zone: $want_workers"
     fi
     green "  ✓ A2 config.yaml reflects the tfvars-seeded fields"
@@ -314,8 +331,8 @@ main() {
 
     echo "" >&2
     green "════════════════════════════════════════════════════════════"
-    green "GREEN — init --var-file verified live: tfvars-user copies"
-    green "land at both phase state dirs, config.yaml seeded, bare plan"
+    green "GREEN — init --var-file verified live: terraform.tfvars.user"
+    green "lands at workspace root, config.yaml seeded, bare plan"
     green "succeeds without re-supplying --var-file, codepath confirmed,"
     green "no key leaks. run-id $RUN_TS"
     green "════════════════════════════════════════════════════════════"

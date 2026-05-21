@@ -51,40 +51,52 @@ const appliedReplayFile = ".applied-replay.tfvars"
 
 // RequireSnapshotOrVarFile pre-empts terraform's bare "No value for
 // required variable" failure with a roksbnkctl-level actionable error
-// when the caller has neither an applied-tfvars snapshot to replay nor
-// an explicit `--var-file`. The check belongs in the verbs the operator
-// expects to work against `-w <ws>` alone on a previously-applied
-// workspace — `plan`, `apply`, `down`, `cluster down` — and is a no-op
-// in every other case:
+// when the caller has neither an applied-tfvars snapshot to replay,
+// an explicit `--var-file`, nor a workspace-persistent
+// `terraform.tfvars.user` written by `init --var-file` (Sprint 19).
+// The check belongs in the verbs the operator expects to work against
+// `-w <ws>` alone — `plan`, `apply`, `down`, `cluster down` — and is a
+// no-op in every other case:
 //
 //   - replayed has a path  → a snapshot exists; round-3 replay covers it.
 //   - userVarFiles has any → the user supplied the inputs explicitly.
+//   - hasUserTFVars        → `init --var-file <path>` seeded the
+//     workspace's `terraform.tfvars.user`; the lifecycle layers it
+//     automatically (see `tf.Workspace.varFiles`).
 //
-// Only when *both* are empty does the call resolve to terraform plan/apply
-// with the small `config.yaml`-derived `state/terraform.tfvars` as the
-// sole var-file, which doesn't carry `ibmcloud_api_key` /
-// `testing_*` / `roks_*` / `f5_*` — so terraform errors with a stack of
-// unrelated-looking "No value for required variable" lines that don't
-// name a remedy. This helper names the remedy.
+// Only when *all three* are empty does the call resolve to terraform
+// plan/apply with the small `config.yaml`-derived `state/terraform.tfvars`
+// as the sole var-file, which doesn't carry `ibmcloud_api_key` /
+// `testing_*` / `roks_*` / `f5_*` — so terraform errors with a stack
+// of unrelated-looking "No value for required variable" lines that
+// don't name a remedy. This helper names the remedy.
 //
 // `phase` ("cluster" / "trial" / "legacy-single") and `verb`
 // (`"down"` / `"plan"` / `"apply"` / `"cluster down"`) shape the
 // message so the user can copy/paste it.
 //
-// Escape hatch: pass `--var-file <any-file>` (even an empty one) to
-// bypass — the caller's `userVarFiles` slice is non-empty so this
-// helper returns nil.
-func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, phase, verb string) error {
-	if len(replayed) > 0 || len(userVarFiles) > 0 {
+// Escape hatches:
+//   - pass `--var-file <any-file>` (even an empty one) to bypass — the
+//     caller's `userVarFiles` slice is non-empty so this helper returns nil.
+//   - run `roksbnkctl init --var-file <path> -w <ws>` once to seed the
+//     workspace-persistent override — `hasUserTFVars` is true on every
+//     subsequent verb against that workspace.
+func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, hasUserTFVars bool, phase, verb string) error {
+	if len(replayed) > 0 || len(userVarFiles) > 0 || hasUserTFVars {
 		return nil
 	}
 	return fmt.Errorf(
 		"this workspace has no terraform.applied.tfvars snapshot for the %s phase yet,\n"+
+			"  and no workspace-persistent terraform.tfvars.user from `init --var-file`,\n"+
 			"  so `roksbnkctl %s -w <workspace>` alone can't supply the required terraform\n"+
 			"  variables (ibmcloud_api_key, testing_*/roks_*/f5_* — none have defaults).\n"+
-			"  Re-run with `--var-file <path/to/your/terraform.tfvars>` once; on the first\n"+
-			"  successful `roksbnkctl up --var-file <path>` the snapshot is written\n"+
-			"  automatically and subsequent `-w <ws>` lifecycle ops will pick it up",
+			"  Pick one:\n"+
+			"    - re-run with `--var-file <path/to/your/terraform.tfvars>`; on the first\n"+
+			"      successful `roksbnkctl up --var-file <path>` the snapshot is written\n"+
+			"      automatically and subsequent `-w <ws>` lifecycle ops will pick it up, OR\n"+
+			"    - re-init with `roksbnkctl init --var-file <path> -w <workspace>` to\n"+
+			"      seed a workspace-persistent terraform.tfvars.user, then every bare\n"+
+			"      `-w <ws>` verb layers it automatically.",
 		phase, verb)
 }
 

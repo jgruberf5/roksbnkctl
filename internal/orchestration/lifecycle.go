@@ -226,9 +226,10 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	// behaviour.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
 	// Pre-empt terraform's bare "No value for required variable" with an
-	// actionable roksbnkctl-level message when neither a snapshot nor a
-	// --var-file is available (validator Issue 3 option (b)).
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "plan"); err != nil {
+	// actionable roksbnkctl-level message when neither a snapshot, a
+	// --var-file, nor an init --var-file-seeded terraform.tfvars.user is
+	// available (validator Issue 3 option (b) + Sprint 19 init --var-file).
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "plan"); err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
@@ -265,13 +266,14 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// appended LAST so phase-architectural values (create_roks_cluster=
 	// false, …) still win over the replay.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
-	// Option (b): when neither a snapshot nor a --var-file is available,
+	// Option (b): when neither a snapshot, a --var-file, nor an
+	// init --var-file-seeded terraform.tfvars.user is available,
 	// pre-empt terraform's raw missing-required-var error with the
 	// actionable roksbnkctl-level message. extraVF (bnk-phase-override)
 	// only exists on the *second* phase of a `up` and contains no
 	// secrets / user inputs, so it doesn't count as "the user supplied
 	// the inputs" for this gate.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "apply"); err != nil {
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "apply"); err != nil {
 		return err
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
@@ -361,9 +363,10 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// doesn't carry. Returns nil when no snapshot exists → byte-
 	// identical to prior behaviour.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
-	// Option (b): no snapshot AND no --var-file → actionable error
+	// Option (b): no snapshot, no --var-file, AND no
+	// init --var-file-seeded terraform.tfvars.user → actionable error
 	// before terraform sees a stack of bare missing-required-var lines.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, "trial", "down"); err != nil {
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "down"); err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)

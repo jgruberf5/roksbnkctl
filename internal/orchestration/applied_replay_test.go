@@ -135,22 +135,24 @@ func TestLayerAppliedTFVars_AbsentNoOp(t *testing.T) {
 
 // TestRequireSnapshotOrVarFile pins the option-(b) gate: a clean
 // actionable error replaces terraform's raw "No value for required
-// variable" when the caller has neither a snapshot to replay nor an
-// explicit --var-file. Hermetic — no terraform or filesystem involved.
+// variable" when the caller has no snapshot to replay, no explicit
+// --var-file, and no Sprint 19 `init --var-file`-seeded
+// `terraform.tfvars.user`. Hermetic — no terraform or filesystem involved.
 func TestRequireSnapshotOrVarFile(t *testing.T) {
-	t.Run("both empty → actionable error", func(t *testing.T) {
-		err := RequireSnapshotOrVarFile(nil, nil, "trial", "down")
+	t.Run("all three empty → actionable error", func(t *testing.T) {
+		err := RequireSnapshotOrVarFile(nil, nil, false, "trial", "down")
 		if err == nil {
-			t.Fatal("expected an error when no snapshot and no --var-file, got nil")
+			t.Fatal("expected an error when no snapshot, no --var-file, no user-tfvars, got nil")
 		}
 		msg := err.Error()
-		// Must name the phase + verb + the remedy the operator can
+		// Must name the phase + verb + BOTH remedies the operator can
 		// copy/paste. These substrings are the user-facing contract.
 		for _, want := range []string{
 			"trial phase",
 			"roksbnkctl down -w <workspace>",
 			"--var-file",
 			"`roksbnkctl up --var-file <path>`",
+			"roksbnkctl init --var-file <path> -w <workspace>",
 		} {
 			if !strings.Contains(msg, want) {
 				t.Fatalf("error message missing %q:\n%s", want, msg)
@@ -162,7 +164,7 @@ func TestRequireSnapshotOrVarFile(t *testing.T) {
 		// A non-empty replayed slice means LayerAppliedTFVars found a
 		// snapshot; the gate must NOT refuse — the round-3 replay
 		// covers it.
-		err := RequireSnapshotOrVarFile([]string{"/some/.applied-replay.tfvars"}, nil, "trial", "down")
+		err := RequireSnapshotOrVarFile([]string{"/some/.applied-replay.tfvars"}, nil, false, "trial", "down")
 		if err != nil {
 			t.Fatalf("expected nil when snapshot exists, got: %v", err)
 		}
@@ -170,27 +172,39 @@ func TestRequireSnapshotOrVarFile(t *testing.T) {
 
 	t.Run("user --var-file present → no-op", func(t *testing.T) {
 		// Operator supplied inputs explicitly; the gate must NOT refuse.
-		err := RequireSnapshotOrVarFile(nil, []string{"/path/to/terraform.tfvars"}, "trial", "down")
+		err := RequireSnapshotOrVarFile(nil, []string{"/path/to/terraform.tfvars"}, false, "trial", "down")
 		if err != nil {
 			t.Fatalf("expected nil when user --var-file present, got: %v", err)
 		}
 	})
 
-	t.Run("both present → no-op", func(t *testing.T) {
+	t.Run("workspace-persistent user-tfvars present → no-op", func(t *testing.T) {
+		// Sprint 19 path: `init --var-file` seeded `terraform.tfvars.user`;
+		// the lifecycle layers it automatically via tf.Workspace.varFiles.
+		// The gate must NOT refuse on bare `-w <ws>` against such a
+		// workspace — that is the whole point of the feature.
+		err := RequireSnapshotOrVarFile(nil, nil, true, "trial", "plan")
+		if err != nil {
+			t.Fatalf("expected nil when init --var-file seeded terraform.tfvars.user, got: %v", err)
+		}
+	})
+
+	t.Run("all three present → no-op", func(t *testing.T) {
 		err := RequireSnapshotOrVarFile(
 			[]string{"/some/.applied-replay.tfvars"},
 			[]string{"/path/to/terraform.tfvars"},
+			true,
 			"cluster", "cluster down",
 		)
 		if err != nil {
-			t.Fatalf("expected nil when both present, got: %v", err)
+			t.Fatalf("expected nil when all three present, got: %v", err)
 		}
 	})
 
 	t.Run("phase + verb shape the message", func(t *testing.T) {
 		// The error names BOTH the phase and the verb so the user can
 		// copy/paste the exact command. Pin both substring shapes.
-		err := RequireSnapshotOrVarFile(nil, nil, "cluster", "cluster down")
+		err := RequireSnapshotOrVarFile(nil, nil, false, "cluster", "cluster down")
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}

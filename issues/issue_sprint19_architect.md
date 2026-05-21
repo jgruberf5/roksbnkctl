@@ -13,7 +13,7 @@
 ## Issue 1 — doc: introduce `init --var-file` in the init chapter + regen the CLI reference
 
 **Severity**: low (docs-only follow-up; the high-sev work is staff Issue 1's code)
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 

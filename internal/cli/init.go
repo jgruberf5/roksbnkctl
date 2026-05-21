@@ -237,36 +237,31 @@ func runInit(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "\n✓ Wrote %s\n", cfgPath)
 
 	// Sprint 19 Issue 1 — `--var-file <path>`. Copy the operator's file
-	// verbatim to both phase state dirs as `terraform.tfvars.user`
-	// (mode 0600). This is the file the existing tfws.HasUserTFVars()
-	// codepath auto-layers between the auto-rendered tfvars and any
-	// caller's `--var-file <…>` flag on every subsequent lifecycle op —
-	// no further code change needed. Pre-existing files are overwritten
-	// (acceptance #7) with a brief stderr note so the operator sees
-	// what landed.
+	// verbatim to the workspace root as `terraform.tfvars.user`
+	// (mode 0600, sibling to config.yaml). This is the file the existing
+	// tfws.HasUserTFVars() codepath auto-layers between the auto-rendered
+	// tfvars and any caller's `--var-file <…>` flag on every subsequent
+	// lifecycle op — no further code change needed. The same file serves
+	// BOTH the trial and cluster phases (tf.Workspace.UserTFVarsPath
+	// resolves to filepath.Dir(stateDir)/terraform.tfvars.user for either
+	// phase). Pre-existing file is overwritten (acceptance #7) with a
+	// brief stderr note so the operator sees what landed.
 	if varFilePath != "" {
 		// AC #7 — a re-init that supplies a different var-file overwrites
-		// the existing terraform.tfvars.user copies; note on stderr so
-		// the operator sees the replacement happened. Detection is a
-		// pre-copy stat at both destinations because the helper is
-		// atomic-rename (the old file vanishes as the new one lands —
-		// no chance to check post-hoc).
-		trialDir, _ := config.WorkspaceStateDir(cctx.WorkspaceName)
-		clusterDir, _ := config.WorkspaceClusterStateDir(cctx.WorkspaceName)
-		for _, prior := range []string{
-			filepath.Join(trialDir, "terraform.tfvars.user"),
-			filepath.Join(clusterDir, "terraform.tfvars.user"),
-		} {
-			if _, statErr := os.Stat(prior); statErr == nil {
-				fmt.Fprintf(os.Stderr, "note: replacing existing %s\n", prior)
-			}
+		// the existing terraform.tfvars.user copy; note on stderr so the
+		// operator sees the replacement happened. Detection is a pre-copy
+		// stat because the helper is atomic-rename (the old file vanishes
+		// as the new one lands — no chance to check post-hoc).
+		wsRoot, _ := config.WorkspaceDir(cctx.WorkspaceName)
+		prior := filepath.Join(wsRoot, "terraform.tfvars.user")
+		if _, statErr := os.Stat(prior); statErr == nil {
+			fmt.Fprintf(os.Stderr, "note: replacing existing %s\n", prior)
 		}
-		trialDest, clusterDest, copyErr := writeUserTFVarsCopies(cctx.WorkspaceName, varFilePath)
+		dest, copyErr := writeUserTFVarsCopies(cctx.WorkspaceName, varFilePath)
 		if copyErr != nil {
 			return copyErr
 		}
-		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", trialDest)
-		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", clusterDest)
+		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", dest)
 	}
 
 	// Persist the API key for future runs. ResolveAPIKey may have

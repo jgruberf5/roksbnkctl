@@ -16,7 +16,7 @@
 ## Issue 1 — feat: `roksbnkctl init --var-file <path>` — workspace-persistent tfvars at init time
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 
@@ -150,3 +150,30 @@ roksbnkctl init -w <workspace> --var-file <path>
 The whole post-init lifecycle wiring was already in place from Sprint 16; staff's contribution is exclusively the file-drop at `init` time at the path the existing `HasUserTFVars()` / `UserTFVarsPath()` helpers (both in `internal/tf/terraform.go`, untouched) already look for.
 
 **Out-of-scope packages NOT touched**: `internal/tf/`, `internal/orchestration/`, `internal/cos/`, `internal/ibm/`, `internal/cli/cos.go`. No commits, no pushes, no `gh issue create`.
+
+---
+
+### Closure round 2 — integrator live-`!` corrections, 2026-05-21
+
+**Status**: resolved.
+
+Round-1 hermetics + helper-direct tests all passed, but the integrator's live `!` verify caught two related defects that round-1's design didn't notice — both rooted in trusting this ledger's path claim over the actual `tf.Workspace.UserTFVarsPath()` definition.
+
+**Defect 1 — file written to the wrong location.** Round-1 wrote `terraform.tfvars.user` into `state/` AND `state-cluster/`. `tf.Workspace.UserTFVarsPath()` is defined as `filepath.Join(filepath.Dir(stateDir), "terraform.tfvars.user")` → for either phase this resolves to **`<workspace-root>/terraform.tfvars.user`** (sibling to `config.yaml`). The two in-state-dir copies were invisible to `HasUserTFVars()`. Fixed by collapsing `writeUserTFVarsCopies` to a single workspace-root copy via `config.WorkspaceDir(name)`. A1 in the e2e driver now also asserts the stale in-state-dir paths do NOT exist so a regression trips the check.
+
+**Defect 2 — actionable-error gate didn't honor `HasUserTFVars()`.** Sprint 16 round-2 added `orchestration.RequireSnapshotOrVarFile` which rejected bare `plan/apply/down` when neither an applied-tfvars snapshot nor an explicit `--var-file` was present — but the gate predates Sprint 19's third input source. Widened the gate's signature to take a `hasUserTFVars bool` third argument; updated the four call sites (`lifecycle.go` ×3 + `cluster_phase.go` ×1) to pass `tfws.HasUserTFVars()`; rewrote the error message to surface BOTH remedies (`--var-file` or `init --var-file -w <ws>`).
+
+**Files changed (round 2)**:
+
+- `internal/cli/init.go` — single-copy at workspace root via `config.WorkspaceDir(name)`; pre-copy `os.Stat` of the single canonical path.
+- `internal/cli/init_var_file.go` — `writeUserTFVarsCopies` now returns one path; mkdirs workspace root, not state dirs.
+- `internal/orchestration/applied_replay.go` — `RequireSnapshotOrVarFile` gains `hasUserTFVars bool`; error message names the `init --var-file` remedy.
+- `internal/orchestration/lifecycle.go` — three call sites pass `tfws.HasUserTFVars()`.
+- `internal/cli/cluster_phase.go` — cluster-down call site passes `tfws.HasUserTFVars()`.
+- `internal/orchestration/applied_replay_test.go` — sub-tests threaded through the new arg; added `workspace-persistent user-tfvars present → no-op` case.
+- `internal/cli/init_var_file_test.go` + `init_var_file_helpers_test.go` — assertion shape updated to the workspace-root path; stale-path negative assertion added.
+- `scripts/e2e-init-var-file.sh` — A1 paths corrected; stale-path negative assertion added; banner copy updated.
+
+**Lesson — for future ledgers.** This ledger's round-1 dataflow trace said `HasUserTFVars` reads `state/terraform.tfvars.user`. It does not — the function is one line, in `internal/tf/terraform.go`, and reads `filepath.Dir(stateDir)`. The ledger's claim was made without checking the function definition. Carries forward the `investigate-first-on-non-obvious-bugs` discipline: when a ledger references an existing function as the "auto-magic" landing site, the author MUST quote the function's body into the ledger before claiming a destination.
+
+**Live-`!` verify (run-id 20260521-031343)**: S1 + A1 + A2 + S2 + A3 + A4 all GREEN; clean teardown; driver RC=0.

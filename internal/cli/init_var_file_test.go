@@ -12,8 +12,9 @@
 //
 // Sub-test → acceptance-criterion map:
 //
-//	(a) HappyPath          → AC1 (both terraform.tfvars.user copies
-//	                              land, mode 0600, byte-identical)
+//	(a) HappyPath          → AC1 (terraform.tfvars.user lands at
+//	                              workspace root sibling to config.yaml,
+//	                              mode 0600, byte-identical to input)
 //	(b) ConfigSeeding      → AC2 (config.yaml reflects tfvars values)
 //	(c) MissingFile        → AC3 (non-zero exit; error names path)
 //	(d) MalformedFile      → AC4 (non-zero exit; error points at
@@ -154,9 +155,13 @@ func writeTFVars(t *testing.T, dir, name, content string) string {
 // ── (a) Happy path ──────────────────────────────────────────────────
 //
 // AC1: a complete terraform.tfvars-shaped file is passed; post-init
-// both ~/.roksbnkctl/<name>/state/terraform.tfvars.user AND
-// ~/.roksbnkctl/<name>/state-cluster/terraform.tfvars.user exist with
-// mode 0600 and are byte-identical to the input.
+// ~/.roksbnkctl/<name>/terraform.tfvars.user (sibling to config.yaml)
+// exists with mode 0600 and is byte-identical to the input. ONE copy
+// at the workspace root — tf.Workspace.UserTFVarsPath() resolves to
+// filepath.Dir(stateDir)/terraform.tfvars.user for BOTH the trial and
+// cluster phases, so a single workspace-root file serves both. Round-1
+// of Sprint 19 erroneously wrote two copies inside the state dirs
+// where HasUserTFVars() does NOT look.
 //
 // Skipped hermetically (no live IBM creds → ibm.Verify() fails before
 // the copy step). The gated live driver covers this end-to-end.
@@ -179,24 +184,28 @@ func TestInitVarFile_HappyPath_BothCopiesLand(t *testing.T) {
 		t.Fatalf("init --var-file unexpectedly failed: %v\nstderr:\n%s", runErr, errOut)
 	}
 
-	// AC1 — both copies present, mode 0600, byte-identical.
+	// AC1 — single workspace-root copy present, mode 0600, byte-identical.
+	dst := filepath.Join(home, wsName, "terraform.tfvars.user")
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("AC1: expected %s to exist: %v", dst, err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("AC1: %s mode = %o, want 0600", dst, mode)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("AC1: reading %s: %v", dst, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("AC1: %s bytes differ from input fixture\nwant %d bytes, got %d bytes", dst, len(want), len(got))
+	}
+	// And the obsolete in-state-dir locations must NOT exist (the
+	// HasUserTFVars()-blind spot the round-1 live verify caught).
 	for _, sub := range []string{"state", "state-cluster"} {
-		dst := filepath.Join(home, wsName, sub, "terraform.tfvars.user")
-		info, err := os.Stat(dst)
-		if err != nil {
-			t.Errorf("AC1: expected %s to exist: %v", dst, err)
-			continue
-		}
-		if mode := info.Mode().Perm(); mode != 0o600 {
-			t.Errorf("AC1: %s mode = %o, want 0600", dst, mode)
-		}
-		got, err := os.ReadFile(dst)
-		if err != nil {
-			t.Errorf("AC1: reading %s: %v", dst, err)
-			continue
-		}
-		if !bytes.Equal(got, want) {
-			t.Errorf("AC1: %s bytes differ from input fixture\nwant %d bytes, got %d bytes", dst, len(want), len(got))
+		stale := filepath.Join(home, wsName, sub, "terraform.tfvars.user")
+		if _, err := os.Stat(stale); err == nil {
+			t.Errorf("AC1: %s should not exist (HasUserTFVars() looks at the workspace root, not the state dirs)", stale)
 		}
 	}
 }
@@ -339,8 +348,11 @@ func TestInitVarFile_NoFlagByteIdentical(t *testing.T) {
 	// command's exit code. We ignore the error deliberately.
 	_, _, _ = runRootCmd(t, "init", "-w", wsName)
 
-	// AC5 — neither phase state dir contains terraform.tfvars.user.
-	for _, sub := range []string{"state", "state-cluster"} {
+	// AC5 — neither the workspace root nor the phase state dirs carry a
+	// terraform.tfvars.user. (Workspace root is the canonical Sprint 19
+	// destination; the state-dir paths are pinned too so a regression
+	// back to round-1's mis-located copies trips the test.)
+	for _, sub := range []string{"", "state", "state-cluster"} {
 		dst := filepath.Join(home, wsName, sub, "terraform.tfvars.user")
 		_, err := os.Stat(dst)
 		if err == nil {

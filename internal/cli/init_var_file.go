@@ -9,11 +9,11 @@ package cli
 //   2. mapping the parsed assignments onto the interview-targeted
 //      config.yaml fields (region, resource group, cluster name,
 //      OpenShift version, workers-per-zone, create_roks_cluster);
-//   3. copying the file verbatim, mode 0600, to both phase state dirs
-//      under the conventional `terraform.tfvars.user` name — the path
-//      the existing `tfws.HasUserTFVars()` codepath in internal/tf
-//      auto-layers on every subsequent lifecycle op without any further
-//      code change.
+//   3. copying the file verbatim, mode 0600, to the workspace root
+//      (sibling to `config.yaml`) as `terraform.tfvars.user` — the
+//      canonical path the existing `tfws.HasUserTFVars()` codepath in
+//      internal/tf auto-layers on every subsequent lifecycle op for
+//      both phases without any further code change.
 //
 // The kubeconfig_dir / scratch_dir paths are workspace-local computed
 // values; this helper deliberately does NOT seed them from the tfvars
@@ -47,7 +47,7 @@ var flagInitVarFile string
 
 func init() {
 	initCmd.Flags().StringVar(&flagInitVarFile, "var-file", "",
-		"path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to both phase state dirs as terraform.tfvars.user")
+		"path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases)")
 }
 
 // varFileSeeds carries the interview-targeted fields the operator's
@@ -171,53 +171,48 @@ func unquoteTFVarString(v string) string {
 	return v
 }
 
-// writeUserTFVarsCopies copies srcPath verbatim to both phase state
-// dirs as `terraform.tfvars.user`, mode 0600 (matches the existing
+// writeUserTFVarsCopies copies srcPath verbatim to the workspace root
+// as `terraform.tfvars.user`, mode 0600 (matches the existing
 // applied-tfvars snapshot pattern — the file carries `ibmcloud_api_key`
-// per the var-file shape). Returns the two absolute destination paths in
-// the order (trial-state, cluster-state) so runInit can print the
-// `✓ Wrote <abs-path>` confirmation lines in the same shape as the
-// surrounding init output.
+// per the var-file shape). Returns the absolute destination path so
+// runInit can print the `✓ Wrote <abs-path>` confirmation line in the
+// same shape as the surrounding init output.
 //
-// State-dir creation: WorkspaceStateDir / WorkspaceClusterStateDir
-// return the paths but do not mkdir; runInit's normal post-config writes
-// (the applied-tfvars snapshot, the auto-rendered tfvars) MkdirAll on
-// first use, but this helper runs before the first lifecycle op, so it
-// mkdirs here too. Mode 0700 on the dirs, matching the pattern
-// WriteAppliedTFVars uses (0o755 there; we go tighter for the state
-// dirs because they hold secrets — terraform.tfvars.user has the api
-// key).
-func writeUserTFVarsCopies(workspace, srcPath string) (trialDest, clusterDest string, err error) {
+// Path. `tf.Workspace.UserTFVarsPath()` resolves to
+// `filepath.Dir(stateDir) + "/terraform.tfvars.user"` — for BOTH the
+// trial and cluster phases that resolves to the same workspace-root
+// path (sibling to `config.yaml`), so a SINGLE copy at the workspace
+// root is auto-layered by the lifecycle for either phase. Initially
+// staff wrote two copies inside `state/` and `state-cluster/`, where
+// `HasUserTFVars()` does NOT look; that's the bug the round-1 live
+// verify caught — fixed to one copy at the workspace root.
+//
+// State-dir creation: not done here — `runInit`'s normal post-config
+// writes (the applied-tfvars snapshot, the auto-rendered tfvars)
+// MkdirAll on first use, and this helper no longer touches state dirs.
+// WorkspaceDir itself is created by SaveWorkspace (which runs first).
+func writeUserTFVarsCopies(workspace, srcPath string) (dest string, err error) {
 	body, err := os.ReadFile(srcPath)
 	if err != nil {
-		return "", "", fmt.Errorf("reading --var-file %q: %w", srcPath, err)
+		return "", fmt.Errorf("reading --var-file %q: %w", srcPath, err)
 	}
 
-	trialDir, err := config.WorkspaceStateDir(workspace)
+	wsDir, err := config.WorkspaceDir(workspace)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	clusterDir, err := config.WorkspaceClusterStateDir(workspace)
-	if err != nil {
-		return "", "", err
-	}
-
-	for _, dir := range []string{trialDir, clusterDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return "", "", fmt.Errorf("creating state dir %q: %w", dir, err)
-		}
+	// SaveWorkspace creates the dir, but be defensive — this helper runs
+	// just after SaveWorkspace, and a 0700 MkdirAll is a no-op when the
+	// dir already exists with that mode.
+	if err := os.MkdirAll(wsDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating workspace dir %q: %w", wsDir, err)
 	}
 
-	trialDest = filepath.Join(trialDir, "terraform.tfvars.user")
-	clusterDest = filepath.Join(clusterDir, "terraform.tfvars.user")
-
-	if err := writeUserTFVarsAtomic(trialDest, body); err != nil {
-		return "", "", err
+	dest = filepath.Join(wsDir, "terraform.tfvars.user")
+	if err := writeUserTFVarsAtomic(dest, body); err != nil {
+		return "", err
 	}
-	if err := writeUserTFVarsAtomic(clusterDest, body); err != nil {
-		return "", "", err
-	}
-	return trialDest, clusterDest, nil
+	return dest, nil
 }
 
 // writeUserTFVarsAtomic writes body to dest at mode 0600 using the
