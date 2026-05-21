@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2869698b.js";
+            window.path_to_searchindex_js = "searchindex-17bb5aab.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -1128,6 +1128,18 @@ exit
 <p>If you’d rather not export it in your shell, <code>roksbnkctl init</code> will prompt for it on a TTY and offer the same keychain-save afterwards. See <a href="#credentials-and-the-resolver-chain">Chapter 14</a> for the full resolution chain.</p>
 <h2 id="step-2--roksbnkctl-init"><a class="header" href="#step-2--roksbnkctl-init">Step 2 — <code>roksbnkctl init</code></a></h2>
 <p>Initialises a workspace under <code>~/.roksbnkctl/default/</code> (or under <code>&lt;name&gt;/</code> if you pass <code>-w &lt;name&gt;</code>). Verifies the API key against IBM IAM, resolves the resource group, and writes <code>config.yaml</code>.</p>
+<blockquote>
+<p><strong>Flag-value syntax.</strong> Short flags accept their value as <code>-w value</code> (one space) or <code>-w=value</code> (immediate equals); the stuck-together form <code>-wvalue</code> is rejected at parse time before any workspace dir is created. The same rule applies to every short flag (<code>-w</code>, <code>-f</code>, <code>-n</code>, <code>-c</code>, <code>-l</code>, <code>-o</code>). Long flags follow the same two shapes: <code>--workspace value</code> or <code>--workspace=value</code>. So if you typo the long-flag name as a short — e.g. <code>roksbnkctl init -ws canada-roks --var-file ./terraform.tfvars</code> — the binary rejects it immediately with:</p>
+<pre><code>roksbnkctl: "-ws" is not a recognised flag (looks like a stuck-together short-flag-value, which this binary does not accept).
+Use one of these forms instead:
+  -w s              (short, space)
+  -w=s              (short, equals)
+  --workspace s     (long, space)
+  --workspace=s     (long, equals)
+Did you mean '--workspace s'?
+</code></pre>
+<p>Recovery is what the error names: re-run with <code>--workspace canada-roks</code> (or <code>-w canada-roks</code>).</p>
+</blockquote>
 <pre><code class="language-bash">roksbnkctl init
 </code></pre>
 <p>Sample interactive session:</p>
