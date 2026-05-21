@@ -38,7 +38,10 @@ type BnkSpec struct {
 	DeploymentSize string `yaml:"deploymentSize,omitempty"`
 	// StorageClassName for BNK persistent volumes. Default "gp3".
 	StorageClassName string `yaml:"storageClassName,omitempty"`
-	// ManifestVersion is the BNK manifest/chart version. Default "2.21.13".
+	// ManifestVersion is the BNK manifest version pulled by FLO from
+	// oci://repo.f5.com/release/f5-bigip-k8s-manifest. Default matches
+	// aws-gpu-setup MANIFEST_VERSION — the FLO chart version
+	// (v2.21.13-0.0.28) is unrelated to this manifest version.
 	ManifestVersion string `yaml:"manifestVersion,omitempty"`
 	// TmmMtu is the TMM interface MTU. Default 9000.
 	TmmMtu int `yaml:"tmmMtu,omitempty"`
@@ -340,7 +343,7 @@ func applyDefaults(c *Cluster) {
 			c.Bnk.StorageClassName = "gp3"
 		}
 		if c.Bnk.ManifestVersion == "" {
-			c.Bnk.ManifestVersion = "2.21.13"
+			c.Bnk.ManifestVersion = "2.3.0-3.2598.3-0.0.170"
 		}
 		if c.Bnk.TmmMtu == 0 {
 			c.Bnk.TmmMtu = 9000

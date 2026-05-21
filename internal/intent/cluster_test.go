@@ -802,8 +802,8 @@ bnk:
 	if c.Bnk.StorageClassName != "gp3" {
 		t.Errorf("StorageClassName: got %q, want gp3", c.Bnk.StorageClassName)
 	}
-	if c.Bnk.ManifestVersion != "2.21.13" {
-		t.Errorf("ManifestVersion: got %q, want 2.21.13", c.Bnk.ManifestVersion)
+	if c.Bnk.ManifestVersion != "2.3.0-3.2598.3-0.0.170" {
+		t.Errorf("ManifestVersion: got %q, want 2.3.0-3.2598.3-0.0.170", c.Bnk.ManifestVersion)
 	}
 	if c.Bnk.TmmMtu != 9000 {
 		t.Errorf("TmmMtu: got %d, want 9000", c.Bnk.TmmMtu)
