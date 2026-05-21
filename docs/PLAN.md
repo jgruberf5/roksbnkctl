@@ -1122,6 +1122,27 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 20 — `make release-publish` stale-PDF hardening (first regular work sprint post-`v1.6.4`)
+
+_Drafted 2026-05-21 immediately after the Sprint 19 v1.6.4 cut surfaced a real defect in the release pipeline: `make release-publish` uploaded a stale `book/book/pandoc/pdf/book.pdf` from the prior cycle under the v1.6.4 asset name, because the target's prereq check was "does the PDF exist?" not "is it current?". The current cycle's `book-pdf` had failed silently (missing `ulem.sty` in the docker image — that's commit `a46fb53`, unrelated to this sprint), and the publish target was happy with whatever `book.pdf` was on disk. Sprint 19's integrator caught the stale-upload manually via a grep against the gh-pages-published HTML; this sprint makes that manual recovery unnecessary._
+
+Tiny scope, one role's worth of code; partitioned the regular way so sprintwatch counts a terminal state for each role:
+
+| Role | Scope |
+|---|---|
+| **Staff** Issue 1 | Edit `Makefile`'s `release-publish` target to `rm -rf book/book/pandoc/` + re-invoke `$(MAKE) book-pdf BOOK_BACKEND=docker` + gate the upload step on the rebuild's exit code. Symmetric hardening for `book-publish` if its HTML side carries the same staleness risk. Docstring update naming the Sprint 19 v1.6.4 event so future maintainers understand the rationale. |
+| **Architect** Issue 1 | None — release-tooling-only, no user-facing surface. Closure note explicitly says "no architect deliverables", flips status to `resolved`. |
+| **Validator** Issue 1 | New hermetic test (`scripts/test-release-publish-staleness.sh` or a bats equivalent under `tests/scripts/` if bats is in the tree) that plants a sentinel stale PDF, stubs `gh` on PATH, and asserts the rebuild preamble wipes the stale bytes + `gh release upload` is never called with stale content. Hermetic — no real `gh`, no docker pull, no actual PDF render. |
+| **Tech-writer** Issue 1 (light, runs after) | Drift sweep — docstring matches recipe, symmetric staleness risks on neighbouring targets caught, `docs/PLAN.md` closure subsection lands. GREEN/RED launch verdict. |
+
+`live-verify-high-issues` does NOT apply — this is artifact-shape risk, not cloud-integration-shape. The hermetic test is sufficient closure. Integrator's live test is whoever cuts the next release runs `make release-publish VERSION=v…` against a tree with a planted stale `book.pdf` and confirms the rebuild fires + the right PDF gets uploaded.
+
+Version at cut: integrator-owned. Internal tooling fix → likely a patch bump (`v1.6.5`) bundled with whatever user-facing changes ride along; could also defer to the next user-facing-feature cut and ride that release.
+
+Sprint launch: integrator dispatches staff + validator in parallel (tech-writer + architect can run sequentially with minimal work). Aggregates + commits + runs the hermetic test + dispatches tech-writer over the integrated tree.
+
+---
+
 ## Sprint 19 — `roksbnkctl init --var-file <path>` — workspace-persistent tfvars at init time (first regular work sprint post-`v1.6.3`)
 
 _Drafted 2026-05-20 after live use of `v1.6.3` surfaced the residual gap that v1.6.2's `.applied-replay.tfvars` mechanism couldn't reach: between `init` and the first successful `up`, there is no `terraform.applied.tfvars` snapshot yet, so bare `roksbnkctl <verb> -w <ws>` still refuses with the Sprint 16 option-(b) actionable error. The plumbing to close the gap already exists in the tree (`tfws.HasUserTFVars()` already auto-layers `state/terraform.tfvars.user` if present); Sprint 19's work is `init`-side only — add a `--var-file <path>` flag that automates the file copy + skips the corresponding interview prompts. The operator's `./terraform.tfvars` (or equivalent) becomes the workspace's persisted variable identity at init time._
