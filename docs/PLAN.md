@@ -1122,6 +1122,29 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 22 — Add `mdbook` image to `tools-images.yml` CI matrix (draft, not yet dispatched)
+
+_Drafted 2026-05-21 immediately after the `v1.7.0` cut surfaced the gap: `make release-publish` step 2 (PDF rebuild + GitHub Release upload) intermittently fails when the docker container's Puppeteer/Chromium can't launch on a cold start. The retry succeeded — but the deeper issue is that the `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev` image referenced by `Makefile:54` is **manually built and pushed** (today's push was the first time the package even existed on ghcr.io; the integrator pushed it 2026-05-21T21:17:32Z and flipped visibility to public). The other two tools images (`ibmcloud`, `iperf3`) ride `tools-images.yml`'s matrix and auto-rebuild + auto-push on every main push + every `v*` tag; `mdbook` does not. Any future Dockerfile edit (e.g. `a46fb53`'s `texlive-plain-generic` add) only reaches ghcr.io if the integrator remembers to `make -C tools/docker build-mdbook` and `docker push`. A fresh contributor running `make book-pdf BOOK_BACKEND=docker` on a clean host would otherwise pull a stale image — or, before today, would 401 because the package didn't exist publicly._
+
+Tiny scope, one workflow-file edit; validator-owned (per `prompts/README.md` role partition, `.github/workflows/*.yml` is validator territory):
+
+| Role | Scope |
+|---|---|
+| **Validator** Issue 1 | Add `mdbook` to the `strategy.matrix.image` list in `.github/workflows/tools-images.yml` (alongside the existing `ibmcloud` and `iperf3` entries). Verify the existing `Build and push (tag)` / `Build and push (main)` / `Build and push (dispatch)` steps work for `mdbook` with `context: .` + `file: ./tools/docker/${{ matrix.image }}/Dockerfile`. The mdbook Dockerfile (`tools/docker/mdbook/Dockerfile`) doesn't reference repo-root paths so the broader context is harmless (same as `iperf3`'s situation per the existing workflow comment). Trigger a manual `workflow_dispatch` run after merge to verify the matrix expansion before relying on it for the next main-push or tag-push. |
+| **Architect** Issue 1 (light) | One short note in `CONTRIBUTING.md` (or wherever the docker-image-publishing flow is documented — verify in `docs/PRD/03-*` or the contributor docs) confirming `mdbook` is now CI-managed; remove any "remember to manually push the mdbook image" callouts if they exist. |
+| **Staff** | No staff scope. This sprint is workflow + docs only — no Go code change. |
+| **Tech-writer** Issue 1 (light, runs after) | Drift sweep — confirm the new matrix entry produced the expected `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev` push on the post-integration main push; spot-check the manifest digest matches what the workflow built; GREEN/RED launch verdict. |
+
+`live-verify-high-issues` does NOT apply — workflow-file change is verifiable by a single `workflow_dispatch` run, not a live cloud test.
+
+Version at cut: integrator-owned. Internal CI-infra fix → patch (`v1.7.1`) is the natural fit, or ride the next user-facing change. No user-visible behavioural surface.
+
+Sprint launch: when ready, integrator drafts the four prompts under `prompts/sprint22/`, copies the theme line from the heading above into `prompts/sprint22/README.md`, then dispatches per `prompts/README.md` §"Kicking off Sprint N — the canonical checklist". The staff prompt can be a no-op pointer at this section's "no staff scope" line, OR the role can be dropped entirely from the dispatch (precedent: Sprint 20 architect closure recorded `no architect deliverables (release-tooling-only)` — same shape applies here for staff).
+
+Related candidate (NOT in this sprint's scope, surfaced for the integrator's awareness when planning Sprint 23): commit `8544ab0`'s message flags that `make staticcheck` should be in the sprint-standard gate set — 7 consecutive CI failures on `main` (Sprint 18 round-4 through Sprint 21) went unnoticed because staticcheck only runs in CI, not in the local gate list each role's closure verifies against. Folding that into a future sprint would close the same blind-spot class one level deeper.
+
+---
+
 ## Sprint 21 — Cobra/pflag argv-parser strictness — reject stuck-together short-flag-values + `cobra.NoArgs` audit (first regular work sprint post-`v1.6.4`, runs in parallel with Sprint 20)
 
 _Drafted 2026-05-21 from the integrator's live-use observation. The operator typed `roksbnkctl init -ws canada-roks --var-file ./terraform.tfvars` intending `--workspace canada-roks`. Cobra/pflag's stuck-together-shorthand parser interpreted `-ws` as `-w s`; the positional `canada-roks` was silently dropped because `init` didn't declare `Args: cobra.NoArgs`. A workspace named `s` was created carrying the correct `canada-roks` cluster identity inside it; a follow-on bare `cluster up` then resolved to `current_workspace: default` and produced a 25-resource-destroy / 41-resource-add plan against real cloud state. The plan was caught at review, but the user explicitly signalled this is the priority class to close: "I don't want to see any more foolish syntax errors, like I made, messing up a resource heavy task." Captured as the `argv-strictness-prevents-resource-damage` integrator memory._
