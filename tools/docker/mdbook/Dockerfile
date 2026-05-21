@@ -80,6 +80,7 @@ RUN apt-get update \
         texlive-fonts-extra \
         texlive-latex-recommended \
         texlive-latex-extra \
+        texlive-plain-generic \
         lmodern \
         fonts-dejavu \
         librsvg2-bin \
