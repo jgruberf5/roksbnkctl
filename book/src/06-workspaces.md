@@ -136,6 +136,50 @@ roksbnkctl ws list
 
 `roksbnkctl init -w <name>` is the one-shot path that creates the directory **and** populates `config.yaml` interactively. Everything else (`ws new`, `ws use`, `ws delete`) is the deconstructed form for users who want finer-grained control.
 
+## Skip the interview: `init --var-file`
+
+If you already have a `terraform.tfvars` in hand — from a prior run, a colleague's hand-off, or `cp terraform.tfvars.example terraform.tfvars && $EDITOR terraform.tfvars` — you don't need to retype its values into the interactive prompts. Pass the file to `init` and the interview is short-circuited for every field the file already answers:
+
+```bash
+roksbnkctl init -w myws --var-file ./terraform.tfvars
+```
+
+What that one command persists:
+
+- **`~/.roksbnkctl/myws/config.yaml`** — seeded from the tfvars' values for the fields the interview asks about (`ibmcloud_cluster_region`, `openshift_cluster_name`, `openshift_cluster_version`, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn't carry still prompt (or fall back to defaults), so a partial `terraform.tfvars` is fine.
+- **`~/.roksbnkctl/myws/state/terraform.tfvars.user`** — a verbatim copy of your var-file, mode `0600`. This is the trial-phase override the lifecycle auto-layers on every `up` / `plan` / `apply` / `down`.
+- **`~/.roksbnkctl/myws/state-cluster/terraform.tfvars.user`** — same verbatim copy under the cluster-phase state dir, also mode `0600`. The cluster phase reads its own copy; one missing copy leaves that phase broken on bare `-w <ws>`.
+
+Why two copies, not one? `roksbnkctl cluster up` / `cluster down` and `roksbnkctl up` / `down` use separate Terraform state trees (see the [on-disk layout](#the-on-disk-layout) above). Each phase's lifecycle reads its own `terraform.tfvars.user` when present — a single shared copy under the workspace root wouldn't reach both.
+
+### Why it matters: subsequent commands Just Work on bare `-w <ws>`
+
+Once `init --var-file` has dropped the two `terraform.tfvars.user` copies, you can run the rest of the lifecycle without re-passing the var-file:
+
+```bash
+roksbnkctl up    -w myws --auto    # var-file already on disk; no flag needed
+roksbnkctl plan  -w myws
+roksbnkctl apply -w myws --auto
+roksbnkctl down  -w myws --auto    # bare -w; no "No value for required variable" error
+```
+
+This closes the UX gap where a fresh workspace's first `up --var-file <path>` was followed later by a bare `down -w <ws>` that errored out because the var-file was nowhere on disk for the destroy. With `init --var-file`, the file is on disk from the moment the workspace exists.
+
+Passing `--var-file <path>` on a later command still wins — the precedence chain is unchanged: rendered `terraform.tfvars` → `terraform.tfvars.user` (this section's deliverable) → caller's `--var-file` flags → phase overrides. To swap credentials or knobs for a single invocation, pass `--var-file ./alt.tfvars` on that one call; the persisted `terraform.tfvars.user` is untouched.
+
+### Secrets on disk
+
+The operator's `ibmcloud_api_key` from `./terraform.tfvars` lands at `~/.roksbnkctl/<ws>/state/terraform.tfvars.user` (and the `state-cluster` sibling), mode `0600`. This is the same security posture as the repo-root `./terraform.tfvars` you copied from — just relocated under workspace state. The standard tfvars guidance applies (see [Chapter 13 §"The `IBMCLOUD_API_KEY` exception"](./13-terraform-variables.md#the-ibmcloud_api_key-exception)): if you'd prefer not to have the key on disk at all, omit `ibmcloud_api_key` from `./terraform.tfvars` before running `init --var-file`, and let the [cred resolver](./14-credentials-resolver.md) supply it from env / keychain / `~/.bluemix/api_key` at apply time. The persisted `terraform.tfvars.user` then carries every other knob but no credential.
+
+### Diagnostics
+
+If `roksbnkctl down -w <ws>` (no `--var-file` flag) errors with `No value for required variable …`, you're in one of two states:
+
+1. **The workspace was `init`-ed without `--var-file`.** No `terraform.tfvars.user` was dropped, so the lifecycle has nothing to layer in for the required variable. Re-run `roksbnkctl init -w <ws> --var-file <path>` to seed both phase copies and retry the `down`.
+2. **The `terraform.tfvars.user` was removed.** Either by hand, by a `ws delete --force` that took the dir out from under you, or by an out-of-band cleanup. Re-run `roksbnkctl init -w <ws> --var-file <path>` to re-drop both copies, or pass `--var-file <path>` on the `down` for a one-shot fix.
+
+The fastest verification that the file is in the right place: `ls -l ~/.roksbnkctl/<ws>/state/terraform.tfvars.user ~/.roksbnkctl/<ws>/state-cluster/terraform.tfvars.user`. Both should exist, both at mode `0600`.
+
 ## The full command tree
 
 ```bash

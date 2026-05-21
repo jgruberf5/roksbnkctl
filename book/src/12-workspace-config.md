@@ -272,6 +272,8 @@ Later layers override earlier. Concretely: `config.yaml`'s `cluster.workers_per_
 
 The `terraform.tfvars.user` middle layer is for when you want a workspace-local override that survives across runs without modifying `config.yaml` — it's typically used for fields the YAML schema doesn't model (rare; the schema covers the common knobs). [Chapter 13](./13-terraform-variables.md) goes deep on this.
 
+If you already have a complete `./terraform.tfvars` (your own, or from a colleague's hand-off) and want this workspace to always use it without re-passing `--var-file` on every command, run `roksbnkctl init -w <ws> --var-file ./terraform.tfvars`. That seeds `config.yaml` from the file **and** drops a verbatim copy at both `state/terraform.tfvars.user` and `state-cluster/terraform.tfvars.user` (mode `0600`), so subsequent `up` / `plan` / `apply` / `down` against bare `-w <ws>` pick it up automatically. The full walkthrough is in [Chapter 6 §"Skip the interview: `init --var-file`"](./06-workspaces.md#skip-the-interview-init---var-file).
+
 The `IBMCLOUD_API_KEY` is the one exception that **never** goes through tfvars on disk. It's passed as a `TF_VAR_ibmcloud_api_key` env var on the terraform invocation. `--var-file` cannot supply the API key — the resolver chain in [Chapter 14](./14-credentials-resolver.md) is the only path.
 
 ## Editing by hand vs helpers

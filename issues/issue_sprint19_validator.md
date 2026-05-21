@@ -69,3 +69,43 @@ Drives the `init` cobra command via its public surface (whatever non-interactive
 - Staff Issue 1 — the code-side; this issue's tests prove it.
 - Sprint 16 round-2 option (b) (`live-verify-high-issues`) — the actionable-error gate this work makes redundant for `init --var-file` users.
 - `scripts/e2e-cos-bucket-get.sh` — the reference gated-live-verify shape this driver mirrors.
+
+---
+
+### Closure — validator deliverable shipped (Sprint 19, 2026-05-20)
+
+**Status: open — pending live `!` verify** (integrator flips to `resolved` after the live `!` cycle GREENs).
+
+**Files shipped:**
+
+- `internal/cli/init_var_file_test.go` (new, +260 LOC additive — no edits to any pre-existing `_test.go`).
+- `scripts/e2e-init-var-file.sh` (new, +x, mirrors `scripts/e2e-cos-bucket-get.sh`'s style).
+
+**Sub-test → acceptance-criterion map:**
+
+| Sub-test | AC | Hermetic? | Notes |
+|---|---|---|---|
+| `TestInitVarFile_HappyPath_BothCopiesLand` | AC1 (both `terraform.tfvars.user` copies, mode 0600, byte-identical) | skipped without live `IBMCLOUD_API_KEY` | staff's runInit calls `ibm.Verify()` BEFORE the var-file copy; positive path needs live creds → live driver covers it |
+| `TestInitVarFile_ConfigSeeding` | AC2 (`config.yaml` reflects tfvars-seeded fields) | skipped without live `IBMCLOUD_API_KEY` | same gate as above; live driver A2 covers it |
+| `TestInitVarFile_MissingFile_Fails` | AC3 (non-zero exit; error names path) | **yes** | `loadInitVarFile` pre-stats; trips before any network call |
+| `TestInitVarFile_MalformedFile_Fails` | AC4 (non-zero exit; error references `terraform.tfvars.example`) | **yes** | binary blob → zero recognised assignments → staff's actionable-error branch fires |
+| `TestInitVarFile_NoFlagByteIdentical` | AC5 (no `--var-file` → no `terraform.tfvars.user` created) | **yes** | filesystem-state assertion; tolerates the Verify failure that the no-creds run produces |
+
+**Hermetic gate (today):** `go test -race -run TestInitVarFile ./internal/cli/` → 3 PASS + 2 SKIP (skip messages explicitly name the live driver as the path to GREEN on the positive cases). Full `go test -race ./internal/cli/` → PASS. `go build ./...` + `go vet ./...` + `gofmt -l internal/cli/init_var_file_test.go` clean. `bash -n scripts/e2e-init-var-file.sh` clean.
+
+**DRY_RUN verification:** `DRY_RUN=1 TFVARS=./terraform/terraform.tfvars.example bash scripts/e2e-init-var-file.sh` walks preflight → S1 (init --var-file) → A1 → A2 → S2 (bare plan) → A3 → A4 with zero cloud calls and the planted-sentinel scan = 0 hits.
+
+**Live driver invocation (integrator-run `!`):**
+
+```
+./scripts/e2e-init-var-file.sh
+# (uses repo-root ./terraform.tfvars by default; never reads the api key into argv)
+```
+
+Asserts: S1 init exits 0 → A1 both `terraform.tfvars.user` copies land at mode 0600 with sha256 byte-equal to input → A2 `config.yaml` carries the tfvars-seeded `region` / `cluster name` / `openshift_version` / `workers_per_zone` fields → S2 bare `plan -w <ws>` exits 0 → **A3 the bare-plan stderr carries the literal `→ Layering user tfvars from` line** (pins the actual `HasUserTFVars()`-true codepath, NOT a "did `plan` exit 0" proxy) → A4 planted-sentinel + API-key-head scan over the run log = 0 hits → EXIT trap removes the throwaway workspace.
+
+**Live-`!`-verify expected shape (per `live-verify-high-issues`):** integrator runs the driver on a real workspace; on GREEN, flips this issue + staff Issue 1 from `open` to `resolved` and tags the sprint for cut. On RED, the failing assertion is named in the driver's stderr and the integrator routes a follow-up.
+
+**Discovered gap (informational, NOT blocking):** staff's shipped `runInit` calls `ibm.Verify()` before the var-file copy step, so the AC1 + AC2 hermetic positive cases cannot reach the assertion surface without live creds. The live driver covers both AC1 and AC2 end-to-end, so this is not a closure blocker — but a v1.7 follow-up could expose a `--skip-verify` (or analogous test seam) to lift the two SKIPs to PASS in CI without re-organising staff's design.
+
+**Discipline checks:** validator did NOT commit; validator did NOT run live infra (no `roksbnkctl init` or `plan` was executed against a real cloud account from this thread); validator did NOT touch any pre-existing `_test.go` (`git status --short | grep _test.go` shows only the two new `??` entries — the validator-shipped `init_var_file_test.go` and staff's sibling helpers test).
