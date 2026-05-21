@@ -102,6 +102,7 @@ Credential mode is selected via --trusted-profile (auto|on|off):
                    perms don't allow.
   off            — skip the trusted-profile path; install the v1.0.x
                    static-key Secret.`,
+	Args: cobra.NoArgs,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		return validateTrustedProfileFlag(flagTrustedProfile)
 	},
@@ -111,12 +112,14 @@ Credential mode is selected via --trusted-profile (auto|on|off):
 var opsShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the ops pod's status, image, RBAC subject, and Secret rotation timestamp",
+	Args:  cobra.NoArgs,
 	RunE:  runOpsShow,
 }
 
 var opsUninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Delete the ops fixtures (namespaces, RBAC, Pod, Secret)",
+	Args:  cobra.NoArgs,
 	RunE:  runOpsUninstall,
 }
 

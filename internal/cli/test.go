@@ -64,6 +64,7 @@ non-zero on any-fail — CI-friendly.`,
 var testConnectivityCmd = &cobra.Command{
 	Use:   "connectivity",
 	Short: "HTTP/HTTPS reachability against configured hosts",
+	Args:  cobra.NoArgs,
 	RunE:  runTestConnectivityCmd,
 }
 
@@ -88,6 +89,7 @@ Two modes:
 Use --backend local|k8s|ssh:<target> to pick a single vantage point;
 --gslb-compare fans out across all available vantages. PRD 03 §"DNS
 probe (GSLB-aware)".`,
+	Args: cobra.NoArgs,
 	RunE: runTestDNSCmd,
 }
 
@@ -100,12 +102,14 @@ in-cluster pod (--mode east-west).
 
 Not yet implemented — landing in v1.x once the internal/k8s client-go
 fixture lifecycle is wired.`,
+	Args: cobra.NoArgs,
 	RunE: runTestThroughputCmd,
 }
 
 var testListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available test suites",
+	Args:  cobra.NoArgs,
 	RunE:  runTestListCmd,
 }
 

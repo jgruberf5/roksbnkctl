@@ -25,12 +25,14 @@ which one commands run against; -w/--workspace overrides for one invocation.`,
 var wsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workspaces and their states",
+	Args:  cobra.NoArgs,
 	RunE:  runWSList,
 }
 
 var wsCurrentCmd = &cobra.Command{
 	Use:   "current",
 	Short: "Print the current workspace name",
+	Args:  cobra.NoArgs,
 	RunE:  runWSCurrent,
 }
 

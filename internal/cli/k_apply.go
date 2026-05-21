@@ -34,6 +34,7 @@ Examples:
   roksbnkctl k apply -f deploy.yaml -n f5-bnk
   roksbnkctl k apply -f manifests/
   cat deploy.yaml | roksbnkctl k apply -f -`,
+		Args: cobra.NoArgs,
 		RunE: runKApply,
 	}
 	flags := cmd.Flags()

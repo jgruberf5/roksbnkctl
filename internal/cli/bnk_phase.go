@@ -40,6 +40,7 @@ Refuses on legacy single-state workspaces (those provisioned with
 v1.0.x ` + "`roksbnkctl up`" + `): cluster + trial share one state file there,
 so the trial can't be applied in isolation without state migration.
 Use ` + "`roksbnkctl up`" + ` on those workspaces.`,
+	Args: cobra.NoArgs,
 	RunE: runBnkUp,
 }
 
@@ -54,6 +55,7 @@ intact for the next ` + "`bnk up`" + ` to attach to. The common iteration loop:
 
 Refuses when there's no trial state to destroy, and on legacy
 single-state workspaces (use ` + "`roksbnkctl down`" + ` there).`,
+	Args: cobra.NoArgs,
 	RunE: runBnkDown,
 }
 

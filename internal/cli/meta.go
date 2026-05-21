@@ -23,6 +23,7 @@ const DocsURL = "https://jgruberf5.github.io/roksbnkctl/book/"
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version, commit, and build date",
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		// Keep the first line byte-identical to the pre-v1.0 shape so
 		// any scripts that grep `roksbnkctl version` output for the
@@ -52,6 +53,7 @@ Linux/macOS only — Windows can't replace a running .exe in place; use
 Requires write permission on the binary's directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
 upgrade verb).`,
+	Args: cobra.NoArgs,
 	RunE: runSelfUpdate,
 }
 
@@ -88,6 +90,7 @@ Pass --target <name> to additionally probe an SSH target (runs whoami).
 Pass --backend k8s | ssh:<target> for per-backend prereq checks.
 
 Exits non-zero only when a required check fails (warnings don't block).`,
+	Args: cobra.NoArgs,
 	RunE: runDoctor,
 }
 

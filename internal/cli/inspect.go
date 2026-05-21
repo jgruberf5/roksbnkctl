@@ -43,6 +43,7 @@ var statusCmd = &cobra.Command{
 
 v1.x will add per-BNK-component readiness (flo, cis, cert-manager,
 cneinstance) once the component-discovery shape is finalised.`,
+	Args: cobra.NoArgs,
 	RunE: runStatus,
 }
 

@@ -39,6 +39,7 @@ BNK version) and writes ~/.roksbnkctl/<workspace>/config.yaml.
 On first run with no -w flag, creates and uses the 'default' workspace.
 Re-run with --upgrade-tf to bump the pinned Terraform source to its latest
 release.`,
+	Args: cobra.NoArgs,
 	RunE: runInit,
 }
 
@@ -48,24 +49,28 @@ var upCmd = &cobra.Command{
 	Long: `roksbnkctl up validates credentials, resolves the pinned Terraform source,
 runs plan, and (after confirmation, unless --auto) applies. Idempotent and
 resumable: a partial failure is recovered by re-running 'roksbnkctl up'.`,
+	Args: cobra.NoArgs,
 	RunE: runUp,
 }
 
 var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Read-only; show what roksbnkctl up would change",
+	Args:  cobra.NoArgs,
 	RunE:  runPlan,
 }
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply Terraform without re-prompting (assumes config.yaml exists)",
+	Args:  cobra.NoArgs,
 	RunE:  runApply,
 }
 
 var downCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Destroy everything in the workspace — terraform destroy",
+	Args:  cobra.NoArgs,
 	RunE:  runDown,
 }
 
