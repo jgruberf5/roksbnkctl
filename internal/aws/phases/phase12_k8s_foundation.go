@@ -462,6 +462,41 @@ func applyRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) er
 	return nil
 }
 
+// deleteRawYAML parses a multi-document YAML byte slice and deletes each
+// object via the dynamic client in REVERSE order. Tolerates NotFound. Used by
+// down paths of phases that applied embedded YAML.
+func deleteRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) error {
+	objs, err := parseYAMLDocs(rawYAML)
+	if err != nil {
+		return fmt.Errorf("parse YAML: %w", err)
+	}
+	for i := len(objs) - 1; i >= 0; i-- {
+		obj := objs[i]
+		kind, _ := obj["kind"].(string)
+		meta, _ := obj["metadata"].(map[string]interface{})
+		objName, _ := meta["name"].(string)
+		objNS, _ := meta["namespace"].(string)
+		apiVersion, _ := obj["apiVersion"].(string)
+		if kind == "" || objName == "" {
+			continue
+		}
+		gvr, namespaced, err := resolveGVR(apiVersion, kind)
+		if err != nil {
+			continue
+		}
+		var delErr error
+		if namespaced {
+			delErr = dyn.Resource(gvr).Namespace(objNS).Delete(ctx, objName, metav1.DeleteOptions{})
+		} else {
+			delErr = dyn.Resource(gvr).Delete(ctx, objName, metav1.DeleteOptions{})
+		}
+		if delErr != nil && !k8serrors.IsNotFound(delErr) {
+			fmt.Fprintf(os.Stderr, "[delete] warning: %s %s/%s: %v\n", kind, objNS, objName, delErr)
+		}
+	}
+	return nil
+}
+
 // parseYAMLDocs splits a multi-document YAML byte slice into individual
 // unstructured maps. Empty documents are skipped.
 func parseYAMLDocs(data []byte) ([]map[string]interface{}, error) {

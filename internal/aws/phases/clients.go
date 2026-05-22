@@ -108,6 +108,9 @@ type EKSAPI interface {
 	CreateNodegroup(ctx context.Context, in *eks.CreateNodegroupInput, opts ...func(*eks.Options)) (*eks.CreateNodegroupOutput, error)
 	DescribeNodegroup(ctx context.Context, in *eks.DescribeNodegroupInput, opts ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error)
 	DeleteNodegroup(ctx context.Context, in *eks.DeleteNodegroupInput, opts ...func(*eks.Options)) (*eks.DeleteNodegroupOutput, error)
+	CreateAddon(ctx context.Context, in *eks.CreateAddonInput, opts ...func(*eks.Options)) (*eks.CreateAddonOutput, error)
+	DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, opts ...func(*eks.Options)) (*eks.DescribeAddonOutput, error)
+	DeleteAddon(ctx context.Context, in *eks.DeleteAddonInput, opts ...func(*eks.Options)) (*eks.DeleteAddonOutput, error)
 }
 
 // IAMAPI is the subset of iam.Client surface used by phase07. Tests inject a

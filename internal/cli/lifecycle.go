@@ -503,6 +503,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 		return fmt.Errorf("up: %w", err)
 	}
 
+	// Phase 11b (slice 8): EBS CSI managed addon + gp3 StorageClass + hugepages-ds.
+	// Runs after Phase 18 (IRSA) so it has node-role IAM in place AND k8s clients
+	// attached, but BEFORE Phase 12 (k8s foundation) since cert-manager etc. don't
+	// depend on CSI/hugepages. Naming "11b" preserves slice-7 numbering identity.
+	if err := phases.Phase11bEBSCSIHugepages(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
+
 	if err := phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
@@ -631,6 +639,12 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase12K8sFoundationDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	// Phase 11b (slice 8): EBS CSI addon + gp3 SC + hugepages-ds teardown.
+	// Runs after Phase 12 down (cert-manager + multus removed) but before
+	// Phase 11 kubeconfig down (still needs k8s client + EKS API access).
+	if err := phases.Phase11bEBSCSIHugepagesDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase11KubeconfigDown(ctx, cl, st, clients); err != nil {

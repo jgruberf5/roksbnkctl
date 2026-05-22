@@ -1,0 +1,60 @@
+---
+# Allocates 2MB HugePages on BNK worker nodes (label role=bnk).
+# F5 TMM requires hugepages-2Mi; default 2048 pages = 4GB.
+# Ported from aws-gpu-setup/hugepages-ds.yaml.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hugepages-setup
+  namespace: kube-system
+  labels:
+    app: hugepages-setup
+    app.kubernetes.io/managed-by: awsbnkctl
+spec:
+  selector:
+    matchLabels:
+      app: hugepages-setup
+  template:
+    metadata:
+      labels:
+        app: hugepages-setup
+    spec:
+      nodeSelector:
+        role: bnk
+      hostPID: true
+      hostNetwork: true
+      tolerations:
+      - operator: Exists
+      restartPolicy: Always
+      containers:
+      - name: hugepages
+        image: alpine:3.20
+        securityContext:
+          privileged: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          NEED=2048
+          PG=/sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+          CUR=$(cat $PG)
+          echo "[hugepages] node=$(hostname) current(2Mi)=$CUR target=$NEED"
+          if [ "$CUR" -lt "$NEED" ]; then
+            echo $NEED > $PG
+            echo "[hugepages] set 2Mi=$(cat $PG)"
+            if [ -w /sys/devices/system/node/node0/hugepages/hugepages-1048576kB/nr_hugepages ]; then
+              echo 0 > /sys/devices/system/node/node0/hugepages/hugepages-1048576kB/nr_hugepages || true
+              echo "[hugepages] zeroed 1Gi pages"
+            fi
+            nsenter -t 1 -m -u -i -n -p -- systemctl restart kubelet || true
+            echo "[hugepages] kubelet restarted to advertise 2Mi capacity"
+          fi
+          sleep infinity
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi

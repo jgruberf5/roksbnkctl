@@ -15,13 +15,17 @@ import (
 type mockEKS struct {
 	// In-memory registries.
 	clusters   map[string]*ekstypes.Cluster
-	nodegroups map[string]map[string]*ekstypes.Nodegroup // clusterName → ngName → ng
+	nodegroups map[string]map[string]*ekstypes.Nodegroup  // clusterName → ngName → ng
+	addons     map[string]map[string]ekstypes.AddonStatus // clusterName → addonName → status
 
 	// Per-method call counts.
 	createClusterCalls   int
 	deleteClusterCalls   int
 	createNodegroupCalls int
 	deleteNodegroupCalls int
+	createAddonCalls     int
+	describeAddonCalls   int
+	deleteAddonCalls     int
 
 	// Configurable errors.
 	createClusterErr   error
@@ -158,4 +162,47 @@ func (m *mockEKS) DeleteNodegroup(_ context.Context, in *eks.DeleteNodegroupInpu
 	out := &eks.DeleteNodegroupOutput{Nodegroup: ng}
 	delete(clusterNGs, ngName)
 	return out, nil
+}
+
+// CreateAddon — slice 8 stub. Records the call + tracks addon state per cluster.
+func (m *mockEKS) CreateAddon(_ context.Context, in *eks.CreateAddonInput, _ ...func(*eks.Options)) (*eks.CreateAddonOutput, error) {
+	m.createAddonCalls++
+	clusterName := *in.ClusterName
+	addonName := *in.AddonName
+	if m.addons == nil {
+		m.addons = map[string]map[string]ekstypes.AddonStatus{}
+	}
+	if _, ok := m.addons[clusterName]; !ok {
+		m.addons[clusterName] = map[string]ekstypes.AddonStatus{}
+	}
+	m.addons[clusterName][addonName] = ekstypes.AddonStatusActive
+	return &eks.CreateAddonOutput{Addon: &ekstypes.Addon{Status: ekstypes.AddonStatusActive}}, nil
+}
+
+func (m *mockEKS) DescribeAddon(_ context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {
+	m.describeAddonCalls++
+	clusterName := *in.ClusterName
+	addonName := *in.AddonName
+	if m.addons == nil {
+		return nil, mkEKSNotFound("addon not found: " + addonName)
+	}
+	clusterAddons, ok := m.addons[clusterName]
+	if !ok {
+		return nil, mkEKSNotFound("addon not found: " + addonName)
+	}
+	status, ok := clusterAddons[addonName]
+	if !ok {
+		return nil, mkEKSNotFound("addon not found: " + addonName)
+	}
+	return &eks.DescribeAddonOutput{Addon: &ekstypes.Addon{Status: status}}, nil
+}
+
+func (m *mockEKS) DeleteAddon(_ context.Context, in *eks.DeleteAddonInput, _ ...func(*eks.Options)) (*eks.DeleteAddonOutput, error) {
+	m.deleteAddonCalls++
+	clusterName := *in.ClusterName
+	addonName := *in.AddonName
+	if m.addons != nil && m.addons[clusterName] != nil {
+		delete(m.addons[clusterName], addonName)
+	}
+	return &eks.DeleteAddonOutput{}, nil
 }
