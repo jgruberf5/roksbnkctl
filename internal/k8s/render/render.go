@@ -322,3 +322,43 @@ func RenderLicenseCR(tmpl []byte, cl *intent.Cluster, jwt string) ([]byte, error
 	}
 	return Render(tmpl, vars)
 }
+
+// ─── F5SPKVlan + GatewayClass (slice-10) ───────────────────────────────────
+
+// F5SPKVlanVars holds the substitution variables for host-device/f5spkvlan.yaml.tmpl.
+type F5SPKVlanVars struct {
+	InstanceNS         string // f5-cne-system (matches CNEInstance namespace)
+	TmmExtSelfIP       string // e.g. 10.0.10.240
+	TmmIntSelfIP       string // e.g. 10.0.20.240
+	TmmSelfIPPrefixLen int    // typically 24
+}
+
+// RenderF5SPKVlan renders the F5SPKVlan CR template for the host-device
+// pattern. Caller supplies the SelfIP values from cl.Network.DataPath.SelfIPs
+// (auto-derived by intent.applyDefaults when not explicitly set).
+func RenderF5SPKVlan(tmpl []byte, selfExt, selfInt string, prefixLen int) ([]byte, error) {
+	vars := F5SPKVlanVars{
+		InstanceNS:         cneInstanceNamespace,
+		TmmExtSelfIP:       selfExt,
+		TmmIntSelfIP:       selfInt,
+		TmmSelfIPPrefixLen: prefixLen,
+	}
+	return Render(tmpl, vars)
+}
+
+// GatewayClassVars holds the substitution variables for host-device/gatewayclass.yaml.tmpl.
+type GatewayClassVars struct {
+	GwcName    string // <cluster>-gatewayclass
+	LabName    string // cl.Metadata.Name
+	InstanceNS string // f5-cne-system
+}
+
+// RenderGatewayClass renders the GatewayClass template for the host-device pattern.
+func RenderGatewayClass(tmpl []byte, cl *intent.Cluster) ([]byte, error) {
+	vars := GatewayClassVars{
+		GwcName:    cl.Metadata.Name + "-gatewayclass",
+		LabName:    cl.Metadata.Name,
+		InstanceNS: cneInstanceNamespace,
+	}
+	return Render(tmpl, vars)
+}

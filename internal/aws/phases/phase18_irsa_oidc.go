@@ -22,9 +22,13 @@ import (
 )
 
 // cneControllerVpcReadPolicy is the inline policy attached to the IRSA role.
-// Actions mirror aws-gpu-setup/up.sh:364-365 (the VPC read permissions required
-// by f5-cne-controller to enumerate subnets, route tables, and ENIs).
-const cneControllerVpcReadPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ec2:DescribeVpcs","ec2:DescribeSubnets","ec2:DescribeRouteTables","ec2:DescribeNetworkInterfaces","ec2:DescribeSecurityGroups","ec2:DescribeInstances","ec2:DescribeInstanceTypes","ec2:DescribeTags","ec2:DescribeAvailabilityZones","ec2:CreateNetworkInterface","ec2:DeleteNetworkInterface","ec2:ModifyNetworkInterfaceAttribute","ec2:AssignPrivateIpAddresses","ec2:UnassignPrivateIpAddresses","ec2:AttachNetworkInterface","ec2:DetachNetworkInterface","ec2:CreateTags"],"Resource":"*"}]}`
+// Actions mirror aws-gpu-setup/up.sh: ec2:Describe* read + ENI mutate + route-
+// table mutate (CreateRoute / DeleteRoute / ReplaceRoute). The route-mutate
+// actions are required for the BNK cne-controller to push gateway VIP routes
+// into the VPC route table when it programs the F5SPKVlan / Gateway data path
+// — without them the controller logs "Cloud prerequisites not met" and TMM
+// never receives SelfIPs. See docs/audits/slice-10-aws-gpu-setup-audit.md §2.
+const cneControllerVpcReadPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ec2:DescribeVpcs","ec2:DescribeSubnets","ec2:DescribeRouteTables","ec2:DescribeNetworkInterfaces","ec2:DescribeSecurityGroups","ec2:DescribeInstances","ec2:DescribeInstanceTypes","ec2:DescribeTags","ec2:DescribeAvailabilityZones","ec2:CreateNetworkInterface","ec2:DeleteNetworkInterface","ec2:ModifyNetworkInterfaceAttribute","ec2:AssignPrivateIpAddresses","ec2:UnassignPrivateIpAddresses","ec2:AttachNetworkInterface","ec2:DetachNetworkInterface","ec2:CreateTags","ec2:CreateRoute","ec2:DeleteRoute","ec2:ReplaceRoute"],"Resource":"*"}]}`
 
 // Phase18IRSAOIDC provisions the per-cluster OIDC provider and the
 // f5-cne-controller IRSA role.

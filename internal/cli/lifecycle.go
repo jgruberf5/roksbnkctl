@@ -540,6 +540,13 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase23License(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	// Phase 23b: F5SPKVlan + GatewayClass for host-device pattern.
+	// Skipped silently when pattern != host-device. Completes TMM data-plane
+	// plumbing — binds trunks 1.1 / 1.2 to ext-vlan / int-vlan inside the
+	// TMM pod netns and announces SelfIPs assigned by Phase 17.
+	if err := phases.Phase23bSPKVlanGatewayClass(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	// Phase 24: CWC DNS-warmup heal (best-effort; never returns error).
 	if err := phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
@@ -612,11 +619,14 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
-	// Phase 25/24/23/22: activation teardown (reverse of up order).
+	// Phase 25/24/23b/23/22: activation teardown (reverse of up order).
 	if err := phases.Phase25ActivationPollDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase24CWCHealDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase23bSPKVlanGatewayClassDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase23LicenseDown(ctx, cl, st, clients); err != nil {

@@ -73,17 +73,20 @@ type mockEC2 struct {
 	authorizeIngressInput *ec2.AuthorizeSecurityGroupIngressInput
 
 	// Network Interfaces (slice 7+)
-	describeENIsOut *ec2.DescribeNetworkInterfacesOutput
-	describeENIsErr error
-	createENIOut    *ec2.CreateNetworkInterfaceOutput
-	createENIErr    error
-	createENICalls  int
-	deleteENICalls  int
-	deleteENIErr    error
-	attachENICalls  int
-	attachENIErr    error
-	detachENICalls  int
-	detachENIErr    error
+	describeENIsOut   *ec2.DescribeNetworkInterfacesOutput
+	describeENIsErr   error
+	createENIOut      *ec2.CreateNetworkInterfaceOutput
+	createENIErr      error
+	createENICalls    int
+	deleteENICalls    int
+	deleteENIErr      error
+	attachENICalls    int
+	attachENIErr      error
+	detachENICalls    int
+	detachENIErr      error
+	assignSelfIPCalls int
+	assignSelfIPErr   error
+	assignedSelfIPs   []string
 
 	// Instances (slice 7+)
 	describeInstancesOut *ec2.DescribeInstancesOutput
@@ -282,6 +285,13 @@ func (m *mockEC2) AttachNetworkInterface(_ context.Context, _ *ec2.AttachNetwork
 func (m *mockEC2) DetachNetworkInterface(_ context.Context, _ *ec2.DetachNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.DetachNetworkInterfaceOutput, error) {
 	m.detachENICalls++
 	return &ec2.DetachNetworkInterfaceOutput{}, m.detachENIErr
+}
+func (m *mockEC2) AssignPrivateIpAddresses(_ context.Context, in *ec2.AssignPrivateIpAddressesInput, _ ...func(*ec2.Options)) (*ec2.AssignPrivateIpAddressesOutput, error) {
+	m.assignSelfIPCalls++
+	if in != nil {
+		m.assignedSelfIPs = append(m.assignedSelfIPs, in.PrivateIpAddresses...)
+	}
+	return &ec2.AssignPrivateIpAddressesOutput{}, m.assignSelfIPErr
 }
 func (m *mockEC2) DescribeInstances(_ context.Context, _ *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	if m.describeInstancesOut == nil {

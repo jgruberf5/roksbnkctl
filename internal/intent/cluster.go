@@ -8,6 +8,7 @@ package intent
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"regexp"
 
@@ -64,8 +65,22 @@ type BnkSpec struct {
 // pattern: host-device is set. External is the TMM client-side (public-ish)
 // subnet; Internal is the TMM backend-side (private) subnet.
 type DataPathSpec struct {
-	External SubnetSpec `yaml:"external"` // BNK_EXT — TMM client-side subnet
-	Internal SubnetSpec `yaml:"internal"` // BNK_INT — TMM backend-side subnet
+	External SubnetSpec   `yaml:"external"` // BNK_EXT — TMM client-side subnet
+	Internal SubnetSpec   `yaml:"internal"` // BNK_INT — TMM backend-side subnet
+	SelfIPs  *SelfIPsSpec `yaml:"selfIPs,omitempty"`
+}
+
+// SelfIPsSpec carries the TMM SelfIP addresses that get assigned as secondary
+// private IPs on each TMM data-plane ENI (Phase 17) and announced inside the
+// TMM pod netns via F5SPKVlan CRs (Phase 23b). Per F5 Multi-AZ PDF p.9, AWS
+// won't route SelfIPs to the ENI unless they're also listed as secondary IPs
+// on the ENI. Auto-derived to <subnet>.240/<prefix> from the data-path
+// subnets when omitted (e.g. 10.0.10.0/24 → 10.0.10.240).
+type SelfIPsSpec struct {
+	External string `yaml:"external,omitempty"`
+	Internal string `yaml:"internal,omitempty"`
+	// PrefixLen mirrors the subnet prefix length. Default 24.
+	PrefixLen int `yaml:"prefixLen,omitempty"`
 }
 
 // nodeGroupNameRE enforces Kubernetes label/name rules for node group names:
@@ -334,6 +349,23 @@ func applyDefaults(c *Cluster) {
 			if _, ok := ng.Labels["role"]; !ok {
 				ng.Labels["role"] = "bnk"
 			}
+
+			// host-device pattern: bump defaults to 3 workers for dSSM quorum.
+			// aws-gpu-setup vars.env:110 explicitly requires `BNK_WORKER_COUNT="3"`
+			// (≥3 for dSSM quorum per §9 F9). Single-node packs the BNK pod set
+			// onto one node which leaves no room for f5-tmm (7-container pod,
+			// ~7.6 vCPU requested) and dSSM only reaches 2/3 ready (no quorum).
+			// Only bump if the operator left the default (1) — preserve explicit
+			// overrides for cost-sensitive lab use. See docs/audits/slice-10.
+			if ng.DesiredSize == 1 {
+				ng.DesiredSize = 3
+			}
+			if ng.MinSize == 1 {
+				ng.MinSize = 3
+			}
+			if ng.MaxSize < ng.DesiredSize {
+				ng.MaxSize = ng.DesiredSize
+			}
 		}
 	}
 	if c.Bnk != nil {
@@ -366,6 +398,52 @@ func applyDefaults(c *Cluster) {
 			c.Bnk.PalCpuSet = "0-3"
 		}
 	}
+
+	// host-device pattern: auto-derive TMM SelfIPs as <subnet>.240 when not
+	// explicitly set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
+	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST
+	// be assigned as secondary IPs on each ENI (Phase 17).
+	if c.Pattern == "host-device" && c.Network.DataPath != nil {
+		if c.Network.DataPath.SelfIPs == nil {
+			c.Network.DataPath.SelfIPs = &SelfIPsSpec{}
+		}
+		sip := c.Network.DataPath.SelfIPs
+		if sip.External == "" {
+			if ip, p := DeriveSelfIP(c.Network.DataPath.External.CIDR, 240); ip != "" {
+				sip.External = ip
+				if sip.PrefixLen == 0 {
+					sip.PrefixLen = p
+				}
+			}
+		}
+		if sip.Internal == "" {
+			if ip, p := DeriveSelfIP(c.Network.DataPath.Internal.CIDR, 240); ip != "" {
+				sip.Internal = ip
+				if sip.PrefixLen == 0 {
+					sip.PrefixLen = p
+				}
+			}
+		}
+		if sip.PrefixLen == 0 {
+			sip.PrefixLen = 24
+		}
+	}
+}
+
+// DeriveSelfIP returns the host-offset IP and prefix length for a /24 CIDR.
+// For non-/24 CIDRs, returns "" and the actual prefix length.
+// Example: DeriveSelfIP("10.0.10.0/24", 240) -> ("10.0.10.240", 24).
+func DeriveSelfIP(cidr string, hostOffset int) (string, int) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", 0
+	}
+	prefix, _ := ipnet.Mask.Size()
+	base := ipnet.IP.To4()
+	if base == nil || prefix != 24 || hostOffset < 1 || hostOffset > 254 {
+		return "", prefix
+	}
+	return net.IPv4(base[0], base[1], base[2], byte(hostOffset)).String(), prefix
 }
 
 // validate checks semantic constraints on the loaded cluster.

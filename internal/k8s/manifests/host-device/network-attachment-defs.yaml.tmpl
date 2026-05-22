@@ -7,6 +7,7 @@ spec:
   config: |
     {
       "cniVersion": "0.3.1",
+      "name": "external-network",
       "type": "host-device",
       "device": "{{ .ExternalIFName }}"
     }
@@ -20,6 +21,7 @@ spec:
   config: |
     {
       "cniVersion": "0.3.1",
+      "name": "internal-network",
       "type": "host-device",
       "device": "{{ .InternalIFName }}"
     }

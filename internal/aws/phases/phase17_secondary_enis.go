@@ -90,7 +90,64 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase17: attaching external ENI %s: %w", extENI, err)
 	}
 
+	// Assign TMM SelfIPs as secondary private IPs on each ENI.
+	// Per F5 Multi-AZ PDF p.9: AWS won't route SelfIPs to the ENI unless they
+	// are also listed as secondary IPs on the ENI. Without this, F5SPKVlan
+	// SelfIP plumbing silently fails (Phase 23b applies the F5SPKVlan CR but
+	// the cne-controller can't program the data path until the IPs are on the
+	// ENI). aws-gpu-setup mirrors this in up.sh assign_selfip after attach.
+	if c := cl.Network.DataPath; c != nil && c.SelfIPs != nil {
+		if c.SelfIPs.External != "" {
+			if err := assignSelfIPIfNeeded(ctx, clients.EC2, extENI, c.SelfIPs.External); err != nil {
+				return fmt.Errorf("phase17: assigning external SelfIP %s to %s: %w", c.SelfIPs.External, extENI, err)
+			}
+			st.Set("TMM_EXT_SELFIP", c.SelfIPs.External)
+		}
+		if c.SelfIPs.Internal != "" {
+			if err := assignSelfIPIfNeeded(ctx, clients.EC2, intENI, c.SelfIPs.Internal); err != nil {
+				return fmt.Errorf("phase17: assigning internal SelfIP %s to %s: %w", c.SelfIPs.Internal, intENI, err)
+			}
+			st.Set("TMM_INT_SELFIP", c.SelfIPs.Internal)
+		}
+		if c.SelfIPs.PrefixLen > 0 {
+			st.Set("TMM_SELFIP_PREFIXLEN", fmt.Sprintf("%d", c.SelfIPs.PrefixLen))
+		}
+	}
+
 	return st.Save()
+}
+
+// assignSelfIPIfNeeded assigns a secondary private IP to an ENI. Idempotent:
+// describes first and skips if the IP is already in the assigned list.
+// Uses AllowReassignment=true to be safe if the IP was previously assigned
+// to a different ENI (e.g. orphaned by a partial down).
+func assignSelfIPIfNeeded(ctx context.Context, ec2c EC2API, eniID, selfIP string) error {
+	out, err := ec2c.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
+	if err != nil {
+		return fmt.Errorf("DescribeNetworkInterfaces %s: %w", eniID, err)
+	}
+	if len(out.NetworkInterfaces) == 0 {
+		return fmt.Errorf("ENI %s not found", eniID)
+	}
+	for _, ip := range out.NetworkInterfaces[0].PrivateIpAddresses {
+		if ip.PrivateIpAddress != nil && *ip.PrivateIpAddress == selfIP {
+			fmt.Fprintf(os.Stderr, "[phase 17] SelfIP %s already assigned to %s\n", selfIP, eniID)
+			return nil
+		}
+	}
+	allowReassignment := true
+	_, err = ec2c.AssignPrivateIpAddresses(ctx, &ec2.AssignPrivateIpAddressesInput{
+		NetworkInterfaceId: ptr(eniID),
+		PrivateIpAddresses: []string{selfIP},
+		AllowReassignment:  &allowReassignment,
+	})
+	if err != nil {
+		return fmt.Errorf("ec2:AssignPrivateIpAddresses %s: %w", eniID, err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 17] assigned SelfIP %s to %s (per F5 Multi-AZ PDF p.9)\n", selfIP, eniID)
+	return nil
 }
 
 // Phase17SecondaryENIsDown detaches and deletes the TMM secondary ENIs.

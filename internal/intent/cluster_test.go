@@ -867,3 +867,105 @@ bnk:
 		t.Errorf("PalCpuSet: got %q, want 0-7", c.Bnk.PalCpuSet)
 	}
 }
+
+// ─── slice-10: SelfIP derivation + host-device default desiredSize=3 ─────
+
+func TestDeriveSelfIP(t *testing.T) {
+	cases := []struct {
+		cidr   string
+		offset int
+		wantIP string
+		wantP  int
+	}{
+		{"10.0.10.0/24", 240, "10.0.10.240", 24},
+		{"10.0.20.0/24", 240, "10.0.20.240", 24},
+		{"192.168.1.0/24", 100, "192.168.1.100", 24},
+		{"10.0.0.0/16", 240, "", 16},  // unsupported prefix
+		{"not-a-cidr", 240, "", 0},    // parse error
+		{"10.0.10.0/24", 256, "", 24}, // offset out of byte range
+		{"10.0.10.0/24", 0, "", 24},   // offset zero rejected
+	}
+	for _, tc := range cases {
+		gotIP, gotP := DeriveSelfIP(tc.cidr, tc.offset)
+		if gotIP != tc.wantIP || gotP != tc.wantP {
+			t.Errorf("DeriveSelfIP(%q,%d) = (%q,%d), want (%q,%d)",
+				tc.cidr, tc.offset, gotIP, gotP, tc.wantIP, tc.wantP)
+		}
+	}
+}
+
+// TestApplyDefaults_HostDevice_DesiredSize3 confirms host-device pattern auto-
+// bumps DesiredSize/MinSize from 1 to 3 (dSSM quorum + TMM headroom).
+// Per aws-gpu-setup vars.env:110 (≥3 for dSSM quorum).
+func TestApplyDefaults_HostDevice_DesiredSize3(t *testing.T) {
+	c := &Cluster{
+		Pattern: "host-device",
+		Network: Network{
+			DataPath: &DataPathSpec{
+				External: SubnetSpec{CIDR: "10.0.10.0/24", AZ: "ap-southeast-2a"},
+				Internal: SubnetSpec{CIDR: "10.0.20.0/24", AZ: "ap-southeast-2a"},
+			},
+		},
+		ClusterSpec: &ClusterSpec{
+			NodeGroups: []NodeGroupSpec{{Name: "default"}},
+		},
+	}
+	applyDefaults(c)
+	ng := c.ClusterSpec.NodeGroups[0]
+	if ng.DesiredSize != 3 || ng.MinSize != 3 || ng.MaxSize < 3 {
+		t.Errorf("host-device defaults: got desired=%d min=%d max=%d, want desired=3 min=3 max>=3",
+			ng.DesiredSize, ng.MinSize, ng.MaxSize)
+	}
+}
+
+// TestApplyDefaults_HostDevice_PreservesExplicitSize confirms explicit operator
+// overrides (e.g. desiredSize=1 for cost-sensitive labs that accept reduced HA)
+// are preserved when the operator set a value other than the default 1.
+func TestApplyDefaults_HostDevice_PreservesExplicitSize(t *testing.T) {
+	c := &Cluster{
+		Pattern: "host-device",
+		Network: Network{
+			DataPath: &DataPathSpec{
+				External: SubnetSpec{CIDR: "10.0.10.0/24", AZ: "a"},
+				Internal: SubnetSpec{CIDR: "10.0.20.0/24", AZ: "a"},
+			},
+		},
+		ClusterSpec: &ClusterSpec{
+			NodeGroups: []NodeGroupSpec{{Name: "lab", DesiredSize: 2, MinSize: 2, MaxSize: 5}},
+		},
+	}
+	applyDefaults(c)
+	ng := c.ClusterSpec.NodeGroups[0]
+	if ng.DesiredSize != 2 || ng.MinSize != 2 || ng.MaxSize != 5 {
+		t.Errorf("explicit override stripped: got desired=%d min=%d max=%d, want 2/2/5",
+			ng.DesiredSize, ng.MinSize, ng.MaxSize)
+	}
+}
+
+// TestApplyDefaults_HostDevice_AutoDerivesSelfIPs confirms SelfIPs auto-derive
+// to <subnet>.240 when not explicitly set in cluster.yaml.
+func TestApplyDefaults_HostDevice_AutoDerivesSelfIPs(t *testing.T) {
+	c := &Cluster{
+		Pattern: "host-device",
+		Network: Network{
+			DataPath: &DataPathSpec{
+				External: SubnetSpec{CIDR: "10.0.10.0/24", AZ: "a"},
+				Internal: SubnetSpec{CIDR: "10.0.20.0/24", AZ: "a"},
+			},
+		},
+	}
+	applyDefaults(c)
+	s := c.Network.DataPath.SelfIPs
+	if s == nil {
+		t.Fatal("SelfIPs not auto-created")
+	}
+	if s.External != "10.0.10.240" {
+		t.Errorf("ext SelfIP = %q, want 10.0.10.240", s.External)
+	}
+	if s.Internal != "10.0.20.240" {
+		t.Errorf("int SelfIP = %q, want 10.0.20.240", s.Internal)
+	}
+	if s.PrefixLen != 24 {
+		t.Errorf("PrefixLen = %d, want 24", s.PrefixLen)
+	}
+}

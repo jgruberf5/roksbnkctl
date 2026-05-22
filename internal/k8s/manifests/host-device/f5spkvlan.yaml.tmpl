@@ -1,0 +1,43 @@
+# F5SPKVlan CRs — TMM VLAN + SelfIP plumbing for host-device pattern.
+#
+# Binds TMM data-plane trunks 1.1 / 1.2 to named virtual interfaces ext-vlan /
+# int-vlan inside the TMM pod netns, announcing the SelfIPs that match the AWS
+# ENI subnets. Trunk-port numbering: the Nth NAD listed in CNEInstance
+# .spec.networkAttachments → trunk 1.N (1.1 = external, 1.2 = internal per
+# our networkAttachments order: ExternalNADName, InternalNADName).
+#
+# Per F5 Multi-AZ PDF p.9: "whatever listener address is created in the TMM
+# must also be added to the corresponding instance interface that will use it."
+# Phase 17 calls ec2:AssignPrivateIpAddresses with these SelfIP values after
+# attaching each ENI to satisfy that requirement. The cne-controller only
+# assigns Gateway VIPs (not SelfIPs) on its own.
+apiVersion: k8s.f5net.com/v1
+kind: F5SPKVlan
+metadata:
+  name: ext-vlan
+  namespace: {{ .InstanceNS }}
+spec:
+  name: ext-vlan
+  interfaces:
+    - "1.1"
+  selfip_v4s:
+    - "{{ .TmmExtSelfIP }}"
+  prefixlen_v4: {{ .TmmSelfIPPrefixLen }}
+  tag: 0
+  auto_lasthop: AUTO_LASTHOP_ENABLED
+---
+apiVersion: k8s.f5net.com/v1
+kind: F5SPKVlan
+metadata:
+  name: int-vlan
+  namespace: {{ .InstanceNS }}
+spec:
+  name: int-vlan
+  internal: true
+  interfaces:
+    - "1.2"
+  selfip_v4s:
+    - "{{ .TmmIntSelfIP }}"
+  prefixlen_v4: {{ .TmmSelfIPPrefixLen }}
+  tag: 0
+  auto_lasthop: AUTO_LASTHOP_ENABLED
