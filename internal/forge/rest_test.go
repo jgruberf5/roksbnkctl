@@ -244,3 +244,172 @@ func TestIsMCPCatalogGap(t *testing.T) {
 type testErr struct{ msg string }
 
 func (e *testErr) Error() string { return e.msg }
+
+// TestRegisterREST_ProjectConflict_UpsertReuses simulates the orphan-project
+// case: forge already has a project with the requested name (e.g. from a
+// previous run where the cluster was deleted but the project record stayed
+// soft-deleted). POST /api/projects returns 409. The upsert path must:
+//
+//  1. GET /api/projects, find the matching name, and reuse its ID.
+//  2. Continue with cluster create — which uploads a fresh kubeconfig.
+//
+// Verifies the user-reported failure mode (forge UI 500s if kubeconfig is
+// missing) is avoided.
+func TestRegisterREST_ProjectConflict_UpsertReuses(t *testing.T) {
+	const orphanProjectID = 42
+
+	var (
+		clusterCreated   bool
+		kubeconfigUpload string
+	)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+	})
+	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost:
+			http.Error(w, `{"error":"project name already exists"}`, http.StatusConflict)
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"projects": []map[string]any{
+					{"id": 1, "name": "some-other-project"},
+					{"id": orphanProjectID, "name": "awsbnkctl-default"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mux.HandleFunc("/api/projects/42/k8s/clusters", func(w http.ResponseWriter, r *http.Request) {
+		clusterCreated = true
+		// Capture the kubeconfig field so the test can assert it was uploaded.
+		var body struct {
+			Kubeconfig string `json:"kubeconfig"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		kubeconfigUpload = body.Kubeconfig
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cluster": map[string]any{"id": 555, "name": "bnk-prod"},
+		})
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	dir := t.TempDir()
+	res, err := RegisterREST(context.Background(), ts.URL, RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  dir,
+		ClusterName:   "bnk-prod",
+		Region:        "ap-southeast-2",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
+	})
+	if err != nil {
+		t.Fatalf("RegisterREST upsert: %v", err)
+	}
+	if res.Link.ProjectID != orphanProjectID {
+		t.Errorf("ProjectID = %d, want %d (orphan reuse)", res.Link.ProjectID, orphanProjectID)
+	}
+	if res.Link.ClusterID != 555 {
+		t.Errorf("ClusterID = %d, want 555", res.Link.ClusterID)
+	}
+	if !clusterCreated {
+		t.Error("cluster create endpoint was not called after project upsert")
+	}
+	if kubeconfigUpload == "" {
+		t.Error("kubeconfig was not uploaded to forge after project upsert")
+	}
+}
+
+// TestRegisterREST_ClusterConflict_PutsFreshKubeconfig simulates the case
+// where both project AND cluster already exist in forge (e.g. a failed-mid-run
+// orphan that left both records intact). The cluster-level upsert must
+// PUT a fresh kubeconfig onto the existing cluster record so the forge k8s UI
+// doesn't 500 on a stale/missing kubeconfig.
+func TestRegisterREST_ClusterConflict_PutsFreshKubeconfig(t *testing.T) {
+	const orphanProjectID = 42
+	const orphanClusterID = 700
+
+	var putKubeconfig string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+	})
+	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost:
+			http.Error(w, `{"error":"project exists"}`, http.StatusConflict)
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"projects": []map[string]any{
+					{"id": orphanProjectID, "name": "awsbnkctl-default"},
+				},
+			})
+		}
+	})
+	mux.HandleFunc("/api/projects/42/k8s/clusters", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost:
+			http.Error(w, `{"error":"cluster name already used in this project"}`, http.StatusConflict)
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"clusters": []map[string]any{
+					{"id": orphanClusterID, "name": "bnk-prod"},
+				},
+			})
+		}
+	})
+	mux.HandleFunc("/api/k8s/clusters/700", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "wrong method", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Kubeconfig string `json:"kubeconfig"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		putKubeconfig = body.Kubeconfig
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	dir := t.TempDir()
+	res, err := RegisterREST(context.Background(), ts.URL, RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  dir,
+		ClusterName:   "bnk-prod",
+		Region:        "ap-southeast-2",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\nfresh: true\n"),
+	})
+	if err != nil {
+		t.Fatalf("RegisterREST cluster upsert: %v", err)
+	}
+	if res.Link.ClusterID != orphanClusterID {
+		t.Errorf("ClusterID = %d, want %d (orphan reuse)", res.Link.ClusterID, orphanClusterID)
+	}
+	if putKubeconfig == "" {
+		t.Fatal("PUT /api/k8s/clusters/{id} was never called — kubeconfig was NOT refreshed")
+	}
+	// Sanity: the PUT body should be base64-encoded (forge requirement).
+	if !strings.HasPrefix(putKubeconfig, "YXBpVmVyc2lvbjog") { // base64("apiVersion: ")
+		t.Errorf("kubeconfig PUT body did not look base64-encoded: prefix=%q", firstN(putKubeconfig, 24))
+	}
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}

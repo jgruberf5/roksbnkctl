@@ -1,15 +1,20 @@
+//lint:file-ignore SA1019 k8sfake.NewSimpleClientset is still functional — NewClientset requires --with-applyconfig codegen
 package k8s
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 // cneGVR is the GVR for CNEInstance, used across wait tests.
@@ -237,3 +242,80 @@ func TestWaitForCRDExists_Timeout(t *testing.T) {
 
 // Ensure metav1 import is used (for GetOptions in the production code path).
 var _ = metav1.GetOptions{}
+
+// ─── WaitForNodeHugepagesCapacity tests ───────────────────────────────────────
+
+func nodeWithHugepages(name, hugepagesCap string) *corev1.Node {
+	cap := corev1.ResourceList{}
+	if hugepagesCap != "" {
+		cap["hugepages-2Mi"] = resource.MustParse(hugepagesCap)
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status:     corev1.NodeStatus{Capacity: cap},
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_AlreadyAdvertised: node already reports
+// >= want — returns nil on first poll.
+func TestWaitForNodeHugepagesCapacity_AlreadyAdvertised(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(nodeWithHugepages("n1", "4Gi"))
+
+	if err := WaitForNodeHugepagesCapacity(context.Background(), cs, "n1", "4Gi", 2*time.Second); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_ExceedsRequest: node has more than the
+// requested capacity — predicate passes (>= not ==).
+func TestWaitForNodeHugepagesCapacity_ExceedsRequest(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(nodeWithHugepages("n1", "8Gi"))
+
+	if err := WaitForNodeHugepagesCapacity(context.Background(), cs, "n1", "4Gi", 2*time.Second); err != nil {
+		t.Fatalf("expected nil with excess capacity, got %v", err)
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_BelowRequest_Timeout: node reports less
+// than want — poll retries and eventually times out.
+func TestWaitForNodeHugepagesCapacity_BelowRequest_Timeout(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(nodeWithHugepages("n1", "2Gi"))
+
+	if err := WaitForNodeHugepagesCapacity(context.Background(), cs, "n1", "4Gi", 200*time.Millisecond); err == nil {
+		t.Fatal("expected timeout error when capacity is below request, got nil")
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_MissingCapacityKey: node lacks the
+// hugepages-2Mi capacity key entirely — should time out, not panic.
+func TestWaitForNodeHugepagesCapacity_MissingCapacityKey(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(nodeWithHugepages("n1", ""))
+
+	if err := WaitForNodeHugepagesCapacity(context.Background(), cs, "n1", "4Gi", 200*time.Millisecond); err == nil {
+		t.Fatal("expected timeout when capacity key missing, got nil")
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_NodeNotFound: target node doesn't exist —
+// poll keeps retrying (kubelet may register late) and times out.
+func TestWaitForNodeHugepagesCapacity_NodeNotFound(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset()
+
+	if err := WaitForNodeHugepagesCapacity(context.Background(), cs, "missing-node", "4Gi", 200*time.Millisecond); err == nil {
+		t.Fatal("expected timeout when node absent, got nil")
+	}
+}
+
+// TestWaitForNodeHugepagesCapacity_BadQuantity: malformed `want` returns a
+// parse error immediately, not a timeout.
+func TestWaitForNodeHugepagesCapacity_BadQuantity(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(nodeWithHugepages("n1", "4Gi"))
+
+	err := WaitForNodeHugepagesCapacity(context.Background(), cs, "n1", "not-a-quantity", time.Second)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse hugepages quantity") {
+		t.Errorf("error message: got %q, want substring 'parse hugepages quantity'", err.Error())
+	}
+}

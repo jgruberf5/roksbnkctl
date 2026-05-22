@@ -799,8 +799,8 @@ bnk:
 	if c.Bnk.DeploymentSize != "Small" {
 		t.Errorf("DeploymentSize: got %q, want Small", c.Bnk.DeploymentSize)
 	}
-	if c.Bnk.StorageClassName != "gp3" {
-		t.Errorf("StorageClassName: got %q, want gp3", c.Bnk.StorageClassName)
+	if c.Bnk.StorageClassName != "gp2" {
+		t.Errorf("StorageClassName: got %q, want gp2", c.Bnk.StorageClassName)
 	}
 	if c.Bnk.ManifestVersion != "2.3.0-3.2598.3-0.0.170" {
 		t.Errorf("ManifestVersion: got %q, want 2.3.0-3.2598.3-0.0.170", c.Bnk.ManifestVersion)
@@ -814,8 +814,8 @@ bnk:
 	if c.Bnk.TmmMemory != "16Gi" {
 		t.Errorf("TmmMemory: got %q, want 16Gi", c.Bnk.TmmMemory)
 	}
-	if c.Bnk.TmmHugepages != "8Gi" {
-		t.Errorf("TmmHugepages: got %q, want 8Gi", c.Bnk.TmmHugepages)
+	if c.Bnk.TmmHugepages != "4Gi" {
+		t.Errorf("TmmHugepages: got %q, want 4Gi", c.Bnk.TmmHugepages)
 	}
 	if c.Bnk.PalCpuSet != "0-3" {
 		t.Errorf("PalCpuSet: got %q, want 0-3", c.Bnk.PalCpuSet)

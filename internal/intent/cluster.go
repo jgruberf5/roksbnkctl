@@ -36,7 +36,10 @@ type BnkSpec struct {
 	// DeploymentSize is the BNK CNEInstance deployment size. Default "Small".
 	// Mirrors aws-gpu-setup DEPLOYMENT_SIZE variable.
 	DeploymentSize string `yaml:"deploymentSize,omitempty"`
-	// StorageClassName for BNK persistent volumes. Default "gp3".
+	// StorageClassName for BNK persistent volumes. Default "gp2" — matches
+	// aws-gpu-setup STORAGE_CLASS. Leverages the EKS-default in-tree gp2
+	// StorageClass, which is CSI-migrated to ebs.csi.aws.com after the
+	// aws-ebs-csi-driver addon is installed (Phase 11b).
 	StorageClassName string `yaml:"storageClassName,omitempty"`
 	// ManifestVersion is the BNK manifest version pulled by FLO from
 	// oci://repo.f5.com/release/f5-bigip-k8s-manifest. Default matches
@@ -49,7 +52,9 @@ type BnkSpec struct {
 	TmmCpu string `yaml:"tmmCpu,omitempty"`
 	// TmmMemory is the TMM memory request. Default "16Gi".
 	TmmMemory string `yaml:"tmmMemory,omitempty"`
-	// TmmHugepages is the TMM hugepages request. Default "8Gi".
+	// TmmHugepages is the TMM hugepages request. Default "4Gi" — matches
+	// aws-gpu-setup TMM_HUGEPAGES + the hugepages-setup DaemonSet which
+	// allocates 2048 × 2Mi pages (= 4 GiB) on role=bnk nodes.
 	TmmHugepages string `yaml:"tmmHugepages,omitempty"`
 	// PalCpuSet is the PAL CPU set string. Default "0-3".
 	PalCpuSet string `yaml:"palCpuSet,omitempty"`
@@ -340,7 +345,7 @@ func applyDefaults(c *Cluster) {
 			c.Bnk.DeploymentSize = "Small"
 		}
 		if c.Bnk.StorageClassName == "" {
-			c.Bnk.StorageClassName = "gp3"
+			c.Bnk.StorageClassName = "gp2"
 		}
 		if c.Bnk.ManifestVersion == "" {
 			c.Bnk.ManifestVersion = "2.3.0-3.2598.3-0.0.170"
@@ -355,7 +360,7 @@ func applyDefaults(c *Cluster) {
 			c.Bnk.TmmMemory = "16Gi"
 		}
 		if c.Bnk.TmmHugepages == "" {
-			c.Bnk.TmmHugepages = "8Gi"
+			c.Bnk.TmmHugepages = "4Gi"
 		}
 		if c.Bnk.PalCpuSet == "" {
 			c.Bnk.PalCpuSet = "0-3"

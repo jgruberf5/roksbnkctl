@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -125,6 +126,36 @@ func WaitForDaemonSetReady(ctx context.Context, clientset kubernetes.Interface, 
 			return true, nil
 		}
 		return false, nil
+	})
+}
+
+// WaitForNodeHugepagesCapacity polls the named Node until its
+// .status.capacity["hugepages-2Mi"] is >= want. Used by Phase 11b after the
+// hugepages-setup DaemonSet has restarted kubelet, since DS-Ready does NOT
+// imply kubelet has re-advertised hugepages capacity yet (kubelet picks up
+// the new sysfs value on next sync).
+//
+// want is a Kubernetes-style quantity string (e.g. "4Gi"). Parse via
+// resource.MustParse on call.
+func WaitForNodeHugepagesCapacity(ctx context.Context, clientset kubernetes.Interface, nodeName, want string, timeout time.Duration) error {
+	wantQty, err := resource.ParseQuantity(want)
+	if err != nil {
+		return fmt.Errorf("parse hugepages quantity %q: %w", want, err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return false, nil //nolint:nilerr — keep polling, node might be transiently unreachable
+		}
+		got, ok := node.Status.Capacity["hugepages-2Mi"]
+		if !ok {
+			return false, nil
+		}
+		// node.status.capacity is map[corev1.ResourceName]resource.Quantity
+		return got.Cmp(wantQty) >= 0, nil
 	})
 }
 

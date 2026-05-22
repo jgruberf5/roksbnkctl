@@ -20,16 +20,19 @@ import (
 )
 
 const (
-	ebsCSIAddonName           = "aws-ebs-csi-driver"
-	ebsCSIAddonActiveTimeout  = 10 * time.Minute
-	ebsCSIAddonPollInterval   = 15 * time.Second
-	hugepagesYAMLPath         = "shared/hugepages-ds.yaml"
-	hugepagesDaemonSetName    = "hugepages-setup"
-	hugepagesDaemonSetNS      = "kube-system"
-	hugepagesReadyTimeout     = 5 * time.Minute
-	gp3StorageClassYAMLPath   = "shared/gp3-storage-class.yaml"
-	gp3StorageClassName       = "gp3"
-	gp3DefaultAnnotationFalse = "false"
+	ebsCSIAddonName          = "aws-ebs-csi-driver"
+	ebsCSIAddonActiveTimeout = 10 * time.Minute
+	ebsCSIAddonPollInterval  = 15 * time.Second
+	hugepagesYAMLPath        = "shared/hugepages-ds.yaml"
+	hugepagesDaemonSetName   = "hugepages-setup"
+	hugepagesDaemonSetNS     = "kube-system"
+	hugepagesReadyTimeout    = 5 * time.Minute
+	// hugepagesNodeCapTimeout bounds the wait for kubelet to re-advertise
+	// hugepages-2Mi capacity AFTER the DS is Ready. Without this gate,
+	// downstream phases proceed before f5-tmm can schedule and the pod fails
+	// with "Insufficient hugepages-2Mi" until the next kubelet sync. Matches
+	// aws-gpu-setup up.sh:639 chk_hugepages_on_node 300s wait.
+	hugepagesNodeCapTimeout = 5 * time.Minute
 )
 
 // Phase11bEBSCSIHugepages closes the BNK runtime-prerequisite gaps that slice 7
@@ -38,24 +41,33 @@ const (
 //  1. Install the aws-ebs-csi-driver EKS managed addon (eks:CreateAddon).
 //     The AmazonEBSCSIDriverPolicy is already attached to the node role by
 //     Phase 07 IAM (slice 5/7 setup), so no IRSA service-account role is
-//     needed — the addon uses node-role credentials.
-//  2. Create the gp3 StorageClass (BnkSpec.StorageClassName default).
-//  3. Apply the hugepages-setup DaemonSet which allocates 2Mi hugepages on
+//     needed — the addon uses node-role credentials. EKS 1.30 deprecates the
+//     in-tree gp2 provisioner; PVCs against the existing default gp2 SC are
+//     dispatched to the EBS CSI driver via CSI migration once this addon is
+//     ACTIVE. No custom SC apply needed (matches aws-gpu-setup up.sh:601-631).
+//  2. Apply the hugepages-setup DaemonSet which allocates 2Mi hugepages on
 //     role=bnk worker nodes (the f5-tmm pod requires hugepages-2Mi capacity).
+//  3. Wait for kubelet on the TMM node to re-advertise
+//     .status.capacity.hugepages-2Mi >= cl.Bnk.TmmHugepages. DS-Ready is NOT
+//     enough — the DS restarts kubelet and capacity surfaces on next sync
+//     (~10–30s). Without this gate, Phase 12+ proceed and f5-tmm fails to
+//     schedule with "Insufficient hugepages-2Mi". Matches aws-gpu-setup
+//     up.sh:639 chk_hugepages_on_node.
 //
 // D-005: CheckAuthOrDie at entry.
 // Slice 7 lifecycle order: ... Phase11 → Phase11bEBSCSIHugepages → Phase12 ...
 func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name
-	fmt.Fprintf(os.Stderr, "[phase 11b] EBS CSI addon + gp3 SC + hugepages-ds: cluster=%s\n", name)
+	scName := cl.Bnk.StorageClassName // "gp2" by default (aws-gpu-setup parity)
+	fmt.Fprintf(os.Stderr, "[phase 11b] EBS CSI addon + hugepages-ds: cluster=%s sc=%s\n", name, scName)
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "[phase 11b] dry-run: would install aws-ebs-csi-driver EKS addon (managed)")
-		fmt.Fprintln(os.Stderr, "[phase 11b] dry-run: would create gp3 StorageClass (ebs.csi.aws.com)")
 		fmt.Fprintln(os.Stderr, "[phase 11b] dry-run: would apply hugepages-setup DaemonSet in kube-system")
+		fmt.Fprintf(os.Stderr, "[phase 11b] dry-run: would wait for TMM node hugepages-2Mi >= %s\n", cl.Bnk.TmmHugepages)
 		st.Set("EBS_CSI_ADDON_STATUS", "dry-run-ACTIVE")
-		st.Set("GP3_STORAGE_CLASS", "dry-run-gp3")
+		st.Set("GP3_STORAGE_CLASS", scName)
 		st.Set("HUGEPAGES_DS_INSTALLED_AT", "dry-run")
 		return nil
 	}
@@ -69,20 +81,10 @@ func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.
 		return fmt.Errorf("phase11b: ebs-csi-driver addon: %w", err)
 	}
 	st.Set("EBS_CSI_ADDON_STATUS", "ACTIVE")
-	fmt.Fprintln(os.Stderr, "[phase 11b] aws-ebs-csi-driver addon ACTIVE")
+	st.Set("GP3_STORAGE_CLASS", scName) // records the SC BNK will request (EKS-default gp2)
+	fmt.Fprintf(os.Stderr, "[phase 11b] aws-ebs-csi-driver addon ACTIVE (PVCs against %q dispatch via CSI migration)\n", scName)
 
-	// 11b.2 — gp3 StorageClass.
-	gp3YAML, err := k8smanifests.FS.ReadFile(gp3StorageClassYAMLPath)
-	if err != nil {
-		return fmt.Errorf("phase11b: reading gp3 SC YAML: %w", err)
-	}
-	if err := applyRawYAML(ctx, clients.Dynamic, gp3YAML); err != nil {
-		return fmt.Errorf("phase11b: applying gp3 StorageClass: %w", err)
-	}
-	st.Set("GP3_STORAGE_CLASS", gp3StorageClassName)
-	fmt.Fprintf(os.Stderr, "[phase 11b] gp3 StorageClass applied (provisioner=ebs.csi.aws.com)\n")
-
-	// 11b.3 — Hugepages DaemonSet.
+	// 11b.2 — Hugepages DaemonSet.
 	hugepagesYAML, err := k8smanifests.FS.ReadFile(hugepagesYAMLPath)
 	if err != nil {
 		return fmt.Errorf("phase11b: reading hugepages-ds YAML: %w", err)
@@ -95,17 +97,32 @@ func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.
 		return fmt.Errorf("phase11b: hugepages DaemonSet not ready: %w", err)
 	}
 	st.Set("HUGEPAGES_DS_INSTALLED_AT", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintln(os.Stderr, "[phase 11b] hugepages-setup DaemonSet ready (node hugepages-2Mi advertised)")
+	fmt.Fprintln(os.Stderr, "[phase 11b] hugepages-setup DaemonSet ready")
+
+	// 11b.3 — Wait for kubelet to re-advertise hugepages capacity on the TMM node.
+	tmmNode := st.Get("TMM_NODE_NAME")
+	if tmmNode == "" {
+		return fmt.Errorf("phase11b: TMM_NODE_NAME not in state (Phase 16 must run before Phase 11b)")
+	}
+	want := cl.Bnk.TmmHugepages
+	fmt.Fprintf(os.Stderr, "[phase 11b] waiting for node %s to advertise hugepages-2Mi >= %s (up to %s)\n",
+		tmmNode, want, hugepagesNodeCapTimeout)
+	if err := k8swait.WaitForNodeHugepagesCapacity(ctx, clients.K8s, tmmNode, want, hugepagesNodeCapTimeout); err != nil {
+		return fmt.Errorf("phase11b: node %s hugepages-2Mi capacity: %w", tmmNode, err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 11b] node %s advertising hugepages-2Mi >= %s\n", tmmNode, want)
 
 	return st.Save()
 }
 
-// Phase11bEBSCSIHugepagesDown deletes the hugepages DS + gp3 SC + EBS CSI addon.
-// Tolerates NotFound at every step.
+// Phase11bEBSCSIHugepagesDown deletes the hugepages DS + EBS CSI addon.
+// Tolerates NotFound at every step. The EKS-default gp2 StorageClass is NOT
+// deleted — it is EKS-owned and lifecycle-tied to the cluster (matches
+// aws-gpu-setup which never deletes the default SC).
 func Phase11bEBSCSIHugepagesDown(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name
-	fmt.Fprintf(os.Stderr, "[phase 11b down] EBS CSI + gp3 SC + hugepages-ds: cluster=%s\n", name)
+	fmt.Fprintf(os.Stderr, "[phase 11b down] EBS CSI addon + hugepages-ds: cluster=%s\n", name)
 
 	if clients.K8s == nil {
 		fmt.Fprintln(os.Stderr, "[phase 11b down] warning: k8s client not available, skipping k8s teardown")
@@ -120,14 +137,7 @@ func Phase11bEBSCSIHugepagesDown(ctx context.Context, cl *intent.Cluster, st *st
 		}
 	}
 
-	// 2. gp3 StorageClass.
-	if gp3YAML, err := k8smanifests.FS.ReadFile(gp3StorageClassYAMLPath); err == nil {
-		if dErr := deleteRawYAML(ctx, clients.Dynamic, gp3YAML); dErr != nil {
-			fmt.Fprintf(os.Stderr, "[phase 11b down] warning: delete gp3 SC: %v\n", dErr)
-		}
-	}
-
-	// 3. EBS CSI addon — best-effort delete. The EKS-managed addon owns its own
+	// 2. EBS CSI addon — best-effort delete. The EKS-managed addon owns its own
 	// k8s resources so this single API call cleans up cluster-side too.
 	if clients.EKS != nil {
 		_, err := clients.EKS.DeleteAddon(ctx, &eks.DeleteAddonInput{

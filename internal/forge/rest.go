@@ -5,12 +5,26 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
+
+// restHTTPErr lets callers switch on the HTTP status code (e.g. POST /api/projects
+// 409 → fall back to GET-and-reuse) without parsing the formatted error string.
+type restHTTPErr struct {
+	StatusCode int
+	URL        string
+	Body       string
+}
+
+func (e *restHTTPErr) Error() string {
+	return fmt.Sprintf("http %d from %s: %s", e.StatusCode, e.URL, e.Body)
+}
 
 // RegisterREST mirrors Register's shape but uses forge's REST API instead of
 // MCP. Used as a fallback when the MCP catalog does not expose create_project
@@ -147,7 +161,23 @@ func restCreateProject(ctx context.Context, base, token string, req RegisterRequ
 		Project   restProject `json:"project"`
 		Success   bool        `json:"success"`
 	}
-	if err := restPost(ctx, base+"/api/projects", token, body, &resp); err != nil {
+	err := restPost(ctx, base+"/api/projects", token, body, &resp)
+	if err != nil {
+		// 409 = unique-name violation: a project with this name already exists
+		// (orphan from a previous run where the cluster was deleted but the
+		// project record was preserved per the soft-delete default). Fall back
+		// to GET-list-and-reuse so the kubeconfig still gets re-uploaded
+		// against this project on the subsequent cluster POST.
+		var herr *restHTTPErr
+		if errors.As(err, &herr) && herr.StatusCode == http.StatusConflict {
+			fmt.Fprintf(os.Stderr, "[forge] project %q already exists (409) — reusing existing record\n", req.ProjectName)
+			existing, lookupErr := restFindProjectByName(ctx, base, token, req.ProjectName)
+			if lookupErr != nil {
+				return restProject{}, fmt.Errorf("forge REST: 409 on create + lookup failed: %w (original: %v)", lookupErr, err)
+			}
+			fmt.Fprintf(os.Stderr, "[forge] reusing project id=%d name=%q\n", existing.ID, existing.Name)
+			return existing, nil
+		}
 		return restProject{}, err
 	}
 	if resp.Project.ID != 0 {
@@ -162,6 +192,25 @@ func restCreateProject(ctx context.Context, base, token string, req RegisterRequ
 	return restProject{}, fmt.Errorf("forge REST create project: no project ID in response (tried wrapped, flat-id, project_id shapes)")
 }
 
+// restFindProjectByName GETs /api/projects and returns the project whose name
+// matches exactly. Used by the 409 upsert path. Returns os.ErrNotExist when
+// the name is absent so callers can distinguish "lookup worked, not found"
+// from "lookup failed".
+func restFindProjectByName(ctx context.Context, base, token, name string) (restProject, error) {
+	var resp struct {
+		Projects []restProject `json:"projects"`
+	}
+	if err := restGet(ctx, base+"/api/projects", token, &resp); err != nil {
+		return restProject{}, fmt.Errorf("list projects: %w", err)
+	}
+	for _, p := range resp.Projects {
+		if p.Name == name {
+			return p, nil
+		}
+	}
+	return restProject{}, fmt.Errorf("project %q not found in forge: %w", name, os.ErrNotExist)
+}
+
 type restCluster struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
@@ -173,11 +222,12 @@ func restCreateCluster(ctx context.Context, base, token string, projectID int, r
 	// kubeconfig: Incorrect padding"). Encode here, not at the caller,
 	// so the MCP path (which sends raw bytes per the existing client)
 	// is unaffected.
+	encodedKubeconfig := base64.StdEncoding.EncodeToString(req.Kubeconfig)
 	body := map[string]any{
 		"name":           req.ClusterName,
 		"cloud_provider": "aws",
 		"region":         req.Region,
-		"kubeconfig":     base64.StdEncoding.EncodeToString(req.Kubeconfig),
+		"kubeconfig":     encodedKubeconfig,
 	}
 	// Same three-shape tolerance as restCreateProject (wrapped, flat-id,
 	// flat-prefix).
@@ -189,7 +239,25 @@ func restCreateCluster(ctx context.Context, base, token string, projectID int, r
 		Success   bool        `json:"success"`
 	}
 	url := fmt.Sprintf("%s/api/projects/%d/k8s/clusters", base, projectID)
-	if err := restPost(ctx, url, token, body, &resp); err != nil {
+	err := restPost(ctx, url, token, body, &resp)
+	if err != nil {
+		// 409 = the project already contains a cluster with this name. Find
+		// it and PUT the fresh kubeconfig so the forge k8s UI doesn't 500 on
+		// a stale/missing kubeconfig (user-reported failure mode 2026-05-22).
+		var herr *restHTTPErr
+		if errors.As(err, &herr) && herr.StatusCode == http.StatusConflict {
+			fmt.Fprintf(os.Stderr, "[forge] cluster %q already exists in project %d (409) — refreshing kubeconfig\n",
+				req.ClusterName, projectID)
+			existing, lookupErr := restFindClusterByName(ctx, base, token, projectID, req.ClusterName)
+			if lookupErr != nil {
+				return restCluster{}, fmt.Errorf("forge REST: 409 on cluster create + lookup failed: %w (original: %v)", lookupErr, err)
+			}
+			if updateErr := restUpdateClusterKubeconfig(ctx, base, token, existing.ID, encodedKubeconfig); updateErr != nil {
+				return restCluster{}, fmt.Errorf("forge REST: 409 on cluster create + kubeconfig refresh failed: %w", updateErr)
+			}
+			fmt.Fprintf(os.Stderr, "[forge] cluster id=%d kubeconfig refreshed\n", existing.ID)
+			return existing, nil
+		}
 		return restCluster{}, err
 	}
 	if resp.Cluster.ID != 0 {
@@ -204,6 +272,33 @@ func restCreateCluster(ctx context.Context, base, token string, projectID int, r
 	return restCluster{}, fmt.Errorf("forge REST create cluster: no cluster ID in response (tried wrapped, flat-id, cluster_id shapes)")
 }
 
+// restFindClusterByName GETs /api/projects/{id}/k8s/clusters and returns the
+// cluster whose name matches exactly.
+func restFindClusterByName(ctx context.Context, base, token string, projectID int, name string) (restCluster, error) {
+	var resp struct {
+		Clusters []restCluster `json:"clusters"`
+	}
+	url := fmt.Sprintf("%s/api/projects/%d/k8s/clusters", base, projectID)
+	if err := restGet(ctx, url, token, &resp); err != nil {
+		return restCluster{}, fmt.Errorf("list clusters: %w", err)
+	}
+	for _, c := range resp.Clusters {
+		if c.Name == name {
+			return c, nil
+		}
+	}
+	return restCluster{}, fmt.Errorf("cluster %q not found in project %d: %w", name, projectID, os.ErrNotExist)
+}
+
+// restUpdateClusterKubeconfig PUTs a fresh kubeconfig onto an existing cluster
+// record. encodedKubeconfig must already be base64-encoded (forge requirement
+// — verified against localhost 2026-05-21 + ClusterUpdateRequest schema).
+func restUpdateClusterKubeconfig(ctx context.Context, base, token string, clusterID int, encodedKubeconfig string) error {
+	body := map[string]any{"kubeconfig": encodedKubeconfig}
+	url := fmt.Sprintf("%s/api/k8s/clusters/%d", base, clusterID)
+	return restPut(ctx, url, token, body, nil)
+}
+
 func restDeleteCluster(ctx context.Context, base, token string, projectID, clusterID int) error {
 	url := fmt.Sprintf("%s/api/projects/%d/k8s/clusters/%d", base, projectID, clusterID)
 	return restDelete(ctx, url, token)
@@ -215,30 +310,54 @@ func restDeleteProject(ctx context.Context, base, token string, projectID int) e
 }
 
 // restPost sends a POST request with JSON body and decodes the JSON response
-// into out.
+// into out. On HTTP status >= 400 returns *restHTTPErr (typed so callers can
+// switch on status code, e.g. 409 → upsert fallback).
 func restPost(ctx context.Context, url, token string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshal body: %w", err)
+	return restRequest(ctx, http.MethodPost, url, token, body, out)
+}
+
+// restPut mirrors restPost but uses HTTP PUT — used by the cluster-409 upsert
+// path to PUT a fresh kubeconfig onto an existing cluster record.
+func restPut(ctx context.Context, url, token string, body, out any) error {
+	return restRequest(ctx, http.MethodPut, url, token, body, out)
+}
+
+// restGet sends a GET request and decodes the JSON response into out.
+// Status >= 400 returns *restHTTPErr.
+func restGet(ctx context.Context, url, token string, out any) error {
+	return restRequest(ctx, http.MethodGet, url, token, nil, out)
+}
+
+// restRequest is the shared transport for restPost / restPut / restGet.
+func restRequest(ctx context.Context, method, url, token string, body, out any) error {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal body: %w", err)
+		}
+		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("http POST %s: %w", url, err)
+		return fmt.Errorf("http %s %s: %w", method, url, err)
 	}
 	defer resp.Body.Close()
 	respBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("http %d from %s: %s", resp.StatusCode, url, truncateREST(string(respBytes), 400))
+		return &restHTTPErr{StatusCode: resp.StatusCode, URL: url, Body: truncateREST(string(respBytes), 400)}
 	}
-	if out != nil {
+	if out != nil && len(respBytes) > 0 {
 		if err := json.Unmarshal(respBytes, out); err != nil {
 			return fmt.Errorf("decode response from %s: %w", url, err)
 		}
