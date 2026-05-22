@@ -465,7 +465,10 @@
     "MGMT",
     "mgmt",
     "netdevice",
-    "spkvlans"
+    "spkvlans",
+    "dssm",
+    "ekstypes",
+    "inotify"
   ],
   "ignorePaths": [
     "book/book/**",

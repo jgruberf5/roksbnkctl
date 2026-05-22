@@ -251,13 +251,22 @@ func ensureNodeGroup(
 
 	// Bind the node group to the Launch Template via id=$LT_ID,version=$Latest.
 	// DiskSize is NOT set when using a launch template (EKS rejects the combination).
+	//
+	// AmiType = AL2023_x86_64_STANDARD: predictable interface naming
+	// (device-index 0..3 → ens5..ens8). The downstream stack assumes this:
+	// Phase 17 attaches BNK_INT at device-index 2 (→ ens7) and BNK_EXT at
+	// device-index 3 (→ ens8); Phase 19 hard-codes those names in the
+	// cloud-network-mapping ConfigMap; Phase 20 NADs reference them too.
+	// AL2 names secondary ENIs eth1..ethN, which breaks Multus link-lookup.
+	// See docs/audits/slice-09-aws-gpu-setup-audit.md §2.3 and
+	// aws-gpu-setup/vars.env:92-95 for the source of the naming contract.
 	ltVersion := "$Latest"
 	_, err = eksc.CreateNodegroup(ctx, &eks.CreateNodegroupInput{
 		ClusterName:   ptr(clusterName),
 		NodegroupName: ptr(ngName),
 		NodeRole:      ptr(nodeRoleARN),
 		Subnets:       publicSubnets,
-		AmiType:       ekstypes.AMITypesAl2X8664,
+		AmiType:       ekstypes.AMITypesAl2023X8664Standard,
 		InstanceTypes: []string{ng.InstanceType},
 		ScalingConfig: &ekstypes.NodegroupScalingConfig{
 			DesiredSize: int32Ptr(desiredSize),
