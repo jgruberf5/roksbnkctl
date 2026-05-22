@@ -95,6 +95,21 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		return fmt.Errorf("phase10: PUBLIC_SUBNETS not in state (run phase03 first)")
 	}
 
+	// For host-device pattern: pin the node group to the public subnet that
+	// shares an AZ with the data-path subnets. EKS picks an AZ from the node
+	// group's subnet set when launching the node; if we pass both AZs, EKS may
+	// land the node in the wrong AZ and Phase 17 ENI attach fails with
+	// "not in the same availability zone".
+	if cl.Pattern == "host-device" && cl.Network.DataPath != nil {
+		targetAZ := cl.Network.DataPath.External.AZ
+		filtered := filterSubnetsByAZ(publicSubnets, cl.Network.Subnets.Public, targetAZ)
+		if len(filtered) == 0 {
+			return fmt.Errorf("phase10: no public subnet matches data-path AZ %q", targetAZ)
+		}
+		fmt.Fprintf(os.Stderr, "[phase 10] host-device pattern: pinning node group to AZ=%s (subnets=%v)\n", targetAZ, filtered)
+		publicSubnets = filtered
+	}
+
 	// Ensure the Launch Template exists.
 	ltID, err := ensureLaunchTemplate(ctx, clients.EC2, name, ltName, cl.Tags, cl.Metadata.Labels)
 	if err != nil {
@@ -420,3 +435,21 @@ func waitNodeGroupDeleted(ctx context.Context, eksc EKSAPI, clusterName, ngName 
 
 // int32Ptr returns a pointer to an int32.
 func int32Ptr(v int32) *int32 { return &v }
+
+// filterSubnetsByAZ returns only the entries of stateSubnets whose
+// cluster.yaml SubnetSpec position has the target AZ. Phase 03 writes
+// PUBLIC_SUBNETS in the same order as cl.Network.Subnets.Public[], so we can
+// correlate by index without re-querying AWS.
+func filterSubnetsByAZ(stateSubnets []string, specSubnets []intent.SubnetSpec, az string) []string {
+	if len(stateSubnets) != len(specSubnets) {
+		// Mismatch (shouldn't happen in normal flow); return all to fail loudly later.
+		return stateSubnets
+	}
+	var out []string
+	for i, spec := range specSubnets {
+		if spec.AZ == az {
+			out = append(out, stateSubnets[i])
+		}
+	}
+	return out
+}
