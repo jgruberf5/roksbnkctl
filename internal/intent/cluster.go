@@ -413,17 +413,26 @@ func applyDefaults(c *Cluster) {
 		if c.Bnk.TmmMtu == 0 {
 			c.Bnk.TmmMtu = 9000
 		}
+		// TMM resource defaults — must match aws-gpu-setup's proven-working values.
+		// 2026-05-23 live test on syd-tracer: TmmCpu="4" + PalCpuSet="0-3" caused
+		// mapres SIGSEGV at startup ("init.tmm.sh: Segmentation fault (core dumped)").
+		// Live-patched CNEInstance with the values below → TMM reached 7/7 Running
+		// in 25s. aws-gpu-setup's working syd-test-lab (BNK 2.3.0, AL2023, m6i.4xlarge)
+		// uses the same values; FLO renders TMM_MAPRES_HUGEPAGES=1536 (3Gi) which
+		// fits the 4Gi hugepages cap. Tokyo's working BNK 2.3 CNEInstance also uses
+		// cpu=2/mem=8Gi/PAL=0,2. Don't change without re-validating against a fresh
+		// EKS up.
 		if c.Bnk.TmmCpu == "" {
-			c.Bnk.TmmCpu = "4"
+			c.Bnk.TmmCpu = "2"
 		}
 		if c.Bnk.TmmMemory == "" {
-			c.Bnk.TmmMemory = "16Gi"
+			c.Bnk.TmmMemory = "8Gi"
 		}
 		if c.Bnk.TmmHugepages == "" {
 			c.Bnk.TmmHugepages = "4Gi"
 		}
 		if c.Bnk.PalCpuSet == "" {
-			c.Bnk.PalCpuSet = "0-3"
+			c.Bnk.PalCpuSet = "0,2"
 		}
 	}
 

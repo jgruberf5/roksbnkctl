@@ -63,7 +63,15 @@ func Phase18IRSAOIDC(ctx context.Context, cl *intent.Cluster, st *state.State, c
 	cneSAName := st.Get("CNE_SA_NAME")
 	if cneSAName == "" {
 		// CNE_SA_NAME is set in slice 7b (Phase 21); use deterministic default.
-		cneSAName = "f5-cne-controller-" + name + "-serviceaccount"
+		// MUST match Phase 21's CNEServiceAccountName() which appends "-bnk-" —
+		// the SA YAML template renders f5-cne-controller-<cluster>-bnk-serviceaccount
+		// via InstanceNameCR=<cluster>-bnk. A name mismatch here means the IRSA
+		// role's trust policy rejects sts:AssumeRoleWithWebIdentity for the actual
+		// SA, cne-controller logs "Cloud prerequisites not met" / cloudProviderInstanceNil,
+		// and AssignPrivateIpAddresses for the Gateway VIP is never called. Caught
+		// live on syd-tracer 2026-05-23 — TMM had the VIP in its listener config
+		// but the BNK_EXT ENI never received 10.0.10.100 as a secondary IP.
+		cneSAName = "f5-cne-controller-" + name + "-bnk-serviceaccount"
 	}
 
 	if dryRun {
@@ -139,12 +147,22 @@ func Phase18IRSAOIDC(ctx context.Context, cl *intent.Cluster, st *state.State, c
 	st.Set("CNE_IRSA_ROLE_ARN", irsaRoleARN)
 	fmt.Fprintf(os.Stderr, "[phase 18] IRSA role ARN: %s\n", irsaRoleARN)
 
-	// ── Step 6: cluster SG ingress from SG_BNK_DATA ───────────────────────────
+	// ── Step 6: bi-directional SG ingress between cluster SG and SG_BNK_DATA ─
+	// Two directions required:
+	//   (a) cluster SG ← SG_BNK_DATA: lets TMM SNATted server-side packets reach
+	//       backend pods (TMM SNATs to BNK SelfIPs 10.0.10.240 / 10.0.20.240).
+	//   (b) SG_BNK_DATA ← cluster SG: lets client traffic from cluster pods reach
+	//       the Gateway VIP (which lives as a secondary IP on the BNK_EXT ENI
+	//       under SG_BNK_DATA). Without this, pod-to-VIP curl gets RST/timeout
+	//       at the BNK_EXT ENI. Caught live 2026-05-23 on syd-tracer.
 	clusterSG := st.Get("EKS_SECURITY_GROUP")
 	sgBNKData := st.Get("SG_BNK_DATA")
 	if clusterSG != "" && sgBNKData != "" {
 		if err := ensureClusterSGIngress(ctx, clients.EC2, clusterSG, sgBNKData); err != nil {
 			return fmt.Errorf("phase18: cluster SG ingress: %w", err)
+		}
+		if err := ensureBNKDataSGIngress(ctx, clients.EC2, sgBNKData, clusterSG); err != nil {
+			return fmt.Errorf("phase18: BNK_DATA SG ingress: %w", err)
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "[phase 18] warning: EKS_SECURITY_GROUP=%q SG_BNK_DATA=%q — skipping cluster SG ingress rule\n", clusterSG, sgBNKData)
@@ -407,6 +425,33 @@ func ensureClusterSGIngress(ctx context.Context, ec2c EC2API, clusterSGID, sgBNK
 	}
 	fmt.Fprintf(os.Stderr, "[phase 18] cluster SG %s: ingress from SG_BNK_DATA %s added (or already present)\n",
 		clusterSGID, sgBNKDataID)
+	return nil
+}
+
+// ensureBNKDataSGIngress adds an ingress rule from cluster SG to SG_BNK_DATA.
+// Allows client traffic from cluster pods to reach the Gateway VIP (secondary IP
+// on the BNK_EXT ENI under SG_BNK_DATA). Tolerates duplicate-rule errors.
+func ensureBNKDataSGIngress(ctx context.Context, ec2c EC2API, sgBNKDataID, clusterSGID string) error {
+	_, err := ec2c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: ptr(sgBNKDataID),
+		IpPermissions: []ec2types.IpPermission{
+			{
+				IpProtocol: ptr("-1"),
+				UserIdGroupPairs: []ec2types.UserIdGroupPair{
+					{
+						GroupId:     ptr(clusterSGID),
+						Description: ptr("allow-cluster-to-bnk-data"),
+					},
+				},
+			},
+		},
+	})
+	if err != nil && !isEC2DuplicatePermission(err) {
+		return fmt.Errorf("ec2:AuthorizeSecurityGroupIngress SG_BNK_DATA %s ← cluster-SG %s: %w",
+			sgBNKDataID, clusterSGID, err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 18] SG_BNK_DATA %s: ingress from cluster SG %s added (or already present)\n",
+		sgBNKDataID, clusterSGID)
 	return nil
 }
 

@@ -677,6 +677,14 @@ func resolveGVR(apiVersion, kind string) (schema.GroupVersionResource, bool, err
 		// BNK CRs (slice 7c — CNEInstance + License)
 		"k8s.f5.com/v1/CNEInstance": {schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}, true},
 		"k8s.f5net.com/v1/License":  {schema.GroupVersionResource{Group: "k8s.f5net.com", Version: "v1", Resource: "licenses"}, true},
+		// Slice 10 host-device data-plane CRs.
+		// CRD plural names verified via `kubectl get crd`: f5-spk-vlans.k8s.f5net.com,
+		// gatewayclasses.gateway.networking.k8s.io. Without these entries, Phase 23b's
+		// applyRawYAML SILENTLY skipped both CRs ("unknown apiVersion/kind" warning),
+		// TMM stayed at ConfigurationDone=True / RoutingDone=False, and CNEInstance
+		// never became Available. Caught live during slice-11 retest 2026-05-23.
+		"k8s.f5net.com/v1/F5SPKVlan":                {schema.GroupVersionResource{Group: "k8s.f5net.com", Version: "v1", Resource: "f5-spk-vlans"}, true},
+		"gateway.networking.k8s.io/v1/GatewayClass": {schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}, false},
 	}
 
 	key := apiVersion + "/" + kind

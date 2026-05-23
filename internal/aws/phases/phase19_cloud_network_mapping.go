@@ -120,13 +120,15 @@ func persistHostDeviceConstants(st *state.State) {
 	st.Set("CLOUD_HOST_DEVICE_NAME", CloudHostDeviceName)
 }
 
-// ensureMGMTSubnetAlias writes MGMT_SUBNET as an alias for PUBLIC_SUBNETS[0]
-// if it is not already set. This is cleaner than requiring Phase 03 to know
-// about the alias — the alias is a Phase 19 concept.
+// ensureMGMTSubnetAlias writes MGMT_SUBNET = PUBLIC_SUBNETS[0]. ALWAYS
+// recomputes from PUBLIC_SUBNETS — does NOT preserve a prior cached value,
+// because a stale MGMT_SUBNET from a previous cluster run would land in the
+// cloud-network-mapping ConfigMap and cne-controller would compute backend
+// gateways against the wrong subnet → TMM has no valid route to the cluster
+// pod CIDR → HTTP requests at the VIP hit "no_acl_match" and get RST.
+// Caught live on syd-tracer 2026-05-23 where a leftover state.env value
+// from a prior session shadowed the actual public subnet ID.
 func ensureMGMTSubnetAlias(st *state.State) error {
-	if st.Get("MGMT_SUBNET") != "" {
-		return nil // already set (e.g. idempotent re-run)
-	}
 	publicSubnets := st.Get("PUBLIC_SUBNETS")
 	if publicSubnets == "" {
 		return fmt.Errorf("PUBLIC_SUBNETS not in state (Phase 03 must run first)")

@@ -78,11 +78,19 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 			}
 		}
 
-		// Read CNEInstance status.state.
+		// Read CNEInstance status.state AND fall back to status.conditions[Available]==True.
+		// BNK 2.3.0 leaves .status.state empty; readiness signal moved to the conditions
+		// list (verified live 2026-05-23 on syd-tracer — Available=True with state="").
 		cneState := ""
 		cneObj, cneErr := clients.Dynamic.Resource(cneinstanceGVR).Namespace(InstanceNamespace).Get(ctx, crName, metav1.GetOptions{})
 		if cneErr == nil {
 			cneState, _, _ = unstructured.NestedString(cneObj.Object, "status", "state")
+			if cneState == "" {
+				// Fallback: derive readiness from conditions[].
+				if cneAvailableFromConditions(cneObj.Object) {
+					cneState = "Available"
+				}
+			}
 		}
 		lastCNEState = cneState
 
@@ -113,9 +121,33 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 		phase25MaxIter, lastCNEState, lastLicState, crName, InstanceNamespace)
 }
 
-// isCNEReady returns true if state is "Ready" or "Running".
+// isCNEReady returns true if state is "Ready", "Running", or "Available"
+// (the latter is the BNK 2.3 fallback derived from .status.conditions).
 func isCNEReady(state string) bool {
-	return state == "Ready" || state == "Running"
+	return state == "Ready" || state == "Running" || state == "Available"
+}
+
+// cneAvailableFromConditions returns true if the CNEInstance object's
+// .status.conditions list contains {type:"Available", status:"True"}.
+// BNK 2.3.0 reports readiness via this condition rather than the older
+// top-level .status.state field.
+func cneAvailableFromConditions(obj map[string]interface{}) bool {
+	conds, found, err := unstructured.NestedSlice(obj, "status", "conditions")
+	if err != nil || !found {
+		return false
+	}
+	for _, c := range conds {
+		cm, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		t, _ := cm["type"].(string)
+		s, _ := cm["status"].(string)
+		if t == "Available" && s == "True" {
+			return true
+		}
+	}
+	return false
 }
 
 // podCounts returns running/pending/failed/total pod counts in the given namespace.

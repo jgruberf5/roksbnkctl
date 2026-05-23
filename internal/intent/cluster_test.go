@@ -808,17 +808,17 @@ bnk:
 	if c.Bnk.TmmMtu != 9000 {
 		t.Errorf("TmmMtu: got %d, want 9000", c.Bnk.TmmMtu)
 	}
-	if c.Bnk.TmmCpu != "4" {
-		t.Errorf("TmmCpu: got %q, want 4", c.Bnk.TmmCpu)
+	if c.Bnk.TmmCpu != "2" {
+		t.Errorf("TmmCpu: got %q, want 2", c.Bnk.TmmCpu)
 	}
-	if c.Bnk.TmmMemory != "16Gi" {
-		t.Errorf("TmmMemory: got %q, want 16Gi", c.Bnk.TmmMemory)
+	if c.Bnk.TmmMemory != "8Gi" {
+		t.Errorf("TmmMemory: got %q, want 8Gi", c.Bnk.TmmMemory)
 	}
 	if c.Bnk.TmmHugepages != "4Gi" {
 		t.Errorf("TmmHugepages: got %q, want 4Gi", c.Bnk.TmmHugepages)
 	}
-	if c.Bnk.PalCpuSet != "0-3" {
-		t.Errorf("PalCpuSet: got %q, want 0-3", c.Bnk.PalCpuSet)
+	if c.Bnk.PalCpuSet != "0,2" {
+		t.Errorf("PalCpuSet: got %q, want 0,2", c.Bnk.PalCpuSet)
 	}
 }
 

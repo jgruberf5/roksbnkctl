@@ -92,7 +92,7 @@ func TestPhase18IRSAOIDC_IRSARoleCreate(t *testing.T) {
 	roleName := cl.Metadata.Name + "-cne-controller-irsa"
 
 	roleARN, err := ensureIRSARole(context.Background(), iamMock, cl.Metadata.Name, roleName,
-		oidcHost, accountID, "f5-cne-system", "f5-cne-controller-tracer-serviceaccount",
+		oidcHost, accountID, "f5-cne-system", "f5-cne-controller-tracer-bnk-serviceaccount",
 		nil, nil)
 	if err != nil {
 		t.Fatalf("ensureIRSARole: %v", err)
@@ -307,36 +307,31 @@ func TestPhase18IrsaOidc_AddsClusterSGIngress(t *testing.T) {
 	}
 
 	// AuthorizeSecurityGroupIngress must have been called exactly once.
-	if ec2Mock.authorizeIngressCalls != 1 {
-		t.Fatalf("authorizeIngressCalls = %d, want 1", ec2Mock.authorizeIngressCalls)
+	if ec2Mock.authorizeIngressCalls != 2 {
+		t.Fatalf("authorizeIngressCalls = %d, want 2 (bi-directional cluster ⇄ BNK_DATA)", ec2Mock.authorizeIngressCalls)
 	}
 
-	// GroupId must be the EKS cluster SG, not SG_BNK_DATA.
-	if ec2Mock.authorizeIngressInput == nil {
-		t.Fatal("authorizeIngressInput is nil")
+	// Bi-directional: call[0] = cluster ← BNK_DATA, call[1] = BNK_DATA ← cluster.
+	if len(ec2Mock.authorizeIngressInputs) != 2 {
+		t.Fatalf("authorizeIngressInputs len=%d, want 2", len(ec2Mock.authorizeIngressInputs))
 	}
-	if ec2Mock.authorizeIngressInput.GroupId == nil || *ec2Mock.authorizeIngressInput.GroupId != "sg-eks-cluster-id" {
-		got := "<nil>"
-		if ec2Mock.authorizeIngressInput.GroupId != nil {
-			got = *ec2Mock.authorizeIngressInput.GroupId
-		}
-		t.Errorf("GroupId = %q, want sg-eks-cluster-id", got)
+	first := ec2Mock.authorizeIngressInputs[0]
+	if first.GroupId == nil || *first.GroupId != "sg-eks-cluster-id" {
+		t.Errorf("first call GroupId = %v, want sg-eks-cluster-id", first.GroupId)
 	}
-
-	// IpPermissions must reference SG_BNK_DATA as the source.
-	if len(ec2Mock.authorizeIngressInput.IpPermissions) == 0 {
-		t.Fatal("IpPermissions is empty")
+	if len(first.IpPermissions) == 0 || len(first.IpPermissions[0].UserIdGroupPairs) == 0 ||
+		first.IpPermissions[0].UserIdGroupPairs[0].GroupId == nil ||
+		*first.IpPermissions[0].UserIdGroupPairs[0].GroupId != "sg-bnk-data-id" {
+		t.Errorf("first call source GroupId mismatch; want sg-bnk-data-id")
 	}
-	perm := ec2Mock.authorizeIngressInput.IpPermissions[0]
-	if len(perm.UserIdGroupPairs) == 0 {
-		t.Fatal("UserIdGroupPairs is empty")
+	second := ec2Mock.authorizeIngressInputs[1]
+	if second.GroupId == nil || *second.GroupId != "sg-bnk-data-id" {
+		t.Errorf("second call GroupId = %v, want sg-bnk-data-id", second.GroupId)
 	}
-	if perm.UserIdGroupPairs[0].GroupId == nil || *perm.UserIdGroupPairs[0].GroupId != "sg-bnk-data-id" {
-		got := "<nil>"
-		if perm.UserIdGroupPairs[0].GroupId != nil {
-			got = *perm.UserIdGroupPairs[0].GroupId
-		}
-		t.Errorf("source GroupId = %q, want sg-bnk-data-id", got)
+	if len(second.IpPermissions) == 0 || len(second.IpPermissions[0].UserIdGroupPairs) == 0 ||
+		second.IpPermissions[0].UserIdGroupPairs[0].GroupId == nil ||
+		*second.IpPermissions[0].UserIdGroupPairs[0].GroupId != "sg-eks-cluster-id" {
+		t.Errorf("second call source GroupId mismatch; want sg-eks-cluster-id")
 	}
 }
 

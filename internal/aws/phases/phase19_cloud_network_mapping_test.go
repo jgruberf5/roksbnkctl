@@ -107,8 +107,12 @@ func TestPhase19CloudNetworkMapping_StateKeysSetOnApply(t *testing.T) {
 	}
 }
 
-// TestPhase19CloudNetworkMapping_MGMTSubnetAlias verifies MGMT_SUBNET is derived
-// from PUBLIC_SUBNETS[0] and idempotent on re-run.
+// TestPhase19CloudNetworkMapping_MGMTSubnetAlias verifies MGMT_SUBNET is
+// ALWAYS recomputed from PUBLIC_SUBNETS[0] (does NOT preserve a stale value).
+// A stale MGMT_SUBNET from a prior cluster run would land in the
+// cloud-network-mapping ConfigMap and cause cne-controller to compute the
+// wrong backend gateway → TMM has no route → HTTP requests at the VIP get
+// no_acl_match and RST. Caught live on syd-tracer 2026-05-23.
 func TestPhase19CloudNetworkMapping_MGMTSubnetAlias(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
@@ -123,13 +127,13 @@ func TestPhase19CloudNetworkMapping_MGMTSubnetAlias(t *testing.T) {
 		t.Errorf("MGMT_SUBNET = %q, want subnet-pub-001", st.Get("MGMT_SUBNET"))
 	}
 
-	// Second call — should be idempotent (already set).
-	st.Set("PUBLIC_SUBNETS", "DIFFERENT-subnet") // changing PUBLIC_SUBNETS shouldn't matter
+	// Second call with NEW PUBLIC_SUBNETS — should OVERWRITE, not preserve.
+	st.Set("PUBLIC_SUBNETS", "subnet-pub-NEW")
 	if err := ensureMGMTSubnetAlias(st); err != nil {
-		t.Fatalf("ensureMGMTSubnetAlias idempotent: %v", err)
+		t.Fatalf("ensureMGMTSubnetAlias re-run: %v", err)
 	}
-	if st.Get("MGMT_SUBNET") != "subnet-pub-001" {
-		t.Errorf("MGMT_SUBNET changed on idempotent re-run: got %q", st.Get("MGMT_SUBNET"))
+	if st.Get("MGMT_SUBNET") != "subnet-pub-NEW" {
+		t.Errorf("MGMT_SUBNET did NOT update on re-run: got %q, want subnet-pub-NEW", st.Get("MGMT_SUBNET"))
 	}
 }
 

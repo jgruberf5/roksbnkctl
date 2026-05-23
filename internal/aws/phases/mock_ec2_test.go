@@ -61,16 +61,17 @@ type mockEC2 struct {
 	disassocRTBCalls int
 
 	// Security Groups (slice 7+)
-	describeSGsOut        *ec2.DescribeSecurityGroupsOutput
-	describeSGsErr        error
-	createSGOut           *ec2.CreateSecurityGroupOutput
-	createSGErr           error
-	createSGCalls         int
-	deleteSGCalls         int
-	deleteSGErr           error
-	authorizeIngressCalls int
-	authorizeIngressErr   error
-	authorizeIngressInput *ec2.AuthorizeSecurityGroupIngressInput
+	describeSGsOut         *ec2.DescribeSecurityGroupsOutput
+	describeSGsErr         error
+	createSGOut            *ec2.CreateSecurityGroupOutput
+	createSGErr            error
+	createSGCalls          int
+	deleteSGCalls          int
+	deleteSGErr            error
+	authorizeIngressCalls  int
+	authorizeIngressErr    error
+	authorizeIngressInput  *ec2.AuthorizeSecurityGroupIngressInput
+	authorizeIngressInputs []*ec2.AuthorizeSecurityGroupIngressInput
 
 	// Network Interfaces (slice 7+)
 	describeENIsOut   *ec2.DescribeNetworkInterfacesOutput
@@ -263,6 +264,7 @@ func (m *mockEC2) DeleteSecurityGroup(_ context.Context, _ *ec2.DeleteSecurityGr
 func (m *mockEC2) AuthorizeSecurityGroupIngress(_ context.Context, in *ec2.AuthorizeSecurityGroupIngressInput, _ ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupIngressOutput, error) {
 	m.authorizeIngressCalls++
 	m.authorizeIngressInput = in
+	m.authorizeIngressInputs = append(m.authorizeIngressInputs, in)
 	return &ec2.AuthorizeSecurityGroupIngressOutput{}, m.authorizeIngressErr
 }
 func (m *mockEC2) AuthorizeSecurityGroupEgress(_ context.Context, _ *ec2.AuthorizeSecurityGroupEgressInput, _ ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupEgressOutput, error) {
