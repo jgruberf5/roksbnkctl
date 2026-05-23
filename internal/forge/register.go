@@ -20,6 +20,15 @@ type RegisterRequest struct {
 	Region        string // AWS region
 	Kubeconfig    []byte // raw YAML for the EKS cluster
 
+	// AWSProfile is the named AWS profile forge should use when minting
+	// EKS bearer tokens for this cluster. When empty, Register fills it
+	// from os.Getenv("AWS_PROFILE") so the forge backend records the
+	// same identity the operator used to provision the cluster — without
+	// it forge falls back to its own global env, which silently breaks
+	// for clusters outside the backend's default region. Set to "-" to
+	// explicitly skip sending an AWS profile.
+	AWSProfile string
+
 	// If true, after CreateCluster awsbnkctl calls scan_cluster +
 	// bnk_health to seed forge's view and smoke-test the link.
 	PostRegisterScan bool
@@ -60,6 +69,9 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 	if req.ProjectName == "" {
 		req.ProjectName = "awsbnkctl-" + req.WorkspaceName
 	}
+	if req.AWSProfile == "" {
+		req.AWSProfile = os.Getenv("AWS_PROFILE")
+	}
 
 	// Idempotency: existing link wins.
 	if existing, err := ReadLink(req.WorkspaceDir); err == nil {
@@ -79,6 +91,7 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 		ProjectType:   "cloud-aws",
 		CloudProvider: "aws",
 		Region:        req.Region,
+		AWSProfile:    sendableAWSProfile(req.AWSProfile),
 		Environment:   "dev",
 		Description:   fmt.Sprintf("Created by awsbnkctl for workspace %q", req.WorkspaceName),
 	})
@@ -131,6 +144,17 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 	}
 
 	return out, nil
+}
+
+// sendableAWSProfile returns the profile string actually transmitted to
+// forge. Callers use "-" to opt out of sending a profile (forge will then
+// fall back to its backend-global env); any other empty / dash variant
+// is treated as "no profile set" and returns "".
+func sendableAWSProfile(profile string) string {
+	if profile == "-" || profile == "" {
+		return ""
+	}
+	return profile
 }
 
 // Unregister tears down the forge-side registration for a workspace.

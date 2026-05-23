@@ -149,6 +149,9 @@ func restCreateProject(ctx context.Context, base, token string, req RegisterRequ
 		"environment":    "dev",
 		"description":    fmt.Sprintf("Created by awsbnkctl for workspace %q", req.WorkspaceName),
 	}
+	if p := sendableAWSProfile(req.AWSProfile); p != "" {
+		body["aws_profile"] = p
+	}
 	// Forge has THREE response shapes in the wild for POST /api/projects:
 	//   A. wrapped:     {project: {id, name, ...}, success: true}  (>=2.10.x MCP tool docs)
 	//   B. flat-id:     {id, name, ...}

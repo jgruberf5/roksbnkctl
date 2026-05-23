@@ -942,6 +942,80 @@ func TestApplyDefaults_HostDevice_PreservesExplicitSize(t *testing.T) {
 	}
 }
 
+// ─── Testing + JumphostSpec tests (slice 12) ─────────────────────────────────
+
+// TestLoad_TestingBlock_Defaults verifies that testing.jumphost gets instanceType
+// defaulted to "t3.small" and mgmtSubnetIndex stays 0.
+func TestLoad_TestingBlock_Defaults(t *testing.T) {
+	yaml := hostDeviceMinimalYAML + `
+testing:
+  jumphost:
+    enabled: true
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Testing == nil || c.Testing.Jumphost == nil {
+		t.Fatal("Testing.Jumphost: nil, want populated")
+	}
+	if !c.Testing.Jumphost.Enabled {
+		t.Error("Jumphost.Enabled: got false, want true")
+	}
+	if c.Testing.Jumphost.InstanceType != "t3.small" {
+		t.Errorf("default InstanceType: got %q, want t3.small", c.Testing.Jumphost.InstanceType)
+	}
+	if c.Testing.Jumphost.MgmtSubnetIndex != 0 {
+		t.Errorf("default MgmtSubnetIndex: got %d, want 0", c.Testing.Jumphost.MgmtSubnetIndex)
+	}
+}
+
+// TestLoad_TestingBlock_ValidationSuccess verifies a fully valid testing block loads.
+func TestLoad_TestingBlock_ValidationSuccess(t *testing.T) {
+	yaml := hostDeviceMinimalYAML + `
+testing:
+  jumphost:
+    enabled: true
+    instanceType: m5.large
+    mgmtSubnetIndex: 0
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with testing block: %v", err)
+	}
+	if c.Testing.Jumphost.InstanceType != "m5.large" {
+		t.Errorf("InstanceType: got %q, want m5.large", c.Testing.Jumphost.InstanceType)
+	}
+}
+
+// TestLoad_TestingBlock_ValidationFailure_NoDataPath verifies that enabling the
+// jumphost without pattern:host-device (and thus without dataPath) returns the
+// documented "BNK_EXT subnet required" error.
+func TestLoad_TestingBlock_ValidationFailure_NoDataPath(t *testing.T) {
+	// minimalYAML has no pattern: host-device and no network.dataPath.
+	yaml := minimalYAML + `
+testing:
+  jumphost:
+    enabled: true
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for testing.jumphost.enabled without dataPath, got nil")
+	}
+	if !containsStr(err.Error(), "BNK_EXT subnet") {
+		t.Errorf("error should mention 'BNK_EXT subnet': %v", err)
+	}
+}
+
 // TestApplyDefaults_HostDevice_AutoDerivesSelfIPs confirms SelfIPs auto-derive
 // to <subnet>.240 when not explicitly set in cluster.yaml.
 func TestApplyDefaults_HostDevice_AutoDerivesSelfIPs(t *testing.T) {

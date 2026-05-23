@@ -20,6 +20,9 @@ type forgeRESTServer struct {
 	clusterFail bool
 	// calls records the endpoint+method pairs called.
 	calls []string
+	// projectBodies records the JSON request body sent to POST /api/projects;
+	// lets tests assert that fields like aws_profile / region propagate.
+	projectBodies []map[string]any
 }
 
 func (s *forgeRESTServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +42,9 @@ func (s *forgeRESTServer) handler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 			return
 		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		s.projectBodies = append(s.projectBodies, body)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"project": map[string]any{"id": 11, "name": "awsbnkctl-default"},
 			"success": true,
@@ -412,4 +418,66 @@ func firstN(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// TestRegisterREST_SendsAWSProfile guards the slice-12 enhancement: the
+// awsbnkctl-side forge registration must transmit `aws_profile` in the
+// POST /api/projects body so forge's EKS-token-mint code has per-project
+// AWS identity instead of falling back to the backend's process env.
+// Together with the upstream bnk-forge fix that prioritises
+// cluster.region, this defends against the silent-401 class of bugs
+// when an operator's AWS_PROFILE differs from the backend's.
+func TestRegisterREST_SendsAWSProfile(t *testing.T) {
+	srv := &forgeRESTServer{}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	_, err := RegisterREST(context.Background(), ts.URL, RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  dir,
+		ClusterName:   "bnk-prod",
+		Region:        "ap-southeast-2",
+		AWSProfile:    "Users-292785712872",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
+	})
+	if err != nil {
+		t.Fatalf("RegisterREST: %v", err)
+	}
+	if len(srv.projectBodies) != 1 {
+		t.Fatalf("expected 1 project POST, got %d", len(srv.projectBodies))
+	}
+	got, ok := srv.projectBodies[0]["aws_profile"].(string)
+	if !ok || got != "Users-292785712872" {
+		t.Errorf("aws_profile = %v (type %T), want %q", srv.projectBodies[0]["aws_profile"], srv.projectBodies[0]["aws_profile"], "Users-292785712872")
+	}
+}
+
+// TestRegisterREST_OmitsAWSProfileWhenDash verifies the "-" sentinel
+// opts a caller out of sending aws_profile (forge then falls back to
+// its global env, matching pre-slice-12 behaviour). Useful for tests
+// or operators who explicitly do not want a per-project profile.
+func TestRegisterREST_OmitsAWSProfileWhenDash(t *testing.T) {
+	srv := &forgeRESTServer{}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	_, err := RegisterREST(context.Background(), ts.URL, RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  dir,
+		ClusterName:   "bnk-prod",
+		Region:        "ap-southeast-2",
+		AWSProfile:    "-",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
+	})
+	if err != nil {
+		t.Fatalf("RegisterREST: %v", err)
+	}
+	if len(srv.projectBodies) != 1 {
+		t.Fatalf("expected 1 project POST, got %d", len(srv.projectBodies))
+	}
+	if v, present := srv.projectBodies[0]["aws_profile"]; present {
+		t.Errorf("aws_profile must be omitted when AWSProfile=\"-\", got %v", v)
+	}
 }

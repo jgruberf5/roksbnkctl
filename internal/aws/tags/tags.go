@@ -53,6 +53,14 @@ const (
 	CompENIExternal    = "eni-external"
 	CompOIDCProvider   = "oidc-provider"
 	CompIRSARole       = "irsa-cne-controller"
+
+	// Jumphost component constants (slice 12).
+	CompJumphostSG       = "jumphost-sg"
+	CompJumphostInstance = "jumphost-instance"
+	CompJumphostENIExt   = "jumphost-eni-bnk-ext"
+	CompJumphostEICE     = "jumphost-eice"
+	CompJumphostRole     = "jumphost-iam-role"
+	CompJumphostProfile  = "jumphost-instance-profile"
 )
 
 // Required returns the four mandatory awsbnkctl tags for a resource.

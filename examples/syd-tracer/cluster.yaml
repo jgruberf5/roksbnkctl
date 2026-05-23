@@ -132,6 +132,15 @@ bnk:
 #     version: "v2.21.13-0.0.28"  # optional; defaults to pinned version
 #     enabled: true                 # optional; default true; set false to skip FLO + OTEL install
 
+# Optional: provision a multi-ENI jumphost + EICE for test traffic
+# against TMM SelfIPs in BNK_EXT (10.0.10.0/24). Default off.
+# Requires pattern: host-device and network.dataPath to be set.
+# testing:
+#   jumphost:
+#     enabled: true
+#     instanceType: t3.small      # optional; default t3.small
+#     mgmtSubnetIndex: 0           # optional; default 0 (first public subnet)
+
 # tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
 tags:
   cost-center: RnD-AI

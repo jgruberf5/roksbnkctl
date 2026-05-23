@@ -89,8 +89,13 @@ type mockEC2 struct {
 	assignedSelfIPs   []string
 
 	// Instances (slice 7+)
-	describeInstancesOut *ec2.DescribeInstancesOutput
-	describeInstancesErr error
+	describeInstancesOut    *ec2.DescribeInstancesOutput
+	describeInstancesErr    error
+	runInstancesOut         *ec2.RunInstancesOutput
+	runInstancesErr         error
+	runInstancesCalls       int
+	terminateInstancesErr   error
+	terminateInstancesCalls int
 
 	// Launch Templates (slice 7+)
 	describeLTsOut *ec2.DescribeLaunchTemplatesOutput
@@ -100,6 +105,19 @@ type mockEC2 struct {
 	createLTCalls  int
 	deleteLTCalls  int
 	deleteLTErr    error
+
+	// EC2 Instance Connect Endpoints (slice 12+)
+	createEICEOut    *ec2.CreateInstanceConnectEndpointOutput
+	createEICEErr    error
+	createEICECalls  int
+	describeEICEsOut *ec2.DescribeInstanceConnectEndpointsOutput
+	describeEICEsErr error
+	deleteEICECalls  int
+	deleteEICEErr    error
+
+	// Images (slice 12+)
+	describeImagesOut *ec2.DescribeImagesOutput
+	describeImagesErr error
 }
 
 func (m *mockEC2) DescribeVpcs(_ context.Context, _ *ec2.DescribeVpcsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
@@ -299,6 +317,36 @@ func (m *mockEC2) DescribeInstances(_ context.Context, _ *ec2.DescribeInstancesI
 	}
 	return m.describeInstancesOut, m.describeInstancesErr
 }
+func (m *mockEC2) RunInstances(_ context.Context, _ *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
+	m.runInstancesCalls++
+	if m.runInstancesErr != nil {
+		return nil, m.runInstancesErr
+	}
+	if m.runInstancesOut != nil {
+		return m.runInstancesOut, nil
+	}
+	id := "i-mock-jumphost"
+	devIdx := int32(0)
+	ip := "10.0.1.100"
+	eniID := "eni-mock-mgmt"
+	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{
+		{
+			InstanceId: &id,
+			State:      &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning},
+			NetworkInterfaces: []ec2types.InstanceNetworkInterface{
+				{
+					NetworkInterfaceId: &eniID,
+					PrivateIpAddress:   &ip,
+					Attachment:         &ec2types.InstanceNetworkInterfaceAttachment{DeviceIndex: &devIdx},
+				},
+			},
+		},
+	}}, nil
+}
+func (m *mockEC2) TerminateInstances(_ context.Context, _ *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
+	m.terminateInstancesCalls++
+	return &ec2.TerminateInstancesOutput{}, m.terminateInstancesErr
+}
 func (m *mockEC2) DescribeLaunchTemplates(_ context.Context, _ *ec2.DescribeLaunchTemplatesInput, _ ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error) {
 	if m.describeLTsOut == nil {
 		return &ec2.DescribeLaunchTemplatesOutput{}, m.describeLTsErr
@@ -320,6 +368,44 @@ func (m *mockEC2) CreateLaunchTemplate(_ context.Context, _ *ec2.CreateLaunchTem
 func (m *mockEC2) DeleteLaunchTemplate(_ context.Context, _ *ec2.DeleteLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.DeleteLaunchTemplateOutput, error) {
 	m.deleteLTCalls++
 	return &ec2.DeleteLaunchTemplateOutput{}, m.deleteLTErr
+}
+
+// mockEC2 slice-12 additions: EICE, RunInstances, DescribeImages.
+
+func (m *mockEC2) CreateInstanceConnectEndpoint(_ context.Context, _ *ec2.CreateInstanceConnectEndpointInput, _ ...func(*ec2.Options)) (*ec2.CreateInstanceConnectEndpointOutput, error) {
+	m.createEICECalls++
+	if m.createEICEErr != nil {
+		return nil, m.createEICEErr
+	}
+	if m.createEICEOut != nil {
+		return m.createEICEOut, nil
+	}
+	id := "eice-mock-1"
+	sgID := "sg-eice-mock"
+	s := ec2types.Ec2InstanceConnectEndpointStateCreateComplete
+	return &ec2.CreateInstanceConnectEndpointOutput{
+		InstanceConnectEndpoint: &ec2types.Ec2InstanceConnectEndpoint{
+			InstanceConnectEndpointId: &id,
+			SecurityGroupIds:          []string{sgID},
+			State:                     s,
+		},
+	}, nil
+}
+func (m *mockEC2) DescribeInstanceConnectEndpoints(_ context.Context, _ *ec2.DescribeInstanceConnectEndpointsInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstanceConnectEndpointsOutput, error) {
+	if m.describeEICEsOut == nil {
+		return &ec2.DescribeInstanceConnectEndpointsOutput{}, m.describeEICEsErr
+	}
+	return m.describeEICEsOut, m.describeEICEsErr
+}
+func (m *mockEC2) DeleteInstanceConnectEndpoint(_ context.Context, _ *ec2.DeleteInstanceConnectEndpointInput, _ ...func(*ec2.Options)) (*ec2.DeleteInstanceConnectEndpointOutput, error) {
+	m.deleteEICECalls++
+	return &ec2.DeleteInstanceConnectEndpointOutput{}, m.deleteEICEErr
+}
+func (m *mockEC2) DescribeImages(_ context.Context, _ *ec2.DescribeImagesInput, _ ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	if m.describeImagesOut == nil {
+		return &ec2.DescribeImagesOutput{}, m.describeImagesErr
+	}
+	return m.describeImagesOut, m.describeImagesErr
 }
 
 // mockSTSImpl implements STSAPI for tests.

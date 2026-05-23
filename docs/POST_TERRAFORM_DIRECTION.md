@@ -649,6 +649,37 @@ Two layers planned, not yet detailed:
 
 ---
 
+## Phase 17b: jumphost (slice 12)
+
+Phase 17b provisions a multi-ENI EC2 jumphost + EC2 Instance Connect Endpoint (EICE) inside the cluster VPC. It runs in `runPhasedUp` between Phase 17 (secondary ENIs) and Phase 18 (IRSA OIDC), and tears down in `runPhasedDown` between Phase 18 down and Phase 17 down.
+
+Feature gate: `testing.jumphost.enabled: true` in cluster.yaml. Default off — existing cluster.yaml files without a `testing:` block are unaffected.
+
+### Resources provisioned (when enabled)
+
+| Resource | Name | Tags |
+|----------|------|------|
+| IAM role | `<cluster>-jumphost-role` | `awsbnkctl:component=jumphost-iam-role` |
+| IAM instance profile | `<cluster>-jumphost-profile` | `awsbnkctl:component=jumphost-instance-profile` |
+| Security group | `<cluster>-jumphost` | `awsbnkctl:component=jumphost-sg` |
+| EC2 Instance Connect Endpoint | `<cluster>-jumphost-eice` | `awsbnkctl:component=jumphost-eice` |
+| EC2 instance (t3.small, AL2023) | `<cluster>-jumphost` | `awsbnkctl:component=jumphost-instance` |
+| Secondary ENI (BNK_EXT subnet) | `<cluster>-jumphost-bnk-ext` | `awsbnkctl:component=jumphost-eni-bnk-ext` |
+
+### state.env keys
+
+`JUMPHOST_INSTANCE_ID`, `JUMPHOST_MGMT_ENI_ID`, `JUMPHOST_MGMT_ENI_IP`, `JUMPHOST_BNK_EXT_ENI_ID`, `JUMPHOST_BNK_EXT_ENI_IP`, `JUMPHOST_EICE_ID`, `JUMPHOST_EICE_SG_ID`, `JUMPHOST_SG_ID`, `JUMPHOST_AMI_ID`, `JUMPHOST_INSTANCE_TYPE`, `JUMPHOST_INSTANCE_PROFILE_NAME`, `JUMPHOST_ROLE_NAME`.
+
+### SG_BNK_DATA cross-reference ordering
+
+The secondary ENI joins `SG_BNK_DATA` (created by Phase 07) so its traffic reaches TMM SelfIPs. The teardown ordering guarantees no "SG in use" errors: Phase 17b down (instance terminate → secondary ENI delete) runs BEFORE Phase 17 down (TMM ENIs) BEFORE Phase 07 down (SG_BNK_DATA delete). No changes to SG_BNK_DATA are needed; the existing intra-SG self-ingress rule covers the jumphost secondary ENI automatically.
+
+### AMI resolution
+
+The latest AL2023 x86_64 AMI is resolved at runtime via SSM Parameter Store: `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`. The resolved AMI ID is cached in `JUMPHOST_AMI_ID` for idempotent re-runs.
+
+---
+
 ## 17 · Acknowledgements
 
 - The aws-gpu-setup PoC (`/Users/j.lucia/Code/aws-gpu-setup/`) is the proof that an imperative awscli + YAML method works for this problem. Treat that repo as a reference implementation we are porting (not vendoring) into Go.

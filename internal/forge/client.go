@@ -81,6 +81,7 @@ type CreateProjectRequest struct {
 	CloudProvider         string // e.g. "aws"
 	Environment           string // default "dev"
 	Region                string
+	AWSProfile            string // named AWS profile forge uses for EKS token mint; sent as "aws_profile"
 	BackendType           string // default "local"
 	Color                 string
 	Icon                  string
@@ -112,6 +113,7 @@ func (c *Client) CreateProject(ctx context.Context, req CreateProjectRequest) (C
 	addStr("cloud_provider", req.CloudProvider)
 	addStr("environment", req.Environment)
 	addStr("region", req.Region)
+	addStr("aws_profile", req.AWSProfile)
 	addStr("backend_type", req.BackendType)
 	addStr("color", req.Color)
 	addStr("icon", req.Icon)

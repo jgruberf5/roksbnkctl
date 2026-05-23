@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithymw "github.com/aws/smithy-go/middleware"
 
@@ -88,16 +89,31 @@ type EC2API interface {
 
 	// Instances (slice 7+)
 	DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, opts ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
+	RunInstances(ctx context.Context, in *ec2.RunInstancesInput, opts ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
+	TerminateInstances(ctx context.Context, in *ec2.TerminateInstancesInput, opts ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error)
 
 	// Launch Templates (slice 7+)
 	DescribeLaunchTemplates(ctx context.Context, in *ec2.DescribeLaunchTemplatesInput, opts ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error)
 	CreateLaunchTemplate(ctx context.Context, in *ec2.CreateLaunchTemplateInput, opts ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error)
 	DeleteLaunchTemplate(ctx context.Context, in *ec2.DeleteLaunchTemplateInput, opts ...func(*ec2.Options)) (*ec2.DeleteLaunchTemplateOutput, error)
+
+	// EC2 Instance Connect Endpoints (slice 12+)
+	CreateInstanceConnectEndpoint(ctx context.Context, in *ec2.CreateInstanceConnectEndpointInput, opts ...func(*ec2.Options)) (*ec2.CreateInstanceConnectEndpointOutput, error)
+	DescribeInstanceConnectEndpoints(ctx context.Context, in *ec2.DescribeInstanceConnectEndpointsInput, opts ...func(*ec2.Options)) (*ec2.DescribeInstanceConnectEndpointsOutput, error)
+	DeleteInstanceConnectEndpoint(ctx context.Context, in *ec2.DeleteInstanceConnectEndpointInput, opts ...func(*ec2.Options)) (*ec2.DeleteInstanceConnectEndpointOutput, error)
+
+	// Images (slice 12+, defensive for AMI ID audit)
+	DescribeImages(ctx context.Context, in *ec2.DescribeImagesInput, opts ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 }
 
 // STSAPI is the subset of sts.Client used by the preflight phase.
 type STSAPI interface {
 	GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdentityInput, opts ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
+}
+
+// SSMAPI is the subset of ssm.Client used by Phase17b (AL2023 AMI resolution).
+type SSMAPI interface {
+	GetParameter(ctx context.Context, in *ssm.GetParameterInput, opts ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
 }
 
 // EKSAPI is the subset of eks.Client surface used by phases 08 and 10.
@@ -149,6 +165,7 @@ type Clients struct {
 	STS     STSAPI
 	IAM     IAMAPI
 	EKS     EKSAPI
+	SSM     SSMAPI
 	Profile string // the AWS profile used — passed to CheckAuthOrDie hints
 
 	// ForgeClient is the forge MCP client used by Phase09. Nil when forge is
@@ -231,6 +248,7 @@ func NewClients(ctx context.Context, region, profile string) (*Clients, error) {
 		STS:     sts.NewFromConfig(cfg),
 		IAM:     iam.NewFromConfig(cfg),
 		EKS:     eks.NewFromConfig(cfg),
+		SSM:     ssm.NewFromConfig(cfg),
 		Profile: profile,
 	}, nil
 }
@@ -252,7 +270,10 @@ func isNotFoundCode(code string) bool {
 		"InvalidInternetGatewayID.NotFound",
 		"InvalidNatGatewayID.NotFound",
 		"InvalidAllocationID.NotFound",
-		"InvalidNetworkInterfaceID.NotFound":
+		"InvalidNetworkInterfaceID.NotFound",
+		"InvalidInstanceID.NotFound",
+		"InvalidGroup.NotFound",
+		"InvalidInstanceConnectEndpoint.NotFound":
 		return true
 	}
 	return false

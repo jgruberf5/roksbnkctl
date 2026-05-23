@@ -15,6 +15,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// instanceTypeRE is a loose sanity check for EC2 instance type strings.
+// Catches obvious typos (e.g. "T3.small", "t3small") without an exhaustive list.
+var instanceTypeRE = regexp.MustCompile(`^[a-z][0-9a-z]+\.[a-z0-9]+$`)
+
 // BnkSpec holds the operator-supplied BNK supply-chain credentials required by
 // Phase 12 (k8s install foundation). The bnk: block is optional at schema load
 // time (slices 1–4 don't need it); Phase 12 returns a clear error if absent.
@@ -120,6 +124,9 @@ type Cluster struct {
 	// Tags are merged into every AWS resource created by awsbnkctl alongside
 	// the required awsbnkctl:* keys.
 	Tags map[string]string `yaml:"tags,omitempty"`
+	// Testing holds optional test-infrastructure configuration (slice 12+).
+	// When absent, no test infrastructure is provisioned (zero AWS calls in Phase 17b).
+	Testing *TestingSpec `yaml:"testing,omitempty"`
 }
 
 // ClusterSpec holds the EKS control plane and node group configuration.
@@ -212,6 +219,27 @@ type AddonsSpec struct {
 	// Flo configures the F5 Lifecycle Operator installation. When absent,
 	// FLO is installed with the pinned chart version.
 	Flo *FloSpec `yaml:"flo,omitempty"`
+}
+
+// TestingSpec holds optional test-infrastructure configuration (slice 12+).
+// The entire block is opt-in; omitting it is the default (nothing provisioned).
+type TestingSpec struct {
+	Jumphost *JumphostSpec `yaml:"jumphost,omitempty"`
+}
+
+// JumphostSpec configures the multi-ENI EC2 jumphost provisioned by Phase 17b.
+// The jumphost provides a test-traffic vantage point inside the BNK_EXT subnet
+// (10.0.10.0/24) so operators can verify TMM SelfIP routing without standing up
+// EC2 by hand. Requires pattern: host-device and network.dataPath to be set.
+type JumphostSpec struct {
+	// Enabled is the master switch. Default false — existing cluster.yaml files
+	// that omit the testing: block are unaffected.
+	Enabled bool `yaml:"enabled"`
+	// InstanceType for the jumphost. Default "t3.small".
+	InstanceType string `yaml:"instanceType,omitempty"`
+	// MgmtSubnetIndex selects which public subnet to use for the primary ENI.
+	// Default 0 (first public subnet, which is MGMT_CIDR = 10.0.1.0/24 in syd-tracer).
+	MgmtSubnetIndex int `yaml:"mgmtSubnetIndex,omitempty"`
 }
 
 // FloSpec configures the FLO (F5 Lifecycle Operator) Helm install in Phase 14.
@@ -399,6 +427,15 @@ func applyDefaults(c *Cluster) {
 		}
 	}
 
+	// testing.jumphost defaults.
+	if c.Testing != nil && c.Testing.Jumphost != nil {
+		jh := c.Testing.Jumphost
+		if jh.InstanceType == "" {
+			jh.InstanceType = "t3.small"
+		}
+		// MgmtSubnetIndex defaults to 0; zero value is already correct.
+	}
+
 	// host-device pattern: auto-derive TMM SelfIPs as <subnet>.240 when not
 	// explicitly set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
 	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST
@@ -484,6 +521,11 @@ func validate(c *Cluster) error {
 	if err := validatePattern(c); err != nil {
 		return err
 	}
+	if c.Testing != nil {
+		if err := validateTesting(c); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -511,6 +553,32 @@ func validatePattern(c *Cluster) error {
 	}
 	if !azSet[dp.Internal.AZ] {
 		return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
+	}
+	return nil
+}
+
+// validateTesting checks constraints on the testing: block.
+//
+//   - testing.jumphost.enabled=true requires pattern: host-device AND network.dataPath.
+//   - instanceType must match the loose instanceTypeRE when set.
+//   - mgmtSubnetIndex must be a valid index into network.subnets.public.
+func validateTesting(c *Cluster) error {
+	if c.Testing.Jumphost == nil {
+		return nil
+	}
+	jh := c.Testing.Jumphost
+	if jh.Enabled {
+		if c.Pattern != "host-device" || c.Network.DataPath == nil {
+			return fmt.Errorf("testing.jumphost requires network.dataPath (BNK_EXT subnet) " +
+				"which is only created when pattern: host-device is set")
+		}
+	}
+	if jh.InstanceType != "" && !instanceTypeRE.MatchString(jh.InstanceType) {
+		return fmt.Errorf("testing.jumphost.instanceType %q does not match expected pattern (e.g. t3.small, m5.large)", jh.InstanceType)
+	}
+	if idx := jh.MgmtSubnetIndex; idx < 0 || idx >= len(c.Network.Subnets.Public) {
+		return fmt.Errorf("testing.jumphost.mgmtSubnetIndex %d is out of range (network.subnets.public has %d entries)",
+			idx, len(c.Network.Subnets.Public))
 	}
 	return nil
 }
