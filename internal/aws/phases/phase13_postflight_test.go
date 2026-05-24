@@ -750,6 +750,78 @@ func TestPhase13_CNEInstanceNotReady(t *testing.T) {
 	}
 }
 
+// TestPhase13_CNEInstanceEmptyStateSubConditionsTrue_Passes verifies the H1 fix:
+// when status.state is empty but F5TmmAvailable + CNEControllerAvailable are both
+// True (Sydney gold-reference shape), postflight must pass.
+func TestPhase13_CNEInstanceEmptyStateSubConditionsTrue_Passes(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := sydTracerCluster()
+	st, _ := state.Load(dir)
+	st.Set("CNEINSTANCE_READY_AT", "2026-05-22T10:00:00Z")
+
+	base := p13FullHappyClientsWithActivation(t)
+
+	// Re-build dynamic client with Sydney-shape CNEInstance: state="" + sub-conditions True.
+	vars := render.CertChainVarsFromCluster(cl)
+	crdGVR := schema.GroupVersionResource{
+		Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions",
+	}
+	cneCRD := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]interface{}{"name": cneCRDName},
+		},
+	}
+	cneInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5.com/v1",
+			"kind":       "CNEInstance",
+			"metadata":   map[string]interface{}{"name": cl.Metadata.Name + "-bnk", "namespace": InstanceNamespace},
+			"status": map[string]interface{}{
+				"state": "",
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "F5TmmAvailable", "status": "True"},
+					map[string]interface{}{"type": "CNEControllerAvailable", "status": "True"},
+				},
+			},
+		},
+	}
+	licInst := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.f5net.com/v1",
+			"kind":       "License",
+			"metadata":   map[string]interface{}{"name": licenseCRName, "namespace": OperatorNamespace},
+			"status":     map[string]interface{}{"state": "Active"},
+		},
+	}
+	scheme := buildScheme()
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstance"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5.com", Version: "v1", Kind: "CNEInstanceList"}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5net.com", Version: "v1", Kind: "License"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "k8s.f5net.com", Version: "v1", Kind: "LicenseList"}, &unstructured.UnstructuredList{})
+	dynObjects := []runtime.Object{
+		buildReadyCertificate(vars.CACertName, certManagerNS),
+		cneCRD,
+		buildReadyCertificate(otelSvrCertName, operatorNS),
+		buildReadyCertificate(otelF5IngCertName, operatorNS),
+		cneInst,
+		licInst,
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8swait.CertificateGVR: "CertificateList",
+		crdGVR:                 "CustomResourceDefinitionList",
+		cneinstanceGVR:         "CNEInstanceList",
+		licenseGVR:             "LicenseList",
+	}, dynObjects...)
+	clients := &Clients{K8s: base.K8s, Dynamic: dyn, Profile: "test"}
+
+	if err := Phase13Postflight(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase13Postflight Sydney-shape (empty state + sub-conditions True): %v", err)
+	}
+}
+
 // TestPhase13_SkipActivationPoll_Warning verifies that when CNEINSTANCE_READY_AT
 // is absent (--skip-activation-poll), postflight logs a warning but succeeds.
 func TestPhase13_SkipActivationPoll_Warning(t *testing.T) {
