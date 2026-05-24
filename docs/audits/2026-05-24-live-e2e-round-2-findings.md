@@ -337,3 +337,149 @@ Plus two new follow-ups uncovered by the cross-check:
 - **NAD form**: migrate to `pciBusID` (separate code change).
 - **`crashagentConfig:{}` patch**: cheap mitigation for the 2.3 FLO hot-loop
   documented in `bnk-tmm-blocker.md` (separate code change).
+
+---
+
+## 2026-05-24 — FLO chart deep-dive + log sweep + multi-namespace lens
+
+> Added after `helm pull oci://repo.f5.com/charts/f5-lifecycle-operator
+> --version v2.21.13-0.0.28` and reading templates/deployment.yaml +
+> values.yaml. Also a log sweep across Sydney's f5-cne-controller, FLO,
+> DSSM db-0 + sentinel for working-baseline patterns.
+
+### FLO chart — namespace-relevant env vars
+
+`templates/deployment.yaml` emits these on the FLO pod (only if the
+matching value is set):
+
+```yaml
+- name: POD_NAMESPACE                       # always set, from metadata.namespace
+- name: CONTAINER_PLATFORM                  # we override to "AWS" (default Generic) ✓
+{{- if .Values.sharedComponentNamespace }}
+- name: SHARED_COMPONENT_NAMESPACE
+  value: {{ .Values.sharedComponentNamespace }}
+{{- end }}
+{{- if .Values.sharedDssm }}
+- name: SHARED_DSSM
+  value: {{ .Values.sharedDssm }}
+{{- end }}
+```
+
+`values.yaml` defaults:
+- `sharedComponentNamespace`: commented out → FLO falls back to its own ns.
+- `sharedDssm`: empty → unset → defaults to false (single-instance).
+- `namespace`: empty → install lands in release ns (whatever we pass via
+  `helm install --namespace <X>`).
+
+Our `internal/k8s/manifests/shared/flo-values.yaml.tmpl` sets **none** of
+the three namespace-flavoured values. FLO therefore runs with:
+- `SHARED_COMPONENT_NAMESPACE` env: not emitted → FLO defaults internally
+  (likely to `POD_NAMESPACE` = its own ns = `f5-cne-core` for us).
+- `SHARED_DSSM` env: not emitted → false.
+- Install ns: whatever `helm install --namespace` passes = `f5-cne-core`.
+
+### Multi-namespace asymmetry: us vs Sydney
+
+| Component group           | Sydney (single-ns) | awsbnkctl (multi-ns)               |
+|---------------------------|--------------------|------------------------------------|
+| FLO + License + CWC       | `f5-operator`      | `f5-cne-core` (OperatorNamespace)  |
+| CNEInstance + DSSM + F5Tmm + RabbitMQ + NADs + CM | `f5-operator` | `f5-cne-system` (InstanceNamespace) |
+
+Sydney's defaults collapse correctly because everything is in one ns. We
+split. The question: does FLO's "shared component namespace default-to-own-ns"
+behaviour silently break things, given that FLO is in `f5-cne-core` but
+components are in `f5-cne-system`?
+
+**Counter-evidence that it does NOT silently break us**: in round-2 cold
+start, sub-conditions `CNEControllerAvailable=True`, `F5TmmAvailable=True`,
+`AnalyzerAvailable=True`, `LicenseAvailable=True` all reached True. FLO is
+clearly finding and instantiating the components in the correct ns —
+probably by deriving from `CNEInstance.metadata.namespace`, not from
+`SHARED_COMPONENT_NAMESPACE`. So this env var is not the bug.
+
+Setting `sharedComponentNamespace: f5-cne-system` is defensive hygiene,
+not a root-cause fix.
+
+### Sentinel + db log pattern: Sydney baseline vs our hang
+
+Sydney `f5-dssm-sentinel-0` `f5-dssm` container — first three lines after start:
+```
+"dssm:start This is for SPK"
+"Running init.sh for single cluster deployment"
+"grpc server is starting up :19891"
+```
+…then `certificates loaded successfully` every ~40 min thereafter.
+
+Our broken syd-tracer `f5-dssm-db-1` hangs **exactly** at the third line.
+Sydney's s6-supervised redis-server starts; ours doesn't. Identical
+preamble, divergence after `grpc server is starting up :19891`.
+
+Without exec into a hung db-1 pod (cluster is torn down), we can't see
+which subprocess of init.sh fails. **Next live cycle action**: while
+db-1 is in the 2/3 hung state, `kubectl exec -it f5-dssm-db-1 -c f5-dssm
+-- sh` and inspect:
+- `ps -ef` (which init.sh child is alive?)
+- `ls /run/service/` (s6-rc state per service)
+- `cat /var/log/redis*.log` (if any)
+- `cat /conf/init.sh` (the actual script content — may reveal a 2.3
+  branch we don't satisfy)
+
+### Cne-controller + FLO steady-state in Sydney
+
+- `f5-cne-controller` main container: only Secret reconciles (~30s cadence
+  for cert rotation), 0 restarts in 19d, no error patterns.
+- FLO container: mostly idle — fluentbit reloads + cert refresh. **No
+  "Reconciler error", no `crashagentConfig` hot-loop**. Confirms the 2.3
+  regression is real and absent in 2.2.
+- `f5-tmm-pod-manager` 1.2.8 reconciles endpoints every <1s, no warnings.
+
+### Recommended experimental matrix — ranked by leverage
+
+Hypothesis-driven: what produces the most information per cycle?
+
+| Rank | Change | Hypothesis | Predicted outcome | Cost |
+|------|--------|------------|-------------------|------|
+| **H1** | Phase 25 acceptance switches to sub-conditions + HTTP 200 (drops rollup `Available`) | Acceptance criterion is wrong, not the cluster (Sydney runs 33d with Available=False) | Phase 25 PASSes with current behaviour, no other change | code-only, 0 AWS cost |
+| **H2** | Phase 24c patches `spec.crashagentConfig: {}` on the 13 component CRs after Phase 23 | FLO hot-loop drives extra Phase 25 latency in 2.3 | FLO reconcile cadence drops from 300ms to seconds | 1 cycle |
+| **H3** | Add 3 TMM env vars (`USE_PHYS_MEM=true`, `TMM_MAPRES_IGNORE_MEM_LIMIT=true`, `TMM_MAPRES_HUGEPAGES=1536`) to CNEInstance.spec.advanced.tmm.env | Sydney has them and Sydney's TMM is stable; ours had SIGSEGV history | TMM init faster/more stable | 1 cycle |
+| **H4** | Conditional `kubectl rollout restart deploy/f5-cne-controller` after Phase 23b if any container is in CrashLoopBackOff | pod-manager 1.6.x cold-start race vs kube-proxy is the timeout cause | Pod-manager comes up clean on the restart; Phase 25 completes earlier | 1 cycle (combine with H1/H2) |
+| H5 | Set `sharedComponentNamespace: f5-cne-system` in flo-values | Multi-ns FLO defaults are silently wrong | Likely no visible difference (we already have all subsystems Available=True) | combine with H1-H4 |
+| H6 | Set `sharedDssm: false` explicitly | We're depending on implicit default | No change — default is already false | skip |
+| H7 | Set `namespace: f5-cne-core` explicitly in FLO values | We're depending on `helm --namespace` | No change — equivalent to current state | skip |
+
+### Suggested first cycle
+
+Combine **H1 + H2 + H5** into one PR / one cold cycle:
+- H1 removes the red-herring acceptance failure (cheap insurance).
+- H2 directly attacks a 2.3 regression documented in
+  `aws-gpu-setup/bnk-tmm-blocker.md`.
+- H5 is defensive multi-ns hygiene; bundles for free.
+
+Predicted outcome if H1+H2 hypotheses are right:
+- Phase 25 reaches PASS within budget.
+- FLO reconcile cadence visibly drops.
+- `scenarios http-routing-e2e` returns 5/5 HTTP 200.
+
+If only H1 fixes acceptance and H2 still shows FLO hot-looping → keep H2 as
+cleanup. If H5 changes nothing → confirms FLO derives ns from CNEInstance
+and we can deprioritise the multi-ns hygiene.
+
+H3 + H4 should be the **second** cycle, isolated from H1+H2 so we can tell
+which moved the needle.
+
+### Read on the namespace/sharedDssm/sharedComponent triple
+
+Honest assessment of the three FLO values the user flagged:
+
+- **`namespace`**: no-op — equivalent to `helm install --namespace` which
+  we already pass. **Skip.**
+- **`sharedDssm`**: default is false, we have one CNEInstance, setting
+  `true` would change behaviour in a direction we don't want. **Skip.**
+- **`sharedComponentNamespace`**: worth setting defensively (H5), but
+  we already have all sub-conditions reaching True — so the multi-ns
+  default-to-own-ns is not the silent failure mode it could have been
+  in a different code path. Set it for cleanliness, don't expect a fix
+  from it.
+
+The higher-leverage tests are H1 (acceptance criterion) and H2
+(`crashagentConfig` patch), which directly attack the two open findings.
