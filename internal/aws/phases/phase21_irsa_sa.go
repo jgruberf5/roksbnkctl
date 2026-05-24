@@ -75,7 +75,7 @@ func Phase21IRSASA(ctx context.Context, cl *intent.Cluster, st *state.State, cli
 
 	// Apply via dynamic client (idempotent annotation upsert via SSA).
 	fmt.Fprintf(os.Stderr, "[phase 21] applying IRSA SA %s in %s\n", saName, InstanceNamespace)
-	if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+	if err := applyRawYAML(ctx, clients, rendered); err != nil {
 		return fmt.Errorf("phase21: applying IRSA SA: %w", err)
 	}
 

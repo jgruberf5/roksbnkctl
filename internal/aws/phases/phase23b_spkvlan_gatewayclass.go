@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	f5spkvlanCRDName     = "f5-spk-vlans.k8s.f5net.com"
-	f5spkvlanCRDWait     = 10 * time.Minute
+	f5spkvlanCRDName = "f5-spk-vlans.k8s.f5net.com"
+	// Why: CRD applies are sub-second; 3 min is generous. See docs/audits/slice-12-cold-start-audit.md §4.
+	f5spkvlanCRDWait     = 3 * time.Minute
 	f5spkvlanYAMLPath    = "host-device/f5spkvlan.yaml.tmpl"
 	gatewayClassYAMLPath = "host-device/gatewayclass.yaml.tmpl"
 )
@@ -100,7 +101,7 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 	}
 	fmt.Fprintf(os.Stderr, "[phase 23b] applying F5SPKVlan ext-vlan (selfip=%s) + int-vlan (selfip=%s)\n",
 		selfIPs.External, selfIPs.Internal)
-	if err := applyRawYAML(ctx, clients.Dynamic, spkRendered); err != nil {
+	if err := applyRawYAML(ctx, clients, spkRendered); err != nil {
 		return fmt.Errorf("phase23b: applying F5SPKVlan: %w", err)
 	}
 	st.Set("F5SPKVLAN_APPLIED_AT", time.Now().UTC().Format(time.RFC3339))
@@ -116,7 +117,7 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 	}
 	gwcName := name + "-gatewayclass"
 	fmt.Fprintf(os.Stderr, "[phase 23b] applying GatewayClass %s\n", gwcName)
-	if err := applyRawYAML(ctx, clients.Dynamic, gwcRendered); err != nil {
+	if err := applyRawYAML(ctx, clients, gwcRendered); err != nil {
 		return fmt.Errorf("phase23b: applying GatewayClass: %w", err)
 	}
 	st.Set("GATEWAYCLASS_NAME", gwcName)

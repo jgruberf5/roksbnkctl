@@ -20,9 +20,9 @@ const (
 	phase25InitialSleep = 30 * time.Second
 
 	// phase25MaxIter is the maximum number of poll iterations.
-	phase25MaxIter = 40
+	phase25MaxIter = 12
 
-	// phase25PollInterval is the sleep between iterations (40 × 30s = 20 min cap).
+	// phase25PollInterval is the sleep between iterations (12 × 30s = 6 min cap).
 	phase25PollInterval = 30 * time.Second
 )
 
@@ -34,7 +34,7 @@ const (
 // to avoid burning a real license per round).
 //
 // On success: sets CNEINSTANCE_READY_AT in state.
-// On timeout: returns a hard error with last-seen states and diagnostic hint.
+// On timeout (6 min): dumps pod diagnostics to stderr then returns a hard error.
 //
 // D-005: CheckAuthOrDie called at entry.
 func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool, skipPoll bool) error {
@@ -48,7 +48,7 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 	}
 
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "[phase 25] dry-run: would poll CNEInstance + License up to 20 min")
+		fmt.Fprintln(os.Stderr, "[phase 25] dry-run: would poll CNEInstance + License up to 6 min")
 		return nil
 	}
 
@@ -117,8 +117,9 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 		}
 	}
 
-	return fmt.Errorf("phase25: timeout after %d iterations (20 min): last cne=%q lic=%q — run `kubectl get cneinstance %s -n %s -o yaml` for diagnosis",
-		phase25MaxIter, lastCNEState, lastLicState, crName, InstanceNamespace)
+	dumpPodDiagnostics(ctx, clients, InstanceNamespace)
+	return fmt.Errorf("phase25: timeout after %d iterations (6 min): last cne=%q lic=%q — see [phase 25] FAIL diag lines above for stuck pod state",
+		phase25MaxIter, lastCNEState, lastLicState)
 }
 
 // isCNEReady returns true if state is "Ready", "Running", or "Available"
@@ -168,6 +169,44 @@ func podCounts(ctx context.Context, clients *Clients, ns string) (running, pendi
 		}
 	}
 	return
+}
+
+// dumpPodDiagnostics prints per-pod phase/reason and recent events for any
+// non-Running pod in ns to stderr. Best-effort: errors are printed, not returned.
+func dumpPodDiagnostics(ctx context.Context, clients *Clients, ns string) {
+	pods, err := clients.K8s.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[phase 25] FAIL diag: %v\n", err)
+		return
+	}
+	for _, pod := range pods.Items {
+		reason := pod.Status.Reason
+		if reason == "" && len(pod.Status.ContainerStatuses) > 0 {
+			if w := pod.Status.ContainerStatuses[0].State.Waiting; w != nil {
+				reason = w.Reason
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[phase 25] FAIL diag: pod=%s phase=%s reason=%s\n",
+			pod.Name, pod.Status.Phase, reason)
+
+		if pod.Status.Phase == "Running" {
+			continue
+		}
+		evts, evtErr := clients.K8s.CoreV1().Events(ns).List(ctx, metav1.ListOptions{
+			FieldSelector: "involvedObject.name=" + pod.Name,
+		})
+		if evtErr != nil {
+			fmt.Fprintf(os.Stderr, "[phase 25] FAIL diag: events for %s: %v\n", pod.Name, evtErr)
+			continue
+		}
+		items := evts.Items
+		if len(items) > 10 {
+			items = items[len(items)-10:]
+		}
+		for _, ev := range items {
+			fmt.Fprintf(os.Stderr, "[phase 25] FAIL diag:   event: %s %s\n", ev.Reason, ev.Message)
+		}
+	}
 }
 
 // Phase25ActivationPollDown is a no-op — polling has no resources to clean up.

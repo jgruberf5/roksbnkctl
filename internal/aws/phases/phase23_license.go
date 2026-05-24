@@ -23,7 +23,11 @@ const (
 	licenseCRYAMLPath = "shared/license-cr.yaml.tmpl"
 	licenseCRDName    = "licenses.k8s.f5net.com"
 	licenseCRName     = "bnk-license"
-	phase23CRDWait    = 10 * time.Minute
+)
+
+const (
+	// Why: CRD applies are sub-second; 3 min is generous. See docs/audits/slice-12-cold-start-audit.md §4.
+	phase23CRDWait = 3 * time.Minute
 )
 
 // licenseGVR is the GVR for the License CR.
@@ -91,7 +95,7 @@ func Phase23License(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 
 	// Apply via dynamic client (SSA).
 	fmt.Fprintf(os.Stderr, "[phase 23] applying License %s in %s\n", licenseCRName, OperatorNamespace)
-	if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+	if err := applyRawYAML(ctx, clients, rendered); err != nil {
 		return fmt.Errorf("phase23: applying License CR: %w", err)
 	}
 

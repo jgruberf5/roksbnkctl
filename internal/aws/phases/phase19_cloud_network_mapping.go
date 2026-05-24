@@ -68,7 +68,7 @@ func Phase19CloudNetworkMapping(ctx context.Context, cl *intent.Cluster, st *sta
 
 	// Apply via dynamic client.
 	fmt.Fprintln(os.Stderr, "[phase 19] applying cloud-network-mapping ConfigMap")
-	if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+	if err := applyRawYAML(ctx, clients, rendered); err != nil {
 		return fmt.Errorf("phase19: applying cloud-network-mapping: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package phases
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -26,6 +27,18 @@ import (
 // will fail phase 17 with AttachmentLimitExceeded when the second TMM
 // secondary tries to attach. m5.xlarge is the minimum viable instance.
 const HostDeviceMinENIs = 4
+
+// HostDeviceMinVCPUs is the minimum vCPU count required for the host-device
+// pattern. BNK 2.3 Small profile requires at least 16 vCPUs on the TMM node.
+const HostDeviceMinVCPUs = 16
+
+// HostDeviceMinMemoryMiB is the minimum memory (MiB) required for the
+// host-device pattern. BNK 2.3 Small profile requires at least 64 GiB.
+const HostDeviceMinMemoryMiB = 65536
+
+// HostDeviceMinDesiredSize is the minimum node group desired size for the
+// host-device pattern. dSSM requires a quorum of ≥3 nodes.
+const HostDeviceMinDesiredSize = 3
 
 // Phase00Preflight runs the pre-flight checks before any provisioning begins:
 //   - SSO sentinel check (hard-exits if auth failed during a previous API call)
@@ -52,9 +65,9 @@ func Phase00Preflight(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	}
 	fmt.Fprintf(os.Stderr, "[phase 00] authenticated: account=%s\n", account)
 
-	// Validate instance type ENI capacity for host-device pattern.
+	// Validate instance type + node group capacity for host-device pattern.
 	if !dryRun && cl.Pattern == "host-device" {
-		if err := checkHostDeviceENICapacity(ctx, cl, clients.EC2); err != nil {
+		if err := checkHostDeviceCapacity(ctx, cl, clients.EC2); err != nil {
 			return fmt.Errorf("phase00: %w", err)
 		}
 	}
@@ -72,15 +85,18 @@ func Phase00Preflight(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	return nil
 }
 
-// checkHostDeviceENICapacity validates that the first node group's instance
-// type can accept HostDeviceMinENIs network interfaces. Fails fast (before any
-// resource creation) when the type is too small — avoiding a confusing
-// AttachmentLimitExceeded ~25 minutes into `up`.
-func checkHostDeviceENICapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2API) error {
+// checkHostDeviceCapacity validates that the first node group meets all
+// host-device pattern minimums (ENIs, vCPUs, memory, desiredSize) before any
+// AWS resource creation. All failures are aggregated so the operator sees the
+// full picture in one shot rather than discovering them sequentially.
+//
+// See docs/audits/slice-12-cold-start-audit.md §5 for rationale.
+func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2API) error {
 	if cl.ClusterSpec == nil || len(cl.ClusterSpec.NodeGroups) == 0 {
 		return nil
 	}
-	instanceType := cl.ClusterSpec.NodeGroups[0].InstanceType
+	ng := cl.ClusterSpec.NodeGroups[0]
+	instanceType := ng.InstanceType
 	if instanceType == "" {
 		return nil
 	}
@@ -95,18 +111,58 @@ func checkHostDeviceENICapacity(ctx context.Context, cl *intent.Cluster, ec2c EC
 		return fmt.Errorf("ec2:DescribeInstanceTypes returned no info for %q", instanceType)
 	}
 	info := out.InstanceTypes[0]
+
+	var errs []error
+
+	// ENI check.
 	if info.NetworkInfo == nil || info.NetworkInfo.MaximumNetworkInterfaces == nil {
-		return fmt.Errorf("ec2:DescribeInstanceTypes %q: missing network info", instanceType)
+		errs = append(errs, fmt.Errorf("ec2:DescribeInstanceTypes %q: missing network info", instanceType))
+	} else {
+		maxENIs := int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces))
+		if maxENIs < HostDeviceMinENIs {
+			errs = append(errs, fmt.Errorf(
+				"pattern=host-device requires an EC2 instance type with at least %d network interfaces (primary + EKS CNI + 2 BNK secondaries); "+
+					"%q supports only %d. Bump cluster.nodeGroups[0].instanceType to m5.xlarge or larger",
+				HostDeviceMinENIs, instanceType, maxENIs,
+			))
+		}
 	}
-	maxENIs := int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces))
-	if maxENIs < HostDeviceMinENIs {
-		return fmt.Errorf(
-			"pattern=host-device requires an EC2 instance type with at least %d network interfaces (primary + EKS CNI + 2 BNK secondaries); "+
-				"%q supports only %d. Bump cluster.nodeGroups[0].instanceType to m5.xlarge or larger",
-			HostDeviceMinENIs, instanceType, maxENIs,
-		)
+
+	// vCPU check (BNK 2.3 Small minimum).
+	if info.VCpuInfo != nil && info.VCpuInfo.DefaultVCpus != nil {
+		vcpus := int(*info.VCpuInfo.DefaultVCpus)
+		if vcpus < HostDeviceMinVCPUs {
+			errs = append(errs, fmt.Errorf(
+				"pattern=host-device requires at least %d vCPUs (BNK 2.3 Small minimum); %q has %d vCPUs",
+				HostDeviceMinVCPUs, instanceType, vcpus,
+			))
+		}
 	}
-	fmt.Fprintf(os.Stderr, "[phase 00] instance-type %s OK for host-device: %d ENIs ≥ %d required\n",
-		instanceType, maxENIs, HostDeviceMinENIs)
+
+	// Memory check (BNK 2.3 Small minimum: 64 GiB).
+	if info.MemoryInfo != nil && info.MemoryInfo.SizeInMiB != nil {
+		memMiB := *info.MemoryInfo.SizeInMiB
+		if memMiB < HostDeviceMinMemoryMiB {
+			errs = append(errs, fmt.Errorf(
+				"pattern=host-device requires at least %d MiB memory (64 GiB, BNK 2.3 Small minimum); %q has %d MiB",
+				HostDeviceMinMemoryMiB, instanceType, memMiB,
+			))
+		}
+	}
+
+	// DesiredSize check (dSSM quorum requires ≥3).
+	if ng.DesiredSize > 0 && ng.DesiredSize < HostDeviceMinDesiredSize {
+		errs = append(errs, fmt.Errorf(
+			"pattern=host-device requires cluster.nodeGroups[0].desiredSize >= %d (dSSM quorum requires ≥3); got %d",
+			HostDeviceMinDesiredSize, ng.DesiredSize,
+		))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	fmt.Fprintf(os.Stderr, "[phase 00] instance-type %s OK for host-device: %d ENIs, desiredSize=%d\n",
+		instanceType, int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces)), ng.DesiredSize)
 	return nil
 }

@@ -10,8 +10,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
@@ -65,14 +67,75 @@ func p12ClientsDryRun() *Clients {
 	return &Clients{Profile: "test"}
 }
 
+// p12FakeRESTMapper returns a meta.DefaultRESTMapper covering the kinds the
+// phase 12 fake-client tests exercise. Real production uses
+// restmapper.NewDeferredDiscoveryRESTMapper against the live API.
+func p12FakeRESTMapper() meta.RESTMapper {
+	versions := []schema.GroupVersion{
+		{Group: "", Version: "v1"},
+		{Group: "apps", Version: "v1"},
+		{Group: "rbac.authorization.k8s.io", Version: "v1"},
+		{Group: "apiextensions.k8s.io", Version: "v1"},
+		{Group: "admissionregistration.k8s.io", Version: "v1"},
+		{Group: "cert-manager.io", Version: "v1"},
+		{Group: "storage.k8s.io", Version: "v1"},
+		{Group: "networking.k8s.io", Version: "v1"},
+		{Group: "k8s.cni.cncf.io", Version: "v1"},
+		{Group: "k8s.f5.com", Version: "v1"},
+		{Group: "k8s.f5net.com", Version: "v1"},
+		{Group: "gateway.networking.k8s.io", Version: "v1"},
+	}
+	m := meta.NewDefaultRESTMapper(versions)
+
+	add := func(group, version, kind, plural string, scope meta.RESTScope) {
+		m.AddSpecific(
+			schema.GroupVersionKind{Group: group, Version: version, Kind: kind},
+			schema.GroupVersionResource{Group: group, Version: version, Resource: plural},
+			schema.GroupVersionResource{Group: group, Version: version, Resource: strings.ToLower(kind)},
+			scope,
+		)
+	}
+
+	add("", "v1", "Namespace", "namespaces", meta.RESTScopeRoot)
+	add("", "v1", "ServiceAccount", "serviceaccounts", meta.RESTScopeNamespace)
+	add("", "v1", "Secret", "secrets", meta.RESTScopeNamespace)
+	add("", "v1", "ConfigMap", "configmaps", meta.RESTScopeNamespace)
+	add("", "v1", "Service", "services", meta.RESTScopeNamespace)
+	add("", "v1", "Pod", "pods", meta.RESTScopeNamespace)
+	add("rbac.authorization.k8s.io", "v1", "ClusterRole", "clusterroles", meta.RESTScopeRoot)
+	add("rbac.authorization.k8s.io", "v1", "ClusterRoleBinding", "clusterrolebindings", meta.RESTScopeRoot)
+	add("rbac.authorization.k8s.io", "v1", "Role", "roles", meta.RESTScopeNamespace)
+	add("rbac.authorization.k8s.io", "v1", "RoleBinding", "rolebindings", meta.RESTScopeNamespace)
+	add("apps", "v1", "Deployment", "deployments", meta.RESTScopeNamespace)
+	add("apps", "v1", "DaemonSet", "daemonsets", meta.RESTScopeNamespace)
+	add("apps", "v1", "StatefulSet", "statefulsets", meta.RESTScopeNamespace)
+	add("networking.k8s.io", "v1", "NetworkPolicy", "networkpolicies", meta.RESTScopeNamespace)
+	add("networking.k8s.io", "v1", "IngressClass", "ingressclasses", meta.RESTScopeRoot)
+	add("apiextensions.k8s.io", "v1", "CustomResourceDefinition", "customresourcedefinitions", meta.RESTScopeRoot)
+	add("admissionregistration.k8s.io", "v1", "ValidatingWebhookConfiguration", "validatingwebhookconfigurations", meta.RESTScopeRoot)
+	add("admissionregistration.k8s.io", "v1", "MutatingWebhookConfiguration", "mutatingwebhookconfigurations", meta.RESTScopeRoot)
+	add("cert-manager.io", "v1", "ClusterIssuer", "clusterissuers", meta.RESTScopeRoot)
+	add("cert-manager.io", "v1", "Issuer", "issuers", meta.RESTScopeNamespace)
+	add("cert-manager.io", "v1", "Certificate", "certificates", meta.RESTScopeNamespace)
+	add("storage.k8s.io", "v1", "StorageClass", "storageclasses", meta.RESTScopeRoot)
+	add("k8s.cni.cncf.io", "v1", "NetworkAttachmentDefinition", "network-attachment-definitions", meta.RESTScopeNamespace)
+	add("k8s.f5.com", "v1", "CNEInstance", "cneinstances", meta.RESTScopeNamespace)
+	add("k8s.f5net.com", "v1", "License", "licenses", meta.RESTScopeNamespace)
+	add("k8s.f5net.com", "v1", "F5SPKVlan", "f5-spk-vlans", meta.RESTScopeNamespace)
+	add("gateway.networking.k8s.io", "v1", "GatewayClass", "gatewayclasses", meta.RESTScopeRoot)
+
+	return m
+}
+
 // p12ClientsFake returns a Clients struct with fake k8s clients pre-populated
 // for unit tests. The fake dynamic client is seeded with a minimal scheme.
 func p12ClientsFake() *Clients {
 	scheme := buildScheme()
 	return &Clients{
-		K8s:     k8sfake.NewSimpleClientset(),
-		Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
-		Profile: "test",
+		K8s:        k8sfake.NewSimpleClientset(),
+		Dynamic:    dynamicfake.NewSimpleDynamicClient(scheme),
+		RESTMapper: p12FakeRESTMapper(),
+		Profile:    "test",
 	}
 }
 
@@ -361,9 +424,10 @@ func TestPhase12Down_AbsentNamespacesLogged(t *testing.T) {
 	}
 }
 
-// ─── Test 9: resolveGVR known resource types ──────────────────────────────────
+// ─── Test 9: restMapping known resource types ─────────────────────────────────
 
-func TestResolveGVR_KnownTypes(t *testing.T) {
+func TestRestMapping_KnownTypes(t *testing.T) {
+	mapper := p12FakeRESTMapper()
 	cases := []struct {
 		apiVersion string
 		kind       string
@@ -378,22 +442,23 @@ func TestResolveGVR_KnownTypes(t *testing.T) {
 		{"apiextensions.k8s.io/v1", "CustomResourceDefinition", "apiextensions.k8s.io", false},
 	}
 	for _, tc := range cases {
-		gvr, ns, err := resolveGVR(tc.apiVersion, tc.kind)
+		gvr, ns, err := restMapping(mapper, tc.apiVersion, tc.kind)
 		if err != nil {
-			t.Errorf("resolveGVR(%s/%s): unexpected error: %v", tc.apiVersion, tc.kind, err)
+			t.Errorf("restMapping(%s/%s): unexpected error: %v", tc.apiVersion, tc.kind, err)
 			continue
 		}
 		if gvr.Group != tc.wantGroup {
-			t.Errorf("resolveGVR(%s/%s).Group = %q, want %q", tc.apiVersion, tc.kind, gvr.Group, tc.wantGroup)
+			t.Errorf("restMapping(%s/%s).Group = %q, want %q", tc.apiVersion, tc.kind, gvr.Group, tc.wantGroup)
 		}
 		if ns != tc.wantNS {
-			t.Errorf("resolveGVR(%s/%s).namespaced = %v, want %v", tc.apiVersion, tc.kind, ns, tc.wantNS)
+			t.Errorf("restMapping(%s/%s).namespaced = %v, want %v", tc.apiVersion, tc.kind, ns, tc.wantNS)
 		}
 	}
 }
 
-func TestResolveGVR_UnknownType(t *testing.T) {
-	_, _, err := resolveGVR("unknown.io/v1", "Bogus")
+func TestRestMapping_UnknownType(t *testing.T) {
+	mapper := p12FakeRESTMapper()
+	_, _, err := restMapping(mapper, "unknown.io/v1", "Bogus")
 	if err == nil {
 		t.Fatal("expected error for unknown resource, got nil")
 	}
@@ -462,5 +527,27 @@ func buildCertObj(readyStatus string) map[string]interface{} {
 				},
 			},
 		},
+	}
+}
+
+// TestApplyRawYAML_UnknownKindHardFails verifies that applyRawYAML errors
+// (rather than silently skipping) when a YAML doc references a kind not in
+// the RESTMapper. This is the C-6 regression test — before the live-mapper
+// migration, unknown kinds logged a warning and returned nil, silently
+// dropping resources like F5SPKVlan/GatewayClass during slice-10.
+func TestApplyRawYAML_UnknownKindHardFails(t *testing.T) {
+	clients := p12ClientsFake()
+	raw := []byte(`apiVersion: made-up.example/v1
+kind: NotARealKind
+metadata:
+  name: should-not-apply
+  namespace: default
+`)
+	err := applyRawYAML(context.Background(), clients, raw)
+	if err == nil {
+		t.Fatal("expected error for unknown kind, got nil")
+	}
+	if !strings.Contains(err.Error(), "NotARealKind") {
+		t.Errorf("error should reference unknown kind: %v", err)
 	}
 }

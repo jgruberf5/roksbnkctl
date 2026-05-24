@@ -75,7 +75,7 @@ func Phase15OTELCerts(ctx context.Context, cl *intent.Cluster, st *state.State, 
 
 	// Apply via dynamic client (same applyRawYAML helper as phase 12).
 	fmt.Fprintln(os.Stderr, "[phase 15] applying OTEL Certificate CRs")
-	if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+	if err := applyRawYAML(ctx, clients, rendered); err != nil {
 		return fmt.Errorf("phase15: applying OTEL certs: %w", err)
 	}
 

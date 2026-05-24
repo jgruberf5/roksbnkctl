@@ -61,7 +61,7 @@ func Phase20NADs(ctx context.Context, cl *intent.Cluster, st *state.State, clien
 			return fmt.Errorf("phase20: rendering NADs for namespace %s: %w", ns, err)
 		}
 		fmt.Fprintf(os.Stderr, "[phase 20] applying NADs in namespace %s\n", ns)
-		if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+		if err := applyRawYAML(ctx, clients, rendered); err != nil {
 			return fmt.Errorf("phase20: applying NADs in %s: %w", ns, err)
 		}
 	}

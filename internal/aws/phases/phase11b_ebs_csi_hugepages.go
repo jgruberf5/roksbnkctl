@@ -89,7 +89,7 @@ func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.
 	if err != nil {
 		return fmt.Errorf("phase11b: reading hugepages-ds YAML: %w", err)
 	}
-	if err := applyRawYAML(ctx, clients.Dynamic, hugepagesYAML); err != nil {
+	if err := applyRawYAML(ctx, clients, hugepagesYAML); err != nil {
 		return fmt.Errorf("phase11b: applying hugepages-ds: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 11b] waiting for hugepages-setup DaemonSet (up to %s)\n", hugepagesReadyTimeout)
@@ -132,7 +132,7 @@ func Phase11bEBSCSIHugepagesDown(ctx context.Context, cl *intent.Cluster, st *st
 
 	// 1. Hugepages DS.
 	if hugepagesYAML, err := k8smanifests.FS.ReadFile(hugepagesYAMLPath); err == nil {
-		if dErr := deleteRawYAML(ctx, clients.Dynamic, hugepagesYAML); dErr != nil {
+		if dErr := deleteRawYAML(ctx, clients, hugepagesYAML); dErr != nil {
 			fmt.Fprintf(os.Stderr, "[phase 11b down] warning: delete hugepages-ds: %v\n", dErr)
 		}
 	}

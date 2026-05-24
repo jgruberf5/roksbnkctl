@@ -25,8 +25,11 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	k8sclient "github.com/JLCode-tech/awsbnkctl/internal/k8s"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/restmapper"
 )
 
 // EC2API is the subset of ec2.Client surface used by the phase functions.
@@ -186,6 +189,12 @@ type Clients struct {
 	// (Certificate, ClusterIssuer) which are not in the typed client-go scheme.
 	// Constructed alongside K8s by AttachK8s.
 	Dynamic dynamic.Interface
+
+	// RESTMapper resolves apiVersion+kind → GroupVersionResource using a live
+	// discovery client. Replaces the per-phase static GVR map that silently
+	// no-op'd unknown kinds (see docs/audits/2026-05-24-latent-bugs-sweep.md C-6).
+	// Constructed alongside K8s by AttachK8s.
+	RESTMapper meta.RESTMapper
 }
 
 // AttachForgeClient constructs and attaches a forge MCP client when forge is
@@ -202,25 +211,44 @@ func (c *Clients) AttachForgeClient(enabled bool, mcpURL string) {
 	c.ForgeClient = forge.NewClient(mcpURL)
 }
 
-// AttachK8s builds a typed kubernetes.Interface and a dynamic.Interface from
-// the kubeconfig file written by Phase11. Called by runPhasedUp AFTER
-// Phase11Kubeconfig completes. Phase 12 returns a clear error if K8s is nil.
+// AttachK8s builds a typed kubernetes.Interface, a dynamic.Interface, and a
+// live RESTMapper from the kubeconfig file written by Phase11. Called by
+// runPhasedUp AFTER Phase11Kubeconfig completes. Phase 12 returns a clear
+// error if K8s is nil.
 //
-// Uses internal/k8s.BuildClientset and BuildDynamicClient so the kubeconfig
-// resolution logic is consistent with the rest of the k8s package.
+// Uses internal/k8s.BuildRESTConfig so the kubeconfig resolution logic is
+// consistent with the rest of the k8s package. All three clients are built
+// from a single *rest.Config derived from the kubeconfig.
 func (c *Clients) AttachK8s(kubeconfigPath string) error {
-	cs, err := k8sclient.BuildClientset(kubeconfigPath)
+	cfg, err := k8sclient.BuildRESTConfig(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("AttachK8s: build rest config: %w", err)
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("AttachK8s: build typed clientset: %w", err)
 	}
-	dyn, err := k8sclient.BuildDynamicClient(kubeconfigPath)
+	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("AttachK8s: build dynamic client: %w", err)
 	}
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("AttachK8s: build discovery client: %w", err)
+	}
 	c.K8s = cs
 	c.Dynamic = dyn
+	c.RESTMapper = restmapper.NewDeferredDiscoveryRESTMapper(p12CachedDiscovery{disc})
 	return nil
 }
+
+// p12CachedDiscovery wraps a DiscoveryInterface as CachedDiscoveryInterface
+// (no actual caching — fine for one-shot phases). Mirrors the same shim used
+// by internal/k8s/apply.go.
+type p12CachedDiscovery struct{ discovery.DiscoveryInterface }
+
+func (p12CachedDiscovery) Fresh() bool { return true }
+func (p12CachedDiscovery) Invalidate() {}
 
 // NewClients constructs real AWS SDK clients wrapped with the SSO sentinel
 // middleware. Region and Profile are read from the cluster intent by the

@@ -609,6 +609,17 @@ func validatePattern(c *Cluster) error {
 	if !azSet[dp.Internal.AZ] {
 		return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
 	}
+	if c.Pattern == "host-device" && c.ClusterSpec != nil {
+		for i, ng := range c.ClusterSpec.NodeGroups {
+			if ng.DesiredSize > 0 && ng.DesiredSize < 3 {
+				return fmt.Errorf(
+					"pattern host-device requires cluster.nodeGroups[%d].desiredSize >= 3 (dSSM quorum), got %d. "+
+						"See docs/audits/slice-12-cold-start-audit.md §5",
+					i, ng.DesiredSize,
+				)
+			}
+		}
+	}
 	return nil
 }
 

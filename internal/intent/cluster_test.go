@@ -1073,6 +1073,58 @@ func TestDefaultVIP_HappyPath(t *testing.T) {
 	}
 }
 
+// TestValidatePattern_HostDeviceRejectsDesiredSize2 verifies that an explicit
+// desiredSize: 2 on a host-device cluster is rejected at load time (dSSM
+// quorum requires ≥3). desiredSize: 0 (default) and ≥3 must still pass.
+func TestValidatePattern_HostDeviceRejectsDesiredSize2(t *testing.T) {
+	// desiredSize: 2 is explicitly set and must be rejected.
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+pattern: host-device
+cluster:
+  nodeGroups:
+    - name: ng
+      desiredSize: 2
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for host-device with desiredSize=2, got nil")
+	}
+	if !containsStr(err.Error(), "desiredSize") {
+		t.Errorf("error should mention 'desiredSize': %v", err)
+	}
+	if !containsStr(err.Error(), "3") {
+		t.Errorf("error should mention required size '3': %v", err)
+	}
+}
+
 // TestDefaultVIP_NoDataPath confirms DefaultVIP returns an error when
 // network.dataPath is nil.
 func TestDefaultVIP_NoDataPath(t *testing.T) {

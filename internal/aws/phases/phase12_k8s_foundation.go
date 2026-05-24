@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -161,7 +162,7 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase12: reading embedded cert-manager YAML: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 12] applying cert-manager v%s (%d bytes)\n", intent.EmbeddedCertManagerVersion, len(certManagerYAML))
-	if err := applyRawYAML(ctx, clients.Dynamic, certManagerYAML); err != nil {
+	if err := applyRawYAML(ctx, clients, certManagerYAML); err != nil {
 		return fmt.Errorf("phase12: applying cert-manager YAML: %w", err)
 	}
 
@@ -192,7 +193,7 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	}
 	fmt.Fprintf(os.Stderr, "[phase 12] applying BNK cert chain (issuer=%s ca=%s)\n",
 		vars.SelfSignedIssuer, vars.CACertName)
-	if err := applyRawYAML(ctx, clients.Dynamic, certChainYAML); err != nil {
+	if err := applyRawYAML(ctx, clients, certChainYAML); err != nil {
 		return fmt.Errorf("phase12: applying BNK cert chain: %w", err)
 	}
 
@@ -210,7 +211,7 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase12: reading embedded multus YAML: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 12] applying Multus CNI %s (%d bytes)\n", multusVersion, len(multusYAML))
-	if err := applyRawYAML(ctx, clients.Dynamic, multusYAML); err != nil {
+	if err := applyRawYAML(ctx, clients, multusYAML); err != nil {
 		return fmt.Errorf("phase12: applying multus YAML: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 12] waiting for Multus DaemonSet %s/%s\n", multusNamespace, multusDaemonSet)
@@ -449,13 +450,21 @@ func applySecretTyped(ctx context.Context, cs kubernetes.Interface, sec *corev1.
 
 // applyRawYAML parses a multi-document YAML byte slice and server-side-applies
 // each object via the dynamic client. Uses field-manager "awsbnkctl-phase12".
-func applyRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) error {
+// Hard-fails on unknown kinds — use clients.RESTMapper (live discovery) rather
+// than the former static GVR map (see C-6 in docs/audits/2026-05-24-latent-bugs-sweep.md).
+func applyRawYAML(ctx context.Context, clients *Clients, rawYAML []byte) error {
+	if clients == nil || clients.Dynamic == nil {
+		return fmt.Errorf("applyRawYAML: clients.Dynamic is nil — call AttachK8s first")
+	}
+	if clients.RESTMapper == nil {
+		return fmt.Errorf("applyRawYAML: clients.RESTMapper is nil — call AttachK8s first")
+	}
 	objs, err := parseYAMLDocs(rawYAML)
 	if err != nil {
 		return fmt.Errorf("parse YAML: %w", err)
 	}
 	for _, obj := range objs {
-		if err := applyUnstructured(ctx, dyn, obj); err != nil {
+		if err := applyUnstructured(ctx, clients, obj); err != nil {
 			return err
 		}
 	}
@@ -463,9 +472,13 @@ func applyRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) er
 }
 
 // deleteRawYAML parses a multi-document YAML byte slice and deletes each
-// object via the dynamic client in REVERSE order. Tolerates NotFound. Used by
-// down paths of phases that applied embedded YAML.
-func deleteRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) error {
+// object via the dynamic client in REVERSE order. Tolerates NotFound and
+// unknown-kind errors (CRD already gone on teardown is fine). Used by down
+// paths of phases that applied embedded YAML.
+func deleteRawYAML(ctx context.Context, clients *Clients, rawYAML []byte) error {
+	if clients == nil || clients.Dynamic == nil || clients.RESTMapper == nil {
+		return nil // best-effort during teardown
+	}
 	objs, err := parseYAMLDocs(rawYAML)
 	if err != nil {
 		return fmt.Errorf("parse YAML: %w", err)
@@ -473,22 +486,26 @@ func deleteRawYAML(ctx context.Context, dyn dynamic.Interface, rawYAML []byte) e
 	for i := len(objs) - 1; i >= 0; i-- {
 		obj := objs[i]
 		kind, _ := obj["kind"].(string)
-		meta, _ := obj["metadata"].(map[string]interface{})
-		objName, _ := meta["name"].(string)
-		objNS, _ := meta["namespace"].(string)
+		metaMap, _ := obj["metadata"].(map[string]interface{})
+		objName, _ := metaMap["name"].(string)
+		objNS, _ := metaMap["namespace"].(string)
 		apiVersion, _ := obj["apiVersion"].(string)
 		if kind == "" || objName == "" {
 			continue
 		}
-		gvr, namespaced, err := resolveGVR(apiVersion, kind)
-		if err != nil {
+		gvr, namespaced, mErr := restMapping(clients.RESTMapper, apiVersion, kind)
+		if mErr != nil {
+			if meta.IsNoMatchError(mErr) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[delete] warning: resolve %s %s: %v\n", kind, objName, mErr)
 			continue
 		}
 		var delErr error
 		if namespaced {
-			delErr = dyn.Resource(gvr).Namespace(objNS).Delete(ctx, objName, metav1.DeleteOptions{})
+			delErr = clients.Dynamic.Resource(gvr).Namespace(objNS).Delete(ctx, objName, metav1.DeleteOptions{})
 		} else {
-			delErr = dyn.Resource(gvr).Delete(ctx, objName, metav1.DeleteOptions{})
+			delErr = clients.Dynamic.Resource(gvr).Delete(ctx, objName, metav1.DeleteOptions{})
 		}
 		if delErr != nil && !k8serrors.IsNotFound(delErr) {
 			fmt.Fprintf(os.Stderr, "[delete] warning: %s %s/%s: %v\n", kind, objNS, objName, delErr)
@@ -583,27 +600,27 @@ func trimSpace(b []byte) []byte {
 
 // applyUnstructured server-side-applies one YAML document via the dynamic client.
 // Resolves namespace from the object's metadata.namespace field; cluster-scoped
-// objects (namespace == "") use the root resource interface.
-func applyUnstructured(ctx context.Context, dyn dynamic.Interface, obj map[string]interface{}) error {
+// objects (namespace == "") use the root resource interface. Hard-fails when
+// the kind is not found in the live RESTMapper — callers must not silently skip
+// unknown kinds (C-6 fix).
+func applyUnstructured(ctx context.Context, clients *Clients, obj map[string]interface{}) error {
 	apiVersion, _ := obj["apiVersion"].(string)
 	kind, _ := obj["kind"].(string)
 	if kind == "" {
 		return nil // skip empty/comment-only docs
 	}
 
-	meta, _ := obj["metadata"].(map[string]interface{})
-	objName, _ := meta["name"].(string)
-	objNS, _ := meta["namespace"].(string)
+	metaMap, _ := obj["metadata"].(map[string]interface{})
+	objName, _ := metaMap["name"].(string)
+	objNS, _ := metaMap["namespace"].(string)
 
 	if objName == "" {
 		return nil // skip docs without name
 	}
 
-	gvr, namespaced, err := resolveGVR(apiVersion, kind)
+	gvr, namespaced, err := restMapping(clients.RESTMapper, apiVersion, kind)
 	if err != nil {
-		// Unknown resource — skip gracefully (e.g. comment-only docs, unknown CRDs during teardown).
-		fmt.Fprintf(os.Stderr, "[phase 12] warning: cannot resolve GVR for %s/%s %s: %v — skipping\n", apiVersion, kind, objName, err)
-		return nil
+		return fmt.Errorf("resolve %s/%s %s: %w", apiVersion, kind, objName, err)
 	}
 
 	body, err := yaml.Marshal(obj)
@@ -617,9 +634,9 @@ func applyUnstructured(ctx context.Context, dyn dynamic.Interface, obj map[strin
 		if ns == "" {
 			ns = "default"
 		}
-		ri = dyn.Resource(gvr).Namespace(ns)
+		ri = clients.Dynamic.Resource(gvr).Namespace(ns)
 	} else {
-		ri = dyn.Resource(gvr)
+		ri = clients.Dynamic.Resource(gvr)
 	}
 
 	_, err = ri.Patch(ctx, objName, types.ApplyPatchType, body, metav1.PatchOptions{
@@ -632,66 +649,21 @@ func applyUnstructured(ctx context.Context, dyn dynamic.Interface, obj map[strin
 	return nil
 }
 
-// resolveGVR maps an apiVersion+kind to a GroupVersionResource and namespace scope.
-// This is a best-effort static map for the resources we know Phase 12 applies.
-// Unknown resources are skipped (applyUnstructured logs and returns nil).
-func resolveGVR(apiVersion, kind string) (schema.GroupVersionResource, bool, error) {
-	// Static map: apiVersion/kind → (GVR, namespaced)
-	type entry struct {
-		gvr        schema.GroupVersionResource
-		namespaced bool
+// restMapping resolves apiVersion+kind to (GVR, namespaced) using the live
+// RESTMapper on Clients. Returns an error wrapping meta.NoKindMatchError when
+// the kind is genuinely unknown — applyRawYAML hard-fails on this, while
+// delete paths tolerate it (see callers).
+func restMapping(mapper meta.RESTMapper, apiVersion, kind string) (schema.GroupVersionResource, bool, error) {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return schema.GroupVersionResource{}, false, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
 	}
-	known := map[string]entry{
-		// Core v1
-		"v1/Namespace":      {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}, false},
-		"v1/ServiceAccount": {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "serviceaccounts"}, true},
-		"v1/Secret":         {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}, true},
-		"v1/ConfigMap":      {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, true},
-		"v1/Service":        {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}, true},
-		"v1/Pod":            {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, true},
-		// RBAC
-		"rbac.authorization.k8s.io/v1/ClusterRole":        {schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}, false},
-		"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}, false},
-		"rbac.authorization.k8s.io/v1/Role":               {schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}, true},
-		"rbac.authorization.k8s.io/v1/RoleBinding":        {schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, true},
-		// Apps
-		"apps/v1/Deployment":  {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, true},
-		"apps/v1/DaemonSet":   {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, true},
-		"apps/v1/StatefulSet": {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, true},
-		// Networking
-		"networking.k8s.io/v1/NetworkPolicy": {schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}, true},
-		"networking.k8s.io/v1/IngressClass":  {schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingressclasses"}, false},
-		// APIextensions (CRDs)
-		"apiextensions.k8s.io/v1/CustomResourceDefinition": {schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}, false},
-		// Admission webhooks
-		"admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration": {schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations"}, false},
-		"admissionregistration.k8s.io/v1/MutatingWebhookConfiguration":   {schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "mutatingwebhookconfigurations"}, false},
-		// cert-manager CRs
-		"cert-manager.io/v1/ClusterIssuer": {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}, false},
-		"cert-manager.io/v1/Issuer":        {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "issuers"}, true},
-		"cert-manager.io/v1/Certificate":   {schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, true},
-		// Storage (slice 8 — EBS CSI default StorageClass patch)
-		"storage.k8s.io/v1/StorageClass": {schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}, false},
-		// Multus NADs (slice 7b — host-device NADs)
-		"k8s.cni.cncf.io/v1/NetworkAttachmentDefinition": {schema.GroupVersionResource{Group: "k8s.cni.cncf.io", Version: "v1", Resource: "network-attachment-definitions"}, true},
-		// BNK CRs (slice 7c — CNEInstance + License)
-		"k8s.f5.com/v1/CNEInstance": {schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}, true},
-		"k8s.f5net.com/v1/License":  {schema.GroupVersionResource{Group: "k8s.f5net.com", Version: "v1", Resource: "licenses"}, true},
-		// Slice 10 host-device data-plane CRs.
-		// CRD plural names verified via `kubectl get crd`: f5-spk-vlans.k8s.f5net.com,
-		// gatewayclasses.gateway.networking.k8s.io. Without these entries, Phase 23b's
-		// applyRawYAML SILENTLY skipped both CRs ("unknown apiVersion/kind" warning),
-		// TMM stayed at ConfigurationDone=True / RoutingDone=False, and CNEInstance
-		// never became Available. Caught live during slice-11 retest 2026-05-23.
-		"k8s.f5net.com/v1/F5SPKVlan":                {schema.GroupVersionResource{Group: "k8s.f5net.com", Version: "v1", Resource: "f5-spk-vlans"}, true},
-		"gateway.networking.k8s.io/v1/GatewayClass": {schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}, false},
+	gk := schema.GroupKind{Group: gv.Group, Kind: kind}
+	mapping, err := mapper.RESTMapping(gk, gv.Version)
+	if err != nil {
+		return schema.GroupVersionResource{}, false, err
 	}
-
-	key := apiVersion + "/" + kind
-	if e, ok := known[key]; ok {
-		return e.gvr, e.namespaced, nil
-	}
-	return schema.GroupVersionResource{}, false, fmt.Errorf("unknown apiVersion/kind: %s", key)
+	return mapping.Resource, mapping.Scope.Name() == meta.RESTScopeNameNamespace, nil
 }
 
 // deleteCertChainCRs deletes the BNK cert chain custom resources via the dynamic
@@ -741,18 +713,22 @@ func deleteCertManagerResources(ctx context.Context, clients *Clients) error {
 	for i := len(objs) - 1; i >= 0; i-- {
 		obj := objs[i]
 		kind, _ := obj["kind"].(string)
-		meta, _ := obj["metadata"].(map[string]interface{})
-		objName, _ := meta["name"].(string)
-		objNS, _ := meta["namespace"].(string)
+		metaMap, _ := obj["metadata"].(map[string]interface{})
+		objName, _ := metaMap["name"].(string)
+		objNS, _ := metaMap["namespace"].(string)
 		apiVersion, _ := obj["apiVersion"].(string)
 
 		if kind == "" || objName == "" {
 			continue
 		}
 
-		gvr, namespaced, err := resolveGVR(apiVersion, kind)
-		if err != nil {
-			continue // unknown resource, skip
+		gvr, namespaced, mErr := restMapping(clients.RESTMapper, apiVersion, kind)
+		if mErr != nil {
+			if meta.IsNoMatchError(mErr) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[phase 12 down] warning: resolve %s %s: %v\n", kind, objName, mErr)
+			continue
 		}
 
 		var delErr error
@@ -787,17 +763,21 @@ func deleteMultusResources(ctx context.Context, clients *Clients) error {
 	for i := len(objs) - 1; i >= 0; i-- {
 		obj := objs[i]
 		kind, _ := obj["kind"].(string)
-		meta, _ := obj["metadata"].(map[string]interface{})
-		objName, _ := meta["name"].(string)
-		objNS, _ := meta["namespace"].(string)
+		metaMap, _ := obj["metadata"].(map[string]interface{})
+		objName, _ := metaMap["name"].(string)
+		objNS, _ := metaMap["namespace"].(string)
 		apiVersion, _ := obj["apiVersion"].(string)
 
 		if kind == "" || objName == "" {
 			continue
 		}
 
-		gvr, namespaced, err := resolveGVR(apiVersion, kind)
-		if err != nil {
+		gvr, namespaced, mErr := restMapping(clients.RESTMapper, apiVersion, kind)
+		if mErr != nil {
+			if meta.IsNoMatchError(mErr) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "[phase 12 down] warning: resolve %s %s: %v\n", kind, objName, mErr)
 			continue
 		}
 

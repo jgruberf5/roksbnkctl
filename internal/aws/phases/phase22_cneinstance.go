@@ -24,7 +24,8 @@ const (
 	phase22PollInterval  = 5 * time.Second
 	phase22FinalizerWait = 30 * time.Second
 
-	// cneInstanceGVR key components — kept as locals so resolveGVR handles dispatch.
+	// cneInstanceGVR key components — kept as locals so the apply path uses
+	// clients.RESTMapper for dispatch (see phase 12 restMapping helper).
 	cneInstanceGroup    = "k8s.f5.com"
 	cneInstanceVersion  = "v1"
 	cneInstanceResource = "cneinstances"
@@ -80,7 +81,7 @@ func Phase22CNEInstance(ctx context.Context, cl *intent.Cluster, st *state.State
 
 	// Apply via dynamic client (SSA).
 	fmt.Fprintf(os.Stderr, "[phase 22] applying CNEInstance %s in %s\n", crName, InstanceNamespace)
-	if err := applyRawYAML(ctx, clients.Dynamic, rendered); err != nil {
+	if err := applyRawYAML(ctx, clients, rendered); err != nil {
 		return fmt.Errorf("phase22: applying CNEInstance: %w", err)
 	}
 
