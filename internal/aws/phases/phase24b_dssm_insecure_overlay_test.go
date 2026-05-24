@@ -25,7 +25,7 @@ func buildDSSMConfigMap(probeContent string) *corev1.ConfigMap {
 			Namespace: InstanceNamespace,
 		},
 		Data: map[string]string{
-			dssmProbeKey: probeContent,
+			"readiness_probe.sh": probeContent,
 		},
 	}
 }
@@ -72,7 +72,7 @@ func TestPhase24b_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated ConfigMap: %v", err)
 	}
-	gotScript := updatedCM.Data[dssmProbeKey]
+	gotScript := updatedCM.Data["readiness_probe.sh"]
 	if !strings.Contains(gotScript, "--tls --insecure") {
 		t.Errorf("expected '--tls --insecure' in updated ConfigMap, got:\n%s", gotScript)
 	}
@@ -223,6 +223,67 @@ func TestPhase24b_Down_ClearsStateKey(t *testing.T) {
 
 	if v := st.Get("DSSM_INSECURE_OVERLAY_APPLIED_AT"); v != "" {
 		t.Errorf("expected state key cleared on down, got %q", v)
+	}
+}
+
+// ─── Test 7: AllSevenScripts — every --tls script in the CM gets patched ─────
+//
+// Regression test for the live-validated bug on syd-tracer 2026-05-24 where
+// Phase 24b's original readiness_probe.sh-only patch left 6 other probe scripts
+// (sentinel_readiness, sentinel_startup, etc.) unpatched, blocking sentinel-2.
+
+func TestPhase24b_AllTLSScriptsPatched(t *testing.T) {
+	awsmw.ResetForTest()
+	orig := phase24bConfigMapWait
+	phase24bConfigMapWait = 5 * time.Second
+	defer func() { phase24bConfigMapWait = orig }()
+
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	// BNK 2.3 f5-dssm ConfigMap ships 7 scripts using --tls: db + sentinel
+	// readiness/liveness/startup probes plus init.sh. All must be patched.
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dssmConfigMapName,
+			Namespace: InstanceNamespace,
+		},
+		Data: map[string]string{
+			"readiness_probe.sh":          "redis-cli -p 6379 --tls --cert x ping\n",
+			"liveness_probe.sh":           "redis-cli -p 6379 --tls --cert x ping\n",
+			"startup_probe.sh":            "redis-cli -p 6379 --tls --cert x ping\n",
+			"sentinel_readiness_probe.sh": "redis-cli -p 26379 --tls --cert x ping\n",
+			"sentinel_liveness_probe.sh":  "redis-cli -p 26379 --tls --cert x ping\n",
+			"sentinel_startup_probe.sh":   "redis-cli -p 26379 --tls --cert x ping\n",
+			"init.sh":                     "redis-cli -p 6379 --tls --cert x INFO\n",
+			"f5log_lib.sh":                "# helper functions; no probe calls; must not be modified\n",
+		},
+	}
+	cs := k8sfake.NewSimpleClientset(cm)
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	if err := Phase24bDSSMInsecureOverlay(context.Background(), dssmHostDeviceCluster(), st, clients, false); err != nil {
+		t.Fatalf("Phase24bDSSMInsecureOverlay: %v", err)
+	}
+
+	updatedCM, err := cs.CoreV1().ConfigMaps(InstanceNamespace).Get(context.Background(), dssmConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get updated CM: %v", err)
+	}
+
+	wantPatched := []string{
+		"readiness_probe.sh", "liveness_probe.sh", "startup_probe.sh",
+		"sentinel_readiness_probe.sh", "sentinel_liveness_probe.sh", "sentinel_startup_probe.sh",
+		"init.sh",
+	}
+	for _, k := range wantPatched {
+		if !strings.Contains(updatedCM.Data[k], "--tls --insecure") {
+			t.Errorf("script %q missing --tls --insecure after patch: %s", k, updatedCM.Data[k])
+		}
+	}
+	// f5log_lib.sh has no --tls and must be untouched.
+	if updatedCM.Data["f5log_lib.sh"] != "# helper functions; no probe calls; must not be modified\n" {
+		t.Errorf("f5log_lib.sh should not have been modified, got: %s", updatedCM.Data["f5log_lib.sh"])
 	}
 }
 

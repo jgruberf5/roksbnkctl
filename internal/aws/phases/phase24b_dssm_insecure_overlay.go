@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -32,9 +33,6 @@ const (
 
 	// dssmTLSInsecureReplace is the replacement that adds --insecure immediately after --tls.
 	dssmTLSInsecureReplace = " --tls --insecure "
-
-	// dssmProbeKey is the ConfigMap data key that holds the readiness_probe.sh content.
-	dssmProbeKey = "readiness_probe.sh"
 )
 
 // phase24bConfigMapWait is the maximum time we wait for the f5-dssm ConfigMap to appear.
@@ -80,10 +78,10 @@ func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *st
 	}
 
 	// Wait for the f5-dssm ConfigMap — FLO creates it after CNEInstance reconciliation.
-	var probeScript string
+	var cm *corev1.ConfigMap
 	waitErr := wait.PollUntilContextTimeout(ctx, 10*time.Second, phase24bConfigMapWait, true,
 		func(ctx context.Context) (bool, error) {
-			cm, err := clients.K8s.CoreV1().ConfigMaps(InstanceNamespace).Get(ctx, dssmConfigMapName, metav1.GetOptions{})
+			got, err := clients.K8s.CoreV1().ConfigMaps(InstanceNamespace).Get(ctx, dssmConfigMapName, metav1.GetOptions{})
 			if err != nil {
 				if k8serrors.IsNotFound(err) {
 					fmt.Fprintf(os.Stderr, "[phase 24b] waiting for ConfigMap %s/%s to appear...\n",
@@ -92,7 +90,7 @@ func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *st
 				}
 				return false, err
 			}
-			probeScript = cm.Data[dssmProbeKey]
+			cm = got
 			return true, nil
 		})
 	if waitErr != nil {
@@ -100,36 +98,47 @@ func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *st
 			InstanceNamespace, dssmConfigMapName, waitErr)
 	}
 
-	// Idempotency: if already patched, skip update and bounce.
-	if strings.Contains(probeScript, dssmInsecureMarker) {
-		fmt.Fprintln(os.Stderr, "[phase 24b] f5-dssm ConfigMap already patched (--tls --insecure present) — skipping")
-		return nil
-	}
-
-	// Apply sed-equivalent: replace all " --tls " with " --tls --insecure ".
-	patched := strings.ReplaceAll(probeScript, dssmTLSReplace, dssmTLSInsecureReplace)
-	if patched == probeScript {
-		// --tls not found — unexpected; log and continue (don't fail — the
-		// BNK image may have changed the probe script).
-		fmt.Fprintln(os.Stderr, "[phase 24b] warning: '--tls' not found in readiness_probe.sh — ConfigMap not modified")
-		return nil
-	}
-
-	// Fetch the current ConfigMap for the typed Update call.
-	cm, err := clients.K8s.CoreV1().ConfigMaps(InstanceNamespace).Get(ctx, dssmConfigMapName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("phase 24b: re-fetch ConfigMap %s/%s: %w", InstanceNamespace, dssmConfigMapName, err)
-	}
+	// Patch every probe script that uses --tls. BNK 2.3 f5-dssm ConfigMap ships 7
+	// such scripts: db probes (readiness/liveness/startup), sentinel probes
+	// (readiness/liveness/startup), and init.sh. Phase 24b's original
+	// readiness_probe.sh-only patch (mirror of aws-gpu-setup/deploy-bnk.sh:263-282)
+	// missed the sentinel probes, which kept f5-dssm-sentinel-2 stuck at 2/3
+	// blocking CNE Available indefinitely (live-validated on syd-tracer 2026-05-24).
 	if cm.Data == nil {
-		cm.Data = make(map[string]string)
+		fmt.Fprintln(os.Stderr, "[phase 24b] warning: ConfigMap data is empty — nothing to patch")
+		return nil
 	}
-	cm.Data[dssmProbeKey] = patched
 
-	_, err = clients.K8s.CoreV1().ConfigMaps(InstanceNamespace).Update(ctx, cm, metav1.UpdateOptions{})
+	patchedKeys := []string{}
+	skippedKeys := []string{}
+	for k, v := range cm.Data {
+		if !strings.Contains(v, dssmTLSReplace) {
+			continue
+		}
+		if strings.Contains(v, dssmInsecureMarker) {
+			skippedKeys = append(skippedKeys, k)
+			continue
+		}
+		cm.Data[k] = strings.ReplaceAll(v, dssmTLSReplace, dssmTLSInsecureReplace)
+		patchedKeys = append(patchedKeys, k)
+	}
+
+	if len(patchedKeys) == 0 {
+		if len(skippedKeys) > 0 {
+			fmt.Fprintf(os.Stderr, "[phase 24b] f5-dssm ConfigMap already patched (--tls --insecure present in %d scripts) — skipping\n",
+				len(skippedKeys))
+		} else {
+			fmt.Fprintln(os.Stderr, "[phase 24b] warning: no '--tls' scripts found in f5-dssm ConfigMap — nothing to patch")
+		}
+		return nil
+	}
+
+	_, err := clients.K8s.CoreV1().ConfigMaps(InstanceNamespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("phase 24b: update ConfigMap %s/%s: %w", InstanceNamespace, dssmConfigMapName, err)
 	}
-	fmt.Fprintln(os.Stderr, "[phase 24b] patched f5-dssm ConfigMap (added --insecure to redis-cli --tls invocations)")
+	fmt.Fprintf(os.Stderr, "[phase 24b] patched %d scripts in f5-dssm ConfigMap (added --insecure to redis-cli --tls invocations): %s\n",
+		len(patchedKeys), strings.Join(patchedKeys, ", "))
 
 	// Bounce dssm pods so they re-mount the patched ConfigMap.
 	if err := clients.K8s.CoreV1().Pods(InstanceNamespace).DeleteCollection(
