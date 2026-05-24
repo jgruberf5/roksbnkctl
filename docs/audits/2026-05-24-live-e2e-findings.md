@@ -46,7 +46,7 @@ then retry the mapping once. Hard-fail if still unknown.
 **Verification**: After hotfix landed (locally), Phase 12 → 23b all proceeded
 cleanly on the re-run.
 
-## Finding #2 (OPEN — needs follow-up) — Phase 25 6-min budget too aggressive for cold start
+## Finding #2 (FIXED in PR #NN — pending) — Phase 25 6-min budget too aggressive for cold start
 
 **Symptom**: Phase 25 activation poll exhausted its 12-iteration / 6-min budget
 (trimmed from 40-iter/20-min by C-4) with:
@@ -95,6 +95,10 @@ b) **CNE controller reconcile lag**: even with all pods Ready, the Available
    pods are Running, do a no-op patch on the CNEInstance to trigger reconcile
    (mirrors the HTTPRoute pattern). This is the controller-kick workaround.
 3. Document the dual workaround in the project memory and a follow-up audit.
+
+**Fix shipped**: Phase 25 budget 12→18 iter (9 min cap); `pkg/bnk.ResyncCNEInstance`
+helper added; Phase 25 auto-kicks the cne-controller once after iter 6 if pods are
+Running but Available is stale. See `pkg/bnk/resync_cne.go`.
 
 ## Finding #3 (OPEN — needs investigation) — DSSM StatefulSet replica Redis startup failure
 

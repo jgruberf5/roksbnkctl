@@ -12,6 +12,7 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
+	"github.com/JLCode-tech/awsbnkctl/pkg/bnk"
 )
 
 const (
@@ -20,9 +21,9 @@ const (
 	phase25InitialSleep = 30 * time.Second
 
 	// phase25MaxIter is the maximum number of poll iterations.
-	phase25MaxIter = 12
+	phase25MaxIter = 18
 
-	// phase25PollInterval is the sleep between iterations (12 × 30s = 6 min cap).
+	// phase25PollInterval is the sleep between iterations (18 × 30s = 9 min cap).
 	phase25PollInterval = 30 * time.Second
 )
 
@@ -34,7 +35,7 @@ const (
 // to avoid burning a real license per round).
 //
 // On success: sets CNEINSTANCE_READY_AT in state.
-// On timeout (6 min): dumps pod diagnostics to stderr then returns a hard error.
+// On timeout (9 min): dumps pod diagnostics to stderr then returns a hard error.
 //
 // D-005: CheckAuthOrDie called at entry.
 func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool, skipPoll bool) error {
@@ -48,7 +49,7 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 	}
 
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "[phase 25] dry-run: would poll CNEInstance + License up to 6 min")
+		fmt.Fprintln(os.Stderr, "[phase 25] dry-run: would poll CNEInstance + License up to 9 min")
 		return nil
 	}
 
@@ -68,6 +69,7 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 	}
 
 	var lastCNEState, lastLicState string
+	var kicked bool
 
 	for i := 1; i <= phase25MaxIter; i++ {
 		if i > 1 {
@@ -115,10 +117,26 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 			st.Set("CNEINSTANCE_READY_AT", time.Now().UTC().Format(time.RFC3339))
 			return st.Save()
 		}
+
+		// After iter 6 (~3 min of polling), if all pods are Running but the
+		// CNEInstance Available condition is still stale, kick the cne-controller
+		// once via a harmless annotation patch. Same reconcile-lag pattern as
+		// project_pool_member_sync_root_cause / project_cne_controller_available_lag.
+		if !kicked && i >= 6 && running == total && total > 0 && !isCNEReady(cneState) {
+			kicked = true
+			elapsed := phase25InitialSleep + time.Duration(i-1)*phase25PollInterval
+			fmt.Fprintf(os.Stderr,
+				"[phase 25] all pods Running but CNE Available=False after %s — kicking cne-controller via no-op annotation patch (see project_cne_controller_available_lag)\n",
+				elapsed.Round(time.Second),
+			)
+			if err := bnk.ResyncCNEInstance(ctx, clients.Dynamic, InstanceNamespace, crName); err != nil {
+				fmt.Fprintf(os.Stderr, "[phase 25] warn: cne-controller kick failed (continuing): %v\n", err)
+			}
+		}
 	}
 
 	dumpPodDiagnostics(ctx, clients, InstanceNamespace)
-	return fmt.Errorf("phase25: timeout after %d iterations (6 min): last cne=%q lic=%q — see [phase 25] FAIL diag lines above for stuck pod state",
+	return fmt.Errorf("phase25: timeout after %d iterations (9 min): last cne=%q lic=%q — see [phase 25] FAIL diag lines above for stuck pod state",
 		phase25MaxIter, lastCNEState, lastLicState)
 }
 
