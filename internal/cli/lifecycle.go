@@ -562,6 +562,13 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	// Phase 24c: f5-tmm-pod-manager cold-start race heal (best-effort).
+	// Targets Finding #4 from docs/audits/2026-05-24-live-e2e-round-2-findings.md:
+	// pod-manager v1.6.x times out hitting the EKS API ClusterIP before
+	// kube-proxy converges on a cold node; restart-once breaks the loop.
+	if err := phases.Phase24cPodManagerHeal(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	// Phase 25: Activation poll — CNEInstance + License status (up to 20 min).
 	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
 	if err := phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll); err != nil {
@@ -630,8 +637,11 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
-	// Phase 25/24b/24/23b/23/22: activation teardown (reverse of up order).
+	// Phase 25/24c/24b/24/23b/23/22: activation teardown (reverse of up order).
 	if err := phases.Phase25ActivationPollDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase24cPodManagerHealDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase24bDSSMInsecureOverlayDown(ctx, cl, st, clients); err != nil {
