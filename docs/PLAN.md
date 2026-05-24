@@ -469,6 +469,8 @@ E2E phases pass on a stock dev host. Security review clean. v1.0 binary attached
 
 ### Sprint 6 close (actual)
 
+> OBSOLETE per D-001 (post-TF direction) — this section documents roksbnkctl Sprint 6 history and is retained as audit trail only.
+
 What shipped (architect surface — confirmed at this commit):
 
 - **Chapters 8 / 9 / 11 "Available in v1.x" annotations** — top-of-chapter banners on `book/src/08-cluster-phase.md`, `book/src/09-registering-existing-cluster.md`, and `book/src/11-tearing-down.md` flag the `awsbnkctl cluster up`/`cluster down`/`cluster show`/`cluster register`/`bnk up`/`bnk down` subverbs as v1.x roadmap surface. The v0.9 binary ships only the single-phase unscoped lifecycle (`up` / `down` / `apply` / `plan` / `init` / `status`); the chapter prose describes the v1.x two-phase design as the staff lift from `roksbnkctl/internal/cli/cluster.go` + `bnk.go` will land it. Closes Sprint 5 tech-writer Issue 2 BLOCKER (path b: explicit "Available in v1.x" notes on absent subverbs) — first-time readers no longer hit `unknown command "cluster"` and bounce. The v1.x retarget itself is folded into the "Subverb subtrees: `cluster up/down/show/register` + `bnk up/down`" entry of the deferred-work appendix below.

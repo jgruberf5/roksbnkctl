@@ -158,6 +158,11 @@ type IAMAPI interface {
 	TagRole(ctx context.Context, in *iam.TagRoleInput, opts ...func(*iam.Options)) (*iam.TagRoleOutput, error)
 	TagInstanceProfile(ctx context.Context, in *iam.TagInstanceProfileInput, opts ...func(*iam.Options)) (*iam.TagInstanceProfileOutput, error)
 
+	// Tag-listing — used by the down-path fallback to find roles when the
+	// conventional naming convention has diverged.
+	ListRoles(ctx context.Context, in *iam.ListRolesInput, opts ...func(*iam.Options)) (*iam.ListRolesOutput, error)
+	ListRoleTags(ctx context.Context, in *iam.ListRoleTagsInput, opts ...func(*iam.Options)) (*iam.ListRoleTagsOutput, error)
+
 	// OIDC provider (slice 7+)
 	CreateOpenIDConnectProvider(ctx context.Context, in *iam.CreateOpenIDConnectProviderInput, opts ...func(*iam.Options)) (*iam.CreateOpenIDConnectProviderOutput, error)
 	GetOpenIDConnectProvider(ctx context.Context, in *iam.GetOpenIDConnectProviderInput, opts ...func(*iam.Options)) (*iam.GetOpenIDConnectProviderOutput, error)

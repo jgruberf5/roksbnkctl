@@ -87,8 +87,12 @@ func Phase08EKSCluster(ctx context.Context, cl *intent.Cluster, st *state.State,
 		}
 	}
 
+	publicCIDRs := []string{"0.0.0.0/0"}
+	if cl.ClusterSpec.EndpointAccess != nil && len(cl.ClusterSpec.EndpointAccess.PublicAccessCidrs) > 0 {
+		publicCIDRs = cl.ClusterSpec.EndpointAccess.PublicAccessCidrs
+	}
+
 	// Create the cluster.
-	// TODO: restrict publicAccessCidrs to operator IP in a future hardening pass; out of scope for slice 3.
 	_, err = clients.EKS.CreateCluster(ctx, &eks.CreateClusterInput{
 		Name:    ptr(name),
 		RoleArn: ptr(clusterRoleARN),
@@ -97,7 +101,7 @@ func Phase08EKSCluster(ctx context.Context, cl *intent.Cluster, st *state.State,
 			SubnetIds:             allSubnets,
 			EndpointPublicAccess:  boolPtr(true),
 			EndpointPrivateAccess: boolPtr(true),
-			PublicAccessCidrs:     []string{"0.0.0.0/0"},
+			PublicAccessCidrs:     publicCIDRs,
 		},
 		Tags: eksTags,
 	})

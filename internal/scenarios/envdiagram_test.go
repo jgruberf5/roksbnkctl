@@ -31,22 +31,17 @@ func makeTestCluster() *intent.Cluster {
 	}
 }
 
-func makeTestState() *state.State {
-	st, _ := state.Load(t_tempDir())
+func makeTestState(t *testing.T) *state.State {
+	t.Helper()
+	st, _ := state.Load(t.TempDir())
 	st.Set("JUMPHOST_INSTANCE_ID", "i-0abcdef1234567890")
 	st.Set("JUMPHOST_BNK_EXT_ENI_IP", "10.0.10.5")
 	return st
 }
 
-// t_tempDir creates a temp dir without t.TempDir() (since we're in TestXxx funcs).
-func t_tempDir() string {
-	// Use a unique path per process.
-	return "/tmp/awsbnkctl-test-state"
-}
-
 func TestRender_StaticOnly(t *testing.T) {
 	cl := makeTestCluster()
-	st := makeTestState()
+	st := makeTestState(t)
 
 	in := scenarios.EnvDiagramInput{
 		Cluster:  cl,
@@ -105,7 +100,7 @@ func TestRender_NilState(t *testing.T) {
 
 func TestRender_NilClients_LiveFieldsFallback(t *testing.T) {
 	cl := makeTestCluster()
-	st := makeTestState()
+	st := makeTestState(t)
 	in := scenarios.EnvDiagramInput{
 		Cluster:   cl,
 		State:     st,
@@ -124,7 +119,7 @@ func TestRender_NilClients_LiveFieldsFallback(t *testing.T) {
 
 func TestRender_ScenarioFooter(t *testing.T) {
 	cl := makeTestCluster()
-	st := makeTestState()
+	st := makeTestState(t)
 	in := scenarios.EnvDiagramInput{
 		Cluster:  cl,
 		State:    st,
@@ -139,7 +134,7 @@ func TestRender_ScenarioFooter(t *testing.T) {
 
 func TestRender_NoScenarioFooter(t *testing.T) {
 	cl := makeTestCluster()
-	st := makeTestState()
+	st := makeTestState(t)
 	in := scenarios.EnvDiagramInput{
 		Cluster:  cl,
 		State:    st,

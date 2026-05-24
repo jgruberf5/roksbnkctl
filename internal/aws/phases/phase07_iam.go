@@ -140,11 +140,22 @@ func Phase07IAMDown(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 07 down] iam: cluster=%s\n", name)
 
-	// Name-based fallback — roles have well-known names.
-	// TODO: tag-listing fallback (ListRoles + per-role ListRoleTags) if names
-	// ever diverge from convention.
+	// Primary: well-known name convention. Fallback: tag scan via findRoleByTag
+	// when GetRole returns NoSuchEntity (handles manual rename / cross-account copy).
 	clusterRoleName := name + "-eks-cluster-role"
+	if _, err := clients.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: ptr(clusterRoleName)}); isNoSuchEntity(err) {
+		if found, scanErr := findRoleByTag(ctx, clients.IAM, name, tags.CompIAMClusterRole); scanErr == nil && found != "" {
+			fmt.Fprintf(os.Stderr, "[phase 07 down] cluster role name diverged from convention; found by tag: %s\n", found)
+			clusterRoleName = found
+		}
+	}
 	nodeRoleName := name + "-eks-node-role"
+	if _, err := clients.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: ptr(nodeRoleName)}); isNoSuchEntity(err) {
+		if found, scanErr := findRoleByTag(ctx, clients.IAM, name, tags.CompIAMNodeRole); scanErr == nil && found != "" {
+			fmt.Fprintf(os.Stderr, "[phase 07 down] node role name diverged from convention; found by tag: %s\n", found)
+			nodeRoleName = found
+		}
+	}
 	profileName := st.Get("NODE_INSTANCE_PROFILE_NAME")
 	if profileName == "" {
 		profileName = name + "-node-instance-profile"
@@ -560,4 +571,50 @@ func isNoSuchEntity(err error) bool {
 	}
 	var nse *iamtypes.NoSuchEntityException
 	return errors.As(err, &nse)
+}
+
+// findRoleByTag scans all IAM roles (paginating via Marker) and returns the name
+// of the first role that carries awsbnkctl:cluster=<clusterName> AND
+// awsbnkctl:component=<component>. Returns "" when no match is found.
+//
+// This is the fallback for Phase07IAMDown when the well-known naming convention
+// has diverged (e.g. after a manual rename or cross-account copy).
+func findRoleByTag(ctx context.Context, iamClient IAMAPI, clusterName, component string) (string, error) {
+	var marker *string
+	for {
+		out, err := iamClient.ListRoles(ctx, &iam.ListRolesInput{Marker: marker})
+		if err != nil {
+			return "", fmt.Errorf("ListRoles: %w", err)
+		}
+		for _, r := range out.Roles {
+			if r.RoleName == nil {
+				continue
+			}
+			tagsOut, err := iamClient.ListRoleTags(ctx, &iam.ListRoleTagsInput{RoleName: r.RoleName})
+			if err != nil {
+				// Skip inaccessible roles rather than aborting the scan.
+				continue
+			}
+			var hasCluster, hasComponent bool
+			for _, t := range tagsOut.Tags {
+				if t.Key == nil || t.Value == nil {
+					continue
+				}
+				if *t.Key == tags.KeyCluster && *t.Value == clusterName {
+					hasCluster = true
+				}
+				if *t.Key == tags.KeyComponent && *t.Value == component {
+					hasComponent = true
+				}
+			}
+			if hasCluster && hasComponent {
+				return *r.RoleName, nil
+			}
+		}
+		if !out.IsTruncated {
+			break
+		}
+		marker = out.Marker
+	}
+	return "", nil
 }

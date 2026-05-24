@@ -1,5 +1,7 @@
 package phases
 
+import "github.com/JLCode-tech/awsbnkctl/internal/bnkconst"
+
 // Host-device pattern constants — architecture-level constants that are NOT
 // operator knobs. These are baked into the manifests and persisted to state.env
 // for observability by downstream phases (doctor, inspect) and Pass 3.
@@ -11,7 +13,9 @@ package phases
 const (
 	// InstanceNamespace is the k8s namespace where the CNE instance resources live
 	// (cloud-network-mapping CM, IRSA SA, CNEInstance CR, NADs).
-	InstanceNamespace = "f5-cne-system"
+	// Single source of truth is bnkconst.InstanceNamespace; re-exported here so
+	// callers within this package need no import change.
+	InstanceNamespace = bnkconst.InstanceNamespace
 
 	// OperatorNamespace is the k8s namespace where FLO/OTEL/License resources live.
 	// Already used in phase14/phase15 as operatorNS — duplicated here for host-device

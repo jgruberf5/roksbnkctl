@@ -131,6 +131,14 @@ type Cluster struct {
 	Testing *TestingSpec `yaml:"testing,omitempty"`
 }
 
+// EndpointAccessSpec controls who can reach the EKS control-plane API endpoint.
+type EndpointAccessSpec struct {
+	// PublicAccessCidrs restricts the public endpoint to these CIDRs.
+	// Default ["0.0.0.0/0"]. Set to your operator IP (e.g. "203.0.113.10/32") for
+	// security hardening. Phase 08 passes the value directly to CreateCluster.
+	PublicAccessCidrs []string `yaml:"publicAccessCidrs,omitempty"`
+}
+
 // ClusterSpec holds the EKS control plane and node group configuration.
 // Corresponds to the `cluster:` block in cluster.yaml.
 type ClusterSpec struct {
@@ -139,6 +147,9 @@ type ClusterSpec struct {
 	// NodeGroups defines one or more managed node groups. At least one is required
 	// when the cluster block is present.
 	NodeGroups []NodeGroupSpec `yaml:"nodeGroups,omitempty"`
+	// EndpointAccess controls the public-endpoint CIDR allowlist.
+	// Omit to accept the default open access (0.0.0.0/0).
+	EndpointAccess *EndpointAccessSpec `yaml:"endpointAccess,omitempty"`
 }
 
 // NodeGroupSpec configures one managed node group.
@@ -365,6 +376,7 @@ func (r *byteReader) Read(p []byte) (int, error) {
 
 // EmbeddedCertManagerVersion is the cert-manager version baked into the binary.
 // Phase 12 validates that bnk.certManagerVersion (if set) matches this exactly.
+// Why: pinned to match the FLO 2.21.13 dependency surface. Bump alongside DefaultFLOVersion.
 const EmbeddedCertManagerVersion = "1.16.1"
 
 // applyDefaults fills in zero-value fields with their documented defaults.

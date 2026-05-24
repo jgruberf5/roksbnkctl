@@ -1,6 +1,6 @@
 # PRD 06 — cluster/trial phase split: `bnk` command group + composite lifecycle
 
-> Post-v1.0 follow-up; not part of the original PRD 00-05 "trim host tools" arc.
+> Post-v1.0 follow-up; not part of the original PRD 00-05 "trim host tools" arc. OBSOLETE per D-001 (post-TF direction).
 >
 > Prerequisites: v1.0.x cluster-phase work (the existing `roksbnkctl cluster up/down/register/show` lives at `internal/cli/cluster_phase.go` and writes `~/.roksbnkctl/<workspace>/cluster-outputs.json`).
 >
@@ -51,7 +51,7 @@ Both pain points compound: a user iterating on a BNK trial against a stable clus
 
 - **`roksbnkctl migrate` command** — splitting an existing legacy single-state workspace's tfstate into separate `state/` + `state-cluster/` trees via `terraform state mv`. Real engineering effort and one-shot state surgery. Deferred until a real legacy user asks. Refusal messages reference it as future work.
 - **`roksbnkctl bnk plan` / `bnk apply` / `cluster plan` / `cluster apply`** — top-level `plan` / `apply` already operate on the trial state and that behavior is unchanged. Symmetry additions deferred to a later cycle.
-- **Docker backend composition** — the current docker dispatch in `runTrialUp`/`runTrialDown` covers the trial state. The new composite `runUp` will call `runClusterUp` (which has no docker shortcut today) followed by trial apply. In docker mode on empty/split workspaces, cluster apply runs locally and the trial step runs in docker — almost certainly not what users want. The composite explicitly disables itself on non-local backends for the empty/split paths; legacy single-state and the direct `cluster up`/`bnk up` calls retain v1.0.x docker behavior. A follow-up PRD covers full docker-mode composition.
+- **Docker backend composition** — the current docker dispatch in `runTrialUp`/`runTrialDown` covers the trial state. The new composite `runUp` will call `runClusterUp` (which has no docker shortcut today) followed by trial apply. In docker mode on empty/split workspaces, cluster apply runs locally and the trial step runs in docker — almost certainly not what users want. The composite explicitly disables itself on non-local backends for the empty/split paths; legacy single-state and the direct `cluster up`/`bnk up` calls retain v1.0.x docker behavior. A follow-up PRD covers full docker-mode composition. OBSOLETE per D-001 (post-TF direction).
 - **Multiple BNK trials on one cluster** — `cluster-outputs.json` already supports the pattern (each `bnk up` in a fresh workspace reuses the registered cluster), but UX polish around switching trials, naming trials, and the "which trial is current" prompt is left for a separate effort.
 - **OpenShift cluster auto-registration on first `bnk up`** — users still go through `cluster register` for clusters they didn't provision via `cluster up`. Auto-discovery is plausible (we already have `ibm.GetCluster`) but is its own scope.
 
@@ -207,6 +207,6 @@ A reference prototype lives on the `spike/bnk-phase-split` branch (commit `00181
 
 ## Related work
 
-- **PRD 03 (execution backends)** — the docker-backend composition gap noted in §"Out of scope" is a follow-up. Future PRD will define how the composite dispatcher composes phase-by-phase across backends.
+- **PRD 03 (execution backends)** — the docker-backend composition gap noted in §"Out of scope" is a follow-up. Future PRD will define how the composite dispatcher composes phase-by-phase across backends. OBSOLETE per D-001 (post-TF direction).
 - **v1.0.x cluster-phase commit history** — `cluster up`/`down`/`register`/`show` shipped in (search the changelog for the cluster-phase entry); the design of the two-phase shape is established. This PRD builds on it.
 - **Book chapter 8** ("The cluster phase") — current text describes `cluster up`/`down` as the *opt-in* two-phase mode; this PRD makes the two-phase shape the *default* shape for new workspaces, so chapter 8 needs a framing edit alongside the new `bnk` chapter material.

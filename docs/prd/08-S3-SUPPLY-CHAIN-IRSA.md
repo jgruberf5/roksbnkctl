@@ -176,7 +176,7 @@ In the cluster:
 
 Gated on `var.enable_ecr_mirror`. Creates one `aws_ecr_repository` per image in the FAR archive (parsed at plan time via a `null_resource` that lists images), then runs `skopeo copy --src-authfile=<far-auth> docker://dev-registry.f5.com/<image> docker://<ecr-uri>/<image>` for each.
 
-Out of scope this sprint if it stretches the staff agent's budget — the staff brief explicitly allows deferring ECR mirror to Sprint 3 follow-up.
+Out of scope this sprint if it stretches the staff agent's budget — the staff brief explicitly allows deferring ECR mirror to Sprint 3 follow-up. OBSOLETE per D-001 (post-TF direction).
 
 ### `internal/aws/` additions
 

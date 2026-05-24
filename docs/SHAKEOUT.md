@@ -247,16 +247,7 @@ Once compile + unit tests pass, drive the verbs in order against a real workspac
 
 ## 9. Things deliberately left undone (v1.x backlog)
 
-These aren't bugs; they're ship-after-feedback decisions captured in PRD's Open Questions:
-
-- **east-west iperf3 with in-cluster client pod** (current east-west uses host as client; only useful for ClusterIP-reachable test rigs)
-- **`roksbnkctl logs --all-pods`** (multi-pod tail)
-- **component-aware `roksbnkctl status`** (BNK pod readiness, CRD health)
-- **`cos.upload:` config block + auto-orchestration in `roksbnkctl up`**
-- **Auto-install terraform via `hashicorp/hc-install`** (currently requires terraform on PATH)
-- **HMAC keys for COS auth** (currently IAM bearer only)
-- **Custom `tests.yaml`** (extra hostnames, custom HTTP paths)
-- **Telemetry / usage analytics** (opt-in, never on by default)
+[Section retired — see docs/POST_TERRAFORM_DIRECTION.md for current v1.x scope]
 
 ---
 

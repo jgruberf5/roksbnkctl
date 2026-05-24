@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/JLCode-tech/awsbnkctl/internal/bnkconst"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
 
@@ -221,9 +222,9 @@ func RenderNADs(tmpl []byte, namespace string) ([]byte, error) {
 // ─── CNEInstance CR ────────────────────────────────────────────────────────
 
 // cneInstanceNamespace is the k8s namespace for CNEInstance and related resources.
-// Mirrors phases.InstanceNamespace — duplicated here to avoid an import cycle
-// (phases imports render; render cannot import phases).
-const cneInstanceNamespace = "f5-cne-system"
+// Sourced from bnkconst to avoid an import cycle (phases imports render; render
+// cannot import phases). bnkconst is the single source of truth.
+const cneInstanceNamespace = bnkconst.InstanceNamespace
 
 // CNEInstanceVars holds the substitution variables for
 // shared/cneinstance.yaml.tmpl. Fields are split into three categories per

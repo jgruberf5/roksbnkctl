@@ -89,6 +89,12 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	if err := attachENIIfNeeded(ctx, clients.EC2, extENI, instanceID, 3); err != nil {
 		return fmt.Errorf("phase17: attaching external ENI %s: %w", extENI, err)
 	}
+	// Why: AL2023 on Nitro assigns predictable interface names (ens7, ens8) for
+	// device-index 2 and 3. If AWS changes the Nitro naming convention in a future
+	// kernel or instance generation, attach will still succeed here but TMM will
+	// fail to bind because the hardcoded names won't match. No readback is
+	// performed today — validate with `ip link` on the node if TMM fails to start.
+	fmt.Fprintf(os.Stderr, "[phase 17] note: assuming AL2023 ifname convention (ens7/ens8); if Nitro renames in the future, secondary attach will appear successful but TMM will fail to bind\n")
 
 	// Assign TMM SelfIPs as secondary private IPs on each ENI.
 	// Per F5 Multi-AZ PDF p.9: AWS won't route SelfIPs to the ENI unless they

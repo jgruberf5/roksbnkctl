@@ -72,7 +72,7 @@ func (m *mockIAM) CreateRole(_ context.Context, in *iam.CreateRoleInput, _ ...fu
 		return nil, m.createRoleErr
 	}
 	arn := "arn:aws:iam::111122223333:role/" + *in.RoleName
-	role := &iamtypes.Role{RoleName: in.RoleName, Arn: &arn}
+	role := &iamtypes.Role{RoleName: in.RoleName, Arn: &arn, Tags: in.Tags}
 	m.roles[*in.RoleName] = role
 	m.attachedPolicies[*in.RoleName] = make(map[string]bool)
 	m.inlinePolicies[*in.RoleName] = nil
@@ -220,6 +220,22 @@ func (m *mockIAM) ListInstanceProfilesForRole(_ context.Context, in *iam.ListIns
 
 func (m *mockIAM) TagRole(_ context.Context, _ *iam.TagRoleInput, _ ...func(*iam.Options)) (*iam.TagRoleOutput, error) {
 	return &iam.TagRoleOutput{}, nil
+}
+
+func (m *mockIAM) ListRoles(_ context.Context, _ *iam.ListRolesInput, _ ...func(*iam.Options)) (*iam.ListRolesOutput, error) {
+	var result []iamtypes.Role
+	for _, r := range m.roles {
+		result = append(result, *r)
+	}
+	return &iam.ListRolesOutput{Roles: result}, nil
+}
+
+func (m *mockIAM) ListRoleTags(_ context.Context, in *iam.ListRoleTagsInput, _ ...func(*iam.Options)) (*iam.ListRoleTagsOutput, error) {
+	role, ok := m.roles[*in.RoleName]
+	if !ok {
+		return nil, mkNoSuchEntity("role not found: " + *in.RoleName)
+	}
+	return &iam.ListRoleTagsOutput{Tags: role.Tags}, nil
 }
 
 func (m *mockIAM) TagInstanceProfile(_ context.Context, _ *iam.TagInstanceProfileInput, _ ...func(*iam.Options)) (*iam.TagInstanceProfileOutput, error) {
