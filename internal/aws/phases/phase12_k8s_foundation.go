@@ -620,7 +620,17 @@ func applyUnstructured(ctx context.Context, clients *Clients, obj map[string]int
 
 	gvr, namespaced, err := restMapping(clients.RESTMapper, apiVersion, kind)
 	if err != nil {
-		return fmt.Errorf("resolve %s/%s %s: %w", apiVersion, kind, objName, err)
+		// Why: DeferredDiscoveryRESTMapper caches the API surface; if a CRD
+		// was installed earlier in the same up run (e.g. cert-manager.io CRDs
+		// applied before the cert-chain CRs that depend on them), the cache
+		// won't know about the new kind. Reset and retry once before failing.
+		if meta.IsNoMatchError(err) {
+			resetRESTMapper(clients.RESTMapper)
+			gvr, namespaced, err = restMapping(clients.RESTMapper, apiVersion, kind)
+		}
+		if err != nil {
+			return fmt.Errorf("resolve %s/%s %s: %w", apiVersion, kind, objName, err)
+		}
 	}
 
 	body, err := yaml.Marshal(obj)
@@ -664,6 +674,18 @@ func restMapping(mapper meta.RESTMapper, apiVersion, kind string) (schema.GroupV
 		return schema.GroupVersionResource{}, false, err
 	}
 	return mapping.Resource, mapping.Scope.Name() == meta.RESTScopeNameNamespace, nil
+}
+
+// resetRESTMapper invalidates a DeferredDiscoveryRESTMapper's cache, forcing
+// the next RESTMapping call to re-fetch the API surface from the server.
+// No-op for mappers that don't implement Reset (e.g. test fakes).
+// Why: CRD-installing applies followed by CR-using applies in the same up run
+// otherwise hit "no matches for kind" because the cache pre-dates the CRD.
+func resetRESTMapper(m meta.RESTMapper) {
+	type resetter interface{ Reset() }
+	if r, ok := m.(resetter); ok {
+		r.Reset()
+	}
 }
 
 // deleteCertChainCRs deletes the BNK cert chain custom resources via the dynamic
