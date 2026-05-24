@@ -433,43 +433,70 @@ db-1 is in the 2/3 hung state, `kubectl exec -it f5-dssm-db-1 -c f5-dssm
   regression is real and absent in 2.2.
 - `f5-tmm-pod-manager` 1.2.8 reconciles endpoints every <1s, no warnings.
 
-### Recommended experimental matrix — ranked by leverage
+### Experimental matrix — ranked (revised 2026-05-24)
 
 Hypothesis-driven: what produces the most information per cycle?
 
 | Rank | Change | Hypothesis | Predicted outcome | Cost |
 |------|--------|------------|-------------------|------|
-| **H1** | Phase 25 acceptance switches to sub-conditions + HTTP 200 (drops rollup `Available`) | Acceptance criterion is wrong, not the cluster (Sydney runs 33d with Available=False) | Phase 25 PASSes with current behaviour, no other change | code-only, 0 AWS cost |
-| **H2** | Phase 24c patches `spec.crashagentConfig: {}` on the 13 component CRs after Phase 23 | FLO hot-loop drives extra Phase 25 latency in 2.3 | FLO reconcile cadence drops from 300ms to seconds | 1 cycle |
-| **H3** | Add 3 TMM env vars (`USE_PHYS_MEM=true`, `TMM_MAPRES_IGNORE_MEM_LIMIT=true`, `TMM_MAPRES_HUGEPAGES=1536`) to CNEInstance.spec.advanced.tmm.env | Sydney has them and Sydney's TMM is stable; ours had SIGSEGV history | TMM init faster/more stable | 1 cycle |
-| **H4** | Conditional `kubectl rollout restart deploy/f5-cne-controller` after Phase 23b if any container is in CrashLoopBackOff | pod-manager 1.6.x cold-start race vs kube-proxy is the timeout cause | Pod-manager comes up clean on the restart; Phase 25 completes earlier | 1 cycle (combine with H1/H2) |
-| H5 | Set `sharedComponentNamespace: f5-cne-system` in flo-values | Multi-ns FLO defaults are silently wrong | Likely no visible difference (we already have all subsystems Available=True) | combine with H1-H4 |
+| **H1** | Phase 25 acceptance switches to sub-conditions `F5TmmAvailable + CNEControllerAvailable` (drops rollup `Available`) | Acceptance criterion is wrong, not the cluster | Removes a class of false negatives (Sydney-shape: DSSM blocks rollup, data path fine). **NOT sufficient on its own for round-2** — see correction below. | code-only ✓ shipped 2026-05-24 commit 2f3f98c |
+| **H4** | Conditional `kubectl rollout restart deploy/f5-cne-controller` after Phase 23b if any container is in CrashLoopBackOff | pod-manager 1.6.x cold-start race vs EKS kube-proxy is the round-2 timeout cause | Pod-manager recovers on restart → CNEControllerAvailable flips True → Phase 25 PASS (with H1 already in place) | 1 cold cycle |
+| **H2** | Phase 24c patches `spec.crashagentConfig: {}` on the 13 component CRs after Phase 23 | FLO hot-loop adds latency / log noise in 2.3 | FLO reconcile cadence drops from 300ms to seconds; doesn't directly fix acceptance | 1 cold cycle (combine with another) |
+| **H3** | Add 3 TMM env vars (`USE_PHYS_MEM=true`, `TMM_MAPRES_IGNORE_MEM_LIMIT=true`, `TMM_MAPRES_HUGEPAGES=1536`) to CNEInstance.spec.advanced.tmm.env | Sydney has them; TMM init is more stable | TMM ready faster; no other visible change | 1 cycle |
+| H5 | Set `sharedComponentNamespace: f5-cne-system` in flo-values | Multi-ns FLO defaults are silently wrong | Likely no visible difference (all subsystems already reach Available=True today) | combine with another |
 | H6 | Set `sharedDssm: false` explicitly | We're depending on implicit default | No change — default is already false | skip |
 | H7 | Set `namespace: f5-cne-core` explicitly in FLO values | We're depending on `helm --namespace` | No change — equivalent to current state | skip |
 
-### Suggested first cycle
+### Correction to original H1 prediction
 
-Combine **H1 + H2 + H5** into one PR / one cold cycle:
-- H1 removes the red-herring acceptance failure (cheap insurance).
-- H2 directly attacks a 2.3 regression documented in
-  `aws-gpu-setup/bnk-tmm-blocker.md`.
-- H5 is defensive multi-ns hygiene; bundles for free.
+The initial framing claimed "H1 alone may fix round-2 acceptance — no AWS
+cycle needed". This was wrong. Re-reading the round-2 evidence:
 
-Predicted outcome if H1+H2 hypotheses are right:
-- Phase 25 reaches PASS within budget.
-- FLO reconcile cadence visibly drops.
-- `scenarios http-routing-e2e` returns 5/5 HTTP 200.
+> `f5-cne-controller-7b5988d4bc-nr2vg` pod: **4/5 Ready**, CrashLoopBackOff,
+> 5 restarts in 12 min, last restart 2m41s ago.
+>
+> Phase 25 timed out at full 9-min budget. CNEInstance Available condition
+> stayed Failed with **three Pending sub-conditions**.
 
-If only H1 fixes acceptance and H2 still shows FLO hot-looping → keep H2 as
-cleanup. If H5 changes nothing → confirms FLO derives ns from CNEInstance
-and we can deprioritise the multi-ns hygiene.
+The cne-controller pod was 4/5 Ready (pod-manager in CrashLoopBackOff).
+Pod not Ready → `CNEControllerAvailable=False`. H1's new gate requires
+`F5TmmAvailable && CNEControllerAvailable`; with CNEControllerAvailable
+False, H1 returns False the same as the old rollup-`Available` gate did.
 
-H3 + H4 should be the **second** cycle, isolated from H1+H2 so we can tell
-which moved the needle.
+**So H1 alone would not have passed round-2.** H1 is still a real
+correctness fix (removes false negatives where DSSM blocks the rollup
+but the data path works — the Sydney 33-day pattern). But it doesn't
+address Finding #4. The actual round-2 failure mode requires **H4** to
+move the needle.
+
+### Suggested first cycle (revised)
+
+Run **H1 (already in branch) + H4** together as cycle 1:
+- H1 fixes the gate so Sydney-shape DSSM-only failures stop being false negatives.
+- H4 directly attacks Finding #4 (pod-manager cold-start race).
+- Both together: minimum viable change set to flip round-2 acceptance to PASS.
+
+Predicted outcome if H1+H4 hypotheses are correct:
+- Pod-manager recovers within ~30s of the rollout restart.
+- CNEControllerAvailable + F5TmmAvailable both True within budget.
+- Phase 25 returns success.
+- `scenarios http-routing-e2e` returns 5/5 HTTP 200 traffic test.
+
+If Phase 25 still times out after H4: pod-manager either isn't the race
+we think, or the restart isn't applied at the right moment. Capture full
+condition history + pod-manager logs for diagnosis.
+
+If H4 fixes pod-manager but acceptance still times out: another
+sub-condition is False — check which one, file a new finding.
+
+Cycle 2 candidates (after H1+H4 validation): **H2** (`crashagentConfig`
+patch) as cleanup for the FLO hot-loop noise, optionally bundled with
+**H5** (multi-ns hygiene) since it's free to add. **H3** (TMM env vars)
+last, isolated.
 
 ### Read on the namespace/sharedDssm/sharedComponent triple
 
-Honest assessment of the three FLO values the user flagged:
+Honest assessment of the three FLO values originally flagged:
 
 - **`namespace`**: no-op — equivalent to `helm install --namespace` which
   we already pass. **Skip.**
@@ -481,5 +508,6 @@ Honest assessment of the three FLO values the user flagged:
   in a different code path. Set it for cleanliness, don't expect a fix
   from it.
 
-The higher-leverage tests are H1 (acceptance criterion) and H2
-(`crashagentConfig` patch), which directly attack the two open findings.
+The higher-leverage tests are H4 (pod-manager bounce, directly addresses
+the actual round-2 timeout) and H1 (already shipped, prevents future
+false-negative class).
