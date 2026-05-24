@@ -148,21 +148,12 @@ pages-assure:
 	fi
 
 # staticcheck: run honnef.co/go/tools/cmd/staticcheck against the whole
-# module. Sprint 9 / PLAN.md §"Sprint 9" code deliverable 5: this is the
-# pre-tag gate step the v1.1.0 → v1.1.1 → v1.1.2 cascade exposed as
-# missing — staticcheck was running in CI but not as a local pre-tag
-# requirement. Auto-installs the binary into $(GOBIN)/staticcheck if
-# it's not on PATH; idempotent on re-runs.
+# module. Pinned via the `tool` directive in go.mod (Go 1.24+), so the
+# version travels with the source tree — no global install, no PATH
+# lookup, no "skipping" branch. Sprint-0 (2026-05-25) replaced the
+# previous classifier-blocked `go install` flow.
 staticcheck:
-	@if ! command -v staticcheck >/dev/null 2>&1 && [ ! -x "$$(go env GOPATH)/bin/staticcheck" ]; then \
-	    echo "    installing honnef.co/go/tools/cmd/staticcheck@latest"; \
-	    go install honnef.co/go/tools/cmd/staticcheck@latest; \
-	fi
-	@if command -v staticcheck >/dev/null 2>&1; then \
-	    staticcheck ./...; \
-	else \
-	    "$$(go env GOPATH)/bin/staticcheck" ./...; \
-	fi
+	go tool staticcheck ./...
 
 # build-integration-tags: compile-check the whole tree under the
 # `integration` build tag without executing any tests. Sprint 9 /
@@ -367,7 +358,7 @@ book-clean:
 # ldflags for version stamping). See issues/issue_sprint0_staff.md for
 # the rationale.
 
-.PHONY: test-short test-integration test-live test-cred-audit lint pre-commit-install
+.PHONY: test-short test-integration test-live test-cred-audit lint ci-local pre-commit-install
 
 test-short:
 	go test -short ./...
@@ -405,8 +396,29 @@ test-integration:
 test-live:
 	go test -tags live -timeout 5m ./internal/k8s/...
 
+# lint: the canonical local pre-push gate. Must run the SAME tools CI
+# runs, in the SAME order, with the SAME failure semantics — otherwise
+# every push turns into a snowflake-fix cycle (push → CI red → patch →
+# repeat). Sprint-0 (2026-05-25) made staticcheck a hard requirement
+# (vendored via go.mod `tool` directive) instead of a silent skip.
+#
+# Mirror this with .github/workflows/ci.yml's `test` job:
+#   1. gofmt -d -l . (fail on any diff)
+#   2. go vet ./...
+#   3. go tool staticcheck ./...
+#   4. go test -race ./...     (test target — runs separately)
 lint:
-	gofmt -d -l . && go vet ./... && (command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not on PATH; skipping")
+	@out=$$(gofmt -d -l .); if [ -n "$$out" ]; then echo "$$out"; echo "gofmt: files need formatting (run 'gofmt -w .')"; exit 1; fi
+	go vet ./...
+	go tool staticcheck ./...
+
+# ci-local: full pre-push gate. Matches the `test` job in
+# .github/workflows/ci.yml step-for-step. Run this before every push;
+# if it's green, CI's `test` job will be too (modulo the integration
+# tags, which are gated separately in CI and surface only on PRs to main).
+ci-local: lint
+	go test -race ./...
+	go build ./...
 
 pre-commit-install:
 	ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit && echo "Pre-commit hook installed."

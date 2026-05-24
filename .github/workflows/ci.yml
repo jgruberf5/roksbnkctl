@@ -46,10 +46,11 @@ jobs:
         run: gofmt -d -l . | tee /tmp/gofmt.diff && test ! -s /tmp/gofmt.diff
 
       - name: staticcheck
-        uses: dominikh/staticcheck-action@v1
-        with:
-          version: 'latest'
-          install-go: false
+        # Pinned via go.mod `tool` directive (Sprint-0, 2026-05-25) — the
+        # version travels with the source tree, so `make lint` locally and
+        # this CI step run the exact same binary. No more snowflake-pin
+        # drift between local and CI.
+        run: go tool staticcheck ./...
 
       - name: go test
         # -race catches data races; cheap to run on the small unit suite
