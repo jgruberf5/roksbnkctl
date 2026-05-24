@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -113,13 +114,21 @@ func Phase17bJumphost(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		idx = 0
 	}
 	mgmtSubnetCIDR := cl.Network.Subnets.Public[idx].CIDR
-	mgmtSubnetID := st.Get("PUBLIC_SUBNETS[" + fmt.Sprintf("%d", idx) + "]")
-	if mgmtSubnetID == "" {
-		// Fallback: try MGMT_SUBNET (set by phase03).
-		mgmtSubnetID = st.Get("MGMT_SUBNET")
+	// Resolve MGMT subnet ID by parsing PUBLIC_SUBNETS (csv) from state.
+	// State is flat key=value — no array indexing — so the original
+	// `PUBLIC_SUBNETS[0]` lookup never resolved and the MGMT_SUBNET
+	// fallback only works if phase 19 has already run (it hasn't at 17b time).
+	publicCSV := st.Get("PUBLIC_SUBNETS")
+	if publicCSV == "" {
+		return fmt.Errorf("phase17b: PUBLIC_SUBNETS not in state (run phase03 first)")
 	}
+	publicIDs := strings.Split(publicCSV, ",")
+	if idx >= len(publicIDs) {
+		return fmt.Errorf("phase17b: mgmtSubnetIndex=%d but PUBLIC_SUBNETS has only %d entries", idx, len(publicIDs))
+	}
+	mgmtSubnetID := strings.TrimSpace(publicIDs[idx])
 	if mgmtSubnetID == "" {
-		return fmt.Errorf("phase17b: MGMT_SUBNET not in state (run phase03 first)")
+		return fmt.Errorf("phase17b: PUBLIC_SUBNETS[%d] is empty (corrupted state.env?)", idx)
 	}
 	_ = mgmtSubnetCIDR // available for logging if needed
 
@@ -398,7 +407,7 @@ func ensureJumphostSG(ctx context.Context, ec2c EC2API, clusterName, vpcID strin
 
 	out, err := ec2c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
 		GroupName:   ptr(sgName),
-		Description: ptr("Jumphost SG — ingress 22/tcp from EICE SG only"),
+		Description: ptr("Jumphost SG - ingress 22/tcp from EICE SG only"),
 		VpcId:       ptr(vpcID),
 		TagSpecifications: []ec2types.TagSpecification{
 			tagSpecification(ec2types.ResourceTypeSecurityGroup, sgTags),

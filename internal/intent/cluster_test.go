@@ -1043,3 +1043,58 @@ func TestApplyDefaults_HostDevice_AutoDerivesSelfIPs(t *testing.T) {
 		t.Errorf("PrefixLen = %d, want 24", s.PrefixLen)
 	}
 }
+
+// TestDefaultVIP_HappyPath confirms DefaultVIP derives <network>.100.
+func TestDefaultVIP_HappyPath(t *testing.T) {
+	cases := []struct {
+		cidr string
+		want string
+	}{
+		{"10.0.10.0/24", "10.0.10.100"},
+		{"172.16.0.0/24", "172.16.0.100"},
+		{"192.168.5.0/24", "192.168.5.100"},
+	}
+	for _, tc := range cases {
+		c := &Cluster{
+			Network: Network{
+				DataPath: &DataPathSpec{
+					External: SubnetSpec{CIDR: tc.cidr},
+				},
+			},
+		}
+		got, err := c.DefaultVIP()
+		if err != nil {
+			t.Errorf("DefaultVIP(%q): unexpected error %v", tc.cidr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("DefaultVIP(%q) = %q, want %q", tc.cidr, got, tc.want)
+		}
+	}
+}
+
+// TestDefaultVIP_NoDataPath confirms DefaultVIP returns an error when
+// network.dataPath is nil.
+func TestDefaultVIP_NoDataPath(t *testing.T) {
+	c := &Cluster{Network: Network{DataPath: nil}}
+	_, err := c.DefaultVIP()
+	if err == nil {
+		t.Fatal("expected error when dataPath is nil, got nil")
+	}
+}
+
+// TestDefaultVIP_EmptyCIDR confirms DefaultVIP returns an error when the
+// external CIDR is empty.
+func TestDefaultVIP_EmptyCIDR(t *testing.T) {
+	c := &Cluster{
+		Network: Network{
+			DataPath: &DataPathSpec{
+				External: SubnetSpec{CIDR: ""},
+			},
+		},
+	}
+	_, err := c.DefaultVIP()
+	if err == nil {
+		t.Fatal("expected error for empty CIDR, got nil")
+	}
+}

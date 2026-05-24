@@ -519,7 +519,12 @@
     "discoveryv",
     "pccd",
     "cvvms",
-    "dedups"
+    "dedups",
+    "readback",
+    "restmapper",
+    "footgun",
+    "hostdevice",
+    "bnkconst"
   ],
   "ignorePaths": [
     "book/book/**",

@@ -9,6 +9,12 @@
 
 # awsbnkctl-managed state, never commit
 .awsbnkctl/
+
+# F5 BNK supply-chain credentials — operator-supplied per cluster.yaml.
+# Typically symlinked into the repo root from a private location.
+# NEVER commit these — they grant FAR pull + license rights.
+cne_pull_64.json
+*.jwt
 # legacy fork-point name; harmless to keep until Sprint 5 polish removes it
 .roksbnkctl/
 

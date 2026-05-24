@@ -44,7 +44,10 @@ func stateWithJumphostPrereqs(t *testing.T) *state.State {
 	st.Set("VPC_ID", "vpc-test-1")
 	st.Set("SG_BNK_DATA", "sg-bnk-data-1")
 	st.Set("BNK_EXT_SUBNET", "subnet-ext-1")
-	st.Set("MGMT_SUBNET", "subnet-mgmt-1")
+	// PUBLIC_SUBNETS is the canonical phase 03 output (csv of subnet IDs).
+	// Phase 17b parses this directly — does NOT depend on phase 19's
+	// MGMT_SUBNET alias which runs later.
+	st.Set("PUBLIC_SUBNETS", "subnet-mgmt-1,subnet-mgmt-2")
 	return st
 }
 
@@ -144,7 +147,7 @@ func TestPhase17bJumphost_MissingPrereqs(t *testing.T) {
 		{"missing VPC_ID", "VPC_ID", "VPC_ID"},
 		{"missing SG_BNK_DATA", "SG_BNK_DATA", "SG_BNK_DATA"},
 		{"missing BNK_EXT_SUBNET", "BNK_EXT_SUBNET", "BNK_EXT_SUBNET"},
-		{"missing MGMT_SUBNET", "MGMT_SUBNET", "MGMT_SUBNET"},
+		{"missing PUBLIC_SUBNETS", "PUBLIC_SUBNETS", "PUBLIC_SUBNETS"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

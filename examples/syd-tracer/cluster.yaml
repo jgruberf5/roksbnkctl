@@ -99,10 +99,19 @@ cluster:
   kubernetesVersion: "1.30"
   nodeGroups:
     - name: default
-      instanceType: t3.medium
-      desiredSize: 1
-      minSize: 1
-      maxSize: 2
+      # m6i.4xlarge × 3 is the documented BNK 2.3 Small minimum:
+      #   - 4+ ENIs: primary + EKS CNI + 2 BNK secondaries (host-device pattern)
+      #   - 16 vCPU + 64 GB: fits full BNK control plane (csrc, downloader,
+      #     analyzer, dssm-sentinel, observer*, cwc, dssm-db, lifecycle-operator)
+      #     + TMM (2 vCPU / 8 GiB) on the single labeled node (host-device pins TMM).
+      #   - 3 nodes: dSSM quorum (slice-09 audit row 28).
+      # See docs/audits/slice-09-aws-gpu-setup-audit.md and
+      # docs/audits/slice-12-cold-start-audit.md §5 for the full sizing rationale.
+      # Phase 00 preflight enforces these minimums for pattern: host-device.
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
       diskSize: 50
 
 # bnk: BNK supply-chain credentials (slice 5+, required for phase 12).
@@ -135,11 +144,11 @@ bnk:
 # Optional: provision a multi-ENI jumphost + EICE for test traffic
 # against TMM SelfIPs in BNK_EXT (10.0.10.0/24). Default off.
 # Requires pattern: host-device and network.dataPath to be set.
-# testing:
-#   jumphost:
-#     enabled: true
-#     instanceType: t3.small      # optional; default t3.small
-#     mgmtSubnetIndex: 0           # optional; default 0 (first public subnet)
+testing:
+  jumphost:
+    enabled: true
+    instanceType: t3.small      # optional; default t3.small
+    mgmtSubnetIndex: 0           # optional; default 0 (first public subnet)
 
 # tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
 tags:

@@ -6,11 +6,13 @@
 package intent
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -283,6 +285,27 @@ func (c *Cluster) StateDir() string {
 	return ".awsbnkctl/" + c.Metadata.Name
 }
 
+// DefaultVIP returns the default Gateway VIP for this cluster.
+// Convention: <dataPath.external.cidr network>.100 — e.g. 10.0.10.0/24 → 10.0.10.100.
+// Returns an error when network.dataPath.external.cidr is not set.
+func (c *Cluster) DefaultVIP() (string, error) {
+	if c.Network.DataPath == nil || c.Network.DataPath.External.CIDR == "" {
+		return "", errors.New("network.dataPath.external.cidr not set; pass --vip explicitly")
+	}
+	cidr := c.Network.DataPath.External.CIDR
+	slash := strings.IndexByte(cidr, '/')
+	if slash <= 0 {
+		return "", fmt.Errorf("malformed dataPath.external.cidr %q", cidr)
+	}
+	network := cidr[:slash]
+	parts := strings.Split(network, ".")
+	if len(parts) != 4 {
+		return "", fmt.Errorf("non-IPv4 dataPath.external.cidr %q", cidr)
+	}
+	parts[3] = "100"
+	return strings.Join(parts, "."), nil
+}
+
 // Load reads and validates a cluster.yaml file at path.
 //
 // Validation rules:
@@ -349,16 +372,39 @@ func applyDefaults(c *Cluster) {
 		for i := range c.ClusterSpec.NodeGroups {
 			ng := &c.ClusterSpec.NodeGroups[i]
 			if ng.InstanceType == "" {
-				ng.InstanceType = "t3.medium"
+				// host-device pattern needs ≥4 ENIs (primary + EKS CNI + 2 BNK secondaries)
+				// AND ≥16 vCPU / ≥64 GB for the full BNK 2.3 Small control plane + TMM
+				// packed onto one labeled node. m6i.4xlarge is the documented minimum per
+				// docs/audits/slice-09-aws-gpu-setup-audit.md row 27 and slice-12 audit §5.
+				// Other patterns can run on smaller workers.
+				if c.Pattern == "host-device" {
+					ng.InstanceType = "m6i.4xlarge"
+				} else {
+					ng.InstanceType = "t3.medium"
+				}
 			}
 			if ng.DesiredSize == 0 {
-				ng.DesiredSize = 1
+				// host-device pattern needs ≥3 nodes for dSSM quorum (slice-09 audit row 28,
+				// un-deferred 2026-05-24). Other patterns default to 1.
+				if c.Pattern == "host-device" {
+					ng.DesiredSize = 3
+				} else {
+					ng.DesiredSize = 1
+				}
 			}
 			if ng.MinSize == 0 {
-				ng.MinSize = 1
+				if c.Pattern == "host-device" {
+					ng.MinSize = 3
+				} else {
+					ng.MinSize = 1
+				}
 			}
 			if ng.MaxSize == 0 {
-				ng.MaxSize = 2
+				if c.Pattern == "host-device" {
+					ng.MaxSize = 4
+				} else {
+					ng.MaxSize = 2
+				}
 			}
 			if ng.DiskSize == 0 {
 				ng.DiskSize = 50

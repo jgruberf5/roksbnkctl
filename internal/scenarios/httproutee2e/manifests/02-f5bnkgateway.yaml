@@ -1,0 +1,13 @@
+apiVersion: k8s.f5net.com/v1
+kind: F5BnkGateway
+metadata:
+  name: awsbnkctl-default
+  namespace: {{.Namespace}}
+spec:
+  ingressConfig:
+    defaultListenerNetworks:
+    - name: external
+      ipv4BaseCidr: {{.ExternalCIDR}}
+      startAddress: {{.VIP}}
+      endAddress: {{.VIPRangeEnd}}
+      provider: f5-ip-provider

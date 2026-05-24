@@ -104,6 +104,9 @@ type EC2API interface {
 
 	// Images (slice 12+, defensive for AMI ID audit)
 	DescribeImages(ctx context.Context, in *ec2.DescribeImagesInput, opts ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
+
+	// Instance Types (slice 13+, preflight ENI-limit validation for host-device pattern)
+	DescribeInstanceTypes(ctx context.Context, in *ec2.DescribeInstanceTypesInput, opts ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error)
 }
 
 // STSAPI is the subset of sts.Client used by the preflight phase.

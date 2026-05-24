@@ -119,6 +119,10 @@ type mockEC2 struct {
 	// Images (slice 12+)
 	describeImagesOut *ec2.DescribeImagesOutput
 	describeImagesErr error
+
+	// Instance Types (slice 13+)
+	describeInstanceTypesOut *ec2.DescribeInstanceTypesOutput
+	describeInstanceTypesErr error
 }
 
 func (m *mockEC2) DescribeVpcs(_ context.Context, _ *ec2.DescribeVpcsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
@@ -408,6 +412,12 @@ func (m *mockEC2) DescribeImages(_ context.Context, _ *ec2.DescribeImagesInput, 
 		return &ec2.DescribeImagesOutput{}, m.describeImagesErr
 	}
 	return m.describeImagesOut, m.describeImagesErr
+}
+func (m *mockEC2) DescribeInstanceTypes(_ context.Context, _ *ec2.DescribeInstanceTypesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
+	if m.describeInstanceTypesOut == nil {
+		return &ec2.DescribeInstanceTypesOutput{}, m.describeInstanceTypesErr
+	}
+	return m.describeInstanceTypesOut, m.describeInstanceTypesErr
 }
 
 // mockSTSImpl implements STSAPI for tests.
