@@ -335,6 +335,59 @@ func TestPhase18IrsaOidc_AddsClusterSGIngress(t *testing.T) {
 	}
 }
 
+// TestPhase18IrsaOidcDown_RevokesCrossRefSGs verifies that Phase18IrsaOidcDown
+// issues two RevokeSecurityGroupIngress calls when EKS_SECURITY_GROUP and
+// SG_BNK_DATA are present in state. This guards against accidental reordering
+// of the Verify steps which would orphan the ingress rules.
+func TestPhase18IrsaOidcDown_RevokesCrossRefSGs(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	cl := testCluster()
+	iamMock := newMockIAM()
+
+	st.Set("EKS_SECURITY_GROUP", "sg-cluster")
+	st.Set("SG_BNK_DATA", "sg-bnk-data")
+	roleName := cl.Metadata.Name + "-cne-controller-irsa"
+	oidcARN := "arn:aws:iam::111122223333:oidc-provider/oidc.eks.ap-southeast-2.amazonaws.com/id/TESTOIDC"
+	roleARN := "arn:aws:iam::111122223333:role/" + roleName
+	iamMock.roles[roleName] = &iamtypes.Role{RoleName: &roleName, Arn: &roleARN}
+	iamMock.attachedPolicies[roleName] = make(map[string]bool)
+	iamMock.inlinePolicies[roleName] = []string{"CneControllerVpcRead"}
+	iamMock.oidcProviders[oidcARN] = "https://oidc.eks.ap-southeast-2.amazonaws.com/id/TESTOIDC"
+	st.Set("CNE_IRSA_ROLE_NAME", roleName)
+	st.Set("OIDC_PROVIDER_ARN", oidcARN)
+
+	ec2Mock := &mockEC2{}
+	clients := &Clients{
+		EC2:     ec2Mock,
+		IAM:     iamMock,
+		EKS:     newMockEKS(),
+		Profile: "test",
+	}
+
+	if err := Phase18IrsaOidcDown(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("Phase18IrsaOidcDown: %v", err)
+	}
+
+	if ec2Mock.revokeIngressCalls != 2 {
+		t.Errorf("revokeIngressCalls = %d, want 2 (bi-directional cluster ⇄ BNK_DATA)", ec2Mock.revokeIngressCalls)
+	}
+	if len(ec2Mock.revokeIngressInputs) < 2 {
+		t.Fatalf("revokeIngressInputs len=%d, want 2", len(ec2Mock.revokeIngressInputs))
+	}
+	// First call: cluster SG ← BNK_DATA (GroupId = cluster SG)
+	first := ec2Mock.revokeIngressInputs[0]
+	if first.GroupId == nil || *first.GroupId != "sg-cluster" {
+		t.Errorf("first revoke GroupId = %v, want sg-cluster", first.GroupId)
+	}
+	// Second call: BNK_DATA SG ← cluster SG (GroupId = BNK_DATA SG)
+	second := ec2Mock.revokeIngressInputs[1]
+	if second.GroupId == nil || *second.GroupId != "sg-bnk-data" {
+		t.Errorf("second revoke GroupId = %v, want sg-bnk-data", second.GroupId)
+	}
+}
+
 // TestExtractAccountID verifies the account ID extraction helper.
 func TestExtractAccountID(t *testing.T) {
 	tests := []struct {

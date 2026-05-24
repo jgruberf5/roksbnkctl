@@ -29,6 +29,11 @@ type RegisterRequest struct {
 	// explicitly skip sending an AWS profile.
 	AWSProfile string
 
+	// CredentialTemplateID is the forge credential template ID to attach to
+	// the newly-created project. When 0, no credential is attached and forge
+	// falls back to its default (typically the operator must wire it manually).
+	CredentialTemplateID int
+
 	// If true, after CreateCluster awsbnkctl calls scan_cluster +
 	// bnk_health to seed forge's view and smoke-test the link.
 	PostRegisterScan bool
@@ -87,13 +92,14 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 
 	// 1) create project
 	proj, err := c.CreateProject(ctx, CreateProjectRequest{
-		Name:          req.ProjectName,
-		ProjectType:   "cloud-aws",
-		CloudProvider: "aws",
-		Region:        req.Region,
-		AWSProfile:    sendableAWSProfile(req.AWSProfile),
-		Environment:   "dev",
-		Description:   fmt.Sprintf("Created by awsbnkctl for workspace %q", req.WorkspaceName),
+		Name:                 req.ProjectName,
+		ProjectType:          "cloud-aws",
+		CloudProvider:        "aws",
+		Region:               req.Region,
+		AWSProfile:           sendableAWSProfile(req.AWSProfile),
+		Environment:          "dev",
+		Description:          fmt.Sprintf("Created by awsbnkctl for workspace %q", req.WorkspaceName),
+		CredentialTemplateID: req.CredentialTemplateID,
 	})
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("create_project: %w", err)

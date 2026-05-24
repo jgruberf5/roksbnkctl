@@ -212,6 +212,11 @@ type ForgeSpec struct {
 	// MCPURL is the forge MCP endpoint. Default http://localhost:8081/mcp/.
 	// Slice 4 prefers MCP and falls back to REST at URL on capability gaps.
 	MCPURL string `yaml:"mcpUrl,omitempty"`
+	// CredentialTemplateID is the forge credential template to attach to the
+	// newly-registered project so forge can `kubectl get` the EKS cluster.
+	// If 0/unset, no credential is attached (operator must wire manually).
+	// Forge's default "1 AWS Production" template is typically the right value.
+	CredentialTemplateID int `yaml:"credentialTemplateId,omitempty"`
 }
 
 // AddonsSpec holds optional add-on configuration for slice 6+.

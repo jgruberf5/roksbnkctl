@@ -6,10 +6,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
-	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/httproutee2e"
+	"github.com/JLCode-tech/awsbnkctl/internal/scenarios/httproutee2e"
 )
 
 func readFileHelper(path string) ([]byte, error) {
@@ -35,6 +39,84 @@ func makeCluster() *intent.Cluster {
 			},
 		},
 		Pattern: "host-device",
+	}
+}
+
+// TestVerifyCallOrder guards the load-bearing step order in Verify:
+//
+//	waitDeploymentAvailable → waitCondition(Programmed) →
+//	waitHTTPRouteCondition(Accepted) → waitHTTPRouteCondition(ResolvedRefs) →
+//	ResyncHTTPRoutes → RunCurlProbes
+//
+// Moving ResyncHTTPRoutes before the condition waits regresses the cne-controller
+// pool-member stale-bug workaround (project_pool_member_sync_root_cause).
+func TestVerifyCallOrder(t *testing.T) {
+	var calls []string
+
+	recordStep := func(name string) func() {
+		return func() { calls = append(calls, name) }
+	}
+
+	deps := httproutee2e.VerifyDeps{
+		WaitDeploymentAvailableFn: func(_ context.Context, _ *scenarios.Context, _, _ string, _ time.Duration) error {
+			recordStep("waitDeploymentAvailable")()
+			return nil
+		},
+		WaitConditionFn: func(_ context.Context, _ *scenarios.Context, _ schema.GroupVersionResource, _, _, condType string, _ time.Duration) error {
+			recordStep("waitCondition(" + condType + ")")()
+			return nil
+		},
+		WaitHTTPRouteConditionFn: func(_ context.Context, _ *scenarios.Context, _, _, condType string, _ time.Duration) error {
+			recordStep("waitHTTPRouteCondition(" + condType + ")")()
+			return nil
+		},
+		ResyncHTTPRoutesFn: func(_ context.Context, _ *scenarios.Context, _ string) error {
+			recordStep("ResyncHTTPRoutes")()
+			return nil
+		},
+		RunCurlProbesFn: func(_ context.Context, _ *scenarios.Context, _ string, _ int, _ time.Duration) (bool, string) {
+			recordStep("RunCurlProbes")()
+			return true, "recorded"
+		},
+	}
+
+	s := httproutee2e.NewScenarioForTest(deps)
+	cl := makeCluster()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("JUMPHOST_INSTANCE_ID", "i-test")
+	st.Set("JUMPHOST_BNK_EXT_ENI_IP", "10.0.10.200")
+
+	sctx := &scenarios.Context{
+		Ctx:          context.Background(),
+		Cluster:      cl,
+		State:        st,
+		Out:          io.Discard,
+		WorkspaceDir: dir,
+		Options:      map[string]string{"vip": "10.0.10.100"},
+	}
+
+	s.Verify(sctx)
+
+	want := []string{
+		"waitDeploymentAvailable",
+		"waitCondition(Programmed)",
+		"waitHTTPRouteCondition(Accepted)",
+		"waitHTTPRouteCondition(ResolvedRefs)",
+		"ResyncHTTPRoutes",
+		"RunCurlProbes",
+	}
+
+	// The F5BnkGateway check uses ctx.Dynamic which is nil — it will be recorded
+	// as a failed assertion but does not call any of our hooks, so we only
+	// check the hook calls, not every assertion.
+	if len(calls) != len(want) {
+		t.Fatalf("call sequence = %v, want %v", calls, want)
+	}
+	for i, got := range calls {
+		if got != want[i] {
+			t.Errorf("calls[%d] = %q, want %q", i, got, want[i])
+		}
 	}
 }
 

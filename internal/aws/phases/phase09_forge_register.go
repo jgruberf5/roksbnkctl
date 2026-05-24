@@ -87,13 +87,18 @@ func Phase09ForgeRegister(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase09: render bootstrap kubeconfig: %w", err)
 	}
 
+	credTplID := 0
+	if cl.Forge != nil {
+		credTplID = cl.Forge.CredentialTemplateID
+	}
 	req := forge.RegisterRequest{
-		WorkspaceName:    clusterName,
-		WorkspaceDir:     workspaceDir,
-		ClusterName:      clusterName,
-		Region:           region,
-		Kubeconfig:       kubeconfig,
-		PostRegisterScan: false, // scan is out of scope for slice 4
+		WorkspaceName:        clusterName,
+		WorkspaceDir:         workspaceDir,
+		ClusterName:          clusterName,
+		Region:               region,
+		Kubeconfig:           kubeconfig,
+		PostRegisterScan:     false, // scan is out of scope for slice 4
+		CredentialTemplateID: credTplID,
 	}
 
 	// Ensure forge client is available.

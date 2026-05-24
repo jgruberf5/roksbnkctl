@@ -72,6 +72,9 @@ type mockEC2 struct {
 	authorizeIngressErr    error
 	authorizeIngressInput  *ec2.AuthorizeSecurityGroupIngressInput
 	authorizeIngressInputs []*ec2.AuthorizeSecurityGroupIngressInput
+	revokeIngressCalls     int
+	revokeIngressErr       error
+	revokeIngressInputs    []*ec2.RevokeSecurityGroupIngressInput
 
 	// Network Interfaces (slice 7+)
 	describeENIsOut   *ec2.DescribeNetworkInterfacesOutput
@@ -273,6 +276,11 @@ func (m *mockEC2) AuthorizeSecurityGroupIngress(_ context.Context, in *ec2.Autho
 }
 func (m *mockEC2) AuthorizeSecurityGroupEgress(_ context.Context, _ *ec2.AuthorizeSecurityGroupEgressInput, _ ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupEgressOutput, error) {
 	return &ec2.AuthorizeSecurityGroupEgressOutput{}, nil
+}
+func (m *mockEC2) RevokeSecurityGroupIngress(_ context.Context, in *ec2.RevokeSecurityGroupIngressInput, _ ...func(*ec2.Options)) (*ec2.RevokeSecurityGroupIngressOutput, error) {
+	m.revokeIngressCalls++
+	m.revokeIngressInputs = append(m.revokeIngressInputs, in)
+	return &ec2.RevokeSecurityGroupIngressOutput{}, m.revokeIngressErr
 }
 func (m *mockEC2) DescribeNetworkInterfaces(_ context.Context, _ *ec2.DescribeNetworkInterfacesInput, _ ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
 	if m.describeENIsOut == nil {

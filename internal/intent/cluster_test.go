@@ -99,6 +99,27 @@ forge:
 	}
 }
 
+func TestLoad_ForgeCredentialTemplateID(t *testing.T) {
+	dir := t.TempDir()
+	withForge := minimalYAML + `
+forge:
+  enabled: true
+  credentialTemplateId: 5
+`
+	p := writeFile(t, dir, "cluster.yaml", withForge)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with forge credentialTemplateId: %v", err)
+	}
+	if c.Forge == nil {
+		t.Fatal("Forge: nil, want populated struct")
+	}
+	if c.Forge.CredentialTemplateID != 5 {
+		t.Errorf("Forge.CredentialTemplateID = %d, want 5", c.Forge.CredentialTemplateID)
+	}
+}
+
 func TestLoad_RejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	bad := minimalYAML + "\nunknownField: boom\n"

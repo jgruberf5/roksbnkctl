@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -89,7 +90,7 @@ func Phase13Postflight(ctx context.Context, cl *intent.Cluster, st *state.State,
 
 	// 5. Optional forge scan_cluster (best-effort).
 	if cl.Forge != nil && cl.Forge.Enabled && clients.ForgeClient != nil {
-		if err := triggerForgeScanCluster(ctx, cl, clients); err != nil {
+		if err := triggerForgeScanCluster(ctx, cl, st, clients); err != nil {
 			fmt.Fprintf(os.Stderr, "[phase 13] forge scan_cluster: warning (non-fatal): %v\n", err)
 		} else {
 			fmt.Fprintln(os.Stderr, "[phase 13] forge scan_cluster triggered OK")
@@ -200,22 +201,27 @@ func Phase13PostflightDown(_ context.Context, _ *intent.Cluster, _ *state.State,
 }
 
 // triggerForgeScanCluster calls forge scan_cluster for the registered cluster.
-// Reads the cluster ID from state (written by Phase09). Best-effort: errors are
-// logged and discarded by the caller.
-func triggerForgeScanCluster(ctx context.Context, cl *intent.Cluster, clients *Clients) error {
+// Reads FORGE_CLUSTER_ID from state (written by Phase09). Best-effort: a missing
+// or unparseable ID is logged and the function returns nil so postflight continues.
+func triggerForgeScanCluster(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients) error {
 	if clients.ForgeClient == nil {
 		return fmt.Errorf("forge client is nil")
 	}
-	// Phase09 writes FORGE_CLUSTER_ID to state. We don't receive st here because
-	// Phase13 is read-only, but we can attempt a scan via MCP using cluster name.
-	// The forge client's ScanCluster method requires a numeric cluster ID which we
-	// don't have here (we'd need st). For Phase 13, a best-effort attempt via the
-	// forge REST API's scan endpoint is sufficient.
-	//
-	// Log intent and return nil — the actual scan is advisory only.
-	// TODO(slice-6): pass cluster ID from state and call clients.ForgeClient.ScanCluster().
-	fmt.Fprintf(os.Stderr, "[phase 13] forge scan_cluster: cluster=%s (best-effort, ID lookup deferred to slice-6)\n",
-		cl.Metadata.Name)
+	rawID := st.Get("FORGE_CLUSTER_ID")
+	if rawID == "" {
+		fmt.Fprintf(os.Stderr, "[phase 13] forge scan_cluster: FORGE_CLUSTER_ID not in state — skipping (run `awsbnkctl forge register` first)\n")
+		return nil
+	}
+	clusterID, err := strconv.Atoi(rawID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[phase 13] forge scan_cluster: FORGE_CLUSTER_ID=%q is not an integer — skipping\n", rawID)
+		return nil
+	}
+	// ScanCluster triggers forge's post-registration scan; advisory only after up.
+	if _, err := clients.ForgeClient.ScanCluster(ctx, clusterID); err != nil {
+		fmt.Fprintf(os.Stderr, "[phase 13] forge scan_cluster: cluster=%s id=%d warning: %v\n",
+			cl.Metadata.Name, clusterID, err)
+	}
 	return nil
 }
 

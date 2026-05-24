@@ -15,6 +15,134 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/httproutee2e"
 )
 
+// topoSort returns the registered scenarios in dependency order using Kahn's
+// algorithm. Returns an error if the dependency graph contains a cycle.
+func topoSort(all []scenarios.Scenario) ([]scenarios.Scenario, error) {
+	// Build name→scenario index and in-degree count.
+	byName := make(map[string]scenarios.Scenario, len(all))
+	for _, s := range all {
+		byName[s.Name()] = s
+	}
+
+	inDegree := make(map[string]int, len(all))
+	for _, s := range all {
+		if _, seen := inDegree[s.Name()]; !seen {
+			inDegree[s.Name()] = 0
+		}
+		for _, dep := range s.Dependencies() {
+			inDegree[s.Name()]++
+			// Ensure dep is tracked even if it has no deps of its own.
+			if _, seen := inDegree[dep]; !seen {
+				inDegree[dep] = 0
+			}
+		}
+	}
+
+	// Queue: all nodes with no incoming edges.
+	var queue []string
+	for _, s := range all {
+		if inDegree[s.Name()] == 0 {
+			queue = append(queue, s.Name())
+		}
+	}
+
+	var sorted []scenarios.Scenario
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		s, ok := byName[name]
+		if !ok {
+			// Dependency references an unregistered scenario; skip.
+			continue
+		}
+		sorted = append(sorted, s)
+		// For every scenario that depends on this one, reduce its in-degree.
+		for _, candidate := range all {
+			for _, dep := range candidate.Dependencies() {
+				if dep == name {
+					inDegree[candidate.Name()]--
+					if inDegree[candidate.Name()] == 0 {
+						queue = append(queue, candidate.Name())
+					}
+				}
+			}
+		}
+	}
+
+	// Any scenario not yet in sorted has unresolved deps — cycle.
+	if len(sorted) < len(all) {
+		var unresolved []string
+		inSorted := make(map[string]bool, len(sorted))
+		for _, s := range sorted {
+			inSorted[s.Name()] = true
+		}
+		for _, s := range all {
+			if !inSorted[s.Name()] {
+				unresolved = append(unresolved, s.Name())
+			}
+		}
+		return nil, fmt.Errorf("scenarios run --all: dep cycle among %v", unresolved)
+	}
+
+	return sorted, nil
+}
+
+// runAllScenarios runs every registered scenario in topo-sorted dependency order.
+func runAllScenarios(cmd *cobra.Command, cl *intent.Cluster, st *state.State) error {
+	all := scenarios.All()
+	if len(all) == 0 {
+		fmt.Fprintln(os.Stderr, "[scenarios] no scenarios registered")
+		return nil
+	}
+
+	ordered, err := topoSort(all)
+	if err != nil {
+		return err
+	}
+
+	kubeconfigPath := cl.StateDir() + "/kubeconfig"
+	opts := make(map[string]string)
+	if flagScenarioVIP != "" {
+		opts["vip"] = flagScenarioVIP
+	}
+
+	sctx, err := scenarios.NewContext(
+		cmd.Context(),
+		kubeconfigPath,
+		cl,
+		st,
+		os.Stderr,
+		flagScenarioDryRun,
+		opts,
+	)
+	if err != nil {
+		return fmt.Errorf("building scenario context: %w", err)
+	}
+	sctx.ReportStamp = time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	sctx.Verbose = flagVerbose
+
+	var failed []string
+	for _, s := range ordered {
+		fmt.Fprintf(os.Stderr, "[scenarios] running %s\n", s.Name())
+		result := scenarios.Run(sctx, s)
+		if result.EnvDiagram != "" {
+			fmt.Fprintln(os.Stderr, result.EnvDiagram)
+		}
+		if !result.AllPassed() {
+			fmt.Fprintf(os.Stderr, "[scenarios] FAIL %s: %s\n", s.Name(), result.Summary)
+			failed = append(failed, s.Name())
+			break
+		}
+		fmt.Fprintf(os.Stderr, "[scenarios] PASS %s\n", s.Name())
+	}
+
+	if len(failed) > 0 {
+		return fmt.Errorf("scenarios run --all: scenario %q failed", failed[0])
+	}
+	fmt.Fprintf(os.Stderr, "[scenarios] all %d scenarios green\n", len(ordered))
+	return nil
+}
+
 var (
 	flagScenarioConfig string
 	flagScenarioVIP    string
@@ -64,7 +192,7 @@ var scenariosRunCmd = &cobra.Command{
   4. Emits a JSON report + ASCII env diagram
 
 Use --dry-run to render manifests only, without touching the cluster.
-Use --all to run every registered scenario (stub: only 1 scenario registered).`,
+Use --all to run every registered scenario in topo-sorted dependency order.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runScenariosRunCmd,
 }
@@ -80,7 +208,7 @@ func init() {
 	scenariosRunCmd.Flags().StringVar(&flagScenarioConfig, "config", "", "path to cluster.yaml (required)")
 	scenariosRunCmd.Flags().StringVar(&flagScenarioVIP, "vip", "", "Gateway VIP to use (default: derived from cluster.yaml)")
 	scenariosRunCmd.Flags().BoolVar(&flagScenarioDryRun, "dry-run", false, "render manifests only; do not apply or verify")
-	scenariosRunCmd.Flags().BoolVar(&flagScenarioAll, "all", false, "run every registered scenario (stub for this slice)")
+	scenariosRunCmd.Flags().BoolVar(&flagScenarioAll, "all", false, "run every registered scenario in topo-sorted order")
 	_ = scenariosRunCmd.MarkFlagRequired("config")
 
 	scenariosCleanCmd.Flags().StringVar(&flagScenarioConfig, "config", "", "path to cluster.yaml (required)")
@@ -92,11 +220,15 @@ func init() {
 
 func runScenariosRunCmd(cmd *cobra.Command, args []string) error {
 	if flagScenarioAll {
-		all := scenarios.All()
-		if len(all) > 1 {
-			return fmt.Errorf("scenarios run --all: not implemented until 2+ scenarios are registered (topo-sort skeleton present; only 1 scenario registered)")
+		cl, err := intent.Load(flagScenarioConfig)
+		if err != nil {
+			return fmt.Errorf("loading cluster.yaml: %w", err)
 		}
-		return fmt.Errorf("scenarios run --all: not implemented until 2+ scenarios are registered (only %d registered)", len(all))
+		st, err := state.Load(cl.StateDir())
+		if err != nil {
+			return fmt.Errorf("loading state.env: %w", err)
+		}
+		return runAllScenarios(cmd, cl, st)
 	}
 
 	if len(args) == 0 {

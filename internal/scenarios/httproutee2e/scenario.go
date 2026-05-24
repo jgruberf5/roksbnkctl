@@ -50,7 +50,66 @@ const (
 
 func init() { scenarios.Register(&scenario{}) }
 
-type scenario struct{}
+// VerifyDeps holds the function pointers used by Verify. The zero value routes
+// every call to the real package-level implementations. Tests swap individual
+// fields to a recording stub to assert call order without touching the cluster.
+type VerifyDeps struct {
+	WaitDeploymentAvailableFn func(ctx context.Context, sctx *scenarios.Context, ns, name string, timeout time.Duration) error
+	WaitConditionFn           func(ctx context.Context, sctx *scenarios.Context, gvr schema.GroupVersionResource, ns, name, condType string, timeout time.Duration) error
+	WaitHTTPRouteConditionFn  func(ctx context.Context, sctx *scenarios.Context, ns, name, condType string, timeout time.Duration) error
+	ResyncHTTPRoutesFn        func(ctx context.Context, sctx *scenarios.Context, ns string) error
+	RunCurlProbesFn           func(ctx context.Context, sctx *scenarios.Context, vip string, iterations int, timeout time.Duration) (bool, string)
+}
+
+func realVerifyDeps() VerifyDeps {
+	return VerifyDeps{
+		WaitDeploymentAvailableFn: waitDeploymentAvailable,
+		WaitConditionFn:           waitCondition,
+		WaitHTTPRouteConditionFn:  waitHTTPRouteCondition,
+		ResyncHTTPRoutesFn: func(ctx context.Context, sctx *scenarios.Context, ns string) error {
+			_, err := bnk.ResyncHTTPRoutes(ctx, sctx.Dynamic, bnk.ResyncOptions{
+				Namespace:      ns,
+				AllInNamespace: true,
+			})
+			return err
+		},
+		RunCurlProbesFn: func(_ context.Context, sctx *scenarios.Context, vip string, iterations int, timeout time.Duration) (bool, string) {
+			instanceID := sctx.State.Get("JUMPHOST_INSTANCE_ID")
+			sourceIP := sctx.State.Get("JUMPHOST_BNK_EXT_ENI_IP")
+			probeOpts := jumphost.ProbeOptions{
+				Region:     sctx.Cluster.Metadata.Region,
+				InstanceID: instanceID,
+				SourceIP:   sourceIP,
+				VIP:        vip,
+				Iterations: iterations,
+				Timeout:    timeout,
+			}
+			probes, probeRunErr := jumphost.RunCurlProbes(sctx.Ctx, probeOpts)
+			successCount := 0
+			var lastErrStr string
+			for _, p := range probes {
+				if p.HTTPCode == 200 && p.Err == "" {
+					successCount++
+				} else if p.Err != "" {
+					lastErrStr = p.Err
+				}
+			}
+			curlOK := probeRunErr == nil && successCount == iterations
+			got := fmt.Sprintf("%d/%d curls returned HTTP 200", successCount, iterations)
+			if probeRunErr != nil {
+				got += " — probe error: " + probeRunErr.Error()
+			} else if !curlOK && lastErrStr != "" {
+				got += " — last error: " + lastErrStr
+			}
+			return curlOK, got
+		},
+	}
+}
+
+type scenario struct {
+	// vDeps is nil for the registered singleton; tests inject a non-nil value.
+	vDeps *VerifyDeps
+}
 
 func (s *scenario) Name() string             { return scnName }
 func (s *scenario) Title() string            { return scnTitle }
@@ -151,13 +210,19 @@ var (
 )
 
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
+	d := s.vDeps
+	if d == nil {
+		real := realVerifyDeps()
+		d = &real
+	}
 	ns := namespace(ctx)
 	res := scenarios.Result{}
 
 	// --- Step 1: Control-plane assertions ---
+	// Order is load-bearing: control-plane must be settled before ResyncHTTPRoutes.
 
 	// nginx Deployment Available.
-	err := waitDeploymentAvailable(ctx.Ctx, ctx, ns, "nginx", 3*time.Minute)
+	err := d.WaitDeploymentAvailableFn(ctx.Ctx, ctx, ns, "nginx", 3*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "nginx Deployment Available",
 		OK:          err == nil,
@@ -165,7 +230,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	})
 
 	// Gateway Programmed=True.
-	err = waitCondition(ctx.Ctx, ctx, gatewayGVR, ns, "scn-gateway", "Programmed", 5*time.Minute)
+	err = d.WaitConditionFn(ctx.Ctx, ctx, gatewayGVR, ns, "scn-gateway", "Programmed", 5*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "Gateway scn-gateway Programmed=True",
 		OK:          err == nil,
@@ -173,7 +238,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	})
 
 	// HTTPRoute Accepted=True.
-	err = waitHTTPRouteCondition(ctx.Ctx, ctx, ns, "scn-route", "Accepted", 3*time.Minute)
+	err = d.WaitHTTPRouteConditionFn(ctx.Ctx, ctx, ns, "scn-route", "Accepted", 3*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-route Accepted=True",
 		OK:          err == nil,
@@ -181,15 +246,15 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	})
 
 	// HTTPRoute ResolvedRefs=True.
-	err = waitHTTPRouteCondition(ctx.Ctx, ctx, ns, "scn-route", "ResolvedRefs", 3*time.Minute)
+	err = d.WaitHTTPRouteConditionFn(ctx.Ctx, ctx, ns, "scn-route", "ResolvedRefs", 3*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-route ResolvedRefs=True",
 		OK:          err == nil,
 		Got:         errString(err),
 	})
 
-	// Best-effort: F5BnkGateway present.
-	{
+	// Best-effort: F5BnkGateway present (skipped when Dynamic client is nil).
+	if ctx.Dynamic != nil {
 		_, ferr := ctx.Dynamic.Resource(f5BnkGatewayGVR).Namespace(ns).Get(ctx.Ctx, "awsbnkctl-default", metav1.GetOptions{})
 		res.Assertions = append(res.Assertions, scenarios.Assertion{
 			Description: "F5BnkGateway awsbnkctl-default present",
@@ -200,11 +265,9 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 	// --- Step 2: ResyncHTTPRoutes (after control-plane is ready) ---
 	// Idempotent workaround for cne-controller pool-member stale bug.
-	// Failing resync is recorded as an assertion but does not abort Verify.
-	_, resyncErr := bnk.ResyncHTTPRoutes(ctx.Ctx, ctx.Dynamic, bnk.ResyncOptions{
-		Namespace:      ns,
-		AllInNamespace: true,
-	})
+	// ResyncHTTPRoutes MUST run after HTTPRoute conditions are settled; moving
+	// it before the condition waits regresses the pool-member fix.
+	resyncErr := d.ResyncHTTPRoutesFn(ctx.Ctx, ctx, ns)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "ResyncHTTPRoutes (pool-member refresh)",
 		OK:          resyncErr == nil,
@@ -233,33 +296,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		return finalizeResult(res)
 	}
 
-	probeOpts := jumphost.ProbeOptions{
-		Region:     ctx.Cluster.Metadata.Region,
-		InstanceID: instanceID,
-		SourceIP:   sourceIP,
-		VIP:        vip,
-		Iterations: iterations,
-		Timeout:    timeout,
-	}
-
-	probes, probeRunErr := jumphost.RunCurlProbes(ctx.Ctx, probeOpts)
-	successCount := 0
-	var lastErrStr string
-	for _, p := range probes {
-		if p.HTTPCode == 200 && p.Err == "" {
-			successCount++
-		} else if p.Err != "" {
-			lastErrStr = p.Err
-		}
-	}
-
-	curlOK := probeRunErr == nil && successCount == iterations
-	got := fmt.Sprintf("%d/%d curls returned HTTP 200", successCount, iterations)
-	if probeRunErr != nil {
-		got += " — probe error: " + probeRunErr.Error()
-	} else if !curlOK && lastErrStr != "" {
-		got += " — last error: " + lastErrStr
-	}
+	curlOK, got := d.RunCurlProbesFn(ctx.Ctx, ctx, vip, iterations, timeout)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: fmt.Sprintf("%d/%d end-to-end curls via Gateway return HTTP 200", iterations, iterations),
 		OK:          curlOK,

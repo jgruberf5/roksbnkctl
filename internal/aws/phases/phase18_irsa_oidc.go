@@ -182,6 +182,19 @@ func Phase18IrsaOidcDown(ctx context.Context, cl *intent.Cluster, st *state.Stat
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 18 down] irsa+oidc: cluster=%s keep-irsa=%v\n", name, keepIRSA)
 
+	// Revoke bi-directional SG ingress rules added in the up path before any
+	// resource deletions. Best-effort: a partial-state down must not halt teardown.
+	clusterSG := st.Get("EKS_SECURITY_GROUP")
+	sgBNKData := st.Get("SG_BNK_DATA")
+	if clusterSG != "" && sgBNKData != "" {
+		if err := revokeClusterSGIngress(ctx, clients.EC2, clusterSG, sgBNKData); err != nil {
+			fmt.Fprintf(os.Stderr, "[phase 18 down] warning: revoke cluster SG ingress: %v\n", err)
+		}
+		if err := revokeBNKDataSGIngress(ctx, clients.EC2, sgBNKData, clusterSG); err != nil {
+			fmt.Fprintf(os.Stderr, "[phase 18 down] warning: revoke BNK_DATA SG ingress: %v\n", err)
+		}
+	}
+
 	if keepIRSA {
 		fmt.Fprintln(os.Stderr, "[phase 18 down] --keep-irsa: retaining OIDC provider and IRSA role")
 		return st.Save()
@@ -464,6 +477,60 @@ func extractAccountID(arn string) string {
 		return ""
 	}
 	return parts[4]
+}
+
+// revokeClusterSGIngress removes the ingress rule added by ensureClusterSGIngress.
+// Tolerates InvalidPermission.NotFound so the down path is idempotent.
+func revokeClusterSGIngress(ctx context.Context, ec2c EC2API, clusterSGID, sgBNKDataID string) error {
+	_, err := ec2c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: ptr(clusterSGID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol:       ptr("-1"),
+			UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: ptr(sgBNKDataID)}},
+		}},
+	})
+	if err != nil && !isInvalidPermissionNotFound(err) {
+		return fmt.Errorf("ec2:RevokeSecurityGroupIngress cluster-SG %s ← %s: %w", clusterSGID, sgBNKDataID, err)
+	}
+	return nil
+}
+
+// revokeBNKDataSGIngress removes the ingress rule added by ensureBNKDataSGIngress.
+// Tolerates InvalidPermission.NotFound so the down path is idempotent.
+func revokeBNKDataSGIngress(ctx context.Context, ec2c EC2API, sgBNKDataID, clusterSGID string) error {
+	_, err := ec2c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: ptr(sgBNKDataID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol:       ptr("-1"),
+			UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: ptr(clusterSGID)}},
+		}},
+	})
+	if err != nil && !isInvalidPermissionNotFound(err) {
+		return fmt.Errorf("ec2:RevokeSecurityGroupIngress BNK_DATA-SG %s ← %s: %w", sgBNKDataID, clusterSGID, err)
+	}
+	return nil
+}
+
+// isInvalidPermissionNotFound returns true for the EC2 InvalidPermission.NotFound
+// error code. Revoking a rule that no longer exists is idempotent on down paths.
+func isInvalidPermissionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	type coder interface{ ErrorCode() string }
+	e := err
+	for e != nil {
+		if ce, ok := e.(coder); ok {
+			return ce.ErrorCode() == "InvalidPermission.NotFound"
+		}
+		type unwrapper interface{ Unwrap() error }
+		if u, ok := e.(unwrapper); ok {
+			e = u.Unwrap()
+		} else {
+			break
+		}
+	}
+	return false
 }
 
 // isEntityAlreadyExists returns true if the error is an IAM EntityAlreadyExists.
