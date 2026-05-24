@@ -554,6 +554,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	// Phase 24b: DSSM --insecure readiness probe overlay (host-device only).
+	// Patches the FLO-created f5-dssm ConfigMap to add --insecure to redis-cli
+	// --tls invocations, then bounces dssm pods. Fixes dssm-db-1 replica startup
+	// probe failure (redis-cli 8.6.0 strict TLS hostname check vs 127.0.0.1 probe).
+	// Mirrors aws-gpu-setup/deploy-bnk.sh:263-282. Idempotent.
+	if err := phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	// Phase 25: Activation poll — CNEInstance + License status (up to 20 min).
 	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
 	if err := phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll); err != nil {
@@ -622,8 +630,11 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
-	// Phase 25/24/23b/23/22: activation teardown (reverse of up order).
+	// Phase 25/24b/24/23b/23/22: activation teardown (reverse of up order).
 	if err := phases.Phase25ActivationPollDown(ctx, cl, st, clients); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase24bDSSMInsecureOverlayDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase24CWCHealDown(ctx, cl, st, clients); err != nil {

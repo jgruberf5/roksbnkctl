@@ -96,11 +96,11 @@ b) **CNE controller reconcile lag**: even with all pods Ready, the Available
    (mirrors the HTTPRoute pattern). This is the controller-kick workaround.
 3. Document the dual workaround in the project memory and a follow-up audit.
 
-**Fix shipped**: Phase 25 budget 12→18 iter (9 min cap); `pkg/bnk.ResyncCNEInstance`
+**Fix shipped (PR #34)**: Phase 25 budget 12→18 iter (9 min cap); `pkg/bnk.ResyncCNEInstance`
 helper added; Phase 25 auto-kicks the cne-controller once after iter 6 if pods are
 Running but Available is stale. See `pkg/bnk/resync_cne.go`.
 
-## Finding #3 (OPEN — needs investigation) — DSSM StatefulSet replica Redis startup failure
+## Finding #3 (FIXED in Phase 24b — pending live re-test) — DSSM StatefulSet replica Redis startup failure
 
 **Symptom**: `f5-dssm-db-1` (StatefulSet replica) startup probe failing for
 12+ minutes:
@@ -145,6 +145,14 @@ which is a different issue).
 
 This finding **blocks** the cold-start acceptance criterion (5/5 HTTP 200 e2e)
 until resolved.
+
+**Fix shipped**: Phase 24b ports the aws-gpu-setup deploy-bnk.sh:263-282 overlay
+(patch f5-dssm ConfigMap readiness_probe.sh to add --insecure to redis-cli --tls
+invocations, then bounce dssm pods). Idempotent. Skipped for non-host-device patterns.
+Root cause: redis-cli 8.6.0 in the f5-dssm image strict-verifies TLS hostname, but
+the dssm cert SAN is "DNS:dssm-svc, IP:0.0.0.0" and the probe connects to 127.0.0.1
+— hostname-check fails. M-8's "defer to first Gateway" assessment in the original
+sweep was wrong; this is on the activation critical path.
 
 ## Other observations (informational)
 
