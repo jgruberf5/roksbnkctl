@@ -3,11 +3,15 @@ package phases
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
@@ -72,9 +76,19 @@ func TestPhase24c_ReadyOnFirstIter(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(deploy, pod)
 	clients := &Clients{K8s: cs, Profile: "test"}
 
-	if err := Phase24cPodManagerHeal(context.Background(), nil, st, clients, false); err != nil {
-		t.Fatalf("Phase24cPodManagerHeal: %v", err)
-	}
+	// Use a cancelled ctx so the loop exits after the first iter without
+	// blocking on h4PollInterval for subsequent iters.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Phase24cPodManagerHeal(ctx, nil, st, clients, false)
+	}()
+
+	// Give the first iter time to run, then cancel so the loop drains.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-errCh
 
 	// Verify no patch was applied (annotation must be absent).
 	d, err := cs.AppsV1().Deployments(InstanceNamespace).Get(context.Background(), h4DeploymentName, metav1.GetOptions{})
@@ -256,7 +270,64 @@ func TestPhase24c_CtxCancel(t *testing.T) {
 	}
 }
 
-// ─── Test 8a: podManagerStatus — container found ─────────────────────────────
+// ─── Test 8: MaxBouncesCap — perpetually-wedged pod → at most h4MaxBounces patches ──
+
+// TestPhase24c_MaxBouncesCap ensures we don't ping-pong bounce a perpetually-wedged pod.
+//
+// Strategy: install a PatchAction reactor on the fake client that atomically
+// counts patch calls.  The pod is always in CrashLoopBackOff so every iter
+// would want to bounce.  We run the phase in a goroutine and cancel the ctx
+// once the counter hits h4MaxBounces (or a 2-second wall-clock guard fires).
+// The phase must not issue more than h4MaxBounces patches total.
+func TestPhase24c_MaxBouncesCap(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	deploy := buildCneControllerDeploy()
+	pod := buildCneControllerPod("cne-ctrl-perpetual", false, 5, "CrashLoopBackOff")
+	cs := k8sfake.NewSimpleClientset(deploy, pod)
+
+	// Reactor counts patch calls on the deployments resource.
+	var patchCount int64
+	cs.PrependReactor("patch", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		atomic.AddInt64(&patchCount, 1)
+		// Return false so the default object tracker also handles the patch
+		// (keeps the fake store consistent).
+		return false, nil, nil
+	})
+
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Phase24cPodManagerHeal(ctx, nil, st, clients, false)
+	}()
+
+	// Poll until we observe h4MaxBounces patches or the 2-second guard fires.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt64(&patchCount) >= int64(h4MaxBounces) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-errCh
+
+	got := atomic.LoadInt64(&patchCount)
+	if got > int64(h4MaxBounces) {
+		t.Errorf("expected at most %d patches (h4MaxBounces), got %d", h4MaxBounces, got)
+	}
+	if got == 0 {
+		t.Errorf("expected at least 1 patch for perpetually-wedged pod, got 0")
+	}
+}
+
+// ─── Test 9a: podManagerStatus — container found ─────────────────────────────
 
 func TestPodManagerStatus_ContainerFound(t *testing.T) {
 	pod := buildCneControllerPod("cne-0", false, 3, "CrashLoopBackOff")
@@ -275,7 +346,7 @@ func TestPodManagerStatus_ContainerFound(t *testing.T) {
 	}
 }
 
-// ─── Test 8b: podManagerStatus — container missing ───────────────────────────
+// ─── Test 9b: podManagerStatus — container missing ───────────────────────────
 
 func TestPodManagerStatus_ContainerMissing(t *testing.T) {
 	pod := &corev1.Pod{

@@ -17,6 +17,11 @@
 // once kube-proxy is ready.  This is a best-effort recovery action — every
 // code path returns nil and this phase is NOT a verification gate.
 //
+// Phase 24c polls for its full window unconditionally (no early exit on first
+// Ready) so it catches late-arriving wedges seen on syd-tracer 2026-05-24.
+// Up to h4MaxBounces rollout-restart patches are issued in case the first
+// bounced pod also binds into the same broken netns state.
+//
 // No new state keys are written.
 // D-005: CheckAuthOrDie called at entry.
 
@@ -39,22 +44,31 @@ import (
 )
 
 const (
-	// h4MaxIter is the number of poll iterations before giving up.
-	// At h4PollInterval=30s this gives ~5 minutes of watch time.
-	h4MaxIter = 10
+	// h4MaxIter widened from 10 → 14: covers the observed 5-7 min late-wedge
+	// window seen on syd-tracer 2026-05-24. Phase 24c now polls 14 × 30s = 7 min.
+	h4MaxIter = 14
 
 	// h4PollInterval is the sleep between pod-manager readiness polls.
 	h4PollInterval = 30 * time.Second
 
-	// h4PostRestartWait is the additional sleep after kicking the rollout,
-	// allowing the new pod to begin scheduling before we re-poll.
-	h4PostRestartWait = 30 * time.Second
+	// h4PostRestartWait widened from 30s → 60s: the new pod's pod-manager
+	// needs ~30-60s to clear ContainerCreating and complete its indexer
+	// setup K8s API call before we can re-evaluate.
+	h4PostRestartWait = 60 * time.Second
 
 	// h4RestartThreshold is the restart count at or above which the pod is
 	// considered wedged even without an explicit CrashLoopBackOff waiting
 	// reason.  Empirically v1.6.x hits this within 2 crash cycles.
 	// ADR D-011 pattern: hardcoded, not user-tunable.
 	h4RestartThreshold = int32(2)
+
+	// h4MaxBounces caps the number of rollout-restart patches issued in a
+	// single Phase 24c invocation.  Live evidence (2026-05-24) shows the
+	// kube-proxy / pod-netns race can re-bind a fresh pod into the same
+	// broken state; one retry covers the common case without ping-ponging.
+	// Two bounces cover the see-once-broken-pod-binds-same-broken-netns
+	// failure mode observed live on syd-tracer.
+	h4MaxBounces = 2
 
 	// h4ContainerName is the sidecar container we are watching.
 	h4ContainerName = "f5-tmm-pod-manager"
@@ -68,6 +82,10 @@ const (
 // and, if detected, triggers a rollout-restart via an annotation patch.
 // Returns nil regardless of outcome — this is a best-effort recovery action,
 // not a verification gate.
+//
+// The phase polls for its full window unconditionally (no early exit on first
+// Ready) to catch late-arriving wedges.  Up to h4MaxBounces patches are
+// issued in case the first bounced pod also lands in the broken state.
 //
 // No new state keys are written (this is a recovery action, not a checkpoint).
 // D-005: CheckAuthOrDie called at entry.
@@ -86,7 +104,16 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 		return nil
 	}
 
-	restarted := false
+	// bounces tracks how many rollout-restart patches we have issued.
+	// 2 covers the see-once-broken-pod-binds-same-broken-netns failure mode
+	// observed live on syd-tracer 2026-05-24.
+	bounces := 0
+
+	// lastSeenReady is sticky-true once any pod's pod-manager has been Ready
+	// in this invocation.  Used to suppress per-iter "not yet Ready" noise
+	// after the first Ready observation, and for terminal log classification.
+	lastSeenReady := false
+
 	start := time.Now()
 
 	for i := 0; i < h4MaxIter; i++ {
@@ -141,6 +168,7 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 		anyWedged := false
 		var wedgedRestarts int32
 		var wedgedReason string
+		anyReady := false
 
 		for i := range pods.Items {
 			pod := &pods.Items[i]
@@ -149,8 +177,14 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 				continue
 			}
 			if ready {
-				fmt.Fprintf(os.Stderr, "[phase 24c] f5-tmm-pod-manager Ready in pod %s (no heal needed)\n", pod.Name)
-				return nil
+				anyReady = true
+				if !lastSeenReady {
+					// First time we observe Ready — log it and mark sticky.
+					fmt.Fprintf(os.Stderr, "[phase 24c] f5-tmm-pod-manager Ready in pod %s\n", pod.Name)
+					lastSeenReady = true
+				}
+				// Do NOT return — keep watching the full window for late wedges.
+				continue
 			}
 			// Pod is wedged if it has CrashLoopBackOff or has restarted enough times.
 			if waitingReason == "CrashLoopBackOff" || restartCount >= h4RestartThreshold {
@@ -160,7 +194,7 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 			}
 		}
 
-		if !restarted && anyWedged {
+		if bounces < h4MaxBounces && anyWedged {
 			// Trigger a rollout-restart via annotation patch on the Deployment template.
 			patchBody := []byte(fmt.Sprintf(
 				`{"spec":{"template":{"metadata":{"annotations":{"awsbnkctl.io/restartedAt":%q}}}}}`,
@@ -177,10 +211,10 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 				fmt.Fprintf(os.Stderr, "[phase 24c] warning: patch deployment %s: %v — retrying\n", h4DeploymentName, patchErr)
 				continue
 			}
+			bounces++
 			fmt.Fprintf(os.Stderr,
-				"[phase 24c] kicked f5-cne-controller rollout (pod-manager wedged: restartCount=%d reason=%q) — sleeping %s\n",
-				wedgedRestarts, wedgedReason, h4PostRestartWait)
-			restarted = true
+				"[phase 24c] kicked f5-cne-controller rollout (bounce %d/%d, pod-manager wedged: restartCount=%d reason=%q) — sleeping %s\n",
+				bounces, h4MaxBounces, wedgedRestarts, wedgedReason, h4PostRestartWait)
 			select {
 			case <-ctx.Done():
 				return nil //nolint:nilerr
@@ -189,26 +223,37 @@ func Phase24cPodManagerHeal(ctx context.Context, _ *intent.Cluster, _ *state.Sta
 			continue
 		}
 
-		// Pod-manager container found but not yet wedged enough; keep watching.
-		// Also handles the case where restarted=true and we are waiting for the
-		// new pod to become Ready.
-		// Log the first pod's state as representative.
-		var logRestarts int32
-		var logReason string
-		for i := range pods.Items {
-			found, _, rc, wr := podManagerStatus(&pods.Items[i])
-			if found {
-				logRestarts = rc
-				logReason = wr
-				break
+		// Pod-manager container found but not wedged enough (or bounce cap reached).
+		// Log the per-iter "not yet Ready" message only when we have not yet seen
+		// Ready in any prior iter (suppress after first Ready observation).
+		if !anyReady && !lastSeenReady {
+			var logRestarts int32
+			var logReason string
+			for i := range pods.Items {
+				found, _, rc, wr := podManagerStatus(&pods.Items[i])
+				if found {
+					logRestarts = rc
+					logReason = wr
+					break
+				}
 			}
+			fmt.Fprintf(os.Stderr,
+				"[phase 24c] pod-manager not yet Ready (restartCount=%d reason=%q, t=%ds) — continuing\n",
+				logRestarts, logReason, elapsed)
 		}
-		fmt.Fprintf(os.Stderr,
-			"[phase 24c] pod-manager not yet Ready (restartCount=%d reason=%q, t=%ds) — continuing\n",
-			logRestarts, logReason, elapsed)
 	}
 
-	fmt.Fprintln(os.Stderr, "[phase 24c] heal iterations exhausted — proceeding (heuristic, not a gate)")
+	// Terminal log: classify outcome based on bounces and lastSeenReady.
+	switch {
+	case bounces == 0:
+		fmt.Fprintf(os.Stderr, "[phase 24c] pod-manager stayed Ready for full %s window — no heal needed\n",
+			time.Duration(h4MaxIter)*h4PollInterval)
+	case lastSeenReady:
+		fmt.Fprintf(os.Stderr, "[phase 24c] applied %d bounce(s); pod-manager now Ready\n", bounces)
+	default:
+		fmt.Fprintf(os.Stderr, "[phase 24c] applied %d bounce(s); pod-manager still not Ready — leaving to Phase 25 (will surface)\n", bounces)
+	}
+
 	return nil
 }
 
