@@ -10,6 +10,80 @@
 > punt to BACKLOG. This sweep documents the existing punted items so they can be
 > addressed before the next live cycle.
 
+## Status as of 2026-05-25 — slice-13 (a587504) merged to main
+
+Survey methodology: each finding's cited file:line inspected at HEAD of `main` (post-slice-13).
+Verdicts: **FIXED** (slice-13 shipped the fix), **OPEN** (still outstanding — proposed fix
+is the work for the cold-start reliability PR), **ESCALATE** (design decision, not a bug).
+
+| ID  | Severity | Verdict | Evidence / fix target                                                          |
+|-----|----------|---------|--------------------------------------------------------------------------------|
+| C-1 | Critical | FIXED   | `internal/intent/cluster.go:380-381` — pattern-aware m6i.4xlarge default        |
+| C-2 | Critical | OPEN    | `internal/aws/phases/phase00_preflight.go:79-112` — ENI only; add CPU/mem/desiredSize |
+| C-3 | Critical | FIXED   | `examples/syd-tracer/cluster.yaml:111-112` — m6i.4xlarge × desiredSize 3        |
+| C-4 | Critical | OPEN    | `internal/aws/phases/phase25_activation_poll.go:23` — `phase25MaxIter = 40` → 12 |
+| C-5 | Critical | OPEN    | `internal/aws/phases/phase23_license.go:26` + `phase23b_spkvlan_gatewayclass.go:23` — 10m → 3m |
+| C-6 | Critical | OPEN    | `internal/aws/phases/phase12_k8s_foundation.go:638-695` — static GVR map → live RESTMapper |
+| C-7 | Critical | OPEN    | `internal/intent/cluster.go:542-585` — validate() must reject host-device desiredSize<3 |
+| H-1 | High     | OPEN    | `internal/tf/`, `terraform/`, `internal/cli/cluster.go:40,58` — delete per D-001 |
+| H-2 | High     | OPEN    | bundled with H-1 — inspect/doctor/status rewrite to tag-discovery               |
+| H-3 | High     | OPEN    | `internal/aws/phases/phase18_irsa_oidc.go:180-219` — SG ingress unwinding on down |
+| H-4 | High     | OPEN    | `internal/cli/scenarios.go:94-99` — implement `--all` topo-sort                 |
+| H-5 | High     | OPEN    | `internal/scenarios/httproutee2e/scenario_test.go` — add `TestVerifyCallOrder`  |
+| H-6 | High     | OPEN    | `internal/aws/phases/phase09_forge_register.go` — wire `CredentialTemplateID`   |
+| H-7 | High     | OPEN    | `internal/aws/phases/phase13_postflight.go:205-220` — implement scan trigger    |
+| H-8 | High     | OPEN    | `internal/aws/phases/phase17b_jumphost.go:647` — extract shared ENI helpers     |
+| M-1 | Medium   | ESCALATE| `internal/cli/meta.go:150` — PRD 03 scope decision (still relevant post-TF?)   |
+| M-2 | Medium   | OPEN    | `internal/aws/phases/phase07_iam.go:144` — implement tag-listing fallback      |
+| M-3 | Medium   | OPEN    | `internal/aws/phases/phase08_eks_cluster.go:91,100` — restrict publicAccessCidrs |
+| M-4 | Medium   | FIXED   | `internal/scenarios/envdiagram.go:238` exported; `httproutee2e/scenario.go:375` imports it |
+| M-5 | Medium   | FIXED   | `internal/cli/scenarios.go:48-52` — all output to stdout                        |
+| M-6 | Medium   | FIXED   | `checkCNEInstanceActive` dead-code removed from `phase25_activation_poll.go`   |
+| M-7 | Medium   | OPEN    | `constants_hostdevice.go:14` + `render/render.go:226` — extract `bnkconst` package |
+| M-8 | Medium   | OPEN    | DSSM `--insecure` readiness probe overlay still deferred                       |
+| M-9 | Medium   | OPEN    | `phase23b_spkvlan_gatewayclass.go:103,119` — superseded by C-6 fix              |
+| M-10| Medium   | ESCALATE| `dataPath` vs `bnkDataPath` — naming debate, needs user decision               |
+| M-11| Medium   | OPEN    | empty `internal/k8s/manifests/sr-iov-tmm/` scaffold — delete                   |
+| M-12| Medium   | OPEN    | `internal/cli/cluster.go:40,58` — subset of H-1                                |
+| L-1 | Low      | OPEN    | `internal/scenarios/scenario_test.go:64` — idiomatic skip when no registry     |
+| L-2 | Low      | OPEN    | `internal/k8s/golden_test.go` — idiomatic env-gated skip                       |
+| L-3 | Low      | OPEN    | `internal/doctor/doctor_test.go:112,146,181,184` — idiomatic env-gated skip    |
+| L-4 | Low      | OPEN    | `tools/refgen/tfvars-md/main_test.go:31` — delete with H-1                     |
+| L-5 | Low      | OPEN    | `internal/scenarios/envdiagram_test.go:44` — fix temp-dir leakage               |
+| L-6 | Low      | OPEN    | `docs/SHAKEOUT.md §9` — retire pre-post-TF section                              |
+| L-7 | Low      | OPEN    | `docs/prd/`, `docs/PLAN.md` — sweep historical Sprint-3 references              |
+| L-8 | Low      | OPEN    | `internal/forge/client.go:121` — subset of H-6                                  |
+| L-9 | Low      | OPEN    | `internal/aws/phases/phase17_secondary_enis.go:69,77` — defensive ifname readback |
+| L-10| Low      | FIXED   | `.gitignore` contains `cne_pull_64.json` and `*.jwt`                            |
+| L-11| Low      | OPEN    | `internal/exec/k8s_install.{go,yaml}` — clean with H-1                          |
+| L-12| Low      | OPEN    | `internal/cli/lifecycle.go:218` — clean with H-1                                |
+| L-13| Low      | ESCALATE| `internal/intent/cluster.go:457` — BNK 2.3.0 version pin (next-release alert)  |
+| L-14| Low      | OPEN    | `internal/intent/cluster.go:363` — cert-manager 1.16.1 version pin              |
+| L-15| Low      | ESCALATE| `docs/FORGE_MCP_INTEGRATION.md:63` — D-009 forge MCP promotion (strategic)     |
+
+### Tally
+
+- **FIXED in slice-13**: 6 — C-1, C-3, M-4, M-5, M-6, L-10
+- **OPEN (work for the cold-start reliability PR)**: 32 — C-2, C-4, C-5, C-6, C-7, H-1, H-2, H-3, H-4, H-5, H-6, H-7, H-8, M-2, M-3, M-7, M-8, M-9, M-11, M-12, L-1, L-2, L-3, L-4, L-5, L-6, L-7, L-8, L-9, L-11, L-12, L-14
+- **ESCALATE (design decisions, surface to user when reached)**: 4 — M-1 (PRD 03 SSH backend still in scope?), M-10 (`dataPath` vs `bnkDataPath`), L-13 (BNK version bump policy), L-15 (D-009 forge MCP promotion strategy)
+
+### Open-decision items (to surface to user)
+
+Per `feedback_no_deferred_fixes.md`: these are **not** deferrals — they're items where the proposed fix needs a design call the agent cannot make unilaterally. Surface each in chat when the cold-start PR work reaches it; do **not** punt to `BACKLOG.md`.
+
+1. **M-1** — `internal/cli/meta.go:150 BackendName: ""` TODO(phase3) for SSH backend. PRD 03 may be obsolete under D-001. Decision needed: keep, delete, or retarget.
+2. **M-10** — cluster.yaml field name `dataPath` vs `bnkDataPath`. Schema-evolution risk if renamed later. Decision needed before next CLI release.
+3. **L-13** — `ManifestVersion = "2.3.0-3.2598.3-0.0.170"` pin. Needs a bump policy: who owns the upgrade signal? (BNK release notes? FLO chart?)
+4. **L-15** — D-009 §3 says "REST fallback is canonical, not exceptional". Strategic direction, not a bug. Punt to its own ADR-driven slice.
+
+Plus four pre-existing escalation items carried over from the original sweep (not finding-keyed):
+
+5. **Helm-chart-driven preflight** (sweep §"out-of-scope"): read FLO chart and sum resource requests live instead of hardcoded constants. Adds helm binary dep. Bundle into cold-start PR or separate.
+6. **H-1/H-2 scope**: ~1480 LoC TF removal across 4-5 files. Bundle into cold-start PR or open `kill-legacy-tf` PR? Recommendation: **separate PR**, immediately after cold-start lands — keeps cold-start PR reviewable.
+7. **H-6 (forge cluster-9 401)**: cross-repo fix; may need bnk-forge PR first.
+8. **C-6 (static GVR map → live RESTMapper)**: 11 call sites; ~150 LoC. Sweep says "most-deferred item in the repo" — recommend bundling INTO cold-start PR (critical) not separating.
+
+
 ## Critical (will bite on next live test)
 
 ### C-1 — Default `instanceType: t3.medium` for `pattern: host-device` is broken-by-default
