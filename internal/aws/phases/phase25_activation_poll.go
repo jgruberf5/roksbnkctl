@@ -80,19 +80,23 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 			}
 		}
 
-		// Read CNEInstance status.state AND fall back to status.conditions[Available]==True.
-		// BNK 2.3.0 leaves .status.state empty; readiness signal moved to the conditions
-		// list (verified live 2026-05-23 on syd-tracer — Available=True with state="").
+		// Read CNEInstance status.state and derive functional readiness.
+		// H1: we deliberately do NOT use the rollup `Available` condition (or
+		// status.state == "Ready"/"Running" as the sole gate). Sydney aws-syd-test
+		// runs in healthy production for 33+ days with Available=False because
+		// f5-dssm-db-1 is Pending — the rollup aggregates DSSM HA replicas which
+		// are NOT on the BNK data path. The right gate for "can traffic flow" is
+		// the sub-conditions F5TmmAvailable + CNEControllerAvailable. See:
+		//   docs/audits/2026-05-24-live-e2e-round-2-findings.md (H1)
+		//   memory: project_sydney_reference_baseline
+		// We still treat status.state ∈ {Ready,Running} as ready for
+		// backward-compatibility with FLO versions that set the field.
 		cneState := ""
+		cneReady := false
 		cneObj, cneErr := clients.Dynamic.Resource(cneinstanceGVR).Namespace(InstanceNamespace).Get(ctx, crName, metav1.GetOptions{})
 		if cneErr == nil {
 			cneState, _, _ = unstructured.NestedString(cneObj.Object, "status", "state")
-			if cneState == "" {
-				// Fallback: derive readiness from conditions[].
-				if cneAvailableFromConditions(cneObj.Object) {
-					cneState = "Available"
-				}
-			}
+			cneReady = isCNEReady(cneState) || cneFunctionallyReady(cneObj.Object)
 		}
 		lastCNEState = cneState
 
@@ -108,21 +112,21 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 		running, pending, failed, total := podCounts(ctx, clients, InstanceNamespace)
 
 		fmt.Fprintf(os.Stderr,
-			"[phase 25] [%d/%d] cne=%s lic=%s pods running=%d pending=%d failed=%d total=%d\n",
-			i, phase25MaxIter, cneState, licState, running, pending, failed, total)
+			"[phase 25] [%d/%d] cne=state=%q,ready=%v lic=%s pods running=%d pending=%d failed=%d total=%d\n",
+			i, phase25MaxIter, cneState, cneReady, licState, running, pending, failed, total)
 
-		// Success: CNEInstance is Ready/Running AND License is Active.
-		if isCNEReady(cneState) && licState == "Active" {
-			fmt.Fprintf(os.Stderr, "[phase 25] activation complete: cne=%s lic=%s\n", cneState, licState)
+		// Success: CNEInstance is functionally ready AND License is Active.
+		if cneReady && licState == "Active" {
+			fmt.Fprintf(os.Stderr, "[phase 25] activation complete: cne=state=%q,ready=true lic=%s\n", cneState, licState)
 			st.Set("CNEINSTANCE_READY_AT", time.Now().UTC().Format(time.RFC3339))
 			return st.Save()
 		}
 
 		// After iter 6 (~3 min of polling), if all pods are Running but the
-		// CNEInstance Available condition is still stale, kick the cne-controller
+		// CNEInstance sub-conditions are still stale, kick the cne-controller
 		// once via a harmless annotation patch. Same reconcile-lag pattern as
 		// project_pool_member_sync_root_cause / project_cne_controller_available_lag.
-		if !kicked && i >= 6 && running == total && total > 0 && !isCNEReady(cneState) {
+		if !kicked && i >= 6 && running == total && total > 0 && !cneReady {
 			kicked = true
 			elapsed := phase25InitialSleep + time.Duration(i-1)*phase25PollInterval
 			fmt.Fprintf(os.Stderr,
@@ -140,21 +144,31 @@ func Phase25ActivationPoll(ctx context.Context, cl *intent.Cluster, st *state.St
 		phase25MaxIter, lastCNEState, lastLicState)
 }
 
-// isCNEReady returns true if state is "Ready", "Running", or "Available"
-// (the latter is the BNK 2.3 fallback derived from .status.conditions).
+// isCNEReady returns true if state is "Ready" or "Running". Kept for
+// backward-compatibility with FLO versions that set .status.state; in
+// BNK 2.3.x the field is typically empty and readiness is derived from
+// cneFunctionallyReady() instead.
 func isCNEReady(state string) bool {
-	return state == "Ready" || state == "Running" || state == "Available"
+	return state == "Ready" || state == "Running"
 }
 
-// cneAvailableFromConditions returns true if the CNEInstance object's
-// .status.conditions list contains {type:"Available", status:"True"}.
-// BNK 2.3.0 reports readiness via this condition rather than the older
-// top-level .status.state field.
-func cneAvailableFromConditions(obj map[string]interface{}) bool {
+// cneFunctionallyReady returns true when both F5TmmAvailable and
+// CNEControllerAvailable sub-conditions are True. These are the conditions
+// that actually matter for traffic to flow through BNK.
+//
+// We deliberately do NOT use the rollup `Available` condition: the
+// aws-syd-test reference cluster runs in healthy production for 33+ days
+// with Available=False because f5-dssm-db-1 is Pending (Insufficient cpu)
+// — the rollup aggregates DSSM HA replicas which are not on the data path.
+// See docs/audits/2026-05-24-live-e2e-round-2-findings.md (H1) and
+// memory: project_sydney_reference_baseline.
+func cneFunctionallyReady(obj map[string]interface{}) bool {
 	conds, found, err := unstructured.NestedSlice(obj, "status", "conditions")
 	if err != nil || !found {
 		return false
 	}
+	tmmReady := false
+	ctrlReady := false
 	for _, c := range conds {
 		cm, ok := c.(map[string]interface{})
 		if !ok {
@@ -162,11 +176,14 @@ func cneAvailableFromConditions(obj map[string]interface{}) bool {
 		}
 		t, _ := cm["type"].(string)
 		s, _ := cm["status"].(string)
-		if t == "Available" && s == "True" {
-			return true
+		switch t {
+		case "F5TmmAvailable":
+			tmmReady = (s == "True")
+		case "CNEControllerAvailable":
+			ctrlReady = (s == "True")
 		}
 	}
-	return false
+	return tmmReady && ctrlReady
 }
 
 // podCounts returns running/pending/failed/total pod counts in the given namespace.

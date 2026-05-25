@@ -146,6 +146,10 @@ type Scenario interface {
 	// Cleanup undoes Apply. Idempotent — a missing namespace / object
 	// is not an error.
 	Cleanup(*Context) error
+
+	// Namespace returns the namespace the scenario's resources live in
+	// (honoring any ctx.Options["namespace"] override). Used by the env diagram.
+	Namespace(ctx *Context) string
 }
 
 // Registry holds every scenario this binary knows about. Scenarios

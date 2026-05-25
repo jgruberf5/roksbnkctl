@@ -24,6 +24,10 @@ const (
 	f5spkvlanCRDWait     = 3 * time.Minute
 	f5spkvlanYAMLPath    = "host-device/f5spkvlan.yaml.tmpl"
 	gatewayClassYAMLPath = "host-device/gatewayclass.yaml.tmpl"
+
+	gatewayClassCRDName = "gatewayclasses.gateway.networking.k8s.io"
+	// Why: installed by the same FLO crd-installer Job as the F5SPKVlan CRD; 3 min is generous.
+	gatewayClassCRDWait = 3 * time.Minute
 )
 
 // f5spkvlanGVR is the GVR for the F5SPKVlan CR (used by Phase23bDown to delete).
@@ -50,9 +54,10 @@ var gatewayClassGVR = schema.GroupVersionResource{
 //     implementation so operator-facing Gateway CRs can target it via
 //     spec.gatewayClassName.
 //
-// Runs AFTER Phase 23 (License) and BEFORE Phase 24 (CWC heal). The
-// F5SPKVlan CRD is installed by FLO once the CNEInstance reaches Reconciled,
-// so we wait for it explicitly (FLO can take 10+ min on a cold cluster).
+// Runs AFTER Phase 23 (License) and BEFORE Phase 24 (CWC heal). Both the
+// F5SPKVlan and GatewayClass CRDs are installed by FLO once the CNEInstance
+// reaches Reconciled, so we wait for BOTH CRDs before applying either CR
+// (FLO can take 10+ min on a cold cluster).
 //
 // Skipped when cl.Pattern != "host-device".
 // SSO sentinel: CheckAuthOrDie at entry.
@@ -89,6 +94,18 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 		return fmt.Errorf("phase23b: waiting for F5SPKVlan CRD: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 23b] CRD %s ready\n", f5spkvlanCRDName)
+
+	// Wait for the GatewayClass CRD too (installed by the same FLO crd-installer
+	// Job). We wait for BOTH CRDs before applying EITHER CR: the GatewayClass
+	// apply otherwise races the RESTMapper cache when the CRD landed <2s earlier
+	// (Cycle-2 Finding #1, docs/audits/2026-05-24-h4-rev-live-cycle). The apply
+	// path's reset-and-retry (applyUnstructured, C-6) re-queries discovery on the
+	// next call once the CRD is present.
+	fmt.Fprintf(os.Stderr, "[phase 23b] waiting for CRD %s (up to %s)\n", gatewayClassCRDName, gatewayClassCRDWait)
+	if err := k8swait.WaitForCRDExists(ctx, clients.Dynamic, gatewayClassCRDName, gatewayClassCRDWait); err != nil {
+		return fmt.Errorf("phase23b: waiting for GatewayClass CRD: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[phase 23b] CRD %s ready\n", gatewayClassCRDName)
 
 	// Render + apply F5SPKVlan.
 	spkTmpl, err := k8smanifests.FS.ReadFile(f5spkvlanYAMLPath)

@@ -141,3 +141,373 @@ Across all 9 merged PRs (#27 + #28 + #29 + #30 + #31 + #32 + #34 + #35 + #36):
 
 3 live cycles × ~$3-5 each = **~$10-15 total AWS spend**. All clusters
 torn down cleanly with zero residue.
+
+---
+
+## 2026-05-24 — Cross-cluster comparison addendum
+
+> Added post-audit after cross-checking against the two pre-existing AWS
+> reference clusters (`aws-syd-test` and `jl-gpu-lab`, both unrelated to
+> awsbnkctl). Materially reframes Findings #4 and #5 and identifies a
+> follow-up direction on NAD form.
+>
+> **Important caveat**: Sydney runs BNK `2.2.1-3.2226.0-0.0.511`. Our
+> target is BNK 2.3.x. Some 2.3-only regressions (notably `crashagentConfig`
+> below) cannot be observed on Sydney. Tokyo (`jl-gpu-lab`) is BNK 2.3.0 but
+> currently scaled to 0 nodes (cost), so its CRs survive but pods don't.
+> Where the comparison is "Sydney 2.2 works → 2.3 should too", call it
+> out — we're using Sydney as a sanity reference, not a copy target.
+
+### Finding #5 — REFRAMED: DSSM replica hang is not a blocker
+
+`aws-syd-test` has been running in production for 33 days with:
+
+```
+CNEInstance.status.conditions:
+  type=Available       status=False  reason=Failed
+  type=DSSMAvailable   status=False  reason=Pending
+    message: "pod f5-operator/f5-dssm-db-1: 0/6 nodes are available:
+             1 node(s) had untolerated taint {dpu: true},
+             2 node(s) had volume node affinity conflict,
+             3 Insufficient cpu."
+  type=F5TmmAvailable          status=True   reason=Available
+  type=CNEControllerAvailable  status=True   reason=Available
+  ... (all other component sub-conditions True)
+```
+
+`f5-dssm-db` StatefulSet is `1/3` (only db-0 ready; db-1 never schedules,
+db-2 doesn't exist) — and the cluster is fully functional with HTTP 200
+traffic flowing via `10.0.10.100` per `bnk-tmm-recovery-runbook.md` and
+the live `f5-tmm-pod-manager` logs which show steady-state TMM endpoint
+reconciles every second.
+
+**Conclusion**: the rollup `CNEInstance.Available` condition aggregates all
+sub-conditions including DSSM HA replicas. Production BNK does not require
+all 3 DSSM `db` replicas ready — primary + sentinel quorum is sufficient.
+Our Phase 25 acceptance criterion is checking the wrong condition.
+
+**Action**: cold-start acceptance (Phase 25 / scenarios `http-routing-e2e`)
+should check **`F5TmmAvailable=True && CNEControllerAvailable=True &&
+RoutingDone=True`** plus the actual HTTP 200 traffic test, not the rollup
+`Available=True`. The `ResyncCNEInstance` kick from PR #34 still has value
+(refreshes sub-conditions after pods become Ready) — keep it. Drop any
+plan for a Phase 24d DSSM-bounce.
+
+### Finding #4 — REFRAMED: pod-manager image regression, not Multus
+
+Image versions across the two reference clusters:
+
+| Cluster              | BNK       | f5-tmm-pod-manager image  | State              |
+|----------------------|-----------|---------------------------|--------------------|
+| aws-syd-test (Sydney)| 2.2.1     | `v1.2.8-0.0.12`           | 0 restarts in 19d  |
+| jl-gpu-lab (Tokyo)   | 2.3.0     | `v1.6.1-0.0.4` (template) | (no nodes)         |
+| syd-tracer (ours)    | 2.3.0     | `v1.6.1-0.0.4`            | CrashLoopBackOff   |
+
+Pod-manager 1.6.x added an up-front K8s API call to register Pod indexers
+during controller startup, before the main reconcile loop. The 1.2.x image
+didn't have this call. The 1.6.x indexer setup is therefore newly sensitive
+to the cold-start race where the controller pod starts before EKS
+kube-proxy has finished programming iptables rules for the EKS API
+ClusterIP (`172.20.0.1`) on the just-came-up node. Self-heals within ~5
+min via CrashLoopBackOff retries.
+
+The original audit hypothesis was wrong: in Sydney the `f5-cne-controller`
+pod runs on a non-TMM node (TMM node carries `taint=dpu`) with plain
+aws-cni eth0 and **no Multus attachments**. So Multus routing on the TMM
+node cannot be the cause — our controller pod isn't Multus-attached either.
+
+**Action options** (not yet committed):
+1. **Accept the self-heal**: 5-min cold-start delay with no code change.
+2. **Conditional bounce**: after Phase 23b but before Phase 25 polls, if
+   `f5-cne-controller` has any container in `CrashLoopBackOff`,
+   `kubectl rollout restart deploy/f5-cne-controller` once. Resets backoff.
+3. **Init-container gate**: patch the FLO-shipped Deployment to add an
+   initContainer that confirms `172.20.0.1:443` is reachable before the
+   pod-manager container starts. Most surgical, biggest patch surface.
+4. **Upstream**: file against F5 — pod-manager 1.6.x indexer setup should
+   retry on i/o timeout, not exit.
+
+### DSSM CRD added `crashagentConfig` in 2.3 — confirms FLO hot-loop
+
+Live diff of the `dssms.k8s.f5.com` CRD between Sydney (2.2) and Tokyo
+(2.3):
+
+```
+Tokyo 2.3 spec.properties has an extra key NOT in Sydney 2.2:
+  crashagentConfig    type=object    description="Crashagent configuration for core collection"
+```
+
+This is the **exact field** that `bnk-tmm-blocker.md` documented as the
+source of the FLO reconcile hot-loop on the rebuilt Tokyo cluster: FLO
+sends `null` for the field on every update; the 2.3 CRD requires
+`type: object`; API server rejects; reconcile fails; requeue immediately.
+The hot loop self-clears when an empty object `{}` is written.
+
+**Action**: a tiny awsbnkctl post-install patch step could write
+`spec.crashagentConfig: {}` on each affected component CR (F5Tmm, DSSM,
+Afm, Downloader, Analyzer, Fluentd, Rabbitmq, CRDConversion, Cwc,
+IPAMController, CSRC, Observer, CNEController) immediately after Phase 23
+to pre-empt the hot loop. Cheap insurance; verify against next cold start.
+
+### NAD form: `pciBusID` is canonical; our `device:` form is a hack
+
+Sydney's NAD config (BNK 2.2, working in production):
+
+```yaml
+spec:
+  config: '{"cniVersion":"0.3.1","type":"host-device","name":"external-network","pciBusID":"0000:00:07.0"}'
+```
+
+Paired with these on `CNEInstance.spec.advanced.tmm`:
+
+```yaml
+annotations:
+  k8s.v1.cni.cncf.io/networks: '[
+    {"name":"external-netdevice","namespace":"f5-operator","interface":"eth1"},
+    {"name":"internal-netdevice","namespace":"f5-operator","interface":"eth2"}
+  ]'
+env:
+  - name: ROBIN_VFIO_RESOURCE_1
+    value: eth1
+  - name: PCIDEVICE_INTEL_COM_ETH1
+    value: "0000:00:07.0"
+  - name: ROBIN_VFIO_RESOURCE_2
+    value: eth2
+  - name: PCIDEVICE_INTEL_COM_ETH2
+    value: "0000:00:08.0"
+```
+
+Our current rendering uses **`device: ens7`** (kernel ifname) in the NAD,
+which keeps the pod-side name as `ens7` and so encodes the host's kernel
+naming convention into the env var key (`PCIDEVICE_INTEL_COM_ENS7`). This
+is fragile: kernel ifname depends on instance type, Nitro slot order,
+udev rules, and AMI. The PCI BDF is the stable identity.
+
+**Direction**: switch NAD template + CNEInstance env to the pciBusID form:
+
+- NAD: `{"cniVersion":"0.3.1","type":"host-device","name":"external-network","pciBusID":"<discovered-BDF>"}`
+- TMM annotation: `k8s.v1.cni.cncf.io/networks` with `interface:eth1`/`eth2`
+- TMM env: `ROBIN_VFIO_RESOURCE_<N>=ethN` and `PCIDEVICE_INTEL_COM_ETHN=<BDF>`
+- We already discover `$EXTERNAL_PCI` and `$INTERNAL_PCI` — they currently
+  feed only the env vars. Route them into the NAD template too.
+
+**BDF discovery edge cases to handle**:
+- m5/m6i typical layout: `0000:00:06.0` = EKS CNI's secondary, `0000:00:07.0`
+  + `0000:00:08.0` = BNK ext/int. But:
+- On instance types where EKS CNI does NOT claim device-index=1 first, or
+  when the BNK ENIs attach at a different order, the BDFs can shift to
+  `0000:00:06.0` / `0000:00:07.0`.
+- Don't hardcode 07/08 — keep the existing tag-based ENI discovery + BDF
+  resolution and feed actual values into the template.
+
+**Tracking**: this is a follow-up code change (NAD template + CNEInstance
+env rewrite + tests). Not in scope for this audit doc — flag and plan
+separately.
+
+### FLO Helm chart + values: what we can / cannot inspect
+
+- Chart source: `oci://repo.f5.com/charts/f5-lifecycle-operator` version
+  `v2.21.13-0.0.28`. Pulled OCI at install time; no local cache.
+- aws-gpu-setup's `manifests/flo-values.yaml` is the override (license,
+  cluster issuer, image pull secrets, `containerPlatform=AWS`). Nothing
+  exotic relevant to the two findings.
+- `bnk-forge-modules/bnk/flo/values.yaml` is the bnk-forge module wrapper's
+  override; also unremarkable except for the full inline JWT scaffolding.
+- To inspect the rendered chart we'd need `helm pull oci://... --version
+  v2.21.13-0.0.28 --untar` on a host with `repo.f5.com` creds. Worth doing
+  on the next syd-tracer cold cycle to confirm the `crashagentConfig:null`
+  pattern in FLO's update payloads and to check what readiness gates /
+  init containers FLO ships for `f5-cne-controller`.
+
+### CRD schema diff summary
+
+| CRD             | 2.2 → 2.3 diff                                                                 |
+|-----------------|--------------------------------------------------------------------------------|
+| CNEInstance     | identical at top-level spec keys + advanced.* sub-keys                         |
+| DSSM            | **+`crashagentConfig`** (object) — drives the FLO hot-loop documented in 2.3   |
+| F5Tmm           | (not diffed in this pass; likely same `crashagentConfig` addition)             |
+
+### Updated takeaway
+
+The two original "open" findings (#4 + #5) reframe as:
+- **#5 → not a bug.** Acceptance criterion needs to drop the rollup `Available`.
+- **#4 → real but narrower.** Image cold-start race; fix or accept self-heal.
+
+Plus two new follow-ups uncovered by the cross-check:
+- **NAD form**: migrate to `pciBusID` (separate code change).
+- **`crashagentConfig:{}` patch**: cheap mitigation for the 2.3 FLO hot-loop
+  documented in `bnk-tmm-blocker.md` (separate code change).
+
+---
+
+## 2026-05-24 — FLO chart deep-dive + log sweep + multi-namespace lens
+
+> Added after `helm pull oci://repo.f5.com/charts/f5-lifecycle-operator
+> --version v2.21.13-0.0.28` and reading templates/deployment.yaml +
+> values.yaml. Also a log sweep across Sydney's f5-cne-controller, FLO,
+> DSSM db-0 + sentinel for working-baseline patterns.
+
+### FLO chart — namespace-relevant env vars
+
+`templates/deployment.yaml` emits these on the FLO pod (only if the
+matching value is set):
+
+```yaml
+- name: POD_NAMESPACE                       # always set, from metadata.namespace
+- name: CONTAINER_PLATFORM                  # we override to "AWS" (default Generic) ✓
+{{- if .Values.sharedComponentNamespace }}
+- name: SHARED_COMPONENT_NAMESPACE
+  value: {{ .Values.sharedComponentNamespace }}
+{{- end }}
+{{- if .Values.sharedDssm }}
+- name: SHARED_DSSM
+  value: {{ .Values.sharedDssm }}
+{{- end }}
+```
+
+`values.yaml` defaults:
+- `sharedComponentNamespace`: commented out → FLO falls back to its own ns.
+- `sharedDssm`: empty → unset → defaults to false (single-instance).
+- `namespace`: empty → install lands in release ns (whatever we pass via
+  `helm install --namespace <X>`).
+
+Our `internal/k8s/manifests/shared/flo-values.yaml.tmpl` sets **none** of
+the three namespace-flavoured values. FLO therefore runs with:
+- `SHARED_COMPONENT_NAMESPACE` env: not emitted → FLO defaults internally
+  (likely to `POD_NAMESPACE` = its own ns = `f5-cne-core` for us).
+- `SHARED_DSSM` env: not emitted → false.
+- Install ns: whatever `helm install --namespace` passes = `f5-cne-core`.
+
+### Multi-namespace asymmetry: us vs Sydney
+
+| Component group           | Sydney (single-ns) | awsbnkctl (multi-ns)               |
+|---------------------------|--------------------|------------------------------------|
+| FLO + License + CWC       | `f5-operator`      | `f5-cne-core` (OperatorNamespace)  |
+| CNEInstance + DSSM + F5Tmm + RabbitMQ + NADs + CM | `f5-operator` | `f5-cne-system` (InstanceNamespace) |
+
+Sydney's defaults collapse correctly because everything is in one ns. We
+split. The question: does FLO's "shared component namespace default-to-own-ns"
+behaviour silently break things, given that FLO is in `f5-cne-core` but
+components are in `f5-cne-system`?
+
+**Counter-evidence that it does NOT silently break us**: in round-2 cold
+start, sub-conditions `CNEControllerAvailable=True`, `F5TmmAvailable=True`,
+`AnalyzerAvailable=True`, `LicenseAvailable=True` all reached True. FLO is
+clearly finding and instantiating the components in the correct ns —
+probably by deriving from `CNEInstance.metadata.namespace`, not from
+`SHARED_COMPONENT_NAMESPACE`. So this env var is not the bug.
+
+Setting `sharedComponentNamespace: f5-cne-system` is defensive hygiene,
+not a root-cause fix.
+
+### Sentinel + db log pattern: Sydney baseline vs our hang
+
+Sydney `f5-dssm-sentinel-0` `f5-dssm` container — first three lines after start:
+```
+"dssm:start This is for SPK"
+"Running init.sh for single cluster deployment"
+"grpc server is starting up :19891"
+```
+…then `certificates loaded successfully` every ~40 min thereafter.
+
+Our broken syd-tracer `f5-dssm-db-1` hangs **exactly** at the third line.
+Sydney's s6-supervised redis-server starts; ours doesn't. Identical
+preamble, divergence after `grpc server is starting up :19891`.
+
+Without exec into a hung db-1 pod (cluster is torn down), we can't see
+which subprocess of init.sh fails. **Next live cycle action**: while
+db-1 is in the 2/3 hung state, `kubectl exec -it f5-dssm-db-1 -c f5-dssm
+-- sh` and inspect:
+- `ps -ef` (which init.sh child is alive?)
+- `ls /run/service/` (s6-rc state per service)
+- `cat /var/log/redis*.log` (if any)
+- `cat /conf/init.sh` (the actual script content — may reveal a 2.3
+  branch we don't satisfy)
+
+### Cne-controller + FLO steady-state in Sydney
+
+- `f5-cne-controller` main container: only Secret reconciles (~30s cadence
+  for cert rotation), 0 restarts in 19d, no error patterns.
+- FLO container: mostly idle — fluentbit reloads + cert refresh. **No
+  "Reconciler error", no `crashagentConfig` hot-loop**. Confirms the 2.3
+  regression is real and absent in 2.2.
+- `f5-tmm-pod-manager` 1.2.8 reconciles endpoints every <1s, no warnings.
+
+### Experimental matrix — ranked (revised 2026-05-24)
+
+Hypothesis-driven: what produces the most information per cycle?
+
+| Rank | Change | Hypothesis | Predicted outcome | Cost |
+|------|--------|------------|-------------------|------|
+| **H1** | Phase 25 acceptance switches to sub-conditions `F5TmmAvailable + CNEControllerAvailable` (drops rollup `Available`) | Acceptance criterion is wrong, not the cluster | Removes a class of false negatives (Sydney-shape: DSSM blocks rollup, data path fine). **NOT sufficient on its own for round-2** — see correction below. | code-only ✓ shipped 2026-05-24 commit 2f3f98c |
+| **H4** | Conditional `kubectl rollout restart deploy/f5-cne-controller` after Phase 23b if any container is in CrashLoopBackOff | pod-manager 1.6.x cold-start race vs EKS kube-proxy is the round-2 timeout cause | Pod-manager recovers on restart → CNEControllerAvailable flips True → Phase 25 PASS (with H1 already in place) | 1 cold cycle |
+| **H2** | Phase 24c patches `spec.crashagentConfig: {}` on the 13 component CRs after Phase 23 | FLO hot-loop adds latency / log noise in 2.3 | FLO reconcile cadence drops from 300ms to seconds; doesn't directly fix acceptance | 1 cold cycle (combine with another) |
+| **H3** | Add 3 TMM env vars (`USE_PHYS_MEM=true`, `TMM_MAPRES_IGNORE_MEM_LIMIT=true`, `TMM_MAPRES_HUGEPAGES=1536`) to CNEInstance.spec.advanced.tmm.env | Sydney has them; TMM init is more stable | TMM ready faster; no other visible change | 1 cycle |
+| H5 | Set `sharedComponentNamespace: f5-cne-system` in flo-values | Multi-ns FLO defaults are silently wrong | Likely no visible difference (all subsystems already reach Available=True today) | combine with another |
+| H6 | Set `sharedDssm: false` explicitly | We're depending on implicit default | No change — default is already false | skip |
+| H7 | Set `namespace: f5-cne-core` explicitly in FLO values | We're depending on `helm --namespace` | No change — equivalent to current state | skip |
+
+### Correction to original H1 prediction
+
+The initial framing claimed "H1 alone may fix round-2 acceptance — no AWS
+cycle needed". This was wrong. Re-reading the round-2 evidence:
+
+> `f5-cne-controller-7b5988d4bc-nr2vg` pod: **4/5 Ready**, CrashLoopBackOff,
+> 5 restarts in 12 min, last restart 2m41s ago.
+>
+> Phase 25 timed out at full 9-min budget. CNEInstance Available condition
+> stayed Failed with **three Pending sub-conditions**.
+
+The cne-controller pod was 4/5 Ready (pod-manager in CrashLoopBackOff).
+Pod not Ready → `CNEControllerAvailable=False`. H1's new gate requires
+`F5TmmAvailable && CNEControllerAvailable`; with CNEControllerAvailable
+False, H1 returns False the same as the old rollup-`Available` gate did.
+
+**So H1 alone would not have passed round-2.** H1 is still a real
+correctness fix (removes false negatives where DSSM blocks the rollup
+but the data path works — the Sydney 33-day pattern). But it doesn't
+address Finding #4. The actual round-2 failure mode requires **H4** to
+move the needle.
+
+### Suggested first cycle (revised)
+
+Run **H1 (already in branch) + H4** together as cycle 1:
+- H1 fixes the gate so Sydney-shape DSSM-only failures stop being false negatives.
+- H4 directly attacks Finding #4 (pod-manager cold-start race).
+- Both together: minimum viable change set to flip round-2 acceptance to PASS.
+
+Predicted outcome if H1+H4 hypotheses are correct:
+- Pod-manager recovers within ~30s of the rollout restart.
+- CNEControllerAvailable + F5TmmAvailable both True within budget.
+- Phase 25 returns success.
+- `scenarios http-routing-e2e` returns 5/5 HTTP 200 traffic test.
+
+If Phase 25 still times out after H4: pod-manager either isn't the race
+we think, or the restart isn't applied at the right moment. Capture full
+condition history + pod-manager logs for diagnosis.
+
+If H4 fixes pod-manager but acceptance still times out: another
+sub-condition is False — check which one, file a new finding.
+
+Cycle 2 candidates (after H1+H4 validation): **H2** (`crashagentConfig`
+patch) as cleanup for the FLO hot-loop noise, optionally bundled with
+**H5** (multi-ns hygiene) since it's free to add. **H3** (TMM env vars)
+last, isolated.
+
+### Read on the namespace/sharedDssm/sharedComponent triple
+
+Honest assessment of the three FLO values originally flagged:
+
+- **`namespace`**: no-op — equivalent to `helm install --namespace` which
+  we already pass. **Skip.**
+- **`sharedDssm`**: default is false, we have one CNEInstance, setting
+  `true` would change behaviour in a direction we don't want. **Skip.**
+- **`sharedComponentNamespace`**: worth setting defensively (H5), but
+  we already have all sub-conditions reaching True — so the multi-ns
+  default-to-own-ns is not the silent failure mode it could have been
+  in a different code path. Set it for cleanliness, don't expect a fix
+  from it.
+
+The higher-leverage tests are H4 (pod-manager bounce, directly addresses
+the actual round-2 timeout) and H1 (already shipped, prevents future
+false-negative class).

@@ -145,6 +145,10 @@ func TestPhase25_NilK8s_ReturnsError(t *testing.T) {
 
 // ─── Test 5: isCNEReady helper ────────────────────────────────────────────────
 
+// H1: "Available" is no longer treated as a ready signal — Sydney production
+// runs with Available=False for 33+ days while traffic flows. Only the legacy
+// state fields Ready/Running count here; functional readiness is determined
+// by cneFunctionallyReady() against sub-conditions.
 func TestIsCNEReady(t *testing.T) {
 	cases := []struct {
 		state string
@@ -155,11 +159,97 @@ func TestIsCNEReady(t *testing.T) {
 		{"Pending", false},
 		{"", false},
 		{"Active", false},
+		{"Available", false}, // H1: rollup is no longer a ready signal
 	}
 	for _, tc := range cases {
 		if got := isCNEReady(tc.state); got != tc.want {
 			t.Errorf("isCNEReady(%q) = %v, want %v", tc.state, got, tc.want)
 		}
+	}
+}
+
+// ─── Test 5b: cneFunctionallyReady — H1 acceptance gate ──────────────────────
+
+// cneFunctionallyReady is the H1 replacement for checking the rollup
+// `Available` condition. It must return true iff BOTH F5TmmAvailable=True
+// AND CNEControllerAvailable=True, regardless of any other condition (notably
+// DSSMAvailable, which Sydney shows can be persistently False in healthy
+// production).
+func TestCneFunctionallyReady(t *testing.T) {
+	mkObj := func(conds []map[string]interface{}) map[string]interface{} {
+		condIfs := make([]interface{}, len(conds))
+		for i, c := range conds {
+			condIfs[i] = c
+		}
+		return map[string]interface{}{
+			"status": map[string]interface{}{
+				"conditions": condIfs,
+			},
+		}
+	}
+	cond := func(t, s string) map[string]interface{} {
+		return map[string]interface{}{"type": t, "status": s}
+	}
+
+	cases := []struct {
+		name  string
+		conds []map[string]interface{}
+		want  bool
+	}{
+		{
+			name: "both sub-conditions True — ready",
+			conds: []map[string]interface{}{
+				cond("F5TmmAvailable", "True"),
+				cond("CNEControllerAvailable", "True"),
+			},
+			want: true,
+		},
+		{
+			name: "Sydney-shape: rollup False, DSSM False, but TMM+CNEController True — ready",
+			conds: []map[string]interface{}{
+				cond("Available", "False"),
+				cond("DSSMAvailable", "False"),
+				cond("F5TmmAvailable", "True"),
+				cond("CNEControllerAvailable", "True"),
+				cond("AnalyzerAvailable", "True"),
+			},
+			want: true,
+		},
+		{
+			name: "TMM not ready — not ready",
+			conds: []map[string]interface{}{
+				cond("F5TmmAvailable", "False"),
+				cond("CNEControllerAvailable", "True"),
+			},
+			want: false,
+		},
+		{
+			name: "CNE controller not ready — not ready",
+			conds: []map[string]interface{}{
+				cond("F5TmmAvailable", "True"),
+				cond("CNEControllerAvailable", "False"),
+			},
+			want: false,
+		},
+		{
+			name: "rollup Available True alone — not ready (H1: rollup is not the gate)",
+			conds: []map[string]interface{}{
+				cond("Available", "True"),
+			},
+			want: false,
+		},
+		{
+			name:  "no conditions at all — not ready",
+			conds: nil,
+			want:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cneFunctionallyReady(mkObj(tc.conds)); got != tc.want {
+				t.Errorf("cneFunctionallyReady(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 

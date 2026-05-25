@@ -197,4 +197,5 @@ func (d *dryRunScenario) Verify(*scenarios.Context) scenarios.Result {
 	return d.onVerify()
 }
 
-func (d *dryRunScenario) Cleanup(*scenarios.Context) error { return nil }
+func (d *dryRunScenario) Cleanup(*scenarios.Context) error    { return nil }
+func (d *dryRunScenario) Namespace(*scenarios.Context) string { return "dry-run-ns" }

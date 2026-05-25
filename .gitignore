@@ -88,3 +88,22 @@ venv/
 .agent/work/**
 !.agent/work/.gitkeep
 # --- End MAF downstream runtime artifacts ---
+
+# --- Live-cluster capture artifacts under docs/audits/ ---
+# These raw dumps contain secrets (license JWTs, SA bearer tokens) and huge
+# noise. Keep ONLY curated docs (*.md, capture.sh, PRE_UP.txt, *-proof.txt);
+# never commit the raw capture output.
+docs/audits/**/*.log
+docs/audits/**/state.env*
+docs/audits/**/*-describe.txt
+docs/audits/**/*-workloads.yaml
+docs/audits/**/cneinstance-license.yaml
+docs/audits/**/cneinstance*.yaml
+docs/audits/**/events-all.txt
+docs/audits/**/pods-all.txt
+docs/audits/**/pods-with-nodes.txt
+docs/audits/**/nodes.txt
+docs/audits/**/SUMMARY.txt
+docs/audits/**/*.pub
+docs/audits/**/*.key
+docs/audits/**/*.pem

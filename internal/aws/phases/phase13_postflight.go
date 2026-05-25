@@ -28,7 +28,7 @@ import (
 //  6. FLO Deployment ready (when FLO enabled).
 //  7. cneinstances.k8s.f5.com CRD exists (when FLO enabled).
 //  8. OTEL certs Ready (when FLO enabled).
-//  9. CNEInstance exists with status.state ∈ {Ready, Running} (when Phase 25 ran).
+//  9. CNEInstance exists with status.state ∈ {Ready, Running}, or F5Tmm+CNEController sub-conditions True (when Phase 25 ran).
 //
 // 10. License bnk-license exists with status.state=Active (when Phase 25 ran).
 //
@@ -158,7 +158,8 @@ func Phase13Postflight(ctx context.Context, cl *intent.Cluster, st *state.State,
 	return nil
 }
 
-// checkCNEInstanceActive reads the CNEInstance CR and verifies status.state ∈ {Ready, Running}.
+// checkCNEInstanceActive reads the CNEInstance CR and verifies status.state ∈ {Ready, Running},
+// or, when state is empty, the F5TmmAvailable + CNEControllerAvailable sub-conditions (H1).
 // Read-only; does not write state.
 func checkCNEInstanceActive(ctx context.Context, cl *intent.Cluster, clients *Clients) error {
 	crName := cl.Metadata.Name + "-bnk"
@@ -170,10 +171,17 @@ func checkCNEInstanceActive(ctx context.Context, cl *intent.Cluster, clients *Cl
 	if rawStatus, ok := obj.Object["status"].(map[string]interface{}); ok {
 		state, _ = rawStatus["state"].(string)
 	}
-	if !isCNEReady(state) {
-		return fmt.Errorf("CNEInstance %s/%s status.state=%q, want Ready or Running", InstanceNamespace, crName, state)
+	// H1: mirror Phase 25's gate. status.state is empty on BNK 2.3.x / the
+	// aws-syd-test gold reference even when traffic flows; the real readiness
+	// signal is the F5TmmAvailable + CNEControllerAvailable sub-conditions.
+	// See phase25_activation_poll.go cneFunctionallyReady() and
+	// memory: project_sydney_reference_baseline.
+	if !isCNEReady(state) && !cneFunctionallyReady(obj.Object) {
+		return fmt.Errorf("CNEInstance %s/%s status.state=%q and F5TmmAvailable+CNEControllerAvailable not both True (want Ready/Running state or functional readiness)",
+			InstanceNamespace, crName, state)
 	}
-	fmt.Fprintf(os.Stderr, "[phase 13] CNEInstance %s/%s state=%s OK\n", InstanceNamespace, crName, state)
+	fmt.Fprintf(os.Stderr, "[phase 13] CNEInstance %s/%s state=%q functionallyReady=%v OK\n",
+		InstanceNamespace, crName, state, cneFunctionallyReady(obj.Object))
 	return nil
 }
 
