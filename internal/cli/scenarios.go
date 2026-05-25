@@ -25,6 +25,8 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aisemanticcache"
 	// Side-effect import: registers multi-vip in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/multivip"
+	// Side-effect import: registers egress-snat in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/egresssnat"
 )
 
 // topoSort returns the registered scenarios in dependency order using Kahn's
