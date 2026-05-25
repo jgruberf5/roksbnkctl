@@ -22,6 +22,7 @@ func (f *fakeScenarioCLI) Manifests(*scenarios.Context) ([]string, error) { retu
 func (f *fakeScenarioCLI) Apply(*scenarios.Context) error                 { return nil }
 func (f *fakeScenarioCLI) Verify(*scenarios.Context) scenarios.Result     { return scenarios.Result{} }
 func (f *fakeScenarioCLI) Cleanup(*scenarios.Context) error               { return nil }
+func (f *fakeScenarioCLI) Namespace(*scenarios.Context) string            { return "fake-ns" }
 
 func TestTopoSort_NoDeps(t *testing.T) {
 	a := &fakeScenarioCLI{name: "a"}
