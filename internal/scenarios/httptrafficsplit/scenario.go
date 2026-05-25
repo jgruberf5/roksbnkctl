@@ -271,6 +271,9 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		})
 		return scenarios.FinalizeResult(res)
 	}
+	// Probe the scenario's pinned VIP (.101), matching the manifests — NOT the
+	// default VIP that BuildProbeParams returns.
+	vip = withLastOctet(vip, strconv.Itoa(101))
 
 	instanceID := ctx.State.Get("JUMPHOST_INSTANCE_ID")
 	sourceIP := ctx.State.Get("JUMPHOST_BNK_EXT_ENI_IP")
@@ -289,10 +292,13 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		probeIter = 10
 	}
 
-	seenA, seenB, got := d.RunBodyProbesFn(ctx.Ctx, ctx, vip, scnHostname, probeIter, timeout)
+	ok, got := scenarios.PollMarkers(ctx.Ctx, 120*time.Second, 10*time.Second, func() (bool, string) {
+		seenA, seenB, g := d.RunBodyProbesFn(ctx.Ctx, ctx, vip, scnHostname, probeIter, timeout)
+		return seenA && seenB, g
+	})
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "weighted split serves both backend-a and backend-b",
-		OK:          seenA && seenB,
+		OK:          ok,
 		Got:         got,
 	})
 

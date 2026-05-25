@@ -13,6 +13,7 @@ import (
 	awspkg "github.com/JLCode-tech/awsbnkctl/internal/aws"
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
+	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
 
 var (
@@ -22,6 +23,7 @@ var (
 	flagForgePurge     bool
 	flagForgeKubeconf  string
 	flagForgeClusterNm string
+	flagForgeConfig    string
 )
 
 var forgeCmd = &cobra.Command{
@@ -70,6 +72,8 @@ local forge_link.json. Pass --purge to also delete the forge project
 func init() {
 	forgeCmd.PersistentFlags().StringVar(&flagForgeMCPURL, "forge-mcp-url", "",
 		"forge MCP endpoint (default $AWSBNKCTL_FORGE_MCP_URL, fallback "+forge.DefaultMCPURL+")")
+	forgeCmd.PersistentFlags().StringVar(&flagForgeConfig, "config", "",
+		"path to cluster.yaml (intent mode); when set, forge targets the cluster.yaml's metadata.name/region and stores the link in the cluster's state dir instead of the legacy workspace")
 
 	forgeRegisterCmd.Flags().StringVar(&flagForgeProject, "project-name", "",
 		"forge project name (default awsbnkctl-<workspace>)")
@@ -87,38 +91,104 @@ func init() {
 	rootCmd.AddCommand(forgeCmd)
 }
 
-func runForgeRegister(cmd *cobra.Command, _ []string) error {
+// forgeTarget carries the resolved identity for any forge sub-command.
+// It is populated either from a cluster.yaml (intent mode, --config) or from
+// the legacy workspace config (~/.awsbnkctl/<ws>/config.yaml).
+type forgeTarget struct {
+	clusterName string // EKS cluster name
+	region      string // AWS region
+	profile     string // AWS named profile ("" → use AWS_PROFILE env / default chain)
+	linkDir     string // directory where forge_link.json lives
+	label       string // human-facing identity label (workspace name or cluster name)
+	mcpURL      string // preferred MCP URL from intent ("" → fall through to flag/env/default)
+}
+
+// resolveForgeTarget returns a forgeTarget from either:
+//   - intent mode (--config <cluster.yaml>), or
+//   - legacy workspace mode (~/.awsbnkctl/<ws>/config.yaml).
+func resolveForgeTarget() (*forgeTarget, error) {
+	if flagForgeConfig != "" {
+		cl, err := intent.Load(flagForgeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("loading --config %s: %w", flagForgeConfig, err)
+		}
+		if cl.Metadata.Name == "" {
+			return nil, fmt.Errorf("cluster.yaml %s: metadata.name is required", flagForgeConfig)
+		}
+		if cl.Metadata.Region == "" {
+			return nil, fmt.Errorf("cluster.yaml %s: metadata.region is required", flagForgeConfig)
+		}
+		t := &forgeTarget{
+			clusterName: cl.Metadata.Name,
+			region:      cl.Metadata.Region,
+			profile:     os.Getenv("AWS_PROFILE"),
+			linkDir:     cl.StateDir(),
+			label:       cl.Metadata.Name,
+		}
+		if cl.Forge != nil && cl.Forge.MCPURL != "" {
+			t.mcpURL = cl.Forge.MCPURL
+		}
+		return t, nil
+	}
+
+	// Legacy workspace path.
 	cctx, err := requireWorkspace()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	wsDir, err := config.WorkspaceDir(cctx.WorkspaceName)
 	if err != nil {
-		return fmt.Errorf("resolving workspace dir: %w", err)
+		return nil, fmt.Errorf("resolving workspace dir: %w", err)
+	}
+	return &forgeTarget{
+		clusterName: cctx.Workspace.Cluster.Name,
+		region:      cctx.Workspace.AWS.Region,
+		profile:     cctx.Workspace.AWS.Profile,
+		linkDir:     wsDir,
+		label:       cctx.WorkspaceName,
+		mcpURL:      "",
+	}, nil
+}
+
+// pickMCPURL returns the MCP URL to use, in priority order:
+//  1. explicit --forge-mcp-url flag
+//  2. mcpURL from the intent cluster.yaml forge.mcpUrl field
+//  3. "" (forge.NewClient falls back to $AWSBNKCTL_FORGE_MCP_URL / DefaultMCPURL)
+func pickMCPURL(intentMCP string) string {
+	if flagForgeMCPURL != "" {
+		return flagForgeMCPURL
+	}
+	return intentMCP
+}
+
+func runForgeRegister(cmd *cobra.Command, _ []string) error {
+	t, err := resolveForgeTarget()
+	if err != nil {
+		return err
 	}
 
-	clusterName := flagForgeClusterNm
-	if clusterName == "" {
-		clusterName = cctx.Workspace.Cluster.Name
+	// --cluster-name overrides the resolved cluster name in both modes.
+	clusterName := t.clusterName
+	if flagForgeClusterNm != "" {
+		clusterName = flagForgeClusterNm
 	}
 	if clusterName == "" {
 		return errors.New("no cluster name — set cluster.name in the workspace or pass --cluster-name")
 	}
 
-	region := cctx.Workspace.AWS.Region
-	if region == "" {
+	if t.region == "" {
 		return errors.New("workspace AWS.region is empty — run `awsbnkctl init` first")
 	}
 
 	// 1) build kubeconfig: either read --kubeconfig <path> or generate
 	// in-process via the EKS presigned-URL flow (PRD 07).
-	kubeconfigYAML, err := buildKubeconfig(cmd.Context(), cctx, clusterName, region)
+	kubeconfigYAML, err := buildKubeconfig(cmd.Context(), t.profile, clusterName, t.region)
 	if err != nil {
 		return err
 	}
 
 	// 2) talk to forge over MCP
-	fc := forge.NewClient(flagForgeMCPURL)
+	fc := forge.NewClient(pickMCPURL(t.mcpURL))
 	if !flagQuiet {
 		fmt.Fprintf(os.Stderr, "→ forge MCP: %s\n", fc.URL())
 	}
@@ -127,11 +197,11 @@ func runForgeRegister(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	res, err := forge.Register(ctx, fc, forge.RegisterRequest{
-		WorkspaceName:    cctx.WorkspaceName,
-		WorkspaceDir:     wsDir,
+		WorkspaceName:    t.label,
+		WorkspaceDir:     t.linkDir,
 		ProjectName:      flagForgeProject,
 		ClusterName:      clusterName,
-		Region:           region,
+		Region:           t.region,
 		Kubeconfig:       kubeconfigYAML,
 		PostRegisterScan: flagForgeScan,
 	})
@@ -143,7 +213,7 @@ func runForgeRegister(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("✓ registered with forge\n")
 	fmt.Printf("  project:   %s (id=%d)\n", res.Link.ProjectName, res.Link.ProjectID)
 	fmt.Printf("  cluster:   %s (id=%d)\n", res.Link.ClusterName, res.Link.ClusterID)
-	fmt.Printf("  link:      %s\n", forge.LinkPath(wsDir))
+	fmt.Printf("  link:      %s\n", forge.LinkPath(t.linkDir))
 	fmt.Printf("  mcp:       %s\n", res.ForgeURL)
 	if flagForgeScan {
 		fmt.Printf("  scan:      %s\n", oneLine(res.ScanOutput))
@@ -153,23 +223,19 @@ func runForgeRegister(cmd *cobra.Command, _ []string) error {
 }
 
 func runForgeStatus(cmd *cobra.Command, _ []string) error {
-	cctx, err := requireWorkspace()
+	t, err := resolveForgeTarget()
 	if err != nil {
 		return err
 	}
-	wsDir, err := config.WorkspaceDir(cctx.WorkspaceName)
-	if err != nil {
-		return fmt.Errorf("resolving workspace dir: %w", err)
-	}
 
-	fc := forge.NewClient(flagForgeMCPURL)
+	fc := forge.NewClient(pickMCPURL(t.mcpURL))
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 	defer cancel()
 
-	st, err := forge.Status(ctx, fc, wsDir)
+	st, err := forge.Status(ctx, fc, t.linkDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "workspace %q has no forge link — run `awsbnkctl forge register`\n", cctx.WorkspaceName)
+			fmt.Fprintf(os.Stderr, "workspace %q has no forge link — run `awsbnkctl forge register`\n", t.label)
 			return nil
 		}
 		return err
@@ -191,22 +257,18 @@ func runForgeStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func runForgeUnregister(cmd *cobra.Command, _ []string) error {
-	cctx, err := requireWorkspace()
+	t, err := resolveForgeTarget()
 	if err != nil {
 		return err
 	}
-	wsDir, err := config.WorkspaceDir(cctx.WorkspaceName)
-	if err != nil {
-		return fmt.Errorf("resolving workspace dir: %w", err)
-	}
 
-	fc := forge.NewClient(flagForgeMCPURL)
+	fc := forge.NewClient(pickMCPURL(t.mcpURL))
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 	defer cancel()
 
-	if err := forge.Unregister(ctx, fc, wsDir, flagForgePurge); err != nil {
+	if err := forge.Unregister(ctx, fc, t.linkDir, flagForgePurge); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "workspace %q has no forge link — nothing to do\n", cctx.WorkspaceName)
+			fmt.Fprintf(os.Stderr, "workspace %q has no forge link — nothing to do\n", t.label)
 			return nil
 		}
 		return err
@@ -216,10 +278,11 @@ func runForgeUnregister(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// buildKubeconfig returns the kubeconfig bytes for the workspace's EKS
-// cluster — either from --kubeconfig <path> or generated in-process via
-// the EKS presigned-URL auth flow.
-func buildKubeconfig(ctx context.Context, cctx *config.Context, clusterName, region string) ([]byte, error) {
+// buildKubeconfig returns the kubeconfig bytes for an EKS cluster —
+// either from --kubeconfig <path> or generated in-process via the EKS
+// presigned-URL auth flow. profile is the AWS named profile to use
+// ("" → use the default credential chain / AWS_PROFILE env).
+func buildKubeconfig(ctx context.Context, profile, clusterName, region string) ([]byte, error) {
 	if flagForgeKubeconf != "" {
 		b, err := os.ReadFile(flagForgeKubeconf) // #nosec G304 -- explicit operator-supplied --kubeconfig path; matches kubectl's own UX
 		if err != nil {
@@ -230,7 +293,7 @@ func buildKubeconfig(ctx context.Context, cctx *config.Context, clusterName, reg
 
 	clients, err := awspkg.NewClients(ctx, awspkg.Options{
 		Region:  region,
-		Profile: cctx.Workspace.AWS.Profile,
+		Profile: profile,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("aws clients: %w", err)

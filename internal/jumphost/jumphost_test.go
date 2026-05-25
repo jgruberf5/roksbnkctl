@@ -130,6 +130,12 @@ func TestBuildHTTPResponderCmd_ContainsMarkerAndPort(t *testing.T) {
 	if !strings.Contains(cmd, "external-resource-pool-OK") {
 		t.Errorf("cmd missing marker: %q", cmd)
 	}
+	if !strings.Contains(cmd, "systemd-run") {
+		t.Errorf("cmd missing 'systemd-run': %q", cmd)
+	}
+	if !strings.Contains(cmd, "awsbnkctl-extpool-8080") {
+		t.Errorf("cmd missing unit name 'awsbnkctl-extpool-8080': %q", cmd)
+	}
 	if !strings.Contains(cmd, "http.server 8080") {
 		t.Errorf("cmd missing 'http.server 8080': %q", cmd)
 	}
@@ -151,11 +157,11 @@ func TestBuildHTTPResponderCmd_EscapesMarkerQuotes(t *testing.T) {
 
 func TestBuildHTTPResponderStopCmd(t *testing.T) {
 	cmd := jumphost.BuildHTTPResponderStopCmd(8080)
-	if !strings.Contains(cmd, "http.server 8080") {
-		t.Errorf("stop cmd missing port: %q", cmd)
+	if !strings.Contains(cmd, "systemctl stop") {
+		t.Errorf("stop cmd missing 'systemctl stop': %q", cmd)
 	}
-	if !strings.Contains(cmd, "pkill") {
-		t.Errorf("stop cmd missing pkill: %q", cmd)
+	if !strings.Contains(cmd, "awsbnkctl-extpool-8080") {
+		t.Errorf("stop cmd missing unit name 'awsbnkctl-extpool-8080': %q", cmd)
 	}
 }
 

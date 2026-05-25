@@ -193,3 +193,20 @@ func IsNotFound(err error) bool {
 	}
 	return strings.Contains(err.Error(), "not found")
 }
+
+// PollMarkers calls fn repeatedly until it returns ok=true or maxWait elapses,
+// sleeping interval between attempts. fn is always called at least once.
+// Returns the final (ok, detail). Honors ctx cancellation.
+func PollMarkers(ctx context.Context, maxWait, interval time.Duration, fn func() (ok bool, detail string)) (bool, string) {
+	deadline := time.Now().Add(maxWait)
+	ok, detail := fn()
+	for !ok && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ok, detail
+		case <-time.After(interval):
+		}
+		ok, detail = fn()
+	}
+	return ok, detail
+}

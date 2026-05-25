@@ -52,48 +52,51 @@ type ProbeResult struct {
 
 // prepareEICEKey mints an ephemeral ED25519 keypair, writes it to temp files,
 // pushes the public half via EC2 Instance Connect, waits 2 s for it to settle,
-// and returns the private-key path plus a cleanup func that removes both files.
-// The caller is responsible for calling cleanup() (typically via defer).
-func prepareEICEKey(ctx context.Context, region, instanceID string) (keyPath string, cleanup func(), err error) {
+// and returns the private-key path, the public-key path, and a cleanup func
+// that removes both files. The caller is responsible for calling cleanup()
+// (typically via defer). The public-key path is exposed so callers that run
+// multiple SSH iterations can re-push the key before each one to reset the
+// EC2 Instance Connect ~60s TTL.
+func prepareEICEKey(ctx context.Context, region, instanceID string) (keyPath, pubKeyPath string, cleanup func(), err error) {
 	priv, pubAuth, err := GenerateEphemeralED25519()
 	if err != nil {
-		return "", func() {}, fmt.Errorf("ephemeral key: %w", err)
+		return "", "", func() {}, fmt.Errorf("ephemeral key: %w", err)
 	}
 
 	keyFile, err := os.CreateTemp("", "awsbnkctl-jumphost-*.key")
 	if err != nil {
-		return "", func() {}, fmt.Errorf("temp key file: %w", err)
+		return "", "", func() {}, fmt.Errorf("temp key file: %w", err)
 	}
 	if _, err := keyFile.Write(priv); err != nil {
 		_ = keyFile.Close()
 		_ = os.Remove(keyFile.Name())
-		return "", func() {}, fmt.Errorf("write key: %w", err)
+		return "", "", func() {}, fmt.Errorf("write key: %w", err)
 	}
 	if err := keyFile.Chmod(0o600); err != nil {
 		_ = keyFile.Close()
 		_ = os.Remove(keyFile.Name())
-		return "", func() {}, fmt.Errorf("chmod key: %w", err)
+		return "", "", func() {}, fmt.Errorf("chmod key: %w", err)
 	}
 	if err := keyFile.Close(); err != nil {
 		_ = os.Remove(keyFile.Name())
-		return "", func() {}, fmt.Errorf("close key: %w", err)
+		return "", "", func() {}, fmt.Errorf("close key: %w", err)
 	}
 
 	pubFile, err := os.CreateTemp("", "awsbnkctl-jumphost-*.pub")
 	if err != nil {
 		_ = os.Remove(keyFile.Name())
-		return "", func() {}, fmt.Errorf("temp pub file: %w", err)
+		return "", "", func() {}, fmt.Errorf("temp pub file: %w", err)
 	}
 	if _, err := pubFile.WriteString(pubAuth); err != nil {
 		_ = pubFile.Close()
 		_ = os.Remove(keyFile.Name())
 		_ = os.Remove(pubFile.Name())
-		return "", func() {}, fmt.Errorf("write pub: %w", err)
+		return "", "", func() {}, fmt.Errorf("write pub: %w", err)
 	}
 	if err := pubFile.Close(); err != nil {
 		_ = os.Remove(keyFile.Name())
 		_ = os.Remove(pubFile.Name())
-		return "", func() {}, fmt.Errorf("close pub: %w", err)
+		return "", "", func() {}, fmt.Errorf("close pub: %w", err)
 	}
 
 	cleanupFn := func() {
@@ -103,13 +106,13 @@ func prepareEICEKey(ctx context.Context, region, instanceID string) (keyPath str
 
 	if err := PushSSHPublicKey(ctx, region, instanceID, pubFile.Name()); err != nil {
 		cleanupFn()
-		return "", func() {}, fmt.Errorf("send-ssh-public-key: %w", err)
+		return "", "", func() {}, fmt.Errorf("send-ssh-public-key: %w", err)
 	}
 
 	// Allow the key a moment to settle (EC2 Instance Connect ~60s TTL).
 	time.Sleep(2 * time.Second)
 
-	return keyFile.Name(), cleanupFn, nil
+	return keyFile.Name(), pubFile.Name(), cleanupFn, nil
 }
 
 // RunCurlProbes mints an ephemeral SSH key, pushes it via EC2 Instance
@@ -130,7 +133,7 @@ func RunCurlProbes(ctx context.Context, opts ProbeOptions) ([]ProbeResult, error
 		opts.User = "ec2-user"
 	}
 
-	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	keyPath, pubKeyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +141,8 @@ func RunCurlProbes(ctx context.Context, opts ProbeOptions) ([]ProbeResult, error
 
 	results := make([]ProbeResult, 0, opts.Iterations)
 	for i := 1; i <= opts.Iterations; i++ {
+		// Re-push the public key before each iteration to reset the ~60s TTL.
+		_ = PushSSHPublicKey(ctx, opts.Region, opts.InstanceID, pubKeyPath)
 		code, secs, perr := SSHCurlViaEICE(ctx, opts.Region, opts.InstanceID, keyPath, opts.SourceIP, opts.VIP, opts.Hostname, opts.Timeout)
 		res := ProbeResult{Iteration: i, HTTPCode: code, Seconds: secs}
 		if perr != nil {
@@ -308,7 +313,7 @@ func RunCurlBodyProbes(ctx context.Context, opts ProbeOptions) ([]BodyProbeResul
 		opts.User = "ec2-user"
 	}
 
-	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	keyPath, pubKeyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +321,8 @@ func RunCurlBodyProbes(ctx context.Context, opts ProbeOptions) ([]BodyProbeResul
 
 	results := make([]BodyProbeResult, 0, opts.Iterations)
 	for i := 1; i <= opts.Iterations; i++ {
+		// Re-push the public key before each iteration to reset the ~60s TTL.
+		_ = PushSSHPublicKey(ctx, opts.Region, opts.InstanceID, pubKeyPath)
 		body, code, perr := SSHCurlBodyViaEICE(ctx, opts.Region, opts.InstanceID, keyPath, opts.SourceIP, opts.VIP, opts.Hostname, opts.Timeout)
 		res := BodyProbeResult{Iteration: i, HTTPCode: code, Body: body}
 		if perr != nil {
@@ -363,22 +370,28 @@ func shellSingleQuote(s string) string {
 }
 
 // buildHTTPResponderCmd returns the remote shell command that writes marker to
-// a temp index file and (re)starts a backgrounded `python3 -m http.server
-// <port>` serving it, then curls 127.0.0.1:<port> and echoes the HTTP code.
+// /tmp/awsbnkctl-extpool/index.html and (re)starts a systemd transient unit
+// (`sudo systemd-run`) serving it via `python3 -m http.server <port>`, then
+// curls 127.0.0.1:<port> and echoes the HTTP code.
 // A "200" trailing line means the responder is live. The marker is
 // shell-escaped so arbitrary content is safe.
+// Using systemd-run instead of setsid/nohup ensures the process persists
+// across EC2 Instance Connect (EICE) sessions and starts cleanly over the
+// EICE tunnel (which returns ssh exit 255 for backgrounded shell jobs).
 func buildHTTPResponderCmd(port int, marker string) string {
 	q := shellSingleQuote(marker)
+	unit := fmt.Sprintf("awsbnkctl-extpool-%d", port)
 	return fmt.Sprintf(
-		`mkdir -p /tmp/awsbnkctl-extpool && printf '%%s' %s > /tmp/awsbnkctl-extpool/index.html && (pkill -f "http.server %d" 2>/dev/null; sleep 1; cd /tmp/awsbnkctl-extpool && setsid nohup python3 -m http.server %d >/tmp/awsbnkctl-extpool/srv.log 2>&1 & ) ; sleep 1 ; curl -s -o /dev/null -w '%%{http_code}' http://127.0.0.1:%d/`,
-		q, port, port, port,
+		`mkdir -p /tmp/awsbnkctl-extpool && printf '%%s' %s > /tmp/awsbnkctl-extpool/index.html; sudo systemctl stop %s 2>/dev/null; sudo systemctl reset-failed %s 2>/dev/null; sudo systemd-run --unit=%s --working-directory=/tmp/awsbnkctl-extpool python3 -m http.server %d >/dev/null 2>&1; sleep 2; curl -s -o /dev/null -w '%%{http_code}' http://127.0.0.1:%d/`,
+		q, unit, unit, unit, port, port,
 	)
 }
 
-// buildHTTPResponderStopCmd returns the best-effort remote command that kills
-// any python3 http.server bound to port.
+// buildHTTPResponderStopCmd returns the best-effort remote command that stops
+// the systemd transient unit for the given port.
 func buildHTTPResponderStopCmd(port int) string {
-	return fmt.Sprintf(`pkill -f "http.server %d" 2>/dev/null ; true`, port)
+	unit := fmt.Sprintf("awsbnkctl-extpool-%d", port)
+	return fmt.Sprintf(`sudo systemctl stop %s 2>/dev/null; sudo systemctl reset-failed %s 2>/dev/null; true`, unit, unit)
 }
 
 // StartHTTPResponder mints+pushes an ephemeral key, then starts a backgrounded
@@ -386,7 +399,7 @@ func buildHTTPResponderStopCmd(port int) string {
 // It returns nil only when the in-host self-curl returns HTTP 200; otherwise it
 // returns an error including the remote stdout so failures are diagnosable.
 func StartHTTPResponder(ctx context.Context, opts ProbeOptions, port int, marker string) error {
-	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	keyPath, _, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
 	if err != nil {
 		return err
 	}
@@ -405,7 +418,7 @@ func StartHTTPResponder(ctx context.Context, opts ProbeOptions, port int, marker
 // StopHTTPResponder best-effort kills any python3 http.server on port via the
 // EICE tunnel. A non-zero remote exit (e.g. nothing to kill) is not an error.
 func StopHTTPResponder(ctx context.Context, opts ProbeOptions, port int) error {
-	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	keyPath, _, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
 	if err != nil {
 		return err
 	}
