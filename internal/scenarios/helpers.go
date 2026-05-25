@@ -193,21 +193,3 @@ func IsNotFound(err error) bool {
 	}
 	return strings.Contains(err.Error(), "not found")
 }
-
-// VIPPlus100 increments the last octet of a dotted-quad IP by 100 (capped at 254).
-func VIPPlus100(vip string) string {
-	parts := strings.Split(vip, ".")
-	if len(parts) != 4 {
-		return vip
-	}
-	last, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return vip
-	}
-	end := last + 100
-	if end > 254 {
-		end = 254
-	}
-	parts[3] = strconv.Itoa(end)
-	return strings.Join(parts, ".")
-}

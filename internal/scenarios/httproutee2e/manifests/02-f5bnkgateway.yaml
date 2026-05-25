@@ -9,5 +9,5 @@ spec:
     - name: external
       ipv4BaseCidr: {{.ExternalCIDR}}
       startAddress: {{.VIP}}
-      endAddress: {{.VIPRangeEnd}}
+      endAddress: {{.VIP}}
       provider: f5-ip-provider
