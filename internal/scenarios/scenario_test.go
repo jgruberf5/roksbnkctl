@@ -50,6 +50,8 @@ func (f *fakeScenario) Cleanup(*scenarios.Context) error {
 	return f.cleanupErr
 }
 
+func (f *fakeScenario) Namespace(*scenarios.Context) string { return "fake-namespace" }
+
 // freshRegistry clears the package-level registry and re-registers.
 // Each test that touches the registry should use a sub-registry.
 // Since the registry is global, we test it in isolation.

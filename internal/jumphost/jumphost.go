@@ -37,6 +37,9 @@ type ProbeOptions struct {
 	Timeout time.Duration
 	// User is the SSH user on the jumphost. Default "ec2-user".
 	User string
+	// Hostname sets the HTTP Host header so requests match hostname-scoped
+	// HTTPRoutes. Empty means no Host header (matches no-hostname routes).
+	Hostname string
 }
 
 // ProbeResult records the outcome of one curl iteration.
@@ -109,7 +112,7 @@ func RunCurlProbes(ctx context.Context, opts ProbeOptions) ([]ProbeResult, error
 
 	results := make([]ProbeResult, 0, opts.Iterations)
 	for i := 1; i <= opts.Iterations; i++ {
-		code, secs, perr := SSHCurlViaEICE(ctx, opts.Region, opts.InstanceID, keyFile.Name(), opts.SourceIP, opts.VIP, opts.Timeout)
+		code, secs, perr := SSHCurlViaEICE(ctx, opts.Region, opts.InstanceID, keyFile.Name(), opts.SourceIP, opts.VIP, opts.Hostname, opts.Timeout)
 		res := ProbeResult{Iteration: i, HTTPCode: code, Seconds: secs}
 		if perr != nil {
 			res.Err = perr.Error()
@@ -142,13 +145,25 @@ func PushSSHPublicKey(ctx context.Context, region, instanceID, pubKeyPath string
 	return nil
 }
 
+// buildCurlCmd returns the remote curl command. When host is non-empty it
+// adds -H 'Host: <host>' so requests match hostname-scoped HTTPRoutes.
+func buildCurlCmd(sourceIP, vip, host string, timeoutSecs int) string {
+	hostHdr := ""
+	if host != "" {
+		hostHdr = fmt.Sprintf(`-H 'Host: %s' `, host)
+	}
+	return fmt.Sprintf(`curl -s -o /dev/null -w '%%{http_code} %%{time_total}' %s--interface %s --max-time %d http://%s/`,
+		hostHdr, sourceIP, timeoutSecs, vip)
+}
+
 // SSHCurlViaEICE opens an EICE tunnel to the jumphost and runs a single
 // curl --interface <sourceIP> http://<vip>/ with the given timeout.
+// When host is non-empty, -H 'Host: <host>' is added so requests match
+// hostname-scoped HTTPRoutes.
 // Returns the HTTP response code, elapsed seconds, and any error.
-func SSHCurlViaEICE(ctx context.Context, region, instanceID, keyPath, sourceIP, vip string, timeout time.Duration) (int, float64, error) {
+func SSHCurlViaEICE(ctx context.Context, region, instanceID, keyPath, sourceIP, vip, host string, timeout time.Duration) (int, float64, error) {
 	proxy := fmt.Sprintf(`ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id %s --region %s`, instanceID, region)
-	remoteCmd := fmt.Sprintf(`curl -s -o /dev/null -w '%%{http_code} %%{time_total}' --interface %s --max-time %d http://%s/`,
-		sourceIP, int(timeout.Seconds()), vip)
+	remoteCmd := buildCurlCmd(sourceIP, vip, host, int(timeout.Seconds()))
 	args := []string{
 		"-o", proxy,
 		"-o", "StrictHostKeyChecking=no",

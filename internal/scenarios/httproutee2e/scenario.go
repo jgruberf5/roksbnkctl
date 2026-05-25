@@ -46,6 +46,8 @@ const (
 	scnName      = "http-routing-e2e"
 	scnTitle     = "HTTP traffic steering with Gateway API HTTPRoute (how-to #8)"
 	scnNamespace = "awsbnkctl-scn-httproute-e2e"
+	// scnHostname must match the hostnames: value in manifests/05-httproute.yaml.
+	scnHostname = "awsbnkctl.local"
 )
 
 func init() { scenarios.Register(&scenario{}) }
@@ -83,6 +85,7 @@ func realVerifyDeps() VerifyDeps {
 				VIP:        vip,
 				Iterations: iterations,
 				Timeout:    timeout,
+				Hostname:   scnHostname,
 			}
 			probes, probeRunErr := jumphost.RunCurlProbes(sctx.Ctx, probeOpts)
 			successCount := 0
@@ -205,7 +208,7 @@ var (
 	f5BnkGatewayGVR = schema.GroupVersionResource{
 		Group:    "k8s.f5net.com",
 		Version:  "v1",
-		Resource: "f5bnkgateways",
+		Resource: "f5-bnkgateways",
 	}
 )
 
@@ -314,6 +317,8 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	}
 	return nil
 }
+
+func (s *scenario) Namespace(ctx *scenarios.Context) string { return namespace(ctx) }
 
 // --- internal helpers ---
 

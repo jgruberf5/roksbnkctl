@@ -126,6 +126,7 @@ func finalize(ctx *Context, s Scenario, started time.Time, r Result) Result {
 			Scenario:  s.Name(),
 			Clientset: ctx.Clientset,
 			Dynamic:   ctx.Dynamic,
+			Namespace: s.Namespace(ctx),
 		}
 		r.EnvDiagram = Render(in)
 	}
