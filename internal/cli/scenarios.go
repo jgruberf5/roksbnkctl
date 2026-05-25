@@ -23,6 +23,8 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aitokencounting"
 	// Side-effect import: registers ai-semantic-cache in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aisemanticcache"
+	// Side-effect import: registers multi-vip in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/multivip"
 )
 
 // topoSort returns the registered scenarios in dependency order using Kahn's
