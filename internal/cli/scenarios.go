@@ -13,6 +13,8 @@ import (
 
 	// Side-effect import: registers http-routing-e2e in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/httproutee2e"
+	// Side-effect import: registers http-traffic-split in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/httptrafficsplit"
 )
 
 // topoSort returns the registered scenarios in dependency order using Kahn's

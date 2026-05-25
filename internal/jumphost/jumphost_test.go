@@ -87,6 +87,43 @@ func TestBuildCurlCmd_NoHost(t *testing.T) {
 	}
 }
 
+func TestBuildCurlBodyCmd_WithHost(t *testing.T) {
+	cmd := jumphost.BuildCurlBodyCmd("10.0.10.120", "10.0.10.100", "split.local", 10)
+
+	if !strings.Contains(cmd, `-H 'Host: split.local'`) {
+		t.Errorf("cmd missing Host header: %q", cmd)
+	}
+	if strings.Contains(cmd, "-o /dev/null") {
+		t.Errorf("cmd must NOT contain -o /dev/null for body capture: %q", cmd)
+	}
+	if !strings.Contains(cmd, `-w '\n%{http_code}'`) {
+		t.Errorf("cmd missing body+code format string: %q", cmd)
+	}
+	if !strings.Contains(cmd, "http://10.0.10.100/") {
+		t.Errorf("cmd missing VIP URL: %q", cmd)
+	}
+	if !strings.Contains(cmd, "--interface 10.0.10.120") {
+		t.Errorf("cmd missing --interface sourceIP: %q", cmd)
+	}
+}
+
+func TestBuildCurlBodyCmd_NoHost(t *testing.T) {
+	cmd := jumphost.BuildCurlBodyCmd("10.0.10.120", "10.0.10.100", "", 10)
+
+	if strings.Contains(cmd, `-H 'Host:`) {
+		t.Errorf("cmd should not contain Host header when host is empty: %q", cmd)
+	}
+	if strings.Contains(cmd, "-o /dev/null") {
+		t.Errorf("cmd must NOT contain -o /dev/null for body capture: %q", cmd)
+	}
+	if !strings.Contains(cmd, `-w '\n%{http_code}'`) {
+		t.Errorf("cmd missing body+code format string: %q", cmd)
+	}
+	if !strings.Contains(cmd, "http://10.0.10.100/") {
+		t.Errorf("cmd missing VIP URL: %q", cmd)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
