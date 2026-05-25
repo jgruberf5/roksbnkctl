@@ -1,0 +1,239 @@
+[scenarios] running ai-semantic-cache
+scenario:  ai-semantic-cache  (amber)
+title:     AI semantic model caching annotations (how-to #7, Amber)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-semantic-cache/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-semantic-cache/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-semantic-cache/03-nginx.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-semantic-cache/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-semantic-cache/05-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.105)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.105                     │
+│  httproute-accepted: True                            │
+│  scenario:           ai-semantic-cache               │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS ai-semantic-cache
+[scenarios] running ai-token-counting
+scenario:  ai-token-counting  (amber)
+title:     AI token counting + enforcement annotation (how-to #6, Amber)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-token-counting/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-token-counting/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-token-counting/03-nginx.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-token-counting/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/ai-token-counting/05-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.104)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.104                     │
+│  httproute-accepted: True                            │
+│  scenario:           ai-token-counting               │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS ai-token-counting
+[scenarios] running external-resource-pool
+scenario:  external-resource-pool  (green)
+title:     Load balance traffic to external resources via EndpointSlice (how-to #10)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/external-resource-pool/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/external-resource-pool/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/external-resource-pool/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/external-resource-pool/05-external-backend.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/external-resource-pool/06-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+[resync] target: HTTPRoute awsbnkctl-scn-extpool/scn-extpool-route (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 28326 → 28357)
+[resync]   patched weight 2 → 1 (resourceVersion 28357 → 28364)
+[resync] ✓ 1 HTTPRoute(s) resynced
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.102)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.102                     │
+│  httproute-accepted: True                            │
+│  scenario:           external-resource-pool          │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS external-resource-pool
+[scenarios] running http-routing-e2e
+scenario:  http-routing-e2e  (green)
+title:     HTTP traffic steering with Gateway API HTTPRoute (how-to #8)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-routing-e2e/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-routing-e2e/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-routing-e2e/03-nginx.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-routing-e2e/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-routing-e2e/05-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+[resync] target: HTTPRoute awsbnkctl-scn-httproute-e2e/scn-route (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 28637 → 28646)
+[resync]   patched weight 2 → 1 (resourceVersion 28646 → 28653)
+[resync] ✓ 1 HTTPRoute(s) resynced
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.100)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.100                     │
+│  httproute-accepted: True                            │
+│  scenario:           http-routing-e2e                │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS http-routing-e2e
+[scenarios] running http-traffic-split
+scenario:  http-traffic-split  (green)
+title:     HTTP weighted traffic split across two backends (how-to #8, weighted)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-traffic-split/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-traffic-split/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-traffic-split/03-backends.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-traffic-split/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http-traffic-split/05-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+[resync] target: HTTPRoute awsbnkctl-scn-traffic-split/scn-split-route (2 backend ref(s))
+[resync]   patched weight 70 → 71 (resourceVersion 29400 → 29433)
+[resync]   patched weight 71 → 70 (resourceVersion 29433 → 29462)
+[resync] ✓ 1 HTTPRoute(s) resynced
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.101)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.101                     │
+│  httproute-accepted: True                            │
+│  scenario:           http-traffic-split              │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS http-traffic-split
+[scenarios] running multi-vip
+scenario:  multi-vip  (green)
+title:     Multiple VIPs from one F5BnkGateway pool (chassis model)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/multi-vip/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/multi-vip/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/multi-vip/03-backends.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/multi-vip/04-gateways.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/multi-vip/05-httproutes.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+[resync] target: HTTPRoute awsbnkctl-scn-multivip/scn-mv-route-a (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 30821 → 30834)
+[resync]   patched weight 2 → 1 (resourceVersion 30834 → 30853)
+[resync] target: HTTPRoute awsbnkctl-scn-multivip/scn-mv-route-b (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 30829 → 30855)
+[resync]   patched weight 2 → 1 (resourceVersion 30855 → 30867)
+[resync] ✓ 2 HTTPRoute(s) resynced
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.106)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.106                     │
+│  httproute-accepted: True                            │
+│  scenario:           multi-vip                       │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS multi-vip
+[scenarios] running proxy-protocol-l4
+scenario:  proxy-protocol-l4  (green)
+title:     Proxy Protocol iRule support for L4 routes (how-to #9)
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/03-backend.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/04-irule.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/05-bnknetpolicy.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/06-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/proxy-protocol-l4/07-l4route.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-093b786bff30413a4  (src: 10.0.10.78)    │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.133)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.103)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.133                      │
+│  gateway-addr:       10.0.10.103                     │
+│  httproute-accepted: (unknown)                       │
+│  scenario:           proxy-protocol-l4               │
+└───────────────────────────────────────────────────────┘
+[scenarios] PASS proxy-protocol-l4
+[scenarios] all 7 scenarios green
