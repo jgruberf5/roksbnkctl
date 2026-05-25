@@ -1,11 +1,13 @@
 // Package externalresourcepool implements scenario "external-resource-pool" —
-// load-balancing HTTP traffic to an off-cluster backend via the BNK Pool CR
-// (how-to #10). The novelty vs http-routing-e2e / http-traffic-split is the
-// F5 Pool CR: the HTTPRoute's backendRef points at a Pool
-// (group: k8s.f5net.com, kind: Pool) instead of a Kubernetes Service, and the
-// Pool's spec.members entry is an *external* IP — here, the slice-12 jumphost's
-// BNK_EXT ENI IP (JUMPHOST_BNK_EXT_ENI_IP), which sits on the same L2 as the
-// VIP and is therefore directly TMM-reachable.
+// load-balancing HTTP traffic to an off-cluster backend via a Kubernetes
+// EndpointSlice (how-to #10). BNK 2.3 has NO Pool CRD; the documented way to
+// load-balance to an *external* resource is a selectorless Service plus a
+// manually-managed EndpointSlice whose endpoint is the external IP. The
+// novelty vs http-routing-e2e / http-traffic-split is exactly that: the
+// HTTPRoute's backendRef points at a selectorless Service (no Pods, no
+// selector), and the hand-written EndpointSlice carries an *external* IP —
+// here, the slice-12 jumphost's BNK_EXT ENI IP (JUMPHOST_BNK_EXT_ENI_IP),
+// which sits on the same L2 as the VIP and is therefore directly TMM-reachable.
 //
 // AWS-specific shape mirrors httptrafficsplit:
 //   - GatewayClass provisioned by Phase 23b (<cluster>-gatewayclass).
@@ -18,14 +20,13 @@
 //     reading the response body to confirm the marker is served via the VIP.
 //
 // Verify order (load-bearing):
-//  1. StartHTTPResponder on the jumphost FIRST so the Pool member is live
-//     before TMM health-checks it.
+//  1. StartHTTPResponder on the jumphost FIRST so the EndpointSlice endpoint is
+//     live before TMM health-checks it.
 //  2. Wait Gateway scn-extpool-gateway Programmed=True.
 //  3. Wait HTTPRoute scn-extpool-route Accepted=True.
 //  4. Wait HTTPRoute scn-extpool-route ResolvedRefs=True.
-//  5. Best-effort confirm the Pool CR exists.
-//  6. ResyncHTTPRoutes — idempotent pool-member workaround.
-//  7. Probe: curl the VIP; assert >=1 returns HTTP 200 AND body has the marker.
+//  5. ResyncHTTPRoutes — idempotent pool-member workaround.
+//  6. Probe: curl the VIP; assert >=1 returns HTTP 200 AND body has the marker.
 package externalresourcepool
 
 import (
@@ -51,7 +52,7 @@ var manifestFS embed.FS
 
 const (
 	scnName      = "external-resource-pool"
-	scnTitle     = "Load balance traffic to external resources via Pool CR (how-to #10)"
+	scnTitle     = "Load balance traffic to external resources via EndpointSlice (how-to #10)"
 	scnNamespace = "awsbnkctl-scn-extpool"
 	// scnHostname must match the hostnames: value in manifests/06-httproute.yaml.
 	scnHostname = "awsbnkctl-extpool.local"
@@ -59,15 +60,6 @@ const (
 	responderPort   = 8080
 	responderMarker = "external-resource-pool-OK"
 )
-
-// poolGVR is the BNK Pool CR. kubectl addresses it as "pool.k8s.f5net.com",
-// i.e. the plural resource name is "pools" (verified against kindbnkctl's
-// extrespool scenario, which queries "pool.k8s.f5net.com/ext-backend-pool").
-var poolGVR = schema.GroupVersionResource{
-	Group:    "k8s.f5net.com",
-	Version:  "v1",
-	Resource: "pools",
-}
 
 func init() { scenarios.Register(&scenario{}) }
 
@@ -78,7 +70,6 @@ type VerifyDeps struct {
 	StartHTTPResponderFn     func(ctx context.Context, sctx *scenarios.Context, port int, marker string) error
 	WaitConditionFn          func(ctx context.Context, sctx *scenarios.Context, gvr schema.GroupVersionResource, ns, name, condType string, timeout time.Duration) error
 	WaitHTTPRouteConditionFn func(ctx context.Context, sctx *scenarios.Context, ns, name, condType string, timeout time.Duration) error
-	PoolPresentFn            func(ctx context.Context, sctx *scenarios.Context, ns, name string) error
 	ResyncHTTPRoutesFn       func(ctx context.Context, sctx *scenarios.Context, ns string) error
 	// RunBodyProbesFn curls the VIP and reports whether the marker was seen on
 	// at least one HTTP 200 response, plus a human-readable summary string.
@@ -93,10 +84,6 @@ func realVerifyDeps() VerifyDeps {
 		},
 		WaitConditionFn:          scenarios.WaitCondition,
 		WaitHTTPRouteConditionFn: scenarios.WaitHTTPRouteCondition,
-		PoolPresentFn: func(ctx context.Context, sctx *scenarios.Context, ns, name string) error {
-			_, err := sctx.Dynamic.Resource(poolGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
-			return err
-		},
 		ResyncHTTPRoutesFn: func(ctx context.Context, sctx *scenarios.Context, ns string) error {
 			_, err := bnk.ResyncHTTPRoutes(ctx, sctx.Dynamic, bnk.ResyncOptions{
 				Namespace:      ns,
@@ -157,25 +144,27 @@ func (s *scenario) Rating() scenarios.Rating { return scenarios.Green }
 func (s *scenario) Dependencies() []string   { return []string{} }
 func (s *scenario) Description() string {
 	return strings.TrimSpace(`
-External-resource Pool scenario exercising BNK's Pool CR as an HTTPRoute backend
-(how-to #10). The HTTPRoute targets a Pool (group: k8s.f5net.com, kind: Pool)
-whose single member is an *off-cluster* IP — the slice-12 jumphost's BNK_EXT ENI
-(JUMPHOST_BNK_EXT_ENI_IP), which is on the VIP's L2 and directly TMM-reachable.
+External-resource scenario exercising a Kubernetes EndpointSlice as an HTTPRoute
+backend (how-to #10). BNK 2.3 has NO Pool CRD; the documented way to load-balance
+to an *external* resource is a selectorless Service plus a manually-managed
+EndpointSlice whose single endpoint is an *off-cluster* IP — the slice-12
+jumphost's BNK_EXT ENI (JUMPHOST_BNK_EXT_ENI_IP), which is on the VIP's L2 and
+directly TMM-reachable.
 
 Applies 5 templated manifests into the scenario namespace:
   Namespace, F5BnkGateway IP pool (single-address, VIP=.102 only),
-  Gateway (spec.addresses=[VIP]), Pool CR (member = jumphost BNK_EXT IP:8080),
-  HTTPRoute (host=awsbnkctl-extpool.local → backendRef Pool ext-backend-pool).
+  Gateway (spec.addresses=[VIP]), selectorless Service ext-backend +
+  EndpointSlice ext-backend-1 (endpoint = jumphost BNK_EXT IP:8080),
+  HTTPRoute (host=awsbnkctl-extpool.local → backendRef Service ext-backend).
 
 Verify order (load-bearing):
   1. Start a python3 http.server on the jumphost (port 8080) serving a marker —
-     done FIRST so the Pool member is live before TMM health-checks it.
+     done FIRST so the EndpointSlice endpoint is live before TMM health-checks it.
   2. Wait Gateway Programmed=True, HTTPRoute Accepted=True + ResolvedRefs=True.
-  3. Best-effort confirm the Pool CR exists.
-  4. Call pkg/bnk.ResyncHTTPRoutes — idempotent pool-member workaround.
-  5. Open SSH via EICE to the jumphost and curl --interface <BNK_EXT_ENI_IP>
+  3. Call pkg/bnk.ResyncHTTPRoutes — idempotent pool-member workaround.
+  4. Open SSH via EICE to the jumphost and curl --interface <BNK_EXT_ENI_IP>
      http://<VIP>/ N times (default 10), reading the response body.
-  6. Assert: >=1 curl returns HTTP 200 AND the body contains the marker.
+  5. Assert: >=1 curl returns HTTP 200 AND the body contains the marker.
 
 Cleanup: stop the responder (best-effort) then delete the namespace (idempotent).
 Requires: testing.jumphost.enabled=true in cluster.yaml + awsbnkctl up first.
@@ -189,7 +178,8 @@ type manifestVars struct {
 	GatewayClassName string
 	VIP              string
 	ExternalCIDR     string
-	// BackendIP is the off-cluster Pool member address (jumphost BNK_EXT ENI).
+	// BackendIP is the off-cluster EndpointSlice endpoint address
+	// (jumphost BNK_EXT ENI).
 	BackendIP string
 }
 
@@ -247,8 +237,8 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	res := scenarios.Result{}
 
 	// --- Step 0: Start the off-cluster HTTP responder FIRST ---
-	// The Pool member must be live before TMM health-checks it, otherwise the
-	// pool member is marked down and curls return 5xx.
+	// The EndpointSlice endpoint must be live before TMM health-checks it,
+	// otherwise the pool member is marked down and curls return 5xx.
 	respErr := d.StartHTTPResponderFn(ctx.Ctx, ctx, responderPort, responderMarker)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "jumphost HTTP responder started",
@@ -281,14 +271,6 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	err = d.WaitHTTPRouteConditionFn(ctx.Ctx, ctx, ns, "scn-extpool-route", "ResolvedRefs", 3*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-extpool-route ResolvedRefs=True",
-		OK:          err == nil,
-		Got:         scenarios.ErrString(err),
-	})
-
-	// Pool CR present (best-effort Get).
-	err = d.PoolPresentFn(ctx.Ctx, ctx, ns, "ext-backend-pool")
-	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "Pool CR ext-backend-pool present",
 		OK:          err == nil,
 		Got:         scenarios.ErrString(err),
 	})
@@ -333,7 +315,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 	seen, got := d.RunBodyProbesFn(ctx.Ctx, ctx, vip, scnHostname, responderMarker, probeIter, timeout)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
-		Description: "end-to-end curl via Gateway reaches external Pool backend (HTTP 200 + marker)",
+		Description: "end-to-end curl via Gateway reaches external EndpointSlice backend (HTTP 200 + marker)",
 		OK:          seen,
 		Got:         got,
 	})

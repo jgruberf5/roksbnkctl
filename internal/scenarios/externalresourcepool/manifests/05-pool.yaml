@@ -1,9 +1,0 @@
-apiVersion: k8s.f5net.com/v1
-kind: Pool
-metadata:
-  name: ext-backend-pool
-  namespace: {{.Namespace}}
-spec:
-  members:
-  - address: {{.BackendIP}}
-    port: 8080

@@ -45,7 +45,7 @@ func makeCluster() *intent.Cluster {
 }
 
 // stateWithBackendIP returns a state.State seeded with the jumphost ENI IP so
-// the Pool manifest renders a concrete backend address.
+// the EndpointSlice manifest renders a concrete backend address.
 func stateWithBackendIP(t *testing.T) *state.State {
 	t.Helper()
 	st, err := state.Load(t.TempDir())
@@ -110,22 +110,30 @@ func TestManifestsRendered(t *testing.T) {
 		if strings.Contains(content, "{{") || strings.Contains(content, "}}") {
 			t.Errorf("manifest %s still contains template directives:\n%s", p, content)
 		}
-		// The Pool manifest must carry the rendered backend IP.
-		if strings.HasSuffix(p, "05-pool.yaml") {
-			if !strings.Contains(content, "kind: Pool") {
-				t.Errorf("05-pool.yaml missing 'kind: Pool':\n%s", content)
+		// The external-backend manifest must carry both a selectorless Service
+		// and an EndpointSlice with the rendered backend IP. BNK 2.3 has no
+		// Pool CRD, so it must NOT mention one.
+		if strings.HasSuffix(p, "05-external-backend.yaml") {
+			if !strings.Contains(content, "kind: Service") {
+				t.Errorf("05-external-backend.yaml missing 'kind: Service':\n%s", content)
+			}
+			if !strings.Contains(content, "kind: EndpointSlice") {
+				t.Errorf("05-external-backend.yaml missing 'kind: EndpointSlice':\n%s", content)
 			}
 			if !strings.Contains(content, fakeBackendIP) {
-				t.Errorf("05-pool.yaml missing backend IP %q:\n%s", fakeBackendIP, content)
+				t.Errorf("05-external-backend.yaml missing backend IP %q:\n%s", fakeBackendIP, content)
+			}
+			if strings.Contains(content, "kind: Pool") {
+				t.Errorf("05-external-backend.yaml must NOT contain 'kind: Pool' (BNK 2.3 has no Pool CRD):\n%s", content)
 			}
 		}
-		// The HTTPRoute must reference the Pool by kind.
+		// The HTTPRoute must reference the Service by name, not a Pool CR.
 		if strings.HasSuffix(p, "06-httproute.yaml") {
-			if !strings.Contains(content, "kind: Pool") {
-				t.Errorf("06-httproute.yaml missing 'kind: Pool' backendRef:\n%s", content)
+			if !strings.Contains(content, "name: ext-backend") {
+				t.Errorf("06-httproute.yaml missing 'name: ext-backend' backendRef:\n%s", content)
 			}
-			if !strings.Contains(content, "ext-backend-pool") {
-				t.Errorf("06-httproute.yaml missing Pool name reference:\n%s", content)
+			if strings.Contains(content, "kind: Pool") {
+				t.Errorf("06-httproute.yaml must NOT contain 'kind: Pool' backendRef (BNK 2.3 has no Pool CRD):\n%s", content)
 			}
 		}
 	}
@@ -156,7 +164,7 @@ func TestManifestsMissingBackendIP(t *testing.T) {
 //
 //	StartHTTPResponder → waitCondition(Programmed) →
 //	waitHTTPRouteCondition(Accepted) → waitHTTPRouteCondition(ResolvedRefs) →
-//	PoolPresent → ResyncHTTPRoutes → RunBodyProbes
+//	ResyncHTTPRoutes → RunBodyProbes
 func TestVerifyCallOrder(t *testing.T) {
 	var calls []string
 
@@ -171,10 +179,6 @@ func TestVerifyCallOrder(t *testing.T) {
 		},
 		WaitHTTPRouteConditionFn: func(_ context.Context, _ *scenarios.Context, _, _, condType string, _ time.Duration) error {
 			calls = append(calls, "waitHTTPRouteCondition("+condType+")")
-			return nil
-		},
-		PoolPresentFn: func(_ context.Context, _ *scenarios.Context, _, _ string) error {
-			calls = append(calls, "PoolPresent")
 			return nil
 		},
 		ResyncHTTPRoutesFn: func(_ context.Context, _ *scenarios.Context, _ string) error {
@@ -211,7 +215,6 @@ func TestVerifyCallOrder(t *testing.T) {
 		"waitCondition(Programmed)",
 		"waitHTTPRouteCondition(Accepted)",
 		"waitHTTPRouteCondition(ResolvedRefs)",
-		"PoolPresent",
 		"ResyncHTTPRoutes",
 		"RunBodyProbes",
 	}
