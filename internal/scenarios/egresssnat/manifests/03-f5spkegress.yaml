@@ -1,0 +1,14 @@
+apiVersion: k8s.f5net.com/v3
+kind: F5SPKEgress
+metadata:
+  name: awsbnkctl-egress
+  namespace: {{.EgressNamespace}}
+spec:
+  snatType: SRC_TRANS_AUTOMAP
+  pseudoCNIConfig:
+    namespaces:
+    - {{.Namespace}}
+    appPodInterface: eth0
+    vxlan:
+      create: true
+      tmmInterfaceName: {{.TmmIntVlan}}
