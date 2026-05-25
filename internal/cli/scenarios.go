@@ -17,6 +17,8 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/httptrafficsplit"
 	// Side-effect import: registers external-resource-pool in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/externalresourcepool"
+	// Side-effect import: registers proxy-protocol-l4 in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/proxyprotocoll4"
 )
 
 // topoSort returns the registered scenarios in dependency order using Kahn's
