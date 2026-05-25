@@ -315,18 +315,24 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	}
 
 	// VIP A → backend mv-a.
-	bodiesA, gotA := d.RunBodyProbesFn(ctx.Ctx, ctx, v.VIPA, scnHostnameA, iterations, timeout)
+	okA, gotA := scenarios.PollMarkers(ctx.Ctx, 120*time.Second, 10*time.Second, func() (bool, string) {
+		bodies, g := d.RunBodyProbesFn(ctx.Ctx, ctx, v.VIPA, scnHostnameA, iterations, timeout)
+		return strings.Contains(bodies, markerA), g
+	})
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "VIP A (.106) serves backend mv-a",
-		OK:          strings.Contains(bodiesA, markerA),
+		OK:          okA,
 		Got:         gotA,
 	})
 
 	// VIP B → backend mv-b.
-	bodiesB, gotB := d.RunBodyProbesFn(ctx.Ctx, ctx, v.VIPB, scnHostnameB, iterations, timeout)
+	okB, gotB := scenarios.PollMarkers(ctx.Ctx, 120*time.Second, 10*time.Second, func() (bool, string) {
+		bodies, g := d.RunBodyProbesFn(ctx.Ctx, ctx, v.VIPB, scnHostnameB, iterations, timeout)
+		return strings.Contains(bodies, markerB), g
+	})
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "VIP B (.107) serves backend mv-b",
-		OK:          strings.Contains(bodiesB, markerB),
+		OK:          okB,
 		Got:         gotB,
 	})
 

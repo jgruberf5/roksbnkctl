@@ -143,7 +143,6 @@ type manifestVars struct {
 	ClusterName      string
 	GatewayClassName string
 	VIP              string
-	VIPRangeEnd      string
 	ExternalCIDR     string
 }
 
@@ -336,6 +335,5 @@ func buildManifestVars(ctx *scenarios.Context) (manifestVars, error) {
 		return v, fmt.Errorf("VIP not derivable — set network.dataPath.external.cidr in cluster.yaml or pass --vip")
 	}
 	v.VIP = vip
-	v.VIPRangeEnd = scenarios.VIPPlus100(vip)
 	return v, nil
 }

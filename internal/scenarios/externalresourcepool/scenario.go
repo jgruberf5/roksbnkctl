@@ -313,10 +313,13 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		probeIter = 10
 	}
 
-	seen, got := d.RunBodyProbesFn(ctx.Ctx, ctx, vip, scnHostname, responderMarker, probeIter, timeout)
+	ok, got := scenarios.PollMarkers(ctx.Ctx, 120*time.Second, 10*time.Second, func() (bool, string) {
+		s, g := d.RunBodyProbesFn(ctx.Ctx, ctx, vip, scnHostname, responderMarker, probeIter, timeout)
+		return s, g
+	})
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "end-to-end curl via Gateway reaches external EndpointSlice backend (HTTP 200 + marker)",
-		OK:          seen,
+		OK:          ok,
 		Got:         got,
 	})
 

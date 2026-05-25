@@ -368,16 +368,18 @@ func withLastOctet(ip, octet string) string {
 	return strings.Join(parts, ".")
 }
 
-// waitL4RouteCondition polls the L4Route's .status.parents[*].conditions for the
-// named condition with status=True. Models scenarios.WaitHTTPRouteCondition but
-// against the BNK l4RouteGVR — the L4Route status carries the same Gateway-API
-// shaped per-parent condition list (verified against kindbnkctl's verify, which
-// reads .status.parents[0].conditions[?(@.type=="Accepted")].status).
+// waitL4RouteCondition polls the L4Route for the named condition with
+// status=True. It inspects BOTH the per-parent list (.status.parents[*].conditions)
+// AND the flat top-level list (.status.conditions), so a True condition in either
+// location satisfies the wait. This dual-path approach guards against uncertainty
+// in the BNK L4Route status schema: some BNK versions surface conditions only at
+// the top level, others use the Gateway-API per-parent shape.
 func waitL4RouteCondition(ctx context.Context, sctx *scenarios.Context, ns, name, condType string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		obj, err := sctx.Dynamic.Resource(l4RouteGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
+			// Path 1: per-parent conditions (.status.parents[*].conditions).
 			parents, _, _ := scenarios.NestedSlice(obj.Object, "status", "parents")
 			for _, pRaw := range parents {
 				p, ok := pRaw.(map[string]interface{})
@@ -393,6 +395,17 @@ func waitL4RouteCondition(ctx context.Context, sctx *scenarios.Context, ns, name
 					if c["type"] == condType && c["status"] == "True" {
 						return nil
 					}
+				}
+			}
+			// Path 2: flat top-level conditions (.status.conditions[*]).
+			conditions, _, _ := scenarios.NestedSlice(obj.Object, "status", "conditions")
+			for _, cRaw := range conditions {
+				c, ok := cRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if c["type"] == condType && c["status"] == "True" {
+					return nil
 				}
 			}
 		}

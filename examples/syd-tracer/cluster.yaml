@@ -153,12 +153,14 @@ testing:
 # Optional: register the cluster with a running bnk-forge instance after `up`.
 # When omitted, forge handoff is skipped. credentialTemplateId=1 is forge's
 # default "AWS Production" template; set to 0 to skip credential attachment.
-#
-# forge:
-#   enabled: true
-#   url: http://localhost:8000
-#   mcpUrl: http://localhost:8081/mcp/
-#   credentialTemplateId: 1  # forge AWS Production template
+# Enabled here so Phase09 registers on `up` and unregisters on `down`; the
+# standalone `awsbnkctl forge {register,status,unregister} --config <this>` also
+# works against the same link in the cluster state dir.
+forge:
+  enabled: true
+  url: http://localhost:8000
+  mcpUrl: http://localhost:8081/mcp/
+  credentialTemplateId: 1  # forge AWS Production template
 
 # tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
 tags:

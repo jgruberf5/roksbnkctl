@@ -41,6 +41,18 @@ clouddocs method: `kubectl exec` into an app pod, `curl` an external echo server
 ## Recommended next step
 A short LIVE spike on the next cold cluster: apply a minimal `F5SPKEgress` (AUTOMAP, one test ns + curl pod), check whether (a) it reconciles, (b) the pod's traffic actually transits TMM, (c) the egress reaches the internet, and (d) what the observed source IP is. Resolve the source/dest-check + pod→TMM-routing unknowns there, THEN build the scenario Green. Until then, egress is NOT in the scenario suite (no guessed/likely-broken scenario committed — per the no-deferred-fixes / don't-ship-unrunnable-code principle).
 
+## Live spike outcome (cycle-4, 2026-05-25 on syd-tracer, BNK 2.3.0)
+
+Ran the live recon on a real cluster. The three AWS unknowns are now resolved, and the hard pod→TMM unknown is characterised:
+
+- **F5SPKEgress CRD present**, plural `f5-spk-egresses.k8s.f5net.com`, versions **v1/v2/v3**. v3 spec matches the doc: `snatType` (enum `SRC_TRANS_NONE|SRC_TRANS_SNATPOOL|SRC_TRANS_AUTOMAP`, default AUTOMAP), `pseudoCNIConfig{appNodeInterface,appPodInterface,namespaces,vxlan,secureSPKIngressPort}`, `vlans{vlanList,disableListedVlans,category}`, `egressSnatpool`, firewall/dns/nat64 fields. F5SPKVlans live: `f5-cne-system/ext-vlan` (selfip 10.0.10.240) + `int-vlan` (selfip 10.0.20.240, interfaces `['1.2']`).
+- **UNKNOWN #1 (EC2 source/dest-check) — RESOLVED ✅**: `SourceDestCheck=false` is ALREADY set on BOTH TMM ENIs (external eni-…b97 / internal eni-…f8a) by the host-device phase. SNAT'd egress won't be VPC-dropped.
+- **SNAT-IP routability — RESOLVED ✅**: AUTOMAP's external self-IP `10.0.10.240` is a secondary IP physically on the external ENI (alongside scenario VIPs .100–.107), so VPC-routable.
+- **UNKNOWN #3 (internet path) — RESOLVED ❌ (negative)**: the external TMM subnet (`subnet-03abd5a6…`) uses the VPC **main** route table, which has ONLY `10.0.0.0/16→local` — **no NAT/IGW route**. So egress out the external self-IP can reach **in-VPC targets only**, NOT the internet. A `curl httpbin.org/ip` test is impossible on this topology; verification must use an in-VPC reflector (e.g. the jumphost).
+- **UNKNOWN #2 (pod→TMM routing) — CHARACTERISED, and it's the blocker**: the Multus `internal-netdevice` NAD is `type: host-device, device: ens7` — but **ens7 is consumed by TMM** (it IS TMM's internal-VLAN interface). host-device can't share a NIC, and once ens7 is moved into the TMM pod the worker node has no internal-VLAN interface for `pseudoCNIConfig.appNodeInterface`. So an app pod canNOT join 10.0.20.0/24 the simple way; egress for app pods would require **`pseudoCNIConfig.vxlan` mode** (a VXLAN tunnel from the worker into TMM's internal VLAN). That is an unproven, multi-step build — NOT a quick apply-and-curl test.
+
+**Verdict (updated):** Egress is *feasible in principle* for **in-VPC** targets on this host-device EKS topology (src/dest-check off, self-IP routable), but the app-pod→TMM data path needs the VXLAN pseudo-CNI mode, which is a focused build + debug effort, not a cycle-tail test. No internet egress without adding a NAT/IGW route to the external subnet. **No egress scenario built or committed** (consistent with don't-ship-guessed-code). Recommended follow-up = a dedicated task: build `pseudoCNIConfig.vxlan` egress + an in-VPC reflector test asserting source IP == 10.0.10.240, on its own cluster cycle.
+
 ## Sources
 - F5SPKEgress CRD: clouddocs.f5.com/bigip-next-for-kubernetes/latest/custom-resource-definitions/spk-egress-crd.html
 - F5SPKSnatpool: .../spk-snatpool-crd.html · F5SPKStaticRoute: .../spk-static-route-crd.html · F5SPKVLAN: .../spk-vlan-crd.html

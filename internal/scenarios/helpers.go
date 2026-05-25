@@ -194,20 +194,19 @@ func IsNotFound(err error) bool {
 	return strings.Contains(err.Error(), "not found")
 }
 
-// VIPPlus100 increments the last octet of a dotted-quad IP by 100 (capped at 254).
-func VIPPlus100(vip string) string {
-	parts := strings.Split(vip, ".")
-	if len(parts) != 4 {
-		return vip
+// PollMarkers calls fn repeatedly until it returns ok=true or maxWait elapses,
+// sleeping interval between attempts. fn is always called at least once.
+// Returns the final (ok, detail). Honors ctx cancellation.
+func PollMarkers(ctx context.Context, maxWait, interval time.Duration, fn func() (ok bool, detail string)) (bool, string) {
+	deadline := time.Now().Add(maxWait)
+	ok, detail := fn()
+	for !ok && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ok, detail
+		case <-time.After(interval):
+		}
+		ok, detail = fn()
 	}
-	last, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return vip
-	}
-	end := last + 100
-	if end > 254 {
-		end = 254
-	}
-	parts[3] = strconv.Itoa(end)
-	return strings.Join(parts, ".")
+	return ok, detail
 }
