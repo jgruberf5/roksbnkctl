@@ -20,14 +20,11 @@
 package httproutee2e
 
 import (
-	"bytes"
 	"context"
 	"embed"
 	"fmt"
 	"io/fs"
-	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,9 +62,9 @@ type VerifyDeps struct {
 
 func realVerifyDeps() VerifyDeps {
 	return VerifyDeps{
-		WaitDeploymentAvailableFn: waitDeploymentAvailable,
-		WaitConditionFn:           waitCondition,
-		WaitHTTPRouteConditionFn:  waitHTTPRouteCondition,
+		WaitDeploymentAvailableFn: scenarios.WaitDeploymentAvailable,
+		WaitConditionFn:           scenarios.WaitCondition,
+		WaitHTTPRouteConditionFn:  scenarios.WaitHTTPRouteCondition,
 		ResyncHTTPRoutesFn: func(ctx context.Context, sctx *scenarios.Context, ns string) error {
 			_, err := bnk.ResyncHTTPRoutes(ctx, sctx.Dynamic, bnk.ResyncOptions{
 				Namespace:      ns,
@@ -165,7 +162,7 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 		if e != nil {
 			return e
 		}
-		rendered, e := renderTemplate(string(tmplBytes), v)
+		rendered, e := scenarios.RenderTemplate(string(tmplBytes), v)
 		if e != nil {
 			return fmt.Errorf("rendering %s: %w", p, e)
 		}
@@ -194,23 +191,11 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 	return ao.Run(ctx.Ctx)
 }
 
-var (
-	gatewayGVR = schema.GroupVersionResource{
-		Group:    "gateway.networking.k8s.io",
-		Version:  "v1",
-		Resource: "gateways",
-	}
-	httpRouteGVR = schema.GroupVersionResource{
-		Group:    "gateway.networking.k8s.io",
-		Version:  "v1",
-		Resource: "httproutes",
-	}
-	f5BnkGatewayGVR = schema.GroupVersionResource{
-		Group:    "k8s.f5net.com",
-		Version:  "v1",
-		Resource: "f5-bnkgateways",
-	}
-)
+var f5BnkGatewayGVR = schema.GroupVersionResource{
+	Group:    "k8s.f5net.com",
+	Version:  "v1",
+	Resource: "f5-bnkgateways",
+}
 
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	d := s.vDeps
@@ -229,15 +214,15 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "nginx Deployment Available",
 		OK:          err == nil,
-		Got:         errString(err),
+		Got:         scenarios.ErrString(err),
 	})
 
 	// Gateway Programmed=True.
-	err = d.WaitConditionFn(ctx.Ctx, ctx, gatewayGVR, ns, "scn-gateway", "Programmed", 5*time.Minute)
+	err = d.WaitConditionFn(ctx.Ctx, ctx, scenarios.GatewayGVR, ns, "scn-gateway", "Programmed", 5*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "Gateway scn-gateway Programmed=True",
 		OK:          err == nil,
-		Got:         errString(err),
+		Got:         scenarios.ErrString(err),
 	})
 
 	// HTTPRoute Accepted=True.
@@ -245,7 +230,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-route Accepted=True",
 		OK:          err == nil,
-		Got:         errString(err),
+		Got:         scenarios.ErrString(err),
 	})
 
 	// HTTPRoute ResolvedRefs=True.
@@ -253,7 +238,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-route ResolvedRefs=True",
 		OK:          err == nil,
-		Got:         errString(err),
+		Got:         scenarios.ErrString(err),
 	})
 
 	// Best-effort: F5BnkGateway present (skipped when Dynamic client is nil).
@@ -262,7 +247,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		res.Assertions = append(res.Assertions, scenarios.Assertion{
 			Description: "F5BnkGateway awsbnkctl-default present",
 			OK:          ferr == nil,
-			Got:         errString(ferr),
+			Got:         scenarios.ErrString(ferr),
 		})
 	}
 
@@ -274,18 +259,18 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "ResyncHTTPRoutes (pool-member refresh)",
 		OK:          resyncErr == nil,
-		Got:         errString(resyncErr),
+		Got:         scenarios.ErrString(resyncErr),
 	})
 
 	// --- Step 3: SSH+EICE curl probes ---
-	vip, iterations, timeout, probeErr := buildProbeParams(ctx)
+	vip, iterations, timeout, probeErr := scenarios.BuildProbeParams(ctx)
 	if probeErr != nil {
 		res.Assertions = append(res.Assertions, scenarios.Assertion{
 			Description: "jumphost probe setup",
 			OK:          false,
 			Got:         probeErr.Error(),
 		})
-		return finalizeResult(res)
+		return scenarios.FinalizeResult(res)
 	}
 
 	instanceID := ctx.State.Get("JUMPHOST_INSTANCE_ID")
@@ -296,7 +281,7 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 			OK:          false,
 			Got:         "JUMPHOST_INSTANCE_ID / JUMPHOST_BNK_EXT_ENI_IP missing from state.env — run `awsbnkctl up` with testing.jumphost.enabled=true",
 		})
-		return finalizeResult(res)
+		return scenarios.FinalizeResult(res)
 	}
 
 	curlOK, got := d.RunCurlProbesFn(ctx.Ctx, ctx, vip, iterations, timeout)
@@ -306,13 +291,13 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Got:         got,
 	})
 
-	return finalizeResult(res)
+	return scenarios.FinalizeResult(res)
 }
 
 func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	ns := namespace(ctx)
 	err := ctx.Clientset.CoreV1().Namespaces().Delete(ctx.Ctx, ns, metav1.DeleteOptions{})
-	if err != nil && !isNotFound(err) {
+	if err != nil && !scenarios.IsNotFound(err) {
 		return fmt.Errorf("deleting namespace %s: %w", ns, err)
 	}
 	return nil
@@ -351,184 +336,6 @@ func buildManifestVars(ctx *scenarios.Context) (manifestVars, error) {
 		return v, fmt.Errorf("VIP not derivable — set network.dataPath.external.cidr in cluster.yaml or pass --vip")
 	}
 	v.VIP = vip
-	v.VIPRangeEnd = vipPlus100(vip)
+	v.VIPRangeEnd = scenarios.VIPPlus100(vip)
 	return v, nil
-}
-
-// vipPlus100 increments the last octet by 100 (capped at 254).
-func vipPlus100(vip string) string {
-	parts := strings.Split(vip, ".")
-	if len(parts) != 4 {
-		return vip
-	}
-	last, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return vip
-	}
-	end := last + 100
-	if end > 254 {
-		end = 254
-	}
-	parts[3] = strconv.Itoa(end)
-	return strings.Join(parts, ".")
-}
-
-func renderTemplate(tmpl string, data interface{}) (string, error) {
-	t, err := template.New("manifest").Parse(tmpl)
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-// waitDeploymentAvailable polls until the named Deployment has the Available
-// condition set to True, or timeout elapses.
-func waitDeploymentAvailable(ctx context.Context, sctx *scenarios.Context, ns, name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		dep, err := sctx.Clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
-		if err == nil {
-			for _, c := range dep.Status.Conditions {
-				if string(c.Type) == "Available" && string(c.Status) == "True" {
-					return nil
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("deployment %s/%s not Available after %s", ns, name, timeout)
-}
-
-// waitCondition polls a Gateway (or any GVR-based resource) for a named
-// condition status=True in .status.conditions.
-func waitCondition(ctx context.Context, sctx *scenarios.Context, gvr schema.GroupVersionResource, ns, name, condType string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		obj, err := sctx.Dynamic.Resource(gvr).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
-		if err == nil {
-			conditions, _, _ := scenarios.NestedSlice(obj.Object, "status", "conditions")
-			for _, cRaw := range conditions {
-				c, ok := cRaw.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if c["type"] == condType && c["status"] == "True" {
-					return nil
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("%s %s/%s condition %s not True after %s", gvr.Resource, ns, name, condType, timeout)
-}
-
-// waitHTTPRouteCondition polls the HTTPRoute's .status.parents[*].conditions
-// for the named condition with status=True.
-func waitHTTPRouteCondition(ctx context.Context, sctx *scenarios.Context, ns, name, condType string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		obj, err := sctx.Dynamic.Resource(httpRouteGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
-		if err == nil {
-			parents, _, _ := scenarios.NestedSlice(obj.Object, "status", "parents")
-			for _, pRaw := range parents {
-				p, ok := pRaw.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				conditions, _, _ := scenarios.NestedSlice(p, "conditions")
-				for _, cRaw := range conditions {
-					c, ok2 := cRaw.(map[string]interface{})
-					if !ok2 {
-						continue
-					}
-					if c["type"] == condType && c["status"] == "True" {
-						return nil
-					}
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("HTTPRoute %s/%s condition %s not True after %s", ns, name, condType, timeout)
-}
-
-func buildProbeParams(ctx *scenarios.Context) (vip string, iterations int, timeout time.Duration, err error) {
-	vip = ctx.Options["vip"]
-	if vip == "" && ctx.Cluster != nil {
-		vip, err = ctx.Cluster.DefaultVIP()
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("deriving VIP: %w", err)
-		}
-	}
-	if vip == "" {
-		return "", 0, 0, fmt.Errorf("VIP not set — pass --vip or set network.dataPath.external.cidr")
-	}
-	iterations = 5
-	if v := ctx.Options["iterations"]; v != "" {
-		if n, e := strconv.Atoi(v); e == nil && n > 0 {
-			iterations = n
-		}
-	}
-	timeout = 10 * time.Second
-	if v := ctx.Options["timeout"]; v != "" {
-		if d, e := time.ParseDuration(v); e == nil && d > 0 {
-			timeout = d
-		}
-	}
-	return vip, iterations, timeout, nil
-}
-
-func finalizeResult(res scenarios.Result) scenarios.Result {
-	if res.AllPassed() {
-		res.Status = "ok"
-		res.Summary = "control-plane reconciled + end-to-end curls via Gateway returned HTTP 200"
-	} else {
-		res.Status = "failed"
-		var failed []string
-		for _, a := range res.Assertions {
-			if !a.OK {
-				failed = append(failed, a.Description)
-			}
-		}
-		res.Summary = "failed: " + strings.Join(failed, "; ")
-	}
-	return res
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return oneLine(err.Error(), 200)
-}
-
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "not found")
 }
