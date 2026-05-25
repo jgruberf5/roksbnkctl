@@ -19,6 +19,10 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/externalresourcepool"
 	// Side-effect import: registers proxy-protocol-l4 in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/proxyprotocoll4"
+	// Side-effect import: registers ai-token-counting in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aitokencounting"
+	// Side-effect import: registers ai-semantic-cache in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aisemanticcache"
 )
 
 // topoSort returns the registered scenarios in dependency order using Kahn's
