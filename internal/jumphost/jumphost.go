@@ -326,6 +326,97 @@ func RunCurlBodyProbes(ctx context.Context, opts ProbeOptions) ([]BodyProbeResul
 	return results, nil
 }
 
+// SSHRunViaEICE opens an EICE tunnel to the jumphost and runs an arbitrary
+// remote command, returning its stdout (trimmed). It uses the same ssh
+// ProxyCommand args as SSHCurlBodyViaEICE and the ec2-user account. The caller
+// is responsible for minting + pushing the key before calling this (use
+// prepareEICEKey).
+func SSHRunViaEICE(ctx context.Context, region, instanceID, keyPath, remoteCmd string) (string, error) {
+	proxy := fmt.Sprintf(`ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id %s --region %s`, instanceID, region)
+	args := []string{
+		"-o", proxy,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=15",
+		"-i", keyPath,
+		"ec2-user@" + instanceID,
+		remoteCmd,
+	}
+	// #nosec G204 -- args are constructed from validated state.env values
+	// (instanceID, region) + a temp private-key path we just minted + a
+	// remoteCmd built from package-controlled values (port + shell-escaped
+	// marker); no caller-supplied free text reaches the subprocess.
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return strings.TrimSpace(stdout.String()), fmt.Errorf("ssh-run: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// shellSingleQuote wraps s in single quotes safe for /bin/sh, escaping any
+// embedded single quotes via the close-quote/escaped-quote/reopen-quote idiom.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// buildHTTPResponderCmd returns the remote shell command that writes marker to
+// a temp index file and (re)starts a backgrounded `python3 -m http.server
+// <port>` serving it, then curls 127.0.0.1:<port> and echoes the HTTP code.
+// A "200" trailing line means the responder is live. The marker is
+// shell-escaped so arbitrary content is safe.
+func buildHTTPResponderCmd(port int, marker string) string {
+	q := shellSingleQuote(marker)
+	return fmt.Sprintf(
+		`mkdir -p /tmp/awsbnkctl-extpool && printf '%%s' %s > /tmp/awsbnkctl-extpool/index.html && (pkill -f "http.server %d" 2>/dev/null; sleep 1; cd /tmp/awsbnkctl-extpool && setsid nohup python3 -m http.server %d >/tmp/awsbnkctl-extpool/srv.log 2>&1 & ) ; sleep 1 ; curl -s -o /dev/null -w '%%{http_code}' http://127.0.0.1:%d/`,
+		q, port, port, port,
+	)
+}
+
+// buildHTTPResponderStopCmd returns the best-effort remote command that kills
+// any python3 http.server bound to port.
+func buildHTTPResponderStopCmd(port int) string {
+	return fmt.Sprintf(`pkill -f "http.server %d" 2>/dev/null ; true`, port)
+}
+
+// StartHTTPResponder mints+pushes an ephemeral key, then starts a backgrounded
+// python3 HTTP server on the jumphost that serves marker as the body on port.
+// It returns nil only when the in-host self-curl returns HTTP 200; otherwise it
+// returns an error including the remote stdout so failures are diagnosable.
+func StartHTTPResponder(ctx context.Context, opts ProbeOptions, port int, marker string) error {
+	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	out, runErr := SSHRunViaEICE(ctx, opts.Region, opts.InstanceID, keyPath, buildHTTPResponderCmd(port, marker))
+	if runErr != nil {
+		return fmt.Errorf("starting HTTP responder on :%d: %w (remote stdout: %q)", port, runErr, out)
+	}
+	if strings.TrimSpace(out) != "200" {
+		return fmt.Errorf("HTTP responder on :%d did not return 200 (remote stdout: %q)", port, out)
+	}
+	return nil
+}
+
+// StopHTTPResponder best-effort kills any python3 http.server on port via the
+// EICE tunnel. A non-zero remote exit (e.g. nothing to kill) is not an error.
+func StopHTTPResponder(ctx context.Context, opts ProbeOptions, port int) error {
+	keyPath, cleanup, err := prepareEICEKey(ctx, opts.Region, opts.InstanceID)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	// Ignore the run error: pkill returns non-zero when no process matched,
+	// which is a perfectly fine outcome for a best-effort stop.
+	_, _ = SSHRunViaEICE(ctx, opts.Region, opts.InstanceID, keyPath, buildHTTPResponderStopCmd(port))
+	return nil
+}
+
 // GenerateEphemeralED25519 mints a fresh ED25519 keypair and returns
 // (private-key in OpenSSH PEM, public-key in authorized_keys format, error).
 func GenerateEphemeralED25519() (privPEM []byte, pubAuthLine string, err error) {

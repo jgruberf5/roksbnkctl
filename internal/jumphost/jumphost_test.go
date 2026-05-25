@@ -124,6 +124,41 @@ func TestBuildCurlBodyCmd_NoHost(t *testing.T) {
 	}
 }
 
+func TestBuildHTTPResponderCmd_ContainsMarkerAndPort(t *testing.T) {
+	cmd := jumphost.BuildHTTPResponderCmd(8080, "external-resource-pool-OK")
+
+	if !strings.Contains(cmd, "external-resource-pool-OK") {
+		t.Errorf("cmd missing marker: %q", cmd)
+	}
+	if !strings.Contains(cmd, "http.server 8080") {
+		t.Errorf("cmd missing 'http.server 8080': %q", cmd)
+	}
+	if !strings.Contains(cmd, "http://127.0.0.1:8080/") {
+		t.Errorf("cmd missing self-curl URL: %q", cmd)
+	}
+	if !strings.Contains(cmd, "%{http_code}") {
+		t.Errorf("cmd missing http_code probe: %q", cmd)
+	}
+}
+
+func TestBuildHTTPResponderCmd_EscapesMarkerQuotes(t *testing.T) {
+	// A marker containing a single quote must not break out of the shell quote.
+	cmd := jumphost.BuildHTTPResponderCmd(9090, "a'b")
+	if !strings.Contains(cmd, `'a'\''b'`) {
+		t.Errorf("single-quote in marker not escaped: %q", cmd)
+	}
+}
+
+func TestBuildHTTPResponderStopCmd(t *testing.T) {
+	cmd := jumphost.BuildHTTPResponderStopCmd(8080)
+	if !strings.Contains(cmd, "http.server 8080") {
+		t.Errorf("stop cmd missing port: %q", cmd)
+	}
+	if !strings.Contains(cmd, "pkill") {
+		t.Errorf("stop cmd missing pkill: %q", cmd)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
