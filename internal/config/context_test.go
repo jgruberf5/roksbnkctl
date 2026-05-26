@@ -59,9 +59,8 @@ func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
 	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	in := &Workspace{
-		AWS:      AWSCfg{Region: "us-east-1", Profile: "default"},
-		Cluster:  ClusterCfg{Create: true, Name: "bnk-demo", WorkersPerZone: 1},
-		TFSource: TFSourceCfg{Type: "github", Repo: "JLCode-tech/awsbnkctl-tf", Ref: "v0.6.7"},
+		AWS:     AWSCfg{Region: "us-east-1", Profile: "default"},
+		Cluster: ClusterCfg{Create: true, Name: "bnk-demo", WorkersPerZone: 1},
 	}
 	if err := SaveWorkspace("demo", in); err != nil {
 		t.Fatalf("SaveWorkspace: %v", err)
@@ -71,7 +70,7 @@ func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
 	}
-	if out.AWS.Region != "us-east-1" || out.Cluster.Name != "bnk-demo" || out.TFSource.Ref != "v0.6.7" {
+	if out.AWS.Region != "us-east-1" || out.Cluster.Name != "bnk-demo" || out.AWS.Profile != "default" {
 		t.Errorf("roundtrip mismatch: %+v", out)
 	}
 }
@@ -85,6 +84,96 @@ func TestLoadWorkspace_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "workspace not found") {
 		t.Errorf("error = %v, want it to wrap ErrWorkspaceNotFound", err)
+	}
+}
+
+// writeWorkspaceStateEnv stages a state.env with the given body under
+// <workspace>/state/ for the given workspace name. Used by the delete-guard
+// tests.
+func writeWorkspaceStateEnv(t *testing.T, ws, body string) {
+	t.Helper()
+	dir, err := WorkspaceStateDir(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state.env"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDeleteWorkspace_GuardOnPopulatedStateEnv covers the state.env-based
+// delete guard: a state.env with a populated resource ID blocks deletion
+// unless --force; an empty state.env (or none) deletes cleanly.
+func TestDeleteWorkspace_GuardOnPopulatedStateEnv(t *testing.T) {
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+
+	// Workspace with a live VPC_ID — guard must block delete.
+	if err := SaveWorkspace("live", &Workspace{AWS: AWSCfg{Region: "us-east-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceStateEnv(t, "live", "VPC_ID=vpc-123\nEKS_CLUSTER_NAME=demo\n")
+	if err := DeleteWorkspace("live", false); err == nil {
+		t.Error("expected DeleteWorkspace to refuse a workspace with provisioned resources")
+	}
+	// --force overrides.
+	if err := DeleteWorkspace("live", true); err != nil {
+		t.Errorf("force delete should succeed: %v", err)
+	}
+	if WorkspaceExists("live") {
+		t.Error("workspace should be gone after force delete")
+	}
+
+	// Workspace whose state.env has only empty values (post-down) — deletes.
+	if err := SaveWorkspace("torndown", &Workspace{AWS: AWSCfg{Region: "us-east-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceStateEnv(t, "torndown", "VPC_ID=\nEKS_CLUSTER_NAME=\n# comment\n")
+	if err := DeleteWorkspace("torndown", false); err != nil {
+		t.Errorf("torn-down workspace (empty IDs) should delete without --force: %v", err)
+	}
+
+	// Workspace with no state.env at all — deletes.
+	if err := SaveWorkspace("fresh", &Workspace{AWS: AWSCfg{Region: "us-east-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteWorkspace("fresh", false); err != nil {
+		t.Errorf("fresh workspace (no state.env) should delete without --force: %v", err)
+	}
+}
+
+func TestStateEnvHasResources(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Missing file → false.
+	if stateEnvHasResources(filepath.Join(dir, "absent.env")) {
+		t.Error("missing file should report no resources")
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"empty values", "VPC_ID=\nTMM_INSTANCE_ID=\n", false},
+		{"only non-resource keys", "AWS_REGION=ap-southeast-2\nINTERNAL_PCI=0000:00:07.0\n", false},
+		{"populated VPC", "AWS_REGION=ap-southeast-2\nVPC_ID=vpc-abc\n", true},
+		{"populated jumphost", "JUMPHOST_INSTANCE_ID=i-0123\n", true},
+		{"comments + blanks only", "# header\n\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "state.env")
+			if err := os.WriteFile(p, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := stateEnvHasResources(p); got != tc.want {
+				t.Errorf("stateEnvHasResources(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,167 +1,177 @@
 package cli
 
-// Sprint 10 / PRD 06 §"`status` command integration" — table tests for
-// `writeStatusPhaseLines`'s per-shape deployment lines. The four shapes
-// (Empty, ClusterOnly, Split, LegacySingle) each have their own
-// expected line-set; we stage the existing `internal/config/testdata/`
-// fixtures into a temp ROKSBNKCTL_HOME so `config.DetectShape` picks
-// them up the same way it does at runtime.
-//
-// What we assert: presence/absence of the per-phase deployment lines,
-// the script-compat `Last apply` line for ShapeLegacySingle, and the
-// shape-callout line. We DON'T assert exact timestamps (file mtimes
-// drift); the format token `last apply ` distinguishes
-// "deployed (last apply …)" from "not deployed".
+// Tests for `awsbnkctl status`'s state.env-driven deploy-state lines
+// (PR4 — status now reports deploy state from the state.env IDs cache).
+// The helpers under test are pure functions over a *state.State, so we
+// build a real state.env on disk and load it through internal/aws/state
+// (the same path runtime uses), then assert each line's shape.
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/JLCode-tech/awsbnkctl/internal/config"
+	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 )
 
-// stageStatusWorkspace stages the on-disk state files that DetectShape
-// reads, under a per-test ROKSBNKCTL_HOME. Borrows the same fixtures
-// the config package's own tfstate_test.go uses so the test surface
-// stays in sync without duplicating files.
-//
-// Each fixture parameter is the basename of a file under
-// internal/config/testdata/. Pass "" to skip writing that side (so we
-// can build missing-state scenarios).
-func stageStatusWorkspace(t *testing.T, trialFixture, clusterFixture string) string {
+// stateFrom writes a state.env with the given KEY=VALUE pairs into a temp
+// dir and loads it. Returns the loaded State and its dir.
+func stateFrom(t *testing.T, kv map[string]string) (*state.State, string) {
 	t.Helper()
-	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
-	const ws = "status-test"
-
-	if trialFixture != "" {
-		dir, err := config.WorkspaceStateDir(ws)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeStatusFixture(t, trialFixture, filepath.Join(dir, "terraform.tfstate"))
-	}
-	if clusterFixture != "" {
-		dir, err := config.WorkspaceClusterStateDir(ws)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeStatusFixture(t, clusterFixture, filepath.Join(dir, "terraform.tfstate"))
-	}
-	return ws
-}
-
-func writeStatusFixture(t *testing.T, fixture, dst string) {
-	t.Helper()
-	src := filepath.Join("..", "config", "testdata", fixture)
-	b, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatalf("reading fixture %s: %v", src, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(dst), err)
-	}
-	if err := os.WriteFile(dst, b, 0o600); err != nil {
-		t.Fatalf("writing %s: %v", dst, err)
-	}
-}
-
-// captureStatusPhaseLines is the common harness: stage fixtures, run
-// writeStatusPhaseLines, return the captured string.
-func captureStatusPhaseLines(t *testing.T, trialFixture, clusterFixture string) string {
-	t.Helper()
-	ws := stageStatusWorkspace(t, trialFixture, clusterFixture)
-	var buf bytes.Buffer
-	writeStatusPhaseLines(&buf, ws)
-	return buf.String()
-}
-
-func TestWriteStatusPhaseLines_Empty(t *testing.T) {
-	got := captureStatusPhaseLines(t, "tfstate_empty.json", "tfstate_empty.json")
-	if !strings.Contains(got, "Cluster phase:\tnot deployed") {
-		t.Errorf("empty: missing cluster-phase 'not deployed' line:\n%s", got)
-	}
-	if !strings.Contains(got, "BNK trial:\tnot deployed") {
-		t.Errorf("empty: missing BNK-trial 'not deployed' line:\n%s", got)
-	}
-	if strings.Contains(got, "Last apply:") || strings.Contains(got, "Shape:") {
-		t.Errorf("empty: should not emit Last apply / Shape lines:\n%s", got)
-	}
-}
-
-func TestWriteStatusPhaseLines_ClusterOnly(t *testing.T) {
-	// trial = empty fixture, cluster = cluster-only fixture → ClusterOnly shape
-	got := captureStatusPhaseLines(t, "tfstate_empty.json", "tfstate_cluster_only.json")
-	if !strings.Contains(got, "Cluster phase:\tdeployed (last apply") {
-		t.Errorf("cluster-only: missing deployed-cluster line:\n%s", got)
-	}
-	if !strings.Contains(got, "BNK trial:\tnot deployed") {
-		t.Errorf("cluster-only: missing BNK-trial 'not deployed' line:\n%s", got)
-	}
-}
-
-func TestWriteStatusPhaseLines_Split(t *testing.T) {
-	got := captureStatusPhaseLines(t, "tfstate_split.json", "tfstate_cluster_only.json")
-	if !strings.Contains(got, "Cluster phase:\tdeployed (last apply") {
-		t.Errorf("split: missing deployed-cluster line:\n%s", got)
-	}
-	if !strings.Contains(got, "BNK trial:\tdeployed (last apply") {
-		t.Errorf("split: missing deployed-trial line:\n%s", got)
-	}
-}
-
-func TestWriteStatusPhaseLines_LegacySingle(t *testing.T) {
-	// Trial state contains cluster-phase modules → DetectShape classifies
-	// as LegacySingle regardless of the cluster-state side.
-	got := captureStatusPhaseLines(t, "tfstate_legacy_single.json", "")
-	if !strings.Contains(got, "Shape:\tlegacy single-state") {
-		t.Errorf("legacy: missing shape callout line:\n%s", got)
-	}
-	if !strings.Contains(got, "Last apply:") {
-		t.Errorf("legacy: missing v1.0.x Last apply line for script-compat:\n%s", got)
-	}
-	// Sanity: the new per-phase format must NOT appear for legacy
-	// (would confuse a v1.0.x parser).
-	if strings.Contains(got, "Cluster phase:\tdeployed") {
-		t.Errorf("legacy: must NOT emit per-phase deployment line:\n%s", got)
-	}
-}
-
-func TestWriteStatusPhaseLines_DetectShapeError_FallsBackToLegacy(t *testing.T) {
-	// Malformed tfstate → DetectShape returns an error → fallback to
-	// the v1.0.x Last apply line so the user still gets *some* signal.
-	got := captureStatusPhaseLines(t, "tfstate_malformed.json", "")
-	// The fallback writes "Last apply:" either with a real mtime or
-	// "(no state — run `awsbnkctl up`)" if Stat fails. We accept either
-	// — the assertion is just that we don't emit a per-phase line.
-	if !strings.Contains(got, "Last apply:") {
-		t.Errorf("error path: expected fallback Last apply line:\n%s", got)
-	}
-	if strings.Contains(got, "Cluster phase:") || strings.Contains(got, "BNK trial:") {
-		t.Errorf("error path: must NOT emit per-phase lines on DetectShape error:\n%s", got)
-	}
-}
-
-// TestDeployedLine covers both branches of the deployedLine helper —
-// readable file (mtime emitted) vs missing file (falls back to
-// "not deployed").
-func TestDeployedLine(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
-
-	missing := filepath.Join(dir, "no-such.tfstate")
-	if got := deployedLine(missing); got != "not deployed" {
-		t.Errorf("missing file: got %q, want %q", got, "not deployed")
+	var b strings.Builder
+	for k, v := range kv {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(v)
+		b.WriteByte('\n')
 	}
-
-	present := filepath.Join(dir, "real.tfstate")
-	if err := os.WriteFile(present, []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "state.env"), []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := deployedLine(present)
-	if !strings.HasPrefix(got, "deployed (last apply ") {
-		t.Errorf("present file: got %q, want prefix 'deployed (last apply '", got)
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
 	}
+	return st, dir
+}
+
+func TestTMMNodeLine(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		kv   map[string]string
+		want string
+	}{
+		{"node name preferred", map[string]string{"TMM_NODE_NAME": "ip-10-0-1-5", "TMM_INSTANCE_ID": "i-abc"}, "ip-10-0-1-5"},
+		{"instance id fallback", map[string]string{"TMM_INSTANCE_ID": "i-abc"}, "i-abc"},
+		{"neither", map[string]string{}, "not provisioned"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _ := stateFrom(t, tc.kv)
+			if got := tmmNodeLine(st); got != tc.want {
+				t.Errorf("tmmNodeLine = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBNKActivationLine(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		kv         map[string]string
+		wantPrefix string
+	}{
+		{"not activated", map[string]string{}, "not activated"},
+		{"activating (license applied, not ready)", map[string]string{"LICENSE_APPLIED_AT": "2026-05-22T10:00:00Z", "LICENSE_NAME": "lic-1"}, "activating"},
+		{"active (ready + license)", map[string]string{"CNEINSTANCE_READY_AT": "2026-05-22T11:00:00Z", "LICENSE_NAME": "lic-1"}, "Active"},
+		{"active (ready only)", map[string]string{"CNEINSTANCE_READY_AT": "2026-05-22T11:00:00Z"}, "Active"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _ := stateFrom(t, tc.kv)
+			if got := bnkActivationLine(st); !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("bnkActivationLine = %q, want prefix %q", got, tc.wantPrefix)
+			}
+		})
+	}
+}
+
+func TestForgeLine(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		kv   map[string]string
+		want string
+	}{
+		{"not linked", map[string]string{}, "not linked"},
+		{"status only", map[string]string{"FORGE_STATUS": "registered"}, "registered"},
+		{"status + project", map[string]string{"FORGE_STATUS": "registered", "FORGE_PROJECT_ID": "proj-9"}, "registered (project proj-9)"},
+		{"project only -> unknown status", map[string]string{"FORGE_PROJECT_ID": "proj-9"}, "unknown (project proj-9)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _ := stateFrom(t, tc.kv)
+			if got := forgeLine(st); got != tc.want {
+				t.Errorf("forgeLine = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLastPhaseAppliedLine(t *testing.T) {
+	t.Parallel()
+
+	// No timestamps → the "no phase timestamps" hint.
+	stEmpty, _ := stateFrom(t, map[string]string{"VPC_ID": "vpc-1"})
+	if got := lastPhaseAppliedLine(stEmpty); !strings.Contains(got, "no phase timestamps") {
+		t.Errorf("empty: got %q, want a 'no phase timestamps' hint", got)
+	}
+
+	// Multiple timestamps + a non-RFC3339 sentinel ("dry-run") → reports
+	// the most-recent parseable key, ignores the sentinel.
+	stMany, _ := stateFrom(t, map[string]string{
+		"NADS_APPLIED_AT":      "2026-05-22T09:00:00Z",
+		"LICENSE_APPLIED_AT":   "dry-run", // must be skipped
+		"CNEINSTANCE_READY_AT": "2026-05-22T12:30:00Z",
+		"FLO_INSTALLED_AT":     "2026-05-22T10:15:00Z",
+	})
+	got := lastPhaseAppliedLine(stMany)
+	if !strings.HasPrefix(got, "CNEINSTANCE_READY_AT at ") {
+		t.Errorf("many: got %q, want most-recent key CNEINSTANCE_READY_AT", got)
+	}
+}
+
+func TestLoadStatusState(t *testing.T) {
+	t.Parallel()
+
+	// No config + no fallback name → not found.
+	if _, ok := loadStatusState("", ""); ok {
+		t.Error("expected (nil,false) with no config and no fallback name")
+	}
+
+	// Fallback name resolves a state.env relative to the working dir.
+	st, dir := stateFrom(t, map[string]string{"VPC_ID": "vpc-xyz"})
+	// loadStatusState looks under .awsbnkctl/<name>/state.env relative to
+	// CWD; stage that layout and chdir into the parent so the relative
+	// path resolves.
+	root := t.TempDir()
+	clusterName := "fallbackcl"
+	stateDir := filepath.Join(root, ".awsbnkctl", clusterName)
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(dir, "state.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "state.env"), src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, ok := loadStatusState("", clusterName)
+	if !ok {
+		t.Fatal("expected fallback-name lookup to find the staged state.env")
+	}
+	if loaded.Get("VPC_ID") != "vpc-xyz" {
+		t.Errorf("loaded wrong state: VPC_ID=%q", loaded.Get("VPC_ID"))
+	}
+
+	// A fallback name pointing at a dir with no state.env → not found.
+	if _, ok := loadStatusState("", "doesnotexist"); ok {
+		t.Error("expected not-found for a cluster with no state.env")
+	}
+
+	_ = st // silence: st only used to seed the file via dir read above
 }

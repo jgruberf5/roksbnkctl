@@ -63,7 +63,7 @@ func WorkspaceConfigPath(name string) (string, error) {
 	return filepath.Join(dir, workspaceConfigFile), nil
 }
 
-// WorkspaceStateDir: ~/.awsbnkctl/<name>/state/  (terraform.tfstate, kubeconfig, scratch/)
+// WorkspaceStateDir: ~/.awsbnkctl/<name>/state/  (state.env IDs cache, kubeconfig, scratch/)
 func WorkspaceStateDir(name string) (string, error) {
 	dir, err := WorkspaceDir(name)
 	if err != nil {

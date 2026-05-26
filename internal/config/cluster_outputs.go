@@ -14,11 +14,11 @@ import (
 // create) or `awsbnkctl cluster register` (after discovering an
 // already-existing cluster), and read by `awsbnkctl up` to deploy BNK
 // trials onto an existing cluster without re-specifying everything in
-// each trial's tfvars.
+// each trial's inputs.
 //
 // Stored at ~/.awsbnkctl/<workspace>/cluster-outputs.json. Treated as
 // authoritative for downstream commands that need to reference the
-// cluster — but explicit tfvars values always win over these.
+// cluster — but explicit per-trial input values always win over these.
 type ClusterOutputs struct {
 	ClusterName      string    `json:"cluster_name"`
 	ClusterID        string    `json:"cluster_id"`

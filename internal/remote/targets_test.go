@@ -17,9 +17,8 @@ func withTempHome(t *testing.T) string {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, dir)
 	const name = "ws1"
 	ws := &config.Workspace{
-		AWS:      config.AWSCfg{Region: "us-east-1"},
-		Cluster:  config.ClusterCfg{Name: "c1"},
-		TFSource: config.TFSourceCfg{Type: "embedded"},
+		AWS:     config.AWSCfg{Region: "us-east-1"},
+		Cluster: config.ClusterCfg{Name: "c1"},
 	}
 	if err := config.SaveWorkspace(name, ws); err != nil {
 		t.Fatalf("seed workspace: %v", err)

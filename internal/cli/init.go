@@ -18,7 +18,7 @@ import (
 // Sprint 2 `awsbnkctl init` — AWS path (PRD 08 § "CLI surface" +
 // PRD 07 § "Inputs"). Interactive wizard collecting region / profile
 // / VPC / subnets / cluster name + the FAR archive + JWT local paths
-// the s3_supply_chain module needs at terraform-apply time.
+// the supply-chain S3 upload phase needs at apply time.
 //
 // SPIKE DEFERRAL: --dry-run flag short-circuits the AWS PutObject
 // call so this binary runs on a stock dev box without live AWS. The
@@ -57,9 +57,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	// init doesn't blow away values the user already set).
 	ws := cctx.Workspace
 	if ws == nil {
-		ws = &config.Workspace{
-			TFSource: config.TFSourceCfg{Type: "embedded"},
-		}
+		ws = &config.Workspace{}
 	}
 
 	// ── AWS block ────────────────────────────────────────────────────
@@ -96,16 +94,15 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	// ── Supply-chain upload (live AWS) ──────────────────────────────
 	if flagInitDryRun {
-		fmt.Fprintln(os.Stderr, "  (--dry-run: skipping S3 PutObject; terraform apply will do the upload via aws_s3_object)")
+		fmt.Fprintln(os.Stderr, "  (--dry-run: skipping S3 PutObject; `awsbnkctl up` will create the bucket + upload)")
 		return nil
 	}
 
-	// Supply-chain bucket name follows the s3_supply_chain module's
-	// pattern, but the operator may not have run `awsbnkctl up` yet
-	// — in which case the bucket doesn't exist. Skip the upload step
-	// with an informational message when that's the case; the
-	// terraform apply path will create + upload via the
-	// aws_s3_object resource at apply time.
+	// The supply-chain bucket follows the standard naming pattern, but
+	// the operator may not have run `awsbnkctl up` yet — in which case
+	// the bucket doesn't exist. Skip the upload step with an
+	// informational message when that's the case; the phased `up` path
+	// creates the bucket + uploads the objects at apply time.
 	if ws.AWS.SupplyChain.FARArchivePath == "" || ws.AWS.SupplyChain.JWTPath == "" {
 		fmt.Fprintln(os.Stderr, "  (no FAR archive / JWT path supplied; skipping S3 upload — re-run init when ready)")
 		return nil
@@ -113,7 +110,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	bucket := ws.AWS.SupplyChain.BucketName
 	if bucket == "" {
-		fmt.Fprintln(os.Stderr, "  (no supply-chain bucket recorded yet; terraform apply will create it + upload via aws_s3_object)")
+		fmt.Fprintln(os.Stderr, "  (no supply-chain bucket recorded yet; `awsbnkctl up` will create it + upload the objects)")
 		return nil
 	}
 
@@ -172,8 +169,8 @@ func validateInitInputs(ws *config.Workspace, dryRun bool) error {
 		return errors.New("AWS region is required")
 	}
 	if !dryRun {
-		// VPC + subnets are mandatory in the strict path because
-		// terraform apply needs them at plan time. The Sprint 1
+		// VPC + subnets are mandatory in the strict path because the
+		// provisioning phases need them up front. The Sprint 1
 		// `awsbnkctl up cluster --dry-run` still works with these
 		// unset (synthetic workspace path), but `awsbnkctl init`
 		// without --dry-run is a "ready to apply" intent.

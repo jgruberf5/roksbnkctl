@@ -73,11 +73,11 @@ var initCmd = &cobra.Command{
 	Long: `awsbnkctl init walks through the AWS-shaped prompts (region, VPC, subnets,
 cluster name, FAR archive path, subscription JWT path, FLO namespace) and writes
 the workspace config.yaml under ~/.awsbnkctl/<workspace>/. The supply-chain
-artefacts are uploaded to S3 by 'awsbnkctl up' via aws_s3_object resources, not
-by init directly — see PRD 08 § "Open questions" for the rationale.
+artefacts are uploaded to S3 by 'awsbnkctl up', not by init directly — see
+PRD 08 § "Open questions" for the rationale.
 
 Use --dry-run to walk the wizard offline (no AWS API calls; useful for
-populating a workspace for terraform plan inspection ahead of a real apply).`,
+populating a workspace ahead of a real apply).`,
 	RunE: runInit,
 }
 

@@ -67,8 +67,7 @@ func resolveBackendSpecWith(cctx *config.Context, tool, flagOverride string) str
 // §"Tool migration plan"). AWS doesn't ship a CLI passthrough — the
 // binary uses internal/aws SDK directly per PRD 00 § "Inheritance map".
 var perToolDefaultBackend = map[string]string{
-	"iperf3":    "k8s",
-	"terraform": "local",
+	"iperf3": "k8s",
 }
 
 // podReady reports whether a pod's ContainerStatuses agree that it is

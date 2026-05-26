@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,24 +33,22 @@ type Workspace struct {
 	// means "let the SDK chain resolve AWS_REGION".
 	AWS AWSCfg `yaml:"aws,omitempty"`
 
-	Cluster  ClusterCfg           `yaml:"cluster"`
-	BNK      BNKCfg               `yaml:"bnk,omitempty"`
-	Test     TestCfg              `yaml:"test,omitempty"`
-	TFSource TFSourceCfg          `yaml:"tf_source"`
-	COS      *COSCfg              `yaml:"cos,omitempty"`
-	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
+	Cluster ClusterCfg           `yaml:"cluster"`
+	BNK     BNKCfg               `yaml:"bnk,omitempty"`
+	Test    TestCfg              `yaml:"test,omitempty"`
+	COS     *COSCfg              `yaml:"cos,omitempty"`
+	Targets map[string]TargetCfg `yaml:"targets,omitempty"`
 
 	// Exec is the per-tool execution-backend config block introduced
-	// in Sprint 3 (PRD 03). Maps a tool name (`iperf3`, `terraform`,
-	// `kubectl`) to its preferred backend (`local`, `docker`, `k8s`,
-	// or `ssh:<target>`). Per-invocation `--backend` flag wins over
-	// the workspace config; missing entries default to `local`.
+	// in Sprint 3 (PRD 03). Maps a tool name (`iperf3`, `kubectl`) to
+	// its preferred backend (`local`, `docker`, `k8s`, or
+	// `ssh:<target>`). Per-invocation `--backend` flag wins over the
+	// workspace config; missing entries default to `local`.
 	//
 	// Example:
 	//
 	//   exec:
-	//     iperf3:    { backend: k8s }
-	//     terraform: { backend: local }
+	//     iperf3: { backend: k8s }
 	Exec map[string]ExecToolCfg `yaml:"exec,omitempty"`
 }
 
@@ -78,8 +77,7 @@ type TargetCfg struct {
 
 // AWSCfg is the AWS-shaped workspace block introduced in Sprint 2
 // (PRD 04 fold + PRD 07/08 inputs). Mirrors the inputs `awsbnkctl init`
-// (AWS path) collects and `internal/tf/vars.go` renders into
-// terraform.tfvars.
+// (AWS path) collects and threads into the AWS-SDK provisioning phases.
 //
 // No credential fields appear here: AWS credentials resolve via the
 // SDK's default chain (env / shared config / profile / instance role /
@@ -87,7 +85,7 @@ type TargetCfg struct {
 // chain hint, not a secret.
 type AWSCfg struct {
 	// Region is the AWS region (e.g. "us-east-1"). Threaded into the
-	// terraform root module's `region` variable and the SDK Options.
+	// AWS client Options used by the provisioning phases.
 	Region string `yaml:"region,omitempty"`
 
 	// Profile is an optional AWS_PROFILE override pinned per workspace.
@@ -109,7 +107,7 @@ type AWSCfg struct {
 	// SupplyChain captures the local FAR archive + JWT paths the
 	// init wizard collected. Sprint 2 staff uploads these to the S3
 	// supply-chain bucket via `internal/aws/s3.go` at workspace save
-	// time (or via terraform `aws_s3_object` on `awsbnkctl up`). The
+	// time (or via the S3 upload phase on `awsbnkctl up`). The
 	// fields are local paths, not secrets — empty when the operator
 	// skipped the wizard's supply-chain step (e.g. `--dry-run`).
 	SupplyChain SupplyChainCfg `yaml:"supply_chain,omitempty"`
@@ -130,7 +128,7 @@ type SupplyChainCfg struct {
 
 	// BucketName overrides the auto-generated supply-chain bucket
 	// name (PRD 08 § "Decision" — `awsbnkctl-<workspace>-<random>`
-	// is the default). Empty = let terraform pick.
+	// is the default). Empty = let the provisioner pick.
 	BucketName string `yaml:"bucket_name,omitempty"`
 
 	// KMSKeyARN pins an existing CMK ARN; empty = the
@@ -195,27 +193,6 @@ type ThroughputCfg struct {
 
 type ConnectivityCfg struct {
 	ExtraHosts []string `yaml:"extra_hosts,omitempty"`
-}
-
-// TFSourceCfg picks where Terraform's source tree comes from. Type
-// drives which other fields apply:
-//
-//   - embedded — uses the HCL bundled into the awsbnkctl binary via
-//     Go's embed directive. No other fields needed. This is the
-//     default and what most users want; install one binary, get
-//     CLI + matched TF together.
-//   - github — downloads a tarball release from a GitHub repo. Repo
-//     ("owner/name") and Ref (release tag) required. For testing
-//     forks or pinning to a specific upstream tag.
-//   - local — points Terraform at a directory on disk. Path required.
-//     For active development on the HCL itself.
-//
-// An empty Type (legacy / forgot-to-set) is treated as embedded.
-type TFSourceCfg struct {
-	Type string `yaml:"type"` // embedded | github | local
-	Repo string `yaml:"repo,omitempty"`
-	Ref  string `yaml:"ref,omitempty"`
-	Path string `yaml:"path,omitempty"` // populated for type=local
 }
 
 type COSCfg struct {
@@ -350,8 +327,15 @@ func WorkspaceExists(name string) bool {
 }
 
 // DeleteWorkspace removes ~/.awsbnkctl/<name>/. Refuses to delete if the
-// workspace's terraform.tfstate has resources (would orphan live infra)
-// unless force is true.
+// workspace's IDs cache (state/state.env) still lists provisioned AWS
+// resources (deleting would orphan live infra) unless force is true.
+//
+// Per D-001…D-007 the provisioning state is the shell-sourceable
+// state.env IDs cache (internal/aws/state), not an HCL state file. The
+// guard reads state/state.env under the workspace dir and refuses
+// deletion when any of the load-bearing resource-ID keys is populated. A
+// missing / unreadable state.env reads as "no resources" so a
+// never-applied (or already torn-down) workspace deletes cleanly.
 func DeleteWorkspace(name string, force bool) error {
 	if err := ValidateName(name); err != nil {
 		return err
@@ -361,12 +345,61 @@ func DeleteWorkspace(name string, force bool) error {
 		return err
 	}
 	if !force {
-		statePath := filepath.Join(dir, stateSubdir, "terraform.tfstate")
-		if has, _ := tfstateHasResources(statePath); has {
-			return fmt.Errorf("workspace %q has terraform-managed resources; pass --force to delete anyway", name)
+		stateEnvPath := filepath.Join(dir, stateSubdir, "state.env")
+		if stateEnvHasResources(stateEnvPath) {
+			return fmt.Errorf("workspace %q has provisioned AWS resources recorded in state.env; pass --force to delete anyway", name)
 		}
 	}
 	return os.RemoveAll(dir)
+}
+
+// stateEnvResourceKeys is the set of state.env keys whose presence (a
+// non-empty value) means the workspace still tracks live AWS infra. Kept
+// deliberately narrow to the top-level resources whose orphaning would
+// cost money / leak: the VPC, the EKS cluster, the default node group,
+// and the two BNK-path instances. Phase code clears these on `down`, so a
+// populated value here is a strong "live infra" signal.
+var stateEnvResourceKeys = []string{
+	"VPC_ID",
+	"EKS_CLUSTER_NAME",
+	"EKS_CLUSTER_ARN",
+	"NODEGROUP_DEFAULT_NAME",
+	"TMM_INSTANCE_ID",
+	"JUMPHOST_INSTANCE_ID",
+}
+
+// stateEnvHasResources reports whether the state.env at path has any of
+// the load-bearing resource-ID keys populated. The file is the
+// shell-sourceable KEY=VALUE IDs cache (see internal/aws/state). A
+// missing/unreadable file or a parse error reads as "no resources"
+// (false) — the delete guard is best-effort and must not block on a
+// malformed cache (the operator can always pass --force).
+func stateEnvHasResources(path string) bool {
+	b, err := os.ReadFile(path) // #nosec G304 -- path is <workspace>/state/state.env (config-managed layout), not user-tainted
+	if err != nil {
+		return false
+	}
+	for _, raw := range strings.Split(string(b), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx < 1 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if val == "" {
+			continue
+		}
+		for _, want := range stateEnvResourceKeys {
+			if key == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // plaintextSecretsRE matches lines that look like a credential value being
