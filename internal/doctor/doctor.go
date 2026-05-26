@@ -59,10 +59,13 @@ var lastWhys []string
 // runWithWhy is the actual check-list builder. Split out so we can
 // unit-test it without poking the lastWhys side-channel.
 //
-// Doctor green-by-default contract: only `terraform` is a REQUIRED
-// host install. Every other previously-required-or-warned tool
-// (kubectl, iperf3, dig) is now INFORMATIONAL — the binary
-// internalises each surface:
+// Doctor green-by-default contract: there are NO required host
+// binaries. Terraform is gone (post-Terraform direction — see
+// docs/POST_TERRAFORM_DIRECTION.md). Helm is internalised via the
+// helm.sh/helm/v3 Go SDK in phase14_flo_helm.go — no host `helm`
+// binary is invoked. All previously-required-or-warned tools
+// (kubectl, iperf3, dig) are INFORMATIONAL — the binary internalises
+// each surface:
 //
 //   - kubectl: internalised via client-go in `awsbnkctl k *`
 //     (PRD 02, Sprint 2).
@@ -70,35 +73,15 @@ var lastWhys []string
 //     (PRD 03, Sprint 4).
 //   - dig: miekg/dns probe library compiled into the binary (PRD 03
 //     §"DNS probe", Sprint 5).
+//   - helm: Helm 3 SDK (helm.sh/helm/v3) embedded directly; no host
+//     `helm` binary needed.
 //
-// A stock dev box with `terraform` installed and nothing else now
-// produces zero warnings and exit 0 from `awsbnkctl doctor`. Backend-
-// conditional checks (`doctor --backend k8s`) still surface their
-// own failures separately.
+// A stock dev box with nothing extra installed now produces zero
+// warnings and exit 0 from `awsbnkctl doctor`. Backend-conditional
+// checks (`doctor --backend k8s`) still surface their own failures
+// separately.
 func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	var out []withWhy
-
-	// REQUIRED: terraform is the workhorse for `awsbnkctl up`; the
-	// binary embeds the HCL but doesn't (yet) ship a terraform-go
-	// runtime — `--backend docker` runs upstream `hashicorp/terraform`
-	// in a container, but the local backend still needs a host
-	// install.
-	out = append(out, checkBinary("terraform", true, "required for `awsbnkctl up` (local backend); `--backend docker` runs containerised but the local path needs a host install"))
-
-	// REQUIRED: helm is invoked by terraform's `null_resource` +
-	// `local-exec` provisioners during `awsbnkctl up`. The bundled
-	// HCL modules (cert_manager, flo, cne_instance) shell out to
-	// `helm upgrade --install` from inside terraform's apply phase;
-	// without `helm` on PATH the apply fails with exit 127 ("helm: not
-	// found") deep into the cluster lifecycle. This is the SECOND
-	// hard fail (along with terraform).
-	//
-	// A v1.x effort to refactor the modules onto the `helm_release`
-	// terraform resource would eliminate this host requirement (the
-	// hashicorp/helm provider speaks the Helm 3 protocol via an
-	// embedded Go runtime). Tracked in docs/PLAN.md §"What's
-	// deliberately deferred to post-v1.0".
-	out = append(out, checkBinary("helm", true, "required for `awsbnkctl up`; terraform's null_resource+local-exec provisioners (cert_manager / flo / cne_instance) shell out to `helm upgrade --install`. `--backend docker` runs terraform containerised but the local-exec still needs a host install."))
 
 	// INFORMATIONAL: every other tool. Missing surfaces as StatusOK
 	// with a "(internalised; …)" detail explaining the alternative.
@@ -139,27 +122,6 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	return out
 }
 
-// checkBinary reports whether name is on PATH and (best-effort) which version.
-func checkBinary(name string, required bool, w string) withWhy {
-	c := Check{Name: name, Optional: !required}
-	path, err := exec.LookPath(name)
-	if err != nil {
-		if required {
-			c.Status = StatusError
-		} else {
-			c.Status = StatusWarning
-		}
-		c.Detail = "not on PATH"
-		return withWhy{Check: c, Why: w}
-	}
-	c.Status = StatusOK
-	c.Detail = path
-	if v := versionLine(name); v != "" {
-		c.Detail = fmt.Sprintf("%s (%s)", path, v)
-	}
-	return withWhy{Check: c, Why: w}
-}
-
 // checkBinaryInformational is the post-Sprint-2 variant for kubectl and
 // oc: the binary is no longer needed because the relevant verbs are
 // internalised via client-go. Missing → StatusOK with an explanatory
@@ -189,10 +151,6 @@ func checkBinaryInformational(name, w string) withWhy {
 func versionLine(name string) string {
 	var args []string
 	switch name {
-	case "terraform":
-		args = []string{"version"}
-	case "helm":
-		args = []string{"version", "--short"}
 	case "iperf3":
 		args = []string{"--version"}
 	case "kubectl":
