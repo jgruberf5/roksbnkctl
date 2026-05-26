@@ -50,7 +50,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/jumphost"
-	k8sapply "github.com/JLCode-tech/awsbnkctl/internal/k8s"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
 )
 
@@ -242,17 +241,7 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 }
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
-	scenarioDir, err := scenarios.EnsureScenarioDir(ctx.WorkspaceDir, scnName)
-	if err != nil {
-		return fmt.Errorf("ensuring scenario dir: %w", err)
-	}
-	// Use SSA + live RESTMapper — NOT applyRawYAML or the static GVR map
-	// which silently skips Gateway/L4Route/F5BnkGateway (phase23b_gvr_bug).
-	ao := &k8sapply.ApplyOptions{
-		Filename:       scenarioDir,
-		KubeconfigPath: ctx.KubeconfigPath,
-	}
-	return ao.Run(ctx.Ctx)
+	return scenarios.ApplyManifests(ctx, scnName)
 }
 
 func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
