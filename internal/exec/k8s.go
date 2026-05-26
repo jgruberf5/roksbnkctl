@@ -277,9 +277,8 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 //
 // Tools NOT in this map keep the legacy shape
 // (`Container.Command = argv[1:]`, image's ENTRYPOINT picks the
-// binary) — `iperf3` (image's ENTRYPOINT="iperf3") and `terraform`
-// (upstream `hashicorp/terraform` image's ENTRYPOINT="terraform")
-// continue to work without an entry.
+// binary) — `iperf3` (image's ENTRYPOINT="iperf3") continues to work
+// without an entry.
 var jobToolCmdOverride = map[string][]string{
 	"awsbnkctl": {"/usr/local/bin/awsbnkctl"},
 }

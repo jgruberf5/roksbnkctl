@@ -72,8 +72,8 @@ var doctorCmd = &cobra.Command{
 	Short: "Check prerequisites and report missing pieces",
 	Long: `Verifies the host has what awsbnkctl needs.
 
-Required (hard fail on missing):
-  - terraform on PATH (the local backend's workhorse for ` + "`awsbnkctl up`" + `)
+There are no required host binaries. Terraform is removed (post-Terraform
+direction). Helm is internalised via the helm.sh/helm/v3 Go SDK.
 
 Informational (the binary internalises each surface; missing → no warning):
   - kubectl / oc — internalised via client-go (` + "`awsbnkctl k *`" + `)
@@ -81,8 +81,7 @@ Informational (the binary internalises each surface; missing → no warning):
   - iperf3       — bundled image, run via --backend k8s
   - dig          — DNS probe internalised via miekg/dns
 
-A stock dev box with only ` + "`terraform`" + ` installed should produce exit 0
-and zero warnings.
+A stock dev box with no extra tools installed produces exit 0 and zero warnings.
 
 Pass --target <name> to additionally probe an SSH target (runs whoami).
 Pass --backend k8s | ssh:<target> for per-backend prereq checks.
