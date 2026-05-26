@@ -1171,3 +1171,129 @@ func TestDefaultVIP_EmptyCIDR(t *testing.T) {
 		t.Fatal("expected error for empty CIDR, got nil")
 	}
 }
+
+// ─── ForgeSpec resolver tests ─────────────────────────────────────────────────
+
+// TestForgeSpec_ResolveUsername_Default verifies nil and zero ForgeSpec both
+// return "admin".
+func TestForgeSpec_ResolveUsername_Default(t *testing.T) {
+	var nilSpec *ForgeSpec
+	if got := nilSpec.ResolveUsername(); got != "admin" {
+		t.Errorf("nil.ResolveUsername() = %q, want \"admin\"", got)
+	}
+	emptySpec := &ForgeSpec{}
+	if got := emptySpec.ResolveUsername(); got != "admin" {
+		t.Errorf("empty.ResolveUsername() = %q, want \"admin\"", got)
+	}
+}
+
+// TestForgeSpec_ResolveUsername_YAMLField verifies that forge.username in the
+// spec is returned when set.
+func TestForgeSpec_ResolveUsername_YAMLField(t *testing.T) {
+	spec := &ForgeSpec{Username: "operator"}
+	if got := spec.ResolveUsername(); got != "operator" {
+		t.Errorf("ResolveUsername() = %q, want \"operator\"", got)
+	}
+}
+
+// TestForgeSpec_ResolvePassword_Default verifies the built-in default is
+// returned (with usingDefault=true) when nothing is configured.
+func TestForgeSpec_ResolvePassword_Default(t *testing.T) {
+	// Clear env so we don't accidentally pick up a real value.
+	t.Setenv("AWSBNKCTL_FORGE_PASSWORD", "")
+	var nilSpec *ForgeSpec
+	pwd, usingDefault := nilSpec.ResolvePassword()
+	if pwd != "changeme" {
+		t.Errorf("password = %q, want \"changeme\"", pwd)
+	}
+	if !usingDefault {
+		t.Error("usingDefault should be true when no env/yaml is set")
+	}
+}
+
+// TestForgeSpec_ResolvePassword_EnvOverridesAll verifies AWSBNKCTL_FORGE_PASSWORD
+// takes precedence over both the yaml field and the built-in default.
+func TestForgeSpec_ResolvePassword_EnvOverridesAll(t *testing.T) {
+	t.Setenv("AWSBNKCTL_FORGE_PASSWORD", "envpass")
+	// Even with a yaml password set, env wins.
+	spec := &ForgeSpec{Password: "yamlpass"}
+	pwd, usingDefault := spec.ResolvePassword()
+	if pwd != "envpass" {
+		t.Errorf("password = %q, want \"envpass\" (env should win)", pwd)
+	}
+	if usingDefault {
+		t.Error("usingDefault should be false when env is set")
+	}
+}
+
+// TestForgeSpec_ResolvePassword_YAMLFallback verifies forge.password in the
+// spec is used when the env is unset.
+func TestForgeSpec_ResolvePassword_YAMLFallback(t *testing.T) {
+	t.Setenv("AWSBNKCTL_FORGE_PASSWORD", "")
+	spec := &ForgeSpec{Password: "yamlpass"}
+	pwd, usingDefault := spec.ResolvePassword()
+	if pwd != "yamlpass" {
+		t.Errorf("password = %q, want \"yamlpass\"", pwd)
+	}
+	if usingDefault {
+		t.Error("usingDefault should be false when forge.password is set")
+	}
+}
+
+// TestForgeSpec_ResolveURL_Default verifies that a nil / zero ForgeSpec returns
+// DefaultForgeRESTURL when no env override is set.
+func TestForgeSpec_ResolveURL_Default(t *testing.T) {
+	t.Setenv("AWSBNKCTL_FORGE_URL", "")
+	var nilSpec *ForgeSpec
+	if got := nilSpec.ResolveURL(); got != DefaultForgeRESTURL {
+		t.Errorf("nil.ResolveURL() = %q, want %q", got, DefaultForgeRESTURL)
+	}
+}
+
+// TestForgeSpec_ResolveURL_EnvOverride verifies AWSBNKCTL_FORGE_URL takes
+// precedence over both the yaml field and the default.
+func TestForgeSpec_ResolveURL_EnvOverride(t *testing.T) {
+	t.Setenv("AWSBNKCTL_FORGE_URL", "http://my-forge:9000")
+	spec := &ForgeSpec{URL: "http://yaml-forge:8000"}
+	if got := spec.ResolveURL(); got != "http://my-forge:9000" {
+		t.Errorf("ResolveURL() = %q, want env value", got)
+	}
+}
+
+// TestForgeSpec_ResolveURL_YAMLFallback verifies forge.url is used when the
+// env is unset.
+func TestForgeSpec_ResolveURL_YAMLFallback(t *testing.T) {
+	t.Setenv("AWSBNKCTL_FORGE_URL", "")
+	spec := &ForgeSpec{URL: "http://yaml-forge:8000"}
+	if got := spec.ResolveURL(); got != "http://yaml-forge:8000" {
+		t.Errorf("ResolveURL() = %q, want \"http://yaml-forge:8000\"", got)
+	}
+}
+
+// TestLoad_ForgeBlockWithCredentials verifies that the new username + password
+// fields round-trip through cluster.yaml load.
+func TestLoad_ForgeBlockWithCredentials(t *testing.T) {
+	dir := t.TempDir()
+	withForgeCreds := minimalYAML + `
+forge:
+  enabled: true
+  url: http://localhost:8000
+  username: myoperator
+  password: s3cr3t
+`
+	p := writeFile(t, dir, "cluster.yaml", withForgeCreds)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with forge creds: %v", err)
+	}
+	if c.Forge == nil {
+		t.Fatal("Forge: nil, want populated struct")
+	}
+	if c.Forge.Username != "myoperator" {
+		t.Errorf("Forge.Username = %q, want \"myoperator\"", c.Forge.Username)
+	}
+	if c.Forge.Password != "s3cr3t" {
+		t.Errorf("Forge.Password = %q, want \"s3cr3t\"", c.Forge.Password)
+	}
+}

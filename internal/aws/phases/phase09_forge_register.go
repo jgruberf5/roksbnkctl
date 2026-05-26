@@ -33,14 +33,19 @@ func Phase09ForgeRegister(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return nil
 	}
 
-	forgeURL := cl.Forge.URL
-	if forgeURL == "" {
-		forgeURL = "http://localhost:8000"
-	}
+	forgeURL := cl.Forge.ResolveURL()
 	mcpURL := cl.Forge.MCPURL
 	if mcpURL == "" {
 		mcpURL = forge.DefaultMCPURL
 	}
+
+	// Resolve REST credentials and warn when the built-in default is in use.
+	forgeUsername := cl.Forge.ResolveUsername()
+	forgePassword, usingDefaultPwd := cl.Forge.ResolvePassword()
+	if usingDefaultPwd {
+		fmt.Fprintln(os.Stderr, "[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment")
+	}
+	restCreds := forge.RestCreds{Username: forgeUsername, Password: forgePassword}
 
 	if dryRun {
 		fmt.Fprintf(os.Stderr, "[phase 09] dry-run: would register with forge at %s\n", mcpURL)
@@ -112,7 +117,7 @@ func Phase09ForgeRegister(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	var lastErr error
 	for i := 0; i < 4; i++ {
 		var res forge.RegisterResult
-		res, lastErr = tryForgeRegister(ctx, clients.ForgeClient, forgeURL, req)
+		res, lastErr = tryForgeRegister(ctx, clients.ForgeClient, forgeURL, req, restCreds)
 		if lastErr == nil {
 			fmt.Fprintf(os.Stderr, "[phase 09] registered with forge — project=%d cluster=%d\n",
 				res.Link.ProjectID, res.Link.ClusterID)
@@ -169,19 +174,24 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 		return fmt.Errorf("phase09 down: read forge link: %w", err)
 	}
 
-	// Resolve forge URLs: prefer cluster.yaml values, fall back to cached link
-	// fields, then to defaults. This handles the case where the operator removed
-	// the forge: block from cluster.yaml between up and down — cl.Forge is nil
-	// but a forge-link.json still exists with the original URLs.
-	forgeURL := "http://localhost:8000"
+	// Resolve forge URLs and credentials: prefer cluster.yaml values, fall
+	// back to cached link fields / defaults. This handles the case where the
+	// operator removed the forge: block from cluster.yaml between up and down
+	// — cl.Forge is nil but a forge-link.json still exists with the original URLs.
+	forgeURL := intent.DefaultForgeRESTURL
 	mcpURL := forge.DefaultMCPURL
+	var restCreds forge.RestCreds
 	if cl.Forge != nil {
-		if cl.Forge.URL != "" {
-			forgeURL = cl.Forge.URL
-		}
+		forgeURL = cl.Forge.ResolveURL()
 		if cl.Forge.MCPURL != "" {
 			mcpURL = cl.Forge.MCPURL
 		}
+		forgeUsername := cl.Forge.ResolveUsername()
+		forgePassword, usingDefaultPwd := cl.Forge.ResolvePassword()
+		if usingDefaultPwd {
+			fmt.Fprintln(os.Stderr, "[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment")
+		}
+		restCreds = forge.RestCreds{Username: forgeUsername, Password: forgePassword}
 	} else {
 		// cl.Forge is nil — use URLs cached in the link file if available.
 		if link.ForgeURL != "" {
@@ -189,6 +199,15 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 		}
 		if link.ForgeMCPURL != "" {
 			mcpURL = link.ForgeMCPURL
+		}
+		// Credentials: resolve from env only (no ForgeSpec to read yaml from).
+		forgePassword, usingDefaultPwd := (*intent.ForgeSpec)(nil).ResolvePassword()
+		if usingDefaultPwd {
+			fmt.Fprintln(os.Stderr, "[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment")
+		}
+		restCreds = forge.RestCreds{
+			Username: (*intent.ForgeSpec)(nil).ResolveUsername(),
+			Password: forgePassword,
 		}
 	}
 
@@ -210,7 +229,7 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 	// MCP failed — fall back to REST only for catalog-gap errors (mirrors up path).
 	// For non-catalog-gap errors (auth, connectivity), skip REST and soft-fail.
 	if forge.IsMCPCatalogGapErr(mcpErr) {
-		restErr := forge.UnregisterREST(ctx, forgeURL, link)
+		restErr := forge.UnregisterREST(ctx, forgeURL, link, restCreds)
 		if restErr == nil || is404ByString(restErr) {
 			// REST succeeded (or 404 — already gone forge-side).
 			if rerr := forge.RemoveLink(workspaceDir); rerr != nil {
@@ -236,7 +255,7 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 
 // tryForgeRegister attempts MCP-first registration with REST fallback on
 // catalog-gap errors. Returns the RegisterResult on success.
-func tryForgeRegister(ctx context.Context, c *forge.Client, restURL string, req forge.RegisterRequest) (forge.RegisterResult, error) {
+func tryForgeRegister(ctx context.Context, c *forge.Client, restURL string, req forge.RegisterRequest, creds forge.RestCreds) (forge.RegisterResult, error) {
 	res, err := forge.Register(ctx, c, req)
 	if err == nil {
 		return res, nil
@@ -246,7 +265,7 @@ func tryForgeRegister(ctx context.Context, c *forge.Client, restURL string, req 
 	}
 	// MCP catalog gap — fall back to REST.
 	fmt.Fprintf(os.Stderr, "[phase 09] MCP catalog gap detected (%v) — falling back to REST\n", err)
-	res, err = forge.RegisterREST(ctx, restURL, req)
+	res, err = forge.RegisterREST(ctx, restURL, req, creds)
 	if err != nil {
 		return forge.RegisterResult{}, err
 	}

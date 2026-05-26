@@ -83,7 +83,7 @@ func TestRegisterREST_HappyPath(t *testing.T) {
 		ClusterName:   "bnk-prod",
 		Region:        "us-east-1",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestRegisterREST_FlatProjectIDShape(t *testing.T) {
 		ClusterName:   "bnk-prod",
 		Region:        "us-east-1",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST (flat project_id shape): %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRegisterREST_AuthFailure(t *testing.T) {
 		WorkspaceDir:  t.TempDir(),
 		ClusterName:   "bnk-prod",
 		Kubeconfig:    []byte("k"),
-	})
+	}, RestCreds{})
 	if err == nil {
 		t.Fatal("expected error on auth failure, got nil")
 	}
@@ -183,7 +183,7 @@ func TestRegisterREST_ProjectCreationFailure(t *testing.T) {
 		WorkspaceDir:  t.TempDir(),
 		ClusterName:   "bnk-prod",
 		Kubeconfig:    []byte("k"),
-	})
+	}, RestCreds{})
 	if err == nil {
 		t.Fatal("expected error on project failure, got nil")
 	}
@@ -199,7 +199,7 @@ func TestRegisterREST_ClusterCreationFailure(t *testing.T) {
 		WorkspaceDir:  t.TempDir(),
 		ClusterName:   "bnk-prod",
 		Kubeconfig:    []byte("k"),
-	})
+	}, RestCreds{})
 	if err == nil {
 		t.Fatal("expected error on cluster failure, got nil")
 	}
@@ -217,7 +217,7 @@ func TestUnregisterREST_404Tolerated(t *testing.T) {
 	defer ts.Close()
 
 	link := &Link{ProjectID: 11, ClusterID: 99}
-	if err := UnregisterREST(context.Background(), ts.URL, link); err != nil {
+	if err := UnregisterREST(context.Background(), ts.URL, link, RestCreds{}); err != nil {
 		t.Fatalf("UnregisterREST should tolerate 404, got: %v", err)
 	}
 }
@@ -314,7 +314,7 @@ func TestRegisterREST_ProjectConflict_UpsertReuses(t *testing.T) {
 		ClusterName:   "bnk-prod",
 		Region:        "ap-southeast-2",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST upsert: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestRegisterREST_ClusterConflict_PutsFreshKubeconfig(t *testing.T) {
 		ClusterName:   "bnk-prod",
 		Region:        "ap-southeast-2",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\nfresh: true\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST cluster upsert: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestRegisterREST_SendsAWSProfile(t *testing.T) {
 		Region:        "ap-southeast-2",
 		AWSProfile:    "Users-292785712872",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestRegisterREST_OmitsAWSProfileWhenDash(t *testing.T) {
 		Region:        "ap-southeast-2",
 		AWSProfile:    "-",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
-	})
+	}, RestCreds{})
 	if err != nil {
 		t.Fatalf("RegisterREST: %v", err)
 	}
@@ -479,5 +479,116 @@ func TestRegisterREST_OmitsAWSProfileWhenDash(t *testing.T) {
 	}
 	if v, present := srv.projectBodies[0]["aws_profile"]; present {
 		t.Errorf("aws_profile must be omitted when AWSProfile=\"-\", got %v", v)
+	}
+}
+
+// ─── RestCreds threading tests ────────────────────────────────────────────────
+
+// TestRestCreds_DefaultsWhenZero verifies the zero RestCreds value resolves to
+// admin / changeme (back-compat behaviour).
+func TestRestCreds_DefaultsWhenZero(t *testing.T) {
+	c := RestCreds{}
+	if got := c.restUsername(); got != "admin" {
+		t.Errorf("restUsername() = %q, want %q", got, "admin")
+	}
+	if got := c.restPassword(); got != "changeme" {
+		t.Errorf("restPassword() = %q, want %q", got, "changeme")
+	}
+}
+
+// TestRestCreds_ExplicitValues verifies that non-zero RestCreds values are used
+// as-is without any fallback.
+func TestRestCreds_ExplicitValues(t *testing.T) {
+	c := RestCreds{Username: "operator", Password: "s3cr3t"}
+	if got := c.restUsername(); got != "operator" {
+		t.Errorf("restUsername() = %q, want %q", got, "operator")
+	}
+	if got := c.restPassword(); got != "s3cr3t" {
+		t.Errorf("restPassword() = %q, want %q", got, "s3cr3t")
+	}
+}
+
+// TestRegisterREST_CredsThreadedToLogin confirms that RegisterREST forwards the
+// RestCreds to the /api/auth/login call. The test server records the username +
+// password sent in the login request body and asserts they match the creds.
+func TestRegisterREST_CredsThreadedToLogin(t *testing.T) {
+	var capturedUser, capturedPass string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		capturedUser = body.Username
+		capturedPass = body.Password
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+	})
+	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1, "name": "awsbnkctl-default"})
+	})
+	mux.HandleFunc("/api/projects/1/k8s/clusters", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 2, "name": "bnk-prod"})
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	creds := RestCreds{Username: "myuser", Password: "mypass"}
+	_, err := RegisterREST(context.Background(), ts.URL, RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  t.TempDir(),
+		ClusterName:   "bnk-prod",
+		Region:        "us-east-1",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
+	}, creds)
+	if err != nil {
+		t.Fatalf("RegisterREST: %v", err)
+	}
+	if capturedUser != "myuser" {
+		t.Errorf("login username = %q, want %q", capturedUser, "myuser")
+	}
+	if capturedPass != "mypass" {
+		t.Errorf("login password = %q, want %q", capturedPass, "mypass")
+	}
+}
+
+// TestUnregisterREST_CredsThreadedToLogin confirms that UnregisterREST forwards
+// the RestCreds to the /api/auth/login call.
+func TestUnregisterREST_CredsThreadedToLogin(t *testing.T) {
+	var capturedUser, capturedPass string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/auth/login" {
+			var body struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			capturedUser = body.Username
+			capturedPass = body.Password
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+			return
+		}
+		// Return 404 for the cluster delete — tolerated by UnregisterREST.
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	creds := RestCreds{Username: "svc", Password: "hunter2"}
+	link := &Link{ProjectID: 5, ClusterID: 10}
+	if err := UnregisterREST(context.Background(), ts.URL, link, creds); err != nil {
+		t.Fatalf("UnregisterREST: %v", err)
+	}
+	if capturedUser != "svc" {
+		t.Errorf("login username = %q, want %q", capturedUser, "svc")
+	}
+	if capturedPass != "hunter2" {
+		t.Errorf("login password = %q, want %q", capturedPass, "hunter2")
 	}
 }
