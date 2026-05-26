@@ -25,7 +25,12 @@ type mockEKS struct {
 	deleteNodegroupCalls int
 	createAddonCalls     int
 	describeAddonCalls   int
+	updateAddonCalls     int
 	deleteAddonCalls     int
+
+	// Capture fields — populated by CreateAddon and UpdateAddon.
+	lastAddonConfig      string
+	lastResolveConflicts ekstypes.ResolveConflicts
 
 	// Configurable errors.
 	createClusterErr   error
@@ -169,6 +174,10 @@ func (m *mockEKS) CreateAddon(_ context.Context, in *eks.CreateAddonInput, _ ...
 	m.createAddonCalls++
 	clusterName := *in.ClusterName
 	addonName := *in.AddonName
+	if in.ConfigurationValues != nil {
+		m.lastAddonConfig = *in.ConfigurationValues
+	}
+	m.lastResolveConflicts = in.ResolveConflicts
 	if m.addons == nil {
 		m.addons = map[string]map[string]ekstypes.AddonStatus{}
 	}
@@ -177,6 +186,25 @@ func (m *mockEKS) CreateAddon(_ context.Context, in *eks.CreateAddonInput, _ ...
 	}
 	m.addons[clusterName][addonName] = ekstypes.AddonStatusActive
 	return &eks.CreateAddonOutput{Addon: &ekstypes.Addon{Status: ekstypes.AddonStatusActive}}, nil
+}
+
+// UpdateAddon — records the call, applies the new config, and sets the addon to Active.
+func (m *mockEKS) UpdateAddon(_ context.Context, in *eks.UpdateAddonInput, _ ...func(*eks.Options)) (*eks.UpdateAddonOutput, error) {
+	m.updateAddonCalls++
+	clusterName := *in.ClusterName
+	addonName := *in.AddonName
+	if in.ConfigurationValues != nil {
+		m.lastAddonConfig = *in.ConfigurationValues
+	}
+	m.lastResolveConflicts = in.ResolveConflicts
+	if m.addons == nil {
+		m.addons = map[string]map[string]ekstypes.AddonStatus{}
+	}
+	if _, ok := m.addons[clusterName]; !ok {
+		m.addons[clusterName] = map[string]ekstypes.AddonStatus{}
+	}
+	m.addons[clusterName][addonName] = ekstypes.AddonStatusActive
+	return &eks.UpdateAddonOutput{Update: &ekstypes.Update{}}, nil
 }
 
 func (m *mockEKS) DescribeAddon(_ context.Context, in *eks.DescribeAddonInput, _ ...func(*eks.Options)) (*eks.DescribeAddonOutput, error) {

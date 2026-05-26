@@ -134,6 +134,7 @@ type EKSAPI interface {
 	DeleteNodegroup(ctx context.Context, in *eks.DeleteNodegroupInput, opts ...func(*eks.Options)) (*eks.DeleteNodegroupOutput, error)
 	CreateAddon(ctx context.Context, in *eks.CreateAddonInput, opts ...func(*eks.Options)) (*eks.CreateAddonOutput, error)
 	DescribeAddon(ctx context.Context, in *eks.DescribeAddonInput, opts ...func(*eks.Options)) (*eks.DescribeAddonOutput, error)
+	UpdateAddon(ctx context.Context, in *eks.UpdateAddonInput, opts ...func(*eks.Options)) (*eks.UpdateAddonOutput, error)
 	DeleteAddon(ctx context.Context, in *eks.DeleteAddonInput, opts ...func(*eks.Options)) (*eks.DeleteAddonOutput, error)
 }
 
