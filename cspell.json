@@ -2,6 +2,9 @@
   "version": "0.2",
   "language": "en",
   "words": [
+    "Agentic",
+    "Fargate",
+    "namespacing",
     "autodiscover",
     "coldstart",
     "Unmarshal",
@@ -582,7 +585,14 @@
     "unrunnable",
     "untolerated",
     "empt",
-    "authorised"
+    "authorised",
+    "ciwatch",
+    "mtimes",
+    "repoint",
+    "sprintwatch",
+    "unwire",
+    "unwired",
+    "Unwires"
   ],
   "ignorePaths": [
     "book/book/**",
