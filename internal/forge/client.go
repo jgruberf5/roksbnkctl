@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -91,6 +92,16 @@ type CreateProjectRequest struct {
 
 // CreateProjectResponse captures the fields awsbnkctl actually reads
 // from forge's project-mutation response. The full payload is richer.
+//
+// Forge currently returns a flat envelope:
+//
+//	{"success":true,"project_id":39,"name":"...","message":"..."}
+//
+// For forward-compat we also accept a nested envelope:
+//
+//	{"project":{"id":39,"name":"..."},"success":true}
+//
+// UnmarshalJSON handles both shapes; the flat fields win when both are present.
 type CreateProjectResponse struct {
 	Project struct {
 		ID   int    `json:"id"`
@@ -98,6 +109,37 @@ type CreateProjectResponse struct {
 	} `json:"project"`
 	Success bool   `json:"success"`
 	Message string `json:"message,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler. It parses both the flat shape
+// forge currently emits and the legacy nested shape.
+func (r *CreateProjectResponse) UnmarshalJSON(b []byte) error {
+	// Use an alias to avoid infinite recursion when calling json.Unmarshal.
+	type alias CreateProjectResponse
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*r = CreateProjectResponse(a)
+
+	// Also parse the flat fields that the live forge MCP server returns.
+	var flat struct {
+		ProjectID int    `json:"project_id"`
+		Name      string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &flat); err != nil {
+		return err
+	}
+	// Flat fields win when present (non-zero).
+	if flat.ProjectID != 0 {
+		r.Project.ID = flat.ProjectID
+	}
+	// Name: prefer the top-level name from the flat shape when the nested
+	// project.name is empty (nested shape sets it; flat shape sets top-level).
+	if r.Project.Name == "" && flat.Name != "" {
+		r.Project.Name = flat.Name
+	}
+	return nil
 }
 
 // CreateProject creates a forge project. Returns the ID forge assigned.
@@ -160,6 +202,16 @@ type CreateClusterRequest struct {
 }
 
 // CreateClusterResponse captures the fields awsbnkctl reads.
+//
+// Forge currently returns a bare top-level object with no wrapper:
+//
+//	{"id":23,"name":"syd-tracer","context":"...","status":"active",...}
+//
+// For forward-compat we also accept a nested envelope:
+//
+//	{"cluster":{"id":23,"name":"syd-tracer"},"success":true}
+//
+// UnmarshalJSON handles both shapes; the top-level id wins when present.
 type CreateClusterResponse struct {
 	Cluster struct {
 		ID   int    `json:"id"`
@@ -167,6 +219,34 @@ type CreateClusterResponse struct {
 	} `json:"cluster"`
 	Success bool   `json:"success"`
 	Message string `json:"message,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler. It parses both the flat/bare
+// shape forge currently emits and the legacy nested-cluster shape.
+func (r *CreateClusterResponse) UnmarshalJSON(b []byte) error {
+	type alias CreateClusterResponse
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*r = CreateClusterResponse(a)
+
+	// Parse the top-level id + name that the live forge MCP server returns.
+	var flat struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &flat); err != nil {
+		return err
+	}
+	// Top-level id wins when present (non-zero).
+	if flat.ID != 0 {
+		r.Cluster.ID = flat.ID
+	}
+	if r.Cluster.Name == "" && flat.Name != "" {
+		r.Cluster.Name = flat.Name
+	}
+	return nil
 }
 
 // CreateCluster registers a Kubernetes cluster under a project.

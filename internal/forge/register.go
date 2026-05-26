@@ -78,14 +78,20 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 		req.AWSProfile = os.Getenv("AWS_PROFILE")
 	}
 
-	// Idempotency: existing link wins.
+	// Idempotency: existing link wins — but only when fully registered.
+	// A "pending" link means the forge handoff failed previously; treat it
+	// the same as no link so we fall through to the create_project →
+	// create_cluster path and complete the registration.
 	if existing, err := ReadLink(req.WorkspaceDir); err == nil {
-		if _, gerr := c.GetCluster(ctx, existing.ClusterID); gerr != nil {
-			return RegisterResult{Link: existing, ForgeURL: c.URL()},
-				fmt.Errorf("workspace already linked to forge cluster_id=%d but get_cluster failed: %w",
-					existing.ClusterID, gerr)
+		if existing.IsRegistered() {
+			if _, gerr := c.GetCluster(ctx, existing.ClusterID); gerr != nil {
+				return RegisterResult{Link: existing, ForgeURL: c.URL()},
+					fmt.Errorf("workspace already linked to forge cluster_id=%d but get_cluster failed: %w",
+						existing.ClusterID, gerr)
+			}
+			return RegisterResult{Link: existing, ForgeURL: c.URL()}, nil
 		}
-		return RegisterResult{Link: existing, ForgeURL: c.URL()}, nil
+		// Link exists but is not registered (e.g. Status=="pending") — fall through.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return RegisterResult{}, fmt.Errorf("read existing link: %w", err)
 	}
