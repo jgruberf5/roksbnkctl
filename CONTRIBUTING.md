@@ -4,30 +4,15 @@
 
 This guide assumes a clone of the repo on a Linux or macOS host with Go 1.25+, git, make, and docker already installed (the "build tools" assumed-present prerequisites).
 
-For Ubuntu/Debian hosts, the repository ships a one-shot installer for everything else `make build` / `make release` / `scripts/e2e-test-full.sh` rely on:
+Additional dev utilities the e2e scripts and Makefile targets shell out to: `helm` 3, `jq`, `unzip`, `gnupg`, `openssh-client`, `python3`. Install these via your OS package manager.
 
-```bash
-./install_build_dependencies.sh
-```
+What is deliberately NOT required on the host:
 
-What it installs (idempotent — re-running skips anything already present):
-
-- `terraform` (HashiCorp apt repo) — required for the binary's local backend
-- `helm` 3 (official apt repo) — required at `awsbnkctl up` time; terraform's `null_resource` + `local-exec` provisioners for the `cert_manager` / `flo` / `cne_instance` modules shell out to host `helm`
-- `ibmcloud` CLI + the `kubernetes-service` and `cloud-object-storage` plugins — required for the `awsbnkctl ibmcloud …` passthrough with `--backend local` and for e2e Phase B/I
-- `oc` (Red Hat OpenShift CLI, from Red Hat's mirror tarball) — required for the e2e flow's Phase B5 step (`awsbnkctl oc whoami` passthrough). The everyday `awsbnkctl k *` verbs don't need it; the passthrough does
-- `jq`, `unzip`, `gnupg`, `openssh-client`, `python3` — dev utilities the e2e scripts and Makefile targets shell out to
-
-What it deliberately does NOT install:
-
+- `terraform` — removed; awsbnkctl uses the Go SDK directly, no Terraform binary
 - `mdbook` / `mdbook-pandoc` / `pandoc` / `texlive` / `mermaid-cli` — bundled in `tools/docker/mdbook/Dockerfile`; build once via `make -C tools/docker build-mdbook`
 - `goreleaser` — pulled at run-time from `goreleaser/goreleaser:latest`
 - `iperf3` — bundled in `tools/docker/iperf3/`, runs via `--backend k8s`
 - `kubectl` — sprint 2 internalised the surface; install on host only if you want to shell out for cred-audit assertions in `scripts/e2e-test-backends.sh`
-
-For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …) and for macOS, the script doesn't auto-detect — install the prereqs manually per the per-OS recipes in [chapter 4 of the book](book/src/04-installation.md#installing-prerequisites).
-
-End users running a pre-built `awsbnkctl` binary from the GitHub Release page do **not** need this script — they only need `terraform` and (optionally) the passthrough CLIs. See the book's installation chapter for that path.
 
 ## Running tests
 
