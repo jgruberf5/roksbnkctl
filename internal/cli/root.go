@@ -14,7 +14,6 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"github.com/JLCode-tech/awsbnkctl/internal/config"
 	execbackend "github.com/JLCode-tech/awsbnkctl/internal/exec"
 )
 
@@ -88,7 +87,7 @@ func warnLegacyState(_ *cobra.Command, _ []string) error {
 }
 
 // Execute runs the root command. Wires SIGINT (Ctrl+C) to a cancellable
-// context so long-running operations like terraform apply terminate
+// context so long-running operations like `awsbnkctl up` terminate
 // promptly and child processes get cleaned up.
 //
 // Loads $PWD/.env at startup if present — godotenv's Load does NOT
@@ -145,12 +144,6 @@ func init() {
 	// tag-released binary pulls matching tag-released tool images
 	// instead of the :dev tag CI doesn't publish.
 	execbackend.SetToolImageTag(func() string { return Version })
-
-	// Wire the build-time Version into the terraform.applied.tfvars
-	// header so the snapshot records which awsbnkctl produced it.
-	// Same import-cycle-dodging seam pattern as SetToolImageTag above.
-	// Ported from roksbnkctl@6725db1 (sprint11 / PRD 07).
-	config.SetAppliedTFVarsVersion(func() string { return Version })
 }
 
 // RootCommand returns the wired-up root cobra command for tooling that

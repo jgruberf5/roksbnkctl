@@ -18,8 +18,8 @@ import (
 // measuring" without paying the LB / DNS / iperf3 setup cost.
 //
 // Mirrors the spike-deferral pattern from `awsbnkctl up --dry-run`:
-// terraform plans without applying; test --dry-run plans without
-// probing. Brief §3 + §"Verification".
+// the phased path prints its plan without mutating AWS; test --dry-run
+// plans without probing. Brief §3 + §"Verification".
 
 // testPlan is the structured shape rendered when --dry-run is set.
 // Public fields so the JSON output mode (-o json) can serialise it

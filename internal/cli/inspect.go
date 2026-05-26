@@ -15,7 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 
+	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
+	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/k8s"
 )
 
@@ -26,23 +28,34 @@ var (
 	flagLogsPrevious  bool
 	flagLogsSince     string
 	flagLogsTailLines int64
+
+	// flagStatusConfig points status at a cluster.yaml so it can locate
+	// the AWS-SDK phased path's state.env IDs cache
+	// (.awsbnkctl/<metadata.name>/state.env). When unset, status falls
+	// back to the current workspace's cluster name for a best-effort
+	// lookup under the working directory.
+	flagStatusConfig string
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Summary of the workspace: cluster, components, per-phase deployment",
+	Short: "Summary of the workspace: cluster, components, deploy state",
 	Long: `awsbnkctl status reports a quick read of the workspace:
 
   - workspace name + region
   - configured cluster name
-  - pinned Terraform source
-  - per-phase deployment status (cluster phase + BNK trial)
-  - v1.0.x ` + "`Last apply`" + ` line preserved for legacy single-state workspaces
+  - deploy state read from the AWS-SDK phased path's state.env IDs cache
+    (.awsbnkctl/<cluster>/state.env): VPC, EKS cluster, node group,
+    TMM node / jumphost, BNK activation, forge link, last phase applied
   - kubeconfig path (if any)
   - cluster reachability (node count + ready count)
 
-v1.x will add per-BNK-component readiness (flo, cis, cert-manager,
-cneinstance) once the component-discovery shape is finalised.`,
+Pass --config <cluster.yaml> to point status at a specific cluster's
+state.env. Without it, status uses the current workspace's cluster name
+and looks for .awsbnkctl/<name>/state.env under the working directory.
+
+Every section is best-effort: a missing or unreadable state.env degrades
+to "not deployed" rather than failing the command.`,
 	RunE: runStatus,
 }
 
@@ -64,6 +77,7 @@ or relabelled, fall back to:
 }
 
 func init() {
+	statusCmd.Flags().StringVar(&flagStatusConfig, "config", "", "path to cluster.yaml (locates the phased path's state.env; defaults to the workspace cluster name)")
 	logsCmd.Flags().BoolVarP(&flagFollow, "follow", "f", false, "follow log output")
 	logsCmd.Flags().StringVarP(&flagLogsNamespace, "namespace", "n", "", "override the component's default namespace")
 	logsCmd.Flags().StringVarP(&flagLogsContainer, "container", "c", "", "container name in a multi-container pod")
@@ -99,17 +113,15 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(tw, "AWS profile:\t%s\n", cctx.Workspace.AWS.Profile)
 	}
 	fmt.Fprintf(tw, "Cluster:\t%s\t%s\n", or(cctx.Workspace.Cluster.Name, "(unset)"), createOrAttach(cctx.Workspace.Cluster.Create))
-	fmt.Fprintf(tw, "TF source:\t%s\n", tfSourceDescription(cctx.Workspace.TFSource))
 
-	// PRD 06 §"`status` command integration": consume config.DetectShape
-	// and emit per-phase deployment lines for non-Legacy shapes. Legacy
-	// preserves the v1.0.x `Last apply` line verbatim plus a one-line
-	// shape callout for script-compat. Best-effort by convention — a
-	// DetectShape error or unreadable state file degrades to
+	// Deploy state, read from the AWS-SDK phased path's state.env IDs
+	// cache (per D-001…D-007). Locate it via the
+	// cluster name — from --config <cluster.yaml> if given, else from the
+	// workspace's configured cluster name — and read
+	// .awsbnkctl/<name>/state.env under the working directory. Best-effort
+	// by convention: a missing / unreadable / empty state.env degrades to
 	// "not deployed" rather than failing the command.
-	//
-	// Ported from roksbnkctl@6fdf5bf (sprint10 / PRD 06).
-	writeStatusPhaseLines(tw, cctx.WorkspaceName)
+	writeStatusDeployState(tw, flagStatusConfig, cctx.Workspace.Cluster.Name)
 
 	// Kubeconfig + cluster reachability.
 	kcPath := k8s.DefaultKubeconfigPath()
@@ -129,87 +141,156 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// writeStatusPhaseLines emits the per-shape deployment lines for the
-// `status` command per PRD 06 §"`status` command integration". Output
-// by shape:
+// writeStatusDeployState emits the deploy-state lines for `status`,
+// sourced from the AWS-SDK phased path's state.env IDs cache
+// (.awsbnkctl/<cluster>/state.env). The cluster name is resolved from
+// configPath (a cluster.yaml, when --config is given) or, failing that,
+// from fallbackClusterName (the workspace's configured cluster name).
 //
-//	ShapeEmpty        — "Cluster phase: not deployed" + "BNK trial: not deployed"
-//	ShapeClusterOnly  — cluster phase with mtime; trial "not deployed"
-//	ShapeSplit        — both phases with their own mtimes
-//	ShapeLegacySingle — one-line shape callout + the v1.0.x "Last apply"
-//	                    line verbatim from `state/terraform.tfstate` mtime
-//	                    (script-compat for v1.0.x parsers)
-//	default           — falls back to the v1.0.x "Last apply" line so a
-//	                    DetectShape error never blocks status output
-//
-// All filesystem failures are silenced — every section of `runStatus`
-// is best-effort. Ported from roksbnkctl@6fdf5bf (sprint10).
-func writeStatusPhaseLines(tw io.Writer, workspace string) {
-	shape, err := config.DetectShape(workspace)
-	if err != nil {
-		// Malformed state files etc. — fall through to v1.0.x line so
-		// the user gets *some* signal rather than a hard failure here.
-		writeLegacyLastApply(tw, workspace)
+// Best-effort by convention — every section of `runStatus` is
+// best-effort. A missing cluster name, an unloadable cluster.yaml, or an
+// unreadable / malformed state.env all degrade to a single "not deployed"
+// line rather than a hard error. The state.env is shell-sourceable
+// KEY=VALUE (see internal/aws/state); empty values mean "not provisioned"
+// because the phase code clears IDs on `down`.
+func writeStatusDeployState(tw io.Writer, configPath, fallbackClusterName string) {
+	st, ok := loadStatusState(configPath, fallbackClusterName)
+	if !ok {
+		fmt.Fprintln(tw, "Deploy state:\t(no state — run `awsbnkctl up --config <cluster.yaml>`)")
 		return
 	}
 
-	trialDir, _ := config.WorkspaceStateDir(workspace)
-	clusterDir, _ := config.WorkspaceClusterStateDir(workspace)
-	trialState := filepath.Join(trialDir, "terraform.tfstate")
-	clusterState := filepath.Join(clusterDir, "terraform.tfstate")
+	fmt.Fprintf(tw, "VPC:\t%s\n", orNotProvisioned(st.Get("VPC_ID")))
+	fmt.Fprintf(tw, "EKS cluster:\t%s\n", orNotProvisioned(st.Get("EKS_CLUSTER_NAME")))
+	fmt.Fprintf(tw, "Node group:\t%s\n", orNotProvisioned(st.Get("NODEGROUP_DEFAULT_NAME")))
+	fmt.Fprintf(tw, "TMM node:\t%s\n", tmmNodeLine(st))
+	fmt.Fprintf(tw, "Jumphost:\t%s\n", orNotProvisioned(st.Get("JUMPHOST_INSTANCE_ID")))
+	fmt.Fprintf(tw, "BNK activation:\t%s\n", bnkActivationLine(st))
+	fmt.Fprintf(tw, "Forge:\t%s\n", forgeLine(st))
+	fmt.Fprintf(tw, "Last phase applied:\t%s\n", lastPhaseAppliedLine(st))
+}
 
-	switch shape {
-	case config.ShapeEmpty:
-		fmt.Fprintln(tw, "Cluster phase:\tnot deployed")
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
-
-	case config.ShapeClusterOnly:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
-
-	case config.ShapeSplit:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintf(tw, "BNK trial:\t%s\n", deployedLine(trialState))
-
-	case config.ShapeLegacySingle:
-		// One-line callout so the reader sees "legacy" at a glance,
-		// plus the verbatim v1.0.x `Last apply` line for script-compat.
-		fmt.Fprintln(tw, "Shape:\tlegacy single-state (cluster + trial in one tfstate)")
-		writeLegacyLastApply(tw, workspace)
-
+// loadStatusState resolves the cluster name then loads its state.env.
+// Returns (state, true) only when a non-empty state.env was found; a
+// missing file, missing cluster name, or unloadable cluster.yaml return
+// (nil, false) so the caller emits the "no state" line.
+func loadStatusState(configPath, fallbackClusterName string) (*state.State, bool) {
+	var stateDir string
+	switch {
+	case configPath != "":
+		cl, err := intent.Load(configPath)
+		if err != nil || cl.Metadata.Name == "" {
+			return nil, false
+		}
+		stateDir = cl.StateDir()
+	case fallbackClusterName != "":
+		// Mirror intent.Cluster.StateDir()'s layout
+		// (.awsbnkctl/<name>) relative to the working directory.
+		stateDir = filepath.Join(".awsbnkctl", fallbackClusterName)
 	default:
-		// Defensive: a future shape constant added without updating
-		// this switch shouldn't blank the line; fall back to the
-		// v1.0.x output so nothing downstream parses a missing line.
-		writeLegacyLastApply(tw, workspace)
+		return nil, false
 	}
-}
 
-// deployedLine returns the `deployed (last apply <timestamp>)` shape
-// for a per-phase line, reading the mtime of `statePath`. Falls back
-// to `not deployed` when the file isn't readable — keeps the per-shape
-// output honest in the face of partial state.
-func deployedLine(statePath string) string {
-	info, err := os.Stat(statePath)
+	// state.Load returns an empty State (no error) when the file is
+	// absent, and an error only on a malformed line. Treat both the
+	// error case and the "file absent / nothing populated" case as
+	// "not deployed".
+	st, err := state.Load(stateDir)
 	if err != nil {
-		return "not deployed"
+		return nil, false
 	}
-	return fmt.Sprintf("deployed (last apply %s)", info.ModTime().Format("2006-01-02 15:04:05 MST"))
+	if _, statErr := os.Stat(filepath.Join(stateDir, "state.env")); statErr != nil {
+		return nil, false
+	}
+	return st, true
 }
 
-// writeLegacyLastApply emits the verbatim v1.0.x `Last apply` line from
-// `state/terraform.tfstate` mtime. Used for ShapeLegacySingle (PRD 06
-// script-compat preservation) and as a defensive fallback for unknown
-// shapes / DetectShape errors.
-func writeLegacyLastApply(tw io.Writer, workspace string) {
-	stateDir, _ := config.WorkspaceStateDir(workspace)
-	statePath := filepath.Join(stateDir, "terraform.tfstate")
-	if info, err := os.Stat(statePath); err == nil {
-		age := time.Since(info.ModTime()).Round(time.Second)
-		fmt.Fprintf(tw, "Last apply:\t%s\t(%s ago)\n", info.ModTime().Format("2006-01-02 15:04:05 MST"), age)
-	} else {
-		fmt.Fprintln(tw, "Last apply:\t(no state — run `awsbnkctl up`)")
+// tmmNodeLine reports the TMM data-plane node: prefer the node name,
+// fall back to the instance ID, else "not provisioned".
+func tmmNodeLine(st *state.State) string {
+	if name := st.Get("TMM_NODE_NAME"); name != "" {
+		return name
 	}
+	return orNotProvisioned(st.Get("TMM_INSTANCE_ID"))
+}
+
+// bnkActivationLine reports BNK activation. "Active" once the CNEInstance
+// reached Ready and the license CR landed; "activating" when the license
+// is applied but the instance hasn't reported Ready yet; else
+// "not activated".
+func bnkActivationLine(st *state.State) string {
+	ready := st.Get("CNEINSTANCE_READY_AT")
+	licenseApplied := st.Get("LICENSE_APPLIED_AT") != "" || st.Get("LICENSE_NAME") != ""
+	switch {
+	case ready != "" && licenseApplied:
+		return fmt.Sprintf("Active (license %s, ready %s)", orUnnamed(st.Get("LICENSE_NAME")), ready)
+	case ready != "":
+		return fmt.Sprintf("Active (ready %s)", ready)
+	case licenseApplied:
+		return fmt.Sprintf("activating (license %s applied, CNEInstance not yet Ready)", orUnnamed(st.Get("LICENSE_NAME")))
+	default:
+		return "not activated"
+	}
+}
+
+// forgeLine reports the forge link from FORGE_STATUS / FORGE_PROJECT_ID.
+func forgeLine(st *state.State) string {
+	status := st.Get("FORGE_STATUS")
+	project := st.Get("FORGE_PROJECT_ID")
+	switch {
+	case status == "" && project == "":
+		return "not linked"
+	case project != "":
+		return fmt.Sprintf("%s (project %s)", orUnknown(status), project)
+	default:
+		return orUnknown(status)
+	}
+}
+
+// statusTimestampKeys are the state.env keys that record a phase
+// timestamp. lastPhaseAppliedLine scans these for the most recent
+// RFC3339 value and reports it as the deploy "high-water mark".
+var statusTimestampKeys = []string{
+	"CLOUD_NETWORK_MAPPING_APPLIED_AT",
+	"IRSA_SA_APPLIED_AT",
+	"NADS_APPLIED_AT",
+	"IFACE_DISCOVERY_AT",
+	"F5SPKVLAN_APPLIED_AT",
+	"FLO_INSTALLED_AT",
+	"HUGEPAGES_DS_INSTALLED_AT",
+	"DSSM_INSECURE_OVERLAY_APPLIED_AT",
+	"LICENSE_CRD_READY_AT",
+	"LICENSE_APPLIED_AT",
+	"CNEINSTANCE_APPLIED_AT",
+	"CNEINSTANCE_RECONCILE_STARTED_AT",
+	"CNEINSTANCE_READY_AT",
+}
+
+// lastPhaseAppliedLine finds the most-recent parseable RFC3339 timestamp
+// across statusTimestampKeys and reports it as "<KEY> at <time>". Values
+// that aren't RFC3339 (e.g. the "dry-run" sentinel) are skipped. When no
+// timestamp is present it reports the "no state" hint.
+func lastPhaseAppliedLine(st *state.State) string {
+	var bestKey string
+	var bestTime time.Time
+	for _, k := range statusTimestampKeys {
+		v := st.Get(k)
+		if v == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			continue
+		}
+		if t.After(bestTime) {
+			bestTime = t
+			bestKey = k
+		}
+	}
+	if bestKey == "" {
+		return "(no phase timestamps yet — run `awsbnkctl up --config <cluster.yaml>`)"
+	}
+	return fmt.Sprintf("%s at %s", bestKey, bestTime.Format("2006-01-02 15:04:05 MST"))
 }
 
 // probeCluster does a single timed call to list nodes and summarises
@@ -263,16 +344,11 @@ func createOrAttach(create bool) string {
 	return "(attach existing)"
 }
 
-func tfSourceDescription(s config.TFSourceCfg) string {
-	switch s.Type {
-	case "github":
-		return fmt.Sprintf("%s@%s", s.Repo, s.Ref)
-	case "local":
-		return "local:" + s.Path
-	default:
-		return "(unset)"
-	}
-}
+func orNotProvisioned(s string) string { return or(s, "not provisioned") }
+
+func orUnnamed(s string) string { return or(s, "unnamed") }
+
+func orUnknown(s string) string { return or(s, "unknown") }
 
 // ── logs ─────────────────────────────────────────────────────────────
 

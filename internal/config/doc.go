@@ -1,11 +1,10 @@
-// Package config loads workspace and global configuration and renders
-// Terraform variables files.
+// Package config loads workspace and global configuration for awsbnkctl.
 //
 // File layout:
 //
 //	~/.awsbnkctl/config.yaml             — global preferences, current_workspace
 //	~/.awsbnkctl/<workspace>/config.yaml — per-workspace inputs
-//	~/.awsbnkctl/<workspace>/state/      — terraform.tfstate, kubeconfig, scratch/
+//	~/.awsbnkctl/<workspace>/state/      — state.env IDs cache, kubeconfig, scratch/
 //
 // Override the base directory via $ROKSBNKCTL_HOME (used by tests;
 // advanced users with non-home-dir state).

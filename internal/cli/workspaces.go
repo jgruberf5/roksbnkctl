@@ -56,7 +56,7 @@ var wsDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	wsDeleteCmd.Flags().BoolVar(&flagWSForce, "force", false, "delete even if Terraform state lists provisioned resources")
+	wsDeleteCmd.Flags().BoolVar(&flagWSForce, "force", false, "delete even if state.env lists provisioned AWS resources")
 	workspacesCmd.AddCommand(wsListCmd, wsCurrentCmd, wsUseCmd, wsNewCmd, wsDeleteCmd)
 	rootCmd.AddCommand(workspacesCmd)
 }
@@ -79,24 +79,18 @@ func runWSList(_ *cobra.Command, _ []string) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tCURRENT\tREGION\tCLUSTER\tTF SOURCE")
+	fmt.Fprintln(tw, "NAME\tCURRENT\tREGION\tCLUSTER")
 	for _, n := range names {
 		marker := ""
 		if n == g.CurrentWorkspace {
 			marker = "*"
 		}
-		var region, cluster, tfRef string
+		var region, cluster string
 		if ws, err := config.LoadWorkspace(n); err == nil {
 			region = ws.AWS.Region
 			cluster = ws.Cluster.Name
-			switch ws.TFSource.Type {
-			case "github":
-				tfRef = ws.TFSource.Repo + "@" + ws.TFSource.Ref
-			case "local":
-				tfRef = "local:" + ws.TFSource.Path
-			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", n, marker, region, cluster, tfRef)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", n, marker, region, cluster)
 	}
 	return tw.Flush()
 }
@@ -147,7 +141,7 @@ func runWSNew(_ *cobra.Command, args []string) error {
 
 // runWSDelete removes a workspace's directory and its keychain entry.
 // Refuses to delete the current workspace (leaves the pointer dangling)
-// and refuses if Terraform state lists resources unless --force is set.
+// and refuses if state.env lists provisioned resources unless --force is set.
 func runWSDelete(_ *cobra.Command, args []string) error {
 	name := args[0]
 	g, err := config.LoadGlobal()
