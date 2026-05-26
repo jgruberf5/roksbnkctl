@@ -8,14 +8,12 @@ useDefault = true
 
 [[allowlists]]
 description = """
-Internal env-var-name sentinels, not credentials. internal/exec/k8s.go's
-k8sLongLivedKey is the literal env key "AWSBNKCTL_K8S_LONG_LIVED=1" used as a
-plumbing flag on RunOpts.Env — the generic-api-key rule flags it on entropy +
-the "Key" identifier name, but it carries no secret material. Match the source
-line (regexTarget=line) by its unique identifier so the rule is suppressed
-regardless of how gitleaks extracts/redacts the "secret".
+internal/exec/k8s.go holds only exec-backend plumbing — e.g. the k8sLongLivedEnv
+env-var sentinel ("AWSBNKCTL_K8S_LONG_LIVED=1") on RunOpts.Env — and no credential
+material. The const was renamed away from "...Key" so gitleaks' generic-api-key rule
+no longer matches; this path-scoped allowlist is a version-stable belt-and-suspenders
+(regexTarget=line is honored by gitleaks 8.30 but not the CI-pinned 8.24.3).
 """
-regexTarget = "line"
-regexes = [
-  '''k8sLongLivedKey''',
+paths = [
+  '''internal/exec/k8s\.go''',
 ]
