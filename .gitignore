@@ -10,6 +10,9 @@
 # awsbnkctl-managed state, never commit
 .awsbnkctl/
 
+# Demo material (presentation packet + diagrams) — kept on disk, not in git
+docs/demo/
+
 # F5 BNK supply-chain credentials — operator-supplied per cluster.yaml.
 # Typically symlinked into the repo root from a private location.
 # NEVER commit these — they grant FAR pull + license rights.
