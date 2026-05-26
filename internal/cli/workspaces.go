@@ -162,11 +162,6 @@ func runWSDelete(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Best-effort keychain cleanup. Missing entry is not an error.
-	if err := config.DeleteAPIKeyFromKeychain(name); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: removing keychain entry for %q: %v\n", name, err)
-	}
-
 	fmt.Fprintf(os.Stderr, "✓ Deleted workspace %q\n", name)
 	return nil
 }
