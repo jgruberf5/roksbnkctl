@@ -474,6 +474,12 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase09ForgeRegister(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	// Phase 08b: vpc-cni prefix delegation BEFORE the node group so nodes boot in
+	// prefix mode (CNI stays on the primary ENI; no secondary ENI → no cross-node
+	// asymmetric-drop on a secondary ENI, which previously hung BNK licensing).
+	if err := phases.Phase08bVPCCNIPrefix(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	if err := phases.Phase10NodeGroup(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
@@ -702,6 +708,9 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase09ForgeRegisterDown(ctx, cl, st, clients, flagKeepForgeLink); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase08bVPCCNIPrefixDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase08EKSClusterDown(ctx, cl, st, clients); err != nil {
