@@ -4,6 +4,10 @@
   "words": [
     "autodiscover",
     "awsbnkctl",
+    "deleg",
+    "ifnames",
+    "VPCCNI",
+    "VTEP",
     "BNKEXT",
     "BNKINT",
     "EICEID",

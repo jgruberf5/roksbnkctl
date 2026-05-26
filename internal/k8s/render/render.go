@@ -5,6 +5,7 @@ package render
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/bnkconst"
@@ -202,19 +203,29 @@ type NADVars struct {
 	Namespace       string // target namespace for the NADs
 	ExternalNADName string // external-netdevice
 	InternalNADName string // internal-netdevice
-	ExternalIFName  string // ens8
-	InternalIFName  string // ens7
+	ExternalPCI     string // 0000:00:08.0
+	InternalPCI     string // 0000:00:07.0
+}
+
+// orDefault returns getter(key) if non-empty, otherwise def.
+// Used to source discovered values from state with a constant fallback.
+func orDefault(getter func(string) string, key, def string) string {
+	if v := getter(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // RenderNADs renders the host-device NADs template for the given namespace.
-// The interface names and NAD names are constants for the host-device pattern.
-func RenderNADs(tmpl []byte, namespace string) ([]byte, error) {
+// PCI bus addresses are sourced from the state getter (set by phase 17c iface-
+// discovery). Falls back to architecture constants when the getter returns "".
+func RenderNADs(tmpl []byte, namespace string, getter func(string) string) ([]byte, error) {
 	vars := NADVars{
 		Namespace:       namespace,
 		ExternalNADName: "external-netdevice",
 		InternalNADName: "internal-netdevice",
-		ExternalIFName:  "ens8",
-		InternalIFName:  "ens7",
+		ExternalPCI:     orDefault(getter, "EXTERNAL_PCI", "0000:00:08.0"), // ens8, device-index 3
+		InternalPCI:     orDefault(getter, "INTERNAL_PCI", "0000:00:07.0"), // ens7, device-index 2
 	}
 	return Render(tmpl, vars)
 }
@@ -253,11 +264,13 @@ type CNEInstanceVars struct {
 	AWSRegion           string // cl.Metadata.Region
 	ExternalNAD         string // external-netdevice
 	InternalNAD         string // internal-netdevice
-	ExternalIFName      string // ens8
-	InternalIFName      string // ens7
-	ExternalPCI         string // 0000:00:08.0
-	InternalPCI         string // 0000:00:07.0
-	CloudHostDeviceName string // ens8
+	ExternalIFName      string // ens8 (or discovered value)
+	InternalIFName      string // ens7 (or discovered value)
+	ExternalIFUpper     string // ENS8 (uppercase of ExternalIFName, for PCIDEVICE_INTEL_COM_<NAME>)
+	InternalIFUpper     string // ENS7 (uppercase of InternalIFName, for PCIDEVICE_INTEL_COM_<NAME>)
+	ExternalPCI         string // 0000:00:08.0 (or discovered value)
+	InternalPCI         string // 0000:00:07.0 (or discovered value)
+	CloudHostDeviceName string // ens8 (or discovered value)
 	CloudHostDeviceTag  string // f5-cne-device
 }
 
@@ -274,6 +287,8 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 		return nil, fmt.Errorf("render: VPC_ID not in state (Phase 02 must run first)")
 	}
 	cvars := CertChainVarsFromCluster(cl)
+	extIFName := orDefault(getter, "EXTERNAL_IFNAME", "ens8")
+	intIFName := orDefault(getter, "INTERNAL_IFNAME", "ens7")
 	vars := CNEInstanceVars{
 		// Operator-knobs
 		DeploymentSize:   cl.Bnk.DeploymentSize,
@@ -294,11 +309,13 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 		AWSRegion:           cl.Metadata.Region,
 		ExternalNAD:         "external-netdevice",
 		InternalNAD:         "internal-netdevice",
-		ExternalIFName:      "ens8",
-		InternalIFName:      "ens7",
-		ExternalPCI:         "0000:00:08.0",
-		InternalPCI:         "0000:00:07.0",
-		CloudHostDeviceName: "ens8",
+		ExternalIFName:      extIFName,
+		InternalIFName:      intIFName,
+		ExternalIFUpper:     strings.ToUpper(extIFName),
+		InternalIFUpper:     strings.ToUpper(intIFName),
+		ExternalPCI:         orDefault(getter, "EXTERNAL_PCI", "0000:00:08.0"),
+		InternalPCI:         orDefault(getter, "INTERNAL_PCI", "0000:00:07.0"),
+		CloudHostDeviceName: orDefault(getter, "CLOUD_HOST_DEVICE_NAME", extIFName),
 		CloudHostDeviceTag:  "f5-cne-device",
 	}
 	return Render(tmpl, vars)
@@ -320,6 +337,24 @@ func RenderLicenseCR(tmpl []byte, cl *intent.Cluster, jwt string) ([]byte, error
 	vars := LicenseCRVars{
 		LabName: cl.Metadata.Name,
 		JWT:     jwt,
+	}
+	return Render(tmpl, vars)
+}
+
+// ─── Iface-discovery pod (phase 17c) ─────────────────────────────────────────
+
+// IfaceDiscoveryPodVars holds the substitution variables for
+// host-device/iface-discovery-pod.yaml.tmpl.
+type IfaceDiscoveryPodVars struct {
+	Namespace string // target namespace (kube-system)
+	NodeName  string // TMM_NODE_NAME (schedules pod on the exact node)
+}
+
+// RenderIfaceDiscoveryPod renders the iface-discovery pod manifest.
+func RenderIfaceDiscoveryPod(tmpl []byte, namespace, nodeName string) ([]byte, error) {
+	vars := IfaceDiscoveryPodVars{
+		Namespace: namespace,
+		NodeName:  nodeName,
 	}
 	return Render(tmpl, vars)
 }

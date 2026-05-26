@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -45,6 +46,8 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		fmt.Fprintln(os.Stderr, "[phase 17] dry-run: would create + attach INTERNAL_ENI (ens7, idx=2) and EXTERNAL_ENI (ens8, idx=3)")
 		st.Set("INTERNAL_ENI", "eni-dry-run-int")
 		st.Set("EXTERNAL_ENI", "eni-dry-run-ext")
+		st.Set("INTERNAL_ENI_MAC", "02:00:00:00:00:02")
+		st.Set("EXTERNAL_ENI_MAC", "02:00:00:00:00:03")
 		return nil
 	}
 
@@ -73,6 +76,14 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	}
 	st.Set("INTERNAL_ENI", intENI)
 
+	// Capture MAC for internal ENI (always — covers state-hit and tag-hit paths).
+	intMAC, err := eniMAC(ctx, clients.EC2, intENI)
+	if err != nil {
+		return fmt.Errorf("phase17: capturing internal ENI MAC: %w", err)
+	}
+	st.Set("INTERNAL_ENI_MAC", intMAC)
+	fmt.Fprintf(os.Stderr, "[phase 17] INTERNAL_ENI_MAC=%s\n", intMAC)
+
 	// External ENI: device-index 3 → ens8.
 	extENI, err := ensureSecondaryENI(ctx, clients.EC2, name, extSubnet, sgID,
 		tags.CompENIExternal, "ens8", cl.Tags, cl.Metadata.Labels, st, "EXTERNAL_ENI")
@@ -80,6 +91,14 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase17: external ENI: %w", err)
 	}
 	st.Set("EXTERNAL_ENI", extENI)
+
+	// Capture MAC for external ENI (always — covers state-hit and tag-hit paths).
+	extMAC, err := eniMAC(ctx, clients.EC2, extENI)
+	if err != nil {
+		return fmt.Errorf("phase17: capturing external ENI MAC: %w", err)
+	}
+	st.Set("EXTERNAL_ENI_MAC", extMAC)
+	fmt.Fprintf(os.Stderr, "[phase 17] EXTERNAL_ENI_MAC=%s\n", extMAC)
 
 	// Attach internal at device-index 2.
 	if err := attachENIIfNeeded(ctx, clients.EC2, intENI, instanceID, 2); err != nil {
@@ -89,12 +108,11 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	if err := attachENIIfNeeded(ctx, clients.EC2, extENI, instanceID, 3); err != nil {
 		return fmt.Errorf("phase17: attaching external ENI %s: %w", extENI, err)
 	}
-	// Why: AL2023 on Nitro assigns predictable interface names (ens7, ens8) for
-	// device-index 2 and 3. If AWS changes the Nitro naming convention in a future
-	// kernel or instance generation, attach will still succeed here but TMM will
-	// fail to bind because the hardcoded names won't match. No readback is
-	// performed today — validate with `ip link` on the node if TMM fails to start.
-	fmt.Fprintf(os.Stderr, "[phase 17] note: assuming AL2023 ifname convention (ens7/ens8); if Nitro renames in the future, secondary attach will appear successful but TMM will fail to bind\n")
+	// Phase 17c (iface-discovery) runs after this phase and resolves the actual
+	// Linux ifname + PCI bus address for each ENI by MAC matching on the node.
+	// The hardcoded ens7/ens8 names are now FALLBACK constants only — phase 17c
+	// provides the authoritative values. See constants_hostdevice.go.
+	fmt.Fprintf(os.Stderr, "[phase 17] MACs captured; phase 17c will resolve ifname+PCI on node\n")
 
 	// Assign TMM SelfIPs as secondary private IPs on each ENI.
 	// Per F5 Multi-AZ PDF p.9: AWS won't route SelfIPs to the ENI unless they
@@ -183,6 +201,8 @@ func Phase17SecondaryENIsDown(ctx context.Context, cl *intent.Cluster, st *state
 		}
 		st.Set(key, "")
 	}
+	st.Set("INTERNAL_ENI_MAC", "")
+	st.Set("EXTERNAL_ENI_MAC", "")
 	return st.Save()
 }
 
@@ -347,6 +367,23 @@ func waitENIDetached(ctx context.Context, ec2c EC2API, eniID string) error {
 		}
 	}
 	return fmt.Errorf("timeout waiting for ENI %s to detach", eniID)
+}
+
+// eniMAC describes a single ENI and returns its MAC address in lower-case
+// (e.g. "0a:1b:2c:3d:4e:5f"). Called after ensureSecondaryENI on ALL paths
+// (state-hit, tag-hit, freshly-created) so the MAC is always captured.
+func eniMAC(ctx context.Context, ec2c EC2API, eniID string) (string, error) {
+	out, err := ec2c.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
+	if err != nil {
+		return "", fmt.Errorf("DescribeNetworkInterfaces %s: %w", eniID, err)
+	}
+	if len(out.NetworkInterfaces) == 0 || out.NetworkInterfaces[0].MacAddress == nil ||
+		*out.NetworkInterfaces[0].MacAddress == "" {
+		return "", fmt.Errorf("ENI %s: MAC address not available", eniID)
+	}
+	return strings.ToLower(*out.NetworkInterfaces[0].MacAddress), nil
 }
 
 // lookupENIByTag looks up a network interface by cluster + component tags.
