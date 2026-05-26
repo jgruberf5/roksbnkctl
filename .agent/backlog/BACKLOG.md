@@ -78,18 +78,27 @@ current: null
   size: small
   status: done   # cycle 6 (2026-05-26): all 4 confirmed live, PR #45 merged to main. See docs/audits/2026-05-26-cycle6/SUMMARY.md. (forge e2e split out → forge-allocate-project-credentials)
 
-- id: forge-allocate-project-credentials
-  title: "Make forge registration credentialed (e2e) so forge can operate the cluster, not just record it"
-  source: "cycle-6 live finding 2026-05-26 + user direction; docs/audits handoff .agent/handoff/2026-05-26-forge-agent-prompt.md"
-  why: "Phase09/`forge register` creates the project + cluster (validated, PR #47) but passing credential_template_id to create_project does NOT populate the project's AWS credential record — get_project_aws_credentials stays configured=false, so forge 401s on every EKS call (test_cluster_connectivity). The cluster is only RECORDED, not OPERABLE. forge's model is SSO-based (aws_sso_initiate→poll→aws_set_project_credentials, or an SSO credential_template)."
+- id: forge-unattended-sso-refresh-token
+  title: "Capture an SSO refresh token for forge (and awsbnkctl's own long-run SDK creds) so up --auto / down stay non-interactive"
+  source: "cycle-6 forge RETURN-handoff 2026-05-26 (.agent/handoff/2026-05-26-forge-RETURN-to-awsbnkctl.md) — supersedes the old forge-allocate-project-credentials item"
+  why: |
+    Forge-side connectivity is now FIXED (forge agent: credential binding + ARN→bare-name EKS token; test_cluster_connectivity cluster 24 → success v1.30). The remaining piece is ONE awsbnkctl/IdC action: the is_default credential template has `can_refresh:false` (NO refresh token), and its exchanged AWS keys expire (~12h). After expiry forge can't re-mint non-interactively and EKS 401s until an interactive SSO re-auth. SAME root cause bit the cycle-6 teardown: a long `awsbnkctl down` stranded at phase 18 because the Go SDK couldn't refresh the expiring SSO token (the AWS CLI could, the SDK could not). One fix addresses both.
   scope: |
-    Gated by the existing forge.enabled flag (cluster.yaml; no new flag needed — confirm whether a top-level `up` CLI flag is also wanted):
-    - After create_project/create_cluster, allocate working AWS creds to the project so connectivity succeeds. Options:
-      (a) call aws_set_project_credentials with the operator SSO identity (account_id, role_name=Users, region, SSO access token), or
-      (b) create/allocate an SSO credential_template (aws_sso_enabled, aws_sso_account_id, aws_sso_role_name) and bind it to the project.
-    - The SSO device flow (aws_sso_initiate→poll) is INTERACTIVE (browser approval) — `up --auto` is non-interactive, so design how creds are obtained unattended (reuse operator SSO cache token? aws_assume_role with forge's base creds? pre-flighted token?). This is the key design question.
-    - Coordinate the forge-side half with the forge agent (handoff prompt): create_project+template should populate project creds, or connectivity should fall back to the default template.
-    - syd-tracer is CONFIG_MAP auth mode; role Users (operator SSO) already has implicit admin, so no aws-auth change needed for that identity.
+    - One-time SSO bootstrap must capture a REFRESH token: request `offline_access` scope / ensure the IdC permission set issues refresh tokens, AND target the credential TEMPLATE (POST /api/credential-templates/{id}/authenticate-sso + poll), NOT the project record (template-backed projects authenticate via the template's keys; forge's lazy refresh operates on the template).
+    - If the IdC permission set does NOT issue refresh tokens for this account/role, unattended is impossible — `up --auto` must prompt for SSO re-auth or pre-flight a fresh token each run.
+    - For awsbnkctl's OWN SDK creds (long up/down): make the SSO credential provider use the refresh-token flow, or pre-flight a fresh/longer session, so a multi-phase down doesn't strand resources mid-run (D-005 sentinel catches expired-at-entry, not expires-mid-run / SDK-can't-refresh).
+    - Optional (forge now tolerates both, NOT required): forge register could pass credential_template_id to create_project; create_cluster could store the bare cluster name as context. Issue 2 (response envelope) is ALREADY handled by PR #47's dual-shape client — no change needed.
+  size: medium
+  status: ready
+
+- id: doctor-exec-terraform-residue
+  title: "Remove Terraform from internal/doctor (required-binary gate) + internal/exec (image pins) — cleanup PR7"
+  source: "found during cleanup PR4 2026-05-26 (status rewrite); not in the original audit chunk plan"
+  why: "After the TF removal (PRs #50/#51/#52), internal/doctor STILL gates `terraform` as a REQUIRED host binary — so `awsbnkctl doctor` would flag missing terraform that's no longer needed (a real post-cleanup bug). internal/exec carries hashicorp/terraform:1.5.7 docker image pins that are now dead."
+  scope: |
+    - internal/doctor: drop `terraform` (and re-evaluate `helm`) from the required-host-binary gate; fix doctor help text.
+    - internal/exec: remove the hashicorp/terraform image pins (~48 refs) + any TF-specific backend wiring.
+    - Verify `awsbnkctl doctor` is green on a box without terraform installed.
   size: medium
   status: ready
 
