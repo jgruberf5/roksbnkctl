@@ -10,12 +10,12 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/k8s"
 )
 
-// Cross-verb helpers shared by test.go + tfvars.go + doctor_backend.go.
+// Cross-verb helpers shared by test.go + doctor_backend.go.
 //
 // Origin: Sprint 0 split-out from the deleted IBM lifecycle verbs.
-// Sprint 3 trims the file to the four helpers that still have live
-// callers in test.go / tfvars.go / doctor_backend.go (workspaceEnv,
-// resolveBackendSpecWith, podReady, refDescription). The IBM-cred
+// Sprint 3 trims the file to the helpers that still have live
+// callers in test.go / doctor_backend.go (workspaceEnv,
+// resolveBackendSpecWith, podReady). The IBM-cred
 // silencer + context import dropped alongside the PRD 04 retarget;
 // the cred package no longer threads an IBM Cloud API key through
 // the execution backends — AWS credentials resolve via the SDK chain
@@ -84,19 +84,4 @@ func podReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
-}
-
-// refDescription renders a TFSourceCfg as a short human-readable string
-// for log output. Lifted from the deleted init.go.
-func refDescription(c config.TFSourceCfg) string {
-	switch c.Type {
-	case "", "embedded":
-		return "embedded"
-	case "github":
-		return fmt.Sprintf("%s@%s", c.Repo, c.Ref)
-	case "local":
-		return "local:" + c.Path
-	default:
-		return "<unknown>"
-	}
 }
