@@ -156,11 +156,21 @@ testing:
 # Enabled here so Phase09 registers on `up` and unregisters on `down`; the
 # standalone `awsbnkctl forge {register,status,unregister} --config <this>` also
 # works against the same link in the cluster state dir.
+#
+# Credential resolution (REST login):
+#   username: forge.username (yaml) → default "admin"
+#   password: $AWSBNKCTL_FORGE_PASSWORD env → forge.password (yaml, dev-only)
+#             → default "changeme" (back-compat; a warning is emitted)
+#
+# For the local dev stack the password is: export AWSBNKCTL_FORGE_PASSWORD=admin123
+# Never write the real password in this file — use the env var.
 forge:
   enabled: true
-  url: http://localhost:8000
+  url: http://localhost:8000       # also overridable via $AWSBNKCTL_FORGE_URL
   mcpUrl: http://localhost:8081/mcp/
-  credentialTemplateId: 1  # forge AWS Production template
+  credentialTemplateId: 1          # forge AWS Production template
+  username: admin                  # optional; default "admin"
+  # password: ""                   # dev-only; prefer $AWSBNKCTL_FORGE_PASSWORD
 
 # tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
 tags:

@@ -219,15 +219,67 @@ type ForgeSpec struct {
 	// Enabled is the master switch. Default false (omitted block = disabled).
 	Enabled bool `yaml:"enabled"`
 	// URL is the forge REST base. Default http://localhost:8000.
+	// Override via AWSBNKCTL_FORGE_URL env (env > yaml > default).
 	URL string `yaml:"url,omitempty"`
 	// MCPURL is the forge MCP endpoint. Default http://localhost:8081/mcp/.
 	// Slice 4 prefers MCP and falls back to REST at URL on capability gaps.
 	MCPURL string `yaml:"mcpUrl,omitempty"`
+	// Username is the forge REST login username. Default "admin".
+	// Set here or pass --forge-user (flag > yaml > default).
+	Username string `yaml:"username,omitempty"`
+	// Password is the forge REST login password. Dev-only; discouraged for
+	// production — supply via AWSBNKCTL_FORGE_PASSWORD env instead so the
+	// value is never written to a checked-in file.
+	// Resolution order: AWSBNKCTL_FORGE_PASSWORD env > this field > "changeme".
+	// When the built-in default "changeme" is used a one-line warning is emitted.
+	Password string `yaml:"password,omitempty"`
 	// CredentialTemplateID is the forge credential template to attach to the
 	// newly-registered project so forge can `kubectl get` the EKS cluster.
 	// If 0/unset, no credential is attached (operator must wire manually).
 	// Forge's default "1 AWS Production" template is typically the right value.
 	CredentialTemplateID int `yaml:"credentialTemplateId,omitempty"`
+}
+
+// DefaultForgeRESTURL is the fallback REST base when forge.url is not set.
+const DefaultForgeRESTURL = "http://localhost:8000"
+
+// ResolveURL returns the forge REST URL to use, in priority order:
+//  1. AWSBNKCTL_FORGE_URL environment variable
+//  2. f.URL (cluster.yaml forge.url)
+//  3. DefaultForgeRESTURL ("http://localhost:8000")
+func (f *ForgeSpec) ResolveURL() string {
+	if v := os.Getenv("AWSBNKCTL_FORGE_URL"); v != "" {
+		return v
+	}
+	if f != nil && f.URL != "" {
+		return f.URL
+	}
+	return DefaultForgeRESTURL
+}
+
+// ResolveUsername returns the forge REST login username, in priority order:
+//  1. f.Username (cluster.yaml forge.username)
+//  2. default "admin"
+func (f *ForgeSpec) ResolveUsername() string {
+	if f != nil && f.Username != "" {
+		return f.Username
+	}
+	return "admin"
+}
+
+// ResolvePassword returns the forge REST login password and whether the
+// built-in default was used. Resolution order:
+//  1. AWSBNKCTL_FORGE_PASSWORD environment variable
+//  2. f.Password (cluster.yaml forge.password — dev-only, discouraged)
+//  3. "changeme" (back-compat default; usingDefault=true signals callers to warn)
+func (f *ForgeSpec) ResolvePassword() (password string, usingDefault bool) {
+	if v := os.Getenv("AWSBNKCTL_FORGE_PASSWORD"); v != "" {
+		return v, false
+	}
+	if f != nil && f.Password != "" {
+		return f.Password, false
+	}
+	return "changeme", true
 }
 
 // AddonsSpec holds optional add-on configuration for slice 6+.

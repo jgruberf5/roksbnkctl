@@ -26,13 +26,42 @@ func (e *restHTTPErr) Error() string {
 	return fmt.Sprintf("http %d from %s: %s", e.StatusCode, e.URL, e.Body)
 }
 
+// RestCreds carries the forge REST login credentials. Both fields are resolved
+// by the caller (intent.ForgeSpec.ResolveUsername / ResolvePassword) before
+// this package is invoked — rest.go does not read env or cluster.yaml directly.
+//
+// When Username is empty, "admin" is used. When Password is empty, "changeme"
+// is used (the caller should have already warned the user if the default is
+// in use). Zero value = all defaults, matching pre-credential-feature behaviour.
+type RestCreds struct {
+	Username string
+	Password string
+}
+
+// restUsername returns the effective username — "admin" when unset.
+func (c RestCreds) restUsername() string {
+	if c.Username != "" {
+		return c.Username
+	}
+	return "admin"
+}
+
+// restPassword returns the effective password — "changeme" when unset.
+func (c RestCreds) restPassword() string {
+	if c.Password != "" {
+		return c.Password
+	}
+	return "changeme"
+}
+
 // RegisterREST mirrors Register's shape but uses forge's REST API instead of
 // MCP. Used as a fallback when the MCP catalog does not expose create_project
 // or create_cluster (catalog-gap detection in Phase09).
 //
-// Credentials are hardcoded admin/changeme — forge localhost dev integration.
-// Real forge auth is out of scope for slice 4.
-func RegisterREST(ctx context.Context, restURL string, req RegisterRequest) (RegisterResult, error) {
+// Credentials are resolved by the caller via intent.ForgeSpec.ResolveUsername /
+// ResolvePassword and passed in as creds. Pass a zero RestCreds for
+// back-compat default behaviour (admin/changeme).
+func RegisterREST(ctx context.Context, restURL string, req RegisterRequest, creds RestCreds) (RegisterResult, error) {
 	if req.WorkspaceName == "" {
 		return RegisterResult{}, fmt.Errorf("forge.RegisterREST: workspace name is required")
 	}
@@ -51,7 +80,7 @@ func RegisterREST(ctx context.Context, restURL string, req RegisterRequest) (Reg
 
 	base := strings.TrimRight(restURL, "/")
 
-	token, err := restLogin(ctx, base)
+	token, err := restLogin(ctx, base, creds.restUsername(), creds.restPassword())
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("forge REST login: %w", err)
 	}
@@ -87,12 +116,14 @@ func RegisterREST(ctx context.Context, restURL string, req RegisterRequest) (Reg
 
 // UnregisterREST tears down the forge-side registration via REST.
 // Tolerates 404 responses (operator may have cleaned up via forge UI).
-func UnregisterREST(ctx context.Context, restURL string, link *Link) error {
+// creds carries the forge login credentials; pass a zero RestCreds for
+// back-compat default behaviour (admin/changeme).
+func UnregisterREST(ctx context.Context, restURL string, link *Link, creds RestCreds) error {
 	if link == nil {
 		return fmt.Errorf("forge.UnregisterREST: link is nil")
 	}
 	base := strings.TrimRight(restURL, "/")
-	token, err := restLogin(ctx, base)
+	token, err := restLogin(ctx, base, creds.restUsername(), creds.restPassword())
 	if err != nil {
 		return fmt.Errorf("forge REST login: %w", err)
 	}
@@ -121,8 +152,8 @@ func IsMCPCatalogGapErr(err error) bool {
 
 // ── REST helpers ──────────────────────────────────────────────────────────────
 
-func restLogin(ctx context.Context, base string) (string, error) {
-	body := map[string]string{"username": "admin", "password": "changeme"}
+func restLogin(ctx context.Context, base, username, password string) (string, error) {
+	body := map[string]string{"username": username, "password": password}
 	var resp struct {
 		Token string `json:"token"`
 	}
