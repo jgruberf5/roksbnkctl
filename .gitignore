@@ -107,3 +107,7 @@ docs/audits/**/SUMMARY.txt
 docs/audits/**/*.pub
 docs/audits/**/*.key
 docs/audits/**/*.pem
+
+# Compiled tool binaries (build locally; don't commit)
+/tools/ciwatch/ciwatch
+/tools/sprintwatch/sprintwatch
