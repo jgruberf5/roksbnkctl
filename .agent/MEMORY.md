@@ -2,7 +2,7 @@
 
 > Shared long-term memory. Read on demand when relevant. Lead curates. Keep under 100 lines.
 
-Last Updated: 2026-05-21
+Last Updated: 2026-05-26
 
 ---
 
@@ -24,6 +24,8 @@ Last Updated: 2026-05-21
 
 ## Conventions (Index)
 
+- **Branching (2026-05-26):** `staging` is the ALWAYS-ON build/integration branch. PR *everything* to `staging`; merge when CI green. `main` is PROTECTED (requires PR + 3 core CI checks: `vet + fmt + staticcheck + test` ubuntu+macos, `security audit`; `enforce_admins:false`) and is promoted from `staging` **weekly** via PR. Never PR directly to main. CI (`ci.yml`) runs on all PRs + pushes to main/staging.
+
 - AWS resource tags: every awsbnkctl-created resource carries `awsbnkctl:cluster=<name>` + `awsbnkctl:component=<kind>` + `awsbnkctl:pattern=<name>` + `awsbnkctl:managed=true` + `Name`.
 - Idempotency: phase functions tolerate "already gone" by swallowing service-specific NotFound codes (see `docs/POST_TERRAFORM_DIRECTION.md` §7 for the per-service list).
 - K8s apply path: client-go via existing `internal/k8s/apply.go`. NO `kubectl` exec (strict Go SDK rule applies symmetrically to k8s).
@@ -36,6 +38,8 @@ Last Updated: 2026-05-21
 ## Handoffs
 
 - [handoff] 2026-05-22 05:00 — slices 01-06 shipped; slice 07 is next — `.agent/handoff/2026-05-22-0500-slice-07-next.md`
+- [handoff] 2026-05-25 02:49 — cold-start fixes + scenario suite (1→7) merged to main (PR #38); live validation pending — `.agent/handoff/2026-05-25-0249-scenario-suite-merged.md`
+- [handoff] 2026-05-26 — cycle 6: node-side discovery (#45) validated live + MERGED; prefix delegation 2nd clean cycle; 7/7 ingress scenarios green; forge register parsing bug fixed (PR #47). forge connectivity still blocked forge-side (project has no allocated AWS creds — SSO `aws_set_project_credentials` needed; not just a credential_template attach) → handed to forge agent: `.agent/handoff/2026-05-26-forge-agent-prompt.md`. Cluster left UP for the forge agent; egress + down deferred. Canonical: `docs/audits/2026-05-26-cycle6/SUMMARY.md`.
 
 ## Preferences
 

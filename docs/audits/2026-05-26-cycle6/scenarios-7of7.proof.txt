@@ -1,0 +1,20 @@
+Cycle 6 scenario suite — 7/7 ingress green (2026-05-26, syd-tracer, live)
+Run individually (egress-snat EXCLUDED — destructive). Each: render → SSA apply → verify (control-plane
++ end-to-end curl via Gateway over jumphost EICE) → clean. Curated from scenarios-cycle6 run log.
+
+  scenario                  rating  rc  verdict
+  ------------------------  ------  --  -------------------------------------------------------------
+  http-routing-e2e          green    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  http-traffic-split        green    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  multi-vip                 green    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  proxy-protocol-l4         green    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  external-resource-pool    green    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  ai-token-counting         amber    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+  ai-semantic-cache         amber    0  OK — control-plane reconciled + curls via Gateway HTTP 200
+
+Notes:
+- All scenarios declare Dependencies() == [] (independent); cleaned between runs for isolation.
+- SSA Force fix (in main) re-confirmed: re-apply produced no .spec.rules managedFields conflict.
+- HTTPRoute pool-member resync (weight 1→2→1) ran per scenario as the reconcile workaround.
+- Validated on top of: prefix delegation (2nd clean cycle) + node-side discovery (#45) + pciBusID NADs.
+  No ingress regression from any of those.
