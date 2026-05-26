@@ -166,18 +166,25 @@ The COS bucket point is worth highlighting: the bundled HCL provisions the COS i
 
 ## `--auto` for non-interactive runs
 
-All three destroy commands prompt for confirmation by default:
+All three destroy commands prompt for confirmation by default. On a Split workspace the composite `down` takes a single up-front confirmation that names both phases, then runs trial → cluster without re-prompting — so you can't accidentally answer "yes" to the trial and miss the cluster gate:
 
 ```
 $ roksbnkctl down
+This will destroy BOTH the BNK trial AND the cluster phase for workspace "default" (ROKS + transit gateway + registry COS + cert-manager + jumphost).
+Continue? [y/N]: 
+```
+
+On LegacySingle the monolithic prompt is unchanged (one state, one destroy):
+
+```
+$ roksbnkctl down                # LegacySingle shape
 This will destroy workspace "default"'s resources.
 Continue? [y/N]: 
 ```
 
 ```
 $ roksbnkctl bnk down
-This will destroy the BNK trial for workspace "default". The cluster phase
-will remain in place — run `roksbnkctl cluster down` to remove it too.
+This will destroy workspace "default"'s resources.
 Continue? [y/N]: 
 ```
 

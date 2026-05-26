@@ -320,6 +320,24 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	case config.ShapeEmpty:
 		return errors.New("nothing to destroy in this workspace")
 	case config.ShapeSplit:
+		// Composite teardown: take confirmation ONCE up front with copy
+		// that names both phases, then flip in.Auto=true so the trial
+		// + cluster leaves don't each re-prompt. The cli adapter's
+		// RunClusterDown closure mirrors in.Auto onto flagAuto so the
+		// (still cli-resident) runClusterDown sees the same decision.
+		// Pre-Sprint 22 the leaves each prompted, and users who said
+		// "yes" to the trial-down prompt sometimes hit Enter on the
+		// (defaults-to-No) cluster-down prompt and ended up with bnk
+		// gone + cluster still running.
+		if !in.Auto {
+			fmt.Fprintf(os.Stderr,
+				"This will destroy BOTH the BNK trial AND the cluster phase for workspace %q (ROKS + transit gateway + registry COS + cert-manager + jumphost).\n",
+				cctx.WorkspaceName)
+			if !in.PromptYesNo("Continue?", false) {
+				return errors.New("aborted")
+			}
+			in.Auto = true
+		}
 		if err := RunTrialDown(ctx, in); err != nil {
 			return err
 		}

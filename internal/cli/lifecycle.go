@@ -114,7 +114,8 @@ func resolveVarFiles(vfs []string) ([]string, error) {
 // terraform-output decoders) are injected as function fields so
 // internal/orchestration never imports internal/cli.
 func lifecycleInputs() *orchestration.LifecycleInputs {
-	return &orchestration.LifecycleInputs{
+	var in *orchestration.LifecycleInputs
+	in = &orchestration.LifecycleInputs{
 		Workspace:    flagWorkspace,
 		Backend:      flagBackend,
 		Auto:         flagAuto,
@@ -126,12 +127,23 @@ func lifecycleInputs() *orchestration.LifecycleInputs {
 		RunClusterUp: func(ctx context.Context) error {
 			return runClusterUp(cmdFromCtx(ctx), nil)
 		},
+		// orchestration.RunDown's Split path flips in.Auto=true after
+		// the combined confirmation so the leaves don't re-prompt.
+		// runClusterDown still reads cli-package flagAuto (Sprint 16
+		// kept cluster_phase.go in cli, byte-unchanged), so mirror
+		// in.Auto onto flagAuto for the call's duration.
 		RunClusterDown: func(ctx context.Context) error {
+			if in.Auto && !flagAuto {
+				prev := flagAuto
+				flagAuto = true
+				defer func() { flagAuto = prev }()
+			}
 			return runClusterDown(cmdFromCtx(ctx), nil)
 		},
 		StringOutput: stringOutput,
 		MapOutput:    mapOutput,
 	}
+	return in
 }
 
 // ── cli-side helper wrappers for the (frozen) cluster-phase adapter ──
