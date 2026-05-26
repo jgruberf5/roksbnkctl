@@ -512,19 +512,3 @@ maintainer in 2028 against the same images. For day-to-day book
 iteration, `make book` against a host `mdbook` install remains the
 fast path — the docker pipeline only runs when producing release
 artifacts.
-
-## Sprint execution and the prompts/ folder
-
-Sprint work runs through dispatched sub-agent prompts checked in under
-`prompts/sprint<N>/<role>.md`. Each sprint has four parallel roles —
-**architect**, **staff**, **validator**, **tech-writer** — whose
-prompts live as plain markdown so any future contributor or LLM can
-re-dispatch them.
-
-Issues filed by agents during a sprint go to
-`issues/issue_sprint<N>_<role>.md`; the integrator (human or LLM
-aggregating output) writes resolution notes to
-`issues/resolved_sprint<N>_<role>.md`.
-
-See [`prompts/README.md`](./prompts/README.md) for the full pattern,
-including the canonical "kicking off Sprint N" checklist.
