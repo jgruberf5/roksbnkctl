@@ -582,7 +582,14 @@
     "unrunnable",
     "untolerated",
     "empt",
-    "authorised"
+    "authorised",
+    "ciwatch",
+    "mtimes",
+    "repoint",
+    "sprintwatch",
+    "unwire",
+    "unwired",
+    "Unwires"
   ],
   "ignorePaths": [
     "book/book/**",

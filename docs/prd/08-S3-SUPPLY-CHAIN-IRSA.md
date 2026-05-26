@@ -1,3 +1,5 @@
+> **⚠️ ARCHIVED (2026-05-26):** This document describes the pre-pivot Terraform-embedded design and is retained for history only. The project now uses the Go-SDK phased provisioner driven by cluster.yaml — see [README.md](../../README.md) and [docs/POST_TERRAFORM_DIRECTION.md](../POST_TERRAFORM_DIRECTION.md).
+
 # PRD 08 — S3 supply chain + IRSA workload identity
 
 The cloud-side primitives that BNK pulls from at runtime: the FAR pull-key archive, the JWT licence, and (optionally) a mirror of the FAR registry's container images. Plus the workload identity that lets FLO pull these without a static AWS key on the wire.

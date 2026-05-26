@@ -1,3 +1,5 @@
+> **⚠️ ARCHIVED (2026-05-26):** This document describes the pre-pivot Terraform-embedded design and is retained for history only. The project now uses the Go-SDK phased provisioner driven by cluster.yaml — see [README.md](../../README.md) and [docs/POST_TERRAFORM_DIRECTION.md](../POST_TERRAFORM_DIRECTION.md).
+
 # PRD 06 — cluster/trial phase split: `bnk` command group + composite lifecycle
 
 > Post-v1.0 follow-up; not part of the original PRD 00-05 "trim host tools" arc. OBSOLETE per D-001 (post-TF direction).
