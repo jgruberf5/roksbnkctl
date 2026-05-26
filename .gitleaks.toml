@@ -11,8 +11,11 @@ description = """
 Internal env-var-name sentinels, not credentials. internal/exec/k8s.go's
 k8sLongLivedKey is the literal env key "AWSBNKCTL_K8S_LONG_LIVED=1" used as a
 plumbing flag on RunOpts.Env — the generic-api-key rule flags it on entropy +
-the "Key" identifier name, but it carries no secret material.
+the "Key" identifier name, but it carries no secret material. Match the source
+line (regexTarget=line) by its unique identifier so the rule is suppressed
+regardless of how gitleaks extracts/redacts the "secret".
 """
+regexTarget = "line"
 regexes = [
-  '''AWSBNKCTL_K8S_LONG_LIVED=1''',
+  '''k8sLongLivedKey''',
 ]
