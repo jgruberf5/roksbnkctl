@@ -81,7 +81,7 @@ type K8sBackend struct {
 // Name implements Backend.
 func (b *K8sBackend) Name() string { return "k8s" }
 
-// k8sLongLivedKey is a sentinel set on RunOpts.Env when callers want
+// k8sLongLivedEnv is a sentinel set on RunOpts.Env when callers want
 // the long-lived ops-pod exec path instead of the Job path. Since
 // RunOpts.Env is the only "free" extension point on the public Backend
 // interface today (adding a LongLivedExec bool would require an API
@@ -90,7 +90,7 @@ func (b *K8sBackend) Name() string { return "k8s" }
 //
 // Future cleanup: bump RunOpts to carry a LongLivedExec field directly
 // once the integrator is ready for an API change.
-const k8sLongLivedKey = "AWSBNKCTL_K8S_LONG_LIVED=1"
+const k8sLongLivedEnv = "AWSBNKCTL_K8S_LONG_LIVED=1"
 
 // extractLongLivedFlag pulls the sentinel out of env and returns
 // (longLived, filteredEnv). Callers pass the filtered env on to the pod
@@ -99,7 +99,7 @@ func extractLongLivedFlag(env []string) (bool, []string) {
 	out := make([]string, 0, len(env))
 	longLived := false
 	for _, kv := range env {
-		if kv == k8sLongLivedKey {
+		if kv == k8sLongLivedEnv {
 			longLived = true
 			continue
 		}
@@ -277,9 +277,8 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 //
 // Tools NOT in this map keep the legacy shape
 // (`Container.Command = argv[1:]`, image's ENTRYPOINT picks the
-// binary) — `iperf3` (image's ENTRYPOINT="iperf3") and `terraform`
-// (upstream `hashicorp/terraform` image's ENTRYPOINT="terraform")
-// continue to work without an entry.
+// binary) — `iperf3` (image's ENTRYPOINT="iperf3") continues to work
+// without an entry.
 var jobToolCmdOverride = map[string][]string{
 	"awsbnkctl": {"/usr/local/bin/awsbnkctl"},
 }

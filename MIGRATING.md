@@ -1,58 +1,33 @@
 # Migrating to awsbnkctl
 
-This guide covers moving an existing F5 BIG-IP Next for Kubernetes (BNK) on AWS deployment workflow over to `awsbnkctl`. It also covers in-tree upgrades between awsbnkctl versions and the migration path for teams coming from `roksbnkctl` on IBM Cloud.
+> **Note (2026-05-26):** This document was written when awsbnkctl used an embedded Terraform tree. The project has since pivoted to a Go-SDK phased provisioner driven by a `cluster.yaml` intent file. Terraform is no longer required and is being removed from the repository. The migration steps below that reference `awsbnkctl init`, `terraform.tfvars`, or the TF-embedded workflow no longer apply.
+>
+> The current workflow is: copy `examples/syd-tracer/cluster.yaml`, edit it for your account, then run `awsbnkctl up --config <file>`. See [README.md](README.md) and [docs/POST_TERRAFORM_DIRECTION.md](docs/POST_TERRAFORM_DIRECTION.md) for the current design.
 
-Once the book (`book/src/`) is retargeted at AWS, it will be the canonical learning path for new users; this file is a focused reference for users who already have an environment, an automation pipeline, or a workspace from a previous version.
+---
 
-> **Status:** scaffolding. awsbnkctl has no shipped release yet — the sections below describe the migration *target* so the implementation knows what to honour. Each section will be tightened as the corresponding sprint lands.
+The sections below are retained for historical reference only.
 
-## From manual EKS + BNK deployment
+## From manual EKS + BNK deployment (historical)
 
-If you currently stand BNK up on EKS by hand — `terraform apply` against your own HCL, `aws eks update-kubeconfig`, `kubectl apply -f cert-manager.yaml`, hand-rolled FLO values, manually-uploaded FAR pull keys — awsbnkctl is a drop-in replacement for that workflow. It does not replace the Terraform itself; it embeds a vetted Terraform tree (cluster + cert-manager + FLO + CNEInstance + license + testing) and drives it with idempotent lifecycle verbs.
+If you currently stand BNK up on EKS by hand — `terraform apply` against your own HCL, `aws eks update-kubeconfig`, `kubectl apply -f cert-manager.yaml`, hand-rolled FLO values, manually-uploaded FAR pull keys — awsbnkctl replaces that workflow. The current awsbnkctl uses the AWS SDK directly (no Terraform) and drives the full activation chain through Phases 00–25.
 
-| Old (hand-rolled) | New (`awsbnkctl`) |
-|---|---|
-| Hand-edited `terraform.tfvars` | `awsbnkctl init` (interactive wizard writes `~/.awsbnkctl/<workspace>/config.yaml` and a derived `terraform.tfvars`) |
-| `aws configure` / `AWS_PROFILE=…` | AWS credentials resolved via the standard chain (env → profile → instance role → SSO); see [Chapter 14 — Credentials resolver](./book/src/14-credentials-resolver.md) once written |
-| `cd terraform && terraform init && terraform plan && terraform apply` | `awsbnkctl up` (runs init + plan + apply; idempotent and resumable) |
-| `aws eks update-kubeconfig --name <cluster> --region <region>` | Auto-fetched post-apply; landed at `~/.awsbnkctl/<workspace>/state/kubeconfig` and pointed to via `KUBECONFIG` in `awsbnkctl shell` |
-| Manual `iperf3` install on jumphost + manual port-forward | `awsbnkctl test throughput` (bundled image, k8s Job by default; no host install required) |
-| Manual `dig` + comparing answers across vantages | `awsbnkctl test dns` (multi-vantage probe) |
-| `terraform destroy` | `awsbnkctl down` |
+The `cluster.yaml` intent file is the replacement for `terraform.tfvars`. AWS credentials continue to be resolved via the standard chain (env, profile, SSO, IRSA, IMDS) — no change there.
 
-## From `roksbnkctl` on IBM Cloud
+## From `roksbnkctl` on IBM Cloud (historical)
 
-awsbnkctl is a hard fork of roksbnkctl. The user-facing CLI surface (`init`, `up`, `test`, `down`, `doctor`, `k`, `self`) is intentionally preserved. The migration is mostly a swap of cloud-side primitives.
+awsbnkctl originated as a hard fork of roksbnkctl. The CLI surface has diverged significantly. The IBM-Cloud-specific flows (`ibmcloud`, ROKS, IBM COS, IBM Trusted Profiles) have no equivalent and are not supported. The migration is a fresh deployment on EKS using `cluster.yaml`.
 
 | roksbnkctl concept | awsbnkctl equivalent |
 |---|---|
-| ROKS cluster | EKS cluster (self-managed node group for SR-IOV) |
-| `IBMCLOUD_API_KEY` env / keychain entry | `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` |
-| IBM Cloud Object Storage (FAR pull keys + license artefacts) | S3 bucket (server-side encrypted) — or ECR mirror for FAR images |
-| IBM Trusted Profile (workload identity for FLO) | IRSA — IAM role for the FLO service account, bound via the EKS OIDC provider |
-| OpenShift `oc` verbs (`roksbnkctl k …` aliased to `oc` where useful) | `awsbnkctl k …` — pure `kubectl` semantics, no OpenShift-specific verbs |
-| `roksbnkctl ibmcloud …` passthrough | Dropped. AWS API calls are made directly via `aws-sdk-go-v2`; no shell-out CLI passthrough is planned. |
+| ROKS cluster | EKS cluster (self-managed node group for BNK data-path) |
+| `IBMCLOUD_API_KEY` env / keychain | `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| IBM Cloud Object Storage (FAR pull keys + licence artefacts) | S3 bucket (server-side encrypted) |
+| IBM Trusted Profile (workload identity for FLO) | IRSA — IAM role for the FLO service account via EKS OIDC provider |
+| `roksbnkctl ibmcloud …` passthrough | Dropped — AWS API calls use `aws-sdk-go-v2` directly |
 
-A `roksbnkctl` workspace **cannot** be migrated automatically — the underlying cluster and storage primitives differ. The recommended path is:
-
-1. `roksbnkctl test` against your existing ROKS workspace to capture a baseline.
-2. `awsbnkctl init` a fresh AWS workspace, accepting defaults where the AWS shape differs (instance types, node group min/max, VPC CIDR).
-3. `awsbnkctl up` and `awsbnkctl test` against the new EKS workspace.
-4. Cut over BNK clients (DNS, GSLB pointers) once the AWS workspace passes its test suite.
-5. `roksbnkctl down` on the old workspace once cutover is verified.
+A `roksbnkctl` workspace cannot be migrated automatically. Start with a fresh `cluster.yaml` and `awsbnkctl up --config`.
 
 ## Between awsbnkctl versions
 
-Per-version migration notes will land here as releases are cut. Until `v0.2` ships (gated on Sprint 1 — see [`docs/PLAN.md`](docs/PLAN.md)), there is nothing to migrate between.
-
-## Cross-references
-
-The following book chapters will document the underlying mechanics referenced above once they are retargeted at AWS:
-
-- Chapter 6 — Workspaces
-- Chapter 12 — Workspace config
-- Chapter 13 — Terraform variables
-- Chapter 14 — Credentials resolver
-- Chapter 17 — Execution backends
-
-Until then, the equivalent chapters in the [roksbnkctl book](https://jgruberf5.github.io/roksbnkctl/book/) describe the same mechanics for the shared surface (workspaces, cred chain, execution backends, internalised kubectl). Swap "ROKS" → "EKS" and "COS" → "S3" mentally while reading.
+Per-version migration notes will be added here as releases are cut. Check [CHANGELOG.md](CHANGELOG.md) for the per-release change log.

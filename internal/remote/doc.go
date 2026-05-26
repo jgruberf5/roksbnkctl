@@ -9,7 +9,7 @@
 //   - hostkeys.go — known_hosts read/write + TOFU prompt
 //   - agent.go    — ssh-agent socket discovery (linux/darwin)
 //
-// The package is deliberately decoupled from terraform: callers that need
-// `tf-output:<name>` keys pass in the resolved outputs map. Keeps the
-// dependency direction tf → remote, never the reverse.
+// The package is deliberately decoupled from any provisioner: callers
+// that need `tf-output:<name>` keys pass in the resolved outputs map.
+// Keeps the dependency direction caller → remote, never the reverse.
 package remote

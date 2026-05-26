@@ -1,3 +1,5 @@
+> **⚠️ ARCHIVED (2026-05-26):** This document describes the pre-pivot Terraform-embedded design and is retained for history only. The project now uses the Go-SDK phased provisioner driven by cluster.yaml — see [README.md](../../README.md) and [docs/POST_TERRAFORM_DIRECTION.md](../POST_TERRAFORM_DIRECTION.md).
+
 # PRD 07 — EKS cluster module + self-managed SR-IOV node group
 
 The load-bearing design decision for `awsbnkctl`: how to stand up an EKS cluster whose worker nodes can host BNK's data plane. BNK requires SR-IOV; AWS's managed Kubernetes surface doesn't expose SR-IOV cleanly through EKS managed node groups. This PRD specifies the alternative.

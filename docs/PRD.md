@@ -1,3 +1,5 @@
+> **⚠️ ARCHIVED (2026-05-26):** This document describes the pre-pivot Terraform-embedded design and is retained for history only. The project now uses the Go-SDK phased provisioner driven by cluster.yaml — see [README.md](../README.md) and [docs/POST_TERRAFORM_DIRECTION.md](POST_TERRAFORM_DIRECTION.md).
+
 # roksbnkctl — Product Requirements Document
 
 > **Status:** Draft v0.2 · 2026-05-08

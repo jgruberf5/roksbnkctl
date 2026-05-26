@@ -23,9 +23,8 @@ assignees: ''
   output that's wrong. Quote the failure verbatim if it surfaces one.
 
   Examples that work:
-    - "`awsbnkctl down -w canada-roks` exits 1 with terraform's
-       `No value for required variable "ibmcloud_api_key"`; the same
-       command with `--var-file ./terraform.tfvars` succeeds."
+    - "`awsbnkctl down -w my-cluster` exits 1 with `context deadline
+       exceeded`; the same command with `--timeout 10m` succeeds."
     - "PDF book page 120 shows the mermaid diagram's shapes and
        arrows but the label text inside each node is missing."
 

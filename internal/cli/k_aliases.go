@@ -16,10 +16,9 @@ package cli
 //     path. So `awsbnkctl logs my-pod-name` works without users
 //     needing the `k` prefix.
 //
-//   - `awsbnkctl apply` is NOT aliased: the existing top-level
-//     `apply` command runs `terraform apply` (Sprint 0/1 lifecycle
-//     surface). Adding a second `apply` would shadow that and break
-//     `awsbnkctl up` muscle memory. Users get the k8s apply via
+//   - `awsbnkctl apply` is NOT aliased: a bare top-level `apply` would
+//     be ambiguous against `awsbnkctl up` (the cluster lifecycle
+//     surface) and break muscle memory. Users get the k8s apply via
 //     `awsbnkctl k apply` explicitly. Tracked in
 //     issues/issue_sprint2_staff.md.
 //

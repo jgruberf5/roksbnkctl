@@ -253,6 +253,63 @@ func TestStatus_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRegister_PendingLinkFallsThrough verifies that a forge_link.json with
+// Status=="pending" is NOT treated as an existing successful registration. The
+// second Register call must fall through to create_project + create_cluster
+// instead of returning the pending link as success.
+func TestRegister_PendingLinkFallsThrough(t *testing.T) {
+	f := newScriptedForge()
+	// Override create_project to return the flat live shape.
+	f.responses["create_project"] = `{"success":true,"project_id":11,"name":"awsbnkctl-default","message":"Project created successfully"}`
+	// Override create_cluster to return the bare live shape.
+	f.responses["create_cluster"] = `{"id":99,"name":"bnk-prod","context":"arn:aws:eks:::cluster/bnk-prod","api_server":"https://example.eks.amazonaws.com","cloud_provider":"aws","region":"us-east-1","status":"active","project_id":11,"default_namespace":"default"}`
+	srv := httptest.NewServer(http.HandlerFunc(f.handler))
+	defer srv.Close()
+
+	c := NewClient(srv.URL + "/mcp/")
+	dir := t.TempDir()
+
+	// Write a pending link — simulates phase09 soft-fail scenario.
+	pendingLink := &Link{
+		ProjectID:   0,
+		ClusterID:   0,
+		ProjectName: "",
+		ClusterName: "bnk-prod",
+		Workspace:   "default",
+		Status:      "pending",
+	}
+	if err := WriteLink(dir, pendingLink); err != nil {
+		t.Fatal(err)
+	}
+
+	req := RegisterRequest{
+		WorkspaceName: "default",
+		WorkspaceDir:  dir,
+		ClusterName:   "bnk-prod",
+		Region:        "us-east-1",
+		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
+	}
+	res, err := Register(context.Background(), c, req)
+	if err != nil {
+		t.Fatalf("Register with pending link: %v", err)
+	}
+	if res.Link == nil {
+		t.Fatal("result.Link is nil")
+	}
+	if res.Link.ProjectID != 11 {
+		t.Errorf("ProjectID = %d, want 11 (should have registered, not returned pending link)", res.Link.ProjectID)
+	}
+	if res.Link.ClusterID != 99 {
+		t.Errorf("ClusterID = %d, want 99", res.Link.ClusterID)
+	}
+	// Must have called create_project + create_cluster, not get_cluster.
+	got := f.calls()
+	want := []string{"create_project", "create_cluster"}
+	if !equalSlices(got, want) {
+		t.Errorf("call order = %v, want %v (pending link must not short-circuit)", got, want)
+	}
+}
+
 func equalSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

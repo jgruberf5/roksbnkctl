@@ -69,7 +69,6 @@ var toolImages = func() map[string]string {
 		// `test.throughput.image` to a non-root iperf3 build — see
 		// chapter 22 for the PSA contract.
 		"iperf3":    "networkstatic/iperf3:latest",
-		"terraform": "hashicorp/terraform:1.5.7",
 		"awsbnkctl": "ghcr.io/JLCode-tech/awsbnkctl-tools:" + tag,
 	}
 }()
@@ -111,7 +110,6 @@ func SetToolImageTag(fn func() string) {
 	tag := toolImageTag()
 	toolImages = map[string]string{
 		"iperf3":    "networkstatic/iperf3:latest",
-		"terraform": "hashicorp/terraform:1.5.7",
 		"awsbnkctl": "ghcr.io/JLCode-tech/awsbnkctl-tools:" + tag,
 	}
 }
@@ -123,9 +121,8 @@ func (*DockerBackend) Name() string { return "docker" }
 //
 // argv[0] selects the image (via toolImages or literal); argv[1:] is
 // passed as the container's command. The entrypoint baked into the
-// image (e.g., `terraform` for the upstream terraform image) handles
-// the argv[1:] by default — callers don't need to repeat the binary
-// name.
+// image (e.g., `iperf3` for the iperf3 image) handles the argv[1:]
+// by default — callers don't need to repeat the binary name.
 func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, error) {
 	if len(argv) == 0 {
 		return 0, errors.New("argv is empty")
@@ -145,11 +142,10 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 	// argv=["busybox:latest", "echo", "hi"]).
 	image, cmdArgv := resolveDockerImageAndArgv(argv)
 
-	// AWS retarget: AWS credentials reach terraform via the standard
-	// AWS provider env vars (AWS_ACCESS_KEY_ID etc.), inherited from
-	// the caller's environment. No cred-shim wrap is needed — the
-	// container sees AWS_* the same way the local backend does, via
-	// the docker-run --env passthrough in buildContainerEnv.
+	// AWS credentials reach containers via the standard AWS provider
+	// env vars (AWS_ACCESS_KEY_ID etc.), inherited from the caller's
+	// environment via the docker-run --env passthrough in
+	// buildContainerEnv. No cred-shim wrap is needed.
 
 	// Materialise creds + Files into a per-run tempdir.
 	tempDir, err := os.MkdirTemp("", "awsbnkctl-docker-")
@@ -166,10 +162,10 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		return 0, err
 	}
 
-	// Append caller-supplied HostMounts (Sprint 5 terraform path).
-	// PRD 03 §"terraform" §"Docker container": the workspace state
-	// directory bind-mounts at /state read-write so terraform's local
-	// backend persists state across runs.
+	// Append caller-supplied HostMounts (Sprint 5 bind-mount path).
+	// PRD 03 §"Docker container": the caller-supplied host directories
+	// bind-mount at the specified container paths read-write so state
+	// persists across runs.
 	for _, hm := range opts.HostMounts {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
@@ -369,13 +365,12 @@ func (b *DockerBackend) ensureImage(ctx context.Context, cli *dockerclient.Clien
 // buildMountsAndEnv translates RunOpts into docker container mounts +
 // the list of `KEY=VALUE` env entries the container should carry.
 //
-// AWS retarget: AWS credentials reach the container via the standard
-// provider env vars passed through buildContainerEnv. No
-// tempfile-bind-mount cred-pattern: the AWS SDK chain and terraform's
-// AWS provider both consume env-var creds, and the values don't carry
-// the same long-lived-secret risk as an IBM Cloud API key did.
-// Kubeconfig propagation (the only cred surface this backend still
-// owns) bind-mounts the single file read-only at /root/.kube/config.
+// AWS credentials reach the container via the standard provider env
+// vars passed through buildContainerEnv. No tempfile-bind-mount
+// cred-pattern: env-var creds don't carry the same long-lived-secret
+// risk as an IBM Cloud API key did. Kubeconfig propagation (the only
+// cred surface this backend still owns) bind-mounts the single file
+// read-only at /root/.kube/config.
 func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount.Mount, []string, func(), error) {
 	var mounts []mount.Mount
 	var env []string
@@ -477,13 +472,11 @@ func buildContainerEnv(env []string) []string {
 //
 // Tools NOT in this map keep the legacy shape — argv[1:] is passed
 // verbatim as the container Cmd, relying on the image's own ENTRYPOINT
-// to pick the binary (`iperf3`, `terraform`).
+// to pick the binary (e.g. `iperf3`, whose image has ENTRYPOINT="iperf3").
 //
 // Why a per-tool map instead of "always prepend argv[0]"? Because
-// `iperf3` and `terraform` images still carry their own ENTRYPOINT
-// directives (the upstream `hashicorp/terraform` image and our own
-// iperf3 image); prepending the binary name in those cases would
-// double-invoke (`iperf3 iperf3 --version`).
+// the iperf3 image carries its own ENTRYPOINT directive; prepending
+// the binary name would double-invoke (`iperf3 iperf3 --version`).
 //
 // The awsbnkctl tools image's `awsbnkctl` alias maps to
 // `/usr/local/bin/awsbnkctl` so a `--backend docker` invocation of
@@ -501,8 +494,8 @@ var dockerImageBinary = map[string][]string{
 //     with the tool's binary name (so the image can have no
 //     ENTRYPOINT and still run the right binary).
 //   - If argv[0] is a known tool WITHOUT an entry in dockerImageBinary
-//     (iperf3, terraform), its image is looked up and argv[1:] is
-//     passed verbatim — the image's own ENTRYPOINT picks the binary.
+//     (e.g. iperf3), its image is looked up and argv[1:] is passed
+//     verbatim — the image's own ENTRYPOINT picks the binary.
 //   - Otherwise argv[0] is treated as a literal image reference and
 //     argv[1:] is the in-container command — useful for tests and
 //     ad-hoc shapes.
