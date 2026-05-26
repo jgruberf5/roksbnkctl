@@ -6,15 +6,13 @@ name: Full E2E
 # Sprint 6 status (final pre-v1.0 sprint): the backend-matrix phases
 # (I-N + L-DNS) and the cluster-bring-up phases (A-H) have both
 # landed at the dry-run tier. The combined dry-run regression surface
-# lives across two CI jobs in .github/workflows/ci.yml:
+# lives in .github/workflows/ci.yml:
 #
-#   - `full-up-dryrun` (Sprint 3) — exercises `awsbnkctl up --dry-run`
-#     against the eight-module root graph.
 #   - `test-dryrun` (Sprint 4) — exercises `awsbnkctl test
 #     {connectivity,dns,throughput} --dry-run` against a fake
 #     workspace materialised in the runner's HOME.
 #
-# Both jobs run on every PR. The **live-apply** tier of every phase
+# This job runs on every PR. The **live-apply** tier of every phase
 # (cluster bring-up + backend matrix + DNS probe + throughput) still
 # gates on the operator-run PRD 07 spike (docs/prd/07-EKS-CLUSTER-
 # SRIOV.md § "Spike protocol"), so this workflow stays a skip-stub
@@ -37,10 +35,10 @@ name: Full E2E
 #   - push to release/** — the release-branch gate (no-op until Sprint 6).
 #
 # NOT triggered on PR / push to main / push to feature branches — the
-# fast unit + integration tiers in ci.yml cover those. The Sprint 3
-# `full-up-dryrun` + Sprint 4 `test-dryrun` jobs in ci.yml run on every
-# PR and provide the dry-run regression gates that this workflow's
-# live-apply path will eventually wrap.
+# fast unit + integration tiers in ci.yml cover those. The Sprint 4
+# `test-dryrun` job in ci.yml runs on every PR and provides the
+# dry-run regression gates that this workflow's live-apply path will
+# eventually wrap.
 
 on:
   workflow_dispatch:
@@ -70,10 +68,9 @@ jobs:
     runs-on: ubuntu-latest
     # Gate to this fork so cross-repo PRs don't try to run it. Sprint
     # 6 brief: trigger surface still gated to JLCode-tech/awsbnkctl;
-    # body references the Sprint 3 full-up-dryrun + Sprint 4
-    # test-dryrun CI jobs for the dry-run regression surface, plus
-    # the Sprint 6 security-audit job, and the PRD 07 spike for the
-    # live-apply gate that lands v1.0.
+    # body references the Sprint 4 test-dryrun CI job for the dry-run
+    # regression surface, plus the Sprint 6 security-audit job, and
+    # the PRD 07 spike for the live-apply gate that lands v1.0.
     if: github.repository == 'JLCode-tech/awsbnkctl'
     steps:
       - uses: actions/checkout@v4
@@ -84,8 +81,7 @@ jobs:
           echo "Full E2E — Sprint 6 stub (final pre-v1.0 sprint)"
           echo "════════════════════════════════════════════════════════════"
           echo "Dry-run tier of phases A-H + I-N + L-DNS is exercised by"
-          echo "  three CI jobs in .github/workflows/ci.yml (every PR):"
-          echo "    full-up-dryrun  (Sprint 3) — awsbnkctl up --dry-run"
+          echo "  two CI jobs in .github/workflows/ci.yml (every PR):"
           echo "    test-dryrun     (Sprint 4) — awsbnkctl test {conn,dns,thpt} --dry-run"
           echo "    security-audit  (Sprint 6) — gosec + govulncheck + gitleaks"
           echo ""

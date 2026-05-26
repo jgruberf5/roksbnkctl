@@ -164,13 +164,7 @@ func runTargetCheck(ctx context.Context, cctx *config.Context, name string) doct
 		}
 		return c
 	}
-	tfOutputs, err := loadTFOutputsForTarget(ctx, cctx, t)
-	if err != nil {
-		c.Status = doctor.StatusError
-		c.Detail = "tf outputs: " + err.Error()
-		return c
-	}
-	signer, err := remote.ResolveSigner(t, tfOutputs)
+	signer, err := remote.ResolveSigner(t, nil)
 	if err != nil {
 		c.Status = doctor.StatusError
 		c.Detail = "key: " + err.Error()

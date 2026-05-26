@@ -214,12 +214,7 @@ func runSSHBackendChecks(ctx context.Context, cctx *config.Context, name string)
 		add("ssh:"+name+" target", doctor.StatusError, err.Error())
 		return out
 	}
-	tfOutputs, err := loadTFOutputsForTarget(ctx, cctx, t)
-	if err != nil {
-		add("ssh:"+name+" target", doctor.StatusError, "tf outputs: "+err.Error())
-		return out
-	}
-	signer, err := remote.ResolveSigner(t, tfOutputs)
+	signer, err := remote.ResolveSigner(t, nil)
 	if err != nil {
 		add("ssh:"+name+" target", doctor.StatusError, "key: "+err.Error())
 		return out
