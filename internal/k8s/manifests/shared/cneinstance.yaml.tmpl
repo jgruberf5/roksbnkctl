@@ -106,7 +106,7 @@ spec:
           value: "{{ .ExternalIFName }}"
         - name: ROBIN_VFIO_RESOURCE_2
           value: "{{ .InternalIFName }}"
-        - name: PCIDEVICE_INTEL_COM_ENS8
+        - name: PCIDEVICE_INTEL_COM_{{ .ExternalIFUpper }}
           value: "{{ .ExternalPCI }}"
-        - name: PCIDEVICE_INTEL_COM_ENS7
+        - name: PCIDEVICE_INTEL_COM_{{ .InternalIFUpper }}
           value: "{{ .InternalPCI }}"

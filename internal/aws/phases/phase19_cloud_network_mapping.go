@@ -107,17 +107,17 @@ func Phase19CloudNetworkMappingDown(ctx context.Context, _ *intent.Cluster, st *
 
 // persistHostDeviceConstants writes the host-device architecture constants to
 // state.env for observability by Pass 3 and future slice-8 doctor/inspect.
+//
+// NOTE: EXTERNAL_IFNAME, INTERNAL_IFNAME, EXTERNAL_PCI, INTERNAL_PCI, and
+// CLOUD_HOST_DEVICE_NAME are NOT written here. Phase 17c (iface-discovery) is
+// the sole writer of those keys. Writing them here would clobber the values
+// discovered on-node since phase 19 runs AFTER phase 17c.
 func persistHostDeviceConstants(st *state.State) {
 	st.Set("INSTANCE_NS", InstanceNamespace)
 	st.Set("OPERATOR_NS", OperatorNamespace)
 	st.Set("EXTERNAL_NAD", ExternalNAD)
 	st.Set("INTERNAL_NAD", InternalNAD)
-	st.Set("EXTERNAL_IFNAME", ExternalIFName)
-	st.Set("INTERNAL_IFNAME", InternalIFName)
-	st.Set("EXTERNAL_PCI", ExternalPCI)
-	st.Set("INTERNAL_PCI", InternalPCI)
 	st.Set("CLOUD_HOST_DEVICE_TAG", CloudHostDeviceTag)
-	st.Set("CLOUD_HOST_DEVICE_NAME", CloudHostDeviceName)
 }
 
 // ensureMGMTSubnetAlias writes MGMT_SUBNET = PUBLIC_SUBNETS[0]. ALWAYS

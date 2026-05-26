@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -211,6 +212,31 @@ func WaitForUnstructuredCondition(ctx context.Context, client dynamic.Interface,
 			namespace, name, jsonPath, expectedValue, lastSeen, err)
 	}
 	return nil
+}
+
+// WaitForPodSucceeded polls a Pod in ns/name until its Phase is Succeeded.
+// Returns nil on success. Fails fast (returns a terminal error) if the pod
+// enters the Failed phase — no point waiting further.
+//
+// Interval is 5 s. timeout is the caller-supplied deadline.
+func WaitForPodSucceeded(ctx context.Context, clientset kubernetes.Interface, ns, name string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		pod, err := clientset.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			// Pod may not exist yet — keep polling.
+			return false, nil //nolint:nilerr
+		}
+		switch pod.Status.Phase {
+		case corev1.PodSucceeded:
+			return true, nil
+		case corev1.PodFailed:
+			return false, fmt.Errorf("pod %s/%s entered Failed phase", ns, name)
+		}
+		return false, nil
+	})
 }
 
 // splitDotPath splits a dot-separated jsonPath string into field segments.

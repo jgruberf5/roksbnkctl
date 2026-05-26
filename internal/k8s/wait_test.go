@@ -240,6 +240,50 @@ func TestWaitForCRDExists_Timeout(t *testing.T) {
 	}
 }
 
+// ─── WaitForPodSucceeded tests ────────────────────────────────────────────────
+
+func buildPodWithPhase(ns, name string, phase corev1.PodPhase) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Status:     corev1.PodStatus{Phase: phase},
+	}
+}
+
+// TestWaitForPodSucceeded_ImmediateSuccess: pod already Succeeded.
+func TestWaitForPodSucceeded_ImmediateSuccess(t *testing.T) {
+	pod := buildPodWithPhase("kube-system", "iface-discovery", corev1.PodSucceeded)
+	cs := k8sfake.NewSimpleClientset(pod)
+
+	if err := WaitForPodSucceeded(context.Background(), cs, "kube-system", "iface-discovery", 2*time.Second); err != nil {
+		t.Fatalf("expected nil for Succeeded pod, got: %v", err)
+	}
+}
+
+// TestWaitForPodSucceeded_FailedPod: pod enters Failed — should error immediately.
+func TestWaitForPodSucceeded_FailedPod(t *testing.T) {
+	pod := buildPodWithPhase("kube-system", "iface-discovery", corev1.PodFailed)
+	cs := k8sfake.NewSimpleClientset(pod)
+
+	err := WaitForPodSucceeded(context.Background(), cs, "kube-system", "iface-discovery", 2*time.Second)
+	if err == nil {
+		t.Fatal("expected error for Failed pod, got nil")
+	}
+	if !strings.Contains(err.Error(), "Failed phase") {
+		t.Errorf("error should mention 'Failed phase': %v", err)
+	}
+}
+
+// TestWaitForPodSucceeded_Timeout: pod stays Pending — times out.
+func TestWaitForPodSucceeded_Timeout(t *testing.T) {
+	pod := buildPodWithPhase("kube-system", "iface-discovery", corev1.PodPending)
+	cs := k8sfake.NewSimpleClientset(pod)
+
+	err := WaitForPodSucceeded(context.Background(), cs, "kube-system", "iface-discovery", 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error for Pending pod, got nil")
+	}
+}
+
 // Ensure metav1 import is used (for GetOptions in the production code path).
 var _ = metav1.GetOptions{}
 

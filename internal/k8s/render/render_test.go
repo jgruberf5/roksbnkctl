@@ -411,23 +411,30 @@ func TestRenderIRSASA_InstanceNameCRConvention(t *testing.T) {
 var nadsTmpl = []byte(`ns: {{ .Namespace }}
 ext: {{ .ExternalNADName }}
 int: {{ .InternalNADName }}
-extIF: {{ .ExternalIFName }}
-intIF: {{ .InternalIFName }}
+extPCI: {{ .ExternalPCI }}
+intPCI: {{ .InternalPCI }}
 `)
 
 func TestRenderNADs_Substitution(t *testing.T) {
-	out, err := RenderNADs(nadsTmpl, "f5-cne-system")
+	out, err := RenderNADs(nadsTmpl, "f5-cne-system", func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs: %v", err)
 	}
 	rendered := string(out)
 
 	checks := map[string]string{
-		"ns":    "f5-cne-system",
-		"ext":   "external-netdevice",
-		"int":   "internal-netdevice",
-		"extIF": "ens8",
-		"intIF": "ens7",
+		"ns":     "f5-cne-system",
+		"ext":    "external-netdevice",
+		"int":    "internal-netdevice",
+		"extPCI": "0000:00:08.0",
+		"intPCI": "0000:00:07.0",
+	}
+	// NADs must use pciBusID selector, not Linux interface name.
+	if strings.Contains(rendered, `"device"`) {
+		t.Errorf("rendered NADs must not contain \"device\" key (use pciBusID instead):\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "pciBusID") && !strings.Contains(rendered, "0000:00:08.0") {
+		t.Errorf("rendered NADs must reference pciBusID or PCI address:\n%s", rendered)
 	}
 	for field, want := range checks {
 		if !strings.Contains(rendered, want) {
@@ -437,7 +444,7 @@ func TestRenderNADs_Substitution(t *testing.T) {
 }
 
 func TestRenderNADs_DefaultNamespace(t *testing.T) {
-	out, err := RenderNADs(nadsTmpl, "default")
+	out, err := RenderNADs(nadsTmpl, "default", func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs default ns: %v", err)
 	}
@@ -448,13 +455,14 @@ func TestRenderNADs_DefaultNamespace(t *testing.T) {
 
 func TestRenderNADs_Constants(t *testing.T) {
 	// Verify the hardcoded constants are correct (these are architecture constraints).
-	tmpl := []byte(`{{ .ExternalIFName }} {{ .InternalIFName }} {{ .ExternalNADName }} {{ .InternalNADName }}`)
-	out, err := RenderNADs(tmpl, "f5-cne-system")
+	// NADs select by PCI bus address (robust against udev interface-name drift).
+	tmpl := []byte(`{{ .ExternalPCI }} {{ .InternalPCI }} {{ .ExternalNADName }} {{ .InternalNADName }}`)
+	out, err := RenderNADs(tmpl, "f5-cne-system", func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs constants: %v", err)
 	}
 	rendered := string(out)
-	for _, want := range []string{"ens8", "ens7", "external-netdevice", "internal-netdevice"} {
+	for _, want := range []string{"0000:00:08.0", "0000:00:07.0", "external-netdevice", "internal-netdevice"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("constant %q missing from output: %s", want, rendered)
 		}
@@ -597,6 +605,119 @@ func TestRenderCNEInstance_EmbeddedShape(t *testing.T) {
 	}
 	if strings.Contains(string(out), "$") {
 		t.Errorf("rendered output still contains $ placeholder:\n%s", out)
+	}
+}
+
+// ─── RenderNADs getter-sourced PCI tests ──────────────────────────────────────
+
+func TestRenderNADs_GetterPCI_Populated(t *testing.T) {
+	// When getter returns values, those PCI addresses must appear in the output.
+	tmpl := []byte(`extPCI: {{ .ExternalPCI }}
+intPCI: {{ .InternalPCI }}
+`)
+	getter := populatedStateGetter(map[string]string{
+		"EXTERNAL_PCI": "0000:00:0a.0",
+		"INTERNAL_PCI": "0000:00:09.0",
+	})
+	out, err := RenderNADs(tmpl, "f5-cne-system", getter)
+	if err != nil {
+		t.Fatalf("RenderNADs (populated getter): %v", err)
+	}
+	rendered := string(out)
+	if !strings.Contains(rendered, "0000:00:0a.0") {
+		t.Errorf("expected discovered external PCI in output:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "0000:00:09.0") {
+		t.Errorf("expected discovered internal PCI in output:\n%s", rendered)
+	}
+}
+
+func TestRenderNADs_GetterPCI_EmptyFallsBackToConstants(t *testing.T) {
+	// When getter returns "", the constant defaults must be used.
+	tmpl := []byte(`extPCI: {{ .ExternalPCI }}
+intPCI: {{ .InternalPCI }}
+`)
+	getter := func(string) string { return "" }
+	out, err := RenderNADs(tmpl, "f5-cne-system", getter)
+	if err != nil {
+		t.Fatalf("RenderNADs (empty getter): %v", err)
+	}
+	rendered := string(out)
+	if !strings.Contains(rendered, "0000:00:08.0") {
+		t.Errorf("expected constant external PCI 0000:00:08.0 in output:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "0000:00:07.0") {
+		t.Errorf("expected constant internal PCI 0000:00:07.0 in output:\n%s", rendered)
+	}
+}
+
+// ─── RenderCNEInstance dynamic env-var name tests ─────────────────────────────
+
+func TestRenderCNEInstance_DynamicIFName_ENS9(t *testing.T) {
+	// When EXTERNAL_IFNAME=ens9 is in state, the env-var name in the CNEInstance
+	// template must be PCIDEVICE_INTEL_COM_ENS9 (not hardcoded ENS8).
+	tmplBytes, err := manifests.FS.ReadFile("shared/cneinstance.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read cneinstance template: %v", err)
+	}
+	cl := cneInstanceCluster()
+	getter := populatedStateGetter(map[string]string{
+		"VPC_ID":          "vpc-test",
+		"EXTERNAL_IFNAME": "ens9",
+		"INTERNAL_IFNAME": "ens6",
+		"EXTERNAL_PCI":    "0000:00:0a.0",
+		"INTERNAL_PCI":    "0000:00:09.0",
+	})
+
+	out, err := RenderCNEInstance(tmplBytes, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCNEInstance (dynamic ifname): %v", err)
+	}
+	rendered := string(out)
+
+	// Dynamic env-var names.
+	if !strings.Contains(rendered, "PCIDEVICE_INTEL_COM_ENS9") {
+		t.Errorf("expected PCIDEVICE_INTEL_COM_ENS9 in output:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "PCIDEVICE_INTEL_COM_ENS6") {
+		t.Errorf("expected PCIDEVICE_INTEL_COM_ENS6 in output:\n%s", rendered)
+	}
+	// Must NOT contain the hardcoded constants.
+	if strings.Contains(rendered, "PCIDEVICE_INTEL_COM_ENS8") {
+		t.Errorf("hardcoded PCIDEVICE_INTEL_COM_ENS8 must not appear when override set:\n%s", rendered)
+	}
+	// Discovered PCI values.
+	if !strings.Contains(rendered, "0000:00:0a.0") {
+		t.Errorf("expected discovered external PCI 0000:00:0a.0:\n%s", rendered)
+	}
+}
+
+func TestRenderCNEInstance_EmptyGetterFallsBackToConstants(t *testing.T) {
+	// When getter only provides VPC_ID (no ifname/PCI), constants must be used.
+	tmplBytes, err := manifests.FS.ReadFile("shared/cneinstance.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read cneinstance template: %v", err)
+	}
+	cl := cneInstanceCluster()
+	getter := func(key string) string {
+		if key == "VPC_ID" {
+			return "vpc-test"
+		}
+		return ""
+	}
+
+	out, err := RenderCNEInstance(tmplBytes, cl, getter)
+	if err != nil {
+		t.Fatalf("RenderCNEInstance (empty getter): %v", err)
+	}
+	rendered := string(out)
+
+	// Should fall back to constant names.
+	if !strings.Contains(rendered, "PCIDEVICE_INTEL_COM_ENS8") {
+		t.Errorf("expected constant PCIDEVICE_INTEL_COM_ENS8 with empty getter:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "PCIDEVICE_INTEL_COM_ENS7") {
+		t.Errorf("expected constant PCIDEVICE_INTEL_COM_ENS7 with empty getter:\n%s", rendered)
 	}
 }
 

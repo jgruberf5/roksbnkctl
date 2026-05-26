@@ -48,12 +48,13 @@ func TestPhase19CloudNetworkMapping_DryRun(t *testing.T) {
 		t.Errorf("CLOUD_NETWORK_MAPPING_APPLIED_AT = %q, want dry-run",
 			st.Get("CLOUD_NETWORK_MAPPING_APPLIED_AT"))
 	}
-	// Host-device constants must be set in dry-run.
+	// Host-device constants that phase19 still writes must be set.
 	if st.Get("INSTANCE_NS") != InstanceNamespace {
 		t.Errorf("INSTANCE_NS = %q, want %q", st.Get("INSTANCE_NS"), InstanceNamespace)
 	}
-	if st.Get("EXTERNAL_IFNAME") != ExternalIFName {
-		t.Errorf("EXTERNAL_IFNAME = %q, want %q", st.Get("EXTERNAL_IFNAME"), ExternalIFName)
+	// EXTERNAL_IFNAME is now written by phase17c, NOT phase19 — must NOT be set here.
+	if st.Get("EXTERNAL_IFNAME") != "" {
+		t.Errorf("EXTERNAL_IFNAME should NOT be set by phase19 (phase17c owns it), got %q", st.Get("EXTERNAL_IFNAME"))
 	}
 	// MGMT_SUBNET alias must be derived from PUBLIC_SUBNETS[0].
 	if st.Get("MGMT_SUBNET") != "subnet-pub-001" {
@@ -92,18 +93,20 @@ func TestPhase19CloudNetworkMapping_StateKeysSetOnApply(t *testing.T) {
 	if err := Phase19CloudNetworkMapping(context.Background(), cl, st, clients, true); err != nil {
 		t.Fatalf("Phase19 dry-run for state-key test: %v", err)
 	}
-	// Verify constants are persisted.
+	// Verify constants that phase19 still sets are persisted.
 	if st.Get("INSTANCE_NS") != InstanceNamespace {
 		t.Errorf("INSTANCE_NS = %q, want %q", st.Get("INSTANCE_NS"), InstanceNamespace)
 	}
-	if st.Get("EXTERNAL_IFNAME") != ExternalIFName {
-		t.Errorf("EXTERNAL_IFNAME = %q, want %q", st.Get("EXTERNAL_IFNAME"), ExternalIFName)
-	}
-	if st.Get("INTERNAL_IFNAME") != InternalIFName {
-		t.Errorf("INTERNAL_IFNAME = %q, want %q", st.Get("INTERNAL_IFNAME"), InternalIFName)
-	}
 	if st.Get("CLOUD_HOST_DEVICE_TAG") != CloudHostDeviceTag {
 		t.Errorf("CLOUD_HOST_DEVICE_TAG = %q, want %q", st.Get("CLOUD_HOST_DEVICE_TAG"), CloudHostDeviceTag)
+	}
+	// EXTERNAL_IFNAME, INTERNAL_IFNAME are written by phase17c (iface-discovery),
+	// NOT phase19. Verify phase19 does NOT clobber them.
+	if st.Get("EXTERNAL_IFNAME") != "" {
+		t.Errorf("EXTERNAL_IFNAME should NOT be set by phase19 (phase17c owns it), got %q", st.Get("EXTERNAL_IFNAME"))
+	}
+	if st.Get("INTERNAL_IFNAME") != "" {
+		t.Errorf("INTERNAL_IFNAME should NOT be set by phase19 (phase17c owns it), got %q", st.Get("INTERNAL_IFNAME"))
 	}
 }
 

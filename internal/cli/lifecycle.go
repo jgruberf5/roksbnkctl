@@ -508,6 +508,9 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase17bJumphost(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	if err := phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun); err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	if err := phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
@@ -693,6 +696,9 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	// Phase 18/17/16: AWS-side BNK teardown (ENIs, OIDC/IRSA, node label).
 	// Runs after kubeconfig down (TMM node already gone with node group teardown).
 	if err := phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA); err != nil {
+		return fmt.Errorf("down: %w", err)
+	}
+	if err := phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
 	if err := phases.Phase17bJumphostDown(ctx, cl, st, clients); err != nil {

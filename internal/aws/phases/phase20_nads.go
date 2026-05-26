@@ -56,7 +56,7 @@ func Phase20NADs(ctx context.Context, cl *intent.Cluster, st *state.State, clien
 	}
 
 	for _, ns := range nadNamespaces {
-		rendered, err := render.RenderNADs(tmplBytes, ns)
+		rendered, err := render.RenderNADs(tmplBytes, ns, st.Get)
 		if err != nil {
 			return fmt.Errorf("phase20: rendering NADs for namespace %s: %w", ns, err)
 		}

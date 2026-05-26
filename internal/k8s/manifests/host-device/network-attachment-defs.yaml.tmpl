@@ -9,7 +9,7 @@ spec:
       "cniVersion": "0.3.1",
       "name": "external-network",
       "type": "host-device",
-      "device": "{{ .ExternalIFName }}"
+      "pciBusID": "{{ .ExternalPCI }}"
     }
 ---
 apiVersion: k8s.cni.cncf.io/v1
@@ -23,5 +23,5 @@ spec:
       "cniVersion": "0.3.1",
       "name": "internal-network",
       "type": "host-device",
-      "device": "{{ .InternalIFName }}"
+      "pciBusID": "{{ .InternalPCI }}"
     }
