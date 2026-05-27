@@ -1,0 +1,90 @@
+{
+  "version": 4,
+  "terraform_version": "1.15.2",
+  "serial": 44,
+  "lineage": "44444444-4444-4444-4444-444444444444",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "data",
+      "type": "ibm_container_cluster_config",
+      "name": "cluster_config",
+      "module": "module.cert_manager",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_container_vpc_cluster",
+      "name": "cluster",
+      "module": "module.cert_manager",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_resource_group",
+      "name": "resource_group",
+      "module": "module.cert_manager",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_container_cluster_config",
+      "name": "cluster_config",
+      "module": "module.cne_instance",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_resource_group",
+      "name": "resource_group",
+      "module": "module.cne_instance",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_container_cluster_config",
+      "name": "cluster_config",
+      "module": "module.flo",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "data",
+      "type": "ibm_resource_group",
+      "name": "resource_group",
+      "module": "module.flo",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    },
+    {
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "flo",
+      "module": "module.flo",
+      "provider": "provider[\"registry.terraform.io/hashicorp/helm\"]",
+      "instances": []
+    },
+    {
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "cne_instance",
+      "module": "module.cne_instance",
+      "provider": "provider[\"registry.terraform.io/hashicorp/helm\"]",
+      "instances": []
+    },
+    {
+      "mode": "managed",
+      "type": "kubernetes_manifest",
+      "name": "license",
+      "module": "module.license",
+      "provider": "provider[\"registry.terraform.io/hashicorp/kubernetes\"]",
+      "instances": []
+    }
+  ],
+  "check_results": null
+}
