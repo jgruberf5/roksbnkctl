@@ -20,7 +20,7 @@ What it installs (idempotent — re-running skips anything already present):
 
 What it deliberately does NOT install:
 
-- `mdbook` / `mdbook-pandoc` / `pandoc` / `texlive` / `mermaid-cli` — bundled in `tools/docker/mdbook/Dockerfile`; build once via `make -C tools/docker build-mdbook`
+- `mdbook` / `mdbook-pandoc` / `pandoc` / `texlive` / `mermaid-cli` — bundled in `tools/docker/mdbook/Dockerfile`. CI publishes `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev` on every `main` push (via `.github/workflows/tools-images.yml`); `docker pull` it or build locally via `make -C tools/docker build-mdbook`
 - `goreleaser` — pulled at run-time from `goreleaser/goreleaser:latest`
 - `iperf3` — bundled in `tools/docker/iperf3/`, runs via `--backend k8s`
 - `kubectl` — sprint 2 internalised the surface; install on host only if you want to shell out for cred-audit assertions in `scripts/e2e-test-backends.sh`
@@ -335,9 +335,17 @@ The PRD 03 docker backend pulls per-tool images at runtime:
 
 - `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud` — Ubuntu base + `ibmcloud-cli` + `container-service` plugin
 - `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3` — Alpine base + `iperf3`
+- `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook` — Debian base + mdbook + mdbook-pandoc + pandoc + texlive-xetex + mermaid-cli (release-time book builder)
 
-Released images are built and pushed by
-`.github/workflows/tools-images.yml` on every `v*` tag push. For local
+All three images are built and pushed by
+`.github/workflows/tools-images.yml`'s `strategy.matrix.image` matrix.
+The workflow auto-builds + auto-pushes on every push to `main` (publishes
+`:dev`) and on every `v*` tag push (publishes `:<tagname>` + `:latest`).
+`mdbook` was folded into the matrix in Sprint 22 — routine edits to
+`tools/docker/mdbook/Dockerfile` no longer require a manual
+`make -C tools/docker build-mdbook` + `docker push` step on the
+release-cut host; the next push to `main` republishes
+`ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev` automatically. For local
 development against the docker backend (without waiting on a tag), build
 the images yourself via the `tools/docker/Makefile`:
 
@@ -345,7 +353,8 @@ the images yourself via the `tools/docker/Makefile`:
 cd tools/docker
 make build-ibmcloud                    # ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev
 make build-iperf3                      # ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:dev
-make build-all                         # both
+make build-mdbook                      # ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev
+make build-all                         # all three
 make clean                             # remove the local images
 ```
 
@@ -488,7 +497,7 @@ GitHub Release).
 
 | Tool | Source |
 |---|---|
-| `mdbook` + `mdbook-mermaid` + `mdbook-pandoc` + `pandoc` + `texlive-xetex` + `@mermaid-js/mermaid-cli` | Bundled in [`tools/docker/mdbook/Dockerfile`](./tools/docker/mdbook/Dockerfile) — ~6 GB image, build once with `make -C tools/docker build-mdbook`. |
+| `mdbook` + `mdbook-mermaid` + `mdbook-pandoc` + `pandoc` + `texlive-xetex` + `@mermaid-js/mermaid-cli` | Bundled in [`tools/docker/mdbook/Dockerfile`](./tools/docker/mdbook/Dockerfile). CI-managed via [`.github/workflows/tools-images.yml`](./.github/workflows/tools-images.yml): every push to `main` republishes `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev`, every `v*` tag push publishes `:<tagname>` + `:latest`. `make release` / `make release-publish` pull whichever tag matches the binary's version, so no host build is required at release time. For local iteration without waiting on a push, `make -C tools/docker build-mdbook` builds `:dev` locally (~6 GB image). |
 | `goreleaser` | Pulled at run-time from `goreleaser/goreleaser:latest` (~150 MB). No host install needed. |
 | `gh` | Required on `PATH` for the `pages-assure` step. Authenticate once with `gh auth login`. |
 

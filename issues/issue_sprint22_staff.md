@@ -163,6 +163,21 @@ The `mode` filter is the entire fix — the prefix-match logic stays.
    also visibly fire when run without `--auto` — that's the
    end-to-end proof that DetectShape now reaches the Split branch.
 
+   **GATE — live-verify deferred to Sprint 23.** The demo.sh
+   re-verify on 2026-05-27 surfaced a second, upstream defect
+   (`bnk-phase-override.tfvars` does not count-gate the jumphost
+   shared key and ROKS-cluster registry COS instance, so they leak
+   into trial state on every Split-shape `up --auto`) that
+   contaminates the very test bed needed to exercise this fix
+   end-to-end. Per `issues/issue_sprint23_staff.md`, the
+   phase-separation leak is the Sprint 23 staff deliverable; the
+   Sprint 22 DetectShape live-verify is GATED on Sprint 23 landing
+   so the post-`up` trial state is the clean shape this fix is
+   designed for. Unit + table tests (`TestDetectShape_Table` "split
+   with cluster-phase data sources in trial", plus the two pinning
+   tests on the mode and type filters) cover the heuristic
+   exhaustively in the meantime.
+
 ### Files affected
 
 - `internal/config/tfstate.go` — the heuristic (one-loop change in
@@ -258,3 +273,79 @@ Files modified:
   command down the wrong path." Different mechanism (DetectShape
   heuristic vs. cobra argv parser), same operator-visible failure
   mode (exit 0, stranded resources, no error to read).
+
+---
+
+## Closure — staff, 2026-05-27
+
+**Audit verdict: claims match diffs, no drift.**
+
+Reviewed the two shipped commits against this issue file's
+"Fix as shipped" section:
+
+- `18415eb` (down-prompt composite UX) — `git show` of
+  `internal/orchestration/lifecycle.go`, `internal/cli/lifecycle.go`,
+  and `book/src/11-tearing-down.md` matches the description: a single
+  up-front confirmation in `RunDown`'s Split branch that names both
+  phases and flips `in.Auto = true` so the trial + cluster leaves
+  don't re-prompt; the cli adapter's `RunClusterDown` closure mirrors
+  `in.Auto` onto `flagAuto` for the call's duration so the
+  (Sprint-16-frozen) `runClusterDown` reads the same decision; book
+  copy refreshed to document the new combined prompt on Split and
+  clarify the unchanged LegacySingle / `bnk down` copies.
+- `cbb9c1b` (DetectShape correctness) — `git show` of
+  `internal/config/tfstate.go`,
+  `internal/config/tfstate_test.go`, and the new
+  `internal/config/testdata/tfstate_split_data_in_trial.json` matches
+  the "Fix as shipped" code block: `trialStateHasClusterModules` now
+  requires `mode == "managed" && type == "ibm_container_vpc_cluster"`
+  before the `clusterPhaseModules` prefix match. New table-driven case
+  `"split with cluster-phase data sources in trial (post-up refresh
+  shape)"`, two new pinning tests
+  (`_DataSourceUnderClusterPrefix`, `_StrayManagedNonClusterType` —
+  the latter mirrors the canada-roks contamination shape), and the
+  three existing helper tests (`_ExactMatch`, `_NestedPrefix`,
+  `_DotGuard`) had their inline JSON updated to carry the
+  now-required `mode` + `type` fields. Doc comment on
+  `clusterPhaseModules` updated to point at the narrower criterion.
+
+**Test + vet results (current `main`):**
+
+- `go test ./internal/config/... ./internal/orchestration/...
+  ./internal/cli/...` — PASS (config + orchestration cached; cli
+  62.3s, green).
+- `go vet ./...` — clean (no output).
+
+**Live-verify gate:** clarification edit added under Issue 1
+acceptance criteria (4) making explicit that the live-verify on a
+fresh workspace is GATED on Sprint 23 landing — the
+`bnk-phase-override.tfvars` count-gate leak surfaced during the
+2026-05-27 demo.sh re-verify contaminates the post-`up` trial state
+needed to exercise this fix end-to-end. Unit + table coverage is
+exhaustive in the interim.
+
+**Future-sprint candidates raised by audit (NOT Sprint 22
+follow-ups — listed for the integrator):**
+
+1. PRD 06 §"Design" wording update — the legacy signature is still
+   described there as "trial state contains cluster-phase modules",
+   which the implementation originally took as "any resource address
+   under the module." The narrower criterion shipped here ("a managed
+   `ibm_container_vpc_cluster` under a cluster-phase module address")
+   deserves matching PRD prose. Tech-writer scope, already noted
+   in the issue body's Related section.
+2. Consider hoisting `runClusterDown`'s `flagAuto` read out of cli
+   package state so the orchestration `in.Auto` flip doesn't need
+   the mirror dance in `lifecycleInputs()`. The current shape is
+   correct and minimally invasive (Sprint 16 phase-1b kept
+   `cluster_phase.go` in cli byte-unchanged), but a future
+   `cluster_phase.go` migration into orchestration would let the
+   composite teardown read a single `in.Auto` directly. Architect
+   scope.
+3. Audit other state-shape heuristics for the same "any resource
+   under prefix" vs. "managed resource of marker type" confusion —
+   `trialStateHasClusterModules` was the diagnostic case here, but
+   the `tfstateHasResources` helper and the (separate)
+   `ShapeClusterOnly` gate use looser matching. Likely fine because
+   they don't drive dispatch, but worth a once-over. Staff scope,
+   low priority.

@@ -5,6 +5,7 @@ name: Build tools images
 #
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-iperf3
+#   - ghcr.io/jgruberf5/roksbnkctl-tools-mdbook
 #
 # Triggered on tag pushes (e.g. v0.9-rc1), on push to `main` (publishes a
 # `:dev` tag so `go install ./cmd/roksbnkctl@main` works on a fresh host
@@ -30,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [ibmcloud, iperf3]
+        image: [ibmcloud, iperf3, mdbook]
     steps:
       - uses: actions/checkout@v4
 
@@ -48,10 +49,10 @@ jobs:
       #
       # Context is the REPO ROOT (not tools/docker/<image>/) because
       # the ibmcloud image's Stage 1 Go build needs ./cmd, ./internal,
-      # go.mod/go.sum, embedded.go, and ./terraform/. The iperf3
-      # Dockerfile doesn't reference repo-root paths and ignores the
-      # broader context. The build-args below are ibmcloud-specific
-      # and harmlessly ignored by iperf3.
+      # go.mod/go.sum, embedded.go, and ./terraform/. The iperf3 and
+      # mdbook Dockerfiles don't reference repo-root paths and ignore
+      # the broader context. The build-args below are ibmcloud-specific
+      # and harmlessly ignored by iperf3 and mdbook.
       - name: Build and push (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v5
