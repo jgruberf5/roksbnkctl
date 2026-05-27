@@ -253,16 +253,19 @@ func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
 	}
 	got := string(body)
 
-	// Byte-identical ordered block. The full 9-line Sprint-23 forced
-	// tfvars sequence, in exact order, with single-LF separators. Any
-	// re-ordering, any inserted whitespace, any dropped line fails the
-	// match.
+	// Byte-identical ordered block. The full 10-line Sprint-23-round-2
+	// forced tfvars sequence, in exact order, with single-LF separators.
+	// Any re-ordering, any inserted whitespace, any dropped line fails
+	// the match. The new `deploy_cert_manager = false` line lands between
+	// `create_roks_registry_cos_instance = false` and the testing_*
+	// block; pre-round-2 was 9 lines.
 	const wantBlock = "create_roks_cluster = false\n" +
 		"roks_cluster_id_or_name = \"crt-cluster-id\"\n" +
 		"use_existing_cluster_vpc = true\n" +
 		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
 		"create_roks_transit_gateway = false\n" +
 		"create_roks_registry_cos_instance = false\n" +
+		"deploy_cert_manager = false\n" +
 		"testing_create_cluster_jumphosts = false\n" +
 		"testing_create_tgw_jumphost = false\n" +
 		"testing_create_client_vpc = false\n"
@@ -271,29 +274,36 @@ func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
 			wantBlock, got)
 	}
 
-	// Pin the exact adjacency of the new Sprint 23 line: it sits
-	// directly between create_roks_transit_gateway=false and
-	// testing_create_cluster_jumphosts=false. A reorder regression
-	// would pass the Contains() check above (block still appears as a
-	// substring) only if the WHOLE block survives — but if a future
-	// edit splits the block, this targeted check still fires.
+	// Pin the exact adjacency of the two Sprint 23 gates:
+	//   create_roks_registry_cos_instance = false  (round 1)
+	//   deploy_cert_manager               = false  (round 2 — the
+	//     cert_manager leak surfaced by the 2026-05-27 canada-roks live
+	//     verify, when the round-1 fix shipped without it)
+	// Both sit between the transit-gateway gate and the testing_* block.
+	// A reorder regression would pass the Contains() check above (block
+	// still appears as a substring) only if the WHOLE block survives —
+	// but if a future edit splits the block, this targeted check still
+	// fires.
 	const wantNeighbours = "create_roks_transit_gateway = false\n" +
 		"create_roks_registry_cos_instance = false\n" +
+		"deploy_cert_manager = false\n" +
 		"testing_create_cluster_jumphosts = false\n"
 	if !strings.Contains(got, wantNeighbours) {
-		t.Errorf("Sprint 23 gate `create_roks_registry_cos_instance = false` is not adjacent to its required neighbours.\n--- want ---\n%s\n--- got ---\n%s",
+		t.Errorf("Sprint 23 round-1+2 gates are not adjacent to their required neighbours.\n--- want ---\n%s\n--- got ---\n%s",
 			wantNeighbours, got)
 	}
 
-	// Defence in depth: the registry-COS leak signature must NOT
-	// survive in any form. The override file is generated, so any
-	// variant of `true` for this flag is a regression. (The header
-	// comment legitimately mentions `create_roks_registry_cos_instance`
-	// by name, so we don't grep for commented-out forms here — only
-	// for an active assignment to true.)
+	// Defence in depth: the leak signatures for BOTH Sprint 23 rounds
+	// must NOT survive in any form. The override file is generated, so
+	// any variant of `true` for either flag is a regression. (Header
+	// comments legitimately mention these flags by name, so we don't
+	// grep for commented-out forms — only for active assignments to
+	// true.)
 	for _, leak := range []string{
 		`create_roks_registry_cos_instance = true`,
 		`create_roks_registry_cos_instance=true`,
+		`deploy_cert_manager = true`,
+		`deploy_cert_manager=true`,
 	} {
 		if strings.Contains(got, leak) {
 			t.Errorf("override carries Sprint 23 leak signature %q\n--- override ---\n%s", leak, got)

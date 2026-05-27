@@ -36,8 +36,8 @@ locals {
     # as soon as the SSH daemon is reachable, without waiting for apt-get.
     mkdir -p /home/ubuntu/.ssh /root/.ssh
     chmod 700 /home/ubuntu/.ssh /root/.ssh
-    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" >> /home/ubuntu/.ssh/authorized_keys
-    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" >> /root/.ssh/authorized_keys
+    echo "${length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""}" >> /home/ubuntu/.ssh/authorized_keys
+    echo "${length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""}" >> /root/.ssh/authorized_keys
     chmod 600 /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys
     chown ubuntu:ubuntu /home/ubuntu/.ssh /home/ubuntu/.ssh/authorized_keys
 
@@ -185,13 +185,13 @@ locals {
 
     # Write shared private key and public key files (authorized_keys already
     # written at boot-top above).
-    echo "${base64encode(tls_private_key.jumphost_shared_key[0].private_key_openssh)}" | base64 -d > /home/ubuntu/.ssh/id_rsa
+    echo "${length(tls_private_key.jumphost_shared_key) > 0 ? base64encode(tls_private_key.jumphost_shared_key[0].private_key_openssh) : ""}" | base64 -d > /home/ubuntu/.ssh/id_rsa
     cp /home/ubuntu/.ssh/id_rsa /root/.ssh/id_rsa
     chmod 600 /home/ubuntu/.ssh/id_rsa /root/.ssh/id_rsa
     chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa
 
-    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" > /home/ubuntu/.ssh/id_rsa.pub
-    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" > /root/.ssh/id_rsa.pub
+    echo "${length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""}" > /home/ubuntu/.ssh/id_rsa.pub
+    echo "${length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""}" > /root/.ssh/id_rsa.pub
     chmod 644 /home/ubuntu/.ssh/id_rsa.pub /root/.ssh/id_rsa.pub
     chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa.pub
 

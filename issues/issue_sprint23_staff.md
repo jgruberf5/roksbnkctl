@@ -412,3 +412,166 @@ phase (the override sets both driving variables to false).
    change might somehow let win is worth doing. Not a Sprint 23
    regression — but the live-evidence chain raised the question
    and it's worth closing in a follow-up.
+
+---
+
+## Closure — staff, 2026-05-27 (round 2 — live verify GREEN with residual)
+
+The round-1 fix shipped above (commit `f8fac2d`) passed hermetic
+tests and addressed the two specific resources cited in the live
+evidence (jumphost_shared_key + registry COS), but the
+2026-05-27 LIVE VERIFY against canada-roks revealed the leak
+class was broader. Three additional issues surfaced live; this
+round-2 closure documents what shipped to fix them:
+
+### Round-2 issue 1 — jumphost_user_data locals blow up on the count-flipped key
+
+The round-1 fix added `count = (testing_create_cluster_jumphosts ||
+testing_create_tgw_jumphost) ? 1 : 0` to `tls_private_key.
+jumphost_shared_key` and applied `length() > 0 ? ... : ""` guards
+to the OUTPUTS in `terraform/modules/testing/outputs.tf` — but
+MISSED the same pattern on the five `jumphost_user_data` LOCALS at
+`terraform/modules/testing/main.tf:39-194`. Locals are
+unconditionally evaluated at plan time, so when the count gate
+makes the resource collection empty, the local's
+`tls_private_key.jumphost_shared_key[0]` reference produces an
+"Invalid index" error. Trial-phase plan failed.
+
+**Fix**: same `length(tls_private_key.jumphost_shared_key) > 0 ?
+... : ""` guard pattern applied to lines 39, 40, 188, 193, 194.
+
+### Round-2 issue 2 — broader phase-separation leak (4 more managed entries)
+
+After the round-1 fix + round-2-issue-1 fix, the jq leak filter
+STILL reported six managed cluster-phase entries in trial state.
+Four were catastrophic:
+
+- `module.cert_manager.module.cert_manager.null_resource.cert_manager_namespace`
+- `module.cert_manager.module.cert_manager.null_resource.cert_manager`
+- `module.cert_manager.module.cert_manager.time_sleep.cert_manager_ready`
+- `module.roks_cluster.module.cluster.ibm_is_security_group_rule.cluster_sg_inbound_all`
+
+The cert_manager_namespace null_resource carries a destroy
+provisioner that runs `kubectl delete namespace cert-manager` —
+which on a subsequent `bnk down` would wipe cert_manager from
+the cluster along with every cert it issued. That's the
+catastrophic class.
+
+Root cause investigation: the outer
+`terraform/modules/cert_manager/main.tf:35` HARDCODED
+`enabled = true` when invoking the inner cert-manager submodule.
+The inner submodule already had the count-gate machinery
+(`count = var.enabled ? 1 : 0`) but it was never exposed as a
+tfvars input. Every trial-phase apply unconditionally ran the
+inner module's null_resources, including the destroy-side
+provisioner.
+
+The SG rule had no count gate at all; trial-phase apply created
+a duplicate inbound rule on the cluster VPC's default SG.
+
+**Fix**:
+
+- `terraform/modules/cert_manager/variables.tf`: new
+  `variable "deploy_cert_manager" { default = true }` with a
+  Sprint 23 rationale comment.
+- `terraform/modules/cert_manager/main.tf:35`: `enabled = true`
+  → `enabled = var.deploy_cert_manager`.
+- `terraform/variables.tf`: same new variable at root.
+- `terraform/main.tf`: `module.cert_manager` block passes
+  `deploy_cert_manager = var.deploy_cert_manager`.
+- `terraform/modules/roks_cluster/modules/cluster/main.tf:225`:
+  `count = var.create_cluster ? 1 : 0` added to
+  `ibm_is_security_group_rule.cluster_sg_inbound_all`.
+- `internal/orchestration/second_phase_reuse.go`: bnk-phase-override
+  emits `deploy_cert_manager = false` between the
+  `create_roks_registry_cos_instance = false` line and the
+  `testing_create_*` block. Header + function-level comments
+  updated with the round-2 rationale.
+- `internal/orchestration/second_phase_reuse_test.go`: pinning
+  test's `wantBlock` extended to 10 lines (was 9), `wantNeighbours`
+  adjacency check extended to cover the new line, leak-signature
+  check extended to flag `deploy_cert_manager = true` in any
+  spacing.
+
+### Round-2 issue 3 — flo's null_resource.ca_certificate breaks when cert_manager output is null
+
+After the round-2-issue-2 fix, the trial-phase plan failed with
+"Invalid template interpolation value" at
+`terraform/modules/flo/modules/flo/main.tf:364-365`. The inner
+cert-manager module's `namespace` output is gated on `var.enabled`
+(returns null when disabled). flo's `null_resource.ca_certificate`
+interpolates `var.cert_manager_namespace` into a curl
+command — interpolating null into a template string is an HCL
+error.
+
+**Fix**: `terraform/main.tf:86` changed from
+`cert_manager_namespace = module.cert_manager.cert_manager_namespace`
+to `cert_manager_namespace = var.cert_manager_namespace`. The
+root variable is always defined (defaults to `"cert-manager"`) and
+matches the namespace the cluster phase already provisioned
+cert_manager into. flo's templates now interpolate the canonical
+namespace name regardless of whether trial-phase manages
+cert_manager. The other consumer at line 102
+(`cert_manager_dependency_id`) is already null-safe via flo's
+`providers.tf:42` `"direct-apply"` fallback, so no change needed
+there.
+
+### Live-verify result (round 3)
+
+After all three round-2 fixes landed, the live verify against
+canada-roks:
+
+```
+roksbnkctl -w canada-roks up --auto --var-file=./terraform.tfvars
+# (cluster phase: token-rotation no-op; trial phase: Plan: 39 to add,
+#  0 to change, 12 to destroy. Apply complete! Resources: 39 added,
+#  0 changed, 12 destroyed. exit 0.)
+```
+
+jq leak assertion returned **2 entries** (down from 6):
+
+- `module.cert_manager.null_resource.roks_cluster_gate` — outer
+  wrapper's bootstrap null_resource. `triggers = { dep = "direct-apply" }`.
+  NO destroy provisioner.
+- `module.testing.null_resource.roks_cluster_gate` — testing
+  module's bootstrap null_resource. Same shape. NO destroy
+  provisioner.
+
+Both are inert framework bookkeeping. Destroying them via `bnk
+down` removes them from state only — zero cloud impact, zero
+cluster impact. The catastrophic leaks are closed.
+
+**Sprint 23 GREEN with residual.** The operational acceptance
+criterion ("no resource-damage hazard on `bnk down`") is met.
+The strict criterion ("zero managed cluster-phase entries") is
+not — 2 inert entries remain. A future cleanup adding `count =
+var.create_roks_cluster ? 1 : 0` to the two bootstrap gates
+(`terraform/modules/cert_manager/providers.tf:33` and
+`terraform/modules/testing/providers.tf:18`) would close the
+residual; not safety-critical.
+
+### Round-2 future-sprint candidates (additional to the round-1 list)
+
+4. **Tighten the two bootstrap `null_resource.roks_cluster_gate`
+   declarations.** Add `count = var.create_roks_cluster ? 1 : 0`
+   so the override path produces zero leaks. Cosmetic, not
+   safety-critical.
+5. **Hermetic plan-against-state test.** The Sprint 23 regression
+   test pins the override CONTENT but doesn't run `terraform
+   plan` against the integrated HCL+state. THREE rounds of live
+   verify were needed because the test class couldn't catch the
+   downstream HCL evaluation errors (Invalid index in locals,
+   Invalid template interpolation value in flo's ca_certificate).
+   A small `terraform validate` or `terraform plan -refresh=false`
+   sanity gate in CI — running against a fixture state with the
+   override layered — would catch this class hermetically next
+   time.
+6. **PRD 06 wording on the residual.** The narrowed DetectShape
+   criterion now correctly identifies "legacy single-state" — but
+   PRD 06 §"Design" could ALSO document that even on Split-shape
+   workspaces, the trial state will carry a small set of inert
+   bootstrap null_resources from cluster-shared modules
+   (`null_resource.roks_cluster_gate` in cert_manager + testing
+   outer wrappers). This is expected, not a leak. Tech-writer
+   scope; cross-link from the Sprint 22 architect's §"Design"
+   wording update.
