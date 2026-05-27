@@ -48,7 +48,7 @@ Exit 0 when every probe returns HTTP 200, non-zero on any miss.`,
 }
 
 func init() {
-	testTrafficCmd.Flags().StringVar(&flagTrafficConfig, "config", "", "path to cluster.yaml (required; state.env path is derived from it)")
+	testTrafficCmd.Flags().StringVarP(&flagTrafficConfig, "config", "f", "", "path to cluster.yaml (required; state.env path is derived from it)")
 	testTrafficCmd.Flags().StringVar(&flagTrafficVIP, "vip", "", "Gateway VIP to curl (default: <BNK_EXT_CIDR>.100 derived from cluster.yaml)")
 	testTrafficCmd.Flags().IntVar(&flagTrafficIterations, "iterations", 5, "number of curl iterations against the VIP")
 	testTrafficCmd.Flags().DurationVar(&flagTrafficTimeout, "timeout", 10*time.Second, "per-curl timeout")

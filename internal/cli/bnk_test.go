@@ -2,6 +2,8 @@ package cli
 
 import (
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // TestResolveBnkResyncOpts covers the flag-validation logic in
@@ -126,5 +128,48 @@ func TestBnkCmdRegistered(t *testing.T) {
 	}
 	if !found {
 		t.Error("bnk command not registered on rootCmd")
+	}
+}
+
+// TestBnkResyncConfigFlagRegistered verifies that bnk resync has --config/-f
+// registered and that --kubeconfig is also present for back-compat.
+func TestBnkResyncConfigFlagRegistered(t *testing.T) {
+	configFlag := bnkResyncCmd.Flags().Lookup("config")
+	if configFlag == nil {
+		t.Fatal("--config flag not registered on bnk resync")
+	}
+	if configFlag.Shorthand != "f" {
+		t.Errorf("--config shorthand = %q, want \"f\"", configFlag.Shorthand)
+	}
+
+	kcFlag := bnkResyncCmd.Flags().Lookup("kubeconfig")
+	if kcFlag == nil {
+		t.Fatal("--kubeconfig flag not registered on bnk resync (back-compat broken)")
+	}
+}
+
+// TestStatusConfigFlagShorthand verifies that statusCmd exposes -f as the
+// shorthand for --config.
+func TestStatusConfigFlagShorthand(t *testing.T) {
+	f := statusCmd.Flags().ShorthandLookup("f")
+	if f == nil {
+		t.Fatal("-f shorthand not registered on status")
+	}
+	if f.Name != "config" {
+		t.Errorf("-f maps to flag %q, want \"config\"", f.Name)
+	}
+}
+
+// TestUpDownConfigFlagShorthand verifies that up and down expose -f for --config.
+func TestUpDownConfigFlagShorthand(t *testing.T) {
+	for _, cmd := range []*cobra.Command{upCmd, downCmd} {
+		f := cmd.Flags().ShorthandLookup("f")
+		if f == nil {
+			t.Errorf("%s: -f shorthand not registered", cmd.Use)
+			continue
+		}
+		if f.Name != "config" {
+			t.Errorf("%s: -f maps to %q, want \"config\"", cmd.Use, f.Name)
+		}
 	}
 }

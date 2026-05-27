@@ -219,13 +219,13 @@ var scenariosCleanCmd = &cobra.Command{
 }
 
 func init() {
-	scenariosRunCmd.Flags().StringVar(&flagScenarioConfig, "config", "", "path to cluster.yaml (required)")
+	scenariosRunCmd.Flags().StringVarP(&flagScenarioConfig, "config", "f", "", "path to cluster.yaml (required)")
 	scenariosRunCmd.Flags().StringVar(&flagScenarioVIP, "vip", "", "Gateway VIP to use (default: derived from cluster.yaml)")
 	scenariosRunCmd.Flags().BoolVar(&flagScenarioDryRun, "dry-run", false, "render manifests only; do not apply or verify")
 	scenariosRunCmd.Flags().BoolVar(&flagScenarioAll, "all", false, "run every registered scenario in topo-sorted order")
 	_ = scenariosRunCmd.MarkFlagRequired("config")
 
-	scenariosCleanCmd.Flags().StringVar(&flagScenarioConfig, "config", "", "path to cluster.yaml (required)")
+	scenariosCleanCmd.Flags().StringVarP(&flagScenarioConfig, "config", "f", "", "path to cluster.yaml (required)")
 	_ = scenariosCleanCmd.MarkFlagRequired("config")
 
 	scenariosCmd.AddCommand(scenariosListCmd, scenariosRunCmd, scenariosCleanCmd)

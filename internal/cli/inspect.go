@@ -77,7 +77,7 @@ or relabelled, fall back to:
 }
 
 func init() {
-	statusCmd.Flags().StringVar(&flagStatusConfig, "config", "", "path to cluster.yaml (locates the phased path's state.env; defaults to the workspace cluster name)")
+	statusCmd.Flags().StringVarP(&flagStatusConfig, "config", "f", "", "path to cluster.yaml (locates the phased path's state.env; defaults to the workspace cluster name)")
 	logsCmd.Flags().BoolVarP(&flagFollow, "follow", "f", false, "follow log output")
 	logsCmd.Flags().StringVarP(&flagLogsNamespace, "namespace", "n", "", "override the component's default namespace")
 	logsCmd.Flags().StringVarP(&flagLogsContainer, "container", "c", "", "container name in a multi-container pod")
@@ -121,10 +121,15 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	// .awsbnkctl/<name>/state.env under the working directory. Best-effort
 	// by convention: a missing / unreadable / empty state.env degrades to
 	// "not deployed" rather than failing the command.
-	writeStatusDeployState(tw, flagStatusConfig, cctx.Workspace.Cluster.Name)
+	st, _ := loadStatusState(flagStatusConfig, cctx.Workspace.Cluster.Name)
+	writeStatusDeployStateFromState(tw, st)
 
 	// Kubeconfig + cluster reachability.
-	kcPath := k8s.DefaultKubeconfigPath()
+	// Prefer KUBECONFIG_PATH from state.env (written by Phase 11 during `up`)
+	// over the host's default kubeconfig, so `status --config <cluster.yaml>`
+	// always reports the targeted cluster rather than whatever kube-context
+	// happens to be active on the host.
+	kcPath := resolveKubeconfigForStatus(st)
 	if kcPath == "" {
 		fmt.Fprintln(tw, "Kubeconfig:\t(none — run `awsbnkctl kubeconfig --download`)")
 		return nil
@@ -141,21 +146,18 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// writeStatusDeployState emits the deploy-state lines for `status`,
-// sourced from the AWS-SDK phased path's state.env IDs cache
-// (.awsbnkctl/<cluster>/state.env). The cluster name is resolved from
-// configPath (a cluster.yaml, when --config is given) or, failing that,
-// from fallbackClusterName (the workspace's configured cluster name).
+// writeStatusDeployStateFromState emits the deploy-state lines for `status`
+// from an already-loaded *state.State. When st is nil (state not found or
+// unreadable) it emits a single "no state" hint line.
 //
-// Best-effort by convention — every section of `runStatus` is
-// best-effort. A missing cluster name, an unloadable cluster.yaml, or an
-// unreadable / malformed state.env all degrade to a single "not deployed"
-// line rather than a hard error. The state.env is shell-sourceable
-// KEY=VALUE (see internal/aws/state); empty values mean "not provisioned"
-// because the phase code clears IDs on `down`.
-func writeStatusDeployState(tw io.Writer, configPath, fallbackClusterName string) {
-	st, ok := loadStatusState(configPath, fallbackClusterName)
-	if !ok {
+// Best-effort by convention — every section of `runStatus` is best-effort.
+// A missing cluster name, an unloadable cluster.yaml, or an unreadable /
+// malformed state.env all degrade to a single "not deployed" line rather than
+// a hard error. The state.env is shell-sourceable KEY=VALUE
+// (see internal/aws/state); empty values mean "not provisioned" because the
+// phase code clears IDs on `down`.
+func writeStatusDeployStateFromState(tw io.Writer, st *state.State) {
+	if st == nil {
 		fmt.Fprintln(tw, "Deploy state:\t(no state — run `awsbnkctl up --config <cluster.yaml>`)")
 		return
 	}
@@ -168,6 +170,68 @@ func writeStatusDeployState(tw io.Writer, configPath, fallbackClusterName string
 	fmt.Fprintf(tw, "BNK activation:\t%s\n", bnkActivationLine(st))
 	fmt.Fprintf(tw, "Forge:\t%s\n", forgeLine(st))
 	fmt.Fprintf(tw, "Last phase applied:\t%s\n", lastPhaseAppliedLine(st))
+}
+
+// resolveKubeconfigForStatus returns the kubeconfig path to use for the status
+// command's cluster probe. It prefers KUBECONFIG_PATH from the loaded state
+// (written by Phase 11 during `awsbnkctl up`) so that `status --config
+// <cluster.yaml>` always probes the targeted cluster, not the host's current
+// kube-context. Falls back to k8s.DefaultKubeconfigPath() when state is nil
+// or KUBECONFIG_PATH is absent/stale.
+//
+// The path stored in state.env is cwd-relative (written relative to where
+// `up` ran). If the stored path doesn't exist as-is, it is also tried
+// relative to the state directory.
+func resolveKubeconfigForStatus(st *state.State) string {
+	if st != nil {
+		if stored := st.Get("KUBECONFIG_PATH"); stored != "" {
+			if _, err := os.Stat(stored); err == nil {
+				return stored
+			}
+			// Try relative to the state dir (e.g. .awsbnkctl/<name>/kubeconfig).
+			candidate := filepath.Join(st.Dir(), filepath.Base(stored))
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+	return k8s.DefaultKubeconfigPath()
+}
+
+// resolveKubeconfigFromConfig derives a kubeconfig path from a cluster.yaml
+// path by loading the cluster's state.env and reading KUBECONFIG_PATH.
+// Returns ("", nil) when configPath is empty. Returns an error only when the
+// config file itself cannot be loaded; a missing/absent KUBECONFIG_PATH in
+// state is not an error — the caller falls back to its own default.
+//
+// This is the shared helper used by both `status` (Bug 1) and `bnk resync
+// --config` (Bug 2) so both commands resolve the kubeconfig the same way.
+func resolveKubeconfigFromConfig(configPath string) (string, error) {
+	if configPath == "" {
+		return "", nil
+	}
+	cl, err := intent.Load(configPath)
+	if err != nil {
+		return "", fmt.Errorf("loading --config %s: %w", configPath, err)
+	}
+	st, err := state.Load(cl.StateDir())
+	if err != nil {
+		// state.Load returns an error only on malformed lines; treat as empty.
+		return "", nil
+	}
+	stored := st.Get("KUBECONFIG_PATH")
+	if stored == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(stored); err == nil {
+		return stored, nil
+	}
+	// Try relative to the state dir.
+	candidate := filepath.Join(cl.StateDir(), filepath.Base(stored))
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", nil
 }
 
 // loadStatusState resolves the cluster name then loads its state.env.

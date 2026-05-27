@@ -34,7 +34,7 @@ Formats:
 }
 
 func init() {
-	topologyCmd.Flags().StringVar(&flagTopologyConfig, "config", "", "path to cluster.yaml (required)")
+	topologyCmd.Flags().StringVarP(&flagTopologyConfig, "config", "f", "", "path to cluster.yaml (required)")
 	topologyCmd.Flags().StringVar(&flagTopologyFormat, "format", "ascii", "output format: ascii or mermaid")
 	_ = topologyCmd.MarkFlagRequired("config")
 	rootCmd.AddCommand(topologyCmd)

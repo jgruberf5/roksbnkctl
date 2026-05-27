@@ -72,7 +72,7 @@ local forge_link.json. Pass --purge to also delete the forge project
 func init() {
 	forgeCmd.PersistentFlags().StringVar(&flagForgeMCPURL, "forge-mcp-url", "",
 		"forge MCP endpoint (default $AWSBNKCTL_FORGE_MCP_URL, fallback "+forge.DefaultMCPURL+")")
-	forgeCmd.PersistentFlags().StringVar(&flagForgeConfig, "config", "",
+	forgeCmd.PersistentFlags().StringVarP(&flagForgeConfig, "config", "f", "",
 		"path to cluster.yaml (intent mode); when set, forge targets the cluster.yaml's metadata.name/region and stores the link in the cluster's state dir instead of the legacy workspace")
 
 	forgeRegisterCmd.Flags().StringVar(&flagForgeProject, "project-name", "",
