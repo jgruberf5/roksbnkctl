@@ -1,0 +1,15 @@
+apiVersion: gateway.k8s.f5net.com/v1
+kind: L4Route
+metadata:
+  name: diameter-l4route
+  namespace: demo-diameter
+spec:
+  parentRefs:
+  - name: diameter-gateway
+    sectionName: diameter-listener
+  protocol: TCP
+  pvaAccelerationMode: disabled
+  rules:
+  - backendRefs:
+    - name: diameter-responder
+      port: 3868

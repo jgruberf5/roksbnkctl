@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: h2c-nginx-conf
+  namespace: demo-http2
+data:
+  default.conf: |
+    server {
+        listen 80;
+        http2 on;          # enables h2c (prior-knowledge) on the cleartext listener; HTTP/1.1 still works
+        location / {
+            add_header Content-Type text/plain;
+            return 200 "BNK on AWS — HTTP/2 demo. backend saw: $server_protocol\n";
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: h2c-backend
+  namespace: demo-http2
+  labels: {app: h2c-backend}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: h2c-backend}
+  template:
+    metadata:
+      labels: {app: h2c-backend}
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - {containerPort: 80, protocol: TCP}
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        readinessProbe:
+          httpGet: {path: /, port: 80}
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+      volumes:
+      - name: nginx-conf
+        configMap: {name: h2c-nginx-conf}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: h2c-backend
+  namespace: demo-http2
+spec:
+  selector: {app: h2c-backend}
+  ports:
+  - name: h2c
+    protocol: TCP
+    port: 80
+    targetPort: 80
+    appProtocol: kubernetes.io/h2c

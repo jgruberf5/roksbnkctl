@@ -1,0 +1,310 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: diameter-responder-src
+  namespace: demo-diameter
+data:
+  responder.py: |
+    #!/usr/bin/env python3
+    """Minimal Diameter base-protocol (RFC 6733) responder — stdlib only.
+
+    A TCP server on 0.0.0.0:3868 that answers a Capabilities-Exchange-Request
+    (CER, command-code 257, application-id 0) with a Capabilities-Exchange-Answer
+    (CEA) carrying Result-Code 2001 (DIAMETER_SUCCESS).
+
+    This is intentionally tiny: it speaks just enough of the Diameter wire format
+    to demonstrate an L4 (TCP) VIP proxying Diameter traffic through a BNK Gateway.
+    The wire codec here is byte-for-byte identical to diameter_client.py.
+    """
+
+    import socket
+    import struct
+    import sys
+    import threading
+
+    # --- Diameter constants (RFC 6733) ---------------------------------------
+
+    CMD_CER_CEA = 257          # Capabilities-Exchange Request/Answer command code
+    APP_ID_BASE = 0            # Diameter base application
+
+    FLAG_REQUEST = 0x80        # 'R' bit in the command flags byte
+    FLAG_PROXIABLE = 0x40      # 'P'
+    FLAG_ERROR = 0x20          # 'E'
+    FLAG_RETRANSMIT = 0x10     # 'T'
+
+    # AVP codes
+    AVP_HOST_IP_ADDRESS = 257
+    AVP_AUTH_APPLICATION_ID = 258
+    AVP_ORIGIN_HOST = 264
+    AVP_VENDOR_ID = 266
+    AVP_RESULT_CODE = 268
+    AVP_PRODUCT_NAME = 269
+    AVP_ORIGIN_REALM = 296
+
+    AVP_FLAG_MANDATORY = 0x40  # 'M' bit
+    AVP_FLAG_VENDOR = 0x80     # 'V' bit
+
+    RESULT_SUCCESS = 2001      # DIAMETER_SUCCESS
+
+    ADDR_FAMILY_IPV4 = 1       # IANA address family for Host-IP-Address AVP
+
+    ORIGIN_HOST = b"responder.awsbnkctl.diameter"
+    ORIGIN_REALM = b"awsbnkctl.diameter"
+    PRODUCT_NAME = b"awsbnkctl-diameter-responder"
+
+
+    # --- AVP / message codec --------------------------------------------------
+
+    def _pad4(n):
+        """Return the number of padding bytes needed to 4-byte align n bytes."""
+        return (4 - (n % 4)) % 4
+
+
+    def encode_avp(code, data, mandatory=True, vendor_id=None):
+        """Encode a single AVP.
+
+        AVP header: code(4B) | flags(1B) | length(3B) | [vendor-id(4B)] | data | pad.
+        The length field is the actual length EXCLUDING trailing padding, but
+        INCLUDING the (optional) vendor-id field.
+        """
+        flags = 0
+        if mandatory:
+            flags |= AVP_FLAG_MANDATORY
+        header_len = 8
+        vendor_bytes = b""
+        if vendor_id is not None:
+            flags |= AVP_FLAG_VENDOR
+            vendor_bytes = struct.pack("!I", vendor_id)
+            header_len += 4
+        avp_len = header_len + len(data)
+        out = struct.pack("!I", code)
+        out += struct.pack("!B", flags)
+        # 3-byte length (big-endian)
+        out += struct.pack("!I", avp_len)[1:]
+        out += vendor_bytes
+        out += data
+        out += b"\x00" * _pad4(avp_len)
+        return out
+
+
+    def decode_avps(buf):
+        """Decode all AVPs in buf into a dict {code: data_bytes} (last wins)."""
+        avps = {}
+        i = 0
+        n = len(buf)
+        while i + 8 <= n:
+            code = struct.unpack("!I", buf[i:i + 4])[0]
+            flags = buf[i + 4]
+            avp_len = struct.unpack("!I", b"\x00" + buf[i + 5:i + 8])[0]
+            if avp_len < 8 or i + avp_len > n:
+                break
+            data_off = i + 8
+            if flags & AVP_FLAG_VENDOR:
+                data_off += 4
+            data = buf[data_off:i + avp_len]
+            avps[code] = data
+            i += avp_len + _pad4(avp_len)
+        return avps
+
+
+    def encode_message(command_code, app_id, hbh, e2e, avps, request=False,
+                       proxiable=False, error=False):
+        """Encode a Diameter message: 20-byte header + concatenated AVP bytes.
+
+        Header layout (RFC 6733 section 3):
+          byte0   version (1)
+          1..3    message length (incl. header + AVPs, with AVP padding)
+          4       command flags (R/P/E/T)
+          5..7    command code
+          8..11   application-id
+          12..15  hop-by-hop id
+          16..19  end-to-end id
+        """
+        body = b"".join(avps)
+        msg_len = 20 + len(body)
+        flags = 0
+        if request:
+            flags |= FLAG_REQUEST
+        if proxiable:
+            flags |= FLAG_PROXIABLE
+        if error:
+            flags |= FLAG_ERROR
+        out = struct.pack("!B", 1)                       # version
+        out += struct.pack("!I", msg_len)[1:]            # 3-byte length
+        out += struct.pack("!B", flags)                  # command flags
+        out += struct.pack("!I", command_code)[1:]       # 3-byte command code
+        out += struct.pack("!I", app_id)                 # application-id
+        out += struct.pack("!I", hbh)                    # hop-by-hop id
+        out += struct.pack("!I", e2e)                    # end-to-end id
+        out += body
+        return out
+
+
+    def decode_header(buf20):
+        """Decode the 20-byte Diameter header. Returns a dict."""
+        version = buf20[0]
+        msg_len = struct.unpack("!I", b"\x00" + buf20[1:4])[0]
+        flags = buf20[4]
+        command = struct.unpack("!I", b"\x00" + buf20[5:8])[0]
+        app_id, hbh, e2e = struct.unpack("!III", buf20[8:20])
+        return {
+            "version": version,
+            "msg_len": msg_len,
+            "flags": flags,
+            "command": command,
+            "app_id": app_id,
+            "hbh": hbh,
+            "e2e": e2e,
+        }
+
+
+    def encode_host_ip(ip_str):
+        """Encode a Host-IP-Address AVP data field: 2B address family + 4B IPv4."""
+        packed = socket.inet_aton(ip_str)
+        return struct.pack("!H", ADDR_FAMILY_IPV4) + packed
+
+
+    # --- message read helper --------------------------------------------------
+
+    def recv_exact(conn, n):
+        """Read exactly n bytes from conn, or return None on EOF."""
+        chunks = []
+        got = 0
+        while got < n:
+            chunk = conn.recv(n - got)
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            got += len(chunk)
+        return b"".join(chunks)
+
+
+    def read_message(conn):
+        """Read one full Diameter message (header + body). Returns bytes or None."""
+        header = recv_exact(conn, 20)
+        if header is None:
+            return None
+        hdr = decode_header(header)
+        body_len = hdr["msg_len"] - 20
+        if body_len < 0:
+            return None
+        body = recv_exact(conn, body_len) if body_len else b""
+        if body is None:
+            return None
+        return header + body
+
+
+    def build_cea(hbh, e2e, local_ip):
+        """Build a CEA answer message for the given hop-by-hop/end-to-end ids."""
+        avps = [
+            encode_avp(AVP_RESULT_CODE, struct.pack("!I", RESULT_SUCCESS)),
+            encode_avp(AVP_ORIGIN_HOST, ORIGIN_HOST),
+            encode_avp(AVP_ORIGIN_REALM, ORIGIN_REALM),
+            encode_avp(AVP_HOST_IP_ADDRESS, encode_host_ip(local_ip)),
+            encode_avp(AVP_VENDOR_ID, struct.pack("!I", 0)),
+            encode_avp(AVP_PRODUCT_NAME, PRODUCT_NAME, mandatory=False),
+            encode_avp(AVP_AUTH_APPLICATION_ID, struct.pack("!I", APP_ID_BASE)),
+        ]
+        return encode_message(CMD_CER_CEA, APP_ID_BASE, hbh, e2e, avps,
+                              request=False)
+
+
+    def handle_conn(conn, peer):
+        print(f"[responder] connection from {peer[0]}:{peer[1]}", flush=True)
+        try:
+            local_ip = conn.getsockname()[0]
+            while True:
+                msg = read_message(conn)
+                if msg is None:
+                    break
+                hdr = decode_header(msg[:20])
+                is_request = bool(hdr["flags"] & FLAG_REQUEST)
+                print(
+                    f"[responder] msg cmd={hdr['command']} app={hdr['app_id']} "
+                    f"R={int(is_request)} hbh={hdr['hbh']} e2e={hdr['e2e']}",
+                    flush=True,
+                )
+                if hdr["command"] == CMD_CER_CEA and is_request \
+                        and hdr["app_id"] == APP_ID_BASE:
+                    cea = build_cea(hdr["hbh"], hdr["e2e"], local_ip)
+                    conn.sendall(cea)
+                    print("[responder] sent CEA (Result-Code 2001)", flush=True)
+                else:
+                    print("[responder] ignoring non-CER message", flush=True)
+        except (ConnectionError, OSError) as exc:
+            print(f"[responder] connection error: {exc}", flush=True)
+        finally:
+            conn.close()
+            print(f"[responder] closed {peer[0]}:{peer[1]}", flush=True)
+
+
+    def main():
+        host = "0.0.0.0"
+        port = int(sys.argv[1]) if len(sys.argv) > 1 else 3868
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind((host, port))
+        srv.listen(64)
+        print(f"[responder] listening on {host}:{port} (Diameter CER->CEA)",
+              flush=True)
+        try:
+            while True:
+                conn, peer = srv.accept()
+                t = threading.Thread(target=handle_conn, args=(conn, peer),
+                                     daemon=True)
+                t.start()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            srv.close()
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diameter-responder
+  namespace: demo-diameter
+  labels: {app: diameter-responder}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: diameter-responder}
+  template:
+    metadata:
+      labels: {app: diameter-responder}
+    spec:
+      containers:
+      - name: responder
+        image: python:3.12-slim
+        command: ["python3", "/app/responder.py", "3868"]
+        ports:
+        - {containerPort: 3868, protocol: TCP}
+        volumeMounts:
+        - {name: src, mountPath: /app}
+        readinessProbe:
+          tcpSocket: {port: 3868}
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        livenessProbe:
+          tcpSocket: {port: 3868}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits:   {cpu: 200m, memory: 128Mi}
+      volumes:
+      - name: src
+        configMap: {name: diameter-responder-src}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: diameter-responder
+  namespace: demo-diameter
+spec:
+  selector: {app: diameter-responder}
+  ports:
+  - {name: diameter, port: 3868, targetPort: 3868, protocol: TCP}

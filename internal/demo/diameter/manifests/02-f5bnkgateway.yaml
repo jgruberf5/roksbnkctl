@@ -1,0 +1,13 @@
+apiVersion: k8s.f5net.com/v1
+kind: F5BnkGateway
+metadata:
+  name: demo-diameter
+  namespace: demo-diameter
+spec:
+  ingressConfig:
+    defaultListenerNetworks:
+    - name: external
+      ipv4BaseCidr: 10.0.10.0/24
+      startAddress: 10.0.10.110
+      endAddress: 10.0.10.110
+      provider: f5-ip-provider
