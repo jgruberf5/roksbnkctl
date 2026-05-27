@@ -341,6 +341,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if err := phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
+	// Phase 17d: demo client staging — pre-stages grpcurl + diameter assets on the
+	// jumphost over EICE. Gated on DemoEnabled(); normal/CI up is byte-for-byte
+	// unchanged. Runs after 17c so the 10.0.10.x data-path ENI is attached + up.
+	if cl.DemoEnabled() {
+		if err := phases.Phase17dDemoStage(ctx, cl, st, clients, dryRun); err != nil {
+			return fmt.Errorf("up: %w", err)
+		}
+	}
 	if err := phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun); err != nil {
 		return fmt.Errorf("up: %w", err)
 	}
