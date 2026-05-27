@@ -35,6 +35,8 @@ test:
 
 The schema is intentionally minimal — `extra_hosts` is a `[]string` of URLs (or bare hostnames; `https://` is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.
 
+You don't have to hand-edit the YAML to populate this list — `roksbnkctl test hosts {list,add,remove,clear}` reads and writes the same slice. See [§ Managing test hosts via the CLI](#managing-test-hosts-via-the-cli) below.
+
 There's no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than "does HTTP work" — a particular status code, a custom header, a body match — `curl` is the right tool, not `roksbnkctl test connectivity`. A richer per-host schema is queued for v1.x; the v1.0 surface holds the YAML simple on purpose.
 
 [Chapter 12 — Workspace config](./12-workspace-config.md#test) covers the full `test:` block; this chapter expands the `connectivity` slice.
@@ -48,6 +50,75 @@ Three classes of URL show up most often in a real workspace:
 - **The GSLB VIP that fronts the application** — confirms the routed name actually serves a 2xx; pair with [`roksbnkctl test dns`](./21-dns-testing-gslb.md) for the GSLB-aware DNS-side validation.
 
 What doesn't belong in `extra_hosts`: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than "got a 2xx or 3xx". Those are `curl` jobs, not connectivity-suite jobs.
+
+## Managing test hosts via the CLI
+
+The YAML in [§ Configuring `extra_hosts`](#configuring-extra_hosts) is the persistent backing store, but you don't have to hand-edit `config.yaml` to populate it. `roksbnkctl test hosts` mirrors the `roksbnkctl targets` ergonomic (see [Chapter 15 — SSH targets](./15-ssh-targets.md#roksbnkctl-targets--full-reference)) and gives you four subcommands that read and write the `test.connectivity.extra_hosts` slice directly:
+
+```
+roksbnkctl test hosts list                       # print current extra_hosts, one per line
+roksbnkctl test hosts add <url> [<url>...]       # append; idempotent (no-op if already present)
+roksbnkctl test hosts remove <url> [<url>...]    # remove; tolerant of absent (no error)
+roksbnkctl test hosts clear                      # remove ALL (confirmation prompt, --auto skip)
+```
+
+All four route through the same workspace marshaller `targets add` uses, so a `test hosts add` write lands in `~/.roksbnkctl/<workspace>/config.yaml` under `test.connectivity.extra_hosts` — operators who already know the YAML field see the connection. Run `cat ~/.roksbnkctl/<workspace>/config.yaml` after any mutation to confirm.
+
+Argv discipline matches the rest of the v1.7.x surface: `list` and `clear` take `cobra.NoArgs` (a stray positional is rejected at parse time, not silently consumed); `add` and `remove` take `cobra.MinimumNArgs(1)`. A typo like `roksbnkctl test hosts list extra` fails before any RunE runs.
+
+### Worked example
+
+Start from an empty workspace, add a URL, list, then run the connectivity probe — the exact sequence an operator hits the first time the `no hosts configured to probe; add via roksbnkctl test hosts add <url>` error fires from `roksbnkctl test connectivity` or no-flag `roksbnkctl test dns`:
+
+```bash
+$ roksbnkctl test hosts list
+$ echo $?
+0
+
+$ roksbnkctl test hosts add https://docs.f5.com
+added https://docs.f5.com
+
+$ roksbnkctl test hosts add https://docs.f5.com
+already present: https://docs.f5.com
+
+$ roksbnkctl test hosts list
+https://docs.f5.com
+
+$ roksbnkctl test connectivity
+running connectivity ...
+  PASS  https://docs.f5.com  200 OK in 187ms
+connectivity PASS (1/1 passed)
+```
+
+> **Note:** the byte-for-byte output above is illustrative — it reflects the surface the Sprint 24 CLI ships and is what tech-writer's drift sweep will re-capture against the built binary before the `v1.7.1` cut. The shape is stable (`list` empty → zero bytes + exit 0; `add` against already-present → "already present:" log + exit 0); minor wording deltas in the log lines may surface in the GREEN-verdict re-capture.
+
+`--output json` is supported on `list` for scripted callers — empty list emits `[]`, populated list emits a JSON array preserving insertion order:
+
+```bash
+$ roksbnkctl test hosts list -o json
+["https://docs.f5.com","https://bigip-next-admin.example.com:8443"]
+```
+
+### `clear`
+
+`clear` requires confirmation (defaults to No) because it wipes the entire slice — the same pattern `roksbnkctl down` and `roksbnkctl cluster down` use, not the per-target `targets remove` pattern:
+
+```bash
+$ roksbnkctl test hosts clear
+This will remove ALL configured test hosts (2 entries). Continue? [y/N]: y
+cleared 2 entries
+
+$ roksbnkctl test hosts clear --auto
+cleared 0 entries
+```
+
+`--auto` skips the prompt for automation contexts. Mirrors the `--auto` semantics elsewhere in the binary.
+
+### Scope of the CLI
+
+The CLI manages **only** `test.connectivity.extra_hosts` — the slice shared by `roksbnkctl test connectivity` and no-flag `roksbnkctl test dns`. The `test.dns.{default_target,resolvers}` and `test.throughput.*` fields have working flag-driven equivalents (`--target`, `--server`, `--duration`, …) and aren't covered by `test hosts`; populate those by hand-editing `config.yaml` for now. A broader `test config` surface is a candidate for a future sprint.
+
+YAML-comment preservation through the marshaller is best-effort and depends on the workspace round-trip — if you keep hand-written comments in `config.yaml`, prefer the YAML path for additions that need to land alongside specific comments; use the CLI for the routine add/remove/list/clear flow.
 
 ## The `--insecure` flag
 
@@ -219,6 +290,7 @@ The connectivity suite is intentionally a thin probe. When the answer to "is it 
 ## Cross-references
 
 - [Chapter 12 — Workspace config](./12-workspace-config.md#test) — full `test:` block schema, including `connectivity.extra_hosts`.
+- [Chapter 15 — SSH targets](./15-ssh-targets.md#roksbnkctl-targets--full-reference) — the `roksbnkctl targets` ergonomic precedent that `roksbnkctl test hosts` mirrors.
 - [Chapter 21 — DNS testing for GSLB](./21-dns-testing-gslb.md) — when "the URL fails" actually means "the name doesn't resolve from this vantage".
 - [Chapter 22 — Throughput testing](./22-throughput-testing.md) — the bandwidth-measurement companion suite.
 - [Chapter 26 — Troubleshooting](./26-troubleshooting.md) — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.

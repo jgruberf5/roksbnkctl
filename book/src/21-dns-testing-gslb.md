@@ -463,6 +463,8 @@ With no `--target` and no `--gslb-compare`, the runner falls back to today's beh
 
 For real GSLB validation you almost always want `--gslb-compare` plus an explicit `--target` and `--server`. The `extra_hosts` fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.
 
+If the no-flag invocation exits with `no hosts configured to probe; add via roksbnkctl test hosts add <url>`, the slice is empty for this workspace. Populate it with `roksbnkctl test hosts add <url>` (see [Chapter 20 §"Managing test hosts via the CLI"](./20-connectivity-testing.md#managing-test-hosts-via-the-cli)) instead of hand-editing `config.yaml`.
+
 [Chapter 20 — Connectivity testing](./20-connectivity-testing.md) covers `connectivity.extra_hosts` in full.
 
 ## Worked example: GSLB divergence troubleshooting
@@ -553,5 +555,6 @@ Common follow-up failure modes (covered in [Chapter 26](./26-troubleshooting.md)
 - [Chapter 17 §"SSH backend"](./17-execution-backends.md#ssh-backend) — file materialisation and bootstrap for `--backend ssh:<target>`.
 - [Chapter 18 §"I'm doing GSLB DNS validation"](./18-choosing-backend.md#im-doing-gslb-dns-validation) — the decision-tree row that picks backends for a GSLB scenario.
 - [Chapter 20 — Connectivity testing](./20-connectivity-testing.md) — the simpler "does HTTP work" companion suite.
+- [Chapter 20 §"Managing test hosts via the CLI"](./20-connectivity-testing.md#managing-test-hosts-via-the-cli) — `roksbnkctl test hosts {list,add,remove,clear}`, the CLI path for populating the `extra_hosts` slice the no-flag `test dns` invocation walks.
 - [Chapter 22 — Throughput testing](./22-throughput-testing.md) — the bandwidth-measurement companion suite.
 - [`miekg/dns` upstream](https://github.com/miekg/dns) — the underlying DNS library, used by CoreDNS and a long list of other reference implementations.
