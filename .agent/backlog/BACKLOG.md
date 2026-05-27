@@ -91,6 +91,10 @@ current: null
   size: medium
   status: ready
 
+# RESOLVED 2026-05-27 — verified ALREADY DONE: internal/doctor no longer gates terraform
+# (doctor.go only checks kubectl + helm, both internalised; comment literally says "Terraform is gone")
+# and `grep hashicorp/terraform internal/` = 0 hits. The functional fix landed in a prior PR; the
+# cosmetic comment/brand tail merged in PR #62 (staging 55f7bd2). No further action.
 - id: doctor-exec-terraform-residue
   title: "Remove Terraform from internal/doctor (required-binary gate) + internal/exec (image pins) — cleanup PR7"
   source: "found during cleanup PR4 2026-05-26 (status rewrite); not in the original audit chunk plan"
@@ -100,6 +104,15 @@ current: null
     - internal/exec: remove the hashicorp/terraform image pins (~48 refs) + any TF-specific backend wiring.
     - Verify `awsbnkctl doctor` is green on a box without terraform installed.
   size: medium
+  status: ready
+
+- id: book-retarget-from-ibm-roks
+  title: "Retarget book/src/ user guide from IBM-ROKS/Terraform to AWS/EKS (M5 sprint)"
+  source: "2026-05-27 doc truth-up session — book/src/ is still the un-ported roksbnkctl book"
+  why: "CLI help + README point operators at https://JLCode-tech.github.io/awsbnkctl/book/, but book/src/ is still the upstream IBM-Cloud guide: chapters 02-why-roks, 03-what-roksbnkctl-does, 13-terraform-variables, 29-terraform-variable-reference, 32-extending-roksbnkctl; 'terraform' in ~12 files, 'roksbnkctl' in ~10, IBM/ROKS in ~8. A fresh AWS operator following the published book gets IBM-Cloud/Terraform instructions."
+  scope: |
+    Rewrite book/src/ chapter-by-chapter for AWS/EKS: rename roksbnkctl->awsbnkctl, ROKS->EKS, drop/replace the Terraform chapters (13, 29) with the Go-SDK phased model, rewrite 02-why-roks, retarget cluster/credentials/backends chapters, update SUMMARY.md. Verify the gh-pages publish target (.github/workflows/book.yml) lands at JLCode-tech.github.io. Matches the never-completed M5 sprint in docs/PLAN.md.
+  size: large
   status: ready
 
 ## Done

@@ -175,11 +175,13 @@ AWS_PROFILE=...                        # required
 **Optional env vars** (Sprint 6 SSH-target-specific):
 
 ```bash
-ROKSBNKCTL_E2E_SSH_TARGET=jumphost          # enables Phase I + M5/M6 + N3
-ROKSBNKCTL_E2E_SSH_NON_UBUNTU=name          # enables Phase I7 (non-Ubuntu detection)
-ROKSBNKCTL_E2E_SSH_NO_NOPASSWD=name         # enables Phase I8 (sudo-password-required)
-ROKSBNKCTL_E2E_INIT_BACKEND=docker          # initial backend for Phase N1 (default: local)
+AWSBNKCTL_E2E_SSH_TARGET=jumphost          # enables Phase I + M5/M6 + N3
+AWSBNKCTL_E2E_SSH_NON_UBUNTU=name          # enables Phase I7 (non-Ubuntu detection)
+AWSBNKCTL_E2E_SSH_NO_NOPASSWD=name         # enables Phase I8 (sudo-password-required)
+AWSBNKCTL_E2E_INIT_BACKEND=docker          # initial backend for Phase N1 (default: local)
 ```
+
+> **Env-var naming:** the canonical runtime env vars are `AWSBNKCTL_HOME` and `AWSBNKCTL_SSH_TARGET`; the legacy `ROKSBNKCTL_HOME` / `ROKSBNKCTL_SSH_TARGET` names are still honoured for back-compat. The `AWSBNKCTL_E2E_*` names above are the e2e harness's intended config interface; the full-e2e runner is currently a skip-stub (Sprint 6 rehydrates it), so these have no effect yet.
 
 See `docs/E2E_TEST.md` §"Full e2e (e2e-test-full.sh)" for the env-var
 table + per-phase coverage notes.

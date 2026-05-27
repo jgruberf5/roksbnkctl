@@ -297,7 +297,7 @@ Then `ssh target /tmp/roksbnkctl.$RAND/wrap.sh ibmcloud iam oauth-tokens`.
 2. **Each backend's `Run()`** accepts `RunOpts.Credentials`, wires them via the documented mechanism, cleans up on exit (defer-based unlink for files, kill ENV vars from process state)
 3. **Logging redactor**: `internal/exec/redact.go` — middleware on `RunOpts.Stdout/Stderr` that masks the IBM API key value if it ever appears in output (defense-in-depth — backends shouldn't print it, but if a tool does, we redact)
 4. **K8s backend RBAC**: `internal/exec/k8s_install.yaml` — namespace, SA, ClusterRole (minimum verbs), RoleBinding (NOT ClusterRoleBinding), Secret stub. Applied by `roksbnkctl ops install`.
-5. **SSH SetEnv detection**: probe whether the remote sshd accepts `SetEnv`. Implementation: send a sentinel env var (`ROKSBNKCTL_SETENV_TEST=ok`), run `echo $ROKSBNKCTL_SETENV_TEST`, check output. Cache the result per-target in workspace state.
+5. **SSH SetEnv detection**: probe whether the remote sshd accepts `SetEnv`. Implementation: send a sentinel env var (`AWSBNKCTL_SETENV_TEST=ok`), run `echo $AWSBNKCTL_SETENV_TEST`, check output. Cache the result per-target in workspace state.
 6. **Doctor extensions**:
    - `roksbnkctl doctor --backend docker` confirms daemon, can pull `tools-ibmcloud` image, can run a no-op
    - `roksbnkctl doctor --backend k8s` confirms ops pod deployed, Secret readable by SA, kubectl exec works

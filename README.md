@@ -4,7 +4,9 @@ A single Go binary that deploys F5 BIG-IP Next for Kubernetes (BNK) onto AWS EKS
 
 ## Status
 
-Live-validated on `aws-syd-test` (ap-southeast-2). The Go-SDK phased path (`up --config`) runs Phases 00–25 — VPC, subnets, IGW, NAT, EKS control plane, node group, kubeconfig, S3 supply chain, IRSA, Multus, SR-IOV CNI, BNK activation, jumphost, forge registration — end-to-end without Terraform. Terraform has been removed from the production path and is being deleted from the repository in follow-up PRs (see [`docs/POST_TERRAFORM_DIRECTION.md`](docs/POST_TERRAFORM_DIRECTION.md)).
+Live-validated in `ap-southeast-2` on the `syd-tracer` reference lab (BNK 2.3.0, `host-device` pattern, EKS 1.30, `m6i.4xlarge × 3` + a `t3.small` jumphost). The Go-SDK phased path (`up --config`) runs Phases 00–25 — VPC, subnets, IGW, NAT, EKS control plane, node group, kubeconfig, S3 supply chain, IRSA, Multus, host-device secondary ENIs, BNK activation, jumphost, forge registration — end-to-end without Terraform. Terraform has been removed entirely: from the production path and from the repository (see [`docs/POST_TERRAFORM_DIRECTION.md`](docs/POST_TERRAFORM_DIRECTION.md)).
+
+> **Docs note:** the canonical quickstart is this README plus `examples/syd-tracer/cluster.yaml`. The long-form mdBook guide under `book/` is still being retargeted from the upstream IBM-ROKS content to AWS/EKS — prefer the README until that lands.
 
 ## How it works
 

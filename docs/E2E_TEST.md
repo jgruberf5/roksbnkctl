@@ -201,10 +201,10 @@ The combined runner picks up every env var the child drivers honour, plus the Ph
 | `ROKSBNKCTL` | `roksbnkctl` (on PATH) | absolute path to the binary if not installed |
 | `PHASE_FROM` | `A` | resume hook (A-H = baseline, I/K/L/L-DNS/M/N = backends) |
 | `DRY_RUN` | `0` | plan-only (no live cloud calls) |
-| `ROKSBNKCTL_E2E_SSH_TARGET` | (unset) | name of an SSH target in the workspace config; enables Phase I + M5/M6 + N3 |
-| `ROKSBNKCTL_E2E_SSH_NON_UBUNTU` | (unset) | purpose-built non-Ubuntu SSH target for Phase I7 |
-| `ROKSBNKCTL_E2E_SSH_NO_NOPASSWD` | (unset) | purpose-built sudo-password-required SSH target for Phase I8 |
-| `ROKSBNKCTL_E2E_INIT_BACKEND` | `local` (or `docker` if no terraform) | initial backend for Phase N1 |
+| `AWSBNKCTL_E2E_SSH_TARGET` | (unset) | name of an SSH target in the workspace config; enables Phase I + M5/M6 + N3 |
+| `AWSBNKCTL_E2E_SSH_NON_UBUNTU` | (unset) | purpose-built non-Ubuntu SSH target for Phase I7 |
+| `AWSBNKCTL_E2E_SSH_NO_NOPASSWD` | (unset) | purpose-built sudo-password-required SSH target for Phase I8 |
+| `AWSBNKCTL_E2E_INIT_BACKEND` | `local` (or `docker` if no terraform) | initial backend for Phase N1 |
 
 ### Cost + duration
 
@@ -225,7 +225,7 @@ Cluster spend is bursty: most of the budget is the ROKS cluster apply + LBs duri
 
 #### Phase I — SSH backend
 
-Exercises the SSH backend introduced in Sprints 1 + 4. Requires `ROKSBNKCTL_E2E_SSH_TARGET=<name>` pointing at a target listed in the workspace's `targets:` block. Typically this is the `jumphost` target auto-populated by `cluster up` (the upstream HCL provisions a TGW jumphost when `testing_create_tgw_jumphost=true`, the default).
+Exercises the SSH backend introduced in Sprints 1 + 4. Requires `AWSBNKCTL_E2E_SSH_TARGET=<name>` pointing at a target listed in the workspace's `targets:` block. Typically this is the `jumphost` target auto-populated by `cluster up` (the upstream HCL provisions a TGW jumphost when `testing_create_tgw_jumphost=true`, the default).
 
 Step matrix (skip-clean rules in parentheses):
 
@@ -238,15 +238,15 @@ Step matrix (skip-clean rules in parentheses):
 | I4 | `env` on remote does NOT contain the API key VALUE (wrapper-script isolation) | — |
 | I5 | `/tmp/roksbnkctl.*` empty on remote after the run (trap-on-EXIT cleaned up) | red ✗ if leaked |
 | I6 | SetEnv silent-drop fallback (sshd AcceptEnv-disabled) | informational |
-| I7 | non-Ubuntu --bootstrap rejection | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_NON_UBUNTU` set |
-| I8 | sudo-password-required rejection | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_NO_NOPASSWD` set |
+| I7 | non-Ubuntu --bootstrap rejection | yellow ⊘ unless `AWSBNKCTL_E2E_SSH_NON_UBUNTU` set |
+| I8 | sudo-password-required rejection | yellow ⊘ unless `AWSBNKCTL_E2E_SSH_NO_NOPASSWD` set |
 | I9 | repo-unreachable failure | yellow ⊘ — manual (mutates remote network) |
 | I10 | Ctrl-C / SIGINT cleanup within 5s | — |
 | I11 | `doctor --backend ssh:<name>` green | — |
 
 #### Phase M — cred-leak audit (full)
 
-Sprint 4 landed M1-M4 + M7 against the docker + k8s backends. Sprint 6 closes M5 + M6 against the SSH backend (gated on the same `ROKSBNKCTL_E2E_SSH_TARGET`):
+Sprint 4 landed M1-M4 + M7 against the docker + k8s backends. Sprint 6 closes M5 + M6 against the SSH backend (gated on the same `AWSBNKCTL_E2E_SSH_TARGET`):
 
 | Step | What it asserts | Skip-clean trigger |
 |---|---|---|
@@ -254,7 +254,7 @@ Sprint 4 landed M1-M4 + M7 against the docker + k8s backends. Sprint 6 closes M5
 | M2 | `docker inspect` no API key in `Config.Env` | (skip if no docker) |
 | M3 | `kubectl get events -n roksbnkctl-ops` no API key | — |
 | M4 | ops pod logs no API key (redactor masks) | yellow ⊘ if ops pod uninstalled |
-| M5 | SSH `/tmp/roksbnkctl.*` empty (cred audit lens) | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_TARGET` set |
+| M5 | SSH `/tmp/roksbnkctl.*` empty (cred audit lens) | yellow ⊘ unless `AWSBNKCTL_E2E_SSH_TARGET` set |
 | M6 | `/var/log/auth.log` no API key value; `Accepted publickey` lines present | yellow ⊘ on sudo-no-read |
 | M7 | workspace `*.log` files no API key (state files allowed) | — |
 
@@ -264,9 +264,9 @@ Validates that a cluster brought up via one backend can be inspected + torn down
 
 | Step | What it asserts | Skip-clean trigger |
 |---|---|---|
-| N1 | `up --backend <init>` succeeds (default `local`, override via `ROKSBNKCTL_E2E_INIT_BACKEND`) | — |
+| N1 | `up --backend <init>` succeeds (default `local`, override via `AWSBNKCTL_E2E_INIT_BACKEND`) | — |
 | N2 | `test throughput --backend k8s` against the cluster from N1 | yellow ⊘ if no kube context |
-| N3 | `ibmcloud --backend ssh:<target> ks cluster ls` sees the N1 cluster | yellow ⊘ unless `ROKSBNKCTL_E2E_SSH_TARGET` set |
+| N3 | `ibmcloud --backend ssh:<target> ks cluster ls` sees the N1 cluster | yellow ⊘ unless `AWSBNKCTL_E2E_SSH_TARGET` set |
 | N4 | `test dns --backend k8s --gslb-compare` multi-vantage probe | yellow ⊘ if no kube context |
 | N5 | `down --backend <other>` tears down (cross-backend state-file compat) | — |
 | N6 | post-teardown: `cluster-outputs.json` removed; no orphan resources | — |
@@ -308,7 +308,7 @@ below are the ones that genuinely require a human at the helm.
 # One-button: runs A-H + I-N + L-DNS against the same cluster
 # (Sprint 6 combined runner — see §"Full e2e (e2e-test-full.sh)" above):
 IBMCLOUD_API_KEY=... \
-ROKSBNKCTL_E2E_SSH_TARGET=jumphost \
+AWSBNKCTL_E2E_SSH_TARGET=jumphost \
 ./scripts/e2e-test-full.sh --teardown
 ```
 
@@ -328,7 +328,7 @@ IBMCLOUD_API_KEY=... ./scripts/e2e-test.sh
 # Step 2: backends driver I + K + L + L-DNS + M + N (runs against
 # the same workspace; Phase N's N1 brings up its own cluster).
 IBMCLOUD_API_KEY=... \
-ROKSBNKCTL_E2E_SSH_TARGET=jumphost \
+AWSBNKCTL_E2E_SSH_TARGET=jumphost \
 ./scripts/e2e-test-backends.sh
 ```
 

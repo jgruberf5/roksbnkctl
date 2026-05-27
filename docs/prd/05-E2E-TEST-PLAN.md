@@ -41,13 +41,13 @@ The driver implementation lives in [`scripts/e2e-test-backends.sh::phase_I`](htt
 | I4 | Cred-audit: `exec --backend ssh:$TARGET -- bash -lc 'env \| grep -i IBMCLOUD'` | output does NOT contain the API key VALUE (the wrapper script sources an env-file inside the command's process tree; SSH login env doesn't carry the key) |
 | I5 | Wrapper-script cleanup: `exec --backend ssh:$TARGET -- ls -d /tmp/roksbnkctl.* 2>/dev/null` | output empty (trap-on-EXIT in wrappers removed all per-invocation tempdirs) |
 | I6 | **Informational**: SetEnv silent-drop fallback note | logged only; the wrapper-script path activates automatically if sshd's `AcceptEnv` rejects `IBMCLOUD_API_KEY` (production sshd default) |
-| I7 | **Opt-in** (`ROKSBNKCTL_E2E_SSH_NON_UBUNTU=<target>`): apt-bootstrap against a non-Ubuntu target | exits non-zero; error message mentions Ubuntu (the bootstrap is Ubuntu-only at v1.0; RHEL/CentOS/Alpine must pre-install) |
-| I8 | **Opt-in** (`ROKSBNKCTL_E2E_SSH_NO_NOPASSWD=<target>`): apt-bootstrap against a target without passwordless sudo | exits non-zero; error message mentions `sudo` |
+| I7 | **Opt-in** (`AWSBNKCTL_E2E_SSH_NON_UBUNTU=<target>`): apt-bootstrap against a non-Ubuntu target | exits non-zero; error message mentions Ubuntu (the bootstrap is Ubuntu-only at v1.0; RHEL/CentOS/Alpine must pre-install) |
+| I8 | **Opt-in** (`AWSBNKCTL_E2E_SSH_NO_NOPASSWD=<target>`): apt-bootstrap against a target without passwordless sudo | exits non-zero; error message mentions `sudo` |
 | I9 | **Manual**: repo-unreachable failure (integrator mutates remote's `/etc/apt/sources.list` or severs DNS) | skipped in automated runs — would affect remote's stable state |
 | I10 | Context-cancel: background SSH-backed `sleep 30; echo done`, send SIGINT after 1s | roksbnkctl process exits within 5s of the signal (clean cancellation of the in-flight SSH session) |
 | I11 | `roksbnkctl doctor --backend ssh:$TARGET` | exits 0; output mentions the `ssh` backend (no API-key value in logs after redactor) |
 
-The `--use-existing-cluster` flag from the early PRD draft is not implemented in the shipped driver; the driver expects an active cluster (Phase D apply complete) or skips Phase I cleanly when the SSH target isn't reachable. Set `ROKSBNKCTL_E2E_SSH_TARGET=<name>` to enable Phase I; unset, the phase is skipped with a yellow `⊘` marker.
+The `--use-existing-cluster` flag from the early PRD draft is not implemented in the shipped driver; the driver expects an active cluster (Phase D apply complete) or skips Phase I cleanly when the SSH target isn't reachable. Set `AWSBNKCTL_E2E_SSH_TARGET=<name>` to enable Phase I; unset, the phase is skipped with a yellow `⊘` marker.
 
 ## Phase J — kubectl internalization (PATH-stripped)
 
@@ -140,7 +140,7 @@ Cross-cutting check that runs **after** Phases I-L — confirms no creds leaked 
 
 A realistic scenario: fresh `up`/`down` cycle that exercises a *different* backend for `down` than for `up`, validating cross-backend state-file portability. The driver implementation lives in [`scripts/e2e-test-backends.sh::phase_N`](https://github.com/jgruberf5/roksbnkctl/blob/main/scripts/e2e-test-backends.sh); the table below reflects what shipped at v1.0 (6 steps, N1-N6, restructured from the original PRD draft to be a single end-to-end lifecycle assertion rather than a fine-grained per-tool sequence).
 
-The init-backend is auto-selected: `local` if `terraform` is on PATH, `docker` otherwise. The teardown-backend is whichever of `local`/`docker` was NOT used for init (or the same one if the alternative is unavailable). The integrator can override the init-backend with `ROKSBNKCTL_E2E_INIT_BACKEND=<name>`.
+The init-backend is auto-selected: `local` if `terraform` is on PATH, `docker` otherwise. The teardown-backend is whichever of `local`/`docker` was NOT used for init (or the same one if the alternative is unavailable). The integrator can override the init-backend with `AWSBNKCTL_E2E_INIT_BACKEND=<name>`.
 
 | Step | Command / check | Pass criterion |
 |---|---|---|
