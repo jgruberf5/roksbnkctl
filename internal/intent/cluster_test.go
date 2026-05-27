@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, dir, name, content string) string {
@@ -1569,6 +1570,81 @@ demo:
 	}
 	if !strings.Contains(err.Error(), "demo.ttl") {
 		t.Errorf("error should mention 'demo.ttl': %v", err)
+	}
+}
+
+// ─── SetDemoTags tests (PRD 10, Slice A2) ────────────────────────────────────
+
+// TestSetDemoTags_NilMap verifies that SetDemoTags nil-inits c.Tags and writes
+// both demo tag keys.
+func TestSetDemoTags_NilMap(t *testing.T) {
+	c := &Cluster{} // Tags is nil
+	expiry := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+
+	if c.Tags == nil {
+		t.Fatal("Tags: nil after SetDemoTags, want initialised map")
+	}
+	if got := c.Tags[DemoTagKey]; got != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, got)
+	}
+	wantExpiry := expiry.UTC().Format(time.RFC3339)
+	if got := c.Tags[DemoExpiryTagKey]; got != wantExpiry {
+		t.Errorf("Tags[%q] = %q, want %q", DemoExpiryTagKey, got, wantExpiry)
+	}
+}
+
+// TestSetDemoTags_ExistingMapPreservesOtherKeys verifies that SetDemoTags does
+// not clobber existing keys unrelated to demo.
+func TestSetDemoTags_ExistingMapPreservesOtherKeys(t *testing.T) {
+	c := &Cluster{
+		Tags: map[string]string{
+			"env":  "staging",
+			"team": "infra",
+		},
+	}
+	expiry := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+
+	if c.Tags["env"] != "staging" {
+		t.Errorf("Tags[\"env\"] = %q, want \"staging\" (should be preserved)", c.Tags["env"])
+	}
+	if c.Tags["team"] != "infra" {
+		t.Errorf("Tags[\"team\"] = %q, want \"infra\" (should be preserved)", c.Tags["team"])
+	}
+	if c.Tags[DemoTagKey] != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, c.Tags[DemoTagKey])
+	}
+}
+
+// TestSetDemoTags_ExpiryIsRFC3339UTC verifies that the expiry tag value equals
+// the passed time formatted as RFC3339 UTC regardless of the input timezone.
+func TestSetDemoTags_ExpiryIsRFC3339UTC(t *testing.T) {
+	// Use a fixed time in a non-UTC location to verify UTC normalisation.
+	loc := time.FixedZone("AEST", 10*60*60)
+	localTime := time.Date(2026, 6, 1, 22, 0, 0, 0, loc) // 22:00 AEST = 12:00 UTC
+	c := &Cluster{}
+	c.SetDemoTags(localTime)
+
+	wantExpiry := localTime.UTC().Format(time.RFC3339) // "2026-06-01T12:00:00Z"
+	if got := c.Tags[DemoExpiryTagKey]; got != wantExpiry {
+		t.Errorf("Tags[%q] = %q, want %q (RFC3339 UTC)", DemoExpiryTagKey, got, wantExpiry)
+	}
+}
+
+// TestSetDemoTags_Idempotent verifies that calling SetDemoTags twice with the
+// same expiry produces the same result (no duplicates, no panic).
+func TestSetDemoTags_Idempotent(t *testing.T) {
+	c := &Cluster{}
+	expiry := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+	c.SetDemoTags(expiry) // second call
+
+	if len(c.Tags) != 2 {
+		t.Errorf("Tags len = %d after two SetDemoTags calls, want 2", len(c.Tags))
+	}
+	if c.Tags[DemoTagKey] != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, c.Tags[DemoTagKey])
 	}
 }
 

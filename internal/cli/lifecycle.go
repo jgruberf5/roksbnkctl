@@ -264,6 +264,10 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 		st.Set("DEMO_MODE", "true")
 		st.Set("DEMO_STAGED_AT", now.Format(time.RFC3339))
 		st.Set("DEMO_EXPIRY", now.Add(ttl).Format(time.RFC3339))
+		// Inject demo tags into cl.Tags so every phase's tags.Merge carries
+		// awsbnkctl:demo=true and awsbnkctl:demo-expiry=<RFC3339> onto every
+		// created AWS resource. The expiry value matches DEMO_EXPIRY above.
+		cl.SetDemoTags(now.Add(ttl))
 		if !dryRun {
 			if err := st.Save(); err != nil {
 				return fmt.Errorf("up: writing demo markers to state: %w", err)

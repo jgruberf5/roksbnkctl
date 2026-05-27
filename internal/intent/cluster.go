@@ -797,6 +797,25 @@ func (c *Cluster) EnableDemo() {
 	}
 }
 
+// DemoTagKey is the AWS tag key written to every resource when demo mode is active.
+// Matches the awsbnkctl: prefix convention used by tags.KeyCluster / tags.KeyComponent.
+const DemoTagKey = "awsbnkctl:demo"
+
+// DemoExpiryTagKey is the AWS tag key that records the RFC3339 UTC expiry time
+// for demo resources. Its value equals the DEMO_EXPIRY state key written at up time.
+const DemoExpiryTagKey = "awsbnkctl:demo-expiry"
+
+// SetDemoTags injects the demo marker tags into c.Tags so every phase's
+// tags.Merge carries them onto created AWS resources. expiry should equal the
+// DEMO_EXPIRY state value (now + ttl). Nil-inits c.Tags. Idempotent.
+func (c *Cluster) SetDemoTags(expiry time.Time) {
+	if c.Tags == nil {
+		c.Tags = map[string]string{}
+	}
+	c.Tags[DemoTagKey] = "true"
+	c.Tags[DemoExpiryTagKey] = expiry.UTC().Format(time.RFC3339)
+}
+
 // ValidateDemo enforces the demo-mode invariants shared by both validation paths:
 //  1. TTL (if non-empty) must parse as a positive Go duration.
 //  2. testing.jumphost.enabled must be true — every demo use-case runs from the jumphost.
