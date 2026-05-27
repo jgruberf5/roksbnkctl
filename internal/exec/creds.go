@@ -1,15 +1,14 @@
 // Package exec defines the Backend interface and per-backend
 // implementations awsbnkctl uses to run external tools (kubectl,
-// terraform, iperf3, etc.). Backends differ along network locality
-// (where the tool runs) and toolchain freshness (host install vs.
-// pinned image); see PRD 03 (docs/prd/03-EXECUTION-BACKENDS.md) for
-// the full rationale.
+// iperf3, etc.). Backends differ along network locality (where the
+// tool runs) and toolchain freshness (host install vs. pinned image);
+// see PRD 03 (docs/prd/03-EXECUTION-BACKENDS.md) for the full
+// rationale.
 //
-// AWS retarget (Sprint 5): the inherited IBM Cloud API-key propagation
-// path is retired. AWS credentials resolve via the SDK chain in
-// `internal/aws` (env / shared config / profile / instance role / SSO
-// / web-identity) and reach terraform via the standard AWS provider
-// env vars (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION /
+// AWS credentials resolve via the SDK chain in `internal/aws` (env /
+// shared config / profile / instance role / SSO / web-identity) and
+// are passed to external tools via the standard AWS provider env vars
+// (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION /
 // AWS_PROFILE). The `Credentials` struct below carries only the
 // kubeconfig bytes; per-backend serialisers translate it into
 // bind-mounts, Secret references, or KUBECONFIG paths as needed.
@@ -44,7 +43,7 @@ type Credentials struct {
 //
 // AWS credentials are NOT threaded through this struct. The AWS SDK
 // chain resolves them at the caller (`internal/aws.NewClients`) and
-// terraform consumes them via the standard AWS provider env vars,
+// external tools consume them via the standard AWS provider env vars
 // inherited from the awsbnkctl process environment. See PRD 04 for
 // the cross-package contract.
 func (c *Credentials) EnvVars() []string {

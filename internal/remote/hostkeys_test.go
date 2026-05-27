@@ -93,13 +93,13 @@ func TestHostKeyCallback_Prompt_Accept(t *testing.T) {
 
 func TestHostKeyCallback_PerToolKnownHosts(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv(config.ROKSBNKCTLHomeEnv, dir)
+	t.Setenv(config.AWSBNKCTLHomeEnv, dir)
 	khPath, err := remote.KnownHostsPath()
 	if err != nil {
 		t.Fatalf("KnownHostsPath: %v", err)
 	}
 	if !strings.HasPrefix(khPath, dir) {
-		t.Errorf("known_hosts must live under ROKSBNKCTL_HOME (%s), got %s", dir, khPath)
+		t.Errorf("known_hosts must live under AWSBNKCTL_HOME (%s), got %s", dir, khPath)
 	}
 	if filepath.Base(khPath) != "known_hosts" {
 		t.Errorf("expected file named known_hosts, got %s", khPath)

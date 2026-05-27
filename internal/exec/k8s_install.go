@@ -18,10 +18,10 @@ import (
 // Template placeholders substituted at apply-time:
 //
 //	${OPS_IRSA_ROLE_ARN} — the IAM role ARN provisioned for the
-//	                       ops pod's ServiceAccount by
-//	                       terraform/modules/iam_irsa (PRD 08);
-//	                       resolved from terraform outputs by
-//	                       the CLI layer at install time.
+//	                       ops pod's ServiceAccount by the
+//	                       Go-SDK IAM phase (PRD 08); resolved
+//	                       from the workspace state by the CLI
+//	                       layer at install time.
 //	${OPS_IMAGE}         — the awsbnkctl tools image ref;
 //	                       version-pinned to internal/cli.Version.
 //

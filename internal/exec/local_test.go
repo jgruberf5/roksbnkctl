@@ -95,11 +95,11 @@ func TestLocalBackend_EnvPropagation(t *testing.T) {
 
 	var stdout bytes.Buffer
 	rc, err := b.Run(context.Background(),
-		[]string{"sh", "-c", "printenv ROKSBNKCTL_TEST_VAR"},
+		[]string{"sh", "-c", "printenv AWSBNKCTL_TEST_VAR"},
 		RunOpts{
 			Stdout: &stdout,
 			Stderr: io.Discard,
-			Env:    []string{"ROKSBNKCTL_TEST_VAR=propagated"},
+			Env:    []string{"AWSBNKCTL_TEST_VAR=propagated"},
 		})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

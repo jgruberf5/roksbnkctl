@@ -16,17 +16,26 @@ const (
 	clusterStateSubdir  = "state-cluster"
 	clusterOutputsFile  = "cluster-outputs.json"
 
-	// ROKSBNKCTLHomeEnv overrides the default ~/.awsbnkctl base. Used by tests
+	// AWSBNKCTLHomeEnv overrides the default ~/.awsbnkctl base. Used by tests
 	// (and power users who want non-home-dir state).
+	// The legacy name ROKSBNKCTL_HOME is still honoured for back-compat.
+	AWSBNKCTLHomeEnv = "AWSBNKCTL_HOME"
+
+	// ROKSBNKCTLHomeEnv is the legacy alias for AWSBNKCTLHomeEnv, kept for
+	// back-compat with scripts and CI that pre-date the rename.
 	ROKSBNKCTLHomeEnv = "ROKSBNKCTL_HOME"
 )
 
 // BaseDir returns the awsbnkctl root directory.
 //
-//  1. $ROKSBNKCTL_HOME if set (no expansion — used as-is)
-//  2. $HOME/.awsbnkctl otherwise
+//  1. $AWSBNKCTL_HOME if set (no expansion — used as-is)
+//  2. $ROKSBNKCTL_HOME if set (legacy back-compat alias)
+//  3. $HOME/.awsbnkctl otherwise
 func BaseDir() (string, error) {
-	if v := os.Getenv(ROKSBNKCTLHomeEnv); v != "" {
+	if v := os.Getenv(AWSBNKCTLHomeEnv); v != "" {
+		return v, nil
+	}
+	if v := os.Getenv(ROKSBNKCTLHomeEnv); v != "" { // back-compat
 		return v, nil
 	}
 	home, err := os.UserHomeDir()
@@ -72,9 +81,9 @@ func WorkspaceStateDir(name string) (string, error) {
 	return filepath.Join(dir, stateSubdir), nil
 }
 
-// WorkspaceClusterStateDir: ~/.awsbnkctl/<name>/state-cluster/ — separate TF
-// state tree for the `awsbnkctl cluster up/down` phase so it doesn't tangle
-// with the BNK-trial state at WorkspaceStateDir.
+// WorkspaceClusterStateDir: ~/.awsbnkctl/<name>/state-cluster/ — separate
+// state directory for the `awsbnkctl cluster up/down` phase so it doesn't
+// tangle with the BNK-trial state at WorkspaceStateDir.
 func WorkspaceClusterStateDir(name string) (string, error) {
 	dir, err := WorkspaceDir(name)
 	if err != nil {
