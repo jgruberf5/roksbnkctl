@@ -1122,6 +1122,39 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 23 — Phase-separation leak fix — `bnk-phase-override.tfvars` coverage gap (draft, not yet dispatched)
+
+_Surfaced 2026-05-27 during the Sprint 22 down-prompt + DetectShape live verify against canada-roks. Pre-Sprint 22 the DetectShape false-positive masked this leak by routing operators through the LegacySingle dispatch; post-fix it's a real `bnk down` resource-damage hazard. A normal post-`up` Split trial state carries 40 data-source refreshes (expected — the BNK trial modules read cluster info via data lookups) plus **two managed cluster-shared resources** that the `bnk-phase-override.tfvars` produced by `writeAndInitSecondPhase` fails to suppress: `module.testing.tls_private_key.jumphost_shared_key` and `module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`. A `roksbnkctl bnk down` against this state would target ALL trial-state managed resources for destruction — including the registry COS instance (cluster loses image storage) and the jumphost shared key (divergence from the cluster-phase key; SSH targets break). Exactly the cluster-shared-resource-damage class the Sprint 8 phase split was designed to prevent. Sprint 22's `v1.7.1` tag is GATED on this — bundle both into one patch._
+
+The header comment on `internal/orchestration/second_phase_reuse.go` claims the override turns "ALL cluster-shared creation off." Live evidence proves that claim inaccurate for at least two resources. The investigation in `issues/issue_sprint23_staff.md` already establishes the architecture facts:
+
+- `terraform/modules/testing/main.tf:279` declares `resource "tls_private_key" "jumphost_shared_key"` with NO `count` / `for_each` gate — every `module.testing` apply creates a fresh key, including the second-phase apply that should be a pure existing-cluster consumer.
+- `terraform/modules/roks_cluster/modules/cluster/main.tf:232` declares `resource "ibm_resource_instance" "cos_instance"` with `count = var.create_cluster && var.create_cos_instance ? 1 : 0`. The outer `module "cluster"` block at `terraform/modules/roks_cluster/main.tf:26-28` passes `create_cluster = var.create_roks_cluster` and `create_cos_instance = var.create_roks_registry_cos_instance`. The override sets `create_roks_cluster = false`, which SHOULD propagate to `count = 0`. Live trial state shows the resource IS present, so either (a) the propagation chain has a gap the issue doesn't yet identify, or (b) the override isn't reaching trial state on all paths (e.g. when `cluster-outputs.json` is missing or partially written). Staff investigation must confirm which.
+
+Live-verify per `live-verify-high-issues` memory is REQUIRED for closure: a fresh `up` on a clean workspace, then assert the trial state file has zero managed entries under `module.roks_cluster.*` / `module.testing.*` prefixes (`jq` one-liner in the issue file).
+
+| Role | Scope |
+|---|---|
+| **Staff** Issue 1 | Investigation-first read of the HCL count-gates + the override propagation. Then fix shape (likely: add `count` gate to `tls_private_key.jumphost_shared_key` driven by an already-overridden testing toggle; confirm or add a flag for `cos_instance` propagation). Update `bnk-phase-override.tfvars` content in `internal/orchestration/second_phase_reuse.go` if a new flag is needed. Make the file's header comment accurate ("ALL cluster-shared creation off" must either become true or get qualified). Add a regression-test assertion in `internal/orchestration/second_phase_reuse_test.go` for the new override content. |
+| **Architect** Issue 1 | PRD 06 §"Design" wording update for the narrowed DetectShape criterion (Sprint 22 staff-flagged follow-up — line ~120 of `docs/PRD/06-CLUSTER-TRIAL-PHASE-SPLIT.md`, "trial state contains cluster-phase modules" needs the "managed `ibm_container_vpc_cluster`" qualifier). |
+| **Architect** Issue 2 (light) | `book/src/31-building-from-source.md` chapter 31 drift sweep (Sprint 22 architect-flagged follow-up): the `tools/docker/` tree listing omits `mdbook/` entirely; the `make` examples predate the mdbook target; the trigger description is wrong. Reconcile against the post-Sprint-22 state. |
+| **Validator** Issue 1 | Hermetic regression test extending `internal/orchestration/second_phase_reuse_test.go` to pin the new override content (whatever new tfvars staff lands). Also document — but do NOT execute — the live-verify recipe: `jq '.resources[] \| select(.mode=="managed" and (.module \| startswith("module.roks_cluster") or startswith("module.testing")))' ~/.roksbnkctl/<ws>/state/terraform.tfstate` must return empty after a fresh `up` against any workspace. The integrator runs the live verify via `!`. |
+| **Tech-writer** Issue 1 (light, runs after) | Drift sweep covering staff + architect + validator deliverables. Per-finding fields use `**Verdict**:` (not `**Status**:`) per the `a2b78da` convention. GREEN/RED launch verdict explicitly notes that `v1.7.1` is now unblocked (Sprint 22 + 23 ship together). |
+
+`live-verify-high-issues` APPLIES — closure is gated on a live verify (`!` invocation by the integrator). Hermetic tests are necessary but not sufficient.
+
+Version at cut: `v1.7.1` patch — Sprint 22's down-prompt + DetectShape fixes + Sprint 23's phase-separation fix ship together. No breaking surface; both are bug fixes. CHANGELOG entry references both sprints.
+
+Sprint launch: when ready, integrator dispatches staff + architect + validator in parallel via `Agent`; aggregates + commits + runs gates; then dispatches tech-writer over the integrated tree.
+
+Related candidates (NOT in this sprint's scope, surfaced for the integrator's awareness when planning Sprint 24+):
+
+- `Makefile:107` recovery hint refinement (add `docker pull` alternative alongside the local build) — architect-flagged during Sprint 22, lower-priority Makefile ergonomic.
+- `roksbnkctl test hosts {list,add,remove,clear}` CLI gap — already filed as `issues/issue_sprint24_staff.md`, lower priority than this sprint.
+- Audit other state-shape heuristics for the same "any-resource-under-prefix" vs. "managed marker type" confusion pattern — staff-flagged during Sprint 22, low priority.
+
+---
+
 ## Sprint 22 — `mdbook` CI matrix + `down` composite UX + `DetectShape` correctness (in flight; staff scope shipped 2026-05-27, validator/architect/tech-writer pending)
 
 _Originally drafted 2026-05-21 as a CI-only sprint (one workflow-file edit to fold `mdbook` into the `tools-images.yml` matrix alongside `ibmcloud` and `iperf3`). Mid-flight on 2026-05-27, a presenter demo.sh re-verify cycle surfaced two staff-class bugs in the same problem domain (the cluster/trial phase-split dispatch, PRD 06) that the integrator fixed in-conversation and folded into this sprint rather than spawning a parallel sprint. The original CI scope remains; two staff Issues now sit alongside it as the sprint's primary deliverables. Staff scope shipped; validator/architect/tech-writer scopes have not been dispatched yet — release tag is gated on Sprint 23 (phase-separation leak surfaced during the same verify cycle), so this sprint's closure paragraph waits on Sprint 23._
