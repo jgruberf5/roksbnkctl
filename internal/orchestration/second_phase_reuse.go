@@ -1,7 +1,8 @@
 package orchestration
 
 // Second-phase cluster-shared-infra handoff (issues/issue_sprint16_validator.md
-// Issue 2 — corrected, round 2). The `up` flow applies the SAME root
+// Issue 2 — corrected, round 2; Sprint 23 phase-separation-leak follow-up
+// in issues/issue_sprint23_staff.md). The `up` flow applies the SAME root
 // terraform (module.roks_cluster + module.testing + the bnk-layer
 // modules) across two independent state files. The cluster phase
 // (state-cluster/) forces deploy_bnk=false and creates the entire
@@ -26,33 +27,49 @@ package orchestration
 // live-proven cluster-phase-override.tfvars mechanism
 // (internal/cli/cluster_phase.go): just as the cluster phase has a
 // FORCED override that turns the bnk-layer OFF (deploy_bnk=false), the
-// second/bnk phase gets a FORCED override that turns ALL cluster-shared
+// second/bnk phase gets a FORCED override that turns cluster-shared
 // creation OFF when this workspace already has a cluster-outputs.json
 // (i.e. the cluster phase has completed). With that override:
 //
-//   create_roks_cluster              = false
+//   create_roks_cluster                = false
 //     → module.roks_cluster.module.cluster resolves the cluster by name
 //       via data.ibm_container_vpc_cluster.existing_cluster (count flips
 //       create→data); ZERO cluster subnet / public-gateway / cluster
 //       creates; null_resource.cluster_ready count→0.
-//   roks_cluster_id_or_name          = "<cluster-outputs.json id/name>"
+//   roks_cluster_id_or_name            = "<cluster-outputs.json id/name>"
 //     → identity for that existing-cluster data lookup + the downstream
 //       roks_cluster_name output (already create_roks_cluster-aware).
-//   use_existing_cluster_vpc         = true
-//   existing_cluster_vpc_id          = "<cluster-outputs.json vpc_id>"
+//   use_existing_cluster_vpc           = true
+//   existing_cluster_vpc_id            = "<cluster-outputs.json vpc_id>"
 //     → ibm_is_vpc.cluster_vpc[0] (count = use_existing_cluster_vpc?0:1,
 //       NOT gated by create_cluster) flips to
 //       data.ibm_is_vpc.existing_cluster_vpc[0]. This is the one round-1
 //       piece that genuinely works and is still needed here.
-//   create_roks_transit_gateway      = false
+//   create_roks_transit_gateway        = false
 //     → ibm_tg_gateway.transit_gateway[0] count→0 (cluster phase already
 //       created + connected it).
-//   testing_create_cluster_jumphosts = false
-//   testing_create_tgw_jumphost      = false
-//   testing_create_client_vpc        = false
+//   create_roks_registry_cos_instance  = false
+//     → module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance
+//       has count = var.create_cluster && var.create_cos_instance ? 1 : 0.
+//       With create_roks_cluster=false above the create_cluster half is
+//       false, so the resource SHOULD already be count=0 — but
+//       2026-05-27 live evidence (issues/issue_sprint23_staff.md) shows
+//       it landing as managed in trial state anyway. Adding this flag
+//       explicitly forces the second count gate off too, so the resource
+//       is suppressed by BOTH halves of the && independently. Defense-
+//       in-depth against any code path (refresh-on-name, partial-apply
+//       carry-over from pre-Sprint-23 workspaces) that might import the
+//       cluster-phase COS into trial state.
+//   testing_create_cluster_jumphosts   = false
+//   testing_create_tgw_jumphost        = false
+//   testing_create_client_vpc          = false
 //     → module.testing plans NO client VPC, NO jumphost subnets, NO
 //       jumphost SG, NO cluster-jumphost subnets/SG. Those are
 //       cluster-shared singletons the cluster phase already created.
+//       Sprint 23 also count-gated tls_private_key.jumphost_shared_key
+//       on (testing_create_cluster_jumphosts || testing_create_tgw_jumphost)
+//       in terraform/modules/testing/main.tf so the key resource itself
+//       (previously ungated → always created) flips to count=0 here too.
 //
 // Net: the second/bnk phase plan contains the bnk-layer modules
 // (cert_manager / flo / cne_instance / license) + existing-cluster DATA
@@ -91,9 +108,12 @@ const bnkPhaseOverrideFile = "bnk-phase-override.tfvars"
 // the normal terraform.tfvars (unchanged create-path render — the round-1
 // per-toggle renderer is gone), then, when this workspace already has a
 // cluster-outputs.json (the cluster phase completed → we are the SECOND
-// phase), writes a bnk-phase-override.tfvars that forces ALL
-// cluster-shared creation off and returns its path so the caller appends
-// it to the plan/apply var-file chain.
+// phase), writes a bnk-phase-override.tfvars that forces every
+// cluster-shared CREATE off (cluster + cluster VPC reuse + transit
+// gateway + registry COS + client VPC + both jumphost classes; Sprint 23
+// added the explicit registry-COS flag and a count gate on the testing
+// module's shared TLS key) and returns its path so the caller appends it
+// to the plan/apply var-file chain.
 //
 // Returns (extraVarFiles, error). extraVarFiles is non-empty ONLY when a
 // usable cluster-outputs.json (with a vpc_id) exists; otherwise it is nil
@@ -163,19 +183,22 @@ func writeBnkPhaseOverrideAt(stateDir string, co *config.ClusterOutputs) (string
 	overridePath := filepath.Join(stateDir, bnkPhaseOverrideFile)
 	content := fmt.Sprintf(`# Generated by roksbnkctl. Do not edit by hand.
 # Second/bnk-phase override (issues/issue_sprint16_validator.md Issue 2,
-# round 2). cluster-outputs.json exists, so the cluster phase already
-# created the ENTIRE cluster-shared network (cluster VPC + subnets +
-# public gateways + transit gateway + the testing client VPC / jumphost
-# subnets / jumphost SG). This phase must NOT manage any of it — it
-# deploys only the BNK trial layer onto the already-provisioned cluster,
-# consuming the cluster identity from cluster-outputs.json via the
-# existing-cluster terraform data sources. Forced (wins over config.yaml
-# tfvars + terraform.tfvars.user), symmetric with cluster-phase-override.
+# round 2; Sprint 23 phase-separation-leak follow-up — added the explicit
+# create_roks_registry_cos_instance gate). cluster-outputs.json exists,
+# so the cluster phase already created the ENTIRE cluster-shared network
+# (cluster VPC + subnets + public gateways + transit gateway + registry
+# COS + the testing client VPC / jumphost subnets / jumphost SG / shared
+# SSH key). This phase must NOT manage any of it — it deploys only the
+# BNK trial layer onto the already-provisioned cluster, consuming the
+# cluster identity from cluster-outputs.json via the existing-cluster
+# terraform data sources. Forced (wins over config.yaml tfvars +
+# terraform.tfvars.user), symmetric with cluster-phase-override.
 create_roks_cluster = false
 roks_cluster_id_or_name = %q
 use_existing_cluster_vpc = true
 existing_cluster_vpc_id = %q
 create_roks_transit_gateway = false
+create_roks_registry_cos_instance = false
 testing_create_cluster_jumphosts = false
 testing_create_tgw_jumphost = false
 testing_create_client_vpc = false
