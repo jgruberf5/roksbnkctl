@@ -17,7 +17,7 @@
 > surfaces with comparable shape (`targets`, `cluster register`)
 > have first-class CLI; test hosts don't. This closes that gap.
 
-`Status: open`.
+`Status: resolved`.
 
 ---
 
@@ -25,7 +25,7 @@
 
 **Severity**: low (UX, not correctness). No resource-damage
 implication; the YAML path works today.
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 
@@ -151,3 +151,122 @@ NOT be sequenced ahead of it. UX gaps wait; resource-damage
 guards don't. Either ship Sprint 23 first and slot this into
 Sprint 24, or batch them together if the same sprint can
 reasonably hold both (staff scope is bounded for both).
+
+---
+
+## Closure — staff, 2026-05-27
+
+### What shipped
+
+New CLI surface, mirroring `roksbnkctl targets`' ergonomics
+byte-for-byte where it makes sense:
+
+```
+roksbnkctl test hosts list                      # cobra.NoArgs;            newline-separated stdout; -o json emits [] for empty
+roksbnkctl test hosts add <url> [<url>...]      # cobra.MinimumNArgs(1);   url.Parse validation, idempotent (no-op + log on already-present)
+roksbnkctl test hosts remove <url> [<url>...]   # cobra.MinimumNArgs(1);   idempotent (no-op + log on absent), preserves order
+roksbnkctl test hosts clear                     # cobra.NoArgs;            confirmation prompt defaults to No, --auto skips
+```
+
+### Files touched
+
+- **New**: `internal/cli/test_hosts.go` — the four subcommand
+  declarations, RunEs, and the `mutateExtraHosts(workspace string,
+  fn func([]string) []string) error` helper that all three
+  mutating RunEs route through (load → mutate → save). Plus a
+  thin `loadExtraHosts` for `list`, a `validateHostURL`
+  url.Parse-based validator (rejects empty / scheme-less /
+  host-less inputs), and a local `flagTestHostsClearAuto` for
+  `--auto` on `clear` (scoped local rather than reusing the
+  global `flagAuto` to keep the lifecycle command group's flag
+  namespace distinct from this UX-only group's).
+- **Edited (one line)**: `internal/cli/test.go`'s init() — added
+  `testHostsCmd` to the `testCmd.AddCommand(...)` call. Existing
+  command surface unchanged.
+- **Edited (one line)**: `internal/cli/test.go:803`'s error
+  message changed from
+  `"no hosts configured to probe; add to test.connectivity.extra_hosts in config.yaml"`
+  to
+  ``"no hosts configured to probe; add via `roksbnkctl test hosts add <url>`"``.
+  Backticks added around the command per the existing in-error
+  style convention (matches `"workspace %q is not initialised; run \`roksbnkctl init\` first"`
+  one line above).
+- **NOT touched**: `internal/orchestration/`,
+  `internal/config/tfstate.go`, `terraform/`,
+  `internal/cli/cluster_phase.go`, `internal/cli/bnk_phase.go`,
+  `internal/cli/lifecycle.go`, or any pre-existing `_test.go`
+  file. New tests are validator's surface
+  (`internal/cli/test_hosts_test.go` — not written by staff).
+
+### Test results
+
+- `go test ./internal/cli/...` — **PASS** (65.2s; all pre-existing
+  CLI tests still green; no new test files in this commit
+  — validator owns `test_hosts_test.go`).
+- `go vet ./...` — **clean** (no warnings).
+- `go build ./...` — **clean** (binary compiles).
+
+### Implementation notes
+
+1. **Persistence path**: routes through `config.LoadWorkspace` +
+   `config.SaveWorkspace` — the same path `targets add/remove`
+   uses via `internal/remote`. No new persistence machinery; the
+   `mutateExtraHosts` helper is a thin load → mutate → save
+   wrapper kept in `test_hosts.go` rather than pushed into
+   `internal/config` because the closure has no other caller.
+2. **URL validation**: `url.Parse` is intentionally lenient (it
+   accepts almost anything); the `validateHostURL` guard
+   additionally rejects empty input, scheme-less input (no
+   `://`), and host-less input. Catches the common operator
+   fat-finger cases without surprising users who pass
+   non-https URLs (e.g. `http://`-only intranets).
+3. **`add` order semantics**: insertion-order-stable. Multiple
+   args in one invocation are appended left-to-right in arg
+   order; already-present args are skipped (no shuffle).
+4. **`remove` order semantics**: relative order of surviving
+   entries is preserved. Multiple args dedupe naturally (no error
+   if same URL passed twice).
+5. **`clear` sets the slice to nil** (not `[]string{}`) so the
+   YAML output omits the `extra_hosts` key entirely under the
+   `omitempty` tag — closer to "never set" than "set to empty
+   array" for cosmetic config-on-disk parity. Functionally
+   indistinguishable to all consumers.
+6. **Idempotence logging**: `add <present>` logs
+   `test hosts: "<url>" already present; no-op` to stderr.
+   `remove <absent>` logs `test hosts: "<url>" not present; no-op`
+   to stderr. Both exit 0. Mirrors targets' tolerance shape.
+
+### Future-sprint candidates raised
+
+1. **YAML comment preservation in the marshaller** —
+   `gopkg.in/yaml.v3`'s `Marshal` does NOT preserve comments
+   that operators may have added to `config.yaml` by hand. The
+   first round-trip through `mutateExtraHosts` (or any `targets
+   add`, or any `init` overwrite) drops those comments silently.
+   This was already the case before Sprint 24; this sprint
+   doesn't make it worse, but it's now more discoverable because
+   `test hosts add` is a much-likelier first-mutation path for
+   ops-engineer comments under `# test:` blocks. Worth a future
+   sprint to either (a) move to a comment-preserving marshaller
+   (`go-yaml/yaml.v3` Node API + manual round-trip, or a
+   different library), or (b) document the limitation in the
+   architect's config chapter so operators know to keep
+   non-essential comments out of the workspace config.yaml.
+2. **`test hosts show <url>`** (parallel to `targets show
+   <name>`) — would let operators verify per-URL reachability
+   without running the full `test connectivity` suite. Low
+   priority; the `list` + `test connectivity` two-step works
+   today.
+3. **`--output yaml`** on `list` — currently only text + json.
+   Mirrors `targets list`'s shape, but a yaml output would be
+   handy for ops engineers who want to splice a list into a
+   sibling workspace's config.yaml. Out of this sprint's tight
+   scope (which is "match targets' ergonomic"); architect can
+   decide whether to add it later as a global pattern.
+4. **DNS / throughput CLI surfaces** — explicitly out of scope
+   per the integrator's "tight scope" decision (decision 1 in
+   `prompts/sprint24/README.md`). The throughput config block
+   has working flag-driven equivalents already; DNS has the
+   `--target` / `--server` / etc. flag surface. If a future
+   sprint decides to mirror this `test hosts` CLI shape onto
+   them, the `mutateExtraHosts` helper here is the template.

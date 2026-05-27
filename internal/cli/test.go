@@ -132,7 +132,7 @@ func init() {
 	testDNSCmd.Flags().BoolVar(&flagDNSGSLBCompare, "gslb-compare", false, "fan out the probe across all configured backends (local + k8s + ssh:<targets>) and emit a comparison JSON with gslb_divergence")
 	testDNSCmd.Flags().BoolVar(&flagDNSRequireDivergence, "require-divergence", false, "with --gslb-compare: exit non-zero if NO divergence is observed (CI assertion that GSLB is doing something)")
 
-	testCmd.AddCommand(testConnectivityCmd, testDNSCmd, testThroughputCmd, testListCmd)
+	testCmd.AddCommand(testConnectivityCmd, testDNSCmd, testThroughputCmd, testListCmd, testHostsCmd)
 	rootCmd.AddCommand(testCmd)
 }
 
@@ -800,7 +800,7 @@ func loadHosts() (*config.Context, []string, error) {
 	}
 	hosts := test.HostsFromConfig(cctx.Workspace)
 	if len(hosts) == 0 {
-		return nil, nil, fmt.Errorf("no hosts configured to probe; add to test.connectivity.extra_hosts in config.yaml")
+		return nil, nil, fmt.Errorf("no hosts configured to probe; add via `roksbnkctl test hosts add <url>`")
 	}
 	return cctx, hosts, nil
 }
