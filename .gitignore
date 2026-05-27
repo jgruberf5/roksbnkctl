@@ -35,6 +35,11 @@ book/book/
 # verification — contains ibmcloud_api_key / bigip_password. NEVER commit.
 /terraform.tfvars
 
+# Presenter's local demo script — checked in historically, but treated
+# as a personal working file going forward (timing, prompt copy, and
+# command selection are per-presenter; not part of the product).
+/demo.sh
+
 # terraform init cache (provider/module downloads) — e.g. left by a
 # `terraform validate` during a sprint. Never source; never commit.
 .terraform/
