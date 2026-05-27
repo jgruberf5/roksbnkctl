@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-17bb5aab.js";
+            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -203,6 +203,7 @@ test:
       - my-bare-host.example.com    # scheme defaults to https://
 </code></pre>
 <p>The schema is intentionally minimal — <code>extra_hosts</code> is a <code>[]string</code> of URLs (or bare hostnames; <code>https://</code> is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.</p>
+<p>You don’t have to hand-edit the YAML to populate this list — <code>roksbnkctl test hosts {list,add,remove,clear}</code> reads and writes the same slice. See <a href="#managing-test-hosts-via-the-cli">§ Managing test hosts via the CLI</a> below.</p>
 <p>There’s no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than “does HTTP work” — a particular status code, a custom header, a body match — <code>curl</code> is the right tool, not <code>roksbnkctl test connectivity</code>. A richer per-host schema is queued for v1.x; the v1.0 surface holds the YAML simple on purpose.</p>
 <p><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> covers the full <code>test:</code> block; this chapter expands the <code>connectivity</code> slice.</p>
 <h3 id="what-extra_hosts-typically-holds"><a class="header" href="#what-extra_hosts-typically-holds">What <code>extra_hosts</code> typically holds</a></h3>
@@ -213,6 +214,55 @@ test:
 <li><strong>The GSLB VIP that fronts the application</strong> — confirms the routed name actually serves a 2xx; pair with <a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a> for the GSLB-aware DNS-side validation.</li>
 </ul>
 <p>What doesn’t belong in <code>extra_hosts</code>: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than “got a 2xx or 3xx”. Those are <code>curl</code> jobs, not connectivity-suite jobs.</p>
+<h2 id="managing-test-hosts-via-the-cli"><a class="header" href="#managing-test-hosts-via-the-cli">Managing test hosts via the CLI</a></h2>
+<p>The YAML in <a href="#configuring-extra_hosts">§ Configuring <code>extra_hosts</code></a> is the persistent backing store, but you don’t have to hand-edit <code>config.yaml</code> to populate it. <code>roksbnkctl test hosts</code> mirrors the <code>roksbnkctl targets</code> ergonomic (see <a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a>) and gives you four subcommands that read and write the <code>test.connectivity.extra_hosts</code> slice directly:</p>
+<pre><code>roksbnkctl test hosts list                       # print current extra_hosts, one per line
+roksbnkctl test hosts add &lt;url&gt; [&lt;url&gt;...]       # append; idempotent (no-op if already present)
+roksbnkctl test hosts remove &lt;url&gt; [&lt;url&gt;...]    # remove; tolerant of absent (no error)
+roksbnkctl test hosts clear                      # remove ALL (confirmation prompt, --auto skip)
+</code></pre>
+<p>All four route through the same workspace marshaller <code>targets add</code> uses, so a <code>test hosts add</code> write lands in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> under <code>test.connectivity.extra_hosts</code> — operators who already know the YAML field see the connection. Run <code>cat ~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> after any mutation to confirm.</p>
+<p>Argv discipline matches the rest of the v1.7.x surface: <code>list</code> and <code>clear</code> take <code>cobra.NoArgs</code> (a stray positional is rejected at parse time, not silently consumed); <code>add</code> and <code>remove</code> take <code>cobra.MinimumNArgs(1)</code>. A typo like <code>roksbnkctl test hosts list extra</code> fails before any RunE runs.</p>
+<h3 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h3>
+<p>Start from an empty workspace, add a URL, list, then run the connectivity probe — the exact sequence an operator hits the first time the <code>no hosts configured to probe; add via roksbnkctl test hosts add &lt;url&gt;</code> error fires from <code>roksbnkctl test connectivity</code> or no-flag <code>roksbnkctl test dns</code>:</p>
+<pre><code class="language-bash">$ roksbnkctl test hosts list
+$ echo $?
+0
+
+$ roksbnkctl test hosts add https://docs.f5.com
+added https://docs.f5.com
+
+$ roksbnkctl test hosts add https://docs.f5.com
+already present: https://docs.f5.com
+
+$ roksbnkctl test hosts list
+https://docs.f5.com
+
+$ roksbnkctl test connectivity
+running connectivity ...
+  PASS  https://docs.f5.com  200 OK in 187ms
+connectivity PASS (1/1 passed)
+</code></pre>
+<blockquote>
+<p><strong>Note:</strong> the byte-for-byte output above is illustrative — it reflects the surface the Sprint 24 CLI ships and is what tech-writer’s drift sweep will re-capture against the built binary before the <code>v1.7.1</code> cut. The shape is stable (<code>list</code> empty → zero bytes + exit 0; <code>add</code> against already-present → “already present:” log + exit 0); minor wording deltas in the log lines may surface in the GREEN-verdict re-capture.</p>
+</blockquote>
+<p><code>--output json</code> is supported on <code>list</code> for scripted callers — empty list emits <code>[]</code>, populated list emits a JSON array preserving insertion order:</p>
+<pre><code class="language-bash">$ roksbnkctl test hosts list -o json
+["https://docs.f5.com","https://bigip-next-admin.example.com:8443"]
+</code></pre>
+<h3 id="clear"><a class="header" href="#clear"><code>clear</code></a></h3>
+<p><code>clear</code> requires confirmation (defaults to No) because it wipes the entire slice — the same pattern <code>roksbnkctl down</code> and <code>roksbnkctl cluster down</code> use, not the per-target <code>targets remove</code> pattern:</p>
+<pre><code class="language-bash">$ roksbnkctl test hosts clear
+This will remove ALL configured test hosts (2 entries). Continue? [y/N]: y
+cleared 2 entries
+
+$ roksbnkctl test hosts clear --auto
+cleared 0 entries
+</code></pre>
+<p><code>--auto</code> skips the prompt for automation contexts. Mirrors the <code>--auto</code> semantics elsewhere in the binary.</p>
+<h3 id="scope-of-the-cli"><a class="header" href="#scope-of-the-cli">Scope of the CLI</a></h3>
+<p>The CLI manages <strong>only</strong> <code>test.connectivity.extra_hosts</code> — the slice shared by <code>roksbnkctl test connectivity</code> and no-flag <code>roksbnkctl test dns</code>. The <code>test.dns.{default_target,resolvers}</code> and <code>test.throughput.*</code> fields have working flag-driven equivalents (<code>--target</code>, <code>--server</code>, <code>--duration</code>, …) and aren’t covered by <code>test hosts</code>; populate those by hand-editing <code>config.yaml</code> for now. A broader <code>test config</code> surface is a candidate for a future sprint.</p>
+<p>YAML-comment preservation through the marshaller is best-effort and depends on the workspace round-trip — if you keep hand-written comments in <code>config.yaml</code>, prefer the YAML path for additions that need to land alongside specific comments; use the CLI for the routine add/remove/list/clear flow.</p>
 <h2 id="the---insecure-flag"><a class="header" href="#the---insecure-flag">The <code>--insecure</code> flag</a></h2>
 <p>Self-signed certs are common in pre-production BNK deployments — the F5 BIG-IP Next admin endpoint, the CIS controller, an internal GSLB VIP that hasn’t yet been re-fronted with a public CA cert. By default Go’s TLS stack rejects them and the probe fails with <code>x509: certificate signed by unknown authority</code>.</p>
 <p>Pass <code>--insecure</code> to skip certificate verification for the run:</p>
@@ -343,6 +393,7 @@ connectivity PASS (3/3 passed)
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
+<li><a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a> — the <code>roksbnkctl targets</code> ergonomic precedent that <code>roksbnkctl test hosts</code> mirrors.</li>
 <li><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> — when “the URL fails” actually means “the name doesn’t resolve from this vantage”.</li>
 <li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
 <li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.</li>

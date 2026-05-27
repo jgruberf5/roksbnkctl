@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-17bb5aab.js";
+            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -237,22 +237,25 @@ make lint               # gofmt + vet + staticcheck (if installed)
 </ol>
 <p>For users who want to <em>not</em> use the embedded HCL, the <code>tf_source: github</code> or <code>tf_source: local</code> options in the workspace config bypass it entirely. See <a href="./12-workspace-config.html#tf_source">Chapter 12 §“tf_source:”</a>.</p>
 <h2 id="the-bundled-tools-images"><a class="header" href="#the-bundled-tools-images">The bundled tools images</a></h2>
-<p>The <code>tools/docker/</code> directory holds Dockerfiles for the images the <code>docker</code> and <code>k8s</code> backends use:</p>
+<p>The <code>tools/docker/</code> directory holds Dockerfiles for the images the <code>docker</code> and <code>k8s</code> backends use, plus the release-time book builder:</p>
 <pre><code class="language-text">tools/docker/
 ├── Makefile
 ├── ibmcloud/
 │   └── Dockerfile      # roksbnkctl-tools-ibmcloud
-└── iperf3/
-    └── Dockerfile      # roksbnkctl-tools-iperf3
+├── iperf3/
+│   └── Dockerfile      # roksbnkctl-tools-iperf3
+└── mdbook/
+    └── Dockerfile      # roksbnkctl-tools-mdbook (release-time book builder)
 </code></pre>
-<p><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/tools/docker/Makefile"><code>tools/docker/Makefile</code></a> builds both images locally as <code>:dev</code>:</p>
+<p><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/tools/docker/Makefile"><code>tools/docker/Makefile</code></a> builds the three images locally as <code>:dev</code>:</p>
 <pre><code class="language-bash">cd tools/docker
-make ibmcloud           # builds roksbnkctl-tools-ibmcloud:dev
-make iperf3             # builds roksbnkctl-tools-iperf3:dev
-make all                # both
+make build-ibmcloud     # builds roksbnkctl-tools-ibmcloud:dev
+make build-iperf3       # builds roksbnkctl-tools-iperf3:dev
+make build-mdbook       # builds roksbnkctl-tools-mdbook:dev
+make build-all          # all three
 </code></pre>
 <p>The <code>:dev</code> tag is what a from-source <code>roksbnkctl</code> resolves to when the binary’s <code>Version</code> is <code>dev</code>. A tag-released binary (<code>v1.0.0</code>) resolves to <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0</code> instead — the resolver logic lives in <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/exec"><code>internal/exec/</code></a> (<code>SetToolImageTag</code> is wired in <code>internal/cli/root.go::init</code>). See <a href="./17-execution-backends.html#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a>.</p>
-<p>The GitHub Actions workflow <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml"><code>tools-images.yml</code></a> builds and pushes the published images on a tag push or when <code>tools/docker/**</code> changes.</p>
+<p>The GitHub Actions workflow <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml"><code>tools-images.yml</code></a> builds and pushes the published images via a <code>strategy.matrix.image</code> over <code>[ibmcloud, iperf3, mdbook]</code>. Every push to <code>main</code> republishes the <code>:dev</code> tag for each image; every <code>v*</code> tag push publishes <code>:&lt;tagname&gt;</code> + <code>:latest</code>. <code>workflow_dispatch</code> is also wired for manual runs. The <code>mdbook</code> image was folded into the matrix in Sprint 22 — routine edits to <code>tools/docker/mdbook/Dockerfile</code> no longer require a manual <code>make -C tools/docker build-mdbook</code> + <code>docker push</code> step on the release-cut host; the next push to <code>main</code> republishes <code>ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev</code> automatically.</p>
 <h2 id="the-book-build"><a class="header" href="#the-book-build">The book build</a></h2>
 <p>The book is built with <a href="https://rust-lang.github.io/mdBook/">mdBook</a>. Install:</p>
 <pre><code class="language-bash">cargo install mdbook

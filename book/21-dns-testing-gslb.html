@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-17bb5aab.js";
+            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -550,6 +550,7 @@ error: DNS probe doesn't benefit from --backend docker (same network identity
 </code></pre>
 <p>With no <code>--target</code> and no <code>--gslb-compare</code>, the runner falls back to today’s behaviour: probe each host in <code>connectivity.extra_hosts</code>, single-vantage, single-iteration, with the host’s <code>system</code> resolver. This is the same shape as the connectivity suite’s reachability probe — no GSLB awareness, no per-server selection — and is the right tool for “did I typo a hostname in my config” rather than “is the GSLB doing what I configured”.</p>
 <p>For real GSLB validation you almost always want <code>--gslb-compare</code> plus an explicit <code>--target</code> and <code>--server</code>. The <code>extra_hosts</code> fallback is the carry-over from earlier roksbnkctl releases, kept for compatibility.</p>
+<p>If the no-flag invocation exits with <code>no hosts configured to probe; add via roksbnkctl test hosts add &lt;url&gt;</code>, the slice is empty for this workspace. Populate it with <code>roksbnkctl test hosts add &lt;url&gt;</code> (see <a href="./20-connectivity-testing.html#managing-test-hosts-via-the-cli">Chapter 20 §“Managing test hosts via the CLI”</a>) instead of hand-editing <code>config.yaml</code>.</p>
 <p><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> covers <code>connectivity.extra_hosts</code> in full.</p>
 <h2 id="worked-example-gslb-divergence-troubleshooting"><a class="header" href="#worked-example-gslb-divergence-troubleshooting">Worked example: GSLB divergence troubleshooting</a></h2>
 <p>End-to-end Part VI scenario: a customer’s BNK GSLB rule says “users in the US get IP A, users in the EU get IP B”. They claim the rule isn’t working — EU users keep landing on the US datacenter. You have <code>roksbnkctl</code> configured with a local laptop (your office), the customer’s cluster (ops pod installed), and a customer-provided EU bastion as an SSH target named <code>eu-bastion</code>. Goal: prove or disprove the divergence, point at where to look next.</p>
@@ -634,6 +635,7 @@ $ roksbnkctl test dns \
 <li><a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a> — file materialisation and bootstrap for <code>--backend ssh:&lt;target&gt;</code>.</li>
 <li><a href="./18-choosing-backend.html#im-doing-gslb-dns-validation">Chapter 18 §“I’m doing GSLB DNS validation”</a> — the decision-tree row that picks backends for a GSLB scenario.</li>
 <li><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> — the simpler “does HTTP work” companion suite.</li>
+<li><a href="./20-connectivity-testing.html#managing-test-hosts-via-the-cli">Chapter 20 §“Managing test hosts via the CLI”</a> — <code>roksbnkctl test hosts {list,add,remove,clear}</code>, the CLI path for populating the <code>extra_hosts</code> slice the no-flag <code>test dns</code> invocation walks.</li>
 <li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
 <li><a href="https://github.com/miekg/dns"><code>miekg/dns</code> upstream</a> — the underlying DNS library, used by CoreDNS and a long list of other reference implementations.</li>
 </ul>

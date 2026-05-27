@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-17bb5aab.js";
+            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -313,14 +313,18 @@ roksbnkctl ws delete &lt;name&gt; --force
 <p>Re-running <code>up</code> against a <code>down</code>’d workspace re-creates everything from scratch. The workspace’s <code>config.yaml</code> is preserved precisely so this re-create can use the same inputs without re-prompting.</p>
 <p>The COS bucket point is worth highlighting: the bundled HCL provisions the COS instance but generally does not provision the buckets inside it (those are written by post-apply provisioners or by the BNK runtime itself). When <code>cluster down</code> destroys the COS instance, the bucket goes with it — but if the COS instance was created out-of-band (e.g. by a registered cluster’s owner) and <code>roksbnkctl</code> is just attaching, then <code>cluster down</code> doesn’t apply and the COS survives.</p>
 <h2 id="--auto-for-non-interactive-runs"><a class="header" href="#--auto-for-non-interactive-runs"><code>--auto</code> for non-interactive runs</a></h2>
-<p>All three destroy commands prompt for confirmation by default:</p>
+<p>All three destroy commands prompt for confirmation by default. On a Split workspace the composite <code>down</code> takes a single up-front confirmation that names both phases, then runs trial → cluster without re-prompting — so you can’t accidentally answer “yes” to the trial and miss the cluster gate:</p>
 <pre><code>$ roksbnkctl down
+This will destroy BOTH the BNK trial AND the cluster phase for workspace "default" (ROKS + transit gateway + registry COS + cert-manager + jumphost).
+Continue? [y/N]: 
+</code></pre>
+<p>On LegacySingle the monolithic prompt is unchanged (one state, one destroy):</p>
+<pre><code>$ roksbnkctl down                # LegacySingle shape
 This will destroy workspace "default"'s resources.
 Continue? [y/N]: 
 </code></pre>
 <pre><code>$ roksbnkctl bnk down
-This will destroy the BNK trial for workspace "default". The cluster phase
-will remain in place — run `roksbnkctl cluster down` to remove it too.
+This will destroy workspace "default"'s resources.
 Continue? [y/N]: 
 </code></pre>
 <pre><code>$ roksbnkctl cluster down
