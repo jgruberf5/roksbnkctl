@@ -79,21 +79,20 @@ type RunOpts struct {
 	Credentials *Credentials
 
 	// HostMounts lists additional bind-mounts the docker backend
-	// projects from the host filesystem into the container. Sprint 5
-	// terraform integration uses this to mount the workspace state
-	// directory at `/state` so the in-container `terraform init/plan/
-	// apply/destroy` operates on the same .tfstate file the local
-	// backend writes. Other backends ignore HostMounts (the local
-	// backend has no need; ssh / k8s would need scp / projected-volume
+	// projects from the host filesystem into the container. Used to
+	// mount workspace state directories or scratch volumes so the
+	// in-container tool operates on the same files as the local
+	// backend. Other backends ignore HostMounts (the local backend
+	// has no need; ssh / k8s would need scp / projected-volume
 	// shapes that aren't worth the v1 complexity).
 	//
-	// PRD 03 §"terraform" + chapter 17 §"terraform docker subsection".
+	// PRD 03 §"docker backend" + chapter 17 §"docker subsection".
 	HostMounts []HostMount
 
-	// RunAsUser pins the container's UID:GID. Set for the terraform
-	// docker path so the state file is written with the host user's
-	// ownership (otherwise terraform-in-container runs as root and
-	// produces root-owned state files the host user can't edit).
+	// RunAsUser pins the container's UID:GID. Set for the docker
+	// backend so state files are written with the host user's
+	// ownership (otherwise the in-container process runs as root and
+	// produces root-owned files the host user can't edit).
 	//
 	// Format: "uid:gid" or just "uid". Empty defers to the image's
 	// default user. Backends that don't honor a runtime UID (k8s,
@@ -102,8 +101,8 @@ type RunOpts struct {
 }
 
 // HostMount is one host → container bind-mount. Used by the docker
-// backend's terraform path; future backends may grow analogous
-// shapes (k8s projected-volume, ssh staged-file).
+// backend; future backends may grow analogous shapes (k8s
+// projected-volume, ssh staged-file).
 type HostMount struct {
 	HostPath      string // absolute path on the host
 	ContainerPath string // absolute path inside the container
@@ -114,16 +113,15 @@ type HostMount struct {
 //
 //	"local"            — local execution
 //	"docker"           — docker daemon on caller host
-//	"ssh:<target>"     — SSH backend with named target (Sprint 4)
-//	"k8s"              — in-cluster pod (Sprint 4)
+//	"ssh:<target>"     — SSH backend with named target
+//	"k8s"              — in-cluster pod
 //
-// Sprint 3 only registers "local" + "docker". The "ssh:<target>" spec
+// Registered backends are "local" + "docker". The "ssh:<target>" spec
 // parser is in place so the integrator's CLI flag parsing has a stable
 // hook; resolving an unregistered spec (k8s, ssh:foo) returns a clear
 // "backend not implemented yet" error pointing at PRD 03.
 //
-// Empty spec defaults to "local" — matches the per-tool default for
-// terraform per PLAN.md Sprint 3.
+// Empty spec defaults to "local".
 func ResolveBackend(spec string) (Backend, error) {
 	if spec == "" {
 		spec = "local"
@@ -148,7 +146,7 @@ func ResolveBackend(spec string) (Backend, error) {
 		// save users a docs round-trip.
 		switch name {
 		case "k8s", "ssh":
-			return nil, fmt.Errorf("backend %q not implemented in this build (Sprint 4); see docs/prd/03-EXECUTION-BACKENDS.md", name)
+			return nil, fmt.Errorf("backend %q not implemented in this build; see docs/prd/03-EXECUTION-BACKENDS.md", name)
 		default:
 			return nil, fmt.Errorf("unknown backend %q (want local|docker|k8s|ssh[:<target>])", spec)
 		}

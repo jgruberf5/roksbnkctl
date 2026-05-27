@@ -138,7 +138,7 @@ type SSHBackend struct{}
 func (*SSHBackend) Name() string { return "ssh" }
 
 // Run implements Backend. The target name is conventionally embedded
-// in opts.Env via the sentinel ROKSBNKCTL_SSH_TARGET=<name> set by the
+// in opts.Env via the sentinel AWSBNKCTL_SSH_TARGET=<name> set by the
 // CLI dispatch layer (mirrors k8s_long_lived_key); the registry's
 // ResolveBackend("ssh:<target>") path also stamps the same key.
 func (b *SSHBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, error) {
@@ -244,13 +244,22 @@ func (b *SSHBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int,
 
 // extractSSHTarget pulls the target sentinel out of env and returns
 // (target, filteredEnv). Mirrors k8s.go's extractLongLivedFlag pattern.
+// Accepts both AWSBNKCTL_SSH_TARGET (canonical) and the legacy
+// ROKSBNKCTL_SSH_TARGET (back-compat for mixed-version parent/child).
 func extractSSHTarget(env []string) (string, []string) {
+	const newPrefix = "AWSBNKCTL_SSH_TARGET="
+	const oldPrefix = "ROKSBNKCTL_SSH_TARGET=" // back-compat
 	out := make([]string, 0, len(env))
 	target := ""
-	const prefix = "ROKSBNKCTL_SSH_TARGET="
 	for _, kv := range env {
-		if strings.HasPrefix(kv, prefix) {
-			target = kv[len(prefix):]
+		if strings.HasPrefix(kv, newPrefix) {
+			target = kv[len(newPrefix):]
+			continue
+		}
+		if strings.HasPrefix(kv, oldPrefix) {
+			if target == "" { // new prefix takes priority
+				target = kv[len(oldPrefix):]
+			}
 			continue
 		}
 		out = append(out, kv)
@@ -550,7 +559,7 @@ func makeCanary() (string, string) {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	suffix := hex.EncodeToString(b[:])
-	return "ROKSBNKCTL_SETENV_CANARY_" + suffix, "v_" + suffix
+	return "AWSBNKCTL_SETENV_CANARY_" + suffix, "v_" + suffix
 }
 
 // base64Encode is std-encoding base64 with no line wrapping. Inlined

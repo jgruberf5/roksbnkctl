@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// All tests redirect $ROKSBNKCTL_HOME via t.Setenv so they never touch the
+// All tests redirect $AWSBNKCTL_HOME via t.Setenv so they never touch the
 // real ~/.awsbnkctl. t.TempDir auto-cleans on failure.
 
 func TestNew_DefaultWorkspace_NoState(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	ctx, err := New("")
 	if err != nil {
@@ -26,7 +26,7 @@ func TestNew_DefaultWorkspace_NoState(t *testing.T) {
 }
 
 func TestNew_FlagOverridesGlobalCurrent(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SaveGlobal(&Global{CurrentWorkspace: "prod"}); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestNew_FlagOverridesGlobalCurrent(t *testing.T) {
 }
 
 func TestNew_GlobalCurrentUsedWhenNoFlag(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SaveGlobal(&Global{CurrentWorkspace: "prod"}); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestNew_GlobalCurrentUsedWhenNoFlag(t *testing.T) {
 }
 
 func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	in := &Workspace{
 		AWS:     AWSCfg{Region: "us-east-1", Profile: "default"},
@@ -76,7 +76,7 @@ func TestSaveAndLoadWorkspace_Roundtrip(t *testing.T) {
 }
 
 func TestLoadWorkspace_NotFound(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	_, err := LoadWorkspace("nope")
 	if err == nil {
@@ -108,7 +108,7 @@ func writeWorkspaceStateEnv(t *testing.T, ws, body string) {
 // delete guard: a state.env with a populated resource ID blocks deletion
 // unless --force; an empty state.env (or none) deletes cleanly.
 func TestDeleteWorkspace_GuardOnPopulatedStateEnv(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	// Workspace with a live VPC_ID — guard must block delete.
 	if err := SaveWorkspace("live", &Workspace{AWS: AWSCfg{Region: "us-east-1"}}); err != nil {
@@ -201,7 +201,7 @@ func TestValidateName(t *testing.T) {
 }
 
 func TestRejectPlaintextSecrets(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	tmpHome, _ := BaseDir()
 	cfg := filepath.Join(tmpHome, "tainted", "config.yaml")
@@ -222,7 +222,7 @@ func TestRejectPlaintextSecrets(t *testing.T) {
 }
 
 func TestRejectPlaintextSecrets_AllowsCommentedExamples(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	tmpHome, _ := BaseDir()
 	cfg := filepath.Join(tmpHome, "ok", "config.yaml")
@@ -251,7 +251,7 @@ tf_source:
 }
 
 func TestListWorkspaces(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	for _, n := range []string{"alpha", "beta", "gamma"} {
 		if err := SaveWorkspace(n, &Workspace{}); err != nil {
@@ -280,7 +280,7 @@ func TestListWorkspaces(t *testing.T) {
 }
 
 func TestSetCurrent_RejectsMissingWorkspace(t *testing.T) {
-	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	t.Setenv(AWSBNKCTLHomeEnv, t.TempDir())
 
 	if err := SetCurrent("phantom"); err == nil {
 		t.Fatal("expected SetCurrent to reject missing workspace")
