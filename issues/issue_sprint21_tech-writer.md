@@ -110,7 +110,7 @@ code surface, tests, and book paragraph are all clean.
 
 #### Drift surface 1 — `cmd/roksbnkctl/main.go` preflight
 
-**Status**: CLEAN.
+**Verdict**: CLEAN.
 
 Preflight call-site at `cmd/roksbnkctl/main.go:24` is inside
 `main()` and runs **before** `cli.Execute()` (line 30) — on
@@ -141,7 +141,7 @@ hand-maintained typo list" → confirmed in source.
 
 #### Drift surface 2 — book paragraph vs binary stderr
 
-**Status**: CLEAN — line-for-line match.
+**Verdict**: CLEAN — line-for-line match.
 
 Command run (from repo root):
 ```
@@ -188,7 +188,7 @@ paragraph) → met.** No high finding here.
 
 #### Drift surface 3 — `book/src/27-command-reference.md` regen
 
-**Status**: CLEAN — current md5 matches a fresh regen.
+**Verdict**: CLEAN — current md5 matches a fresh regen.
 
 `md5sum book/src/27-command-reference.md` → `bee798f5857c0b5d9fd46287d942c2fa`
 (matches the architect's closure claim).
@@ -221,7 +221,7 @@ against the post-staff cobra tree) → met.** No finding.
 
 #### Drift surface 4 — cross-chapter sweep for stuck-together short-flag-value
 
-**Status**: CLEAN — none found.
+**Verdict**: CLEAN — none found.
 
 Sweep universe per the issue spec: value-requiring shorts
 `{c, f, l, n, o, w}` (matches the architect's enumeration at
@@ -252,7 +252,7 @@ finding; none found).
 
 #### Drift surface 5 — `docs/PLAN.md` §"Sprint 21" closure — **MEDIUM FINDING 1**
 
-**Status**: FINDING — missing closure subsection.
+**Verdict**: FINDING — missing closure subsection.
 
 `docs/PLAN.md:1125–1144` is the Sprint 21 section. It carries
 the per-role table (lines 1131–1136), the
@@ -324,7 +324,7 @@ closure for proposed wording).
 
 #### Drift surface 6 — `CHANGELOG.md` Sprint 21 entry — **MEDIUM FINDING 2 (recommendation only)**
 
-**Status**: FINDING — entry not yet written; recommendation
+**Verdict**: FINDING — entry not yet written; recommendation
 follows.
 
 `CHANGELOG.md`'s latest entry is `v1.6.4 — 2026-05-21`
@@ -395,7 +395,7 @@ The integrator should:
 
 #### Drift surface 7 — staff closure note line-number drift — **LOW FINDING 3**
 
-**Status**: documentation-only, source unaffected.
+**Verdict**: documentation-only, source unaffected.
 
 `issues/issue_sprint21_staff.md:125–128` cites the preflight
 helpers as `argvPreflight at line 54, collectValueRequiringShorts
