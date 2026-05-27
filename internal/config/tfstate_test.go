@@ -101,6 +101,20 @@ func TestDetectShape_Table(t *testing.T) {
 			wantShape:      ShapeLegacySingle,
 		},
 		{
+			// Sprint 22 regression: a post-up Split trial state
+			// legitimately carries data-source refreshes under
+			// cluster-phase module prefixes (`module.cert_manager`,
+			// `module.roks_cluster`, `module.testing`). Pre-fix
+			// `trialStateHasClusterModules` classified this as
+			// LegacySingle and stranded the cluster phase on
+			// `roksbnkctl down`; the heuristic now requires a managed
+			// `ibm_container_vpc_cluster` under those prefixes.
+			name:           "split with cluster-phase data sources in trial (post-up refresh shape)",
+			trialFixture:   "tfstate_split_data_in_trial.json",
+			clusterFixture: "tfstate_cluster_only.json",
+			wantShape:      ShapeSplit,
+		},
+		{
 			name:           "empty trial + empty cluster state files (applied then fully destroyed)",
 			trialFixture:   "tfstate_empty.json",
 			clusterFixture: "tfstate_empty.json",
@@ -155,13 +169,20 @@ func TestDetectShape_MissingStateIsEmpty(t *testing.T) {
 
 // TestTrialStateHasClusterModules_ExactMatch covers the
 // `r.Module == prefix` branch — the cluster_phase modules can appear
-// at the root of the module address (no trailing sub-path).
+// at the root of the module address (no trailing sub-path). The
+// detector requires `mode == "managed"` AND
+// `type == "ibm_container_vpc_cluster"` (Sprint 22 strengthening) so
+// the fixture supplies both alongside the exact-prefix module address.
 func TestTrialStateHasClusterModules_ExactMatch(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "terraform.tfstate")
 	const body = `{
 		"resources": [
-			{"module": "module.cert_manager"}
+			{
+				"mode": "managed",
+				"type": "ibm_container_vpc_cluster",
+				"module": "module.cert_manager"
+			}
 		]
 	}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -177,16 +198,20 @@ func TestTrialStateHasClusterModules_ExactMatch(t *testing.T) {
 }
 
 // TestTrialStateHasClusterModules_NestedPrefix covers the
-// `strings.HasPrefix(r.Module, prefix+".")` branch — nested sub-modules
-// of the cluster phase must also be detected (matches the real
-// canada-roks state shape: `module.roks_cluster.module.cluster`).
+// `strings.HasPrefix(r.Module, prefix+".")` branch — a managed
+// ibm_container_vpc_cluster under a nested sub-module of the cluster
+// phase must also be detected (matches the real legacy state shape:
+// `module.roks_cluster.module.cluster`).
 func TestTrialStateHasClusterModules_NestedPrefix(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "terraform.tfstate")
 	const body = `{
 		"resources": [
-			{"module": "module.roks_cluster.module.cluster"},
-			{"module": "module.testing.module.jumphost"}
+			{
+				"mode": "managed",
+				"type": "ibm_container_vpc_cluster",
+				"module": "module.roks_cluster.module.cluster"
+			}
 		]
 	}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -203,14 +228,24 @@ func TestTrialStateHasClusterModules_NestedPrefix(t *testing.T) {
 
 // TestTrialStateHasClusterModules_DotGuard checks that the trailing-dot
 // match prevents false positives — `module.roks_cluster_extras` must
-// NOT match `module.roks_cluster`.
+// NOT match `module.roks_cluster`. Both fixture entries carry the
+// otherwise-detected mode + type so the only thing under test is the
+// module-address dot guard.
 func TestTrialStateHasClusterModules_DotGuard(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "terraform.tfstate")
 	const body = `{
 		"resources": [
-			{"module": "module.roks_cluster_extras"},
-			{"module": "module.cert_managerific"}
+			{
+				"mode": "managed",
+				"type": "ibm_container_vpc_cluster",
+				"module": "module.roks_cluster_extras"
+			},
+			{
+				"mode": "managed",
+				"type": "ibm_container_vpc_cluster",
+				"module": "module.cert_managerific"
+			}
 		]
 	}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -222,6 +257,79 @@ func TestTrialStateHasClusterModules_DotGuard(t *testing.T) {
 	}
 	if has {
 		t.Error("expected non-cluster module names with cluster prefixes to NOT match")
+	}
+}
+
+// TestTrialStateHasClusterModules_DataSourceUnderClusterPrefix pins
+// Sprint 22's tightening: a `mode == "data"` entry under a cluster-
+// phase module prefix is a legitimate refresh artefact (trial-phase
+// modules read cluster info via data sources) and must NOT be
+// classified as legacy single-state. Pre-Sprint-22, this body
+// classified as LegacySingle and stranded the cluster phase on
+// `roksbnkctl down`.
+func TestTrialStateHasClusterModules_DataSourceUnderClusterPrefix(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "terraform.tfstate")
+	const body = `{
+		"resources": [
+			{
+				"mode": "data",
+				"type": "ibm_container_cluster_config",
+				"module": "module.cert_manager"
+			},
+			{
+				"mode": "data",
+				"type": "ibm_container_vpc_cluster",
+				"module": "module.cert_manager"
+			}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	has, err := trialStateHasClusterModules(path)
+	if err != nil {
+		t.Fatalf("trialStateHasClusterModules: %v", err)
+	}
+	if has {
+		t.Error("expected data-source-only entries under cluster prefix to NOT trigger legacy classification")
+	}
+}
+
+// TestTrialStateHasClusterModules_StrayManagedNonClusterType pins the
+// type filter: a managed resource under a cluster-phase module prefix
+// whose TYPE is not `ibm_container_vpc_cluster` (e.g. a stray
+// `tls_private_key` under `module.testing` or an
+// `ibm_resource_instance` under `module.roks_cluster`) must NOT be
+// classified as legacy. Mirrors the canada-roks 2026-05-27
+// post-partial-apply trial-state shape observed during the Sprint 22
+// down-prompt-fix live verify.
+func TestTrialStateHasClusterModules_StrayManagedNonClusterType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "terraform.tfstate")
+	const body = `{
+		"resources": [
+			{
+				"mode": "managed",
+				"type": "tls_private_key",
+				"module": "module.testing"
+			},
+			{
+				"mode": "managed",
+				"type": "ibm_resource_instance",
+				"module": "module.roks_cluster.module.cluster"
+			}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	has, err := trialStateHasClusterModules(path)
+	if err != nil {
+		t.Fatalf("trialStateHasClusterModules: %v", err)
+	}
+	if has {
+		t.Error("expected stray managed-non-cluster-type entries under cluster prefix to NOT trigger legacy classification")
 	}
 }
 

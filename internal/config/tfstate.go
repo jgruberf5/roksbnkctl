@@ -69,14 +69,19 @@ func (s WorkspaceShape) String() string {
 
 // clusterPhaseModules — TF module addresses owned by the cluster phase
 // (the set of modules `cluster_phase.go` provisions when
-// deploy_bnk=false is forced). Presence of any of these in the trial
-// state is the unambiguous signal that the workspace pre-dates the
-// cluster/trial split and lives entirely in one state file.
+// deploy_bnk=false is forced).
 //
 // Per PRD 06 §"Design": "module.roks_cluster", "module.cert_manager",
 // "module.testing". Matching uses exact-equality OR HasPrefix(name+".")
 // so we catch root-of-module addresses and any nested sub-addresses
 // (e.g. `module.roks_cluster.module.cluster`).
+//
+// Note: the cluster-phase signal in trial state is narrower than
+// "any resource under one of these prefixes" — see
+// `trialStateHasClusterModules` for the actual managed-cluster
+// criterion. Data-source refreshes legitimately populate trial state
+// with reads under `module.cert_manager` etc. and must not trip the
+// legacy classification.
 var clusterPhaseModules = []string{
 	"module.roks_cluster",
 	"module.cert_manager",
@@ -173,15 +178,29 @@ func tfstateHasResources(path string) (bool, error) {
 }
 
 // trialStateHasClusterModules reports whether the trial-phase tfstate
-// at `path` contains any cluster-phase module — the signal of a
-// pre-split single-state workspace.
+// at `path` carries the unambiguous v1.0.x single-state signal: a
+// managed `ibm_container_vpc_cluster` resource (the ROKS cluster
+// itself) provisioned under one of the `clusterPhaseModules` address
+// prefixes.
 //
-// Match shape per PRD 06 §"Design": for each prefix in
-// `clusterPhaseModules`, accept either `r.Module == prefix` (the root
-// of a module address) or `strings.HasPrefix(r.Module, prefix+".")`
-// (any nested sub-module). The trailing-dot guard prevents false
-// positives like `module.roks_cluster_extras` matching
-// `module.roks_cluster`.
+// Three filters, all required:
+//
+//  1. `mode == "managed"` — data sources (`mode == "data"`) are
+//     external lookups, not ownership. Trial-state plans legitimately
+//     refresh data sources under `module.cert_manager` /
+//     `module.roks_cluster` / `module.testing` (the BNK trial modules
+//     read cluster info via those addresses) and pre-Sprint-22 that
+//     refresh tripped the legacy classifier — see Sprint 22 issue.
+//  2. `type == "ibm_container_vpc_cluster"` — the ROKS cluster
+//     resource is the singular marker of "this state file owns the
+//     cluster." Other managed resources can appear under cluster-phase
+//     module addresses for benign reasons (stray `tls_private_key`,
+//     `ibm_resource_instance`-of-COS, etc., observed during partial
+//     applies) without indicating shared-state ownership.
+//  3. The module address matches a `clusterPhaseModules` prefix
+//     (exact match OR `HasPrefix(prefix + ".")` — the trailing-dot
+//     guard prevents `module.roks_cluster_extras` from matching
+//     `module.roks_cluster`).
 //
 // Missing file → (false, nil); malformed JSON → (false, error).
 func trialStateHasClusterModules(path string) (bool, error) {
@@ -194,13 +213,18 @@ func trialStateHasClusterModules(path string) (bool, error) {
 	}
 	var s struct {
 		Resources []struct {
+			Mode   string `json:"mode"`
 			Module string `json:"module"`
+			Type   string `json:"type"`
 		} `json:"resources"`
 	}
 	if err := json.Unmarshal(b, &s); err != nil {
 		return false, err
 	}
 	for _, r := range s.Resources {
+		if r.Mode != "managed" || r.Type != "ibm_container_vpc_cluster" {
+			continue
+		}
 		for _, prefix := range clusterPhaseModules {
 			if r.Module == prefix || strings.HasPrefix(r.Module, prefix+".") {
 				return true, nil
