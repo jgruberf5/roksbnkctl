@@ -65,6 +65,13 @@ var (
 	// poll. Designed for reviewers who need to re-run up without re-burning a
 	// real F5 license activation each round. Default false (always poll).
 	flagSkipActivationPoll bool
+
+	// flagDemo is bound ONLY to upCmd. When true, the cluster is marked as a demo
+	// deployment: DEMO_MODE, DEMO_STAGED_AT, and DEMO_EXPIRY are written to
+	// state.env before the provisioning phase graph. Sugar for demo.enabled: true
+	// in cluster.yaml — the provisioning phases are unchanged. Requires
+	// testing.jumphost.enabled: true (validated in runPhasedUp).
+	flagDemo bool
 )
 
 var initCmd = &cobra.Command{
@@ -107,6 +114,7 @@ func init() {
 	upCmd.Flags().BoolVar(&flagRegisterWithForge, "register-with-forge", false, "after a successful apply, register the EKS cluster with bnk-forge over MCP (no-op in --dry-run)")
 	upCmd.Flags().StringVarP(&flagConfig, "config", "f", "", "path to cluster.yaml (required)")
 	upCmd.Flags().BoolVar(&flagSkipActivationPoll, "skip-activation-poll", false, "skip the 20-min CNEInstance+License activation poll (for reviewer re-runs that must not re-burn the F5 license)")
+	upCmd.Flags().BoolVar(&flagDemo, "demo", false, "provision the same cluster, marked as a demo (writes DEMO_MODE, requires testing.jumphost.enabled)")
 
 	downCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 	downCmd.Flags().BoolVar(&flagDownDryRun, "dry-run", false, "print what would be destroyed, make no AWS mutations")
@@ -123,7 +131,7 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	if flagConfig == "" {
 		return errors.New("awsbnkctl up requires --config <cluster.yaml>")
 	}
-	return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun, flagSkipActivationPoll)
+	return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun, flagSkipActivationPoll, flagDemo)
 }
 
 // registerWithForgePostApply runs the same flow as `awsbnkctl forge
@@ -206,10 +214,26 @@ func runDown(cmd *cobra.Command, _ []string) error {
 // zero AWS API mutations.
 // When skipActivationPoll is true, Phase 25 returns immediately (for reviewers
 // who must not re-burn a real F5 license each round).
-func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActivationPoll bool) error {
+// When demo is true (or demo.enabled: true in cluster.yaml), the cluster is
+// marked as a demo: DEMO_MODE, DEMO_STAGED_AT, and DEMO_EXPIRY are written to
+// state.env before the phase graph. The provisioning phases are unchanged.
+func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActivationPoll bool, demo bool) error {
 	cl, err := intent.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("up: %w", err)
+	}
+
+	// --demo flag forces demo.enabled=true even when the demo: block is absent.
+	// EnableDemo is idempotent: safe to call when already enabled by cluster.yaml.
+	if demo {
+		cl.EnableDemo()
+	}
+	// For the flag path, ValidateDemo was NOT called inside intent.Load (the flag
+	// is not visible to validate()). Call it now — both paths enforce the same rules.
+	if cl.DemoEnabled() {
+		if err := intent.ValidateDemo(cl); err != nil {
+			return fmt.Errorf("up: %w", err)
+		}
 	}
 
 	clients, err := phases.NewClients(ctx, cl.Metadata.Region, "")
@@ -229,6 +253,24 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "→ dry-run: printing plan, no AWS mutations will be made")
+	}
+
+	// Demo markers: write DEMO_MODE, DEMO_STAGED_AT, DEMO_EXPIRY early (before the
+	// phase graph) so a partially-failed up still records the cluster as a demo.
+	// A normal (non-demo) up writes none of these keys and is byte-for-byte unchanged.
+	if cl.DemoEnabled() {
+		ttl, _ := time.ParseDuration(cl.Demo.TTL) // already validated above
+		now := time.Now().UTC()
+		st.Set("DEMO_MODE", "true")
+		st.Set("DEMO_STAGED_AT", now.Format(time.RFC3339))
+		st.Set("DEMO_EXPIRY", now.Add(ttl).Format(time.RFC3339))
+		if !dryRun {
+			if err := st.Save(); err != nil {
+				return fmt.Errorf("up: writing demo markers to state: %w", err)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "→ demo mode: DEMO_MODE=true TTL=%s DEMO_EXPIRY=%s\n",
+			cl.Demo.TTL, st.Get("DEMO_EXPIRY"))
 	}
 
 	if err := phases.Phase00Preflight(ctx, cl, st, clients, dryRun); err != nil {
