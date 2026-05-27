@@ -80,11 +80,19 @@ Signals (all on-disk, no terraform calls):
 |---|---|---|
 | Trial state has any resources | `len(state.resources) > 0` on `state/terraform.tfstate` | Trial phase has been applied |
 | Cluster state has any resources | same check on `state-cluster/terraform.tfstate` | Cluster phase has been applied |
-| Trial state contains cluster modules | walk `state.resources[]`, match `module` field against `module.roks_cluster`, `module.cert_manager`, `module.testing` (the modules that `deploy_bnk=false` in `cluster_phase.go` provisions) | Legacy single-state — cluster and trial share one tfstate |
+| Trial state owns the ROKS cluster | walk `state.resources[]`, find an entry whose `mode == "managed"` AND `type == "ibm_container_vpc_cluster"` AND whose `module` address matches one of `module.roks_cluster`, `module.cert_manager`, `module.testing` (the modules that `deploy_bnk=false` in `cluster_phase.go` provisions) | Legacy single-state — cluster and trial share one tfstate |
 
 Missing tfstate files → "no resources" (workspace not applied yet). Malformed JSON → surfaced as error so dispatch doesn't silently misroute.
 
-The cluster-module match uses `strings.HasPrefix(r.Module, prefix+".")` plus exact equality to cover both root-of-module and nested-module addresses. Empirically verified against the canada-roks workspace (135 resources, includes `module.roks_cluster`, `module.roks_cluster.module.cluster`, `module.cert_manager`, `module.testing.*`, plus `module.flo.*`, `module.cne_instance.*`, `module.license.*`).
+The legacy-single-state classifier requires all three filters together; any one of them on its own would over-classify. Authoritative implementation: `trialStateHasClusterModules` in `internal/config/tfstate.go`.
+
+1. **`mode == "managed"`.** A normal post-`up` split trial state legitimately *reads* data sources under cluster-phase module prefixes — `module.cert_manager` and `module.roks_cluster` propagate cluster identity into the BNK trial via data-source lookups, and those entries appear in the trial tfstate with `mode == "data"`. Treating data refreshes as ownership would mis-flag every healthy split workspace as legacy. The filter discards them.
+
+2. **`type == "ibm_container_vpc_cluster"`.** The ROKS cluster resource itself is the singular unambiguous v1.0.x marker — if a trial-phase state file owns that resource, the cluster lives in the trial state and the workspace is shared. Other managed resources can appear under cluster-phase module addresses for benign reasons (a stray `tls_private_key.jumphost_shared_key` under `module.testing`, a `module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance` for the registry COS, etc., observed during normal post-`up` split applies); none of those imply shared-state ownership, so they must not trip the classifier on their own. Pinning to the cluster resource type is what makes the heuristic robust against the routine cluster-shared resources that propagate into the BNK trial's plan graph.
+
+3. **Cluster-phase module prefix match.** Even an `ibm_container_vpc_cluster` resource needs to live under one of the cluster-phase module addresses for the legacy classification to fire. Match logic is exact-equality OR `strings.HasPrefix(r.Module, prefix+".")` — the trailing-dot guard covers nested sub-addresses (e.g. `module.roks_cluster.module.cluster`) while preventing false matches against unrelated module names that happen to share a prefix (e.g. `module.roks_cluster_extras` does not match `module.roks_cluster`).
+
+Empirically verified against the canada-roks workspace (135 resources, includes `module.roks_cluster`, `module.roks_cluster.module.cluster`, `module.cert_manager`, `module.testing.*`, plus `module.flo.*`, `module.cne_instance.*`, `module.license.*`).
 
 ### Dispatch table
 

@@ -9,13 +9,19 @@
 
 output "testing_jumphost_shared_public_key" {
   description = "Public key installed on all jumphosts — add to your local ~/.ssh/authorized_keys to log in, or use the private key below"
-  value       = trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)
+  # Sprint 23: jumphost_shared_key is now count-gated on the union of the
+  # two testing_create_*_jumphost toggles. When neither is set (e.g. the
+  # bnk/trial-phase override forces both false), count = 0 and the output
+  # returns "" instead of indexing an empty resource list.
+  value = length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""
 }
 
 output "testing_jumphost_shared_private_key" {
   description = "Private key shared across all jumphosts. Write to a local file (chmod 600) to SSH between hosts: ssh -i <keyfile> ubuntu@<ip>"
-  value       = tls_private_key.jumphost_shared_key.private_key_openssh
-  sensitive   = true
+  # Sprint 23: see testing_jumphost_shared_public_key — same count-flipped
+  # output shape (count=0 → empty string instead of an indexing error).
+  value     = length(tls_private_key.jumphost_shared_key) > 0 ? tls_private_key.jumphost_shared_key[0].private_key_openssh : ""
+  sensitive = true
 }
 
 # ============================================================

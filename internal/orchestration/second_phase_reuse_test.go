@@ -116,6 +116,82 @@ func TestWriteBnkPhaseOverride_TurnsAllClusterSharedOff(t *testing.T) {
 	}
 }
 
+// TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey is the
+// Sprint 23 regression: the 2026-05-27 live evidence
+// (issues/issue_sprint23_staff.md) shows two cluster-shared resources
+// landing as MANAGED entries in the trial state on every Split-shape
+// `roksbnkctl up` —
+// `module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`
+// and `module.testing.tls_private_key.jumphost_shared_key`. The fix has
+// two halves and this test pins the override half:
+//
+//   - the override must explicitly force create_roks_registry_cos_instance =
+//     false, so the inner cluster module's
+//     `count = var.create_cluster && var.create_cos_instance ? 1 : 0`
+//     evaluates to 0 from BOTH halves of the &&, not just the
+//     create_roks_cluster=false half (defense in depth against any code
+//     path — refresh-on-name, partial-apply carry-over — that might leak
+//     the cluster-phase COS into trial state). Pre-Sprint-23 the override
+//     omitted this flag → tfvars default `true` flowed through.
+//
+// The companion half — gating tls_private_key.jumphost_shared_key on
+// (testing_create_cluster_jumphosts || testing_create_tgw_jumphost) so
+// the resource itself flips to count=0 when the existing
+// testing_create_*_jumphost=false override lines fire — lives in
+// terraform/modules/testing/main.tf and is covered by the
+// `roksbnkctl !` live-verify recipe documented in the Sprint 23 closure.
+//
+// Additive — no pre-existing test case is edited.
+func TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey(t *testing.T) {
+	dir := t.TempDir()
+
+	co := &config.ClusterOutputs{
+		ClusterName: "canada-roks",
+		ClusterID:   "crt-cluster-id",
+		VPCID:       "r038-ef6305af-vpc",
+		Source:      "cluster-up",
+	}
+	p, err := writeBnkPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeBnkPhaseOverrideAt: %v", err)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+
+	// The Sprint 23 addition: the override must carry the explicit
+	// registry-COS gate, not lean on the create_roks_cluster=false
+	// half of the inner count expression alone.
+	const wantCOS = `create_roks_registry_cos_instance = false`
+	if !strings.Contains(got, wantCOS) {
+		t.Errorf("bnk-phase override missing Sprint 23 gate %q — registry COS will leak into trial state\n--- override ---\n%s", wantCOS, got)
+	}
+
+	// The Sprint 23 companion: the two testing_create_* gates that
+	// drive the new tls_private_key.jumphost_shared_key count gate
+	// (in terraform/modules/testing/main.tf) must BOTH be in the
+	// override. Already in the round-2 contract — re-asserted here so
+	// any future regression that drops them also fails THIS test,
+	// keeping the jumphost-key-leak signature locked.
+	for _, want := range []string{
+		`testing_create_cluster_jumphosts = false`,
+		`testing_create_tgw_jumphost = false`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bnk-phase override missing jumphost-key-gate driver %q\n--- override ---\n%s", want, got)
+		}
+	}
+
+	// And: the override must NOT carry the true-form of the registry-COS
+	// flag (a defensive guard — if someone ever re-derives the override
+	// from upstream defaults the test catches the regression).
+	if strings.Contains(got, `create_roks_registry_cos_instance = true`) {
+		t.Errorf("override still carries the leak signature `create_roks_registry_cos_instance = true`\n--- override ---\n%s", got)
+	}
+}
+
 // TestClusterIdentity_PrefersIDThenName documents the data-lookup
 // identity selection (data.ibm_container_vpc_cluster.existing_cluster
 // accepts an id or a name for `name`).
@@ -125,5 +201,102 @@ func TestClusterIdentity_PrefersIDThenName(t *testing.T) {
 	}
 	if got := clusterIdentity(&config.ClusterOutputs{ClusterName: "n-1"}); got != "n-1" {
 		t.Errorf("clusterIdentity: want n-1 (no id), got %q", got)
+	}
+}
+
+// TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock is the Sprint 23
+// validator-side additive regression. It complements the staff-side
+// TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey by
+// pinning the BYTE-IDENTICAL ordered block of forced tfvars lines —
+// not just presence. The staff test asserts the new
+// `create_roks_registry_cos_instance = false` gate is somewhere in the
+// override; this test additionally pins its exact ADJACENCY: it must
+// sit between `create_roks_transit_gateway = false` and
+// `testing_create_cluster_jumphosts = false`, in that order, with no
+// intervening lines.
+//
+// Why the stronger assertion: pre-Sprint-23 the override was the round-2
+// 8-line block (no registry-COS gate). The Sprint 23 fix inserts ONE
+// new line at a specific position. A future refactor that re-orders the
+// override (or accidentally drops the new gate while leaving its
+// neighbours intact) would slip past a per-line Contains check but is
+// caught here. Parity discipline (per the validator brief) is
+// byte-identical match on the new lines, not a regex.
+//
+// Live-verify recipe (DO NOT execute in tests — the integrator runs it
+// via `!`): see issues/issue_sprint23_validator.md §"Live-verify recipe".
+// On a fresh Split-shape workspace, after a successful `up`, the trial
+// state file must carry ZERO managed resources under
+// `module.roks_cluster.*` or `module.testing.*` prefixes (jq filter in
+// the closure). If non-empty after this fix lands, the hermetic test
+// passing is necessary but not sufficient and the integrator must NOT
+// run `roksbnkctl bnk down` (resource-damage hazard); full
+// `roksbnkctl down` + re-investigate.
+//
+// Additive — no pre-existing test case is edited.
+func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
+	dir := t.TempDir()
+
+	co := &config.ClusterOutputs{
+		ClusterName: "canada-roks",
+		ClusterID:   "crt-cluster-id",
+		VPCID:       "r038-ef6305af-vpc",
+		Source:      "cluster-up",
+	}
+	p, err := writeBnkPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeBnkPhaseOverrideAt: %v", err)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+
+	// Byte-identical ordered block. The full 9-line Sprint-23 forced
+	// tfvars sequence, in exact order, with single-LF separators. Any
+	// re-ordering, any inserted whitespace, any dropped line fails the
+	// match.
+	const wantBlock = "create_roks_cluster = false\n" +
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n" +
+		"use_existing_cluster_vpc = true\n" +
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
+		"create_roks_transit_gateway = false\n" +
+		"create_roks_registry_cos_instance = false\n" +
+		"testing_create_cluster_jumphosts = false\n" +
+		"testing_create_tgw_jumphost = false\n" +
+		"testing_create_client_vpc = false\n"
+	if !strings.Contains(got, wantBlock) {
+		t.Fatalf("bnk-phase override is missing the Sprint 23 byte-identical block.\n--- want block ---\n%s\n--- got file ---\n%s",
+			wantBlock, got)
+	}
+
+	// Pin the exact adjacency of the new Sprint 23 line: it sits
+	// directly between create_roks_transit_gateway=false and
+	// testing_create_cluster_jumphosts=false. A reorder regression
+	// would pass the Contains() check above (block still appears as a
+	// substring) only if the WHOLE block survives — but if a future
+	// edit splits the block, this targeted check still fires.
+	const wantNeighbours = "create_roks_transit_gateway = false\n" +
+		"create_roks_registry_cos_instance = false\n" +
+		"testing_create_cluster_jumphosts = false\n"
+	if !strings.Contains(got, wantNeighbours) {
+		t.Errorf("Sprint 23 gate `create_roks_registry_cos_instance = false` is not adjacent to its required neighbours.\n--- want ---\n%s\n--- got ---\n%s",
+			wantNeighbours, got)
+	}
+
+	// Defence in depth: the registry-COS leak signature must NOT
+	// survive in any form. The override file is generated, so any
+	// variant of `true` for this flag is a regression. (The header
+	// comment legitimately mentions `create_roks_registry_cos_instance`
+	// by name, so we don't grep for commented-out forms here — only
+	// for an active assignment to true.)
+	for _, leak := range []string{
+		`create_roks_registry_cos_instance = true`,
+		`create_roks_registry_cos_instance=true`,
+	} {
+		if strings.Contains(got, leak) {
+			t.Errorf("override carries Sprint 23 leak signature %q\n--- override ---\n%s", leak, got)
+		}
 	}
 }

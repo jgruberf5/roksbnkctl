@@ -91,29 +91,32 @@ For users who want to *not* use the embedded HCL, the `tf_source: github` or `tf
 
 ## The bundled tools images
 
-The `tools/docker/` directory holds Dockerfiles for the images the `docker` and `k8s` backends use:
+The `tools/docker/` directory holds Dockerfiles for the images the `docker` and `k8s` backends use, plus the release-time book builder:
 
 ```text
 tools/docker/
 ├── Makefile
 ├── ibmcloud/
 │   └── Dockerfile      # roksbnkctl-tools-ibmcloud
-└── iperf3/
-    └── Dockerfile      # roksbnkctl-tools-iperf3
+├── iperf3/
+│   └── Dockerfile      # roksbnkctl-tools-iperf3
+└── mdbook/
+    └── Dockerfile      # roksbnkctl-tools-mdbook (release-time book builder)
 ```
 
-[`tools/docker/Makefile`](https://github.com/jgruberf5/roksbnkctl/blob/main/tools/docker/Makefile) builds both images locally as `:dev`:
+[`tools/docker/Makefile`](https://github.com/jgruberf5/roksbnkctl/blob/main/tools/docker/Makefile) builds the three images locally as `:dev`:
 
 ```bash
 cd tools/docker
-make ibmcloud           # builds roksbnkctl-tools-ibmcloud:dev
-make iperf3             # builds roksbnkctl-tools-iperf3:dev
-make all                # both
+make build-ibmcloud     # builds roksbnkctl-tools-ibmcloud:dev
+make build-iperf3       # builds roksbnkctl-tools-iperf3:dev
+make build-mdbook       # builds roksbnkctl-tools-mdbook:dev
+make build-all          # all three
 ```
 
 The `:dev` tag is what a from-source `roksbnkctl` resolves to when the binary's `Version` is `dev`. A tag-released binary (`v1.0.0`) resolves to `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0` instead — the resolver logic lives in [`internal/exec/`](https://github.com/jgruberf5/roksbnkctl/tree/main/internal/exec) (`SetToolImageTag` is wired in `internal/cli/root.go::init`). See [Chapter 17 §":dev tag resolution"](./17-execution-backends.md#dev-tag-resolution).
 
-The GitHub Actions workflow [`tools-images.yml`](https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml) builds and pushes the published images on a tag push or when `tools/docker/**` changes.
+The GitHub Actions workflow [`tools-images.yml`](https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml) builds and pushes the published images via a `strategy.matrix.image` over `[ibmcloud, iperf3, mdbook]`. Every push to `main` republishes the `:dev` tag for each image; every `v*` tag push publishes `:<tagname>` + `:latest`. `workflow_dispatch` is also wired for manual runs. The `mdbook` image was folded into the matrix in Sprint 22 — routine edits to `tools/docker/mdbook/Dockerfile` no longer require a manual `make -C tools/docker build-mdbook` + `docker push` step on the release-cut host; the next push to `main` republishes `ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev` automatically.
 
 ## The book build
 

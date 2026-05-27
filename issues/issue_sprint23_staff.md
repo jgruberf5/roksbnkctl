@@ -12,7 +12,7 @@
 > created (or refresh-recorded) into trial state on every Split-shape
 > `roksbnkctl up` second phase.
 
-`Status: open`.
+`Status: resolved`.
 
 ---
 
@@ -29,7 +29,7 @@ designed to prevent. Pre-Sprint-22 the DetectShape false-positive
 (`issue_sprint22_staff.md`) masked this leak by forcing operators
 through the LegacySingle path; post-fix the leak is visible and
 exploitable.
-**Status**: open
+**Status**: resolved (override gates COS instance + jumphost-shared-key resource count-gated; closure §"Closure — staff, 2026-05-27")
 
 ### Live observation (2026-05-27, post-`up --auto`)
 
@@ -167,3 +167,248 @@ specific HCL or tfvars-override change with a regression test.
 - Integrator memory [[live-verify-high-issues]] — applies. Closure
   requires a fresh `up` on a clean workspace + an assertion that
   the trial state file has zero managed cluster-phase entries.
+
+---
+
+## Closure — staff, 2026-05-27
+
+### Investigation verdict
+
+**Hypothesis (a) — missing override flag — is the actionable root
+cause; hypotheses (b) and (c) were ruled out by reading.**
+
+Per-hypothesis findings from the HCL read pass:
+
+- **(a) Missing override flag.** The override sets
+  `create_roks_cluster = false`. That propagates through
+  `terraform/modules/roks_cluster/main.tf:28`
+  (`create_cos_instance = var.create_roks_registry_cos_instance`,
+  NOT `var.create_roks_cluster`) to the inner cluster module as
+  `var.create_cos_instance` — and `var.create_cos_instance` keeps
+  its tfvars default of `true` (root `terraform/variables.tf:68-72`,
+  inner submodule `terraform/modules/roks_cluster/modules/cluster/variables.tf:60-64`)
+  because nothing in the override touches the
+  `create_roks_registry_cos_instance` knob. The inner count
+  expression at `terraform/modules/roks_cluster/modules/cluster/main.tf:233`
+  reads `var.create_cluster && var.create_cos_instance ? 1 : 0`,
+  so the AND-half driven by `create_roks_cluster=false`
+  SHOULD make count=0 on its own. In live evidence it doesn't —
+  the resource lands in trial state as `managed` anyway
+  (most likely on a refresh-on-name path where IBM Cloud's
+  `ibm_resource_instance` data carries a stable
+  cluster-phase-created COS into the trial plan; the exact
+  internal walk doesn't matter for the fix). The DEFENSIBLE
+  intervention is to force the SECOND half of the && off too
+  (`create_roks_registry_cos_instance = false`) so the
+  resource is suppressed independently by EITHER half — no
+  reliance on cross-module count-propagation through a path
+  that empirically isn't airtight.
+- **(b) Separate code path / non-cluster module.** Ruled out.
+  Grep for `ibm_resource_instance` + `cos_instance` (line
+  632-654 of investigation trace) shows the only MANAGED
+  `ibm_resource_instance.cos_instance` declaration in the
+  whole `terraform/` tree is the single resource at
+  `terraform/modules/roks_cluster/modules/cluster/main.tf:232`.
+  The flo + license submodules reference COS via
+  `data.ibm_resource_instance.cos_instance` (data, not
+  managed) — they cannot put the resource in state as
+  `mode=managed`.
+- **(c) Override not reaching the apply.** Ruled out. Both
+  `RunTrialUp` (lifecycle.go:169-173) and `RunApply`
+  (lifecycle.go:258-279) append the extraVF returned by
+  `writeAndInitSecondPhase` to the var-file chain AFTER the
+  user's `--var-file` and the applied-tfvars replay. Terraform
+  later-source-wins; the override DOES reach every second-phase
+  plan/apply when `cluster-outputs.json` exists.
+
+Live-evidence misattribution check (per investigation task 3):
+**none.** The state addresses on issue lines 43-44
+(`module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`
+and `module.testing.tls_private_key.jumphost_shared_key`) both
+match real declared resources in the in-tree HCL at the cited
+paths. The architectural hypothesis on issue lines 74-86 (one
+ungated `tls_private_key`, one COS instance "gated by a flag the
+override does NOT set to false") matches the verdict exactly.
+
+### Fix shape
+
+Two HCL edits + one override-content edit + one comment-accuracy
+edit + one additive regression test.
+
+**HCL edits — `terraform/modules/testing/main.tf`:**
+
+```diff
+ resource "tls_private_key" "jumphost_shared_key" {
++  count     = (var.testing_create_cluster_jumphosts || var.testing_create_tgw_jumphost) ? 1 : 0
+   algorithm = "RSA"
+   rsa_bits  = 4096
+ }
+```
+
+…plus a header comment block above the resource (Sprint 23
+provenance, the trial-phase count=0 rationale, and the
+[0]-indexing contract for consumers).
+
+Every consumer of the resource in the same file flipped to
+`[0]`-indexed:
+
+- lines 39, 40 (`authorized_keys` boot-top install)
+- line 188 (`/home/ubuntu/.ssh/id_rsa` base64-decode)
+- lines 193, 194 (`/home/ubuntu/.ssh/id_rsa.pub`, `/root/.ssh/id_rsa.pub`)
+- lines 571, 604 (`connection { private_key = … }` for the two
+  `null_resource.*_jumphost_hosts`)
+
+Locals + consumers stay safe because the `jumphost_user_data`
+local is only evaluated when at least one jumphost resource
+references it (terraform's lazy local-eval), and both jumphost
+instance resources have count/for_each guarded by the same
+toggles that drive the new count gate on the key.
+
+**HCL output edits — `terraform/modules/testing/outputs.tf`:**
+
+```diff
+ output "testing_jumphost_shared_public_key" {
+-  value       = trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)
++  value = length(tls_private_key.jumphost_shared_key) > 0 ? trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh) : ""
+ }
+ output "testing_jumphost_shared_private_key" {
+-  value       = tls_private_key.jumphost_shared_key.private_key_openssh
++  value     = length(tls_private_key.jumphost_shared_key) > 0 ? tls_private_key.jumphost_shared_key[0].private_key_openssh : ""
+ }
+```
+
+The root `terraform/outputs.tf:71-75` already wraps in `try(…, "")`
+so its consumer (`roksbnkctl up`'s post-apply hook that populates
+`targets.jumphost`) is unperturbed when the count flips to 0.
+
+**Override-content edit — `internal/orchestration/second_phase_reuse.go`:**
+
+```diff
+ create_roks_cluster = false
+ roks_cluster_id_or_name = %q
+ use_existing_cluster_vpc = true
+ existing_cluster_vpc_id = %q
+ create_roks_transit_gateway = false
++create_roks_registry_cos_instance = false
+ testing_create_cluster_jumphosts = false
+ testing_create_tgw_jumphost = false
+ testing_create_client_vpc = false
+```
+
+**Comment-accuracy edit — same file.** The Sprint 16 round-2
+header block claimed the override "turns ALL cluster-shared
+creation OFF" — Sprint 23 evidence shows that wasn't true for
+the registry COS gate. Rewrote the relevant prose (file-level
+doc-comment lines 1-77 and the `writeAndInitSecondPhase`
+function-level comment) to:
+
+1. Cite Sprint 23 explicitly in the file-level doc comment.
+2. Add an itemized entry for `create_roks_registry_cos_instance = false`
+   explaining the two-count-half defense-in-depth and the
+   refresh-on-name leak hypothesis.
+3. Cross-link the companion `tls_private_key.jumphost_shared_key`
+   count gate in `terraform/modules/testing/main.tf`.
+4. Change the function-level `writeAndInitSecondPhase` comment from
+   "forces ALL cluster-shared creation off" to "forces every
+   cluster-shared CREATE off (cluster + cluster VPC reuse +
+   transit gateway + registry COS + client VPC + both jumphost
+   classes; Sprint 23 added the explicit registry-COS flag and
+   a count gate on the testing module's shared TLS key)".
+
+**Regression test diff — `internal/orchestration/second_phase_reuse_test.go`:**
+
+New additive `TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey`
+case (no pre-existing test edited). Asserts:
+
+- `create_roks_registry_cos_instance = false` is present in the
+  override (the new Sprint 23 line).
+- `testing_create_cluster_jumphosts = false` and
+  `testing_create_tgw_jumphost = false` are BOTH present (re-pins
+  the jumphost-key-gate drivers, so any future regression that
+  drops them also fails THIS test).
+- The leak signature `create_roks_registry_cos_instance = true`
+  is NOT present.
+
+Pre-fix the test fails on the first assertion (the override doesn't
+carry the new flag); post-fix all three groups pass. Existing
+`TestWriteBnkPhaseOverride_TurnsAllClusterSharedOff` continues
+to pass byte-identically against the new override content — the
+Sprint 23 edit is purely additive at the override-text level.
+
+### `go test` + `go vet`
+
+```
+$ go test ./...
+ok  	github.com/jgruberf5/roksbnkctl/internal/cli	(70.023s)
+ok  	github.com/jgruberf5/roksbnkctl/internal/config	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/cos	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/cred	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/doctor	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/exec	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/ibm	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/k8s	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/orchestration	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/remote	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/test	(cached)
+ok  	github.com/jgruberf5/roksbnkctl/internal/tf	(0.198s)
+ok  	github.com/jgruberf5/roksbnkctl/tools/refgen/cobra-md	(0.151s)
+ok  	github.com/jgruberf5/roksbnkctl/tools/refgen/tfvars-md	(0.648s)
+PASS — orchestration includes the new
+TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey.
+
+$ go vet ./...
+(clean — no diagnostics)
+```
+
+### Live-verify recipe (integrator runs the `!`)
+
+After integration, on a clean workspace:
+
+```bash
+roksbnkctl up --auto --var-file=./terraform.tfvars -w canada-roks
+jq '.resources[]
+    | select(.mode == "managed"
+             and (.module
+                  | startswith("module.roks_cluster")
+                  or startswith("module.testing")))' \
+   ~/.roksbnkctl/canada-roks/state/terraform.tfstate
+```
+
+Expected outcome: empty output. Pre-fix the two managed entries
+(`module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`
+and `module.testing.tls_private_key.jumphost_shared_key`) appeared.
+Post-fix neither resource exists in trial state — the COS instance
+is count-gated on BOTH halves of the inner `&&` and never enters
+trial state; the jumphost key is count-gated to 0 in the trial
+phase (the override sets both driving variables to false).
+
+### Future-sprint candidates raised
+
+1. **Audit other cluster-shared resources for the same count-gate
+   pattern.** The investigation rules out `(b)` for COS by
+   greppping the whole `terraform/` tree, but the same audit hasn't
+   been done for every type that could land in trial state via
+   refresh-on-name. A future sprint could systematically scan the
+   tree for `resource "ibm_*"` declarations whose `count` is gated
+   on a single flag the override DOESN'T also set, and either
+   gate them explicitly or document why they're safe. Lower
+   priority than this fix because the live evidence only flagged
+   the COS resource — but a defense-in-depth follow-up makes sense.
+2. **`roksbnkctl bnk down` confirmation prompt naming the two
+   cluster-shared resources.** The Sprint 22 down-prompt covers
+   the Split-shape composite teardown shape. Pre-Sprint-23 a
+   `bnk down` (trial-only destroy) on a workspace that had
+   already leaked the COS + key would have destroyed
+   cluster-shared infrastructure silently. Post-Sprint-23 the
+   leak is plugged at source, but a defensive `bnk down` that
+   refuses (or LOUDLY warns) if trial state still contains any
+   managed cluster-phase entries would be belt-and-suspenders.
+   Worth a small follow-up sprint.
+3. **The applied-tfvars replay (`appliedVF`) is appended BEFORE
+   `extraVF` in `RunApply` (lifecycle.go:279).** While the
+   architectural override correctly wins later-source-wins, an
+   audit confirming the replay can't carry a stale
+   `create_roks_registry_cos_instance = true` line that a future
+   change might somehow let win is worth doing. Not a Sprint 23
+   regression — but the live-evidence chain raised the question
+   and it's worth closing in a follow-up.

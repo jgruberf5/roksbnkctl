@@ -36,8 +36,8 @@ locals {
     # as soon as the SSH daemon is reachable, without waiting for apt-get.
     mkdir -p /home/ubuntu/.ssh /root/.ssh
     chmod 700 /home/ubuntu/.ssh /root/.ssh
-    echo "${trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)}" >> /home/ubuntu/.ssh/authorized_keys
-    echo "${trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)}" >> /root/.ssh/authorized_keys
+    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" >> /home/ubuntu/.ssh/authorized_keys
+    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" >> /root/.ssh/authorized_keys
     chmod 600 /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys
     chown ubuntu:ubuntu /home/ubuntu/.ssh /home/ubuntu/.ssh/authorized_keys
 
@@ -185,13 +185,13 @@ locals {
 
     # Write shared private key and public key files (authorized_keys already
     # written at boot-top above).
-    echo "${base64encode(tls_private_key.jumphost_shared_key.private_key_openssh)}" | base64 -d > /home/ubuntu/.ssh/id_rsa
+    echo "${base64encode(tls_private_key.jumphost_shared_key[0].private_key_openssh)}" | base64 -d > /home/ubuntu/.ssh/id_rsa
     cp /home/ubuntu/.ssh/id_rsa /root/.ssh/id_rsa
     chmod 600 /home/ubuntu/.ssh/id_rsa /root/.ssh/id_rsa
     chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa
 
-    echo "${trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)}" > /home/ubuntu/.ssh/id_rsa.pub
-    echo "${trimspace(tls_private_key.jumphost_shared_key.public_key_openssh)}" > /root/.ssh/id_rsa.pub
+    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" > /home/ubuntu/.ssh/id_rsa.pub
+    echo "${trimspace(tls_private_key.jumphost_shared_key[0].public_key_openssh)}" > /root/.ssh/id_rsa.pub
     chmod 644 /home/ubuntu/.ssh/id_rsa.pub /root/.ssh/id_rsa.pub
     chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa.pub
 
@@ -274,9 +274,23 @@ locals {
 # in the user_data of every jumphost. Every host therefore
 # accepts connections from any other host using this key,
 # enabling passwordless SSH across all jumphosts.
+#
+# Count-gated on the union of the two jumphost toggles
+# (Sprint 23, issues/issue_sprint23_staff.md Issue 1): the key is
+# only useful when at least one jumphost actually exists. The
+# second/bnk-phase override (internal/orchestration/second_phase_reuse.go)
+# forces BOTH testing_create_cluster_jumphosts and
+# testing_create_tgw_jumphost to false, so this resource flips to
+# count=0 in the trial phase — the cluster-shared key is owned by
+# the cluster phase only, and the trial phase never re-manages it.
+# Pre-Sprint-23: ungated → leaked into trial state on every Split-shape
+# `roksbnkctl up`. Outputs and downstream user_data / connection
+# references all use `[0]` (safe because they are only evaluated when
+# at least one jumphost resource is itself active).
 # ============================================================
 
 resource "tls_private_key" "jumphost_shared_key" {
+  count     = (var.testing_create_cluster_jumphosts || var.testing_create_tgw_jumphost) ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
@@ -554,7 +568,7 @@ resource "null_resource" "cluster_jumphost_hosts" {
     type        = "ssh"
     host        = ibm_is_floating_ip.cluster_jumphost_fip[each.key].address
     user        = "ubuntu"
-    private_key = tls_private_key.jumphost_shared_key.private_key_openssh
+    private_key = tls_private_key.jumphost_shared_key[0].private_key_openssh
     timeout     = "15m"
   }
 
@@ -587,7 +601,7 @@ resource "null_resource" "tgw_jumphost_hosts" {
     type        = "ssh"
     host        = ibm_is_floating_ip.tgw_jumphost_fip[0].address
     user        = "ubuntu"
-    private_key = tls_private_key.jumphost_shared_key.private_key_openssh
+    private_key = tls_private_key.jumphost_shared_key[0].private_key_openssh
     timeout     = "15m"
   }
 
