@@ -61,6 +61,20 @@ variable "create_roks_cluster" {
   default     = false
 }
 
+# Sprint 23: gate the inner cert-manager helm/null_resource bring-up so the
+# second-phase apply doesn't re-manage cert_manager that the cluster phase
+# already deployed. When false, the inner module's count flips to 0; its
+# outputs (namespace / helm_release_version / cert_manager_ready_id) become
+# null, and downstream consumers (flo/cne_instance/license) gate on `!= null`
+# (flo/providers.tf:42's `"direct-apply"` fallback). The destroy provisioner
+# at modules/cert-manager/main.tf — `kubectl delete namespace cert-manager` —
+# CANNOT fire when the resource was never created, which is the whole point.
+variable "deploy_cert_manager" {
+  description = "When true, manage the cert_manager helm/null_resource bring-up. Set false in the bnk-phase override when cluster-outputs.json exists — cluster phase already provisioned cert_manager and the second phase must NOT re-manage it (would attempt kubectl delete namespace cert-manager on a subsequent bnk down)."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_dependency_id" {
   description = "roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes"
   type        = string

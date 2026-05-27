@@ -32,7 +32,7 @@ module "cert_manager" {
 
   depends_on = [data.ibm_container_cluster_config.runtime_config]
 
-  enabled               = true
+  enabled               = var.deploy_cert_manager
   namespace             = var.cert_manager_namespace
   chart_version         = var.cert_manager_version
   post_deployment_delay = 30

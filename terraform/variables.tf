@@ -71,6 +71,17 @@ variable "create_roks_registry_cos_instance" {
   default     = true
 }
 
+# Sprint 23: bnk-phase-override.tfvars sets this false when cluster-outputs.json
+# exists. Cluster phase manages cert_manager (helm release + namespace lifecycle);
+# trial phase MUST NOT re-manage it, or `roksbnkctl bnk down` would execute the
+# inner module's destroy provisioner — `kubectl delete namespace cert-manager` —
+# and wipe cert_manager + every cert it issued.
+variable "deploy_cert_manager" {
+  description = "When true, the cert_manager module's helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to \"direct-apply\")."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_vpc_name" {
   description = "Name of the cluster VPC"
   type        = string

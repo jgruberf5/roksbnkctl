@@ -66,6 +66,7 @@ module "cert_manager" {
   cert_manager_namespace     = var.cert_manager_namespace
   cert_manager_version       = var.cert_manager_version
   create_roks_cluster        = var.create_roks_cluster
+  deploy_cert_manager        = var.deploy_cert_manager
   roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
   kubeconfig_dir             = "${var.kubeconfig_dir}/cert_manager"
 }
@@ -82,7 +83,17 @@ module "flo" {
   ibmcloud_cluster_region       = var.ibmcloud_cluster_region
   ibmcloud_resource_group       = var.ibmcloud_resource_group
   roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
-  cert_manager_namespace        = module.cert_manager.cert_manager_namespace
+  # Sprint 23 round-2: pass the ROOT variable directly, not the cert_manager
+  # module's output. When deploy_cert_manager=false (bnk-phase override),
+  # the inner cert-manager module's outputs return null (mode=managed
+  # resources gated to count=0). flo's null_resource.ca_certificate at
+  # modules/flo/modules/flo/main.tf:364-365 interpolates this value into a
+  # template string — interpolating null produces an "Invalid template
+  # interpolation value" error. The root variable is always defined
+  # (defaults to "cert-manager") and matches the namespace the CLUSTER
+  # phase already provisioned cert_manager into, which is exactly what flo
+  # needs to know to deploy BNK resources against the existing namespace.
+  cert_manager_namespace        = var.cert_manager_namespace
   far_repo_url                  = var.far_repo_url
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   use_cos_bucket                = true

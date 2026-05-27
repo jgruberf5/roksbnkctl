@@ -221,8 +221,13 @@ resource "ibm_is_security_group_rule" "cluster_tcp_80" {
 }
 
 
-# Add inbound rule to cluster VPC default security group to allow all traffic
+# Add inbound rule to cluster VPC default security group to allow all traffic.
+# Sprint 23: count-gated on var.create_cluster so the second-phase apply (which
+# forces create_cluster=false via the bnk-phase override) does NOT add a
+# duplicate rule to the cluster VPC's default SG. The cluster phase already
+# created this rule; trial phase has no business managing it.
 resource "ibm_is_security_group_rule" "cluster_sg_inbound_all" {
+  count     = var.create_cluster ? 1 : 0
   group     = local.cluster_vpc_default_sg
   direction = "inbound"
   remote    = "0.0.0.0/0"
