@@ -6,8 +6,9 @@
 //	~/.awsbnkctl/<workspace>/config.yaml — per-workspace inputs
 //	~/.awsbnkctl/<workspace>/state/      — state.env IDs cache, kubeconfig, scratch/
 //
-// Override the base directory via $ROKSBNKCTL_HOME (used by tests;
-// advanced users with non-home-dir state).
+// Override the base directory via $AWSBNKCTL_HOME (used by tests;
+// advanced users with non-home-dir state). The legacy name
+// $ROKSBNKCTL_HOME is still honoured for back-compat.
 //
 // Secrets policy: workspace config.yaml is rejected at load time if it
 // contains plaintext credentials (api_key, password, token,

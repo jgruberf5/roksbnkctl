@@ -109,10 +109,10 @@ func (LocalBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, 
 	}
 
 	// Wrap stdout/stderr through the redactor so a wrapped tool that
-	// accidentally prints a secret (verbose tool logging — kubectl
-	// --v=10, terraform TF_LOG=trace) gets caught before the bytes
-	// reach the caller. PRD 04 §"Cross-backend principles" #1 —
-	// defense-in-depth.
+	// accidentally prints a secret (verbose tool logging — e.g.
+	// kubectl --v=10 or a tool's debug log mode) gets caught before
+	// the bytes reach the caller. PRD 04 §"Cross-backend principles"
+	// #1 — defense-in-depth.
 	stdout, stdoutClose := wrapForRedaction(opts.Stdout, opts.Credentials)
 	stderr, stderrClose := wrapForRedaction(opts.Stderr, opts.Credentials)
 	defer func() {

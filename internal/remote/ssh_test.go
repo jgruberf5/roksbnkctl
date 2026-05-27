@@ -61,7 +61,7 @@ func startTestServer(t *testing.T, handler gssh.Handler) (host string, port int,
 
 // allowKeyCallback returns a HostKeyCallback that accepts only the
 // expected host key. Avoids the production TOFU code path so SSH-only
-// tests don't touch ROKSBNKCTL_HOME.
+// tests don't touch AWSBNKCTL_HOME.
 func allowKeyCallback(want ssh.PublicKey) ssh.HostKeyCallback {
 	return func(_ string, _ net.Addr, got ssh.PublicKey) error {
 		if want.Type() != got.Type() ||

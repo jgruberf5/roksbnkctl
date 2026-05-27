@@ -10,10 +10,11 @@ import (
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 )
 
-// IAMAPI is the subset of iam.Client surface awsbnkctl uses. Sprint 2
-// covers the OIDC-provider lookup (for the iam_irsa terraform module's
-// data source equivalent in Go) + the IRSA role existence probe (for
-// the doctor row). PRD 08 § "internal/aws/" pins this list.
+// IAMAPI is the subset of iam.Client surface awsbnkctl uses. It covers
+// the OIDC-provider lookup (equivalent to what a Terraform data source
+// would do, now expressed directly in Go via the AWS SDK) + the IRSA
+// role existence probe (for the doctor row). PRD 08 § "internal/aws/"
+// pins this list.
 type IAMAPI interface {
 	GetOpenIDConnectProvider(ctx context.Context, in *iam.GetOpenIDConnectProviderInput, opts ...func(*iam.Options)) (*iam.GetOpenIDConnectProviderOutput, error)
 	GetRole(ctx context.Context, in *iam.GetRoleInput, opts ...func(*iam.Options)) (*iam.GetRoleOutput, error)
@@ -39,8 +40,8 @@ func (c *Clients) EnsureIAM() (IAMAPI, error) {
 // iam:GetOpenIDConnectProvider. The URL field surfaces the issuer
 // (with no scheme — IAM strips https://); ClientIDs are the audiences
 // the provider trusts (typically just "sts.amazonaws.com" for EKS
-// IRSA). PRD 08's iam_irsa terraform module uses both at trust-policy
-// composition time.
+// IRSA). The Go-SDK IAM phase uses both at trust-policy composition
+// time (PRD 08).
 type OIDCProviderInfo struct {
 	ARN       string
 	URL       string
@@ -51,8 +52,8 @@ type OIDCProviderInfo struct {
 // GetOIDCProvider calls iam:GetOpenIDConnectProvider. The ARN format is
 // arn:aws:iam::<account>:oidc-provider/<host>/<id> — for EKS the host
 // is `oidc.eks.<region>.amazonaws.com` and the id is the cluster's
-// OIDC suffix. PRD 07's eks_cluster module surfaces this ARN as the
-// `oidc_provider_arn` output.
+// OIDC suffix. The Go-SDK cluster phase surfaces this ARN as the
+// oidc_provider_arn cluster output.
 func (c *Clients) GetOIDCProvider(ctx context.Context, arn string) (*OIDCProviderInfo, error) {
 	if arn == "" {
 		return nil, errors.New("OIDC provider ARN is empty")
@@ -97,7 +98,8 @@ type RoleInfo struct {
 //
 // The doctor row treats "role doesn't exist" as informational
 // (acceptable pre-apply) rather than failing — full IRSA-role
-// reconciliation lands when the iam_irsa terraform module applies.
+// reconciliation is performed by the Go-SDK IAM phase during
+// `awsbnkctl up`.
 func (c *Clients) HasIRSARole(ctx context.Context, roleName string) (*RoleInfo, error) {
 	if roleName == "" {
 		return nil, errors.New("role name is empty")
@@ -136,15 +138,14 @@ func IsIAMNoSuchEntity(err error) bool {
 	return strings.Contains(err.Error(), "NoSuchEntity")
 }
 
-// IRSARoleNameForCluster derives the IAM role name the iam_irsa
-// terraform module creates from the cluster name, per PRD 08's
+// IRSARoleNameForCluster derives the IAM role name the Go-SDK IAM phase
+// creates from the cluster name, per PRD 08's
 // "<cluster>-flo-supply-chain-reader" naming convention. Callers can
-// override the module's role name via `role_name_override`; in that
-// case the doctor row probes whatever name lives in the workspace
-// config — but most invocations will exercise this default.
+// override via workspace config; most invocations will exercise this
+// default.
 //
-// Pinned in iam.go (rather than the iam_irsa module's variables.tf)
-// because the doctor row needs to know the name without parsing HCL.
+// Pinned in iam.go so the doctor row can derive the expected name
+// without requiring caller knowledge of the naming convention.
 func IRSARoleNameForCluster(clusterName string) string {
 	return "awsbnkctl-" + clusterName + "-flo-supply-chain-reader"
 }

@@ -192,7 +192,7 @@ func waitForSSHReady(ctx context.Context, t *testing.T, host string, port int, u
 // Wires an Insecure-mode HostKeyCallback so the first connect against a
 // fresh container is silent (the container's host key was just generated
 // at startup; no operator can have pre-pinned it). Each test gets its own
-// known_hosts file via t.Setenv(ROKSBNKCTL_HOME, t.TempDir()) — see
+// known_hosts file via t.Setenv(AWSBNKCTL_HOME, t.TempDir()) — see
 // callers below.
 func (f *sshFixture) target() *Target {
 	return &Target{
@@ -209,7 +209,7 @@ func (f *sshFixture) target() *Target {
 // connect → run → output → exit zero. If this fails everything else is
 // noise, so it's first.
 func TestIntegration_Connect_Whoami(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
+	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fix := startSSHContainer(ctx, t)
@@ -238,7 +238,7 @@ func TestIntegration_Connect_Whoami(t *testing.T) {
 // remote process flow through Run unchanged. PRD 01's "remote command
 // failed → pass through the remote process's exit code unchanged" clause.
 func TestIntegration_ExitCode_Propagates(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
+	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fix := startSSHContainer(ctx, t)
@@ -266,7 +266,7 @@ func TestIntegration_ExitCode_Propagates(t *testing.T) {
 // the worst SSH bugs (line-buffering misconfigurations, partial reads,
 // goroutine reorderings) at low cost.
 func TestIntegration_Stdout_StreamsAllLines(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
+	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fix := startSSHContainer(ctx, t)
@@ -303,7 +303,7 @@ func TestIntegration_Stdout_StreamsAllLines(t *testing.T) {
 // `awsbnkctl exec --on jumphost -- some-tool` and corrupt downstream
 // pipelines that expect clean stderr/stdout.
 func TestIntegration_StderrSeparation(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
+	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fix := startSSHContainer(ctx, t)
@@ -351,7 +351,7 @@ func TestIntegration_StderrSeparation(t *testing.T) {
 // during `awsbnkctl exec --on jumphost -- sleep 30` would hang for the
 // full 30s — bad UX.
 func TestIntegration_ContextCancellation(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
+	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fix := startSSHContainer(ctx, t)

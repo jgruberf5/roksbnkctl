@@ -522,7 +522,7 @@ func runDNSProbeSSH(ctx context.Context, cctx *config.Context, spec, target stri
 		"--timeout", timeout.String(),
 		"-o", "json",
 	}
-	env := []string{"ROKSBNKCTL_SSH_TARGET=" + tName}
+	env := []string{"AWSBNKCTL_SSH_TARGET=" + tName}
 	var stdout strings.Builder
 	rc, runErr := be.Run(ctx, argv, execbackend.RunOpts{
 		Env:    env,
@@ -757,7 +757,7 @@ func runIperf3ClientSSH(ctx context.Context, backendSpec string, opts test.Throu
 		Bootstrap:       flagBootstrap,
 		InsecureHostKey: flagInsecureHostKey,
 	})
-	env := []string{"ROKSBNKCTL_SSH_TARGET=" + target}
+	env := []string{"AWSBNKCTL_SSH_TARGET=" + target}
 	argv := append([]string{"iperf3"}, args...)
 	var stdout strings.Builder
 	rc, runErr := be.Run(ctx, argv, execbackend.RunOpts{

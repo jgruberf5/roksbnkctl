@@ -9,12 +9,12 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/remote"
 )
 
-// withTempHome points ROKSBNKCTL_HOME at a fresh tempdir and seeds a
+// withTempHome points AWSBNKCTL_HOME at a fresh tempdir and seeds a
 // minimally-valid workspace there. Returns the workspace name.
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv(config.ROKSBNKCTLHomeEnv, dir)
+	t.Setenv(config.AWSBNKCTLHomeEnv, dir)
 	const name = "ws1"
 	ws := &config.Workspace{
 		AWS:     config.AWSCfg{Region: "us-east-1"},
