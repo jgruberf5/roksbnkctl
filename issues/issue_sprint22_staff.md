@@ -33,7 +33,7 @@ shipped"** below the original proposal for the actual code and tests.
 operator sees exit 0 and assumes both phases gone — same class as
 [[argv-strictness-prevents-resource-damage]], silently driving a
 resource-heavy command against the wrong dispatch path)
-**Status**: open
+**Status**: resolved (shipped in `cbb9c1b`; companion down-prompt fix in `18415eb`)
 
 ### Motivation
 
