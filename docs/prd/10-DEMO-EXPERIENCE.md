@@ -81,7 +81,7 @@ What the marker gates:
 | `demo run` | refuses (guard: "not a demo cluster") | enabled |
 | `down` | tears down infra | also runs `demo clean` first |
 
-**Tag mechanism (resolved):** the demo tags ride the **existing `cl.Tags` map** — injected at config-load when `demo.enabled`, so the `tags.Merge(tags.Required(...), cl.Tags, ...)` call already present in every phase carries them for free. This is **zero per-phase edits** (the deletion-test winner over adding a new tag-map argument to ~15 `Merge` call-sites). The expiry tag is an **absolute** `awsbnkctl:demo-expiry=<RFC3339 UTC>` computed at `up --demo` from a default **7-day** window (overridable via `demo.ttl`, a Go duration); absolute rather than a duration so `status` can compute remaining time without separately knowing creation time.
+**Tag mechanism (resolved):** the demo tags ride the **existing `cl.Tags` map** — injected at config-load when `demo.enabled`, so the `tags.Merge(tags.Required(...), cl.Tags, ...)` call already present in every phase carries them for free. This is **zero per-phase edits** (the deletion-test winner over adding a new tag-map argument to ~15 `Merge` call-sites). The expiry tag is an **absolute** `awsbnkctl:demo-expiry=<RFC3339 UTC>` computed at `up --demo` from a default **1-day** window (overridable via `demo.ttl`, a Go duration); absolute rather than a duration so `status` can compute remaining time without separately knowing creation time.
 
 ## Jumphost pre-staging (during `up --demo`)
 
@@ -166,7 +166,7 @@ Constraints: must degrade gracefully on a non-TTY / piped output (fall back to t
 
 1. **Workload deploy timing:** `demo run` applies the demo namespaces/VIPs **on demand** (re-runnable; `up --demo` stays focused on infra + client pre-staging, not workloads).
 2. **Package layout:** a thin **`internal/demo/`** package tree that *composes* the scenario lifecycle — keeps "validate" (scenarios) vs "present" (demo) separable. *(Confirmed viable against the live `Scenario` interface — no framework fork.)*
-3. **Auto-expiry:** demo clusters carry a **TTL/expiry tag** alongside `awsbnkctl:demo=true`, surfaced as a **warn-only** notice in `status` (no automatic teardown). **Format:** absolute `awsbnkctl:demo-expiry=<RFC3339 UTC>`, default **7-day** window, overridable via `demo.ttl`. *(Operator: confirm the 7-day default during review.)*
+3. **Auto-expiry:** demo clusters carry a **TTL/expiry tag** alongside `awsbnkctl:demo=true`, surfaced as a **warn-only** notice in `status` (no automatic teardown). **Format:** absolute `awsbnkctl:demo-expiry=<RFC3339 UTC>`, default **1-day** window, overridable via `demo.ttl`. *(Operator-decided 2026-05-27: 1 day — it's a demo, not a long-lived cluster.)*
 4. **Flag ergonomics:** **`-f`** shorthand + keep the `--config` long name (shipped via PR #66).
 5. **Tag threading (Architect):** demo + TTL tags ride the existing `cl.Tags` map (injected at config-load), **not** a new `Merge` argument — zero per-phase edits.
 6. **Pre-staging placement (Architect):** a new orchestration step *after* the jumphost phase, not an edit inside the AWS-provisioning jumphost phase; the `jumphost` package stays a dependency-free leaf.
