@@ -7,10 +7,12 @@ package cli
 // (the same path runtime uses), then assert each line's shape.
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 )
@@ -260,4 +262,60 @@ func TestLoadStatusState(t *testing.T) {
 	}
 
 	_ = st // silence: st only used to seed the file via dir read above
+}
+
+func TestWriteStatusDemoBanner(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	cases := []struct {
+		name       string
+		kv         map[string]string
+		wantBanner bool
+		wantSubstr string
+		wantAbsent string
+	}{
+		{name: "demo + future expiry", kv: map[string]string{"DEMO_MODE": "true", "DEMO_EXPIRY": future}, wantBanner: true, wantSubstr: "in "},
+		{name: "demo + past expiry", kv: map[string]string{"DEMO_MODE": "true", "DEMO_EXPIRY": past}, wantBanner: true, wantSubstr: "EXPIRED"},
+		{name: "demo + missing expiry", kv: map[string]string{"DEMO_MODE": "true"}, wantBanner: true, wantAbsent: "expires"},
+		{name: "non-demo cluster", kv: map[string]string{"VPC_ID": "vpc-1"}, wantBanner: false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var st *state.State
+			if tc.kv != nil {
+				st, _ = stateFrom(t, tc.kv)
+			}
+			var buf bytes.Buffer
+			writeStatusDemoBanner(&buf, st)
+			got := buf.String()
+
+			if tc.wantBanner && !strings.Contains(got, "⚠ DEMO") {
+				t.Errorf("expected ⚠ DEMO banner, got: %q", got)
+			}
+			if !tc.wantBanner && got != "" {
+				t.Errorf("expected no output for non-demo cluster, got: %q", got)
+			}
+			if tc.wantSubstr != "" && !strings.Contains(got, tc.wantSubstr) {
+				t.Errorf("expected %q in output, got: %q", tc.wantSubstr, got)
+			}
+			if tc.wantAbsent != "" && strings.Contains(got, tc.wantAbsent) {
+				t.Errorf("expected %q to be absent from output, got: %q", tc.wantAbsent, got)
+			}
+		})
+	}
+}
+
+func TestWriteStatusDemoBannerNilState(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	writeStatusDemoBanner(&buf, nil) // must not panic
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for nil state, got: %q", buf.String())
+	}
 }

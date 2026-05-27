@@ -122,6 +122,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	// by convention: a missing / unreadable / empty state.env degrades to
 	// "not deployed" rather than failing the command.
 	st, _ := loadStatusState(flagStatusConfig, cctx.Workspace.Cluster.Name)
+	writeStatusDemoBanner(tw, st)
 	writeStatusDeployStateFromState(tw, st)
 
 	// Kubeconfig + cluster reachability.
@@ -144,6 +145,52 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	clusterStatus := probeCluster(cmd.Context(), kcPath)
 	fmt.Fprintf(os.Stdout, "Cluster:        %s\n", clusterStatus)
 	return nil
+}
+
+// writeStatusDemoBanner emits the demo banner and a warn-only expiry notice
+// when the cluster is a demo deployment (DEMO_MODE=true in state). No-op for
+// non-demo clusters and nil state. Best-effort: a missing or unparseable
+// DEMO_EXPIRY degrades to the banner alone without a countdown.
+func writeStatusDemoBanner(tw io.Writer, st *state.State) {
+	if st == nil || st.Get("DEMO_MODE") != "true" {
+		return
+	}
+	fmt.Fprintln(tw, "⚠ DEMO:\tnot a production deployment")
+	exp := st.Get("DEMO_EXPIRY")
+	if exp == "" {
+		return
+	}
+	t, err := time.Parse(time.RFC3339, exp)
+	if err != nil {
+		fmt.Fprintf(tw, "Demo expires:\t%s (unparseable)\n", exp)
+		return
+	}
+	remaining := time.Until(t)
+	if remaining > 0 {
+		fmt.Fprintf(tw, "Demo expires:\t%s (in %s)\n", exp, humanizeDuration(remaining))
+	} else {
+		fmt.Fprintf(tw, "Demo expires:\t%s (EXPIRED)\n", exp)
+	}
+}
+
+// humanizeDuration formats a positive duration as a short projector-legible
+// string (e.g. "2d 3h", "45m", "30s").
+func humanizeDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm", minutes)
+	default:
+		return fmt.Sprintf("%ds", seconds)
+	}
 }
 
 // writeStatusDeployStateFromState emits the deploy-state lines for `status`
