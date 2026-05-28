@@ -1,9 +1,8 @@
 # Forge MCP Integration — Plan
 
-**Status:** P1 + P2 shipped (PR #1, PR #2). MCP-only (Option B); REST fallback eliminated by `bnk-forge#114`.
+**Status:** stable. P1 + P2 shipped (PR #1, PR #2). MCP-only (Option B); REST fallback eliminated by `bnk-forge#114`.
 **Owner:** awsbnkctl maintainers
 **Companion repo:** `bnk-forge-v2` (localhost dev at `http://localhost:8000`; MCP at `http://localhost:8081/mcp/`)
-**Last updated:** 2026-05-18
 
 ## 0 · Architecture: peer-read model (load-bearing)
 
@@ -207,7 +206,7 @@ P0 + P3 + P1 + P2 shipped in one session — Option A (REST) was leapfrogged bec
 - **Unit tests** (`internal/forge/*_test.go`): mock REST client; verify request bodies, idempotency keys, error mapping.
 - **`forge register --dry-run`**: prints the planned API calls (`POST /api/projects {...}`, etc.) without executing — covered by a golden test.
 - **Localhost E2E** (`scripts/forge-e2e.sh`): given a running `bnk-forge-v2` localhost stack (`make install` in that repo) + a dry-run `awsbnkctl up` workspace, exercise `forge register` end-to-end and assert forge's `/api/projects/{id}` reflects the expected shape. Skipped in CI unless `FORGE_E2E=1` is set.
-- **PRD 07 spike integration**: after the operator runs the real-AWS spike and lands a real cluster, `forge register` becomes part of the spike checklist (extends `docs/prd/07-EKS-CLUSTER-SRIOV.md` § "Spike protocol — day 3").
+- **Spike integration**: when an operator runs the real-AWS spike against a fresh cluster, `forge register` is part of the spike checklist (covers the spike-to-production transition).
 
 ---
 
@@ -239,5 +238,4 @@ These don't block writing the code, but worth resolving before P1 lands.
 - Forge cluster routes: `bnk-forge-v2/backend/routes/k8s/clusters.py`
 - Forge IaC routes: `bnk-forge-v2/backend/routes/` (projects, project-modules, stacks)
 - Localhost dev creds: `admin` / `changeme` at `POST http://localhost:8000/api/auth/login`
-- awsbnkctl CLI lifecycle: `docs/PRD.md`, `docs/prd/00-OVERVIEW.md`
-- PRD 07 spike protocol (where day-3 will eventually call `forge register`): `docs/prd/07-EKS-CLUSTER-SRIOV.md`
+- awsbnkctl CLI lifecycle: README + [`docs/POST_TERRAFORM_DIRECTION.md`](POST_TERRAFORM_DIRECTION.md)

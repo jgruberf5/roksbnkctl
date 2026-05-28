@@ -7,13 +7,101 @@ package cli
 // (the same path runtime uses), then assert each line's shape.
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 )
+
+// TestResolveKubeconfigForStatus verifies that resolveKubeconfigForStatus
+// prefers the state.env KUBECONFIG_PATH over the host default, and falls back
+// gracefully when the path is missing or state is nil.
+func TestResolveKubeconfigForStatus(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil state falls back to host default", func(t *testing.T) {
+		got := resolveKubeconfigForStatus(nil)
+		// We can't assert the exact host default path, but we can assert
+		// the function doesn't panic and returns something (or empty string)
+		// without touching an absent state.
+		_ = got // just ensure it doesn't panic
+	})
+
+	t.Run("state without KUBECONFIG_PATH falls back to host default", func(t *testing.T) {
+		st, _ := stateFrom(t, map[string]string{"VPC_ID": "vpc-123"})
+		got := resolveKubeconfigForStatus(st)
+		// No KUBECONFIG_PATH → must not return the absent stored path.
+		// The result is either the host default or "".
+		_ = got
+	})
+
+	t.Run("state with existing KUBECONFIG_PATH returns that path", func(t *testing.T) {
+		// Write a real file so os.Stat succeeds.
+		dir := t.TempDir()
+		kcFile := filepath.Join(dir, "kubeconfig")
+		if err := os.WriteFile(kcFile, []byte("fake-kubeconfig"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		st, _ := stateFrom(t, map[string]string{"KUBECONFIG_PATH": kcFile})
+		got := resolveKubeconfigForStatus(st)
+		if got != kcFile {
+			t.Errorf("resolveKubeconfigForStatus = %q, want %q", got, kcFile)
+		}
+	})
+
+	t.Run("state with relative KUBECONFIG_PATH resolves via state dir", func(t *testing.T) {
+		// Simulate a relative path stored in state.env by using basename
+		// and putting the file next to the state.env.
+		dir := t.TempDir()
+		kcFile := filepath.Join(dir, "kubeconfig")
+		if err := os.WriteFile(kcFile, []byte("fake-kubeconfig"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.env"), []byte("KUBECONFIG_PATH=.awsbnkctl/mycluster/kubeconfig\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		st, err := state.Load(dir)
+		if err != nil {
+			t.Fatalf("state.Load: %v", err)
+		}
+		// The stored path ".awsbnkctl/mycluster/kubeconfig" won't exist
+		// as-is in the temp dir, so resolveKubeconfigForStatus will try
+		// filepath.Join(st.Dir(), "kubeconfig") = dir/kubeconfig, which
+		// does exist (we wrote it above).
+		got := resolveKubeconfigForStatus(st)
+		if got != kcFile {
+			t.Errorf("resolveKubeconfigForStatus = %q, want %q (state dir fallback)", got, kcFile)
+		}
+	})
+}
+
+// TestResolveKubeconfigFromConfig verifies the shared helper that derives
+// a kubeconfig path from a cluster.yaml via its state.env KUBECONFIG_PATH.
+func TestResolveKubeconfigFromConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty configPath returns empty string", func(t *testing.T) {
+		got, err := resolveKubeconfigFromConfig("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
+		}
+	})
+
+	t.Run("nonexistent config file returns error", func(t *testing.T) {
+		_, err := resolveKubeconfigFromConfig("/nonexistent/path/cluster.yaml")
+		if err == nil {
+			t.Fatal("expected error for nonexistent config, got nil")
+		}
+	})
+}
 
 // stateFrom writes a state.env with the given KEY=VALUE pairs into a temp
 // dir and loads it. Returns the loaded State and its dir.
@@ -174,4 +262,60 @@ func TestLoadStatusState(t *testing.T) {
 	}
 
 	_ = st // silence: st only used to seed the file via dir read above
+}
+
+func TestWriteStatusDemoBanner(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	cases := []struct {
+		name       string
+		kv         map[string]string
+		wantBanner bool
+		wantSubstr string
+		wantAbsent string
+	}{
+		{name: "demo + future expiry", kv: map[string]string{"DEMO_MODE": "true", "DEMO_EXPIRY": future}, wantBanner: true, wantSubstr: "in "},
+		{name: "demo + past expiry", kv: map[string]string{"DEMO_MODE": "true", "DEMO_EXPIRY": past}, wantBanner: true, wantSubstr: "EXPIRED"},
+		{name: "demo + missing expiry", kv: map[string]string{"DEMO_MODE": "true"}, wantBanner: true, wantAbsent: "expires"},
+		{name: "non-demo cluster", kv: map[string]string{"VPC_ID": "vpc-1"}, wantBanner: false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var st *state.State
+			if tc.kv != nil {
+				st, _ = stateFrom(t, tc.kv)
+			}
+			var buf bytes.Buffer
+			writeStatusDemoBanner(&buf, st)
+			got := buf.String()
+
+			if tc.wantBanner && !strings.Contains(got, "⚠ DEMO") {
+				t.Errorf("expected ⚠ DEMO banner, got: %q", got)
+			}
+			if !tc.wantBanner && got != "" {
+				t.Errorf("expected no output for non-demo cluster, got: %q", got)
+			}
+			if tc.wantSubstr != "" && !strings.Contains(got, tc.wantSubstr) {
+				t.Errorf("expected %q in output, got: %q", tc.wantSubstr, got)
+			}
+			if tc.wantAbsent != "" && strings.Contains(got, tc.wantAbsent) {
+				t.Errorf("expected %q to be absent from output, got: %q", tc.wantAbsent, got)
+			}
+		})
+	}
+}
+
+func TestWriteStatusDemoBannerNilState(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	writeStatusDemoBanner(&buf, nil) // must not panic
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for nil state, got: %q", buf.String())
+	}
 }

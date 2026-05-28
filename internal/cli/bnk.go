@@ -17,6 +17,7 @@ var (
 	flagBnkResyncGatewayClass string
 	flagBnkResyncDryRun       bool
 	flagBnkResyncKubeconfig   string
+	flagBnkResyncConfig       string
 )
 
 var bnkCmd = &cobra.Command{
@@ -45,6 +46,12 @@ Target selection (exactly one required):
   --gateway-class <name>          resync HTTPRoutes whose parent Gateway uses
                                   gatewayClassName: <name> (all namespaces)
 
+Kubeconfig selection (precedence: --kubeconfig > --config > default lookup):
+  --config/-f <cluster.yaml>   derive kubeconfig from the cluster's state.env
+                               KUBECONFIG_PATH (same resolution as "status -f")
+  --kubeconfig <path>          explicit path (takes precedence over --config)
+  (neither)                    standard kubectl lookup: $KUBECONFIG → ~/.kube/config
+
 Live-validated on syd-tracer 2026-05-23 — controller logs
 "GatewayReconciler: handling http route update" within 5s of the first patch.`,
 	Args: cobra.MaximumNArgs(1),
@@ -56,7 +63,8 @@ func init() {
 	bnkResyncCmd.Flags().BoolVar(&flagBnkResyncAllInNS, "all-in-ns", false, "resync every HTTPRoute in the namespace given by -n")
 	bnkResyncCmd.Flags().StringVar(&flagBnkResyncGatewayClass, "gateway-class", "", "resync HTTPRoutes whose parent Gateway uses this gatewayClassName (all namespaces)")
 	bnkResyncCmd.Flags().BoolVar(&flagBnkResyncDryRun, "dry-run", false, "print what would be patched without making any API writes")
-	bnkResyncCmd.Flags().StringVar(&flagBnkResyncKubeconfig, "kubeconfig", "", "path to kubeconfig (default: standard kubectl lookup: $KUBECONFIG → ~/.kube/config)")
+	bnkResyncCmd.Flags().StringVar(&flagBnkResyncKubeconfig, "kubeconfig", "", "explicit kubeconfig path (takes precedence over --config; default: $KUBECONFIG → ~/.kube/config)")
+	bnkResyncCmd.Flags().StringVarP(&flagBnkResyncConfig, "config", "f", "", "path to cluster.yaml; derives kubeconfig from the cluster's state.env KUBECONFIG_PATH (overridden by --kubeconfig)")
 
 	bnkCmd.AddCommand(bnkResyncCmd)
 	rootCmd.AddCommand(bnkCmd)
@@ -68,7 +76,17 @@ func runBnkResync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dyn, err := k8s.BuildDynamicClient(flagBnkResyncKubeconfig)
+	// Kubeconfig precedence: explicit --kubeconfig > --config-derived > default.
+	kubeconfigPath := flagBnkResyncKubeconfig
+	if kubeconfigPath == "" && flagBnkResyncConfig != "" {
+		derived, err := resolveKubeconfigFromConfig(flagBnkResyncConfig)
+		if err != nil {
+			return fmt.Errorf("bnk resync: %w", err)
+		}
+		kubeconfigPath = derived
+	}
+
+	dyn, err := k8s.BuildDynamicClient(kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("building kube client: %w", err)
 	}

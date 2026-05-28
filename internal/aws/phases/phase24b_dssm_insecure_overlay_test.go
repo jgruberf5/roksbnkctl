@@ -36,7 +36,37 @@ func dssmHostDeviceCluster() *intent.Cluster {
 	return &intent.Cluster{Pattern: "host-device"}
 }
 
+// buildReadyDSSMPod returns a dssm pod with a Ready=True condition.
+func buildReadyDSSMPod(name, appLabel string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: InstanceNamespace,
+			Labels:    map[string]string{"app": appLabel},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+}
+
+// buildNotReadyDSSMPod returns a dssm pod with no Ready condition (cold-start state).
+func buildNotReadyDSSMPod(name, appLabel string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: InstanceNamespace,
+			Labels:    map[string]string{"app": appLabel},
+		},
+	}
+}
+
 // ─── Test 1: HappyPath — unpatched CM gets patched and pods bounced ───────────
+//
+// Pods are NOT ready (no Ready condition) so the readiness guard falls through.
+// The CM is unpatched so the phase patches it and issues a DeleteCollection.
 
 func TestPhase24b_HappyPath(t *testing.T) {
 	awsmw.ResetForTest()
@@ -52,14 +82,9 @@ func TestPhase24b_HappyPath(t *testing.T) {
 	unpatchedScript := "redis-cli -p 6379 --tls --cert /etc/dssm/tls.crt ping\n"
 	cm := buildDSSMConfigMap(unpatchedScript)
 
-	// Also seed a pod so DeleteCollection has something to act on.
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "dssm-db-1",
-			Namespace: InstanceNamespace,
-			Labels:    map[string]string{"app": "f5-dssm"},
-		},
-	}
+	// Seed a not-ready pod using the REAL labels — readiness guard lists these and
+	// finds them not Ready, so the phase falls through to patch+bounce.
+	pod := buildNotReadyDSSMPod("f5-dssm-db-0", "f5-dssm-db")
 	cs := k8sfake.NewSimpleClientset(cm, pod)
 	clients := &Clients{K8s: cs, Profile: "test"}
 
@@ -77,7 +102,7 @@ func TestPhase24b_HappyPath(t *testing.T) {
 		t.Errorf("expected '--tls --insecure' in updated ConfigMap, got:\n%s", gotScript)
 	}
 
-	// Assert a DeleteCollection action was issued for app=f5-dssm.
+	// Assert a DeleteCollection action was issued for the correct pod selector.
 	var foundDelete bool
 	for _, action := range cs.Actions() {
 		if action.GetVerb() == "delete-collection" &&
@@ -88,7 +113,7 @@ func TestPhase24b_HappyPath(t *testing.T) {
 		}
 	}
 	if !foundDelete {
-		t.Error("expected DeleteCollection action for pods with app=f5-dssm, none found")
+		t.Error("expected DeleteCollection action for dssm pods, none found")
 	}
 
 	// Assert state key set.
@@ -284,6 +309,171 @@ func TestPhase24b_AllTLSScriptsPatched(t *testing.T) {
 	// f5log_lib.sh has no --tls and must be untouched.
 	if updatedCM.Data["f5log_lib.sh"] != "# helper functions; no probe calls; must not be modified\n" {
 		t.Errorf("f5log_lib.sh should not have been modified, got: %s", updatedCM.Data["f5log_lib.sh"])
+	}
+}
+
+// ─── Test 8: ReadinessGuard — all dssm pods Ready → no mutations ─────────────
+//
+// This is the primary idempotency fix: on a healthy warm cluster, the phase must
+// return nil immediately without touching the ConfigMap or bouncing pods.
+
+func TestPhase24b_ReadinessGuard_AllReady_NoMutations(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	// Seed both db and sentinel pods as Ready.
+	dbPod := buildReadyDSSMPod("f5-dssm-db-0", "f5-dssm-db")
+	sentinelPod := buildReadyDSSMPod("f5-dssm-sentinel-0", "f5-dssm-sentinel")
+	// Also seed an unpatched CM — if the guard fails, this would get mutated.
+	unpatchedScript := "redis-cli -p 6379 --tls --cert /etc/dssm/tls.crt ping\n"
+	cm := buildDSSMConfigMap(unpatchedScript)
+
+	cs := k8sfake.NewSimpleClientset(cm, dbPod, sentinelPod)
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	if err := Phase24bDSSMInsecureOverlay(context.Background(), dssmHostDeviceCluster(), st, clients, false); err != nil {
+		t.Fatalf("Phase24bDSSMInsecureOverlay with all-Ready pods: %v", err)
+	}
+
+	// Assert NO mutating K8s calls were made (no ConfigMap update, no pod bounce).
+	for _, action := range cs.Actions() {
+		verb := action.GetVerb()
+		if verb == "update" || verb == "delete-collection" || verb == "delete" || verb == "patch" {
+			t.Errorf("readiness guard: unexpected mutating action %q — phase should have returned immediately", verb)
+		}
+	}
+}
+
+// ─── Test 9: ReadinessGuard — one pod not Ready → falls through to patch+bounce
+
+func TestPhase24b_ReadinessGuard_OneNotReady_FallsThrough(t *testing.T) {
+	awsmw.ResetForTest()
+	orig := phase24bConfigMapWait
+	phase24bConfigMapWait = 5 * time.Second
+	defer func() { phase24bConfigMapWait = orig }()
+
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	// One db pod Ready, one sentinel pod NOT Ready — guard must fall through.
+	dbPod := buildReadyDSSMPod("f5-dssm-db-0", "f5-dssm-db")
+	sentinelPod := buildNotReadyDSSMPod("f5-dssm-sentinel-0", "f5-dssm-sentinel")
+	unpatchedScript := "redis-cli -p 6379 --tls --cert /etc/dssm/tls.crt ping\n"
+	cm := buildDSSMConfigMap(unpatchedScript)
+
+	cs := k8sfake.NewSimpleClientset(cm, dbPod, sentinelPod)
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	if err := Phase24bDSSMInsecureOverlay(context.Background(), dssmHostDeviceCluster(), st, clients, false); err != nil {
+		t.Fatalf("Phase24bDSSMInsecureOverlay with one-not-Ready: %v", err)
+	}
+
+	// Must have updated the ConfigMap.
+	var foundUpdate bool
+	for _, action := range cs.Actions() {
+		if action.GetVerb() == "update" && action.GetResource().Resource == "configmaps" {
+			foundUpdate = true
+		}
+	}
+	if !foundUpdate {
+		t.Error("expected ConfigMap update when not all dssm pods are Ready")
+	}
+
+	// Must have issued a DeleteCollection for pods.
+	var foundDelete bool
+	for _, action := range cs.Actions() {
+		if action.GetVerb() == "delete-collection" && action.GetResource().Resource == "pods" {
+			foundDelete = true
+		}
+	}
+	if !foundDelete {
+		t.Error("expected DeleteCollection for pods when dssm not Ready, none found")
+	}
+}
+
+// ─── Test 10: ReadinessGuard — zero pods (very early cold-start) → falls through
+
+func TestPhase24b_ReadinessGuard_ZeroPods_FallsThrough(t *testing.T) {
+	awsmw.ResetForTest()
+	orig := phase24bConfigMapWait
+	phase24bConfigMapWait = 5 * time.Second
+	defer func() { phase24bConfigMapWait = orig }()
+
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	// No pods at all — guard must treat this as not Ready (very early cold-start).
+	unpatchedScript := "redis-cli -p 6379 --tls --cert /etc/dssm/tls.crt ping\n"
+	cm := buildDSSMConfigMap(unpatchedScript)
+
+	cs := k8sfake.NewSimpleClientset(cm)
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	if err := Phase24bDSSMInsecureOverlay(context.Background(), dssmHostDeviceCluster(), st, clients, false); err != nil {
+		t.Fatalf("Phase24bDSSMInsecureOverlay with zero dssm pods: %v", err)
+	}
+
+	// Must have updated the ConfigMap (fell through to patch path).
+	var foundUpdate bool
+	for _, action := range cs.Actions() {
+		if action.GetVerb() == "update" && action.GetResource().Resource == "configmaps" {
+			foundUpdate = true
+		}
+	}
+	if !foundUpdate {
+		t.Error("expected ConfigMap update when zero dssm pods exist (very early cold-start)")
+	}
+}
+
+// ─── Test 11: CorrectBounceSelector — DeleteCollection uses the real pod labels ─
+//
+// Verifies that the bounce selector is "app in (f5-dssm-db,f5-dssm-sentinel)"
+// and NOT the old dead "app=f5-dssm" that matched zero pods.
+
+func TestPhase24b_CorrectBounceSelector(t *testing.T) {
+	awsmw.ResetForTest()
+	orig := phase24bConfigMapWait
+	phase24bConfigMapWait = 5 * time.Second
+	defer func() { phase24bConfigMapWait = orig }()
+
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	// Seed an unpatched CM and a not-ready dssm pod so we reach the bounce.
+	unpatchedScript := "redis-cli -p 6379 --tls --cert /etc/dssm/tls.crt ping\n"
+	cm := buildDSSMConfigMap(unpatchedScript)
+	pod := buildNotReadyDSSMPod("f5-dssm-db-0", "f5-dssm-db")
+
+	cs := k8sfake.NewSimpleClientset(cm, pod)
+	clients := &Clients{K8s: cs, Profile: "test"}
+
+	if err := Phase24bDSSMInsecureOverlay(context.Background(), dssmHostDeviceCluster(), st, clients, false); err != nil {
+		t.Fatalf("Phase24bDSSMInsecureOverlay: %v", err)
+	}
+
+	// Find the DeleteCollection action and inspect its label selector.
+	// The fake clientset records this as k8stesting.DeleteCollectionActionImpl.
+	var selectorStr string
+	for _, action := range cs.Actions() {
+		if action.GetVerb() != "delete-collection" || action.GetResource().Resource != "pods" {
+			continue
+		}
+		if da, ok := action.(k8stesting.DeleteCollectionActionImpl); ok {
+			selectorStr = da.ListRestrictions.Labels.String()
+		}
+	}
+
+	if selectorStr == "" {
+		t.Fatal("no DeleteCollection action recorded for pods")
+	}
+
+	// The selector must reference f5-dssm-db and f5-dssm-sentinel, NOT the old dead "app=f5-dssm".
+	if selectorStr == "app=f5-dssm" {
+		t.Errorf("DeleteCollection used old dead selector %q — must target real dssm pod labels (f5-dssm-db + f5-dssm-sentinel)", selectorStr)
+	}
+	if !strings.Contains(selectorStr, "f5-dssm-db") || !strings.Contains(selectorStr, "f5-dssm-sentinel") {
+		t.Errorf("DeleteCollection selector %q does not reference both f5-dssm-db and f5-dssm-sentinel", selectorStr)
 	}
 }
 

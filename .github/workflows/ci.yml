@@ -3,7 +3,7 @@ name: CI
 # Runs on every PR and on push to main/staging. staging is the always-on
 # integration/build branch (PRs target staging; staging promotes to main
 # weekly). Catches the SDK-method-name and version-pin guesses captured in
-# docs/SHAKEOUT.md without needing anyone to drive a local build.
+# docs/design/ without needing anyone to drive a local build.
 
 on:
   pull_request:

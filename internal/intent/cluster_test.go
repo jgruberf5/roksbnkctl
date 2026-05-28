@@ -3,7 +3,9 @@ package intent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, dir, name, content string) string {
@@ -1295,5 +1297,368 @@ forge:
 	}
 	if c.Forge.Password != "s3cr3t" {
 		t.Errorf("Forge.Password = %q, want \"s3cr3t\"", c.Forge.Password)
+	}
+}
+
+// ─── DemoSpec tests (PRD 10, Slice A1) ───────────────────────────────────────
+
+// hostDeviceWithJumphostYAML is a valid host-device cluster with jumphost enabled —
+// the minimum required for demo mode.
+const hostDeviceWithJumphostYAML = hostDeviceMinimalYAML + `
+testing:
+  jumphost:
+    enabled: true
+`
+
+// TestLoad_DemoBlock_Absent verifies that omitting the demo: block keeps Demo nil.
+func TestLoad_DemoBlock_Absent(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", minimalYAML)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Demo != nil {
+		t.Errorf("Demo: got %+v, want nil when demo block absent", c.Demo)
+	}
+}
+
+// TestLoad_DemoBlock_EnabledWithJumphost verifies the happy path: demo: enabled: true
+// with testing.jumphost.enabled: true loads successfully and TTL defaults to "24h".
+func TestLoad_DemoBlock_EnabledWithJumphost(t *testing.T) {
+	dir := t.TempDir()
+	yaml := hostDeviceWithJumphostYAML + `
+demo:
+  enabled: true
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with demo block: %v", err)
+	}
+	if c.Demo == nil {
+		t.Fatal("Demo: nil, want populated struct")
+	}
+	if !c.Demo.Enabled {
+		t.Error("Demo.Enabled: got false, want true")
+	}
+	if c.Demo.TTL != "24h" {
+		t.Errorf("Demo.TTL: got %q, want \"24h\" (default)", c.Demo.TTL)
+	}
+}
+
+// TestLoad_DemoBlock_ExplicitTTL verifies a custom TTL is accepted and preserved.
+func TestLoad_DemoBlock_ExplicitTTL(t *testing.T) {
+	dir := t.TempDir()
+	yaml := hostDeviceWithJumphostYAML + `
+demo:
+  enabled: true
+  ttl: 48h
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with demo ttl=48h: %v", err)
+	}
+	if c.Demo.TTL != "48h" {
+		t.Errorf("Demo.TTL: got %q, want \"48h\"", c.Demo.TTL)
+	}
+}
+
+// TestDemoEnabled_Helper verifies DemoEnabled() returns the correct boolean.
+func TestDemoEnabled_Helper(t *testing.T) {
+	cases := []struct {
+		desc string
+		c    *Cluster
+		want bool
+	}{
+		{"nil Demo", &Cluster{}, false},
+		{"Demo.Enabled=false", &Cluster{Demo: &DemoSpec{Enabled: false}}, false},
+		{"Demo.Enabled=true", &Cluster{Demo: &DemoSpec{Enabled: true}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := tc.c.DemoEnabled(); got != tc.want {
+				t.Errorf("DemoEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEnableDemo verifies the EnableDemo method across three cases:
+//  1. nil Demo block → creates block, sets Enabled=true, defaults TTL.
+//  2. explicit TTL already set → Enabled=true, TTL preserved.
+//  3. already enabled → idempotent (no double-application).
+func TestEnableDemo(t *testing.T) {
+	t.Run("creates Demo block and defaults TTL", func(t *testing.T) {
+		c := &Cluster{}
+		c.EnableDemo()
+		if !c.DemoEnabled() {
+			t.Fatal("DemoEnabled() = false after EnableDemo on nil Demo")
+		}
+		if c.Demo.TTL != DefaultDemoTTL {
+			t.Errorf("TTL = %q, want %q", c.Demo.TTL, DefaultDemoTTL)
+		}
+	})
+
+	t.Run("preserves explicit TTL", func(t *testing.T) {
+		c := &Cluster{Demo: &DemoSpec{TTL: "48h"}}
+		c.EnableDemo()
+		if !c.DemoEnabled() {
+			t.Fatal("DemoEnabled() = false after EnableDemo")
+		}
+		if c.Demo.TTL != "48h" {
+			t.Errorf("TTL = %q, want \"48h\" (explicit value should be preserved)", c.Demo.TTL)
+		}
+	})
+
+	t.Run("idempotent on already-enabled spec", func(t *testing.T) {
+		c := &Cluster{Demo: &DemoSpec{Enabled: true, TTL: "12h"}}
+		c.EnableDemo()
+		if !c.DemoEnabled() {
+			t.Fatal("DemoEnabled() = false after second EnableDemo call")
+		}
+		if c.Demo.TTL != "12h" {
+			t.Errorf("TTL = %q after second EnableDemo, want \"12h\" (should not change)", c.Demo.TTL)
+		}
+	})
+}
+
+// TestApplyDefaults_Demo_TTLDefault verifies that applyDefaults fills in DefaultDemoTTL
+// when demo is enabled but TTL is empty.
+func TestApplyDefaults_Demo_TTLDefault(t *testing.T) {
+	c := &Cluster{Demo: &DemoSpec{Enabled: true}}
+	applyDefaults(c)
+	if c.Demo.TTL != DefaultDemoTTL {
+		t.Errorf("applyDefaults: Demo.TTL = %q, want %q", c.Demo.TTL, DefaultDemoTTL)
+	}
+}
+
+// TestApplyDefaults_Demo_TTLPreserved verifies that an explicitly-set TTL is
+// not overwritten by applyDefaults.
+func TestApplyDefaults_Demo_TTLPreserved(t *testing.T) {
+	c := &Cluster{Demo: &DemoSpec{Enabled: true, TTL: "48h"}}
+	applyDefaults(c)
+	if c.Demo.TTL != "48h" {
+		t.Errorf("applyDefaults: Demo.TTL = %q, want \"48h\"", c.Demo.TTL)
+	}
+}
+
+// TestApplyDefaults_Demo_DisabledNoTTL verifies that applyDefaults does NOT
+// set a TTL when demo is disabled (the block is present but Enabled=false).
+func TestApplyDefaults_Demo_DisabledNoTTL(t *testing.T) {
+	c := &Cluster{Demo: &DemoSpec{Enabled: false}}
+	applyDefaults(c)
+	if c.Demo.TTL != "" {
+		t.Errorf("applyDefaults: Demo.TTL = %q on disabled demo, want \"\"", c.Demo.TTL)
+	}
+}
+
+// TestValidateDemo_HappyPath verifies that a cluster with jumphost enabled and a
+// valid TTL passes ValidateDemo.
+func TestValidateDemo_HappyPath(t *testing.T) {
+	c := &Cluster{
+		Demo: &DemoSpec{Enabled: true, TTL: "24h"},
+		Testing: &TestingSpec{
+			Jumphost: &JumphostSpec{Enabled: true},
+		},
+	}
+	if err := ValidateDemo(c); err != nil {
+		t.Errorf("ValidateDemo happy path: unexpected error: %v", err)
+	}
+}
+
+// TestValidateDemo_Disabled verifies that ValidateDemo is a no-op when demo is disabled.
+func TestValidateDemo_Disabled(t *testing.T) {
+	c := &Cluster{Demo: &DemoSpec{Enabled: false}}
+	if err := ValidateDemo(c); err != nil {
+		t.Errorf("ValidateDemo disabled: unexpected error: %v", err)
+	}
+}
+
+// TestValidateDemo_BadTTL verifies that malformed TTL values are rejected with
+// a clear error message.
+func TestValidateDemo_BadTTL(t *testing.T) {
+	cases := []struct {
+		ttl  string
+		desc string
+	}{
+		{"banana", "non-duration string"},
+		{"-5h", "negative duration"},
+		{"0", "zero duration"},
+		{"0s", "zero duration as 0s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			c := &Cluster{
+				Demo: &DemoSpec{Enabled: true, TTL: tc.ttl},
+				Testing: &TestingSpec{
+					Jumphost: &JumphostSpec{Enabled: true},
+				},
+			}
+			err := ValidateDemo(c)
+			if err == nil {
+				t.Fatalf("ValidateDemo(%q): expected error, got nil", tc.ttl)
+			}
+			if !strings.Contains(err.Error(), "demo.ttl") {
+				t.Errorf("error should mention 'demo.ttl': %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateDemo_JumphostRequired verifies that demo mode requires
+// testing.jumphost.enabled: true across all absence variants.
+func TestValidateDemo_JumphostRequired(t *testing.T) {
+	cases := []struct {
+		desc    string
+		testing *TestingSpec
+	}{
+		{"testing block absent", nil},
+		{"jumphost block absent", &TestingSpec{}},
+		{"jumphost.enabled=false", &TestingSpec{Jumphost: &JumphostSpec{Enabled: false}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			c := &Cluster{
+				Demo:    &DemoSpec{Enabled: true, TTL: "24h"},
+				Testing: tc.testing,
+			}
+			err := ValidateDemo(c)
+			if err == nil {
+				t.Fatal("ValidateDemo: expected error when jumphost not enabled, got nil")
+			}
+			if !strings.Contains(err.Error(), "testing.jumphost.enabled") {
+				t.Errorf("error should mention 'testing.jumphost.enabled': %v", err)
+			}
+		})
+	}
+}
+
+// TestLoad_DemoBlock_RejectsNoJumphost verifies that demo: enabled: true without
+// testing.jumphost.enabled fails with a clear error at Load time.
+func TestLoad_DemoBlock_RejectsNoJumphost(t *testing.T) {
+	dir := t.TempDir()
+	// hostDeviceMinimalYAML has no testing block.
+	yaml := hostDeviceMinimalYAML + `
+demo:
+  enabled: true
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for demo without jumphost, got nil")
+	}
+	if !strings.Contains(err.Error(), "testing.jumphost.enabled") {
+		t.Errorf("error should mention 'testing.jumphost.enabled': %v", err)
+	}
+}
+
+// TestLoad_DemoBlock_RejectsMalformedTTL verifies that a bad TTL in cluster.yaml
+// fails Load with a clear error.
+func TestLoad_DemoBlock_RejectsMalformedTTL(t *testing.T) {
+	dir := t.TempDir()
+	yaml := hostDeviceWithJumphostYAML + `
+demo:
+  enabled: true
+  ttl: banana
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for malformed demo.ttl, got nil")
+	}
+	if !strings.Contains(err.Error(), "demo.ttl") {
+		t.Errorf("error should mention 'demo.ttl': %v", err)
+	}
+}
+
+// ─── SetDemoTags tests (PRD 10, Slice A2) ────────────────────────────────────
+
+// TestSetDemoTags_NilMap verifies that SetDemoTags nil-inits c.Tags and writes
+// both demo tag keys.
+func TestSetDemoTags_NilMap(t *testing.T) {
+	c := &Cluster{} // Tags is nil
+	expiry := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+
+	if c.Tags == nil {
+		t.Fatal("Tags: nil after SetDemoTags, want initialised map")
+	}
+	if got := c.Tags[DemoTagKey]; got != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, got)
+	}
+	wantExpiry := expiry.UTC().Format(time.RFC3339)
+	if got := c.Tags[DemoExpiryTagKey]; got != wantExpiry {
+		t.Errorf("Tags[%q] = %q, want %q", DemoExpiryTagKey, got, wantExpiry)
+	}
+}
+
+// TestSetDemoTags_ExistingMapPreservesOtherKeys verifies that SetDemoTags does
+// not clobber existing keys unrelated to demo.
+func TestSetDemoTags_ExistingMapPreservesOtherKeys(t *testing.T) {
+	c := &Cluster{
+		Tags: map[string]string{
+			"env":  "staging",
+			"team": "infra",
+		},
+	}
+	expiry := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+
+	if c.Tags["env"] != "staging" {
+		t.Errorf("Tags[\"env\"] = %q, want \"staging\" (should be preserved)", c.Tags["env"])
+	}
+	if c.Tags["team"] != "infra" {
+		t.Errorf("Tags[\"team\"] = %q, want \"infra\" (should be preserved)", c.Tags["team"])
+	}
+	if c.Tags[DemoTagKey] != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, c.Tags[DemoTagKey])
+	}
+}
+
+// TestSetDemoTags_ExpiryIsRFC3339UTC verifies that the expiry tag value equals
+// the passed time formatted as RFC3339 UTC regardless of the input timezone.
+func TestSetDemoTags_ExpiryIsRFC3339UTC(t *testing.T) {
+	// Use a fixed time in a non-UTC location to verify UTC normalisation.
+	loc := time.FixedZone("AEST", 10*60*60)
+	localTime := time.Date(2026, 6, 1, 22, 0, 0, 0, loc) // 22:00 AEST = 12:00 UTC
+	c := &Cluster{}
+	c.SetDemoTags(localTime)
+
+	wantExpiry := localTime.UTC().Format(time.RFC3339) // "2026-06-01T12:00:00Z"
+	if got := c.Tags[DemoExpiryTagKey]; got != wantExpiry {
+		t.Errorf("Tags[%q] = %q, want %q (RFC3339 UTC)", DemoExpiryTagKey, got, wantExpiry)
+	}
+}
+
+// TestSetDemoTags_Idempotent verifies that calling SetDemoTags twice with the
+// same expiry produces the same result (no duplicates, no panic).
+func TestSetDemoTags_Idempotent(t *testing.T) {
+	c := &Cluster{}
+	expiry := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.SetDemoTags(expiry)
+	c.SetDemoTags(expiry) // second call
+
+	if len(c.Tags) != 2 {
+		t.Errorf("Tags len = %d after two SetDemoTags calls, want 2", len(c.Tags))
+	}
+	if c.Tags[DemoTagKey] != "true" {
+		t.Errorf("Tags[%q] = %q, want \"true\"", DemoTagKey, c.Tags[DemoTagKey])
+	}
+}
+
+// TestLoad_DemoBlock_DisabledNotValidated verifies that a disabled demo block
+// (enabled: false) with a missing jumphost does NOT fail — disabled = no rules applied.
+func TestLoad_DemoBlock_DisabledNotValidated(t *testing.T) {
+	dir := t.TempDir()
+	yaml := minimalYAML + `
+demo:
+  enabled: false
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err != nil {
+		t.Fatalf("disabled demo block should not fail validation: %v", err)
 	}
 }

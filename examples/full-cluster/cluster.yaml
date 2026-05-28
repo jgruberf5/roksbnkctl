@@ -1,0 +1,178 @@
+# cluster.yaml — real-account tracer test in ap-southeast-2.
+#
+# Derived from /Users/j.lucia/Code/aws-gpu-setup/vars.syd-test-lab.env:
+#   - region:   ap-southeast-2 (AWS_REGION)
+#   - VPC CIDR: 10.0.0.0/16    (VPC_CIDR)
+#   - AZs:      ap-southeast-2a / ap-southeast-2b (AZ / AZ_B)
+#   - public:   10.0.1.0/24  in -2a (MGMT_CIDR — workers + jumphost go here in slice 3+)
+#               10.0.2.0/24  in -2b (EKS_CP_B_CIDR — EKS control plane needs ≥2 AZs)
+#   - private:  10.0.11.0/24 in -2a (currently unused by aws-gpu-setup; reserved
+#                                     for BNK-side workers when slices 3/5 land)
+#               10.0.12.0/24 in -2b (second-AZ private symmetry)
+#
+# BNK data-plane subnets (host-device pattern, slice 7+):
+#   BNK_EXT: 10.0.10.0/24 in -2a — external TMM VLAN (matches aws-gpu-setup BNK_EXT_CIDR)
+#   BNK_INT: 10.0.20.0/24 in -2a — internal TMM VLAN (matches aws-gpu-setup BNK_INT_CIDR)
+#   These are created by Phase 03 when pattern=host-device and network.dataPath is set.
+#   They are dedicated to the TMM data path; they do not carry worker/EKS traffic.
+#
+# Prerequisites before `up`:
+#   export AWS_PROFILE=Users-292785712872
+#   aws sso login --profile $AWS_PROFILE
+#   aws sts get-caller-identity     # sanity check
+#
+# Usage:
+#   awsbnkctl up   --config examples/full-cluster/cluster.yaml --dry-run
+#   awsbnkctl up   --config examples/full-cluster/cluster.yaml
+#   awsbnkctl down --config examples/full-cluster/cluster.yaml --yes
+#   awsbnkctl down --config examples/full-cluster/cluster.yaml --yes --keep-irsa
+#
+# State written to: .awsbnkctl/full-cluster/state.env
+
+apiVersion: awsbnkctl/v1
+kind: Cluster
+
+metadata:
+  # full-cluster — full BNK-on-EKS deploy reference. Distinct from aws-gpu-setup's
+  # syd-test-lab so the two can coexist in the same AWS account without
+  # tag-discovery collisions.
+  name: full-cluster
+  region: ap-southeast-2
+  labels:
+    owner: jarrod
+    purpose: tracer-bullet-slice-07
+    sourced-from: aws-gpu-setup/vars.syd-test-lab.env
+
+# pattern selects the data-path variant.
+# host-device: TMM runs directly on EC2 host NIC interfaces (no SR-IOV vfio).
+#              Requires network.dataPath for BNK ext/int subnet creation (phase 03).
+#              Activates phases 16 (TMM node label), 17 (secondary ENIs), 18 (IRSA).
+pattern: host-device
+
+network:
+  vpcCidr: 10.0.0.0/16
+
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+
+  subnets:
+    public:
+      # Public subnets: map-public-ip-on-launch, route 0.0.0.0/0 → IGW.
+      # 10.0.1.0/24 matches MGMT_CIDR in aws-gpu-setup (workers + jumphost AZ).
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+      # 10.0.2.0/24 matches EKS_CP_B_CIDR (second AZ for EKS control-plane HA).
+      - cidr: 10.0.2.0/24
+        az: ap-southeast-2b
+
+    private:
+      # Private subnets: no public IP, egress via NAT GW (cost-optimised: 1 NAT).
+      # 10.0.11.0/24 / 10.0.12.0/24 are NEW CIDRs (aws-gpu-setup uses
+      # 10.0.10.0/24 + 10.0.20.0/24 for TMM VLANs which are pattern-specific).
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.12.0/24
+        az: ap-southeast-2b
+
+  # dataPath: BNK data-plane subnet definitions (host-device pattern only).
+  # Phase 03 creates these subnets and writes BNK_EXT_SUBNET / BNK_INT_SUBNET to
+  # state.env. Phase 17 attaches secondary ENIs from these subnets to the TMM node.
+  # CIDRs match aws-gpu-setup's BNK_EXT_CIDR / BNK_INT_CIDR so both tools can
+  # coexist in the same account (distinct tag:awsbnkctl:cluster values prevent
+  # tag-discovery collisions).
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+
+  # 1 NAT GW = cost-optimised (single point of egress in the first public subnet).
+  # For HA multi-AZ, set to len(azs). Per-AZ NAT is a slice 2+ option.
+  natGateways: 1
+
+# cluster: EKS control plane + managed node group configuration (slice 3+).
+# Phases 08 (EKS cluster), 10 (node group), 11 (kubeconfig) require this block.
+cluster:
+  kubernetesVersion: "1.30"
+  nodeGroups:
+    - name: default
+      # m6i.4xlarge × 3 is the documented BNK 2.3 Small minimum:
+      #   - 4+ ENIs: primary + EKS CNI + 2 BNK secondaries (host-device pattern)
+      #   - 16 vCPU + 64 GB: fits full BNK control plane (csrc, downloader,
+      #     analyzer, dssm-sentinel, observer*, cwc, dssm-db, lifecycle-operator)
+      #     + TMM (2 vCPU / 8 GiB) on the single labeled node (host-device pins TMM).
+      #   - 3 nodes: dSSM quorum (slice-09 audit row 28).
+      # See docs/audits/slice-09-aws-gpu-setup-audit.md and
+      # docs/audits/slice-12-cold-start-audit.md §5 for the full sizing rationale.
+      # Phase 00 preflight enforces these minimums for pattern: host-device.
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
+      diskSize: 50
+
+# bnk: BNK supply-chain credentials (slice 5+, required for phase 12).
+# The operator MUST update farArchive and jwt to point at real files before running
+# `awsbnkctl up`. Placeholder paths below will cause phase 12 to error at entry.
+#
+# farArchive: path to F5's FAR pull credentials JSON (from the F5 portal).
+#             Type in k8s: kubernetes.io/dockerconfigjson secret named 'far-secret'.
+#             F5 ships this file pre-formatted as a dockerconfigjson.
+#
+# jwt: path to F5's subscription JWT (from the F5 portal / entitlement email).
+#      Type in k8s: Opaque secret named 'bnk-license-jwt', key 'license.jwt'.
+#
+# certManagerVersion: pinned to match the embedded upstream YAML (1.16.1).
+#                     Omit to use the default. Mismatch is a hard error.
+bnk:
+  farArchive: ./cne_pull_64.json     # REPLACE: path to your F5 FAR pull credentials JSON
+  jwt: ./license.jwt                  # REPLACE: path to your F5 subscription JWT
+  # certManagerVersion: "1.16.1"     # optional; defaults to 1.16.1 (the embedded version)
+
+# addons: optional add-on configuration (slice 6+).
+# When omitted, FLO is installed at the pinned default version (v2.21.13-0.0.28).
+# Uncomment to pin a version or disable FLO explicitly:
+#
+# addons:
+#   flo:
+#     version: "v2.21.13-0.0.28"  # optional; defaults to pinned version
+#     enabled: true                 # optional; default true; set false to skip FLO + OTEL install
+
+# Optional: provision a multi-ENI jumphost + EICE for test traffic
+# against TMM SelfIPs in BNK_EXT (10.0.10.0/24). Default off.
+# Requires pattern: host-device and network.dataPath to be set.
+testing:
+  jumphost:
+    enabled: true
+    instanceType: t3.small      # optional; default t3.small
+    mgmtSubnetIndex: 0           # optional; default 0 (first public subnet)
+
+# Optional: register the cluster with a running bnk-forge instance after `up`.
+# When omitted, forge handoff is skipped. credentialTemplateId=1 is forge's
+# default "AWS Production" template; set to 0 to skip credential attachment.
+# Enabled here so Phase09 registers on `up` and unregisters on `down`; the
+# standalone `awsbnkctl forge {register,status,unregister} --config <this>` also
+# works against the same link in the cluster state dir.
+#
+# Credential resolution (REST login):
+#   username: forge.username (yaml) → default "admin"
+#   password: $AWSBNKCTL_FORGE_PASSWORD env → forge.password (yaml, dev-only)
+#             → default "changeme" (back-compat; a warning is emitted)
+#
+# For the local dev stack the password is: export AWSBNKCTL_FORGE_PASSWORD=admin123
+# Never write the real password in this file — use the env var.
+forge:
+  enabled: true
+  url: http://localhost:8000       # also overridable via $AWSBNKCTL_FORGE_URL
+  mcpUrl: http://localhost:8081/mcp/
+  credentialTemplateId: 1          # forge AWS Production template
+  username: admin                  # optional; default "admin"
+  # password: ""                   # dev-only; prefer $AWSBNKCTL_FORGE_PASSWORD
+
+# tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
+tags:
+  cost-center: RnD-AI
+  env: lab

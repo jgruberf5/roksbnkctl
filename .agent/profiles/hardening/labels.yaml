@@ -1,6 +1,0 @@
-profile: hardening
-roles:
-  lead: Hardening Lead
-  architect: Analyst
-  builder: Implementer
-  reviewer: Auditor

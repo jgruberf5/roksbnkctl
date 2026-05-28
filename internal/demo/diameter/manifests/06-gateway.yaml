@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: diameter-gateway
+  namespace: {{.Namespace}}
+spec:
+  gatewayClassName: {{.GatewayClassName}}
+  addresses:
+  - type: IPAddress
+    value: {{.VIP}}
+  listeners:
+  # Focus listener: a TCP (L4) VIP on the standard Diameter port 3868.
+  - name: diameter-listener
+    protocol: TCP
+    port: 3868
+    allowedRoutes:
+      namespaces: {from: Same}
+  # Second listener purely to demonstrate the "multi-protocol VIP" idea — an
+  # HTTP listener co-resident on the same Gateway/VIP. The Diameter demo does
+  # not route through it; it just shows TCP and HTTP listeners side by side.
+  - name: http-listener
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces: {from: Same}

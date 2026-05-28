@@ -198,6 +198,58 @@ func TestPhase17cIfaceDiscoveryDown_ClearsKeys(t *testing.T) {
 	}
 }
 
+// ─── ifaceMappingResolved tests ──────────────────────────────────────────────
+
+func TestIfaceMappingResolved_AllSet(t *testing.T) {
+	st, _ := state.Load(t.TempDir())
+	st.Set("EXTERNAL_IFNAME", "ens8")
+	st.Set("INTERNAL_IFNAME", "ens7")
+	st.Set("EXTERNAL_PCI", "0000:00:08.0")
+	st.Set("INTERNAL_PCI", "0000:00:07.0")
+	if !ifaceMappingResolved(st) {
+		t.Error("expected resolved when all 4 keys set, got false")
+	}
+}
+
+func TestIfaceMappingResolved_EachKeyMissingMeansNotResolved(t *testing.T) {
+	allKeys := []string{"EXTERNAL_IFNAME", "INTERNAL_IFNAME", "EXTERNAL_PCI", "INTERNAL_PCI"}
+	for _, missing := range allKeys {
+		t.Run("missing_"+missing, func(t *testing.T) {
+			st, _ := state.Load(t.TempDir())
+			for _, k := range allKeys {
+				if k != missing {
+					st.Set(k, "somevalue")
+				}
+			}
+			if ifaceMappingResolved(st) {
+				t.Errorf("expected not resolved when %s is missing, got true", missing)
+			}
+		})
+	}
+}
+
+// ─── shouldSkipIfaceDiscovery tests ──────────────────────────────────────────
+
+func TestShouldSkipIfaceDiscovery(t *testing.T) {
+	tests := []struct {
+		resolved   bool
+		tmmRunning bool
+		want       bool
+	}{
+		{true, true, true},
+		{true, false, false},
+		{false, true, false},
+		{false, false, false},
+	}
+	for _, tc := range tests {
+		got := shouldSkipIfaceDiscovery(tc.resolved, tc.tmmRunning)
+		if got != tc.want {
+			t.Errorf("shouldSkipIfaceDiscovery(resolved=%v, tmmRunning=%v) = %v, want %v",
+				tc.resolved, tc.tmmRunning, got, tc.want)
+		}
+	}
+}
+
 // ─── Cross-phase ordering test ────────────────────────────────────────────────
 
 // TestCrossPhase_17cThenPhase19_DiscoveredKeysSurvive verifies the critical

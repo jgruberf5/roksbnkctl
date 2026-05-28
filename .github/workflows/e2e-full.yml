@@ -14,7 +14,7 @@ name: Full E2E
 #
 # This job runs on every PR. The **live-apply** tier of every phase
 # (cluster bring-up + backend matrix + DNS probe + throughput) still
-# gates on the operator-run PRD 07 spike (docs/prd/07-EKS-CLUSTER-
+# gates on the operator-run PRD 07 spike (docs/design/specs/07-EKS-CLUSTER-
 # SRIOV.md § "Spike protocol"), so this workflow stays a skip-stub
 # for live-AWS runs. The trigger surface (workflow_dispatch +
 # release/** push) survives so downstream automation (release
@@ -86,7 +86,7 @@ jobs:
           echo "    security-audit  (Sprint 6) — gosec + govulncheck + gitleaks"
           echo ""
           echo "Live-apply tier still gates on the operator-run PRD 07 spike:"
-          echo "  docs/prd/07-EKS-CLUSTER-SRIOV.md § \"Spike protocol\""
+          echo "  docs/design/specs/07-EKS-CLUSTER-SRIOV.md § \"Spike protocol\""
           echo "  (provision EKS 1.30 + self-managed c5n.4xlarge node group;"
           echo "   install Multus + SR-IOV CNI + device plugin DaemonSets;"
           echo "   schedule a pod requesting intel.com/sriov:1)."
@@ -101,5 +101,5 @@ jobs:
           echo "  Security audit (offline):            Sprint 6 ci.yml (gosec/govulncheck/gitleaks)"
           echo "  Book PDF artefact (release-time):    Sprint 6 — local make book-pdf + release-publish"
           echo "  Full v1.0 sign-off:                  v1.0 cut (gated on PRD 07 spike)"
-          echo "See docs/PLAN.md § Sprint 6 for the v1.0-readiness gate."
+          echo "See docs/design/ § Sprint 6 for the v1.0-readiness gate."
           exit 0

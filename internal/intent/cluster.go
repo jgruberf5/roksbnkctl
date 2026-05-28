@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -129,6 +130,10 @@ type Cluster struct {
 	// Testing holds optional test-infrastructure configuration (slice 12+).
 	// When absent, no test infrastructure is provisioned (zero AWS calls in Phase 17b).
 	Testing *TestingSpec `yaml:"testing,omitempty"`
+	// Demo declares this as a demo deployment (PRD 10, Slice A1+). When present
+	// and enabled, `up` writes DEMO_MODE/DEMO_STAGED_AT/DEMO_EXPIRY to state.env.
+	// Omitting the block (or leaving enabled: false) is the default (not a demo).
+	Demo *DemoSpec `yaml:"demo,omitempty"`
 }
 
 // EndpointAccessSpec controls who can reach the EKS control-plane API endpoint.
@@ -310,6 +315,21 @@ type JumphostSpec struct {
 	// MgmtSubnetIndex selects which public subnet to use for the primary ENI.
 	// Default 0 (first public subnet, which is MGMT_CIDR = 10.0.1.0/24 in syd-tracer).
 	MgmtSubnetIndex int `yaml:"mgmtSubnetIndex,omitempty"`
+}
+
+// DemoSpec declares that this cluster is a demo deployment (PRD 10, Slice A1).
+// When Enabled is true, `awsbnkctl up` writes DEMO_MODE, DEMO_STAGED_AT, and
+// DEMO_EXPIRY to the cluster's state.env before the provisioning phase graph.
+// Demo mode requires testing.jumphost.enabled: true — every demo use-case runs
+// a test client from the EICE jumphost (Slice B onwards). The `--demo` CLI flag
+// is syntactic sugar that forces Enabled=true without requiring this block.
+type DemoSpec struct {
+	// Enabled is the master switch. Default false (omitted block = not a demo).
+	Enabled bool `yaml:"enabled"`
+	// TTL is the lifetime of the demo cluster as a Go duration string (e.g. "24h",
+	// "48h"). Default "24h" when Enabled is true and TTL is omitted. Must parse as
+	// a positive duration. DEMO_EXPIRY = DEMO_STAGED_AT + TTL.
+	TTL string `yaml:"ttl,omitempty"`
 }
 
 // FloSpec configures the FLO (F5 Lifecycle Operator) Helm install in Phase 14.
@@ -560,6 +580,11 @@ func applyDefaults(c *Cluster) {
 		// MgmtSubnetIndex defaults to 0; zero value is already correct.
 	}
 
+	// demo defaults: TTL defaults to DefaultDemoTTL when demo mode is enabled.
+	if c.Demo != nil && c.Demo.Enabled && c.Demo.TTL == "" {
+		c.Demo.TTL = DefaultDemoTTL
+	}
+
 	// host-device pattern: auto-derive TMM SelfIPs as <subnet>.240 when not
 	// explicitly set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
 	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST
@@ -647,6 +672,11 @@ func validate(c *Cluster) error {
 	}
 	if c.Testing != nil {
 		if err := validateTesting(c); err != nil {
+			return err
+		}
+	}
+	if c.Demo != nil && c.Demo.Enabled {
+		if err := ValidateDemo(c); err != nil {
 			return err
 		}
 	}
@@ -738,6 +768,80 @@ func validateBnk(b *BnkSpec) error {
 		return fmt.Errorf("bnk.certManagerVersion %q does not match the embedded cert-manager version %q; "+
 			"slice 6+ may add multi-version support — for now omit the field to use the default",
 			b.CertManagerVersion, EmbeddedCertManagerVersion)
+	}
+	return nil
+}
+
+// DefaultDemoTTL is the TTL applied when demo mode is enabled and no explicit
+// TTL is provided — either by applyDefaults (config-block path) or by EnableDemo
+// (--demo flag path).
+const DefaultDemoTTL = "24h"
+
+// DemoEnabled reports whether demo mode is active on this cluster.
+// True when c.Demo is non-nil and c.Demo.Enabled is true.
+func (c *Cluster) DemoEnabled() bool {
+	return c.Demo != nil && c.Demo.Enabled
+}
+
+// EnableDemo forces demo mode on (the --demo flag's effect), creating the
+// Demo block if absent and defaulting TTL to DefaultDemoTTL when empty.
+// Idempotent: safe to call when demo is already enabled. Callers must still
+// run ValidateDemo afterward (e.g. to enforce the jumphost requirement).
+func (c *Cluster) EnableDemo() {
+	if c.Demo == nil {
+		c.Demo = &DemoSpec{}
+	}
+	c.Demo.Enabled = true
+	if c.Demo.TTL == "" {
+		c.Demo.TTL = DefaultDemoTTL
+	}
+}
+
+// DemoTagKey is the AWS tag key written to every resource when demo mode is active.
+// Matches the awsbnkctl: prefix convention used by tags.KeyCluster / tags.KeyComponent.
+const DemoTagKey = "awsbnkctl:demo"
+
+// DemoExpiryTagKey is the AWS tag key that records the RFC3339 UTC expiry time
+// for demo resources. Its value equals the DEMO_EXPIRY state key written at up time.
+const DemoExpiryTagKey = "awsbnkctl:demo-expiry"
+
+// SetDemoTags injects the demo marker tags into c.Tags so every phase's
+// tags.Merge carries them onto created AWS resources. expiry should equal the
+// DEMO_EXPIRY state value (now + ttl). Nil-inits c.Tags. Idempotent.
+func (c *Cluster) SetDemoTags(expiry time.Time) {
+	if c.Tags == nil {
+		c.Tags = map[string]string{}
+	}
+	c.Tags[DemoTagKey] = "true"
+	c.Tags[DemoExpiryTagKey] = expiry.UTC().Format(time.RFC3339)
+}
+
+// ValidateDemo enforces the demo-mode invariants shared by both validation paths:
+//  1. TTL (if non-empty) must parse as a positive Go duration.
+//  2. testing.jumphost.enabled must be true — every demo use-case runs from the jumphost.
+//
+// Called from validate() for the config-block path (demo: enabled: true in YAML)
+// and from runUp for the CLI flag path (--demo forces Enabled=true after Load).
+// applyDefaults must have run before ValidateDemo so that an omitted TTL is
+// already defaulted to "24h".
+func ValidateDemo(c *Cluster) error {
+	if c.Demo == nil || !c.Demo.Enabled {
+		return nil
+	}
+	// TTL must be a positive duration when non-empty (post-defaults it will be "24h").
+	if c.Demo.TTL != "" {
+		d, err := time.ParseDuration(c.Demo.TTL)
+		if err != nil {
+			return fmt.Errorf("demo.ttl %q is not a valid duration (e.g. \"24h\", \"48h\"): %w", c.Demo.TTL, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("demo.ttl %q must be a positive duration (e.g. \"24h\")", c.Demo.TTL)
+		}
+	}
+	// Demo mode requires testing.jumphost.enabled: true.
+	if c.Testing == nil || c.Testing.Jumphost == nil || !c.Testing.Jumphost.Enabled {
+		return fmt.Errorf("--demo requires testing.jumphost.enabled: true " +
+			"(the demo use-cases run from the jumphost); add it to cluster.yaml")
 	}
 	return nil
 }

@@ -14,8 +14,11 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/phases"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
+	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
+	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
+	"github.com/JLCode-tech/awsbnkctl/internal/ui"
 )
 
 var (
@@ -65,6 +68,13 @@ var (
 	// poll. Designed for reviewers who need to re-run up without re-burning a
 	// real F5 license activation each round. Default false (always poll).
 	flagSkipActivationPoll bool
+
+	// flagDemo is bound ONLY to upCmd. When true, the cluster is marked as a demo
+	// deployment: DEMO_MODE, DEMO_STAGED_AT, and DEMO_EXPIRY are written to
+	// state.env before the provisioning phase graph. Sugar for demo.enabled: true
+	// in cluster.yaml — the provisioning phases are unchanged. Requires
+	// testing.jumphost.enabled: true (validated in runPhasedUp).
+	flagDemo bool
 )
 
 var initCmd = &cobra.Command{
@@ -105,12 +115,13 @@ func init() {
 	upCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
 	upCmd.Flags().BoolVar(&flagUpDryRun, "dry-run", false, "print the phased plan and exit 0 with no AWS mutations")
 	upCmd.Flags().BoolVar(&flagRegisterWithForge, "register-with-forge", false, "after a successful apply, register the EKS cluster with bnk-forge over MCP (no-op in --dry-run)")
-	upCmd.Flags().StringVar(&flagConfig, "config", "", "path to cluster.yaml (required)")
+	upCmd.Flags().StringVarP(&flagConfig, "config", "f", "", "path to cluster.yaml (required)")
 	upCmd.Flags().BoolVar(&flagSkipActivationPoll, "skip-activation-poll", false, "skip the 20-min CNEInstance+License activation poll (for reviewer re-runs that must not re-burn the F5 license)")
+	upCmd.Flags().BoolVar(&flagDemo, "demo", false, "provision the same cluster, marked as a demo (writes DEMO_MODE, requires testing.jumphost.enabled)")
 
 	downCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 	downCmd.Flags().BoolVar(&flagDownDryRun, "dry-run", false, "print what would be destroyed, make no AWS mutations")
-	downCmd.Flags().StringVar(&flagConfig, "config", "", "path to cluster.yaml (required)")
+	downCmd.Flags().StringVarP(&flagConfig, "config", "f", "", "path to cluster.yaml (required)")
 	downCmd.Flags().BoolVar(&flagYes, "yes", false, "skip the interactive destroy confirmation (required with --config)")
 	downCmd.Flags().BoolVar(&flagKeepForgeLink, "keep-forge-link", false, "preserve forge-link.json on down (skips Phase 09 forge unregister)")
 	downCmd.Flags().BoolVar(&flagKeepIRSA, "keep-irsa", false, "retain the OIDC provider and IRSA role on down (both are kept for reuse across cluster iterations)")
@@ -123,7 +134,7 @@ func runUp(cmd *cobra.Command, _ []string) error {
 	if flagConfig == "" {
 		return errors.New("awsbnkctl up requires --config <cluster.yaml>")
 	}
-	return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun, flagSkipActivationPoll)
+	return runPhasedUp(cmd.Context(), flagConfig, flagUpDryRun, flagSkipActivationPoll, flagDemo)
 }
 
 // registerWithForgePostApply runs the same flow as `awsbnkctl forge
@@ -206,10 +217,26 @@ func runDown(cmd *cobra.Command, _ []string) error {
 // zero AWS API mutations.
 // When skipActivationPoll is true, Phase 25 returns immediately (for reviewers
 // who must not re-burn a real F5 license each round).
-func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActivationPoll bool) error {
+// When demo is true (or demo.enabled: true in cluster.yaml), the cluster is
+// marked as a demo: DEMO_MODE, DEMO_STAGED_AT, and DEMO_EXPIRY are written to
+// state.env before the phase graph. The provisioning phases are unchanged.
+func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActivationPoll bool, demo bool) error {
 	cl, err := intent.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("up: %w", err)
+	}
+
+	// --demo flag forces demo.enabled=true even when the demo: block is absent.
+	// EnableDemo is idempotent: safe to call when already enabled by cluster.yaml.
+	if demo {
+		cl.EnableDemo()
+	}
+	// For the flag path, ValidateDemo was NOT called inside intent.Load (the flag
+	// is not visible to validate()). Call it now — both paths enforce the same rules.
+	if cl.DemoEnabled() {
+		if err := intent.ValidateDemo(cl); err != nil {
+			return fmt.Errorf("up: %w", err)
+		}
 	}
 
 	clients, err := phases.NewClients(ctx, cl.Metadata.Region, "")
@@ -231,44 +258,113 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 		fmt.Fprintln(os.Stderr, "→ dry-run: printing plan, no AWS mutations will be made")
 	}
 
-	if err := phases.Phase00Preflight(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	// Demo markers: write DEMO_MODE, DEMO_STAGED_AT, DEMO_EXPIRY early (before the
+	// phase graph) so a partially-failed up still records the cluster as a demo.
+	// A normal (non-demo) up writes none of these keys and is byte-for-byte unchanged.
+	if cl.DemoEnabled() {
+		ttl, _ := time.ParseDuration(cl.Demo.TTL) // already validated above
+		now := time.Now().UTC()
+		st.Set("DEMO_MODE", "true")
+		st.Set("DEMO_STAGED_AT", now.Format(time.RFC3339))
+		st.Set("DEMO_EXPIRY", now.Add(ttl).Format(time.RFC3339))
+		// Inject demo tags into cl.Tags so every phase's tags.Merge carries
+		// awsbnkctl:demo=true and awsbnkctl:demo-expiry=<RFC3339> onto every
+		// created AWS resource. The expiry value matches DEMO_EXPIRY above.
+		cl.SetDemoTags(now.Add(ttl))
+		if !dryRun {
+			if err := st.Save(); err != nil {
+				return fmt.Errorf("up: writing demo markers to state: %w", err)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "→ demo mode: DEMO_MODE=true TTL=%s DEMO_EXPIRY=%s\n",
+			cl.Demo.TTL, st.Get("DEMO_EXPIRY"))
 	}
-	if err := phases.Phase02VPC(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+
+	// Construct the launch renderer. RocketRenderer is returned only when
+	// demo && IsTerminal(stderr) && !noColor; otherwise PlainRenderer (no-op).
+	rdr := ui.NewRenderer(os.Stderr, cl.Metadata.Name, cl.DemoEnabled(), flagNoColor)
+	rdr.Start([]ui.Stage{
+		{Num: 1, Label: "VPC · subnets · IGW · NAT", PhaseRange: "[Phase 00–07]"},
+		{Num: 2, Label: "EKS control plane", PhaseRange: "[Phase 08–08b]"},
+		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost", PhaseRange: "[Phase 10–18]"},
+		{Num: 4, Label: "BNK supply chain · activation", PhaseRange: "[Phase 11b–25]"},
+	})
+
+	// stage wraps a single phase call with PhaseBegin/PhaseEnd events and
+	// preserves the existing fmt.Errorf("up: %w", err) wrapping on failure.
+	stage := func(num int, name string, fn func() error) error {
+		rdr.PhaseBegin(num, name)
+		err := fn()
+		rdr.PhaseEnd(num, name, err)
+		if err != nil {
+			rdr.Finish(err)
+			return fmt.Errorf("up: %w", err)
+		}
+		return nil
 	}
-	if err := phases.Phase03Subnets(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+
+	if err := stage(1, "preflight", func() error {
+		return phases.Phase00Preflight(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase04IGW(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "vpc", func() error {
+		return phases.Phase02VPC(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase05NAT(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "subnets", func() error {
+		return phases.Phase03Subnets(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase06RouteTables(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "igw", func() error {
+		return phases.Phase04IGW(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase07IAM(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "nat", func() error {
+		return phases.Phase05NAT(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase08EKSCluster(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "route-tables", func() error {
+		return phases.Phase06RouteTables(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase09ForgeRegister(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "iam", func() error {
+		return phases.Phase07IAM(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
+	if err := stage(2, "eks-cluster", func() error {
+		return phases.Phase08EKSCluster(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
+	if err := stage(2, "forge-register", func() error {
+		return phases.Phase09ForgeRegister(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 08b: vpc-cni prefix delegation BEFORE the node group so nodes boot in
 	// prefix mode (CNI stays on the primary ENI; no secondary ENI → no cross-node
 	// asymmetric-drop on a secondary ENI, which previously hung BNK licensing).
-	if err := phases.Phase08bVPCCNIPrefix(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(2, "vpc-cni-prefix", func() error {
+		return phases.Phase08bVPCCNIPrefix(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase10NodeGroup(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "node-group", func() error {
+		return phases.Phase10NodeGroup(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase11Kubeconfig(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "kubeconfig", func() error {
+		return phases.Phase11Kubeconfig(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
 	// Phase 16: label the TMM-target node + resolve EC2 instance ID.
@@ -283,94 +379,145 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 			return fmt.Errorf("up: attaching k8s clients: %w", err)
 		}
 	}
-	if err := phases.Phase16TMMNodeLabel(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "tmm-node-label", func() error {
+		return phases.Phase16TMMNodeLabel(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "secondary-enis", func() error {
+		return phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17bJumphost(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "jumphost", func() error {
+		return phases.Phase17bJumphost(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "iface-discovery", func() error {
+		return phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	// Phase 17d: demo client staging — pre-stages grpcurl + diameter assets on the
+	// jumphost over EICE. Gated on DemoEnabled(); normal/CI up is byte-for-byte
+	// unchanged. Runs after 17c so the 10.0.10.x data-path ENI is attached + up.
+	if cl.DemoEnabled() {
+		if err := stage(3, "demo-stage", func() error {
+			return phases.Phase17dDemoStage(ctx, cl, st, clients, dryRun)
+		}); err != nil {
+			return err
+		}
+	}
+	if err := stage(3, "irsa-oidc", func() error {
+		return phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
 	// Phase 11b (slice 8): EBS CSI managed addon + gp3 StorageClass + hugepages-ds.
 	// Runs after Phase 18 (IRSA) so it has node-role IAM in place AND k8s clients
 	// attached, but BEFORE Phase 12 (k8s foundation) since cert-manager etc. don't
 	// depend on CSI/hugepages. Naming "11b" preserves slice-7 numbering identity.
-	if err := phases.Phase11bEBSCSIHugepages(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "ebs-csi-hugepages", func() error {
+		return phases.Phase11bEBSCSIHugepages(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
-	if err := phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "k8s-foundation", func() error {
+		return phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase14FLOHelm(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "flo-helm", func() error {
+		return phases.Phase14FLOHelm(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "otel-certs", func() error {
+		return phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 19: cloud-network-mapping ConfigMap (required by cne-controller pre-CNEInstance).
-	if err := phases.Phase19CloudNetworkMapping(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cloud-network-mapping", func() error {
+		return phases.Phase19CloudNetworkMapping(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 20: host-device NADs in f5-cne-system + default (required by CNEInstance webhook).
-	if err := phases.Phase20NADs(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "nads", func() error {
+		return phases.Phase20NADs(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 21: IRSA ServiceAccount pre-creation with eks.amazonaws.com/role-arn annotation.
-	if err := phases.Phase21IRSASA(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "irsa-sa", func() error {
+		return phases.Phase21IRSASA(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 22: CNEInstance CR apply + reconcile-started gate (2 min).
-	if err := phases.Phase22CNEInstance(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cne-instance", func() error {
+		return phases.Phase22CNEInstance(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 23: License CRD wait + License CR apply.
-	if err := phases.Phase23License(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "license", func() error {
+		return phases.Phase23License(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 23b: F5SPKVlan + GatewayClass for host-device pattern.
 	// Skipped silently when pattern != host-device. Completes TMM data-plane
 	// plumbing — binds trunks 1.1 / 1.2 to ext-vlan / int-vlan inside the
 	// TMM pod netns and announces SelfIPs assigned by Phase 17.
-	if err := phases.Phase23bSPKVlanGatewayClass(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "spk-vlan-gateway-class", func() error {
+		return phases.Phase23bSPKVlanGatewayClass(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24: CWC DNS-warmup heal (best-effort; never returns error).
-	if err := phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cwc-heal", func() error {
+		return phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24b: DSSM --insecure readiness probe overlay (host-device only).
 	// Patches the FLO-created f5-dssm ConfigMap to add --insecure to redis-cli
 	// --tls invocations, then bounces dssm pods. Fixes dssm-db-1 replica startup
 	// probe failure (redis-cli 8.6.0 strict TLS hostname check vs 127.0.0.1 probe).
 	// Mirrors aws-gpu-setup/deploy-bnk.sh:263-282. Idempotent.
-	if err := phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "dssm-overlay", func() error {
+		return phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24c: f5-tmm-pod-manager cold-start race heal (best-effort).
 	// Targets Finding #4 from docs/audits/2026-05-24-live-e2e-round-2-findings.md:
 	// pod-manager v1.6.x times out hitting the EKS API ClusterIP before
 	// kube-proxy converges on a cold node; restart-once breaks the loop.
-	if err := phases.Phase24cPodManagerHeal(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "pod-manager-heal", func() error {
+		return phases.Phase24cPodManagerHeal(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 25: Activation poll — CNEInstance + License status (up to 20 min).
 	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
-	if err := phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "activation-poll", func() error {
+		return phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll)
+	}); err != nil {
+		return err
 	}
 	// Phase 13 postflight runs LAST so it can verify FLO + OTEL + activation state.
-	if err := phases.Phase13Postflight(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "postflight", func() error {
+		return phases.Phase13Postflight(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
+	rdr.Finish(nil)
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "→ dry-run complete")
@@ -433,6 +580,15 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 			// Log and continue — kubeconfig may be absent if phase 11 never ran.
 			fmt.Fprintf(os.Stderr, "down: warning: could not attach k8s clients (%v) — phase 12/14/15 down will log warning and skip\n", err)
 		}
+	}
+	// Demo use-case teardown — runs before infra teardown while kubeconfig is
+	// still valid. Gated on DEMO_MODE=true in state (not cl.DemoEnabled() —
+	// the --demo flag is not persisted to cluster.yaml so cl.Demo is nil on down).
+	// See runDemoCleanDown for idempotency contract.
+	if err := runDemoCleanDown(ctx, cl, st); err != nil {
+		// runDemoCleanDown already logs per-use-case errors and returns nil;
+		// this branch is a safety net for unexpected errors.
+		fmt.Fprintf(os.Stderr, "down: demo-clean: unexpected error: %v\n", err)
 	}
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
@@ -533,5 +689,43 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ down complete: cluster=%s\n", cl.Metadata.Name)
+	return nil
+}
+
+// runDemoCleanDown invokes the Cleanup hook for every registered demo use-case.
+// It is called during runPhasedDown BEFORE infra teardown, while the kubeconfig
+// is still valid. Three idempotency guards ensure AC #6 is satisfied:
+//
+//  1. DEMO_MODE gate — skips the whole function when the cluster is not a demo.
+//     (Uses state, not cl.DemoEnabled() — the --demo flag is not persisted to
+//     cluster.yaml, so cl.Demo is nil on the down path.)
+//  2. Zero-use-case early return — C0 ships no real use-cases; must succeed.
+//  3. NewContext / Cleanup failures are logged and tolerated — kubeconfig may
+//     already be gone on a partial teardown; absent namespaces are not errors
+//     (scenarios.Cleanup contract: missing namespace == no-op).
+func runDemoCleanDown(ctx context.Context, cl *intent.Cluster, st *state.State) error {
+	if st.Get("DEMO_MODE") != "true" {
+		return nil // not a demo cluster; nothing to clean
+	}
+	ucs := demo.All()
+	if len(ucs) == 0 {
+		return nil // C0: no use-cases registered — clean success
+	}
+
+	kube := cl.StateDir() + "/kubeconfig"
+	sctx, err := scenarios.NewContext(ctx, kube, cl, st, os.Stderr, false, nil)
+	if err != nil {
+		// kubeconfig may be absent on a re-run / partial teardown — warn, don't fail.
+		fmt.Fprintf(os.Stderr, "down: demo-clean: skipping (no kube context: %v)\n", err)
+		return nil
+	}
+
+	for _, uc := range ucs {
+		fmt.Fprintf(os.Stderr, "down: demo-clean: %s\n", uc.Name())
+		if err := scenarios.Cleanup(sctx, uc); err != nil {
+			// One use-case's error must NOT abort the rest or the down sequence.
+			fmt.Fprintf(os.Stderr, "down: demo-clean: %s: warn: %v\n", uc.Name(), err)
+		}
+	}
 	return nil
 }

@@ -592,7 +592,15 @@
     "sprintwatch",
     "unwire",
     "unwired",
-    "Unwires"
+    "Unwires",
+    "grpcurl",
+    "grpcbin",
+    "demoer",
+    "resynced",
+    "bidi",
+    "usecase",
+    "idempotently",
+    "parseable"
   ],
   "ignorePaths": [
     "book/book/**",

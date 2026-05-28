@@ -1,6 +1,0 @@
-profile: build
-roles:
-  lead: Build Lead
-  architect: Architect
-  builder: Builder
-  reviewer: Reviewer
