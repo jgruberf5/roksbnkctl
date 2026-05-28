@@ -53,18 +53,22 @@ Subcommands:
 
 var demoListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "Print registered demo use-cases",
+	Short: "Print registered demo use-cases and Green scenarios",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		all := demo.All()
+		all := demo.Catalogue()
 		if len(all) == 0 {
 			fmt.Fprintln(os.Stdout, "no demo use-cases registered")
 			return nil
 		}
-		fmt.Fprintf(os.Stdout, "%-30s  %-6s  %-30s  %s\n", "NAME", "RATING", "TITLE", "DESCRIPTION")
-		fmt.Fprintf(os.Stdout, "%-30s  %-6s  %-30s  %s\n", "----", "------", "-----", "-----------")
+		fmt.Fprintf(os.Stdout, "%-30s  %-8s  %-6s  %-30s  %s\n", "NAME", "KIND", "RATING", "TITLE", "DESCRIPTION")
+		fmt.Fprintf(os.Stdout, "%-30s  %-8s  %-6s  %-30s  %s\n", "----", "----", "------", "-----", "-----------")
 		for _, s := range all {
-			fmt.Fprintf(os.Stdout, "%-30s  %-6s  %-30s  %s\n",
-				s.Name(), string(s.Rating()), s.Title(), s.Description())
+			kind := "scenario"
+			if demo.IsDemoEntry(s) {
+				kind = "demo"
+			}
+			fmt.Fprintf(os.Stdout, "%-30s  %-8s  %-6s  %-30s  %s\n",
+				s.Name(), kind, string(s.Rating()), s.Title(), s.Description())
 		}
 		return nil
 	},
@@ -135,7 +139,7 @@ func runDemoRunCmd(cmd *cobra.Command, args []string) error {
 
 	var useCases []scenarios.Scenario
 	if flagDemoAll {
-		all := demo.All()
+		all := demo.Catalogue()
 		if len(all) == 0 {
 			fmt.Fprintln(os.Stderr, "[demo] no use-cases registered")
 			return nil
@@ -150,9 +154,9 @@ func runDemoRunCmd(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("usage: awsbnkctl demo run <name> [--dry-run] or --all")
 		}
 		name := args[0]
-		s := demo.Find(name)
+		s := demo.FindInCatalogue(name)
 		if s == nil {
-			return fmt.Errorf("demo use-case %q not found (use `awsbnkctl demo list` to see registered use-cases)", name)
+			return fmt.Errorf("use-case %q not found in demo catalogue (try `awsbnkctl demo list` to see registered demos and Green scenarios)", name)
 		}
 		useCases = []scenarios.Scenario{s}
 	}
@@ -255,14 +259,14 @@ func runDemoCleanCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagDemoAll {
-		return cleanAllUseCases(sctx, demo.All())
+		return cleanAllUseCases(sctx, demo.Catalogue())
 	}
 
 	// Single named use-case.
 	name := args[0]
-	s := demo.Find(name)
+	s := demo.FindInCatalogue(name)
 	if s == nil {
-		return fmt.Errorf("demo use-case %q not found", name)
+		return fmt.Errorf("use-case %q not found in demo catalogue (try `awsbnkctl demo list` to see registered demos and Green scenarios)", name)
 	}
 	return scenarios.Cleanup(sctx, s)
 }

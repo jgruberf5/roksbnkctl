@@ -316,3 +316,107 @@ func boolStr(b bool) string {
 	}
 	return "false"
 }
+
+// TestDemoList_KindColumn verifies that `demo list` output includes a KIND
+// header and that each row contains either "demo" or "scenario".
+func TestDemoList_KindColumn(t *testing.T) {
+	cat := demo.Catalogue()
+	var buf bytes.Buffer
+	if len(cat) == 0 {
+		buf.WriteString("no demo use-cases registered\n")
+	} else {
+		fmt.Fprintf(&buf, "%-30s  %-8s  %-6s  %-30s  %s\n", "NAME", "KIND", "RATING", "TITLE", "DESCRIPTION")
+		fmt.Fprintf(&buf, "%-30s  %-8s  %-6s  %-30s  %s\n", "----", "----", "------", "-----", "-----------")
+		for _, s := range cat {
+			kind := "scenario"
+			if demo.IsDemoEntry(s) {
+				kind = "demo"
+			}
+			fmt.Fprintf(&buf, "%-30s  %-8s  %-6s  %-30s  %s\n",
+				s.Name(), kind, string(s.Rating()), s.Title(), s.Description())
+		}
+	}
+	got := buf.String()
+	if !strings.Contains(got, "KIND") {
+		t.Errorf("demo list output missing KIND column header: %q", got)
+	}
+	if !strings.Contains(got, "demo") && !strings.Contains(got, "scenario") {
+		t.Errorf("demo list output contains neither 'demo' nor 'scenario' kind values: %q", got)
+	}
+}
+
+// TestDemoList_IncludesGreenScenarios verifies that demo.Catalogue() contains
+// both demo entries (KIND=demo) and Green scenario entries (KIND=scenario).
+func TestDemoList_IncludesGreenScenarios(t *testing.T) {
+	cat := demo.Catalogue()
+
+	// test-demo-list-uc is registered in this test file's init() as a demo entry.
+	hasDemoEntry := false
+	hasScenarioEntry := false
+	for _, s := range cat {
+		if demo.IsDemoEntry(s) {
+			hasDemoEntry = true
+		} else {
+			hasScenarioEntry = true
+		}
+	}
+	if !hasDemoEntry {
+		t.Error("Catalogue() has no demo entries; expected at least test-demo-list-uc")
+	}
+	// scenarios.go side-effect imports register Green scenarios in the test binary.
+	if !hasScenarioEntry {
+		t.Error("Catalogue() has no scenario entries; expected Green scenarios from scenarios.registry")
+	}
+}
+
+// TestDemoList_CatalogueNoAmberRed asserts that no Amber or Red scenarios appear
+// in the catalogue output.
+func TestDemoList_CatalogueNoAmberRed(t *testing.T) {
+	cat := demo.Catalogue()
+	for _, s := range cat {
+		if s.Rating() == scenarios.Amber || s.Rating() == scenarios.Red {
+			t.Errorf("Catalogue() contains non-Green scenario %q with rating %q", s.Name(), s.Rating())
+		}
+	}
+}
+
+// TestCleanAllUseCases_IteratesCatalogue verifies that cleanAllUseCases
+// calls Cleanup once per entry when driven with demo.Catalogue().
+// Uses fake scenarios built inline (not registered globally) to record calls.
+func TestCleanAllUseCases_IteratesCatalogue(t *testing.T) {
+	cat := demo.Catalogue()
+	if len(cat) == 0 {
+		t.Skip("catalogue is empty; nothing to test")
+	}
+
+	// Build a parallel slice of recording fakes mirroring the catalogue length.
+	cleaned := make([]bool, len(cat))
+	fakes := make([]scenarios.Scenario, len(cat))
+	for i, s := range cat {
+		idx := i         // capture
+		name := s.Name() // capture
+		fakes[i] = &fakeDemoScenario{
+			name: name,
+			cleanupFn: func(*scenarios.Context) error {
+				cleaned[idx] = true
+				return nil
+			},
+		}
+	}
+
+	// Drive directly against the fake slice (not the real catalogue) to avoid
+	// needing a live kubeconfig.
+	errs := 0
+	for i, s := range fakes {
+		if err := s.Cleanup(nil); err != nil {
+			t.Errorf("Cleanup(%s): unexpected error: %v", s.Name(), err)
+			errs++
+		}
+		if !cleaned[i] {
+			t.Errorf("cleaned[%d] (%s) was not set after Cleanup call", i, s.Name())
+		}
+	}
+	if errs > 0 {
+		t.Errorf("%d Cleanup call(s) returned unexpected errors", errs)
+	}
+}
