@@ -1,7 +1,9 @@
 package phases
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -226,6 +228,22 @@ func Phase14FLOHelm(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	return runFLOHelmInstall(ctx, helmInstaller, cl, st, floVersion, valuesMap, clients)
 }
 
+// helmValuesEqual reports whether two Helm values maps are semantically equal by
+// comparing their canonical JSON representations. Canonical-JSON compare avoids
+// int-vs-float64 skew between Helm's JSON-stored Config and the rendered values.
+// Returns false (treat as changed → upgrade) if either side fails to marshal.
+func helmValuesEqual(a, b map[string]interface{}) bool {
+	aj, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bj, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(aj, bj)
+}
+
 // runFLOHelmInstall handles the list→install-or-upgrade→CRD-wait sequence.
 // Extracted for testability (accepts helmInstaller interface).
 func runFLOHelmInstall(ctx context.Context, h helmInstaller, cl *intent.Cluster, st *state.State, floVersion string, valuesMap map[string]interface{}, clients *Clients) error {
@@ -249,11 +267,27 @@ func runFLOHelmInstall(ctx context.Context, h helmInstaller, cl *intent.Cluster,
 		}
 		fmt.Fprintf(os.Stderr, "[phase 14] helm install %s complete\n", floReleaseName)
 	} else {
-		fmt.Fprintf(os.Stderr, "[phase 14] release %s already exists, upgrading\n", floReleaseName)
-		if _, err = h.Upgrade(floReleaseName, floNamespace, ch, valuesMap); err != nil {
-			return fmt.Errorf("phase14: helm upgrade %s: %w", floReleaseName, err)
+		existing := releases[0]
+		deployedVersion := ""
+		if existing.Chart != nil && existing.Chart.Metadata != nil {
+			deployedVersion = existing.Chart.Metadata.Version
 		}
-		fmt.Fprintf(os.Stderr, "[phase 14] helm upgrade %s complete\n", floReleaseName)
+		alreadyDeployed := existing.Info != nil && existing.Info.Status == release.StatusDeployed
+		valuesUnchanged := helmValuesEqual(existing.Config, valuesMap)
+
+		if alreadyDeployed && deployedVersion == floVersion && valuesUnchanged {
+			// Skip upgrade: release is healthy, at the correct version, with identical values.
+			// Canonical-JSON compare avoids int-vs-float64 skew between Helm's JSON-stored Config and the rendered values.
+			// Proceeding to CRD-wait + state writes (idempotent).
+			fmt.Fprintf(os.Stderr, "[phase 14] release %s already at v%s with unchanged values — skipping upgrade\n", floReleaseName, floVersion)
+		} else {
+			fmt.Fprintf(os.Stderr, "[phase 14] release %s exists but needs upgrade (deployedVersion=%q desiredVersion=%q deployed=%v valuesMatch=%v) — upgrading\n",
+				floReleaseName, deployedVersion, floVersion, alreadyDeployed, valuesUnchanged)
+			if _, err = h.Upgrade(floReleaseName, floNamespace, ch, valuesMap); err != nil {
+				return fmt.Errorf("phase14: helm upgrade %s: %w", floReleaseName, err)
+			}
+			fmt.Fprintf(os.Stderr, "[phase 14] helm upgrade %s complete\n", floReleaseName)
+		}
 	}
 
 	// Wait for cneinstances.k8s.f5.com CRD (FLO installs it during reconciliation).

@@ -21,8 +21,14 @@ const (
 	// dssmConfigMapName is the FLO-created ConfigMap that holds the readiness probe script.
 	dssmConfigMapName = "f5-dssm"
 
-	// dssmLabelSelector targets all f5-dssm pods for the post-patch bounce.
-	dssmLabelSelector = "app=f5-dssm"
+	// dssmLabelSelector targets the real dssm pods for the post-patch bounce.
+	// Live-verified 2026-05-28: pods are labeled app=f5-dssm-db and app=f5-dssm-sentinel;
+	// the old "app=f5-dssm" selector matched zero pods and made the bounce a silent no-op.
+	dssmLabelSelector = "app in (f5-dssm-db,f5-dssm-sentinel)"
+
+	// dssmReadinessSelector is the label selector used to list dssm pods for the
+	// readiness guard. Identical to dssmLabelSelector — named separately for clarity.
+	dssmReadinessSelector = "app in (f5-dssm-db,f5-dssm-sentinel)"
 
 	// dssmInsecureMarker is the string we check for (and inject) in readiness_probe.sh.
 	dssmInsecureMarker = "--tls --insecure"
@@ -74,6 +80,17 @@ func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *st
 
 	if clients.K8s == nil {
 		fmt.Fprintln(os.Stderr, "[phase 24b] warning: K8s client not available, skipping DSSM overlay")
+		return nil
+	}
+
+	// Readiness guard: skip the entire patch+bounce when dssm is already healthy.
+	// The FLO operator reverts the ConfigMap marker on every reconcile, so re-patching
+	// on a warm cluster is perpetual churn with no effect (dssm stays healthy without the
+	// patch present — live-confirmed 2026-05-28 on syd-tracer at 27h uptime). The patch
+	// only matters during initial cold-start to unblock the redis-cli TLS hostname-verify
+	// bug; once pods are Ready the fix has already been applied and the pods are healthy.
+	if allDSSMPodsReady(ctx, clients) {
+		fmt.Fprintln(os.Stderr, "[phase 24b] dssm already Ready — skipping overlay (cold-start only)")
 		return nil
 	}
 
@@ -157,6 +174,40 @@ func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *st
 		fmt.Fprintf(os.Stderr, "[phase 24b] warning: save state: %v\n", err)
 	}
 	return nil
+}
+
+// allDSSMPodsReady returns true when at least one dssm pod exists AND every
+// dssm pod (db + sentinel) in InstanceNamespace has a Ready condition of True.
+// Zero pods (very early cold-start) returns false so the patch path runs.
+func allDSSMPodsReady(ctx context.Context, clients *Clients) bool {
+	pods, err := clients.K8s.CoreV1().Pods(InstanceNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: dssmReadinessSelector,
+	})
+	if err != nil {
+		// List failure → can't confirm Ready; fall through to patch path.
+		fmt.Fprintf(os.Stderr, "[phase 24b] warning: listing dssm pods for readiness check: %v — assuming not Ready\n", err)
+		return false
+	}
+	if len(pods.Items) == 0 {
+		// No pods yet (very early cold-start).
+		return false
+	}
+	for i := range pods.Items {
+		if !isPodReady(&pods.Items[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isPodReady reports whether the pod has a Ready condition with status True.
+func isPodReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // Phase24bDSSMInsecureOverlayDown is a no-op — the f5-dssm ConfigMap and pods

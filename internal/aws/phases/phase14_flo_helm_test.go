@@ -386,6 +386,150 @@ func TestPhase14_FLODisabled_SkipsHelmCalls(t *testing.T) {
 	}
 }
 
+// ─── Test 10b: Skip upgrade when version + values + status all match ────────
+
+func TestPhase14_SkipUpgrade_WhenUnchanged(t *testing.T) {
+	awsmw.ResetForTest()
+	cl, _, _ := clusterWithBnk(t)
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("KUBECONFIG_PATH", "/fake/kubeconfig")
+
+	clients := buildFakeCNEClients(t)
+	desiredValues := map[string]interface{}{"key": "value"}
+	fake := &fakeHelmInstaller{
+		listReleases: []*release.Release{
+			{
+				Name:      floReleaseName,
+				Namespace: floNamespace,
+				Chart: &chart.Chart{
+					Metadata: &chart.Metadata{Version: intent.DefaultFLOVersion},
+				},
+				Config: map[string]interface{}{"key": "value"},
+				Info:   &release.Info{Status: release.StatusDeployed},
+			},
+		},
+	}
+
+	if err := runFLOHelmInstall(context.Background(), fake, cl, st, intent.DefaultFLOVersion, desiredValues, clients); err != nil {
+		t.Fatalf("runFLOHelmInstall skip-unchanged: %v", err)
+	}
+
+	if fake.upgradeCalls != 0 {
+		t.Errorf("upgradeCalls = %d, want 0 (should skip when unchanged)", fake.upgradeCalls)
+	}
+	if fake.installCalls != 0 {
+		t.Errorf("installCalls = %d, want 0", fake.installCalls)
+	}
+	// CRD-wait and state writes must still run.
+	if st.Get("FLO_RELEASE_NAME") != floReleaseName {
+		t.Errorf("FLO_RELEASE_NAME = %q, want %q", st.Get("FLO_RELEASE_NAME"), floReleaseName)
+	}
+	if st.Get("FLO_INSTALLED_AT") == "" {
+		t.Error("FLO_INSTALLED_AT should be set even when upgrade is skipped")
+	}
+}
+
+// ─── Test 10c: Upgrade when chart version differs ────────────────────────────
+
+func TestPhase14_Upgrade_WhenVersionDiffers(t *testing.T) {
+	awsmw.ResetForTest()
+	cl, _, _ := clusterWithBnk(t)
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("KUBECONFIG_PATH", "/fake/kubeconfig")
+
+	clients := buildFakeCNEClients(t)
+	desiredValues := map[string]interface{}{"key": "value"}
+	fake := &fakeHelmInstaller{
+		listReleases: []*release.Release{
+			{
+				Name:      floReleaseName,
+				Namespace: floNamespace,
+				Chart: &chart.Chart{
+					// Deployed version is older than desired.
+					Metadata: &chart.Metadata{Version: "v2.20.0-0.0.1"},
+				},
+				Config: map[string]interface{}{"key": "value"},
+				Info:   &release.Info{Status: release.StatusDeployed},
+			},
+		},
+	}
+
+	if err := runFLOHelmInstall(context.Background(), fake, cl, st, intent.DefaultFLOVersion, desiredValues, clients); err != nil {
+		t.Fatalf("runFLOHelmInstall upgrade-version-differs: %v", err)
+	}
+
+	if fake.upgradeCalls != 1 {
+		t.Errorf("upgradeCalls = %d, want 1 (should upgrade when version differs)", fake.upgradeCalls)
+	}
+	if fake.installCalls != 0 {
+		t.Errorf("installCalls = %d, want 0", fake.installCalls)
+	}
+}
+
+// ─── Test 10d: Upgrade when values differ ────────────────────────────────────
+
+func TestPhase14_Upgrade_WhenValuesDiffer(t *testing.T) {
+	awsmw.ResetForTest()
+	cl, _, _ := clusterWithBnk(t)
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("KUBECONFIG_PATH", "/fake/kubeconfig")
+
+	clients := buildFakeCNEClients(t)
+	desiredValues := map[string]interface{}{"key": "new-value"}
+	fake := &fakeHelmInstaller{
+		listReleases: []*release.Release{
+			{
+				Name:      floReleaseName,
+				Namespace: floNamespace,
+				Chart: &chart.Chart{
+					Metadata: &chart.Metadata{Version: intent.DefaultFLOVersion},
+				},
+				// Deployed with different values than desired.
+				Config: map[string]interface{}{"key": "old-value"},
+				Info:   &release.Info{Status: release.StatusDeployed},
+			},
+		},
+	}
+
+	if err := runFLOHelmInstall(context.Background(), fake, cl, st, intent.DefaultFLOVersion, desiredValues, clients); err != nil {
+		t.Fatalf("runFLOHelmInstall upgrade-values-differ: %v", err)
+	}
+
+	if fake.upgradeCalls != 1 {
+		t.Errorf("upgradeCalls = %d, want 1 (should upgrade when values differ)", fake.upgradeCalls)
+	}
+	if fake.installCalls != 0 {
+		t.Errorf("installCalls = %d, want 0", fake.installCalls)
+	}
+}
+
+// ─── Test 10e: Install when release absent ────────────────────────────────────
+
+func TestPhase14_Install_WhenAbsent(t *testing.T) {
+	awsmw.ResetForTest()
+	cl, _, _ := clusterWithBnk(t)
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("KUBECONFIG_PATH", "/fake/kubeconfig")
+
+	clients := buildFakeCNEClients(t)
+	fake := &fakeHelmInstaller{} // empty listReleases → no existing release
+
+	if err := runFLOHelmInstall(context.Background(), fake, cl, st, intent.DefaultFLOVersion, map[string]interface{}{}, clients); err != nil {
+		t.Fatalf("runFLOHelmInstall install-when-absent: %v", err)
+	}
+
+	if fake.installCalls != 1 {
+		t.Errorf("installCalls = %d, want 1", fake.installCalls)
+	}
+	if fake.upgradeCalls != 0 {
+		t.Errorf("upgradeCalls = %d, want 0", fake.upgradeCalls)
+	}
+}
+
 // ─── Test 10: CA_ISSUER / FAR_SECRET_NAME / JWT substitution in values template ─
 
 func TestPhase14_ValuesTemplate_Substitution(t *testing.T) {
