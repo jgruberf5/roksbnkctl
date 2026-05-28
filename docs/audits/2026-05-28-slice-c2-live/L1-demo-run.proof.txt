@@ -1,0 +1,54 @@
+=== L1: demo run diameter (against existing demo-diameter state — SSA idempotency) ===
+
+▶ diameter — Diameter-over-L4 demo — proves BNK's TMM can carry arbitrary TCP protocols by
+proxying the Diameter base protocol (RFC 6733) from a jumphost through a BNK
+L4 Gateway to a python responder backend, and validating the full CER→CEA
+capabilities exchange returns Result-Code=2001 (DIAMETER_SUCCESS).
+
+L4 (TCP) only: TMM proxies the Diameter TCP stream transparently. The Diameter-
+aware L7 routing (F5DiameterEndpoint MRF) is a CNF/SPK-only feature not present
+on this BNK-on-EKS build. VIP 10.0.10.110:3868 (dedicated, no collision with
+scenario-suite or http2 demo). The python diameter_client.py is pushed to the
+jumphost via CopyFileViaEICE and run via RunStagingCommands.
+
+Verify order (load-bearing, mirrors proxy-protocol-l4 — NOT httproutee2e):
+  1. diameter-responder Deployment Available.
+  2. Gateway diameter-gateway Programmed=True.
+  3. L4Route diameter-l4route Accepted=True.
+  4. Best-effort F5BnkGateway demo-diameter present.
+  5. Push diameter_client.py to jumphost; run against VIP:3868.
+  6. Assert stdout contains Result-Code=2001 AND DIAMETER_SUCCESS.
+
+Requires: testing.jumphost.enabled=true in cluster.yaml + awsbnkctl up --demo first.
+scenario:  diameter  (green)
+title:     Diameter (RFC 6733) CER→CEA over L4 (TCP) BNK Gateway
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/diameter/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/diameter/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/diameter/03-backend.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/diameter/06-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/diameter/07-l4route.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+✔ diameter: PASS — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-069018cbf6b27af12  (src: 10.0.10.217)   │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.212)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.110)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.212                      │
+│  gateway-addr:       10.0.10.110                     │
+│  httproute-accepted: (unknown)                       │
+│  scenario:           diameter                        │
+└───────────────────────────────────────────────────────┘
+[resync] ✓ 0 HTTPRoute(s) resynced
+EXIT=0

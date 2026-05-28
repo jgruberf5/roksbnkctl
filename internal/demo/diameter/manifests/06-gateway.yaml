@@ -2,12 +2,12 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: diameter-gateway
-  namespace: demo-diameter
+  namespace: {{.Namespace}}
 spec:
-  gatewayClassName: syd-tracer-gatewayclass
+  gatewayClassName: {{.GatewayClassName}}
   addresses:
   - type: IPAddress
-    value: 10.0.10.110
+    value: {{.VIP}}
   listeners:
   # Focus listener: a TCP (L4) VIP on the standard Diameter port 3868.
   - name: diameter-listener

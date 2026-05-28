@@ -2,7 +2,7 @@ apiVersion: gateway.k8s.f5net.com/v1
 kind: L4Route
 metadata:
   name: diameter-l4route
-  namespace: demo-diameter
+  namespace: {{.Namespace}}
 spec:
   parentRefs:
   - name: diameter-gateway

@@ -11,7 +11,10 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
-	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/http2" // registers "http2" use-case via init()
+	// Side-effect imports: each use-case package registers into demo.registry via init().
+	// Alphabetical; one line per use-case as new slices ship.
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/diameter" // registers "diameter" use-case via init()
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/http2"    // registers "http2" use-case via init()
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
 	"github.com/JLCode-tech/awsbnkctl/pkg/bnk"
