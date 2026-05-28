@@ -29,7 +29,7 @@ cluster.yaml without an SSO session, or as a CI gate for cluster.yaml
 files committed under examples/.
 
 Example:
-  awsbnkctl validate examples/syd-tracer/cluster.yaml`,
+  awsbnkctl validate examples/full-cluster/cluster.yaml`,
 	Args: cobra.ExactArgs(1),
 	RunE: runValidate,
 }

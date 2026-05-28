@@ -53,7 +53,6 @@ archives:
       - LICENSE
       - README.md
       - CHANGELOG.md
-      - MIGRATING.md
 
 checksum:
   name_template: "checksums.txt"
@@ -79,10 +78,6 @@ release:
     ## awsbnkctl {{ .Tag }}
 
     Single-binary CLI for deploying F5 BIG-IP Next for Kubernetes on AWS EKS.
-
-    Read the book: <https://JLCode-tech.github.io/awsbnkctl/book/> — _Deploying and Testing BIG-IP Next for Kubernetes with awsbnkctl_
-
-    Migration guide: <https://github.com/JLCode-tech/awsbnkctl/blob/main/MIGRATING.md>
   footer: |
     ---
     See [`CHANGELOG.md`](https://github.com/JLCode-tech/awsbnkctl/blob/main/CHANGELOG.md) for the full per-version change log.
