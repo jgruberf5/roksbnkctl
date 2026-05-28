@@ -1,16 +1,16 @@
 # PRD 09 — Scenarios framework + `awsbnkctl test traffic`
 
-> **Status:** draft — authored 2026-05-23 after live HTTP-200 breakthrough on syd-tracer. Operator-facing surface for end-to-end BNK validation. Drafted alongside slice-11 (which ships `awsbnkctl bnk resync` as the prerequisite primitive).
+> **Status:** stable. Operator-facing surface for end-to-end BNK validation. Specifies the scenarios framework alongside the `awsbnkctl bnk resync` primitive (slice-11).
 
 ## Why this PRD exists
 
-We currently have no way to assert "BNK is actually serving traffic" from inside `awsbnkctl`. The lifecycle commands (`up`/`down`) check that pods are Ready, the License is Active, and the Gateway is Programmed=True — but they don't curl the VIP. The 2026-05-23 live session on syd-tracer surfaced the gap: every Phase 25 check passed and yet the VIP returned HTTP 500 because of a stale TMM pool member ([upstream issue draft](../upstream-issues/cne-controller-endpointslice-not-watched.md)).
+awsbnkctl lacks a built-in assertion that "BNK is actually serving traffic". The lifecycle commands (`up`/`down`) check that pods are Ready, the License is Active, and the Gateway is Programmed=True — but they don't curl the VIP. Live testing surfaced the gap: every Phase 25 check passed and yet the VIP returned HTTP 500 because of a stale TMM pool member ([upstream issue draft](../upstream-issues/cne-controller-endpointslice-not-watched.md)).
 
 We need an explicit, repeatable, reportable check: deploy a known-good workload, drive traffic through the data plane from an AWS-side vantage that exercises the real VIP (not a kube-proxy shortcut), assert the response, and emit a report that includes an ASCII rendering of the environment exercised.
 
-## Prior art — `kindbnkctl`
+## Prior art
 
-`mwiget/kindbnkctl` has a mature scenarios framework already. We adopt its shape so operators who run both tools see the same vocabulary:
+The design adopts the shape of an established scenarios framework so operators see consistent vocabulary:
 
 - One Go package per scenario under `internal/scenarios/<name>/`
 - A scenario implements a `Scenario` interface — `Manifests() / Apply() / Verify() / Cleanup()`
@@ -19,9 +19,9 @@ We need an explicit, repeatable, reportable check: deploy a known-good workload,
 - Reports written to `<workspace>/artifacts/scenarios/<name>/` (per-run manifests + logs) and aggregated at `<workspace>/reports/<stamp>/`
 - Each scenario maps to one F5 how-to at `clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/`
 
-The kindbnkctl scenario catalogue (as of 2026-05-22):
+Reference catalogue of scenarios (existing implementations available in prior tooling):
 
-| Scenario | F5 how-to | Rating in kindbnkctl |
+| Scenario | F5 how-to | Reference rating |
 |---|---|---|
 | `bgp-peer-frr` | BGP peering with FRR | Green |
 | `http-routing-e2e` | HTTP traffic steering with Gateway API HTTPRoute | Green |
@@ -58,7 +58,7 @@ Add a new lifecycle phase (after Phase 17 — secondary ENIs) that provisions:
 - A `t3.small` EC2 with two ENIs:
   - Primary in the MGMT subnet (for AWS Systems Manager + EICE access)
   - Secondary in the BNK_EXT subnet (for traffic that lands on the data path VIP)
-- An EC2 Instance Connect Endpoint in the MGMT subnet (so SSH works even from corporate networks that drop AWS 3.x.x.x traffic — proved necessary in syd-tracer testing)
+- An EC2 Instance Connect Endpoint in the MGMT subnet (so SSH works even from corporate networks that drop AWS 3.x.x.x traffic — validated in testing)
 - A security group that allows: SSH from EICE only (no public ingress) + outbound to anywhere in the VPC
 - IAM instance profile with `ec2:DescribeInstances` for the jumphost's own metadata
 
@@ -90,7 +90,7 @@ internal/scenarios/
   envdiagram.go                  # ASCII env diagram of cluster + jumphost
   httproutee2e/
     README.md
-    scenario.go                  # ports kindbnkctl's http-routing-e2e
+    scenario.go                  # implements the http-routing-e2e scenario
     manifests/
       01-namespace.yaml
       02-gateway.yaml
@@ -98,7 +98,7 @@ internal/scenarios/
       04-nginx.yaml
 ```
 
-Each scenario writes `Result` JSON + assertion list per kindbnkctl's shape; the framework prepends an ASCII env diagram to each report.
+Each scenario writes `Result` JSON + assertion list per the framework shape; the framework prepends an ASCII env diagram to each report.
 
 #### `http-routing-e2e` shape (ported, AWS-adapted)
 
@@ -113,10 +113,10 @@ Each scenario writes `Result` JSON + assertion list per kindbnkctl's shape; the 
 
 #### ASCII env diagram (output in every report)
 
-Every report includes a deterministic ASCII rendering of what was exercised. Example for `http-routing-e2e` on syd-tracer:
+Every report includes a deterministic ASCII rendering of what was exercised. Example for `http-routing-e2e`:
 
 ```
-syd-tracer  (eks 1.30, ap-southeast-2)
+my-cluster  (eks 1.30, ap-southeast-2)
 └── node ip-10-0-1-177 (BNK eligible, SR-IOV)
     ├── f5-tmm pod (eth0=10.0.1.177)
     │   ├── ext-vlan  → ENI 10.0.10.240/24 → BNK_EXT subnet
@@ -148,9 +148,9 @@ ASCII output goes to stderr by default + included verbatim in `reports/<stamp>/<
 ## Acceptance criteria (slice-11 only)
 
 - [x] `docs/upstream-issues/cne-controller-endpointslice-not-watched.md` exists with reproduction + diagnostic + suggested fix
-- [x] This PRD exists, names slice-12 + slice-13, documents the kindbnkctl scenario catalogue we plan to port, and specifies the ASCII env diagram contract
+- [x] This PRD exists, names slice-12 + slice-13, documents the reference scenario catalogue to implement, and specifies the ASCII env diagram contract
 - [ ] `pkg/bnk.ResyncHTTPRoutes` + `awsbnkctl bnk resync` ship per `.agent/tasks/active/slice-11b-bnk-resync/TASK.md`
-- [ ] Live verification on syd-tracer: `awsbnkctl bnk resync nginx-route -n f5-cne-system` flips a stale pool back to current within 5s
+- [ ] Live verification: `awsbnkctl bnk resync nginx-route -n f5-cne-system` flips a stale pool back to current within 5s
 
 ## Acceptance criteria (follow-up slices)
 
@@ -164,7 +164,7 @@ ASCII output goes to stderr by default + included verbatim in `reports/<stamp>/<
 ### Slice-13
 
 - `awsbnkctl scenarios list` lists Green/Amber/Red catalogue
-- `awsbnkctl scenarios run http-routing-e2e` returns 0 against a freshly-built syd-tracer cluster with assertions all passing
+- `awsbnkctl scenarios run http-routing-e2e` returns 0 against a freshly-built cluster with assertions all passing
 - `awsbnkctl test traffic` is an alias that maps to `scenarios run http-routing-e2e`
 - Report includes ASCII env diagram per the contract above
 - JSON output schema: `awsbnkctl.scenario.v1`

@@ -1,15 +1,14 @@
 # Post-Terraform Direction — Implementation Spec
 
-**Status:** Approved 2026-05-21 (via grill-me session). Not yet implemented.
+**Status:** stable
 **Owner:** awsbnkctl maintainers
-**Last updated:** 2026-05-21
 **Companion docs:** [`docs/FORGE_MCP_INTEGRATION.md`](FORGE_MCP_INTEGRATION.md) (forge handoff already designed; this doc realigns the rest of the tool to the same model)
 
 ---
 
 ## 0 · TL;DR
 
-Terraform was the wrong implementation choice for awsbnkctl. The aws-gpu-setup PoC (`/Users/j.lucia/Code/aws-gpu-setup/`) proved that an imperative awscli + YAML method delivers the same result with dramatically faster iteration. We adopt the **method**, not the code — porting the imperative phased shape into Go against the AWS SDK, keeping the Go binary as the typed contract surface for forge MCP and the single-binary distribution story.
+Terraform was the wrong implementation choice for awsbnkctl. Validation of an imperative awscli + YAML method proved it delivers the same result with dramatically faster iteration. The design adopts the **method**, not any specific codebase — the imperative phased shape is ported into Go against the AWS SDK, keeping the Go binary as the typed contract surface for forge MCP and the single-binary distribution story.
 
 **Bottom line:**
 - Delete `terraform/`, `internal/tf/`, `embedded.go` (TF embed), `install_build_dependencies.sh`.
@@ -30,7 +29,7 @@ All four mattered — that's why the move is wholesale, not patch:
 | **Distribution / binary fetch** | `internal/tf/fetch.go`, version pinning, embedded modules, `install_build_dependencies.sh` | TF binary stops shipping. Single Go binary. |
 | **State-file fragility** | `terraform.tfstate` drift, `terraform.applied.tfvars` dance, lock contention, manual `state rm` recovery | AWS tags are truth. Local cache is regenerable. |
 | **Two control planes** | TF for infra + bash/SDK for runtime = two mental models, divergent failure surfaces | One Go program, one mental model. |
-| **Iteration speed** | Plan/apply cycles slow; errors opaque; hard for AI agents (forge/MCP) to reason about TF graph | Imperative, sequential, log-able. Mirror aws-gpu-setup's velocity. |
+| **Iteration speed** | Plan/apply cycles slow; errors opaque; hard for AI agents (forge/MCP) to reason about TF graph | Imperative, sequential, log-able. Direct AWS-SDK calls with no intermediate state file. |
 
 ---
 
@@ -39,8 +38,8 @@ All four mattered — that's why the move is wholesale, not patch:
 | Layer | Decision |
 |---|---|
 | AWS writes + reads | **Strict Go SDK only.** No exec to `aws` CLI. `internal/aws/` grows to cover what TF did. |
-| Provisioning shape | **Imperative phased functions** ported from aws-gpu-setup's `up.sh` / `down.sh`. NOT a reconciler framework. |
-| Auth | **SSO sentinel pattern** from `aws-gpu-setup/lib/lab-core.sh`'s `aws_q` + `check_auth_or_die`, ported into a Go middleware wrapper around the SDK client. Up-front `sts.GetCallerIdentity` + mid-run phase-boundary checks. Hard-exit on `ExpiredToken` / `InvalidClientTokenId` with the exact `aws sso login --profile <X>` hint. |
+| Provisioning shape | **Imperative phased functions** (NOT a reconciler framework). |
+| Auth | **SSO sentinel pattern**: up-front `sts.GetCallerIdentity` + mid-run phase-boundary checks via a Go middleware wrapper around the SDK client. Hard-exit on `ExpiredToken` / `InvalidClientTokenId` with the exact `aws sso login --profile <X>` hint. |
 | State | **AWS tags (truth) + `.awsbnkctl/<cluster>/state.env` IDs cache.** Required tag on every resource: `awsbnkctl:cluster=<name>`. Cache is rebuildable from tags. Loss of cache → tag-discovery fallback. |
 | Intent | **`cluster.yaml`** — structured, Go-struct-validated, forge-MCP-readable. No vars.env emit. |
 | K8s manifests | **Variant directories.** `internal/k8s/manifests/<pattern>/*.yaml` (e.g. `host-device/`, `sr-iov-tmm/`). `cluster.yaml: pattern: <name>` selects. Adding a third pattern = add a directory. Shared manifests in `internal/k8s/manifests/shared/`. |
@@ -62,7 +61,7 @@ Forge integration model is **locked in [`FORGE_MCP_INTEGRATION.md`](FORGE_MCP_IN
 | **Down + forge** | `awsbnkctl down` calls `forge unregister` **by default**. `--keep-forge-link` preserves the project record. Matches the `--keep-iam` / `--keep-keypair` flag family. |
 | **Pattern variant visibility** | Stamp namespace label/annotation: `awsbnkctl.io/pattern: host-device`. No bnk-forge schema change required. Forge GUI can surface it later if it grows the feature. |
 
-### Implementation status (slice 4, 2026-05-21)
+### Implementation status (slice 4)
 
 Phase 09 (`Phase09ForgeRegister` / `Phase09ForgeRegisterDown`) is **implemented** in
 `internal/aws/phases/phase09_forge_register.go` and wired into `runPhasedUp` /
@@ -72,7 +71,7 @@ Key implementation notes:
 - **MCP-first, REST fallback.** `forge.Register()` (MCP) is tried first. On a catalog-gap
   error (`IsMCPCatalogGapErr` in `internal/forge/rest.go`) the phase retries via
   `forge.RegisterREST()` which speaks directly to the forge REST API. This mirrors the
-  kindbnkctl precedent (D-009): MCP is preferred but REST is the canonical fallback, not
+  established precedent: MCP is preferred but REST is the canonical fallback, not
   exceptional.
 - **REST fallback credentials.** Hardcoded `admin/changeme` matching the localhost
   bnk-forge dev stack. Real forge auth is out of scope for slice 4.
@@ -188,7 +187,7 @@ pattern: host-device                # selects internal/k8s/manifests/host-device
 
 # BNK supply-chain artefacts loaded as k8s Secrets by slice 5.
 # Paths are local files on the operator's machine; awsbnkctl reads and
-# creates the Secrets directly (NO S3 round-trip, matching aws-gpu-setup).
+# creates the Secrets directly (NO S3 round-trip).
 bnk:                                # REQUIRED for slice 5 (k8s install)
   farArchive: ./cne_pull_64.json    # F5 FAR pull credentials (JSON)
   jwt: ./license.jwt                # F5 subscription JWT
@@ -283,7 +282,7 @@ up
 ├─ 20. host-device NADs (Phase20NADs) ◄── slice 7b (Pass 2, activation-inert)
 │       NetworkAttachmentDefinitions external-netdevice (ens8) + internal-netdevice (ens7)
 │       applied into BOTH f5-cne-system AND default namespaces
-│       (per aws-gpu-setup/deploy-bnk.sh:143 NAD_NS_SET)
+│       (NAD_NS_SET: both namespaces required by the host-device pattern)
 ├─ 21. IRSA ServiceAccount pre-creation (Phase21IRSASA) ◄── slice 7b (Pass 2, activation-inert)
 │       ServiceAccount f5-cne-controller-<cluster>-bnk-serviceaccount in f5-cne-system
 │       annotation: eks.amazonaws.com/role-arn=<CNE_IRSA_ROLE_ARN>
@@ -291,7 +290,7 @@ up
 ├─ 22. CNEInstance CR (Phase22CNEInstance) ◄── slice 7c (Pass 3) *** BURNS F5 LICENSE ***
 │       render + SSA-apply cneinstances.k8s.f5.com/v1/CNEInstance <cluster>-bnk in f5-cne-system
 │       2-min "reconcile started" gate: polls status.conditions non-empty before proceeding
-│       (catches "reconcile never started" pathology early per Architect mandate)
+│       (catches "reconcile never started" pathology early)
 │       --dry-run: logs plan, skips apply+poll, sets placeholder state
 │       state keys: CNEINSTANCE_NAME, CNEINSTANCE_APPLIED_AT, CNEINSTANCE_RECONCILE_STARTED_AT
 ├─ 23. License CR (Phase23License) ◄── slice 7c (Pass 3) *** BURNS F5 LICENSE ***
@@ -324,7 +323,7 @@ up
 ```
 
 > **Removed from the roadmap:** the original TF graph had `terraform/modules/ecr_mirror/`
-> and `terraform/modules/s3_supply_chain/` (~281 LOC combined). aws-gpu-setup
+> and `terraform/modules/s3_supply_chain/` (~281 LOC combined). The reference implementation
 > demonstrates BNK works without either — FAR archive + JWT load as k8s Secrets
 > from local files, and EKS pulls F5 images directly via the FAR pull secret.
 > If a future deployment needs air-gap or image mirroring, model it as an
@@ -417,7 +416,7 @@ down
 | eks | `ResourceNotFoundException` |
 | iam | `NoSuchEntity` |
 
-**Post-condition waits** (port from aws-gpu-setup's `lib/lab-core.sh: wait_gone`):
+**Post-condition waits** (modeled on the reference `wait_gone` pattern):
 - NAT GW deletion → wait for `State == deleted`
 - EIP unassociation → wait for `AssociationId == ""` before release
 - ENI detach → poll until ENI is gone before deleting its SG
@@ -427,10 +426,10 @@ down
 
 ## 8 · SSO auth sentinel — Go port
 
-aws-gpu-setup's pattern in `lib/lab-core.sh`:
-1. Every `aws` CLI call goes through `aws_q`, which captures stderr to a tempfile and grep's for token-expiry strings.
-2. On match, `aws_q` writes a sentinel file (`/tmp/aws-gpu-setup.auth-fail.$$`) and returns the error.
-3. Every phase begins with `banner`, which calls `check_auth_or_die`, which reads the sentinel and hard-exits with the `aws sso login` hint.
+The pattern used in the reference implementation:
+1. Every AWS call is wrapped to capture stderr and check for token-expiry strings.
+2. On match, a sentinel flag is set and the error is returned.
+3. Every phase begins with `CheckAuthOrDie`, which reads the sentinel and hard-exits with the `aws sso login` hint.
 
 Go port (sketch):
 
@@ -604,21 +603,21 @@ internal/k8s/manifests/
 - `awsbnkctl down --yes` removes everything; second `down` is a no-op.
 - Mid-run SSO expiry produces the auth-sentinel hard-exit with the `aws sso login` hint, not silent no-op.
 
-**Slice roadmap (updated 2026-05-22 post slice-07c Pass 3):**
+**Slice roadmap:**
 - ✅ Slice 1 — VPC + subnets + IGW + NAT + RTs (tracer bullet) **[shipped, PR #8]**
 - ✅ Slice 2 — IAM cluster role + node role + instance profile **[shipped, PR #8]**
 - ✅ Slice 3 — EKS cluster + node group + kubeconfig **[shipped, PR #11]**
 - ✅ Slice 4 — Phase 09 forge register (MCP-first, REST fallback, soft-fail) **[shipped, PR #11]**
 - ✅ Slice 5 — K8s install foundation (shipped): namespaces + FAR/JWT Secrets + cert-manager v1.16.1 + BNK cert chain. Phase 12 (foundation) + Phase 13 (postflight) in up order; Phase12K8sFoundationDown first in destroy order. Variant manifest scaffold `internal/k8s/manifests/{shared,host-device,sr-iov-tmm}/` in place.
 - ✅ Slice 6 — FLO Helm install + OTEL certs (shipped, PR #14): Phase 14 (FLO Helm install via OCI FAR-key auth) + Phase 15 (OTEL Certificate CRs). Phase ordering: Phase12 → Phase14 → Phase15 → Phase13. Down order: Phase15Down → Phase14Down → Phase12Down. Adds `helm.sh/helm/v3` as a direct dep.
-- ✅ Slice 7a — BNK activation prerequisites Pass 1 (shipped): Phase 16 (TMM node label), Phase 17 (secondary ENIs for host-device data path), Phase 18 (OIDC provider + IRSA role for f5-cne-controller). Activation-inert. Adds `network.dataPath` to cluster.yaml schema, `--keep-irsa` down flag.
-- ✅ Slice 7b — BNK k8s prerequisites Pass 2 (shipped): Phase 19 (cloud-network-mapping CM), Phase 20 (host-device NADs in f5-cne-system + default), Phase 21 (IRSA SA pre-creation). Activation-inert.
-- ✅ Slice 7c — BNK activation Pass 3 (shipped, in review): Phase 22 (CNEInstance CR + 2-min reconcile gate), Phase 23 (License CRD wait + License CR), Phase 24 (CWC DNS-warmup heal), Phase 25 (20-min activation poll). **THIS IS THE ONLY PASS THAT BURNS A REAL F5 LICENSE.** Adds `--skip-activation-poll` up flag. Phase ordering: ... → Phase21 → Phase22 → Phase23 → Phase24 → Phase25 → Phase13. Down order: Phase25Down → Phase24Down → Phase23Down → Phase22Down → Phase21Down → ...
-- ⏳ Slice 8 — Polish: `inspect`/`doctor`/`status` reading state.env + tag scheme. Deletion of `terraform/` + `internal/tf/` + `embedded.go`. SR-IOV TMM pattern (variant manifests). Optionally split commands per kindbnkctl pattern (D-009).
+- ✅ Slice 7a — BNK activation prerequisites, part 1 (shipped): Phase 16 (TMM node label), Phase 17 (secondary ENIs for host-device data path), Phase 18 (OIDC provider + IRSA role for f5-cne-controller). Activation-inert. Adds `network.dataPath` to cluster.yaml schema, `--keep-irsa` down flag.
+- ✅ Slice 7b — BNK k8s prerequisites, part 2 (shipped): Phase 19 (cloud-network-mapping CM), Phase 20 (host-device NADs in f5-cne-system + default), Phase 21 (IRSA SA pre-creation). Activation-inert.
+- ✅ Slice 7c — BNK activation (shipped): Phase 22 (CNEInstance CR + 2-min reconcile gate), Phase 23 (License CRD wait + License CR), Phase 24 (CWC DNS-warmup heal), Phase 25 (20-min activation poll). **THIS IS THE ONLY PASS THAT BURNS A REAL F5 LICENSE.** Adds `--skip-activation-poll` up flag. Phase ordering: ... → Phase21 → Phase22 → Phase23 → Phase24 → Phase25 → Phase13. Down order: Phase25Down → Phase24Down → Phase23Down → Phase22Down → Phase21Down → ...
+- ⏳ Slice 8 — Polish: `inspect`/`doctor`/`status` reading state.env + tag scheme. Deletion of `terraform/` + `internal/tf/` + `embedded.go`. SR-IOV TMM pattern (variant manifests). Optionally split commands into a fuller sub-command surface.
 - ⏳ Future (separately scoped, not in the slice plan):
   - Air-gap / ECR mirror — opt-in via cluster.yaml `airGap: true`; only build if/when a deployment requires it.
   - Multi-cluster workspace
-  - Scenarios framework port from kindbnkctl (D-009 reference)
+  - Scenarios framework port from sibling tooling
 
 ---
 
@@ -626,15 +625,15 @@ internal/k8s/manifests/
 
 Two layers planned, not yet detailed:
 - **Unit:** SDK mocks via `aws-sdk-go-v2`'s middleware injection. Every phase function has a unit test that simulates "already exists," "create succeeds," "auth expired mid-run." Pattern matches the existing `internal/aws/*_test.go`.
-- **Integration:** Real-account harness, region-scoped, cluster-name-prefixed (`tracer-ci-<sha>`). Skipped without `AWSBNKCTL_INTEGRATION=1` + valid SSO session. Tear-down in `t.Cleanup`. Aws-gpu-setup's `tests/` directory worth surveying for prior art.
+- **Integration:** Real-account harness, region-scoped, cluster-name-prefixed (`tracer-ci-<sha>`). Skipped without `AWSBNKCTL_INTEGRATION=1` + valid SSO session. Tear-down in `t.Cleanup`.
 
 ---
 
 ## 15 · What we explicitly are NOT doing
 
-- **Not** wrapping aws-gpu-setup as a subprocess. We adopt the *method*; we don't ship the bash.
+- **Not** wrapping an external bash implementation as a subprocess. The design adopts the *method*; only the Go implementation ships.
 - **Not** building a reconciler abstraction (`Reconcile()` interface, dependency graph engine). Sequential phase functions are sufficient and far easier to debug.
-- **Not** adding a `--native` feature flag to coexist TF and Go paths. Greenfield build per user direction; current TF clusters cleaned up manually.
+- **Not** adding a `--native` feature flag to coexist TF and Go paths. Greenfield build; current TF clusters cleaned up manually.
 - **Not** changing the forge MCP integration model. Existing `docs/FORGE_MCP_INTEGRATION.md` stands; only the *timing* of register changes.
 - **Not** introducing two-factor `--confirm-cluster` typo protection. The single confirm + per-cluster `.awsbnkctl/<name>/` directory is enough.
 
@@ -682,5 +681,5 @@ The latest AL2023 x86_64 AMI is resolved at runtime via SSM Parameter Store: `/a
 
 ## 17 · Acknowledgements
 
-- The aws-gpu-setup PoC (`/Users/j.lucia/Code/aws-gpu-setup/`) is the proof that an imperative awscli + YAML method works for this problem. Treat that repo as a reference implementation we are porting (not vendoring) into Go.
-- The dpubnkctl architectural direction (mwiget/dpubnkctl) is the long-term polestar. Patterns to keep adopting as awsbnkctl evolves: PoC-as-repo state model, examples/ as named topologies, AGENTS.md numbered-gotcha catalog, validate command, journal/decisions.md.
+- An imperative awscli + YAML reference implementation is the proof that this provisioning method works for this problem. The design ports that imperative shape into Go (not vendoring the bash).
+- Sibling `*bnkctl` tools are the long-term polestar for patterns to adopt: PoC-as-repo state model, `examples/` as named topologies, validate command, journal/decisions.md.

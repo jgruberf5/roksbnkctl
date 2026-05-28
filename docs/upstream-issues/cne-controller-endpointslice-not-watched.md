@@ -1,12 +1,12 @@
 # Upstream issue draft — f5-cne-controller: pool members not refreshed on EndpointSlice change
 
-> Drafted 2026-05-23 by the awsbnkctl team for filing against F5's BIG-IP Next for Kubernetes (BNK) project. Live-reproduced and worked around on `syd-tracer` (BNK 2.3.0 / manifest `2.3.0-3.2598.3-0.0.170`). User-facing severity: **major** — VIP returns HTTP 500 silently until an operator notices and manually patches the HTTPRoute.
+> Draft upstream issue for filing against F5's BIG-IP Next for Kubernetes (BNK) project. Live-reproduced and worked around (BNK 2.3.0 / manifest `2.3.0-3.2598.3-0.0.170`). User-facing severity: **major** — VIP returns HTTP 500 silently until an operator notices and manually patches the HTTPRoute.
 
 ## Summary
 
 `f5-cne-controller` resolves HTTPRoute `backendRefs` → Service → EndpointSlice → TMM pool members **only at HTTPRoute spec reconcile time**. It does NOT subscribe to EndpointSlice change events for backend services. When a backend pod is rescheduled (new pod IP), the EndpointSlice updates correctly but TMM's `pool_member` table retains the stale (deleted) pod IP. Traffic landing on the VIP returns HTTP 500 ("no available pool member") indefinitely.
 
-The only documented workaround is to bounce the HTTPRoute (delete + re-apply, or patch the spec) so the controller re-reads the current EndpointSlice. This is captured as a known issue in `aws-gpu-setup/SESSION_FINDINGS_2026_05_19_part4.md` line 82 ("bounce HTTPRoute to refresh stale pool members") and verified live by `awsbnkctl` operators on multiple occasions.
+The only documented workaround is to bounce the HTTPRoute (delete + re-apply, or patch the spec) so the controller re-reads the current EndpointSlice. This is a known issue verified live on multiple occasions.
 
 ## Versions
 
@@ -129,7 +129,7 @@ weight 1 → 2  (forces spec generation bump → controller reconciles)
 weight 2 → 1  (restores original weight)
 ```
 
-The controller picks up the spec change, re-resolves the EndpointSlice, and pushes fresh pool members. Idempotent. Behaviour-preserving. No pod restarts. Verified live on syd-tracer: curl response transitioned from HTTP 500 to HTTP 200 within ~1 second of running `awsbnkctl bnk resync`.
+The controller picks up the spec change, re-resolves the EndpointSlice, and pushes fresh pool members. Idempotent. Behaviour-preserving. No pod restarts. Verified live: curl response transitions from HTTP 500 to HTTP 200 within ~1 second of running `awsbnkctl bnk resync`.
 
 ## Impact
 
