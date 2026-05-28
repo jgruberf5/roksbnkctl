@@ -18,6 +18,7 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
+	"github.com/JLCode-tech/awsbnkctl/internal/ui"
 )
 
 var (
@@ -279,44 +280,91 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 			cl.Demo.TTL, st.Get("DEMO_EXPIRY"))
 	}
 
-	if err := phases.Phase00Preflight(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	// Construct the launch renderer. RocketRenderer is returned only when
+	// demo && IsTerminal(stderr) && !noColor; otherwise PlainRenderer (no-op).
+	rdr := ui.NewRenderer(os.Stderr, cl.Metadata.Name, cl.DemoEnabled(), flagNoColor)
+	rdr.Start([]ui.Stage{
+		{Num: 1, Label: "VPC · subnets · IGW · NAT", PhaseRange: "[Phase 00–07]"},
+		{Num: 2, Label: "EKS control plane", PhaseRange: "[Phase 08–08b]"},
+		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost", PhaseRange: "[Phase 10–18]"},
+		{Num: 4, Label: "BNK supply chain · activation", PhaseRange: "[Phase 11b–25]"},
+	})
+
+	// stage wraps a single phase call with PhaseBegin/PhaseEnd events and
+	// preserves the existing fmt.Errorf("up: %w", err) wrapping on failure.
+	stage := func(num int, name string, fn func() error) error {
+		rdr.PhaseBegin(num, name)
+		err := fn()
+		rdr.PhaseEnd(num, name, err)
+		if err != nil {
+			rdr.Finish(err)
+			return fmt.Errorf("up: %w", err)
+		}
+		return nil
 	}
-	if err := phases.Phase02VPC(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+
+	if err := stage(1, "preflight", func() error {
+		return phases.Phase00Preflight(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase03Subnets(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "vpc", func() error {
+		return phases.Phase02VPC(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase04IGW(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "subnets", func() error {
+		return phases.Phase03Subnets(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase05NAT(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "igw", func() error {
+		return phases.Phase04IGW(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase06RouteTables(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "nat", func() error {
+		return phases.Phase05NAT(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase07IAM(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "route-tables", func() error {
+		return phases.Phase06RouteTables(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase08EKSCluster(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(1, "iam", func() error {
+		return phases.Phase07IAM(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase09ForgeRegister(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(2, "eks-cluster", func() error {
+		return phases.Phase08EKSCluster(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
+	if err := stage(2, "forge-register", func() error {
+		return phases.Phase09ForgeRegister(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 08b: vpc-cni prefix delegation BEFORE the node group so nodes boot in
 	// prefix mode (CNI stays on the primary ENI; no secondary ENI → no cross-node
 	// asymmetric-drop on a secondary ENI, which previously hung BNK licensing).
-	if err := phases.Phase08bVPCCNIPrefix(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(2, "vpc-cni-prefix", func() error {
+		return phases.Phase08bVPCCNIPrefix(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase10NodeGroup(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "node-group", func() error {
+		return phases.Phase10NodeGroup(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase11Kubeconfig(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "kubeconfig", func() error {
+		return phases.Phase11Kubeconfig(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
 	// Phase 16: label the TMM-target node + resolve EC2 instance ID.
@@ -331,102 +379,145 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 			return fmt.Errorf("up: attaching k8s clients: %w", err)
 		}
 	}
-	if err := phases.Phase16TMMNodeLabel(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "tmm-node-label", func() error {
+		return phases.Phase16TMMNodeLabel(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "secondary-enis", func() error {
+		return phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17bJumphost(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "jumphost", func() error {
+		return phases.Phase17bJumphost(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "iface-discovery", func() error {
+		return phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 17d: demo client staging — pre-stages grpcurl + diameter assets on the
 	// jumphost over EICE. Gated on DemoEnabled(); normal/CI up is byte-for-byte
 	// unchanged. Runs after 17c so the 10.0.10.x data-path ENI is attached + up.
 	if cl.DemoEnabled() {
-		if err := phases.Phase17dDemoStage(ctx, cl, st, clients, dryRun); err != nil {
-			return fmt.Errorf("up: %w", err)
+		if err := stage(3, "demo-stage", func() error {
+			return phases.Phase17dDemoStage(ctx, cl, st, clients, dryRun)
+		}); err != nil {
+			return err
 		}
 	}
-	if err := phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(3, "irsa-oidc", func() error {
+		return phases.Phase18IRSAOIDC(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
 	// Phase 11b (slice 8): EBS CSI managed addon + gp3 StorageClass + hugepages-ds.
 	// Runs after Phase 18 (IRSA) so it has node-role IAM in place AND k8s clients
 	// attached, but BEFORE Phase 12 (k8s foundation) since cert-manager etc. don't
 	// depend on CSI/hugepages. Naming "11b" preserves slice-7 numbering identity.
-	if err := phases.Phase11bEBSCSIHugepages(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "ebs-csi-hugepages", func() error {
+		return phases.Phase11bEBSCSIHugepages(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 
-	if err := phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "k8s-foundation", func() error {
+		return phases.Phase12K8sFoundation(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase14FLOHelm(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "flo-helm", func() error {
+		return phases.Phase14FLOHelm(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
-	if err := phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "otel-certs", func() error {
+		return phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 19: cloud-network-mapping ConfigMap (required by cne-controller pre-CNEInstance).
-	if err := phases.Phase19CloudNetworkMapping(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cloud-network-mapping", func() error {
+		return phases.Phase19CloudNetworkMapping(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 20: host-device NADs in f5-cne-system + default (required by CNEInstance webhook).
-	if err := phases.Phase20NADs(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "nads", func() error {
+		return phases.Phase20NADs(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 21: IRSA ServiceAccount pre-creation with eks.amazonaws.com/role-arn annotation.
-	if err := phases.Phase21IRSASA(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "irsa-sa", func() error {
+		return phases.Phase21IRSASA(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 22: CNEInstance CR apply + reconcile-started gate (2 min).
-	if err := phases.Phase22CNEInstance(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cne-instance", func() error {
+		return phases.Phase22CNEInstance(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 23: License CRD wait + License CR apply.
-	if err := phases.Phase23License(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "license", func() error {
+		return phases.Phase23License(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 23b: F5SPKVlan + GatewayClass for host-device pattern.
 	// Skipped silently when pattern != host-device. Completes TMM data-plane
 	// plumbing — binds trunks 1.1 / 1.2 to ext-vlan / int-vlan inside the
 	// TMM pod netns and announces SelfIPs assigned by Phase 17.
-	if err := phases.Phase23bSPKVlanGatewayClass(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "spk-vlan-gateway-class", func() error {
+		return phases.Phase23bSPKVlanGatewayClass(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24: CWC DNS-warmup heal (best-effort; never returns error).
-	if err := phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "cwc-heal", func() error {
+		return phases.Phase24CWCHeal(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24b: DSSM --insecure readiness probe overlay (host-device only).
 	// Patches the FLO-created f5-dssm ConfigMap to add --insecure to redis-cli
 	// --tls invocations, then bounces dssm pods. Fixes dssm-db-1 replica startup
 	// probe failure (redis-cli 8.6.0 strict TLS hostname check vs 127.0.0.1 probe).
 	// Mirrors aws-gpu-setup/deploy-bnk.sh:263-282. Idempotent.
-	if err := phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "dssm-overlay", func() error {
+		return phases.Phase24bDSSMInsecureOverlay(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 24c: f5-tmm-pod-manager cold-start race heal (best-effort).
 	// Targets Finding #4 from docs/audits/2026-05-24-live-e2e-round-2-findings.md:
 	// pod-manager v1.6.x times out hitting the EKS API ClusterIP before
 	// kube-proxy converges on a cold node; restart-once breaks the loop.
-	if err := phases.Phase24cPodManagerHeal(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "pod-manager-heal", func() error {
+		return phases.Phase24cPodManagerHeal(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
 	// Phase 25: Activation poll — CNEInstance + License status (up to 20 min).
 	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
-	if err := phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "activation-poll", func() error {
+		return phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll)
+	}); err != nil {
+		return err
 	}
 	// Phase 13 postflight runs LAST so it can verify FLO + OTEL + activation state.
-	if err := phases.Phase13Postflight(ctx, cl, st, clients, dryRun); err != nil {
-		return fmt.Errorf("up: %w", err)
+	if err := stage(4, "postflight", func() error {
+		return phases.Phase13Postflight(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
 	}
+	rdr.Finish(nil)
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "→ dry-run complete")

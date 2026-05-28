@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
+	"github.com/JLCode-tech/awsbnkctl/internal/ui"
 )
 
 // TestDemoFlagPath_ForcesEnabled verifies that EnableDemo() (what runPhasedUp calls
@@ -134,6 +137,103 @@ func TestRunDemoCleanDown_SkipsWhenNotDemo(t *testing.T) {
 	if err := runDemoCleanDown(context.Background(), cl, st); err != nil {
 		t.Errorf("runDemoCleanDown with DEMO_MODE unset: got error %v, want nil", err)
 	}
+}
+
+// fakeRenderer is a recording Renderer for stage() wrapper tests.
+type fakeRenderer struct {
+	events []string
+}
+
+func (f *fakeRenderer) Start(_ []ui.Stage)            {}
+func (f *fakeRenderer) Finish(_ error)                {}
+func (f *fakeRenderer) PhaseBegin(_ int, name string) { f.events = append(f.events, "begin:"+name) }
+func (f *fakeRenderer) PhaseEnd(_ int, name string, err error) {
+	if err != nil {
+		f.events = append(f.events, "end:"+name+":err:"+err.Error())
+	} else {
+		f.events = append(f.events, "end:"+name+":ok")
+	}
+}
+
+// TestStageWrapper_RecordsBeginAndEnd_PreservesError verifies the stage() closure:
+//   - calls PhaseBegin before fn
+//   - calls PhaseEnd after fn with the same error
+//   - wraps fn's error as fmt.Errorf("up: %w", err)
+//   - does not swallow errors
+func TestStageWrapper_RecordsBeginAndEnd_PreservesError(t *testing.T) {
+	t.Run("success path", func(t *testing.T) {
+		fake := &fakeRenderer{}
+		stage := func(num int, name string, fn func() error) error {
+			fake.PhaseBegin(num, name)
+			err := fn()
+			fake.PhaseEnd(num, name, err)
+			if err != nil {
+				fake.Finish(err)
+				return fmt.Errorf("up: %w", err)
+			}
+			return nil
+		}
+
+		called := false
+		err := stage(1, "vpc", func() error {
+			called = true
+			return nil
+		})
+		if err != nil {
+			t.Errorf("stage: expected nil on success, got %v", err)
+		}
+		if !called {
+			t.Error("stage: fn was never called")
+		}
+		if len(fake.events) != 2 {
+			t.Fatalf("stage: expected 2 events (begin+end), got %v", fake.events)
+		}
+		if fake.events[0] != "begin:vpc" {
+			t.Errorf("first event = %q, want %q", fake.events[0], "begin:vpc")
+		}
+		if fake.events[1] != "end:vpc:ok" {
+			t.Errorf("second event = %q, want %q", fake.events[1], "end:vpc:ok")
+		}
+	})
+
+	t.Run("error path", func(t *testing.T) {
+		fake := &fakeRenderer{}
+		stage := func(num int, name string, fn func() error) error {
+			fake.PhaseBegin(num, name)
+			err := fn()
+			fake.PhaseEnd(num, name, err)
+			if err != nil {
+				fake.Finish(err)
+				return fmt.Errorf("up: %w", err)
+			}
+			return nil
+		}
+
+		origErr := errors.New("quota exceeded")
+		err := stage(1, "vpc", func() error {
+			return origErr
+		})
+		if err == nil {
+			t.Fatal("stage: expected non-nil error, got nil")
+		}
+		// The original error must be wrapped as "up: ..."
+		if !errors.Is(err, origErr) {
+			t.Errorf("stage: errors.Is(err, origErr) = false; err = %v", err)
+		}
+		if err.Error() != "up: quota exceeded" {
+			t.Errorf("stage: wrapped error = %q, want %q", err.Error(), "up: quota exceeded")
+		}
+		if len(fake.events) != 2 {
+			t.Fatalf("stage: expected 2 events (begin+end), got %v", fake.events)
+		}
+		if fake.events[0] != "begin:vpc" {
+			t.Errorf("first event = %q, want %q", fake.events[0], "begin:vpc")
+		}
+		wantEnd := "end:vpc:err:quota exceeded"
+		if fake.events[1] != wantEnd {
+			t.Errorf("second event = %q, want %q", fake.events[1], wantEnd)
+		}
+	})
 }
 
 // TestRunDemoCleanDown_SafeWithZeroUseCases verifies AC #6: when DEMO_MODE=true

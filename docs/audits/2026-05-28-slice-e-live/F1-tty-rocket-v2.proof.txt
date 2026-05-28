@@ -1,0 +1,515 @@
+=== F1: TTY rocket UI (v2, post-SSO refresh) ===
+^D→ dry-run: printing plan, no AWS mutations will be made
+→ demo mode: DEMO_MODE=true TTL=24h DEMO_EXPIRY=2026-05-29T05:42:13Z
+[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+0s
+[2K   ──────────  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+0s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: preflight)  ⏳ 0s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 00] preflight: cluster=syd-tracer region=ap-southeast-2
+[phase 00] authenticated: account=292785712872
+[phase 00] preflight OK
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: preflight)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: vpc)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 02] vpc: cluster=syd-tracer cidr=10.0.0.0/16
+[phase 02] vpc vpc-08bc970850cb7d211 already exists, skipping
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: vpc)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: subnets)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 03] subnets: cluster=syd-tracer vpc=vpc-08bc970850cb7d211
+[phase 03] subnet subnet-0aa0cc4b9bd53016f (10.0.1.0/24) already exists, skipping
+[phase 03] subnet subnet-05e073421c1e2288b (10.0.2.0/24) already exists, skipping
+[phase 03] subnet subnet-0b86a8f716044d2eb (10.0.11.0/24) already exists, skipping
+[phase 03] subnet subnet-0b0981f80b73a9d15 (10.0.12.0/24) already exists, skipping
+[phase 03] dry-run: would create BNK_EXT_SUBNET 10.0.10.0/24 in ap-southeast-2a
+[phase 03] dry-run: would create BNK_INT_SUBNET 10.0.20.0/24 in ap-southeast-2a
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: subnets)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: igw)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 04] igw: cluster=syd-tracer vpc=vpc-08bc970850cb7d211
+[phase 04] igw igw-0734eec90fba48399 already exists, skipping create
+[phase 04] IGW already attached to vpc-08bc970850cb7d211
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: igw)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: nat)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 05] nat: cluster=syd-tracer subnet=subnet-0aa0cc4b9bd53016f
+[phase 05] EIP eipalloc-0b3e651e84674d3e5 already exists, skipping
+[phase 05] NAT GW nat-051fcb12a842e66a4 already exists, skipping
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: nat)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+2s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: route-tables)  ⏳ 2s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 06] route tables: cluster=syd-tracer vpc=vpc-08bc970850cb7d211
+[phase 06] public RTB rtb-01f4d8b90b0e26104 already exists, skipping
+[phase 06] private RTB rtb-0f9875f9fbb8f338c already exists, skipping
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: route-tables)  ⏳ 3s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: iam)  ⏳ 3s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 07] iam: cluster=syd-tracer
+[phase 07] dry-run: would create cluster role syd-tracer-eks-cluster-role
+[phase 07] dry-run: would create node role syd-tracer-eks-node-role
+[phase 07] dry-run: would create instance profile syd-tracer-node-instance-profile
+[phase 07] dry-run: would create security group syd-tracer-bnk-data (bnk-data-plane)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████░░░░  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  (current: iam)  ⏳ 3s
+[2K   ──────────  STAGE 2  EKS control plane                            [Phase 08–08b]
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: eks-cluster)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 08] eks cluster: creating syd-tracer (k8s v1.30)
+[phase 08] dry-run: would create EKS cluster syd-tracer
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: eks-cluster)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: forge-register)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment
+[phase 09] dry-run: would register with forge at http://localhost:8081/mcp/
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: forge-register)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: vpc-cni-prefix)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 08b] vpc-cni prefix delegation: cluster=syd-tracer
+[phase 08b] dry-run: would adopt vpc-cni addon with ENABLE_PREFIX_DELEGATION=true (prefix delegation → CNI stays on primary ENI, no secondary ENI)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████░░░░  STAGE 2  EKS control plane                            [Phase 08–08b]  (current: vpc-cni-prefix)  ⏳ 0s
+[2K   ──────────  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: node-group)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 10] dry-run: would create launch template syd-tracer-bnk-lt
+[phase 10] dry-run: would create node group syd-tracer-ng-default (lt=syd-tracer-bnk-lt)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: node-group)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: kubeconfig)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 11] dry-run: would write kubeconfig to .awsbnkctl/syd-tracer/kubeconfig
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: kubeconfig)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: tmm-node-label)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 16] TMM node label: cluster=syd-tracer
+[phase 16] dry-run: would find node with role=bnk, label app=f5-tmm, resolve EC2 instance ID
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: tmm-node-label)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: secondary-enis)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 17] secondary ENIs: cluster=syd-tracer
+[phase 17] dry-run: would create + attach INTERNAL_ENI (ens7, idx=2) and EXTERNAL_ENI (ens8, idx=3)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: secondary-enis)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: jumphost)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 17b] jumphost: cluster=syd-tracer
+[phase 17b] dry-run: would resolve AL2023 AMI via SSM /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+[phase 17b] dry-run: would create jumphost SG syd-tracer-jumphost in VPC
+[phase 17b] dry-run: would create EICE in MGMT subnet
+[phase 17b] dry-run: would launch t3.small instance in MGMT subnet
+[phase 17b] dry-run: would create+attach secondary ENI in BNK_EXT subnet
+[phase 17b] dry-run: would set 11 JUMPHOST_* state keys
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: jumphost)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: iface-discovery)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 17c] iface-discovery: cluster=syd-tracer
+[phase 17c] dry-run: setting iface constants from architecture defaults
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: iface-discovery)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: demo-stage)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 17d] demo-stage: cluster=syd-tracer
+[phase 17d] dry-run: would install grpcurl v1.9.3 to /usr/local/bin (skip-if-present)
+[phase 17d] dry-run: would verify curl present on jumphost
+[phase 17d] dry-run: would copy diameter_client.py → /home/ec2-user/demo/diameter_client.py
+[phase 17d] dry-run: would copy responder.py → /home/ec2-user/demo/responder.py
+[phase 17d] dry-run: would verify EICE data-path (ip addr | grep BNK_EXT_ENI_IP)
+[phase 17d] dry-run: would write DEMO_CLIENT_STAGED_AT to state
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: demo-stage)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: irsa-oidc)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[phase 18] irsa+oidc: cluster=syd-tracer
+[phase 18] dry-run: would resolve EKS OIDC issuer, compute thumbprint, create OIDC provider
+[phase 18] dry-run: would create IRSA role syd-tracer-cne-controller-irsa
+[phase 18] dry-run: would add cluster-SG ingress from SG_BNK_DATA
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████░░░░  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  (current: irsa-oidc)  ⏳ 0s
+[2K   ──────────  STAGE 4  BNK supply chain · activation                [Phase 11b–25]
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: ebs-csi-hugepages)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 11b] EBS CSI addon + hugepages-ds: cluster=syd-tracer sc=gp2
+[phase 11b] dry-run: would install aws-ebs-csi-driver EKS addon (managed)
+[phase 11b] dry-run: would apply hugepages-setup DaemonSet in kube-system
+[phase 11b] dry-run: would wait for TMM node hugepages-2Mi >= 4Gi
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: ebs-csi-hugepages)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: k8s-foundation)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 12] k8s foundation: cluster=syd-tracer
+[phase 12] dry-run: would create namespaces: cert-manager, f5-cne-core, f5-cne-system, f5-bnk-instance, f5-utils
+[phase 12] dry-run: would create secret f5-cne-core/far-secret (dockerconfigjson)
+[phase 12] dry-run: would create secret f5-cne-system/far-secret (dockerconfigjson)
+[phase 12] dry-run: would create secret f5-bnk-instance/far-secret (dockerconfigjson)
+[phase 12] dry-run: would create secret f5-utils/far-secret (dockerconfigjson)
+[phase 12] dry-run: would create secret default/far-secret (dockerconfigjson)
+[phase 12] dry-run: would create secret f5-cne-core/bnk-license-jwt (opaque/license.jwt)
+[phase 12] dry-run: would apply cert-manager v1.16.1
+[phase 12] dry-run: would apply BNK cert chain (issuer=syd-tracer-selfsigned-cluster-issuer, ca=syd-tracer-ca)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: k8s-foundation)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: flo-helm)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 14] FLO Helm install: cluster=syd-tracer
+[phase 14] dry-run: would helm install f5-lifecycle-operator v2.21.13-0.0.28 in f5-cne-core (ca-issuer=syd-tracer-ca-cluster-issuer)
+[phase 14] dry-run: would check existing releases (skipped in dry-run)
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: flo-helm)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: otel-certs)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 15] OTEL certs: cluster=syd-tracer
+[phase 15] dry-run: would create Certificate f5-cne-core/external-otelsvr in f5-cne-core
+[phase 15] dry-run: would create Certificate f5-cne-core/external-f5ingotelsvr in f5-cne-core
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: otel-certs)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cloud-network-mapping)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 19] cloud-network-mapping: cluster=syd-tracer
+[phase 19] dry-run: would apply cloud-network-mapping CM in f5-cne-system
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cloud-network-mapping)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: nads)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 20] NADs: cluster=syd-tracer
+[phase 20] dry-run: would apply NADs (external-netdevice + internal-netdevice) in f5-cne-system and default
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: nads)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: irsa-sa)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 21] IRSA SA: cluster=syd-tracer
+[phase 21] dry-run: would pre-create SA f5-cne-controller-syd-tracer-bnk-serviceaccount in f5-cne-system with IRSA annotation
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: irsa-sa)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cne-instance)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 22] CNEInstance: cluster=syd-tracer cr=syd-tracer-bnk
+[phase 22] dry-run: would apply CNEInstance syd-tracer-bnk in f5-cne-system with deploymentSize=Small
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cne-instance)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: license)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 23] License: cluster=syd-tracer
+[phase 23] dry-run: would wait for licenses.k8s.f5net.com CRD then apply License bnk-license in f5-cne-core
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: license)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: spk-vlan-gateway-class)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 23b] F5SPKVlan + GatewayClass: cluster=syd-tracer
+[phase 23b] dry-run: would wait for F5SPKVlan CRD then apply ext-vlan + int-vlan + GatewayClass
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: spk-vlan-gateway-class)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cwc-heal)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 24] CWC DNS-warmup heal
+[phase 24] dry-run: would auto-bounce cwc on restart >= 3
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: cwc-heal)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: dssm-overlay)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 24b] DSSM --insecure readiness probe overlay
+[phase 24b] dry-run: would patch f5-dssm ConfigMap and bounce dssm pods
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: dssm-overlay)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: pod-manager-heal)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 24c] f5-tmm-pod-manager cold-start race heal
+[phase 24c] dry-run: would rollout-restart f5-cne-controller deploy if f5-tmm-pod-manager container wedges
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: pod-manager-heal)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: activation-poll)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 25] activation poll: cluster=syd-tracer cr=syd-tracer-bnk
+[phase 25] dry-run: would poll CNEInstance + License up to 9 min
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: activation-poll)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: postflight)  ⏳ 0s
+[2K   ──────────  ORBIT
+[phase 13] postflight: cluster=syd-tracer
+[phase 13] dry-run: would verify: namespaces, cert-manager Deployments, CA cert, FAR secrets, FLO Deployment, CNEInstance CRD, OTEL certs, CNEInstance state, License state
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████░░░░  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  (current: postflight)  ⏳ 0s
+[2K   ──────────  ORBIT
+[6A[2K   awsbnkctl ▸ syd-tracer ▸ DEMO LAUNCH   T+3s
+[2K   ██████████  STAGE 1  VPC · subnets · IGW · NAT                    [Phase 00–07]  ✓ 3s
+[2K   ██████████  STAGE 2  EKS control plane                            [Phase 08–08b]  ✓ 0s
+[2K   ██████████  STAGE 3  Nodes · kubeconfig · ENIs · jumphost         [Phase 10–18]  ✓ 0s
+[2K   ██████████  STAGE 4  BNK supply chain · activation                [Phase 11b–25]  ✓ 0s
+[2K   ──────────  ORBIT
+   ──────────  ORBIT    🛰  cluster up · VIP live · T+3s
+→ dry-run complete
+EXIT=
