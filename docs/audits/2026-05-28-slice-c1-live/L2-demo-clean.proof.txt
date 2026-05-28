@@ -1,0 +1,8 @@
+=== L2: demo clean http2 — remove the namespace ===
+scenario:  http2
+cleaning...
+OK
+EXIT=0
+=== post-clean: namespace should be Terminating/gone ===
+NAME         STATUS        AGE
+demo-http2   Terminating   27h

@@ -11,11 +11,10 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/http2" // registers "http2" use-case via init()
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
 	"github.com/JLCode-tech/awsbnkctl/pkg/bnk"
-	// Side-effect imports: C1/C2/D use-cases register into demo.registry via init().
-	// Add one line per use-case package as Slices C1/C2/D ship.
 )
 
 // flagDemo* are the demo subcommand's OWN package-level flag variables.

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: h2c-nginx-conf
-  namespace: demo-http2
+  namespace: {{.Namespace}}
 data:
   default.conf: |
     server {
@@ -18,7 +18,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: h2c-backend
-  namespace: demo-http2
+  namespace: {{.Namespace}}
   labels: {app: h2c-backend}
 spec:
   replicas: 1
@@ -51,7 +51,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: h2c-backend
-  namespace: demo-http2
+  namespace: {{.Namespace}}
 spec:
   selector: {app: h2c-backend}
   ports:

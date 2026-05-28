@@ -2,12 +2,12 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: http2-gateway
-  namespace: demo-http2
+  namespace: {{.Namespace}}
 spec:
-  gatewayClassName: syd-tracer-gatewayclass
+  gatewayClassName: {{.GatewayClassName}}
   addresses:
   - type: IPAddress
-    value: 10.0.10.111
+    value: {{.VIP}}
   listeners:
   - name: http
     protocol: HTTP

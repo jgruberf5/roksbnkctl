@@ -1,0 +1,59 @@
+=== L3: demo run http2 — fresh deploy (post-clean) ===
+
+▶ http2 — HTTP/2 (h2c) end-to-end through BNK — both legs are HTTP/2.
+
+Applies 5 templated manifests into the demo namespace:
+  Namespace, F5BnkGateway IP pool, nginx Deployment+Service (appProtocol h2c),
+  Gateway (spec.addresses=[VIP]), HTTPRoute (host=http2.awsbnkctl.local → nginx).
+
+Verify order (load-bearing):
+  1. Wait for control-plane conditions: h2c-backend Available, Gateway Programmed=True,
+     HTTPRoute Accepted=True + ResolvedRefs=True.
+  2. Best-effort F5BnkGateway demo-http2 check.
+  3. Call pkg/bnk.ResyncHTTPRoutes — idempotent pool-member workaround for
+     cne-controller stale pool-member bug (project_pool_member_sync_root_cause).
+  4. SSH+EICE curl --http2-prior-knowledge from the jumphost's BNK_EXT ENI.
+  5. Assert: 5/5 HTTP/2 200 (client→TMM wire HTTP/2) + body contains "HTTP/2.0"
+     (TMM→backend leg is also HTTP/2).
+
+Cleanup: delete the demo namespace (idempotent).
+Requires: --demo cluster (awsbnkctl up --demo).
+scenario:  http2  (green)
+title:     HTTP/2 (h2c) end-to-end through BNK TMM — both legs
+
+[1/3] Rendering manifests ...
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http2/01-namespace.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http2/02-f5bnkgateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http2/03-backend.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http2/04-gateway.yaml
+      .awsbnkctl/syd-tracer/artifacts/scenarios/http2/05-httproute.yaml
+[2/3] Applying ...
+[3/3] Verifying ...
+[resync] target: HTTPRoute demo-http2/http2-route (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 489408 → 489419)
+[resync]   patched weight 2 → 1 (resourceVersion 489419 → 489427)
+[resync] ✓ 1 HTTPRoute(s) resynced
+      OK — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+✔ http2: PASS — control-plane reconciled + end-to-end curls via Gateway returned HTTP 200
+┌───────────────────────────────────────────────────────┐
+│  cluster: syd-tracer       region: ap-southeast-2    │
+│  ext-cidr: 10.0.10.0/24          vip: 10.0.10.100    │
+│                                                      │
+│  jumphost: i-069018cbf6b27af12  (src: 10.0.10.217)   │
+│      │                                               │
+│      └─SSH+EICE──► curl ──► TMM (10.0.1.212)         │
+│                             │                        │
+│                         Gateway (addr: 10.0.10.111)  │
+│                             │                        │
+│                         HTTPRoute → nginx            │
+│                                                      │
+│  tmm-pod:            10.0.1.212                      │
+│  gateway-addr:       10.0.10.111                     │
+│  httproute-accepted: True                            │
+│  scenario:           http2                           │
+└───────────────────────────────────────────────────────┘
+[resync] target: HTTPRoute demo-http2/http2-route (1 backend ref(s))
+[resync]   patched weight 1 → 2 (resourceVersion 489429 → 489484)
+[resync]   patched weight 2 → 1 (resourceVersion 489484 → 489490)
+[resync] ✓ 1 HTTPRoute(s) resynced
+EXIT=0
