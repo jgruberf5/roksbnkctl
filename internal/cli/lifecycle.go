@@ -14,8 +14,10 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/phases"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
+	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
+	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
 )
 
 var (
@@ -488,6 +490,15 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 			fmt.Fprintf(os.Stderr, "down: warning: could not attach k8s clients (%v) — phase 12/14/15 down will log warning and skip\n", err)
 		}
 	}
+	// Demo use-case teardown — runs before infra teardown while kubeconfig is
+	// still valid. Gated on DEMO_MODE=true in state (not cl.DemoEnabled() —
+	// the --demo flag is not persisted to cluster.yaml so cl.Demo is nil on down).
+	// See runDemoCleanDown for idempotency contract.
+	if err := runDemoCleanDown(ctx, cl, st); err != nil {
+		// runDemoCleanDown already logs per-use-case errors and returns nil;
+		// this branch is a safety net for unexpected errors.
+		fmt.Fprintf(os.Stderr, "down: demo-clean: unexpected error: %v\n", err)
+	}
 	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
 		return fmt.Errorf("down: %w", err)
 	}
@@ -587,5 +598,43 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ down complete: cluster=%s\n", cl.Metadata.Name)
+	return nil
+}
+
+// runDemoCleanDown invokes the Cleanup hook for every registered demo use-case.
+// It is called during runPhasedDown BEFORE infra teardown, while the kubeconfig
+// is still valid. Three idempotency guards ensure AC #6 is satisfied:
+//
+//  1. DEMO_MODE gate — skips the whole function when the cluster is not a demo.
+//     (Uses state, not cl.DemoEnabled() — the --demo flag is not persisted to
+//     cluster.yaml, so cl.Demo is nil on the down path.)
+//  2. Zero-use-case early return — C0 ships no real use-cases; must succeed.
+//  3. NewContext / Cleanup failures are logged and tolerated — kubeconfig may
+//     already be gone on a partial teardown; absent namespaces are not errors
+//     (scenarios.Cleanup contract: missing namespace == no-op).
+func runDemoCleanDown(ctx context.Context, cl *intent.Cluster, st *state.State) error {
+	if st.Get("DEMO_MODE") != "true" {
+		return nil // not a demo cluster; nothing to clean
+	}
+	ucs := demo.All()
+	if len(ucs) == 0 {
+		return nil // C0: no use-cases registered — clean success
+	}
+
+	kube := cl.StateDir() + "/kubeconfig"
+	sctx, err := scenarios.NewContext(ctx, kube, cl, st, os.Stderr, false, nil)
+	if err != nil {
+		// kubeconfig may be absent on a re-run / partial teardown — warn, don't fail.
+		fmt.Fprintf(os.Stderr, "down: demo-clean: skipping (no kube context: %v)\n", err)
+		return nil
+	}
+
+	for _, uc := range ucs {
+		fmt.Fprintf(os.Stderr, "down: demo-clean: %s\n", uc.Name())
+		if err := scenarios.Cleanup(sctx, uc); err != nil {
+			// One use-case's error must NOT abort the rest or the down sequence.
+			fmt.Fprintf(os.Stderr, "down: demo-clean: %s: warn: %v\n", uc.Name(), err)
+		}
+	}
 	return nil
 }

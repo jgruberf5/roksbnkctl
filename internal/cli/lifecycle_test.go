@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
+	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
 
@@ -112,5 +114,57 @@ func TestDemoMarkerNotWrittenOnNormalUp(t *testing.T) {
 		if got := st2.Get(key); got != "" {
 			t.Errorf("normal up: %s = %q, want \"\" (should not be written)", key, got)
 		}
+	}
+}
+
+// TestRunDemoCleanDown_SkipsWhenNotDemo verifies that runDemoCleanDown returns
+// nil immediately when DEMO_MODE is not set — the non-demo path is a no-op.
+func TestRunDemoCleanDown_SkipsWhenNotDemo(t *testing.T) {
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	// DEMO_MODE is unset — runDemoCleanDown must return nil without touching kube.
+	cl := &intent.Cluster{
+		Metadata: intent.Metadata{Name: "non-demo-cluster", Region: "ap-southeast-2"},
+	}
+	// Override StateDir via the cluster name — state dir is ".awsbnkctl/<name>".
+	// Pass the already-loaded state directly to runDemoCleanDown.
+	if err := runDemoCleanDown(context.Background(), cl, st); err != nil {
+		t.Errorf("runDemoCleanDown with DEMO_MODE unset: got error %v, want nil", err)
+	}
+}
+
+// TestRunDemoCleanDown_SafeWithZeroUseCases verifies AC #6: when DEMO_MODE=true
+// but no demo use-cases are registered (C0 reality), runDemoCleanDown succeeds
+// without attempting to build a kube context.
+func TestRunDemoCleanDown_SafeWithZeroUseCases(t *testing.T) {
+	// Reset the demo registry to empty for this test.
+	// We save and restore the original registry.
+	original := demo.All()
+	demo.ResetForTest()
+	defer func() {
+		demo.ResetForTest()
+		for _, s := range original {
+			demo.Register(s)
+		}
+	}()
+
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	st.Set("DEMO_MODE", "true")
+
+	cl := &intent.Cluster{
+		Metadata: intent.Metadata{Name: "demo-empty-cluster", Region: "ap-southeast-2"},
+	}
+
+	// With zero use-cases registered, runDemoCleanDown must return nil without
+	// attempting to build a kube context (which would fail — no real kubeconfig).
+	if err := runDemoCleanDown(context.Background(), cl, st); err != nil {
+		t.Errorf("runDemoCleanDown with DEMO_MODE=true + empty registry: got error %v, want nil", err)
 	}
 }
