@@ -32,6 +32,15 @@ import (
 type State struct {
 	dir  string
 	data map[string]string
+
+	// readOnly makes Save a no-op. It is set for `--dry-run` runs so the
+	// in-memory placeholder values that phases Set during a dry-run (e.g.
+	// EKS_CLUSTER_ARN="arn:aws:eks:dry-run:...", BNK_INT_SUBNET="dry-run-...")
+	// never persist to the real state.env on disk. Without this, a dry-run
+	// against a real cluster's state dir overwrites genuine resource IDs with
+	// dry-run placeholders, which later breaks a real `down` (it tries to
+	// delete a malformed "dry-run-subnet-..." ID). See MarkReadOnly.
+	readOnly bool
 }
 
 // Load reads the state.env file from dir. If the file does not exist, Load
@@ -86,10 +95,28 @@ func (s *State) Set(key, value string) {
 	s.data[key] = value
 }
 
+// MarkReadOnly puts the State into read-only mode: Set still updates the
+// in-memory map (so a dry-run can thread placeholder values between phases),
+// but Save becomes a no-op so the on-disk state.env is never modified. Call
+// this immediately after Load for `--dry-run` runs.
+func (s *State) MarkReadOnly() {
+	s.readOnly = true
+}
+
+// ReadOnly reports whether Save is currently a no-op.
+func (s *State) ReadOnly() bool {
+	return s.readOnly
+}
+
 // Save writes the in-memory state to state.env atomically. The directory is
 // created if it does not exist. The file is written to a temp name and
 // renamed so a partial write never corrupts the existing file.
 func (s *State) Save() error {
+	// Dry-run guard: never touch disk. Phases still call Set/Save freely;
+	// this keeps those writes in-memory only. See MarkReadOnly.
+	if s.readOnly {
+		return nil
+	}
 	if err := os.MkdirAll(s.dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", s.dir, err)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -205,7 +206,7 @@ func runDown(cmd *cobra.Command, _ []string) error {
 	if flagConfig == "" {
 		return errors.New("awsbnkctl down requires --config <cluster.yaml>")
 	}
-	return runPhasedDown(cmd.Context(), flagConfig, flagYes)
+	return runPhasedDown(cmd.Context(), flagConfig, flagYes, flagDownDryRun)
 }
 
 // runPhasedUp is the Go-SDK phased provisioning path activated by
@@ -255,6 +256,11 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}
 
 	if dryRun {
+		// Read-only state: phases Set placeholder IDs in-memory for their plan
+		// output, but nothing persists to the real state.env on disk. Prevents
+		// dry-run placeholders ("dry-run-subnet-...") from polluting a real
+		// cluster's state and later breaking `down`. See state.MarkReadOnly.
+		st.MarkReadOnly()
 		fmt.Fprintln(os.Stderr, "→ dry-run: printing plan, no AWS mutations will be made")
 	}
 
@@ -540,7 +546,15 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 // resources in reverse phase order.
 //
 // When yes is false the operator is prompted to type 'destroy' to proceed.
-func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
+//
+// When dryRun is true the destroy plan is printed from state and the
+// function returns WITHOUT invoking any Phase*Down — guaranteeing zero AWS
+// mutations. This is a single leak-proof guard rather than per-phase dryRun
+// branching: down phases issue Delete calls with varied control flow, so
+// gating each one independently risks one slipping through and deleting for
+// real (which is exactly the bug this guard replaces). The confirmation
+// prompt is also skipped because a dry-run changes nothing to confirm.
+func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool) error {
 	cl, err := intent.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("down: %w", err)
@@ -559,6 +573,11 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 	st, err := state.Load(stateDir)
 	if err != nil {
 		return fmt.Errorf("down: loading state: %w", err)
+	}
+
+	if dryRun {
+		printDownPlan(os.Stderr, cl, st, flagKeepIRSA, flagKeepForgeLink)
+		return nil
 	}
 
 	if !yes {
@@ -690,6 +709,93 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool) error {
 
 	fmt.Fprintf(os.Stderr, "✓ down complete: cluster=%s\n", cl.Metadata.Name)
 	return nil
+}
+
+// printDownPlan renders the destroy plan for `awsbnkctl down --dry-run`.
+// It enumerates the resources recorded in state, in the same reverse-phase
+// order runPhasedDown tears them down, printing only the entries that are
+// actually present. It makes NO AWS calls and NO state writes — it is the
+// read-only half of the down flow.
+//
+// keepIRSA / keepForgeLink mirror the live-down flags so the plan reflects
+// what would actually be retained.
+func printDownPlan(w io.Writer, cl *intent.Cluster, st *state.State, keepIRSA, keepForgeLink bool) {
+	fmt.Fprintf(w, "→ dry-run: destroy plan for cluster %q in %s (no AWS mutations)\n",
+		cl.Metadata.Name, cl.Metadata.Region)
+
+	type entry struct {
+		label string
+		key   string // state key; value printed when non-empty
+	}
+	// Reverse-phase order, matching runPhasedDown's teardown sequence.
+	entries := []entry{
+		{label: "demo use-cases", key: "DEMO_MODE"},
+		{label: "OTEL server cert", key: "OTEL_SVR_CERT_NAME"},
+		{label: "OTEL f5ing cert", key: "OTEL_F5ING_CERT_NAME"},
+		{label: "GatewayClass + F5SPKVlan", key: "GATEWAYCLASS_NAME"},
+		{label: "License CR", key: "LICENSE_NAME"},
+		{label: "CNEInstance CR", key: "CNEINSTANCE_NAME"},
+		{label: "IRSA ServiceAccount", key: "CNE_SA_NAME"},
+		{label: "internal NAD", key: "INTERNAL_NAD"},
+		{label: "external NAD", key: "EXTERNAL_NAD"},
+		{label: "FLO helm release", key: "FLO_RELEASE_NAME"},
+		{label: "EBS CSI addon", key: "EBS_CSI_ADDON_STATUS"},
+		{label: "kubeconfig (local file)", key: "KUBECONFIG_PATH"},
+		{label: "OIDC provider", key: "OIDC_PROVIDER_ARN"},
+		{label: "CNE IRSA role", key: "CNE_IRSA_ROLE_NAME"},
+		{label: "jumphost instance", key: "JUMPHOST_INSTANCE_ID"},
+		{label: "jumphost IAM role", key: "JUMPHOST_ROLE_NAME"},
+		{label: "jumphost instance profile", key: "JUMPHOST_INSTANCE_PROFILE_NAME"},
+		{label: "jumphost EICE", key: "JUMPHOST_EICE_ID"},
+		{label: "jumphost SG", key: "JUMPHOST_SG_ID"},
+		{label: "jumphost EICE SG", key: "JUMPHOST_EICE_SG_ID"},
+		{label: "jumphost mgmt ENI", key: "JUMPHOST_MGMT_ENI_ID"},
+		{label: "jumphost data-path ENI", key: "JUMPHOST_BNK_EXT_ENI_ID"},
+		{label: "external secondary ENI", key: "EXTERNAL_ENI"},
+		{label: "internal secondary ENI", key: "INTERNAL_ENI"},
+		{label: "node group", key: "NODEGROUP_DEFAULT_NAME"},
+		{label: "launch template", key: "LT_ID"},
+		{label: "forge registration", key: "FORGE_CLUSTER_ID"},
+		{label: "EKS cluster", key: "EKS_CLUSTER_NAME"},
+		{label: "EKS node role", key: "EKS_NODE_ROLE_ARN"},
+		{label: "EKS cluster role", key: "EKS_CLUSTER_ROLE_ARN"},
+		{label: "node instance profile", key: "NODE_INSTANCE_PROFILE_NAME"},
+		{label: "BNK data SG", key: "SG_BNK_DATA"},
+		{label: "public route table", key: "PUBLIC_RTB"},
+		{label: "private route table", key: "PRIVATE_RTB"},
+		{label: "NAT gateway", key: "NAT_GW_ID"},
+		{label: "NAT Elastic IP", key: "NAT_EIP_ALLOC"},
+		{label: "internet gateway", key: "IGW_ID"},
+		{label: "public subnets", key: "PUBLIC_SUBNETS"},
+		{label: "private subnets", key: "PRIVATE_SUBNETS"},
+		{label: "BNK external subnet", key: "BNK_EXT_SUBNET"},
+		{label: "BNK internal subnet", key: "BNK_INT_SUBNET"},
+		{label: "VPC", key: "VPC_ID"},
+	}
+
+	n := 0
+	for _, e := range entries {
+		val := st.Get(e.key)
+		if val == "" {
+			continue
+		}
+		// Retention flags: show the resource is kept, not deleted.
+		if keepIRSA && (e.key == "OIDC_PROVIDER_ARN" || e.key == "CNE_IRSA_ROLE_NAME") {
+			fmt.Fprintf(w, "  • retain  %-28s %s (--keep-irsa)\n", e.label, val)
+			continue
+		}
+		if keepForgeLink && e.key == "FORGE_CLUSTER_ID" {
+			fmt.Fprintf(w, "  • retain  %-28s id=%s (--keep-forge-link)\n", e.label, val)
+			continue
+		}
+		fmt.Fprintf(w, "  • delete  %-28s %s\n", e.label, val)
+		n++
+	}
+
+	if n == 0 {
+		fmt.Fprintln(w, "  (state records no live resources — nothing to destroy)")
+	}
+	fmt.Fprintf(w, "→ dry-run complete: %d resource(s) would be destroyed\n", n)
 }
 
 // runDemoCleanDown invokes the Cleanup hook for every registered demo use-case.
