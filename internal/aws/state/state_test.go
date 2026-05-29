@@ -103,3 +103,64 @@ func TestGet_MissingKeyReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty string, got %q", got)
 	}
 }
+
+// TestMarkReadOnly_SaveIsNoOp is the regression guard for the up --dry-run
+// state-pollution bug: a dry-run sets placeholder IDs in memory, but Save must
+// never write them to the real state.env on disk.
+func TestMarkReadOnly_SaveIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-existing real state on disk (as if a real `up` had run).
+	real, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	real.Set("BNK_INT_SUBNET", "subnet-0realid")
+	if err := real.Save(); err != nil {
+		t.Fatalf("Save real state: %v", err)
+	}
+
+	// Now simulate a dry-run: load, mark read-only, overlay a placeholder, save.
+	dry, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load for dry-run: %v", err)
+	}
+	dry.MarkReadOnly()
+	if !dry.ReadOnly() {
+		t.Fatal("ReadOnly() = false after MarkReadOnly()")
+	}
+	dry.Set("BNK_INT_SUBNET", "dry-run-subnet-bnk-int") // the polluting placeholder
+	if dry.Get("BNK_INT_SUBNET") != "dry-run-subnet-bnk-int" {
+		t.Error("Set should still update the in-memory map in read-only mode")
+	}
+	if err := dry.Save(); err != nil {
+		t.Fatalf("Save in read-only mode should be a no-op, got error: %v", err)
+	}
+
+	// Reload from disk — the real ID must survive, the placeholder must NOT.
+	after, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load after dry-run save: %v", err)
+	}
+	if got := after.Get("BNK_INT_SUBNET"); got != "subnet-0realid" {
+		t.Errorf("dry-run polluted disk: BNK_INT_SUBNET = %q, want subnet-0realid", got)
+	}
+}
+
+// TestMarkReadOnly_NoFileCreatedOnFreshDir verifies a dry-run against a dir
+// with no prior state.env leaves the disk untouched (no file created).
+func TestMarkReadOnly_NoFileCreatedOnFreshDir(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	s.MarkReadOnly()
+	s.Set("VPC_ID", "vpc-dry-run")
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save no-op: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.env")); !os.IsNotExist(err) {
+		t.Errorf("read-only Save created state.env on disk (stat err = %v); expected none", err)
+	}
+}

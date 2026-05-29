@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,82 @@ func TestDemoMarkerNotWrittenOnNormalUp(t *testing.T) {
 		if got := st2.Get(key); got != "" {
 			t.Errorf("normal up: %s = %q, want \"\" (should not be written)", key, got)
 		}
+	}
+}
+
+// TestPrintDownPlan_ListsResourcesAndMakesNoMutations is the regression guard
+// for the down --dry-run bug: --dry-run must list what would be destroyed and
+// must NOT touch AWS or state. We can't easily assert "no AWS calls" in a unit
+// test, but printDownPlan takes no AWS client at all (the whole point of the
+// single-guard design), and we assert it does not mutate or persist state.
+func TestPrintDownPlan_ListsResourcesAndMakesNoMutations(t *testing.T) {
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	st.Set("VPC_ID", "vpc-abc123")
+	st.Set("EKS_CLUSTER_NAME", "syd-tracer")
+	st.Set("NAT_GW_ID", "nat-0deadbeef")
+	st.Set("OIDC_PROVIDER_ARN", "arn:aws:iam::111:oidc-provider/x")
+	st.Set("CNE_IRSA_ROLE_NAME", "syd-tracer-cne-controller-irsa")
+	if err := st.Save(); err != nil {
+		t.Fatalf("state.Save: %v", err)
+	}
+
+	cl := &intent.Cluster{
+		Metadata: intent.Metadata{Name: "syd-tracer", Region: "ap-southeast-2"},
+	}
+
+	// keepIRSA=true → OIDC + IRSA role must be shown as retained, not deleted.
+	var buf strings.Builder
+	printDownPlan(&buf, cl, st, true /*keepIRSA*/, false /*keepForgeLink*/)
+	out := buf.String()
+
+	for _, want := range []string{"vpc-abc123", "syd-tracer", "nat-0deadbeef", "no AWS mutations"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan output missing %q\n---\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "--keep-irsa") {
+		t.Errorf("keepIRSA=true should annotate retained OIDC/IRSA with --keep-irsa\n---\n%s", out)
+	}
+	// The VPC/EKS/NAT are the deletable set (3); OIDC + IRSA are retained, so
+	// the count of resources that "would be destroyed" must be exactly 3.
+	if !strings.Contains(out, "3 resource(s) would be destroyed") {
+		t.Errorf("expected 3 deletable resources (OIDC+IRSA retained)\n---\n%s", out)
+	}
+
+	// State on disk must be byte-identical — dry-run persists nothing.
+	st2, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load after plan: %v", err)
+	}
+	if got := st2.Get("VPC_ID"); got != "vpc-abc123" {
+		t.Errorf("dry-run mutated state: VPC_ID = %q, want vpc-abc123", got)
+	}
+	if got := st2.Get("OIDC_PROVIDER_ARN"); got == "" {
+		t.Error("dry-run cleared OIDC_PROVIDER_ARN — must not mutate state")
+	}
+}
+
+// TestPrintDownPlan_EmptyStateSaysNothingToDestroy verifies the plan handles a
+// fully-torn-down (or never-provisioned) cluster gracefully.
+func TestPrintDownPlan_EmptyStateSaysNothingToDestroy(t *testing.T) {
+	st, err := state.Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	cl := &intent.Cluster{Metadata: intent.Metadata{Name: "gone", Region: "ap-southeast-2"}}
+
+	var buf strings.Builder
+	printDownPlan(&buf, cl, st, false, false)
+	out := buf.String()
+	if !strings.Contains(out, "nothing to destroy") {
+		t.Errorf("empty state should report nothing to destroy\n---\n%s", out)
+	}
+	if !strings.Contains(out, "0 resource(s) would be destroyed") {
+		t.Errorf("empty state should report 0 resources\n---\n%s", out)
 	}
 }
 
