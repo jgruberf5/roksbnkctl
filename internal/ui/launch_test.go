@@ -68,10 +68,10 @@ func TestNewRenderer_GatingMatrix(t *testing.T) {
 
 func testStages() []Stage {
 	return []Stage{
-		{Num: 1, Label: "VPC · subnets · IGW · NAT", PhaseRange: "[Phase 00–07]"},
-		{Num: 2, Label: "EKS control plane", PhaseRange: "[Phase 08–08b]"},
-		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost", PhaseRange: "[Phase 10–18]"},
-		{Num: 4, Label: "BNK supply chain · activation", PhaseRange: "[Phase 11b–25]"},
+		{Num: 1, Label: "VPC · subnets · IGW · NAT"},
+		{Num: 2, Label: "EKS control plane"},
+		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost"},
+		{Num: 4, Label: "BNK supply chain · activation"},
 	}
 }
 
@@ -105,9 +105,9 @@ func TestRocketRenderer_PhaseBeginMarksInProgress(t *testing.T) {
 	if !strings.Contains(out, "STAGE 2") {
 		t.Errorf("PhaseBegin output missing 'STAGE 2'; got:\n%s", out)
 	}
-	// Should show the in-progress bar (██████░░░░) or ⏳
-	if !strings.Contains(out, "██████░░░░") && !strings.Contains(out, "⏳") {
-		t.Errorf("PhaseBegin output not showing in-progress indicator; got:\n%s", out)
+	// The active stage shows the ⏳ in-progress indicator (and the ◐ icon).
+	if !strings.Contains(out, "⏳") {
+		t.Errorf("PhaseBegin output not showing in-progress indicator (⏳); got:\n%s", out)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestRocketRenderer_PhaseEndAlone_DoesNotMarkDone(t *testing.T) {
 func TestRocketRenderer_FinishStillMarksTrailingStageDone(t *testing.T) {
 	var buf bytes.Buffer
 	rdr := NewRocketRenderer(&buf, "test-cluster")
-	rdr.Start([]Stage{{Num: 4, Label: "BNK supply chain · activation", PhaseRange: "[Phase 11b–25]"}})
+	rdr.Start([]Stage{{Num: 4, Label: "BNK supply chain · activation"}})
 	rdr.PhaseBegin(4, "x")
 	rdr.PhaseEnd(4, "x", nil)
 	buf.Reset()
