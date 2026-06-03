@@ -59,10 +59,10 @@ func TestVersionCmd_OutputShape(t *testing.T) {
 }
 
 // TestDocsURL_Value pins the canonical docs URL constant so a stray
-// renamings of the GitHub Pages site (or rolling to a versioned path)
-// fail loudly here rather than silently in user-facing output.
+// rename of the documentation surface fails loudly here rather than
+// silently in user-facing output.
 func TestDocsURL_Value(t *testing.T) {
-	const want = "https://JLCode-tech.github.io/awsbnkctl/book/"
+	const want = "https://github.com/JLCode-tech/awsbnkctl#readme"
 	if DocsURL != want {
 		t.Errorf("DocsURL drift: want %q, got %q", want, DocsURL)
 	}

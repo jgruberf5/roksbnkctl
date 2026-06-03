@@ -80,12 +80,11 @@ var (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Interactive AWS setup; collects region + VPC + subnets + FAR archive + JWT, writes the workspace config (PRD 08).",
+	Short: "Interactive AWS setup; collects region + VPC + subnets + FAR archive + JWT, writes the workspace config.",
 	Long: `awsbnkctl init walks through the AWS-shaped prompts (region, VPC, subnets,
 cluster name, FAR archive path, subscription JWT path, FLO namespace) and writes
 the workspace config.yaml under ~/.awsbnkctl/<workspace>/. The supply-chain
-artefacts are uploaded to S3 by 'awsbnkctl up', not by init directly — see
-PRD 08 § "Open questions" for the rationale.
+artefacts are uploaded to S3 by 'awsbnkctl up', not by init directly.
 
 Use --dry-run to walk the wizard offline (no AWS API calls; useful for
 populating a workspace ahead of a real apply).`,
@@ -268,7 +267,13 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	// phase graph) so a partially-failed up still records the cluster as a demo.
 	// A normal (non-demo) up writes none of these keys and is byte-for-byte unchanged.
 	if cl.DemoEnabled() {
-		ttl, _ := time.ParseDuration(cl.Demo.TTL) // already validated above
+		// TTL is validated (non-empty, positive) by ValidateDemo + defaulted by
+		// applyDefaults, but guard the parse defensively: a zero TTL would set
+		// DEMO_EXPIRY == now (instant expiry). Fall back to the documented default.
+		ttl, err := time.ParseDuration(cl.Demo.TTL)
+		if err != nil || ttl <= 0 {
+			ttl, _ = time.ParseDuration(intent.DefaultDemoTTL)
+		}
 		now := time.Now().UTC()
 		st.Set("DEMO_MODE", "true")
 		st.Set("DEMO_STAGED_AT", now.Format(time.RFC3339))

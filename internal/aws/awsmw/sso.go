@@ -7,7 +7,7 @@
 // call CheckAuthOrDie at their start to hard-exit before more phases silently
 // no-op.
 //
-// See docs/POST_TERRAFORM_DIRECTION.md §8 for the full design.
+// See docs/ARCHITECTURE.md for the full design.
 package awsmw
 
 import (

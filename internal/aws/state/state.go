@@ -11,7 +11,7 @@
 //   - Save writes atomically (temp file + rename) to avoid partial writes.
 //   - The file is listed in .gitignore and must never be committed.
 //
-// See docs/POST_TERRAFORM_DIRECTION.md §10 for the full format spec.
+// See docs/ARCHITECTURE.md for the full format spec.
 package state
 
 import (

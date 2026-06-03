@@ -1,4 +1,4 @@
-.PHONY: build-aws build-iperf3 build-mdbook build-all clean
+.PHONY: build-aws build-iperf3 build-all clean
 
 # GHCR normalises org names to lowercase server-side; the
 # `JLCode-tech` casing in the .github/workflows/tools-images.yml
@@ -56,13 +56,9 @@ build-aws:
 build-iperf3:
 	docker build -t $(IMG_PREFIX)-iperf3:$(TAG) iperf3/
 
-build-mdbook:
-	docker build -t $(IMG_PREFIX)-mdbook:$(TAG) mdbook/
-
-build-all: build-aws build-iperf3 build-mdbook
+build-all: build-aws build-iperf3
 
 clean:
 	docker image rm -f \
 		$(IMG_PREFIX)-aws:$(TAG) \
-		$(IMG_PREFIX)-iperf3:$(TAG) \
-		$(IMG_PREFIX)-mdbook:$(TAG) || true
+		$(IMG_PREFIX)-iperf3:$(TAG) || true

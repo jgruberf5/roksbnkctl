@@ -24,7 +24,7 @@ var (
 
 var testTrafficCmd = &cobra.Command{
 	Use:   "traffic",
-	Short: "Drive HTTP traffic through TMM from the slice-12 jumphost (alias for `scenarios run http-routing-e2e`)",
+	Short: "Drive HTTP traffic through TMM from the test jumphost (alias for `scenarios run http-routing-e2e`)",
 	Long: `awsbnkctl test traffic is an alias for:
 
   awsbnkctl scenarios run http-routing-e2e --config <config> [flags]
@@ -40,7 +40,7 @@ It exercises the BNK data plane end-to-end:
      http://<VIP>/ N times.
   7. Reports HTTP code distribution.
 
-Reads JUMPHOST_* keys from state.env (provisioned by Phase 17b — slice-12).
+Reads JUMPHOST_* keys from state.env (provisioned by Phase 17b).
 If the BNK pool member is stale, the ResyncHTTPRoutes call in step 4 handles it.
 
 Exit 0 when every probe returns HTTP 200, non-zero on any miss.`,

@@ -5,7 +5,7 @@
 // called in order by the up/down orchestrators in internal/cli. Phase 01 is
 // reserved for IAM (slice 2). Network phases are numbered 02–06.
 //
-// See docs/POST_TERRAFORM_DIRECTION.md §6–§7 for the full ordering spec.
+// See docs/ARCHITECTURE.md for the full ordering spec.
 package phases
 
 import (
@@ -299,7 +299,7 @@ func ptr(s string) *string { return &s }
 func boolPtr(b bool) *bool { return &b }
 
 // isNotFoundCode reports whether the smithy error code is one of the EC2
-// "already gone" codes that down phases should swallow. See spec §7.
+// "already gone" codes that down phases should swallow. See spec.
 func isNotFoundCode(code string) bool {
 	switch code {
 	case "InvalidVpcID.NotFound",

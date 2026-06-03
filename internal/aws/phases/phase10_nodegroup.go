@@ -228,7 +228,7 @@ func ensureNodeGroup(
 
 	// Kubernetes node labels. K8s label keys can't contain ':' so use the
 	// awsbnkctl.io/ prefix (matching the namespace-label convention from
-	// docs/POST_TERRAFORM_DIRECTION.md §3 / D-006). The `:` form used for
+	// docs/ARCHITECTURE.md). The `:` form used for
 	// AWS resource tags would cause an EKS InvalidParameterException
 	// (regex '([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]').
 	k8sLabels := map[string]string{
@@ -258,7 +258,7 @@ func ensureNodeGroup(
 	// device-index 3 (→ ens8); Phase 19 hard-codes those names in the
 	// cloud-network-mapping ConfigMap; Phase 20 NADs reference them too.
 	// AL2 names secondary ENIs eth1..ethN, which breaks Multus link-lookup.
-	// See docs/audits/slice-09-aws-gpu-setup-audit.md §2.3 and
+	// See docs/audits/slice-09-aws-gpu-setup-audit.md.3 and
 	// aws-gpu-setup/vars.env:92-95 for the source of the naming contract.
 	ltVersion := "$Latest"
 	_, err = eksc.CreateNodegroup(ctx, &eks.CreateNodegroupInput{

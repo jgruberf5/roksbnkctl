@@ -122,7 +122,7 @@ func (r *HTTPRouteReconciler) findRoutesForSlice(ctx context.Context, obj client
 
 ## Operator-side workaround (until the fix lands)
 
-`awsbnkctl bnk resync <httproute-name> -n <namespace>` (shipped in `awsbnkctl` slice-11) does the spec-toggle for you:
+`awsbnkctl bnk resync <httproute-name> -n <namespace>` does the spec-toggle for you:
 
 ```
 weight 1 → 2  (forces spec generation bump → controller reconciles)

@@ -4,26 +4,28 @@ name: Build tools images
 # backend pulls at runtime. Publishes the AWS-flavoured image
 # (`ghcr.io/JLCode-tech/awsbnkctl-tools-aws`) carrying awscli v2 +
 # kubectl + helm + iperf3 + dig + jq + curl for the docker exec-backend's
-# AWS code paths (Sprint 4 wire-up).
+# AWS code paths.
 #
 # Current matrix:
-#   - ghcr.io/JLCode-tech/awsbnkctl-tools-aws     (Sprint 1 added)
+#   - ghcr.io/JLCode-tech/awsbnkctl-tools-aws
 #   - ghcr.io/JLCode-tech/awsbnkctl-tools-iperf3
 #
-# Triggered on tag pushes (e.g. v0.9-rc1), on push to `main` (publishes a
-# `:dev` tag so `go install ./cmd/awsbnkctl@main` works on a fresh host
-# without a local `tools/docker/Makefile build` step), and on manual
-# dispatch — never on every PR.
-#
-# Sprint 4 staff Issue 2 + Sprint 5 validator scope (validator owns
-# CI workflow files). Tag → `:<tagname>` + `:latest`. Main-push →
-# `:dev`. Workflow dispatch → both `:dev` and the input ref name.
+# Triggered on tag pushes, on push to `main` (publishes a `:dev` tag so
+# `go install ./cmd/awsbnkctl@main` works on a fresh host without a local
+# `tools/docker/Makefile build` step), and on manual dispatch — never on
+# every PR. Tag → `:<tagname>` + `:latest`. Main-push → `:dev`. Workflow
+# dispatch → both `:dev` and the input ref name.
 
 on:
   push:
     tags: ['v*']
     branches: [main]
   workflow_dispatch:
+
+# Serialize publishes per ref; do not cancel an in-flight image push.
+concurrency:
+  group: tools-images-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -60,8 +62,7 @@ jobs:
       # is self-contained (no repo-root build context required) — the
       # build-args below are harmlessly ignored.
       #
-      # Sprint 2 (tech-writer Sprint 1 Issue 6): `platforms` now
-      # advertises a multi-arch manifest list (linux/amd64 +
+      # `platforms` advertises a multi-arch manifest list (linux/amd64 +
       # linux/arm64). The Dockerfile under tools/docker/aws/ branches
       # on $TARGETARCH to pick the right awscli/kubectl/helm download
       # URL per arch; both arches are pinned to their own sha256s. The

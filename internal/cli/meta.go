@@ -14,11 +14,10 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/remote"
 )
 
-// DocsURL is the canonical user documentation surface for awsbnkctl —
-// the published mdBook at GitHub Pages. Single source of truth so the
-// `version` subcommand, the cobra-wired `--version` flag, and the
-// `self update` flow all surface the same URL.
-const DocsURL = "https://JLCode-tech.github.io/awsbnkctl/book/"
+// DocsURL is the canonical user documentation surface for awsbnkctl.
+// Single source of truth so the `version` subcommand, the cobra-wired
+// `--version` flag, and the `self update` flow all surface the same URL.
+const DocsURL = "https://github.com/JLCode-tech/awsbnkctl#readme"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",

@@ -1,6 +1,6 @@
 // Package intent holds the cluster.yaml schema (v1) and loader.
 //
-// The canonical format is described in docs/POST_TERRAFORM_DIRECTION.md §5.
+// The canonical format is described in docs/ARCHITECTURE.md.
 // Every field maps directly to an AWS resource or provisioning decision —
 // there is no intermediate Terraform variable layer.
 package intent
@@ -217,7 +217,7 @@ type SubnetSpec struct {
 // true and the URL is unreachable, the soft-fail-with-retry path writes
 // a `pending` link file and exits 0.
 //
-// See docs/FORGE_MCP_INTEGRATION.md for the handoff details. Shape borrowed
+// See docs/FORGE_INTEGRATION.md for the handoff details. Shape borrowed
 // from mwiget/kindbnkctl's bnk_forge: block (camelCase here to match the
 // rest of our schema).
 type ForgeSpec struct {
@@ -464,7 +464,7 @@ func applyDefaults(c *Cluster) {
 				// host-device pattern needs ≥4 ENIs (primary + EKS CNI + 2 BNK secondaries)
 				// AND ≥16 vCPU / ≥64 GB for the full BNK 2.3 Small control plane + TMM
 				// packed onto one labeled node. m6i.4xlarge is the documented minimum per
-				// docs/audits/slice-09-aws-gpu-setup-audit.md row 27 and slice-12 audit §5.
+				// docs/audits/slice-09-aws-gpu-setup-audit.md row 27 and slice-12 audit.
 				// Other patterns can run on smaller workers.
 				if c.Pattern == "host-device" {
 					ng.InstanceType = "m6i.4xlarge"
@@ -515,7 +515,7 @@ func applyDefaults(c *Cluster) {
 
 			// host-device pattern: bump defaults to 3 workers for dSSM quorum.
 			// aws-gpu-setup vars.env:110 explicitly requires `BNK_WORKER_COUNT="3"`
-			// (≥3 for dSSM quorum per §9 F9). Single-node packs the BNK pod set
+			// (≥3 for dSSM quorum per F9). Single-node packs the BNK pod set
 			// onto one node which leaves no room for f5-tmm (7-container pod,
 			// ~7.6 vCPU requested) and dSSM only reaches 2/3 ready (no quorum).
 			// Only bump if the operator left the default (1) — preserve explicit
@@ -713,7 +713,7 @@ func validatePattern(c *Cluster) error {
 			if ng.DesiredSize > 0 && ng.DesiredSize < 3 {
 				return fmt.Errorf(
 					"pattern host-device requires cluster.nodeGroups[%d].desiredSize >= 3 (dSSM quorum), got %d. "+
-						"See docs/audits/slice-12-cold-start-audit.md §5",
+						"See docs/audits/slice-12-cold-start-audit.md",
 					i, ng.DesiredSize,
 				)
 			}

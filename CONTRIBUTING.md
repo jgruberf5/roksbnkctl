@@ -16,7 +16,6 @@ What is **not** required on the host:
 - `kubectl` — internalised via `client-go`. Install only if you want a host-level kubectl alongside.
 - `aws` CLI — internalised via the AWS SDK. Install only if you want SSO login flows (`aws sso login`).
 - `goreleaser` — pulled at release time from `goreleaser/goreleaser:latest`.
-- `mdbook` / `pandoc` — bundled in `tools/docker/mdbook/Dockerfile` for book builds.
 
 ## Building
 
