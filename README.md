@@ -54,7 +54,7 @@ aws sso login --profile $AWS_PROFILE     # if using SSO
 
 ## Status
 
-The Go-SDK phased path runs end-to-end without Terraform: VPC, subnets, IGW, NAT, EKS control plane, node group, kubeconfig, S3 supply chain, IRSA, Multus, host-device secondary ENIs, BNK activation, jumphost, forge registration. Terraform has been removed entirely from the production path and from the repository — see [`docs/POST_TERRAFORM_DIRECTION.md`](docs/POST_TERRAFORM_DIRECTION.md).
+The Go-SDK phased path runs end-to-end without Terraform: VPC, subnets, IGW, NAT, EKS control plane, node group, kubeconfig, S3 supply chain, IRSA, Multus, host-device secondary ENIs, BNK activation, jumphost, forge registration. Terraform has been removed entirely from the production path and from the repository — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Validated live in `ap-southeast-2` on a reference lab (BNK 2.3.0, `host-device` pattern, EKS 1.30, `m6i.4xlarge × 3` + a `t3.small` jumphost) across the full provision → traffic → demo → teardown cycle.
 
@@ -117,7 +117,7 @@ Phase 00 preflight enforces these minimums and fails fast before any AWS writes.
 | Command | Description |
 |---|---|
 | `up -f <cfg>` | Provision everything (Phases 00–25). Add `--dry-run` to preview, `--demo` for the audience-mode launch renderer. |
-| `down -f <cfg> --yes` | Tear down in reverse. Flags: `--keep-iam`, `--keep-keypair`, `--keep-forge-link`. |
+| `down -f <cfg> --yes` | Tear down in reverse. Flags: `--keep-irsa`, `--keep-forge-link`, `--dry-run`. |
 | `status` | Workspace summary: cluster state, BNK components, per-phase deployment. |
 | `doctor` | Health check: AWS creds, reachability, BNK subsystem state. |
 | `validate <path>` | Parse + validate a `cluster.yaml` (no AWS API calls). |
@@ -127,7 +127,7 @@ Phase 00 preflight enforces these minimums and fails fast before any AWS writes.
 | `test traffic` | Shorthand for `scenarios run http-routing-e2e`. |
 | `bnk resync [route]` | Force the CNE controller to re-resolve stale TMM pool members. |
 | `k <verb> [args]` | Kubernetes passthrough — `get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`. No host `kubectl` needed. |
-| `forge {register,status,unregister}` | Optional handoff to a running [bnk-forge](docs/FORGE_MCP_INTEGRATION.md) instance. |
+| `forge {register,status,unregister}` | Optional handoff to a running [bnk-forge](docs/FORGE_INTEGRATION.md) instance. |
 | `install` | Copy the running binary into a directory on PATH. |
 
 ## Demo experience
@@ -171,9 +171,9 @@ awsbnkctl/
 ├── pkg/bnk/              # exported BNK runtime helpers (HTTPRoute resync)
 ├── examples/             # reference cluster.yaml configurations
 └── docs/
-    ├── POST_TERRAFORM_DIRECTION.md   # why Terraform was removed
-    ├── FORGE_MCP_INTEGRATION.md      # forge handoff design
-    ├── design/specs/                 # per-PRD design notes
+    ├── ARCHITECTURE.md               # AWS-SDK phased model + cluster.yaml intent
+    ├── FORGE_INTEGRATION.md          # forge handoff design
+    ├── design/specs/                 # subsystem design notes
     └── upstream-issues/              # known issues / workarounds in BNK
 ```
 
@@ -197,4 +197,4 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). For deeper architectural context, the 
 
 ## License
 
-[MIT](LICENSE) © 2026 John Gruber
+[MIT](LICENSE) © 2026 JLCode-tech

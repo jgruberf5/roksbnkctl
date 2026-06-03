@@ -29,7 +29,6 @@ metadata:
   # mandatory awsbnkctl:* tags. Use them for cost-centre tracking or
   # environment markers.
   labels:
-    owner: jarrod
     purpose: tracer-bullet
 
 network:

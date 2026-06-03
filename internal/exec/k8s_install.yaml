@@ -27,7 +27,7 @@
 # assumes the role via `sts:AssumeRoleWithWebIdentity` automatically —
 # no static key in any Secret. The pod-identity webhook is part of
 # EKS, not awsbnkctl; the IAM role and the SA annotation value are
-# created upstream by `terraform/modules/iam_irsa` (PRD 08).
+# created by the IRSA/OIDC provisioning phase.
 ---
 apiVersion: v1
 kind: Namespace
@@ -55,9 +55,8 @@ metadata:
     # IRSA wiring — the EKS pod-identity webhook reads this annotation
     # and injects projected-SA-token + AWS_ROLE_ARN + AWS_WEB_IDENTITY_TOKEN_FILE
     # into the ops pod's container at admission time. The role ARN is
-    # provisioned by `terraform/modules/iam_irsa/` (PRD 08) and resolved
-    # by `awsbnkctl ops install` from terraform outputs before applying
-    # this manifest.
+    # provisioned by the IRSA/OIDC phase and resolved from cluster state
+    # before applying this manifest.
     eks.amazonaws.com/role-arn: "${OPS_IRSA_ROLE_ARN}"
 ---
 apiVersion: rbac.authorization.k8s.io/v1

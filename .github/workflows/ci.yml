@@ -2,8 +2,7 @@ name: CI
 
 # Runs on every PR and on push to main/staging. staging is the always-on
 # integration/build branch (PRs target staging; staging promotes to main
-# weekly). Catches the SDK-method-name and version-pin guesses captured in
-# docs/design/ without needing anyone to drive a local build.
+# weekly).
 
 on:
   pull_request:
@@ -12,6 +11,12 @@ on:
 
 permissions:
   contents: read
+
+# Cancel superseded runs: a new push to the same ref aborts the in-flight
+# run instead of leaving overlapping full matrices churning.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -47,19 +52,14 @@ jobs:
         run: gofmt -d -l . | tee /tmp/gofmt.diff && test ! -s /tmp/gofmt.diff
 
       - name: staticcheck
-        # Pinned via go.mod `tool` directive (Sprint-0, 2026-05-25) — the
-        # version travels with the source tree, so `make lint` locally and
-        # this CI step run the exact same binary. No more snowflake-pin
-        # drift between local and CI.
+        # Pinned via the go.mod `tool` directive — the version travels with
+        # the source tree, so `make lint` locally and this CI step run the
+        # exact same binary. No pin drift between local and CI.
         run: go tool staticcheck ./...
 
       - name: go test
-        # -race catches data races; cheap to run on the small unit suite
-        # we have today. Sprint 2 added `internal/k8s/*_test.go` —
-        # they're picked up here automatically once the integrator drops
-        # the `k8sinternal` build tag (carried temporarily during staff
-        # +validator parallel work). See `internal/k8s/get_test.go`
-        # header for the rationale and removal plan.
+        # -race catches data races; cheap to run on the unit suite. The
+        # wildcard picks up every package's tests automatically.
         run: go test -race ./...
 
       - name: go build
@@ -89,8 +89,7 @@ jobs:
       # job is to clean up against long-lived hosts. Disabling it kills
       # the docker-hub `testcontainers/ryuk:<v>` image pull that produced
       # the intermittent `429 too many requests` flake on
-      # `TestIntegration_Connect_Whoami` during the v1.1.x cycle.
-      # PLAN.md §"Sprint 9" code deliverable 4.
+      # `TestIntegration_Connect_Whoami`.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
@@ -114,11 +113,10 @@ jobs:
     name: integration (docker backend)
     needs: test
     # Linux-only mirror of the existing integration job, scoped to the
-    # docker backend tests under `internal/exec/`. Sprint 3 / PRD 03
-    # introduces `internal/exec/docker_integration_test.go` which spins
-    # short-lived busybox containers via the docker backend and asserts
-    # the cred-no-leak invariant from PRD 04. Skipped on PRs from forks
-    # for the same reasons as the `integration` job above.
+    # docker backend tests under `internal/exec/`. These spin short-lived
+    # busybox containers via the docker backend and assert the
+    # credential-no-leak invariant. Skipped on PRs from forks for the
+    # same reasons as the `integration` job above.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
@@ -145,33 +143,24 @@ jobs:
   aws-mocked:
     name: integration (aws — mocked sdk)
     needs: test
-    # Sprint 1 (PRD 07): exercises `internal/aws/{client,sts,ec2,eks,vpc}.go`
-    # against mocked aws-sdk-go-v2 clients. Sprint 2 (PRD 08) extends
-    # the same job to cover `internal/aws/{s3,iam}.go` — the S3 supply
-    # chain helpers (`PutObject`, `HeadObject`) and the IRSA / OIDC
-    # readers (`GetOIDCProvider`, `HasIRSARole`) — using the same
-    # aws-sdk-go-v2 middleware-test pattern. NO LIVE AWS — the staff
-    # agent injects fake API responders via the middleware seam (or
-    # hand-rolled interfaces in test files). This job runs on every PR
-    # and push because it doesn't need credentials, network egress to
-    # AWS, or a runtime daemon; the only requirement is the Go toolchain.
+    # Exercises the `internal/aws/` SDK helpers (STS/EC2/EKS/VPC/S3/IAM)
+    # against mocked aws-sdk-go-v2 clients — the S3 supply-chain helpers
+    # (`PutObject`, `HeadObject`) and the IRSA / OIDC readers
+    # (`GetOIDCProvider`, `HasIRSARole`) included. NO LIVE AWS: fake API
+    # responders are injected via the middleware seam (or hand-rolled
+    # interfaces in test files). This job runs on every PR and push because
+    # it needs no credentials, no network egress to AWS, and no runtime
+    # daemon — only the Go toolchain.
     #
-    # Live-AWS validation is the operator-run spike (PRD 07 §"Spike
-    # protocol"), gating v0.2 outside the agent dispatch lane.
+    # If a future test calls an AWS API (e.g. `sts.GetCallerIdentity`,
+    # `s3.PutObject`, `iam.GetOpenIDConnectProvider`) without a mock, this
+    # job times out hitting the real endpoint with no creds — the signal to
+    # add the missing mock rather than weaken the gate.
     #
-    # If a future test calls `sts.GetCallerIdentity` / `s3.PutObject` /
-    # `iam.GetOpenIDConnectProvider` (or any other AWS API) without a
-    # mock, this job will time out hitting the real AWS endpoint with
-    # no creds. The validator's task brief calls for an issue against
-    # the staff agent in that scenario rather than a silent fix here.
-    #
-    # Sprint 2 deferral (validator Issue 2): a localstack-backed
-    # integration tier (`services: localstack:` step) is the v1.x
-    # follow-up — gives the S3 + IAM helpers a real HTTP endpoint to
-    # round-trip against without needing a real AWS account. For v1.0
-    # the mocked-only path keeps the CI surface free of Docker-in-CI
-    # cost + flake, and the PRD 08 helpers are simple enough that
-    # mocked unit tests catch the regression shape.
+    # A localstack-backed tier (a real HTTP endpoint to round-trip S3 + IAM
+    # against, without a real AWS account) is a possible future addition;
+    # the mocked-only path keeps the CI surface free of Docker-in-CI cost
+    # and flake.
     runs-on: ubuntu-latest
     env:
       # Belt-and-braces: if a test path leaks past its mock, these
@@ -194,20 +183,17 @@ jobs:
 
       - name: go test (integration tag — internal/aws)
         # 3m budget covers the mocked-SDK suite — no image pulls, no
-        # network. Sprint 2 (PRD 08) adds `internal/aws/{s3,iam}_test.go`
-        # to the same package, so the wildcard `./internal/aws/...`
-        # already picks them up — no per-file invocation needed.
-        # Bumps if the suite grows; reduce only after measuring.
+        # network. The wildcard `./internal/aws/...` picks up every test in
+        # the package. Bump if the suite grows; reduce only after measuring.
         run: go test -tags integration -timeout 3m ./internal/aws/...
 
   k8s-backend:
     name: integration (k8s backend — kind)
     needs: test
-    # Linux-only kind-based integration job for the K8s backend (Sprint 4
-    # / PRD 03 second half). Uses helm/kind-action to spin an ephemeral
-    # kind cluster, then runs the integration-tagged tests under
-    # internal/exec and internal/cli (the latter exercises `awsbnkctl
-    # ops install/show/uninstall` end-to-end).
+    # Linux-only kind-based integration job for the K8s backend. Uses
+    # helm/kind-action to spin an ephemeral kind cluster, then runs the
+    # integration-tagged tests under internal/exec and internal/cli (the
+    # latter exercises `awsbnkctl ops install/show/uninstall` end-to-end).
     #
     # Skipped on PRs from forks for the same reasons as the `integration`
     # job above — kind images pulled from upstream registries hit rate
@@ -250,31 +236,14 @@ jobs:
   test-dryrun:
     name: test-dryrun (awsbnkctl test {connectivity,dns,throughput} --dry-run)
     needs: test
-    # Sprint 4 (PLAN.md § "Sprint 4"): the test-surface refresh gate
-    # that asserts `awsbnkctl test {connectivity,dns,throughput}
-    # --dry-run` resolves a workspace config and emits a sensible
-    # "would probe X" plan against fake hosts without panicking and
-    # without making real network calls. No live network egress — a
-    # fake workspace is materialised under $HOME/.awsbnkctl with
-    # entries pointing at non-resolving names; the dry-run path is
-    # expected to enumerate the would-be probes and exit-0.
-    #
-    # SPIKE DEFERRAL still in force (PRD 07 § "Spike protocol"): this
-    # job is the offline regression surface for the test verbs; the
-    # live-AWS exercise of the same surface happens in the operator-
-    # run spike, gating v0.2 outside the agent dispatch lane.
-    #
-    # Canary posture (same shape as Sprint 3's full-up-dryrun gate):
-    # if staff has not yet wired `--dry-run` onto the test
-    # subcommands at the time this job first runs, every step will
-    # fail with `unknown flag: --dry-run` and the job goes red. That
-    # is the **intended** signal; it flips green when staff lands the
-    # flag per the Sprint 4 staff brief
-    # ("plumb workspace region + cluster outputs into test commands;
-    # add --dry-run to the test verbs").
-    #
-    # See issues/issue_sprint4_validator.md Issue 1 for the audit
-    # trail and the proposed surface contract this job asserts.
+    # The test-surface gate: asserts `awsbnkctl test
+    # {connectivity,dns,throughput} --dry-run` resolves a workspace config
+    # and emits a sensible "would probe X" plan against fake hosts without
+    # panicking and without making real network calls. No live network
+    # egress — a fake workspace is materialised under $HOME/.awsbnkctl with
+    # entries pointing at non-resolving names; the dry-run path is expected
+    # to enumerate the would-be probes and exit-0. Live-AWS exercise of the
+    # same surface is the operator-run validation, not this offline gate.
     runs-on: ubuntu-latest
     env:
       # Mirror of aws-mocked / full-up-dryrun: fake creds so any
@@ -295,9 +264,8 @@ jobs:
           cache: true
 
       - name: Build awsbnkctl
-        # Same path the Sprint 3 full-up-dryrun job uses
-        # (./bin/awsbnkctl), matching what the brief's command lines
-        # exercise verbatim.
+        # Build to ./bin/awsbnkctl, matching the command lines the
+        # dry-run steps below exercise verbatim.
         run: |
           mkdir -p bin
           go build -o bin/awsbnkctl ./cmd/awsbnkctl
@@ -329,10 +297,6 @@ jobs:
             name: ci-dryrun-cluster
           aws:
             region: us-east-1
-          tf_source:
-            type: github
-            repo: JLCode-tech/awsbnkctl-tf
-            ref: main
           test:
             connectivity:
               extra_hosts:
@@ -430,68 +394,29 @@ jobs:
           # Catches typos and template breaks before tag time.
           args: check
 
-  book-build:
-    name: book build + cspell
-    # Sprint 5 (PLAN.md § "Sprint 5" — book retarget): every PR runs
-    # `mdbook build book/` plus cspell over `book/src/**/*.md` so a
-    # broken chapter or unknown-word regression surfaces at PR-review
-    # time, not at integrator-tag time. The existing book.yml workflow
-    # only runs on `book/**` path changes; this job runs on every PR
-    # so a cspell.json edit (or a workflow YAML edit) also gets
-    # validated against the chapter set without needing a chapter edit
-    # to trigger book.yml.
-    #
-    # PDF rendering stays out of CI — the multi-GB pandoc + XeLaTeX +
-    # mermaid-cli toolchain is the integrator's local-driven
-    # responsibility (see `make release` / `make release-publish` in
-    # the Makefile). HTML build catches every chapter-shape regression
-    # (broken markdown, dead anchor, malformed code fence) that
-    # affects the published web book at
-    # https://JLCode-tech.github.io/awsbnkctl/book/.
+  docs-spellcheck:
+    name: docs cspell
+    # Every PR runs cspell over the operator-facing docs surface so an
+    # unknown-word regression surfaces at PR-review time. New domain
+    # words land via a cspell.json edit on the same PR.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@v2
-        with:
-          mdbook-version: 'latest'
-
-      - name: Install mdbook-mermaid
-        # mdbook-mermaid is a separate preprocessor binary; the
-        # peaceiris/actions-mdbook action only ships mdbook itself.
-        # Cached across runs by baptiste0928/cargo-install.
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: mdbook-mermaid
-
-      - name: mdbook build (HTML)
-        # Pandoc backend is `optional = true` in book/book.toml, so
-        # this builds HTML cleanly without needing pandoc/XeLaTeX on
-        # the runner. Fails the job on broken markdown, dead links,
-        # malformed code fences.
-        run: mdbook build book/
-
-      - name: cspell (book/src/**/*.md + docs/**/*.md)
-        # Hard-fail on any unknown-word finding. Sprint 5 validator
-        # closed the cspell.json vocabulary to zero findings against
-        # the rewritten chapter set; Sprint 6 validator extends the
-        # gate to `docs/**/*.md` (PRDs + PLAN + SHAKEOUT) so any
-        # future PR that introduces a typo in either the book or the
-        # operator-facing docs surface fails fast. New domain words
-        # land via a cspell.json edit on the same PR.
+      - name: cspell (docs/**/*.md + README + CONTRIBUTING)
+        # Hard-fail on any unknown-word finding.
         uses: streetsidesoftware/cspell-action@v6
         with:
           config: cspell.json
           files: |
-            book/src/**/*.md
             docs/**/*.md
+            README.md
+            CONTRIBUTING.md
 
   security-audit:
     name: security audit (gosec + govulncheck + gitleaks)
-    # Sprint 6 (PLAN.md § "Sprint 6" — hardening + v1.0 cut prep):
-    # the v1.0-readiness security gate. Runs on every PR + push to
-    # main; surfaces three classes of regression before tag time:
+    # The security gate. Runs on every PR + push; surfaces three classes
+    # of regression before tag time:
     #
     #   1. gosec — static analysis for the well-known go security
     #      anti-patterns (G104 unchecked errors, G304 file-inclusion,
@@ -510,15 +435,11 @@ jobs:
     #      ...). Mirrors what an integrator's pre-tag `gitleaks
     #      detect --redact` run would catch.
     #
-    # All three steps run with `continue-on-error: false` (the
-    # default) — the v1.0 gate posture per PLAN.md § Sprint 6 is
-    # "gosec ./... clean; secrets scan clean". A finding fails the
-    # job, blocks the PR, and surfaces in the Actions tab as a
-    # red-x check.
-    #
-    # Live-AWS validation is NOT exercised here — those checks gate
-    # on the operator-run PRD 07 spike. This job is the static
-    # offline gate; the runtime gate is the spike.
+    # All three steps run with `continue-on-error: false` (the default):
+    # the gate posture is "gosec ./... clean; secrets scan clean". A
+    # finding fails the job, blocks the PR, and surfaces in the Actions tab
+    # as a red-x check. This is the static offline gate; live-AWS
+    # validation is exercised separately by the operator.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -538,26 +459,27 @@ jobs:
           cache: true
 
       - name: gosec (Go static security analyzer)
-        # The official upstream-maintained action; pins to a tagged
-        # release (no @master). Default args run `gosec ./...` over
-        # the whole module; `-fmt sarif` would emit GH Code Scanning
-        # output, but for now we just fail-on-finding to keep the
-        # surface simple. Add a `.gosec.yaml` at repo root if a
+        # The official upstream-maintained action, pinned to a tagged
+        # release (not @master) for supply-chain stability. Default args
+        # run `gosec ./...` over the whole module; `-fmt sarif` would emit
+        # GH Code Scanning output, but for now we just fail-on-finding to
+        # keep the surface simple. Add a `.gosec.yaml` at repo root if a
         # finding needs to be suppressed with a rationale.
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.27.1
         with:
           args: ./...
 
       - name: govulncheck (Go vulnerability scanner)
-        # Reachability-aware; reports only vulns the binary
-        # actually exercises. Driven by the official upstream
-        # action which installs the latest `govulncheck` binary
-        # and runs it against `./...`.
-        uses: golang/govulncheck-action@v1
-        with:
-          go-version-file: go.mod
-          # Default `./...` covers cmd/ + internal/.
-          check-latest: true
+        # Reachability-aware; reports only vulns the binary actually
+        # exercises. Run directly (not via golang/govulncheck-action) so the
+        # scan uses the go.mod-pinned toolchain installed by the setup-go
+        # step above. The wrapper action re-installs the newest manifest Go,
+        # which can lag a patched release and re-flag stdlib CVEs that the
+        # go.mod pin has already fixed.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go version
+          govulncheck ./...
 
       - name: gitleaks (secret scan)
         # Scans the full git history for committed secrets. Uses

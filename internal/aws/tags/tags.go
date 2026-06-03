@@ -9,7 +9,7 @@
 //
 // Additional tags from cluster.yaml: tags: and metadata.labels: are merged in.
 //
-// See docs/POST_TERRAFORM_DIRECTION.md §9 for the full tag scheme spec.
+// See docs/ARCHITECTURE.md for the full tag scheme spec.
 package tags
 
 import (

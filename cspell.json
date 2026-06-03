@@ -600,12 +600,16 @@
     "bidi",
     "usecase",
     "idempotently",
-    "parseable"
+    "parseable",
+    "optimisation",
+    "unregistration",
+    "unregister",
+    "unregisters",
+    "unregistered",
+    "proxyprotocoll"
   ],
   "ignorePaths": [
-    "book/book/**",
     "go.sum",
-    "*.tfstate",
     "*.lock.hcl"
   ]
 }

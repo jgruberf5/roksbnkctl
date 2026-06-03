@@ -61,7 +61,7 @@ var lastWhys []string
 //
 // Doctor green-by-default contract: there are NO required host
 // binaries. Terraform is gone (post-Terraform direction — see
-// docs/POST_TERRAFORM_DIRECTION.md). Helm is internalised via the
+// docs/ARCHITECTURE.md). Helm is internalised via the
 // helm.sh/helm/v3 Go SDK in phase14_flo_helm.go — no host `helm`
 // binary is invoked. All previously-required-or-warned tools
 // (kubectl, iperf3, dig) are INFORMATIONAL — the binary internalises

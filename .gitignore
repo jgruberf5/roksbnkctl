@@ -33,7 +33,6 @@ cne_pull_64.json
 
 # --- Release / build outputs ---
 dist/
-book/book/
 
 # --- Local environment overrides ---
 .env

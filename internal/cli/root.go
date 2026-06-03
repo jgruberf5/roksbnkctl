@@ -50,7 +50,7 @@ The 4-command lifecycle:
   awsbnkctl test    Run connectivity, DNS, and throughput tests
   awsbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)
 
-See https://JLCode-tech.github.io/awsbnkctl/book/ for the canonical user guide.`,
+See https://github.com/JLCode-tech/awsbnkctl#readme for the user guide.`,
 	SilenceUsage:      true,
 	PersistentPreRunE: warnLegacyState,
 }
@@ -147,9 +147,8 @@ func init() {
 }
 
 // RootCommand returns the wired-up root cobra command for tooling that
-// needs to walk the command tree (e.g. the cobra-to-markdown reference
-// generator under tools/refgen/cobra-md). Subcommands are registered
-// via package-level init() funcs, so the tree is fully assembled before
+// needs to walk the command tree. Subcommands are registered via
+// package-level init() funcs, so the tree is fully assembled before
 // any caller imports this package.
 //
 // Callers MUST NOT mutate the returned command — it's the same instance

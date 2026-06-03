@@ -438,7 +438,7 @@ func TestRegisterREST_SendsAWSProfile(t *testing.T) {
 		WorkspaceDir:  dir,
 		ClusterName:   "bnk-prod",
 		Region:        "ap-southeast-2",
-		AWSProfile:    "Users-292785712872",
+		AWSProfile:    "Users-123456789012",
 		Kubeconfig:    []byte("apiVersion: v1\nkind: Config\n"),
 	}, RestCreds{})
 	if err != nil {
@@ -448,8 +448,8 @@ func TestRegisterREST_SendsAWSProfile(t *testing.T) {
 		t.Fatalf("expected 1 project POST, got %d", len(srv.projectBodies))
 	}
 	got, ok := srv.projectBodies[0]["aws_profile"].(string)
-	if !ok || got != "Users-292785712872" {
-		t.Errorf("aws_profile = %v (type %T), want %q", srv.projectBodies[0]["aws_profile"], srv.projectBodies[0]["aws_profile"], "Users-292785712872")
+	if !ok || got != "Users-123456789012" {
+		t.Errorf("aws_profile = %v (type %T), want %q", srv.projectBodies[0]["aws_profile"], srv.projectBodies[0]["aws_profile"], "Users-123456789012")
 	}
 }
 

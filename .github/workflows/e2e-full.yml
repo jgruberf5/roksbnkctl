@@ -1,55 +1,26 @@
 name: Full E2E
 
-# Manual-trigger workflow for the combined A-H + I-N + L-DNS e2e
-# driver.
+# Placeholder for the full live-apply end-to-end run (provision a real
+# EKS cluster, install BNK, drive traffic, tear down).
 #
-# Sprint 6 status (final pre-v1.0 sprint): the backend-matrix phases
-# (I-N + L-DNS) and the cluster-bring-up phases (A-H) have both
-# landed at the dry-run tier. The combined dry-run regression surface
-# lives in .github/workflows/ci.yml:
+# The offline regression surface for the lifecycle and test verbs lives
+# in .github/workflows/ci.yml and runs on every PR:
+#   - test-dryrun    — awsbnkctl test {connectivity,dns,throughput} --dry-run
+#   - security-audit — gosec + govulncheck + gitleaks
 #
-#   - `test-dryrun` (Sprint 4) — exercises `awsbnkctl test
-#     {connectivity,dns,throughput} --dry-run` against a fake
-#     workspace materialised in the runner's HOME.
-#
-# This job runs on every PR. The **live-apply** tier of every phase
-# (cluster bring-up + backend matrix + DNS probe + throughput) still
-# gates on the operator-run PRD 07 spike (docs/design/specs/07-EKS-CLUSTER-
-# SRIOV.md § "Spike protocol"), so this workflow stays a skip-stub
-# for live-AWS runs. The trigger surface (workflow_dispatch +
-# release/** push) survives so downstream automation (release
-# branches, the integrator's babysit loop) keeps parsing it; the
-# body echoes the Sprint 6 skip-banner and exits 0.
-#
-# Sprint 6 is the final pre-v1.0 sprint — the release is
-# **structurally complete** at v0.9-rc1 candidate. The transition
-# from skip-stub to live e2e driver invocation (renaming
-# `cluster_region` → `aws_region`, threading AWS_* secrets instead
-# of IBMCLOUD_API_KEY, fronting an AWS-shaped e2e driver script
-# under scripts/e2e-*.sh) lands together with the v1.0 cut, which
-# itself gates on the operator-run PRD 07 spike. Tracked as Sprint
-# 3 validator Issue 7.
-#
-# Triggers:
-#   - workflow_dispatch — manual run from the Actions tab.
-#   - push to release/** — the release-branch gate (no-op until Sprint 6).
-#
-# NOT triggered on PR / push to main / push to feature branches — the
-# fast unit + integration tiers in ci.yml cover those. The Sprint 4
-# `test-dryrun` job in ci.yml runs on every PR and provides the
-# dry-run regression gates that this workflow's live-apply path will
-# eventually wrap.
+# The live-apply tier needs a real AWS account, F5 supply-chain
+# credentials, and several minutes of cluster bring-up, so it is run by
+# an operator rather than on every PR. This workflow keeps a stable
+# manual trigger surface (workflow_dispatch + release/** push) and emits
+# a short banner until a live driver is wired in.
 
 on:
   workflow_dispatch:
     inputs:
-      cluster_region:
-        # Renamed to aws_region in Sprint 4 once the AWS-shaped driver
-        # lands. Left as cluster_region in Sprint 0 to preserve the
-        # input contract until the driver actually consumes it.
-        description: 'AWS region for the test cluster (us-east-1, us-west-2, eu-west-1, ...)'
+      aws_region:
+        description: 'AWS region for the test cluster (e.g. ap-southeast-2)'
         required: true
-        default: 'us-east-1'
+        default: 'ap-southeast-2'
       teardown_on_success:
         description: 'Tear down the cluster after a green run (false leaves it up for inspection)'
         required: false
@@ -62,44 +33,31 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   full-e2e:
-    name: Full E2E (Sprint 6 stub — v1.0 cut gates on PRD 07 spike)
+    name: Full E2E (live-apply tier; manual operator-run)
     runs-on: ubuntu-latest
-    # Gate to this fork so cross-repo PRs don't try to run it. Sprint
-    # 6 brief: trigger surface still gated to JLCode-tech/awsbnkctl;
-    # body references the Sprint 4 test-dryrun CI job for the dry-run
-    # regression surface, plus the Sprint 6 security-audit job, and
-    # the PRD 07 spike for the live-apply gate that lands v1.0.
+    # Gate to this repo so cross-repo PRs don't try to run it.
     if: github.repository == 'JLCode-tech/awsbnkctl'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sprint 6 skip banner
+      - name: Status banner
         run: |
           echo "════════════════════════════════════════════════════════════"
-          echo "Full E2E — Sprint 6 stub (final pre-v1.0 sprint)"
+          echo "Full E2E — live-apply tier (operator-run)"
           echo "════════════════════════════════════════════════════════════"
-          echo "Dry-run tier of phases A-H + I-N + L-DNS is exercised by"
-          echo "  two CI jobs in .github/workflows/ci.yml (every PR):"
-          echo "    test-dryrun     (Sprint 4) — awsbnkctl test {conn,dns,thpt} --dry-run"
-          echo "    security-audit  (Sprint 6) — gosec + govulncheck + gitleaks"
+          echo "Offline regression of the lifecycle + test verbs runs on every"
+          echo "PR via ci.yml (test-dryrun, aws-mocked, security-audit)."
           echo ""
-          echo "Live-apply tier still gates on the operator-run PRD 07 spike:"
-          echo "  docs/design/specs/07-EKS-CLUSTER-SRIOV.md § \"Spike protocol\""
-          echo "  (provision EKS 1.30 + self-managed c5n.4xlarge node group;"
-          echo "   install Multus + SR-IOV CNI + device plugin DaemonSets;"
-          echo "   schedule a pod requesting intel.com/sriov:1)."
-          echo ""
-          echo "Per-phase status:"
-          echo "  Phases A-H (cluster bring-up):       Sprint 3 dry-run + PRD 07 spike for apply"
-          echo "  Phases I-J (local/docker backends):  Sprint 4 dry-run + PRD 07 spike for apply"
-          echo "  Phases K-L (multi-tool + k8s):       Sprint 4 dry-run + PRD 07 spike for apply"
-          echo "  Phase  L-DNS (Route 53 GSLB probe):  Sprint 4 dry-run + PRD 07 spike for apply"
-          echo "  Phase  M (cred-leak audit):          Sprint 4 implements; live exercise in spike"
-          echo "  Phase  N (mixed-mode lifecycle):     Sprint 4 implements; live exercise in spike"
-          echo "  Security audit (offline):            Sprint 6 ci.yml (gosec/govulncheck/gitleaks)"
-          echo "  Book PDF artefact (release-time):    Sprint 6 — local make book-pdf + release-publish"
-          echo "  Full v1.0 sign-off:                  v1.0 cut (gated on PRD 07 spike)"
-          echo "See docs/design/ § Sprint 6 for the v1.0-readiness gate."
+          echo "The live-apply run provisions a real EKS cluster, installs BNK,"
+          echo "drives traffic, and tears down. It requires AWS credentials and"
+          echo "F5 supply-chain files, so it is run by an operator with:"
+          echo "    awsbnkctl up   --config examples/demo/cluster.yaml"
+          echo "    awsbnkctl demo run --all -f examples/demo/cluster.yaml"
+          echo "    awsbnkctl down --config examples/demo/cluster.yaml --yes"
           exit 0

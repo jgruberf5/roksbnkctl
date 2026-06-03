@@ -1,0 +1,158 @@
+# cluster.yaml — demo deployment of BNK-on-EKS.
+#
+# This is the configuration `awsbnkctl up --demo` (or demo.enabled: true below)
+# expects: a full host-device BNK cluster plus a multi-ENI jumphost, marked as a
+# demo so the protocol use-cases (`awsbnkctl demo run …`) can drive test traffic
+# from inside the BNK external subnet.
+#
+# What it provisions:
+#   - A VPC (one /16) with two public + two private subnets across two AZs,
+#     one NAT gateway, and the BNK external/internal TMM data-plane subnets.
+#   - An EKS control plane + a 3-node managed node group (dSSM quorum).
+#   - The full BNK 2.3 stack (host-device data path, TMM pinned to one node).
+#   - A jumphost reachable over EC2 Instance Connect Endpoint for test traffic.
+#   - Demo markers (DEMO_MODE / DEMO_EXPIRY) and demo tags on every resource.
+#
+# Quick start:
+#   1. Authenticate to AWS:
+#        aws sso login --profile <your-profile>
+#        aws sts get-caller-identity            # sanity check
+#   2. Drop your F5 supply-chain files next to this repo (see the bnk: block) and
+#      update the two paths below if they live elsewhere.
+#   3. Validate (no AWS calls):
+#        awsbnkctl validate examples/demo/cluster.yaml
+#   4. Dry-run the plan (requires AWS creds; no mutations):
+#        awsbnkctl up --config examples/demo/cluster.yaml --dry-run
+#   5. Provision:
+#        awsbnkctl up --config examples/demo/cluster.yaml
+#   6. Run the demos:
+#        awsbnkctl demo list
+#        awsbnkctl demo run http2     --config examples/demo/cluster.yaml
+#        awsbnkctl demo run --all     --config examples/demo/cluster.yaml
+#   7. Tear down (also cleans the demo use-cases):
+#        awsbnkctl down --config examples/demo/cluster.yaml --yes
+#
+# State is written to .awsbnkctl/bnk-demo/state.env after every successful phase,
+# so a mid-run failure is safe to resume by re-running `up`.
+
+apiVersion: awsbnkctl/v1
+kind: Cluster
+
+metadata:
+  # name is load-bearing: it becomes the awsbnkctl:cluster=<name> tag on every
+  # AWS resource and the directory name under .awsbnkctl/. Must match
+  # ^[a-z][a-z0-9-]{0,38}[a-z0-9]$. Pick a name unique within your account so
+  # tag-discovery never collides with another awsbnkctl cluster.
+  name: bnk-demo
+
+  # region must be set explicitly — awsbnkctl never picks a default region.
+  region: ap-southeast-2
+
+  labels:
+    purpose: bnk-demo
+
+# pattern selects the data-path variant.
+# host-device: TMM runs directly on EC2 host NIC interfaces (no SR-IOV vfio).
+#              Required for the demo. Needs network.dataPath (external + internal
+#              TMM subnets) and a node group of >= 3 nodes.
+pattern: host-device
+
+# demo marks this as a demo deployment. Equivalent to passing --demo on the CLI.
+# When enabled, `up` writes DEMO_MODE / DEMO_STAGED_AT / DEMO_EXPIRY to state.env,
+# tags every resource with awsbnkctl:demo=true, pre-stages the demo test clients
+# on the jumphost, and `down` cleans the demo use-cases first. Requires
+# testing.jumphost.enabled: true (every demo use-case drives traffic from it).
+demo:
+  enabled: true
+  ttl: 24h          # cluster lifetime hint; DEMO_EXPIRY = now + ttl. Default 24h.
+
+network:
+  vpcCidr: 10.0.0.0/16
+
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+
+  subnets:
+    public:
+      # Public subnets: map-public-ip-on-launch, route 0.0.0.0/0 -> IGW.
+      # First public subnet hosts the jumphost primary ENI (mgmtSubnetIndex: 0).
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+      # Second AZ public subnet (EKS control plane needs >= 2 AZs).
+      - cidr: 10.0.2.0/24
+        az: ap-southeast-2b
+
+    private:
+      # Private subnets: no public IP, egress via NAT GW. EKS worker nodes live here.
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.12.0/24
+        az: ap-southeast-2b
+
+  # dataPath: the two TMM data-plane subnets (host-device pattern only).
+  # Phase 03 creates these; Phase 17 attaches secondary ENIs from them to the
+  # TMM node. The default Gateway VIP is derived as <external network>.100
+  # (here 10.0.10.100) and TMM SelfIPs as <subnet>.240 unless overridden.
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24      # BNK_EXT — TMM client-side VLAN
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24      # BNK_INT — TMM backend-side VLAN
+      az: ap-southeast-2a
+
+  # 1 NAT GW = cost-optimised (single egress point). For HA, set to len(azs).
+  natGateways: 1
+
+# cluster: EKS control plane + managed node group.
+# host-device defaults (applied when omitted): instanceType m6i.4xlarge,
+# desired/min 3, max 4, role=bnk label on the first node group. 3 nodes give the
+# dSSM quorum and headroom for the full BNK control plane + TMM on one node.
+cluster:
+  kubernetesVersion: "1.30"
+  nodeGroups:
+    - name: default
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
+      diskSize: 50
+
+# bnk: F5 supply-chain credentials, required by Phase 12.
+# Replace the two paths with your own files before running `up`:
+#   farArchive — F5 FAR pull credentials JSON (kubernetes.io/dockerconfigjson)
+#                from the F5 portal; grants the registry pull + license rights.
+#   jwt        — F5 subscription JWT (Opaque secret, key license.jwt) from the
+#                F5 portal / entitlement email.
+# Paths are resolved relative to your working directory. These files are
+# gitignored (cne_pull_64.json, *.jwt) so they are never committed.
+bnk:
+  farArchive: ./cne_pull_64.json     # REPLACE with your F5 FAR pull credentials JSON
+  jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
+  # certManagerVersion: "1.16.1"     # optional; defaults to the embedded version
+
+# testing.jumphost: required for demo mode. Provisions a multi-ENI EC2 jumphost
+# reachable over EC2 Instance Connect Endpoint (no public IP, no inbound SSH
+# CIDR). Every demo use-case curls the VIP from this host inside BNK_EXT.
+testing:
+  jumphost:
+    enabled: true
+    instanceType: t3.small      # optional; default t3.small
+    mgmtSubnetIndex: 0           # optional; first public subnet
+
+# forge: optional registration with a running bnk-forge instance after `up`.
+# Left disabled so this demo has zero external dependencies. To enable, set
+# enabled: true, point url/mcpUrl at your forge, and supply the password via the
+# AWSBNKCTL_FORGE_PASSWORD environment variable (never write it in this file).
+# forge:
+#   enabled: true
+#   url: http://localhost:8000
+#   mcpUrl: http://localhost:8081/mcp/
+#   credentialTemplateId: 1
+#   username: admin
+
+# tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
+tags:
+  cost-center: RnD-AI
+  env: demo

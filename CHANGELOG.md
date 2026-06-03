@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 
 ### Changed
 
-- **Terraform removed entirely.** The production path is now AWS-SDK-only across all phases. The repository no longer carries Terraform sources, lock files, or vendored modules. See [`docs/POST_TERRAFORM_DIRECTION.md`](docs/POST_TERRAFORM_DIRECTION.md) for the rationale.
+- **Terraform removed entirely.** The production path is now AWS-SDK-only across all phases. The repository no longer carries Terraform sources, lock files, or vendored modules. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the rationale.
 - **`-f/--config` flag unification** — `bnk resync` now accepts `-f/--config`; `status` reads the targeted cluster's `state.env` instead of the host default kubeconfig.
 - **CNE Instance auto-resync** — `awsbnkctl bnk resync` ships as a first-class subcommand to work around the upstream HTTPRoute pool-member stale bug (see [`docs/upstream-issues/`](docs/upstream-issues/)).
 - **`cluster.yaml` validation** — strict YAML parsing (`KnownFields(true)`); unknown top-level fields fail loud rather than silently being ignored.

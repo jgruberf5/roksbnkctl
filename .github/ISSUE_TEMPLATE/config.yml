@@ -11,9 +11,9 @@
 blank_issues_enabled: false
 
 contact_links:
-  - name: 📖 Read the book
-    url: https://JLCode-tech.github.io/awsbnkctl/book/
+  - name: 📖 Read the docs
+    url: https://github.com/JLCode-tech/awsbnkctl#readme
     about: |
       How-to questions about deploying or using awsbnkctl are usually
-      answered in the book — read first; file an issue if the book is
-      wrong or missing something.
+      answered in the README and the examples/ directory — read first;
+      file an issue if the docs are wrong or missing something.

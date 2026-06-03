@@ -1,119 +1,92 @@
-# PRD 09 — Scenarios framework + `awsbnkctl test traffic`
+# Scenarios framework + `awsbnkctl test traffic`
 
-> **Status:** stable. Operator-facing surface for end-to-end BNK validation. Specifies the scenarios framework alongside the `awsbnkctl bnk resync` primitive (slice-11).
+The scenarios framework is the operator-facing surface for end-to-end BNK
+validation. It deploys a known-good workload, drives real traffic through the
+data plane, asserts the response, and emits a report with an ASCII rendering of
+the environment it exercised.
 
-## Why this PRD exists
+## Overview
 
-awsbnkctl lacks a built-in assertion that "BNK is actually serving traffic". The lifecycle commands (`up`/`down`) check that pods are Ready, the License is Active, and the Gateway is Programmed=True — but they don't curl the VIP. Live testing surfaced the gap: every Phase 25 check passed and yet the VIP returned HTTP 500 because of a stale TMM pool member ([upstream issue draft](../upstream-issues/cne-controller-endpointslice-not-watched.md)).
+The lifecycle commands (`up` / `down`) check that pods are Ready, the License is
+Active, and the Gateway is `Programmed=True` — but they don't curl the VIP. That
+leaves a gap: those control-plane checks can all pass while the VIP still returns
+HTTP 500 because of a stale TMM pool member
+([upstream issue](../../upstream-issues/cne-controller-endpointslice-not-watched.md)).
 
-We need an explicit, repeatable, reportable check: deploy a known-good workload, drive traffic through the data plane from an AWS-side vantage that exercises the real VIP (not a kube-proxy shortcut), assert the response, and emit a report that includes an ASCII rendering of the environment exercised.
+A scenario closes that gap with an explicit, repeatable, reportable check: it
+deploys a known-good workload, drives traffic from an AWS-side vantage point that
+exercises the real VIP (not a kube-proxy shortcut), asserts the response, and
+writes a report. Each scenario maps to one F5 how-to at
+`clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/`, so operators see
+consistent vocabulary.
 
-## Prior art
-
-The design adopts the shape of an established scenarios framework so operators see consistent vocabulary:
-
-- One Go package per scenario under `internal/scenarios/<name>/`
-- A scenario implements a `Scenario` interface — `Manifests() / Apply() / Verify() / Cleanup()`
-- Each scenario carries a README, a `manifests/` directory, and a stable `Rating` (Green/Amber/Red) of what's testable in this target's shape
-- Scenarios self-register in `init()` so the CLI auto-discovers them
-- Reports written to `<workspace>/artifacts/scenarios/<name>/` (per-run manifests + logs) and aggregated at `<workspace>/reports/<stamp>/`
-- Each scenario maps to one F5 how-to at `clouddocs.f5.com/bigip-next-for-kubernetes/latest/how-tos/`
-
-Reference catalogue of scenarios (existing implementations available in prior tooling):
-
-| Scenario | F5 how-to | Reference rating |
-|---|---|---|
-| `bgp-peer-frr` | BGP peering with FRR | Green |
-| `http-routing-e2e` | HTTP traffic steering with Gateway API HTTPRoute | Green |
-| `grpc-route` | gRPC routing | Green |
-| `tcp-l4-lb` | TCP L4 load balancing | Green |
-| `udp-l4-lb` | UDP L4 load balancing | Green |
-| `proxy-protocol` | Proxy Protocol v2 | Green |
-| `cluster-wide-watch` | Cluster-wide watch namespaces | Green |
-| `ext-res-pool` | External resource pool | Green |
-| `fic-dynamic-ip` | FIC dynamic IP | Amber |
-| `ai-token-count` | AI token counter | Amber |
-| `ai-sem-cache` | AI semantic cache | Amber |
-| `core-files` | Core file collection (induced panic) | Red on kind |
-| `cwc-admin-access` | CWC admin access | Amber |
-
-Our AWS shape can reach most of these as **Green** (real EKS, real SR-IOV) while a few — anything that needs real DPUs or BGP peers we don't have — will be Amber or Red.
-
-## What slice-11 ships (this branch)
-
-A small foundation that the scenarios framework will build on:
-
-- **`pkg/bnk.ResyncHTTPRoutes`** — Go-callable resync that scenarios will invoke before their HTTPRoute-dependent assertions. Workaround for the EndpointSlice-not-watched bug; will become a no-op once the upstream is fixed.
-- **`awsbnkctl bnk resync`** — same primitive exposed as a CLI verb for ad-hoc operator use.
-- This PRD + the [upstream issue draft](../upstream-issues/cne-controller-endpointslice-not-watched.md).
-
-## What follow-up slices ship
-
-### Slice-12: Phase N (jumphost-with-multi-ENI)
-
-The scenarios that exercise the data plane need a vantage point that is **outside** the kube network namespace (so we exercise the real VIP, not a Service ClusterIP) but **inside** the BNK_EXT subnet (so the source IP matches what TMM SNAT expects).
-
-Add a new lifecycle phase (after Phase 17 — secondary ENIs) that provisions:
-
-- A `t3.small` EC2 with two ENIs:
-  - Primary in the MGMT subnet (for AWS Systems Manager + EICE access)
-  - Secondary in the BNK_EXT subnet (for traffic that lands on the data path VIP)
-- An EC2 Instance Connect Endpoint in the MGMT subnet (so SSH works even from corporate networks that drop AWS 3.x.x.x traffic — validated in testing)
-- A security group that allows: SSH from EICE only (no public ingress) + outbound to anywhere in the VPC
-- IAM instance profile with `ec2:DescribeInstances` for the jumphost's own metadata
-
-State is written to `state.env` under the `JUMPHOST_*` prefix so `down` can find and destroy it.
-
-This is intentionally a phase, not part of `test traffic`, so the EC2 cost amortises across many scenario runs (the jumphost lives for the cluster's lifetime, not per-test).
-
-Dependencies: requires Phase 17's ENI/SG plumbing.
-
-### Slice-13: Scenarios framework + `awsbnkctl scenarios` + `http-routing-e2e`
-
-The user-facing entry point.
+## Using it
 
 ```
-awsbnkctl scenarios list                  # show registered scenarios + Rating
-awsbnkctl scenarios run <name>            # run one
-awsbnkctl scenarios run --all             # run every Green scenario topo-sorted
-awsbnkctl scenarios clean <name>          # cleanup
-awsbnkctl test traffic                    # alias for `scenarios run http-routing-e2e`
+awsbnkctl scenarios list                       # show registered scenarios + Rating
+awsbnkctl scenarios run <name> -f cluster.yaml # run one scenario
+awsbnkctl scenarios run --all  -f cluster.yaml # run every scenario, topo-sorted
+awsbnkctl scenarios clean <name> -f cluster.yaml
+awsbnkctl test traffic                         # alias for the http-routing-e2e scenario
 ```
 
-Internal layout:
+Flags on `scenarios run`:
 
-```
-internal/scenarios/
-  scenario.go                    # Scenario interface + Registry
-  runner.go                      # cobra subcommand wiring
-  reporter.go                    # JSON + text + ASCII-env rendering
-  envdiagram.go                  # ASCII env diagram of cluster + jumphost
-  httproutee2e/
-    README.md
-    scenario.go                  # implements the http-routing-e2e scenario
-    manifests/
-      01-namespace.yaml
-      02-gateway.yaml
-      03-httproute.yaml
-      04-nginx.yaml
-```
+- `-f, --config` — path to `cluster.yaml` (required).
+- `--vip` — Gateway VIP to use (default: derived from `cluster.yaml`).
+- `--dry-run` — render manifests only; do not apply or verify.
+- `--all` — run every registered scenario in topo-sorted dependency order.
 
-Each scenario writes `Result` JSON + assertion list per the framework shape; the framework prepends an ASCII env diagram to each report.
+`scenarios run --all` stops at the first failing scenario and returns a non-zero
+exit code; otherwise it reports all scenarios green.
 
-#### `http-routing-e2e` shape (ported, AWS-adapted)
+## How it works
 
-1. `Manifests`: render namespace, Gateway (`gatewayClassName: <cluster>-gatewayclass`, `spec.addresses=[VIP]` from cluster.yaml), HTTPRoute → nginx Service, nginx Deployment.
-2. `Apply`: apply manifests; wait for Gateway `Programmed=True`, HTTPRoute `Accepted=True` + `ResolvedRefs=True`, nginx Deployment Available.
-3. `Verify`:
-   - Call `pkg/bnk.ResyncHTTPRoutes` against the namespace (gentle, idempotent)
-   - SSH to the jumphost via EICE
-   - 5x `curl --interface <BNK_EXT-secondary-IP> http://<VIP>/`
-   - Assertions: 5/5 HTTP 200, p95 latency under threshold, response body matches nginx marker
-4. `Cleanup`: delete the namespace (cascades to HTTPRoute/Gateway/Deployment/Service).
+Each scenario is a Go package under `internal/scenarios/<name>/` that implements
+the `Scenario` interface — `Manifests()` / `Apply()` / `Verify()` / `Cleanup()` —
+and self-registers in `init()` so the CLI auto-discovers it. A scenario carries a
+README, a `manifests/` directory, and a stable `Rating` (Green / Amber / Red)
+describing what's testable in this deployment's shape.
 
-#### ASCII env diagram (output in every report)
+`scenarios run` drives one scenario through a fixed pipeline:
 
-Every report includes a deterministic ASCII rendering of what was exercised. Example for `http-routing-e2e`:
+1. **Render** — render the scenario's manifests into
+   `<workspace>/artifacts/scenarios/<name>/`.
+2. **Apply** — apply the manifests via server-side apply with a live RESTMapper,
+   then wait for the control-plane conditions the scenario needs (for example
+   Gateway `Programmed=True`, HTTPRoute `Accepted=True` + `ResolvedRefs=True`,
+   backend Deployment Available).
+3. **Verify** — call `pkg/bnk.ResyncHTTPRoutes` against the scenario's namespace
+   (gentle, idempotent), then SSH to the jumphost over EICE and drive traffic at
+   the real VIP, asserting the response.
+4. **Report** — emit a JSON report plus an ASCII environment diagram.
+5. **Clean** — `scenarios clean` invokes the scenario's `Cleanup` hook, which
+   deletes the scenario namespace (cascading to its HTTPRoute / Gateway /
+   Deployment / Service).
+
+Reports are written under `<workspace>/artifacts/scenarios/<name>/` (per-run
+manifests + logs) and aggregated at `<workspace>/reports/<stamp>/`.
+
+### The `http-routing-e2e` scenario
+
+The canonical scenario, and the target of `awsbnkctl test traffic`:
+
+1. `Manifests`: render a namespace, a Gateway
+   (`gatewayClassName: <cluster>-gatewayclass`, `spec.addresses=[VIP]` from
+   `cluster.yaml`), an HTTPRoute pointing at an nginx Service, and the nginx
+   Deployment.
+2. `Apply`: apply the manifests; wait for Gateway `Programmed=True`, HTTPRoute
+   `Accepted=True` + `ResolvedRefs=True`, and the nginx Deployment Available.
+3. `Verify`: resync the HTTPRoute, SSH to the jumphost via EICE, and run
+   `5x curl --interface <BNK_EXT-secondary-IP> http://<VIP>/`. Assertions: 5/5
+   HTTP 200, p95 latency under threshold, and a response body that matches the
+   nginx marker.
+4. `Cleanup`: delete the namespace.
+
+### ASCII environment diagram
+
+Every report includes a deterministic ASCII rendering of what was exercised.
+Example for `http-routing-e2e`:
 
 ```
 my-cluster  (eks 1.30, ap-southeast-2)
@@ -139,40 +112,62 @@ Scenario: http-routing-e2e   Rating: 🟢   Result: ✓ 5/5 HTTP 200 (p95=9ms)
 ```
 
 The renderer reads:
-- `cluster.yaml` (cluster name, region, VIP, subnets)
-- `state.env` (jumphost instance ID + ENI IPs + EICE endpoint)
-- live cluster state (TMM pod + node + Gateway + HTTPRoute backend Service Endpoints)
 
-ASCII output goes to stderr by default + included verbatim in `reports/<stamp>/<name>/env-diagram.txt`. JSON output (`-o json`) embeds it as a field.
+- `cluster.yaml` (cluster name, region, VIP, subnets),
+- `state.env` (jumphost instance ID + ENI IPs + EICE endpoint),
+- live cluster state (TMM pod + node + Gateway + HTTPRoute backend Service
+  Endpoints).
 
-## Acceptance criteria (slice-11 only)
+The diagram is printed to stderr and included verbatim in the report.
 
-- [x] `docs/upstream-issues/cne-controller-endpointslice-not-watched.md` exists with reproduction + diagnostic + suggested fix
-- [x] This PRD exists, names slice-12 + slice-13, documents the reference scenario catalogue to implement, and specifies the ASCII env diagram contract
-- [ ] `pkg/bnk.ResyncHTTPRoutes` + `awsbnkctl bnk resync` ship per `.agent/tasks/active/slice-11b-bnk-resync/TASK.md`
-- [ ] Live verification: `awsbnkctl bnk resync nginx-route -n f5-cne-system` flips a stale pool back to current within 5s
+## Scenario catalogue
 
-## Acceptance criteria (follow-up slices)
+The registered scenarios and their ratings:
 
-### Slice-12
+| Scenario | What it exercises | Rating |
+|---|---|---|
+| `http-routing-e2e` | HTTP traffic steering with Gateway API HTTPRoute | Green |
+| `http-traffic-split` | Weighted HTTP traffic split across backends | Green |
+| `external-resource-pool` | External resource pool | Green |
+| `proxy-protocol-l4` | Proxy Protocol v2 over L4 | Green |
+| `multi-vip` | Multiple VIPs on one cluster | Green |
+| `ai-token-counting` | AI token counter | Amber |
+| `ai-semantic-cache` | AI semantic cache | Amber |
+| `egress-snat` | Egress SNAT | Amber |
 
-- New phase in `up`/`down` provisions/destroys a t3.small jumphost with primary MGMT ENI + secondary BNK_EXT ENI + EICE endpoint
-- `state.env` carries `JUMPHOST_INSTANCE_ID`, `JUMPHOST_MGMT_ENI_IP`, `JUMPHOST_BNK_EXT_ENI_IP`, `JUMPHOST_EICE_ID`, `JUMPHOST_SG_ID`
-- Idempotent across re-runs; `down` cleanly removes the jumphost
-- Skippable via `cluster.yaml` `testing.jumphost.enabled: false`
+The Green scenarios run cleanly against the real EKS / SR-IOV deployment. The
+Amber scenarios depend on capabilities the data plane doesn't fully program in
+this shape, so they're carried as known-partial.
 
-### Slice-13
+## Operational notes
 
-- `awsbnkctl scenarios list` lists Green/Amber/Red catalogue
-- `awsbnkctl scenarios run http-routing-e2e` returns 0 against a freshly-built cluster with assertions all passing
-- `awsbnkctl test traffic` is an alias that maps to `scenarios run http-routing-e2e`
-- Report includes ASCII env diagram per the contract above
-- JSON output schema: `awsbnkctl.scenario.v1`
+- **Jumphost requirement.** The data-plane verification needs a vantage point
+  that is *outside* the kube network namespace (so it exercises the real VIP, not
+  a Service ClusterIP) but *inside* the BNK_EXT subnet (so the source IP matches
+  what TMM SNAT expects). `up` provisions this jumphost when
+  `testing.jumphost.enabled` — a small EC2 with a primary ENI in the MGMT subnet
+  (for AWS Systems Manager + EICE access) and a secondary ENI in the BNK_EXT
+  subnet (for traffic that lands on the data-path VIP), an EC2 Instance Connect
+  Endpoint so SSH works even from networks that drop AWS `3.x.x.x` traffic, and a
+  security group that allows SSH from EICE only with no public ingress. The
+  jumphost lives for the cluster's lifetime, so its cost amortizes across many
+  scenario runs. State is recorded under the `JUMPHOST_*` keys in `state.env` so
+  `down` can find and destroy it.
 
-## Out of scope
+- **Pool-member staleness → auto-resync.** The cne-controller resolves HTTPRoute
+  pool members only at HTTPRoute reconcile, not on EndpointSlice change, so a
+  rescheduled backend pod can leave a stale pool member that returns HTTP 500.
+  Each scenario calls `pkg/bnk.ResyncHTTPRoutes` before its HTTPRoute-dependent
+  assertions to flip a stale pool back to current. The same primitive is exposed
+  for ad-hoc use as `awsbnkctl bnk resync`. This becomes a no-op once the upstream
+  is fixed — see the
+  [upstream issue](../../upstream-issues/cne-controller-endpointslice-not-watched.md).
 
-- BGP scenarios (`bgp-peer-frr`) — needs an FRR sibling pod or external peer; defer to a later slice once we decide which side hosts the BGP control plane
-- Multi-region / GSLB scenarios
-- Modifying the F5 cne-controller binary
-- Replacing the host-device pattern with a sidecar pattern
-- Performance benchmarking (handled by `awsbnkctl test throughput`, not the scenarios runner)
+- **Server-side apply only.** Scenarios apply manifests via SSA with a live
+  RESTMapper, never via raw YAML apply, so re-runs converge instead of
+  conflicting.
+
+## Related
+
+- [Demo experience](10-DEMO-EXPERIENCE.md) — `up --demo`, the launch renderer,
+  and `demo run` build on this framework to *present* BNK to an audience.
