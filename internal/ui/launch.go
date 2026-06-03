@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -86,6 +87,10 @@ type RocketRenderer struct {
 	finished    bool
 	failed      bool
 	descending  bool // true for the `down` landing scene (orbit → pad)
+
+	mu       sync.Mutex    // serializes drawFrame between event calls and the ticker
+	done     chan struct{} // closed on Finish to stop the refresh ticker
+	stopOnce sync.Once     // guards close(done)
 }
 
 // NewRocketRenderer constructs a RocketRenderer writing to out.
@@ -95,15 +100,54 @@ func NewRocketRenderer(out io.Writer, clusterName string) *RocketRenderer {
 }
 
 func (r *RocketRenderer) Start(stages []Stage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.started = time.Now()
 	r.stages = make([]stageState, len(stages))
 	for i, s := range stages {
 		r.stages[i] = stageState{stage: s, status: "idle"}
 	}
+	r.done = make(chan struct{})
 	r.drawFrame()
+	// On a real TTY, refresh once a second so the T+ timer and exhaust keep
+	// animating during long phases that emit no Begin/End events. Skipped off a
+	// terminal (e.g. tests writing to a bytes.Buffer) so output is deterministic
+	// and there's no concurrent write to the test buffer.
+	if isTerminalFn(r.out) {
+		go r.tick()
+	}
+}
+
+// tick redraws once a second until Finish closes r.done, keeping the timer and
+// exhaust live during long phases. Holds the mutex around each redraw so it
+// never races the event-driven draws.
+func (r *RocketRenderer) tick() {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-t.C:
+			r.mu.Lock()
+			if !r.finished {
+				r.drawFrame()
+			}
+			r.mu.Unlock()
+		}
+	}
+}
+
+// stopTicker signals the refresh goroutine to exit (idempotent).
+func (r *RocketRenderer) stopTicker() {
+	if r.done != nil {
+		r.stopOnce.Do(func() { close(r.done) })
+	}
 }
 
 func (r *RocketRenderer) PhaseBegin(stageNum int, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	// Mark any other active stage as done — control has moved on to a new stage.
 	for i := range r.stages {
 		if r.stages[i].stage.Num != stageNum && r.stages[i].status == "active" {
@@ -128,6 +172,8 @@ func (r *RocketRenderer) PhaseBegin(stageNum int, name string) {
 }
 
 func (r *RocketRenderer) PhaseEnd(stageNum int, name string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	idx := r.stageIndex(stageNum)
 	if idx < 0 {
 		return
@@ -153,10 +199,13 @@ func (r *RocketRenderer) PhaseEnd(stageNum int, name string, err error) {
 }
 
 func (r *RocketRenderer) Finish(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.finished {
 		return
 	}
 	r.finished = true
+	r.stopTicker()
 	if err != nil {
 		// Failure was already surfaced (boom frame + error line) by PhaseEnd.
 		// Leave that frozen frame in place; don't redraw.
