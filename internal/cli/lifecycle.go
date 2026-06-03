@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -127,6 +128,39 @@ func init() {
 	downCmd.Flags().BoolVar(&flagKeepIRSA, "keep-irsa", false, "retain the OIDC provider and IRSA role on down (both are kept for reuse across cluster iterations)")
 
 	rootCmd.AddCommand(initCmd, upCmd, downCmd)
+}
+
+// captureStderrForAnimation points os.Stderr at a per-cluster log file while an
+// animated renderer (rocket launch/landing) owns the terminal. Every phase logs
+// via fmt.Fprintf(os.Stderr, …); without this redirect those lines interleave
+// with — and corrupt — the in-place ANSI redraw (frames stack and scroll). The
+// renderer keeps writing to the real terminal (it captured os.Stderr before this
+// call); phase logs go to logPath instead.
+//
+// rocket reports whether an animated renderer is actually in use (demo + TTY);
+// when false this is a no-op so non-demo / CI output is unchanged. Returns the
+// real terminal writer, a restore func (call via defer), and the log path ("" if
+// not redirected).
+func captureStderrForAnimation(rocket bool, stateDir, kind string) (term *os.File, restore func(), logPath string) {
+	term = os.Stderr
+	restore = func() {}
+	if !rocket {
+		return term, restore, ""
+	}
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		return term, restore, ""
+	}
+	p := filepath.Join(stateDir, kind+"-demo.log")
+	// #nosec G304 -- stateDir/kind are internal, not user-tainted.
+	f, err := os.Create(p)
+	if err != nil {
+		return term, restore, ""
+	}
+	os.Stderr = f
+	return term, func() {
+		os.Stderr = term
+		_ = f.Close()
+	}, p
 }
 
 // runUp wires `awsbnkctl up` — requires --config <cluster.yaml>.
@@ -294,11 +328,20 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	// Construct the launch renderer. RocketRenderer is returned only when
 	// demo && IsTerminal(stderr) && !noColor; otherwise PlainRenderer (no-op).
 	rdr := ui.NewRenderer(os.Stderr, cl.Metadata.Name, cl.DemoEnabled(), flagNoColor)
+	// When the animated renderer is active, send phase logs to a file so they
+	// don't interleave with (and corrupt) the in-place rocket redraw.
+	_, rocket := rdr.(*ui.RocketRenderer)
+	// Skip the redirect for --dry-run so the plan stays visible on the terminal.
+	termW, restoreErr, logPath := captureStderrForAnimation(rocket && !dryRun, cl.StateDir(), "up")
+	defer restoreErr()
+	if logPath != "" {
+		fmt.Fprintf(termW, "   awsbnkctl ▸ %s ▸ phase log → %s\n", cl.Metadata.Name, logPath)
+	}
 	rdr.Start([]ui.Stage{
-		{Num: 1, Label: "VPC · subnets · IGW · NAT", PhaseRange: "[Phase 00–07]"},
-		{Num: 2, Label: "EKS control plane", PhaseRange: "[Phase 08–08b]"},
-		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost", PhaseRange: "[Phase 10–18]"},
-		{Num: 4, Label: "BNK supply chain · activation", PhaseRange: "[Phase 11b–25]"},
+		{Num: 1, Label: "VPC · subnets · IGW · NAT"},
+		{Num: 2, Label: "EKS control plane"},
+		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost"},
+		{Num: 4, Label: "BNK supply chain · activation"},
 	})
 
 	// stage wraps a single phase call with PhaseBegin/PhaseEnd events and
@@ -533,7 +576,7 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "→ dry-run complete")
 	} else {
-		fmt.Fprintf(os.Stderr, "✓ up complete: cluster=%s state=%s\n", cl.Metadata.Name, stateDir)
+		fmt.Fprintf(termW, "✓ up complete: cluster=%s state=%s\n", cl.Metadata.Name, stateDir)
 	}
 
 	// P2: auto-register with forge over MCP after a successful apply.
@@ -614,105 +657,79 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		// this branch is a safety net for unexpected errors.
 		fmt.Fprintf(os.Stderr, "down: demo-clean: unexpected error: %v\n", err)
 	}
-	if err := phases.Phase15OTELCertsDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
+	// Landing renderer: on a demo cluster + TTY, the rocket descends orbit → pad
+	// (the reverse of `up`'s launch) as teardown stages complete. Non-demo / CI
+	// gets a no-op PlainRenderer, so the per-phase logs are byte-for-byte
+	// unchanged. Teardown runs in reverse-up order, grouped into the same 4
+	// stages (STAGE 4 BNK → STAGE 1 VPC).
+	ldr := ui.NewDescentRenderer(os.Stderr, cl.Metadata.Name, st.Get("DEMO_MODE") == "true", flagNoColor)
+	// Send phase logs to a file while the landing animation owns the terminal.
+	_, landing := ldr.(*ui.RocketRenderer)
+	termW, restoreErr, logPath := captureStderrForAnimation(landing, cl.StateDir(), "down")
+	defer restoreErr()
+	if logPath != "" {
+		fmt.Fprintf(termW, "   awsbnkctl ▸ %s ▸ phase log → %s\n", cl.Metadata.Name, logPath)
 	}
-	// Phase 25/24c/24b/24/23b/23/22: activation teardown (reverse of up order).
-	if err := phases.Phase25ActivationPollDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase24cPodManagerHealDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase24bDSSMInsecureOverlayDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase24CWCHealDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase23bSPKVlanGatewayClassDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase23LicenseDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase22CNEInstanceDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	// Phase 21/20/19: k8s BNK prerequisites teardown (reverse of up order).
-	if err := phases.Phase21IRSASADown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase20NADsDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase19CloudNetworkMappingDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase14FLOHelmDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase12K8sFoundationDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	// Phase 11b (slice 8): EBS CSI addon + gp3 SC + hugepages-ds teardown.
-	// Runs after Phase 12 down (cert-manager + multus removed) but before
-	// Phase 11 kubeconfig down (still needs k8s client + EKS API access).
-	if err := phases.Phase11bEBSCSIHugepagesDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase11KubeconfigDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	// Phase 18/17/16: AWS-side BNK teardown (ENIs, OIDC/IRSA, node label).
-	// Runs after kubeconfig down (TMM node already gone with node group teardown).
-	if err := phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase17bJumphostDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase17SecondaryENIsDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase16TMMNodeLabelDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase10NodeGroupDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase09ForgeRegisterDown(ctx, cl, st, clients, flagKeepForgeLink); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase08bVPCCNIPrefixDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase08EKSClusterDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase07IAMDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase06RouteTablesDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase05NATDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase04IGWDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase03SubnetsDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
-	if err := phases.Phase02VPCDown(ctx, cl, st, clients); err != nil {
-		return fmt.Errorf("down: %w", err)
-	}
+	ldr.Start([]ui.Stage{
+		{Num: 1, Label: "VPC · subnets · IGW · NAT"},
+		{Num: 2, Label: "EKS control plane"},
+		{Num: 3, Label: "Nodes · kubeconfig · ENIs · jumphost"},
+		{Num: 4, Label: "BNK supply chain · activation"},
+	})
 
-	fmt.Fprintf(os.Stderr, "✓ down complete: cluster=%s\n", cl.Metadata.Name)
+	type downStep struct {
+		num  int
+		name string
+		fn   func() error
+	}
+	steps := []downStep{
+		// STAGE 4 — BNK supply chain · activation (reverse of up order).
+		{4, "otel-certs", func() error { return phases.Phase15OTELCertsDown(ctx, cl, st, clients) }},
+		{4, "activation-poll", func() error { return phases.Phase25ActivationPollDown(ctx, cl, st, clients) }},
+		{4, "pod-manager-heal", func() error { return phases.Phase24cPodManagerHealDown(ctx, cl, st, clients) }},
+		{4, "dssm-overlay", func() error { return phases.Phase24bDSSMInsecureOverlayDown(ctx, cl, st, clients) }},
+		{4, "cwc-heal", func() error { return phases.Phase24CWCHealDown(ctx, cl, st, clients) }},
+		{4, "spk-vlan-gateway-class", func() error { return phases.Phase23bSPKVlanGatewayClassDown(ctx, cl, st, clients) }},
+		{4, "license", func() error { return phases.Phase23LicenseDown(ctx, cl, st, clients) }},
+		{4, "cne-instance", func() error { return phases.Phase22CNEInstanceDown(ctx, cl, st, clients) }},
+		{4, "irsa-sa", func() error { return phases.Phase21IRSASADown(ctx, cl, st, clients) }},
+		{4, "nads", func() error { return phases.Phase20NADsDown(ctx, cl, st, clients) }},
+		{4, "cloud-network-mapping", func() error { return phases.Phase19CloudNetworkMappingDown(ctx, cl, st, clients) }},
+		{4, "flo-helm", func() error { return phases.Phase14FLOHelmDown(ctx, cl, st, clients) }},
+		{4, "k8s-foundation", func() error { return phases.Phase12K8sFoundationDown(ctx, cl, st, clients) }},
+		// STAGE 3 — Nodes · kubeconfig · ENIs · jumphost.
+		{3, "ebs-csi-hugepages", func() error { return phases.Phase11bEBSCSIHugepagesDown(ctx, cl, st, clients) }},
+		{3, "kubeconfig", func() error { return phases.Phase11KubeconfigDown(ctx, cl, st, clients) }},
+		{3, "irsa-oidc", func() error { return phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA) }},
+		{3, "iface-discovery", func() error { return phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients) }},
+		{3, "jumphost", func() error { return phases.Phase17bJumphostDown(ctx, cl, st, clients) }},
+		{3, "secondary-enis", func() error { return phases.Phase17SecondaryENIsDown(ctx, cl, st, clients) }},
+		{3, "tmm-node-label", func() error { return phases.Phase16TMMNodeLabelDown(ctx, cl, st, clients) }},
+		{3, "node-group", func() error { return phases.Phase10NodeGroupDown(ctx, cl, st, clients) }},
+		// STAGE 2 — EKS control plane.
+		{2, "forge-unregister", func() error { return phases.Phase09ForgeRegisterDown(ctx, cl, st, clients, flagKeepForgeLink) }},
+		{2, "vpc-cni-prefix", func() error { return phases.Phase08bVPCCNIPrefixDown(ctx, cl, st, clients) }},
+		{2, "eks-cluster", func() error { return phases.Phase08EKSClusterDown(ctx, cl, st, clients) }},
+		// STAGE 1 — VPC · subnets · IGW · NAT · IAM.
+		{1, "iam", func() error { return phases.Phase07IAMDown(ctx, cl, st, clients) }},
+		{1, "route-tables", func() error { return phases.Phase06RouteTablesDown(ctx, cl, st, clients) }},
+		{1, "nat", func() error { return phases.Phase05NATDown(ctx, cl, st, clients) }},
+		{1, "igw", func() error { return phases.Phase04IGWDown(ctx, cl, st, clients) }},
+		{1, "subnets", func() error { return phases.Phase03SubnetsDown(ctx, cl, st, clients) }},
+		{1, "vpc", func() error { return phases.Phase02VPCDown(ctx, cl, st, clients) }},
+	}
+	for _, s := range steps {
+		ldr.PhaseBegin(s.num, s.name)
+		err := s.fn()
+		ldr.PhaseEnd(s.num, s.name, err)
+		if err != nil {
+			ldr.Finish(err)
+			return fmt.Errorf("down: %w", err)
+		}
+	}
+	ldr.Finish(nil)
+
+	fmt.Fprintf(termW, "✓ down complete: cluster=%s\n", cl.Metadata.Name)
 	return nil
 }
 
