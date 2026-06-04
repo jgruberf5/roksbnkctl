@@ -48,13 +48,15 @@
   link / policy in the FLO module (`flo/main.tf` ~1159-1191) and the COS
   JWT/FAR-auth reads are IBM Cloud API, not Kubernetes — leave them in
   terraform (a later sprint may move them to `internal/ibm`).
-- **Helm strategy is architect's to pin** (`issue_sprint27_architect.md`).
-  Recommended: cert-manager via its static install manifest applied through
-  the existing SSA path (no helm dep); FLO/CIS via the helm Go SDK
-  (`helm.sh/helm/v3`) because their versions are discovered at runtime from
-  the FAR `f5-bigip-k8s-manifest` and need chart templating + OCI pull.
-  Code the architect's pinned choice — do not add `helm.sh/helm/v3` before
-  it's confirmed (it's a heavy dependency).
+- **Helm stays in terraform (RESOLVED, integrator 2026-06-04).** Keep the
+  three chart installs (cert-manager, f5-lifecycle-operator, f5-bnk-cis) in
+  terraform, but **convert them from `null_resource` + `local-exec helm` to
+  the proper `helm_release` provider** so terraform waits on real chart
+  readiness (`wait = true`) instead of `--wait=false` + `time_sleep`. **No
+  `helm.sh/helm/v3` Go dependency.** Native Go replaces ONLY the `curl`-
+  applied custom-resource parts + their `time_sleep` gates. The FAR
+  version-discovery (`helm pull f5-bigip-k8s-manifest`, parse FLO/CIS
+  versions) stays terraform-side too (it feeds the `helm_release` versions).
 
 ---
 
@@ -97,38 +99,43 @@ the reconciler builds on. Build on the existing `BuildDynamicClient` /
 **Severity**: high (the core of the sprint)
 **Status**: open
 
-New package `internal/bnk` that performs, in dependency order, every K8s
-operation the four terraform modules do today — each step **apply (SSA) →
-watch to ready**, with structured progress events. Port the resource bodies
-from the terraform modules (they are the spec):
+This sprint splits the BNK phase into a **terraform install layer** and a
+**native Go custom-resource layer** with a clean handoff (terraform applies
+the installs, then the Go reconciler runs post-apply). The architect pins the
+exact boundary (`issue_sprint27_architect.md`) — which currently-`curl`'d
+resources are helm *prerequisites* (stay terraform) vs *post-install* CRs
+(move to Go). Port the resource bodies from the terraform modules — they are
+the behavior spec.
 
-1. **cert-manager** (`terraform/modules/cert_manager/...`): install (per
-   architect's helm decision) → `WaitCRDEstablished("certificates.cert-manager.io",
-   "clusterissuers.cert-manager.io", ...)` → `WaitDeploymentReady` for the
-   three cert-manager deployments. Replaces the helm `--wait` + 30s sleep.
-2. **FLO bootstrap** (`terraform/modules/flo/modules/flo/main.tf`): create
-   `f5-utils` + `flo` namespaces (port the terminating-namespace
-   finalizer-cleanup into Go, done deterministically — see that module's
-   lines ~481-654); `far-secret` (dockerconfigjson) in both namespaces and
-   `f5-bigip-ctlr-login`; the two `NetworkAttachmentDefinition`s
-   (`ens3-ipvlan-l2`, `macvlan-conf`); the self-signed `ClusterIssuer` +
-   `ext-ca` `Certificate` + CA `ClusterIssuer` (watch Certificate `Ready`);
-   FAR version discovery (OCI pull of `f5-bigip-k8s-manifest`, parse FLO+CIS
-   versions — port from `extract_flo_version`); helm install
-   `f5-lifecycle-operator` + `f5-bnk-cis`; the three privileged-SCC
-   `ClusterRoleBinding`s; the node-labeler SA/Role/Binding/Job
-   (`WaitJobComplete`); then `WaitDeploymentReady` for FLO. Replaces the
-   `--wait=false` + 30s/60s sleeps.
-3. **CNEInstance** (`terraform/modules/cne_instance/...`): SSA-apply the
-   `k8s.f5.com/v1 CNEInstance` CR (port the spec from `cneinstance/main.tf`
-   ~79-207); apply the per-SA SCC `ClusterRoleBinding`s; then watch the
-   CNEInstance `.status` to ready. Replaces the `curl PATCH` + two 30s
-   sleeps.
-4. **License** (`terraform/modules/license/...`): wait License CRD/API +
-   admission webhook ready, SSA-apply the `k8s.f5net.com/v1 License` CR
-   (JWT from COS read — keep the COS fetch as-is via `internal/cos`/terraform
-   output), retry on transient webhook 4xx/5xx, then watch `.status`.
-   Replaces the `curl` poll+retry loop.
+**Terraform install layer** (staff converts the HCL; no `curl`, no
+`time_sleep` — real provider waits):
+- cert-manager / f5-lifecycle-operator / f5-bnk-cis → `helm_release` with
+  `wait = true` (replaces `null_resource local-exec helm --wait=false` +
+  `time_sleep`). FAR version-discovery stays terraform-side (feeds the
+  release versions).
+- The helm *prerequisites* that must exist before the charts install — the
+  `f5-utils`/`flo` namespaces and the `far-secret`/`f5-bigip-ctlr-login`
+  secrets (image-pull + CIS login) — move from `curl` to the terraform
+  `kubernetes` provider (`kubernetes_namespace`/`kubernetes_secret`) so
+  terraform owns the full install DAG. (Per architect's boundary — these are
+  not "CRs", and a missing image-pull secret at pod-create makes `helm_release
+  wait=true` block; so they must precede the charts.)
+
+**Native Go custom-resource layer** (`internal/bnk`, runs post-apply against
+the workspace kubeconfig; each step **apply (SSA) → watch to ready**) — the
+genuinely-brittle parts terraform applies via `curl` then sleeps on:
+1. cert-manager CRs: self-signed `ClusterIssuer` + `ext-ca` `Certificate` +
+   CA `ClusterIssuer` → watch Certificate `Ready` (consumed at FLO *runtime*,
+   not at helm-install time — so post-handoff is safe; confirm with architect).
+2. The two `NetworkAttachmentDefinition`s (`ens3-ipvlan-l2`, `macvlan-conf`).
+3. The privileged-SCC `ClusterRoleBinding`s (FLO + CIS + the per-SA set).
+4. node-labeler SA/Role/Binding/`Job` → `WaitJobComplete`.
+5. **CNEInstance** (`k8s.f5.com/v1`, port spec from `cneinstance/main.tf`
+   ~79-207) → watch `.status` to ready (replaces `curl PATCH` + two 30s
+   sleeps).
+6. **License** (`k8s.f5net.com/v1`, JWT from COS via terraform output /
+   `internal/cos`) → retry transient webhook 4xx/5xx, watch `.status`
+   (replaces the `curl` poll+retry loop + 30s sleep).
 
 Design notes:
 - A `Reconciler` struct holding the `*k8s.Client` + a `ProgressReporter`
@@ -182,12 +189,20 @@ The reconciler must be built for speed from the start, not optimized later:
   goes and the speedup is measurable/provable. `bnk status` / a `--timings`
   summary prints the breakdown.
 
-Target (refine with the integrator after the first live run): a warm
-re-deploy of a new version should complete in a **small fraction** of the
-terraform path's wall-clock — the ~210s of pure sleep is recovered outright,
-and parallelism + terraform-overhead removal should compound that. The
-validator's gated-live timing comparison (`issue_sprint27_validator.md`)
-measures native vs terraform baseline.
+Where the speed comes from under the terraform-keeps-helm split (honest
+accounting): (1) the **~210s of fixed `time_sleep` is removed entirely** —
+the cert/FLO/CIS sleeps become `helm_release wait=true` real-readiness waits
+(terraform-side), and the CNE/License/Job sleeps become Go watches; (2) the
+Go custom-resource layer **parallelizes** independent steps and short-circuits
+already-ready ones; (3) the **fast re-deploy** path skips converged steps.
+Terraform DOES remain in the critical path for the install layer (its
+init/plan/apply overhead + the `helm_release` waits are not eliminated), so
+the win is concentrated in killing the dead sleeps + the Go CR-layer
+watch/parallelism, not in removing terraform. Target (refine with the
+integrator after the first live run): materially faster wall-clock than the
+current path, with the 210s of sleep gone as the floor. The validator's
+gated-live timing comparison (`issue_sprint27_validator.md`) measures native
+vs the legacy baseline.
 
 ## Issue 4 — Orchestration + CLI wiring, status surface, terraform gating
 
@@ -230,10 +245,15 @@ measures native vs terraform baseline.
 - `internal/orchestration/lifecycle.go`, `internal/orchestration/second_phase_reuse.go`
   (gating), `internal/cli/bnk_phase.go` (native up/down wiring + flag).
 - `internal/config/workspace.go` (native toggle, if config-driven).
-- `go.mod` (helm SDK + any `tools/watch` usage — per architect).
-- The terraform `flo/cne_instance/license/cert_manager` modules are **not
-  deleted** this sprint — they stay behind the legacy flag; a later sprint
-  removes them once the native path is the default.
+- `go.mod` — **no `helm.sh/helm/v3`**; only any client-go `tools/watch` +
+  `golang.org/x/sync/errgroup` (likely already indirect) usage.
+- **Terraform**: a `helm_release`-based install layer for cert-manager +
+  FLO + CIS (with `wait = true`) and `kubernetes_namespace`/`kubernetes_secret`
+  for the helm prerequisites — structured (per architect) as a flag-selected
+  config so the **existing `curl`-based modules stay intact as the legacy
+  baseline** the validator benchmarks against. The native path's terraform
+  applies only the install layer + IBM IAM; the Go reconciler owns the CRs.
+  A later sprint removes the legacy curl modules once native is the default.
 
 ### Acceptance criteria
 1. `bnk up --native` against a real cluster brings up cert-manager → FLO →

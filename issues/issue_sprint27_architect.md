@@ -13,37 +13,47 @@
 
 ---
 
-## Issue 1 — Helm strategy decision (BLOCKING input to staff)
+## Issue 1 — Terraform↔Go handoff boundary (helm decision RESOLVED)
 
-**Severity**: high (a dependency-weight decision that staff cannot start the
-chart-install code without)
+**Severity**: high (the boundary is a BLOCKING input — staff can't structure
+the install layer vs the Go CR layer without it)
 **Status**: open
 
-Today terraform installs three charts via `local-exec helm`: **cert-manager**
-(public jetstack repo, `--wait`), **f5-lifecycle-operator** and **f5-bnk-cis**
-(OCI charts from the FAR registry, `--wait=false`), with FLO/CIS versions
-discovered at runtime by `helm pull`-ing `f5-bigip-k8s-manifest` and parsing
-an embedded manifest (`flo/main.tf` `extract_flo_version`, ~414-462).
+**Decision (integrator 2026-06-04):** Helm stays in terraform. Convert the
+three chart installs (cert-manager, f5-lifecycle-operator, f5-bnk-cis) from
+`null_resource` + `local-exec helm` to the proper **`helm_release` provider**
+with `wait = true` (real readiness, no `time_sleep`); FAR version-discovery
+stays terraform-side. **No `helm.sh/helm/v3` Go dependency.** Native Go
+replaces ONLY the `curl`-applied custom resources + their `time_sleep` gates.
 
-Pin ONE approach and document the trade-off:
+Your job is to draw the **exact handoff boundary** so the BNK phase is a clean
+two-stage flow (terraform installs → Go reconciles CRs) with no ping-pong:
 
-- **Recommended (mixed):** cert-manager via its **static install manifest**
-  applied through the existing `internal/k8s` SSA path (no helm dependency
-  for it — cert-manager ships a single versioned manifest); FLO/CIS via the
-  **helm Go SDK** (`helm.sh/helm/v3` action + registry packages) for OCI
-  pull + runtime templating + values. This keeps helm only where runtime
-  chart templating is genuinely required, and removes the host `helm` binary.
-- **Alternative A (no helm dep):** render FLO/CIS charts with helm's engine
-  libs and SSA-apply — still pulls in helm libraries, loses release state.
-- **Alternative B (lightest dep):** keep the three chart installs in
-  terraform but switch the FLO/CIS `null_resource` to the proper
-  `helm_release` provider (real waits), and have the native reconciler
-  replace ONLY the `curl`/`time_sleep` CR-apply parts. Smallest dependency
-  footprint; the BNK phase stays split across terraform + Go.
+1. For each currently-`curl`'d resource in the four modules, classify it as
+   **terraform (helm prerequisite)** or **Go (post-install CR)**. The hard
+   cases to get right:
+   - **Namespaces + secrets** (`f5-utils`/`flo`, `far-secret`,
+     `f5-bigip-ctlr-login`): must exist BEFORE the charts (image-pull secret;
+     `helm_release wait=true` would block on `ImagePullBackOff` otherwise) →
+     terraform `kubernetes_namespace`/`kubernetes_secret`. Confirm.
+   - **cert-manager `ClusterIssuer`/`Certificate`/CA issuer**: FLO's helm
+     values *reference* the issuer, but does FLO consume it at **install**
+     time (must pre-exist → terraform) or only at **runtime** when it issues
+     certs during CNEInstance reconcile (can be Go, post-handoff)? This
+     determines whether they're terraform or Go. Verify against FLO chart
+     behavior — do not guess.
+   - **NADs, SCC bindings, node-labeler Job, CNEInstance, License**: post-
+     install → Go.
+2. Confirm there is **no resource that a `helm_release` depends on which is
+   produced by the Go layer** (that would force terraform→Go→terraform
+   ping-pong). If one exists, push it into terraform.
+3. Recommend how to keep the **legacy `curl`-based modules intact as the
+   benchmark baseline** while adding the new helm_release path (flag-selected
+   install-mode variable vs a parallel slim module set) — the validator times
+   native vs legacy, so both must run.
 
-Record the decision (and the `helm.sh/helm/v3` dependency-size implication)
-in your closure so staff codes exactly one path. If you pick a path that adds
-`helm.sh/helm/v3`, note the `go.mod` blast radius for the integrator.
+Output: the resource-by-resource boundary table + the install-DAG vs Go-DAG
+split, in your closure.
 
 ## Issue 2 — CRD ready-signal schemas (BLOCKING input to the watches)
 
@@ -139,7 +149,9 @@ of serial sleep into a few seconds of parallel watching.
 - mdbook builds (docker image) clean; verify cross-links.
 
 ### Acceptance criteria
-1. Helm strategy pinned with the dependency trade-off documented.
+1. Terraform↔Go handoff boundary drawn: a resource-by-resource
+   terraform(install/prereq)-vs-Go(post-install CR) table, the
+   no-ping-pong check, and the legacy-baseline-preservation recommendation.
 2. Every gated resource's ready-signal confirmed + cited (especially
    CNEInstance + License).
 3. Watch-helper API + progress-event shape (incl. `duration`) agreed with
