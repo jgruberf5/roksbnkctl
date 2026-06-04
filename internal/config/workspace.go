@@ -25,6 +25,21 @@ type Workspace struct {
 	COS      *COSCfg              `yaml:"cos,omitempty"`
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
 
+	// Prefix is the workspace's account-scoped resource-name base
+	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
+	// tfvars render derives every IBM Cloud resource name from it via
+	// internal/naming.Derive and emits the full name set, so two
+	// workspaces that both create infra no longer collide on the upstream
+	// module's default names. Empty (legacy config) keeps the old sparse
+	// render. Additive + omitempty, so old config.yaml loads unchanged.
+	Prefix string `yaml:"prefix,omitempty"`
+
+	// Resources carries the per-resource create toggles (and the
+	// existing-resource name/ID for any declined-but-still-depended-on
+	// resource). nil (legacy config) means the render falls back to the
+	// upstream module defaults for each toggle.
+	Resources *ResourcesCfg `yaml:"resources,omitempty"`
+
 	// Exec is the per-tool execution-backend config block introduced
 	// in Sprint 3 (PRD 03). Maps a tool name (`ibmcloud`, `iperf3`,
 	// `terraform`) to its preferred backend (`local`, `docker`,
@@ -86,6 +101,30 @@ type ClusterCfg struct {
 	Name             string `yaml:"name"`
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
 	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
+}
+
+// ResourcesCfg holds the per-resource create toggles for a prefix-driven
+// workspace (Sprint 26). The cluster itself is NOT here — it reuses the
+// existing ClusterCfg.Create / ClusterCfg.Name (Name doubles as the
+// existing id/name when Create=false, as today). Each toggle carries an
+// Existing name/ID used when Create=false and a live dependent still needs
+// to reference the resource by name.
+type ResourcesCfg struct {
+	TransitGateway   ResourceToggle `yaml:"transit_gateway"`
+	RegistryCOS      ResourceToggle `yaml:"registry_cos"`
+	CertManager      ResourceToggle `yaml:"cert_manager"`
+	BNK              ResourceToggle `yaml:"bnk"`
+	TGWJumphost      ResourceToggle `yaml:"tgw_jumphost"`
+	ClusterJumphosts ResourceToggle `yaml:"cluster_jumphosts"`
+	ClientVPC        ResourceToggle `yaml:"client_vpc"`
+}
+
+// ResourceToggle is one create/reuse decision: Create=true provisions the
+// resource (under its prefix-derived name); Create=false reuses an existing
+// one named by Existing (when a live dependent consumes it).
+type ResourceToggle struct {
+	Create   bool   `yaml:"create"`
+	Existing string `yaml:"existing,omitempty"` // existing name/ID when Create=false
 }
 
 type BNKCfg struct {
