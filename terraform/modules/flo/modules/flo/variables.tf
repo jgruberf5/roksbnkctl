@@ -4,6 +4,23 @@ variable "enabled" {
   default     = false
 }
 
+variable "bnk_cr_mode" {
+  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline)."
+  type        = string
+  default     = "kubectl"
+
+  validation {
+    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
+    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
+  }
+}
+
+variable "node_labeler_job_ttl_seconds" {
+  description = "ttlSecondsAfterFinished for the node-labeler Job (kubectl mode). The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
+  type        = number
+  default     = 600
+}
+
 # Directory for artifacts that have to survive across `terraform apply`
 # invocations (FAR auth tarball, extracted JSON read later by data.local_file
 # resources). The default lives under .bnk/ in the bind-mounted cwd so the

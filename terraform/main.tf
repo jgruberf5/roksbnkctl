@@ -67,6 +67,7 @@ module "cert_manager" {
   cert_manager_version       = var.cert_manager_version
   create_roks_cluster        = var.create_roks_cluster
   deploy_cert_manager        = var.deploy_cert_manager
+  bnk_cr_mode                = var.bnk_cr_mode
   roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
   kubeconfig_dir             = "${var.kubeconfig_dir}/cert_manager"
 }
@@ -79,10 +80,10 @@ module "cert_manager" {
 module "flo" {
   source = "./modules/flo"
 
-  ibmcloud_api_key              = var.ibmcloud_api_key
-  ibmcloud_cluster_region       = var.ibmcloud_cluster_region
-  ibmcloud_resource_group       = var.ibmcloud_resource_group
-  roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+  roks_cluster_name_or_id = module.roks_cluster.roks_cluster_name
   # Sprint 23 round-2: pass the ROOT variable directly, not the cert_manager
   # module's output. When deploy_cert_manager=false (bnk-phase override),
   # the inner cert-manager module's outputs return null (mode=managed
@@ -111,6 +112,7 @@ module "flo" {
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cert_manager_dependency_id    = module.cert_manager.cert_manager_ready_id
   deploy_bnk                    = var.deploy_bnk
+  bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/flo"
   scratch_dir                   = var.scratch_dir
 }
@@ -155,6 +157,7 @@ module "cne_instance" {
   roks_cluster_dependency_id       = module.roks_cluster.cluster_ready_id
   flo_dependency_id                = module.flo.flo_ready_id
   deploy_bnk                       = var.deploy_bnk
+  bnk_cr_mode                      = var.bnk_cr_mode
   kubeconfig_dir                   = "${var.kubeconfig_dir}/cne_instance"
 }
 
@@ -181,6 +184,7 @@ module "license" {
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cneinstance_dependency_id     = module.cne_instance.cneinstance_ready_id
   deploy_bnk                    = var.deploy_bnk
+  bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/license"
 }
 

@@ -243,4 +243,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)
 	}
+	// Sprint 27 install-mode flag. Emitted only when set; an unset value
+	// lets the upstream TF default (kubectl) stand, keeping older configs
+	// byte-identical. "legacy_curl" selects the null_resource baseline.
+	if ws.BNK.CRMode != "" {
+		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
+	}
 }

@@ -27,6 +27,17 @@ provider "helm" {
   }
 }
 
+# alekc/kubectl — applies free-form CR YAML as real terraform resources with
+# no plan-time CRD schema lookup (the reason the legacy path used raw curl).
+# Wired from the same ibm_container_cluster_config as kubernetes/helm; the
+# try(..., "") pattern keeps it plan-safe when the cluster doesn't exist yet.
+provider "kubectl" {
+  host                   = try(data.ibm_container_cluster_config.cluster_config[0].host, "")
+  token                  = try(data.ibm_container_cluster_config.cluster_config[0].token, "")
+  cluster_ca_certificate = try(base64decode(data.ibm_container_cluster_config.cluster_config[0].ca_certificate), null)
+  load_config_file       = false
+}
+
 # Runtime config — deferred to apply time via roks_cluster_gate dependency.
 # Used by null_resource provisioners (resource arguments, not provider config),
 # so (known after apply) is fine here.

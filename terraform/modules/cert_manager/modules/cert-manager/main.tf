@@ -1,13 +1,29 @@
 # ============================================================
 # Cert-Manager Module
-# Manages cert-manager installation including:
-# - Namespace creation (via kubectl local-exec)
-# - Helm release deployment (via helm CLI local-exec)
-# - Post-deployment wait for CRD availability
+# Manages cert-manager installation. Two install mechanisms,
+# selected by var.bnk_cr_mode:
+#
+#   - "kubectl" (default, Sprint 27 terraform-native): the namespace
+#     is a kubernetes_namespace and the chart is a helm_release
+#     (wait = true). No local-exec, no time_sleep.
+#   - "legacy_curl": the original null_resource local-exec kubectl/helm
+#     bring-up gated by a fixed time_sleep. Kept byte-identical as the
+#     validator's benchmark baseline.
+#
+# The providers (kubernetes / helm) are inherited from the wrapping
+# module's providers.tf, wired from ibm_container_cluster_config.
 # ============================================================
 
 terraform {
   required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.25"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
     null = {
       source  = "hashicorp/null"
       version = ">= 3.2.0"
@@ -19,9 +35,58 @@ terraform {
   }
 }
 
+locals {
+  use_kubectl = var.enabled && var.bnk_cr_mode == "kubectl"
+  use_legacy  = var.enabled && var.bnk_cr_mode == "legacy_curl"
+}
+
+# ============================================================
+# kubectl mode (Sprint 27 terraform-native)
+# ============================================================
+
+# cert-manager namespace via the kubernetes provider — precedes the chart.
+resource "kubernetes_namespace_v1" "cert_manager" {
+  count = local.use_kubectl ? 1 : 0
+
+  metadata {
+    name = var.namespace
+  }
+}
+
+# cert-manager chart via helm_release (wait = true) — real rollout readiness,
+# replacing the legacy --wait helm local-exec + the post-deployment time_sleep.
+resource "helm_release" "cert_manager" {
+  count = local.use_kubectl ? 1 : 0
+
+  name       = "cert-manager"
+  repository = var.chart_repository
+  chart      = "cert-manager"
+  version    = var.chart_version
+  namespace  = var.namespace
+
+  wait    = true
+  timeout = var.timeout
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  set {
+    name  = "featureGates"
+    value = "ServerSideApply=true"
+  }
+
+  depends_on = [kubernetes_namespace_v1.cert_manager]
+}
+
+# ============================================================
+# legacy_curl mode (unchanged baseline)
+# ============================================================
+
 # Create cert-manager namespace via kubectl local-exec
 resource "null_resource" "cert_manager_namespace" {
-  count = var.enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     namespace  = var.namespace
@@ -49,7 +114,7 @@ resource "null_resource" "cert_manager_namespace" {
 
 # Install cert-manager via Helm CLI local-exec
 resource "null_resource" "cert_manager" {
-  count = var.enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     chart_version = var.chart_version
@@ -94,7 +159,7 @@ resource "null_resource" "cert_manager" {
 # This ensures ClusterIssuer, Certificate, and other cert-manager CRDs
 # are available before dependent resources try to use them
 resource "time_sleep" "cert_manager_ready" {
-  count = var.enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   depends_on      = [null_resource.cert_manager[0]]
   create_duration = "${var.post_deployment_delay}s"

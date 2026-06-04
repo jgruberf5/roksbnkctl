@@ -19,6 +19,18 @@ terraform {
       source  = "hashicorp/time"
       version = ">= 0.9.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.25"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.4.0"
+    }
   }
 }
 
@@ -33,6 +45,7 @@ module "cert_manager" {
   depends_on = [data.ibm_container_cluster_config.runtime_config]
 
   enabled               = var.deploy_cert_manager
+  bnk_cr_mode           = var.bnk_cr_mode
   namespace             = var.cert_manager_namespace
   chart_version         = var.cert_manager_version
   post_deployment_delay = 30

@@ -131,6 +131,14 @@ type BNKCfg struct {
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
 	FARRepoURL      string `yaml:"far_repo_url,omitempty"`
 	ManifestVersion string `yaml:"manifest_version,omitempty"`
+
+	// CRMode selects the BNK custom-resource install mechanism rendered as
+	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
+	// helm_release + alekc/kubectl kubectl_manifest + wait_for path (default);
+	// "legacy_curl" → the null_resource/curl/time_sleep baseline kept behind
+	// the flag for the validator's benchmark. The `--legacy-bnk` flag sets
+	// "legacy_curl" at runtime, overriding this config value.
+	CRMode string `yaml:"cr_mode,omitempty"`
 }
 
 type TestCfg struct {

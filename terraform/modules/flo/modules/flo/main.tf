@@ -1,5 +1,8 @@
 locals {
-  global_enabled          = var.enabled
+  global_enabled = var.enabled
+  use_kubectl    = var.enabled && var.bnk_cr_mode == "kubectl"
+  use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
+
   far_registry_hostname   = replace(var.far_repo_url, "https://", "")
   image_repository        = "${local.far_registry_hostname}/images"
   far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : ""
@@ -253,7 +256,7 @@ data "http" "nad_crd" {
 
 # Create NetworkAttachmentDefinition in FLO namespace using kubernetes_manifest
 resource "null_resource" "network_attachment_definition" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name      = local.nad_name_computed
@@ -286,7 +289,7 @@ resource "null_resource" "network_attachment_definition" {
 
 # Create macvlan NetworkAttachmentDefinition
 resource "null_resource" "macvlan_network_attachment_definition" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name      = "macvlan-conf"
@@ -319,7 +322,7 @@ resource "null_resource" "macvlan_network_attachment_definition" {
 
 # Apply ClusterIssuer via curl server-side apply — idempotent across test runs.
 resource "null_resource" "cluster_issuers" {
-  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+  count = local.use_legacy && var.cert_manager_crd_ready ? 1 : 0
 
   triggers = {
     host  = var.kube_host
@@ -348,7 +351,7 @@ resource "null_resource" "cluster_issuers" {
 
 # Self-signed certificate for CA
 resource "null_resource" "ca_certificate" {
-  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+  count = local.use_legacy && var.cert_manager_crd_ready ? 1 : 0
 
   triggers = {
     host      = var.kube_host
@@ -380,7 +383,7 @@ resource "null_resource" "ca_certificate" {
 
 # CA cluster issuer
 resource "null_resource" "ca_cluster_issuer" {
-  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+  count = local.use_legacy && var.cert_manager_crd_ready ? 1 : 0
 
   triggers = {
     name  = var.cluster_issuer_name
@@ -479,7 +482,7 @@ data "external" "versions" {
 # Create f5-utils namespace via curl server-side apply — idempotent; no provider
 # existence-check so it succeeds even when the namespace was left by a prior run.
 resource "null_resource" "f5_utils" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name  = var.utils_namespace
@@ -567,7 +570,7 @@ resource "null_resource" "f5_utils" {
 
 # Create FLO namespace (skip if it's "default" - always exists)
 resource "null_resource" "flo_namespace" {
-  count = local.global_enabled && var.flo_namespace != "default" ? 1 : 0
+  count = local.use_legacy && var.flo_namespace != "default" ? 1 : 0
 
   triggers = {
     name  = var.flo_namespace
@@ -655,7 +658,7 @@ resource "null_resource" "flo_namespace" {
 
 # Create BIG-IP login secret for CIS controller
 resource "null_resource" "bigip_ctlr_login" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name      = "f5-bigip-ctlr-login"
@@ -688,7 +691,7 @@ resource "null_resource" "bigip_ctlr_login" {
 
 # Create FAR image pull secret in flo namespace
 resource "null_resource" "far_secret_flo" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name      = "far-secret"
@@ -721,7 +724,7 @@ resource "null_resource" "far_secret_flo" {
 
 # Create FAR image pull secret in f5-utils namespace
 resource "null_resource" "far_secret_utils" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name      = "far-secret"
@@ -754,7 +757,7 @@ resource "null_resource" "far_secret_utils" {
 
 # Install f5-lifecycle-operator using Helm CLI local-exec
 resource "null_resource" "f5_lifecycle_operator" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     manifest_version      = var.f5_bigip_k8s_manifest_version
@@ -832,7 +835,7 @@ resource "null_resource" "f5_lifecycle_operator" {
 
 # Install f5-bnk-cis using Helm CLI local-exec
 resource "null_resource" "f5_bnk_cis" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     manifest_version      = var.f5_bigip_k8s_manifest_version
@@ -911,7 +914,7 @@ resource "null_resource" "f5_bnk_cis" {
 # Apply privileged SCC to flo-f5-lifecycle-operator service account using Kubernetes RBAC
 # This approach works with IBM Schematics and doesn't require 'oc' CLI
 resource "null_resource" "flo_scc_privileged" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name  = "system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator"
@@ -943,7 +946,7 @@ resource "null_resource" "flo_scc_privileged" {
 
 # Apply privileged SCC to f5-bigip-ctlr-serviceaccount for CIS
 resource "null_resource" "cis_scc_privileged" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name  = "system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount"
@@ -975,7 +978,7 @@ resource "null_resource" "cis_scc_privileged" {
 
 # Apply privileged SCC to default service account for CIS
 resource "null_resource" "cis_default_scc_privileged" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     name  = "system:openshift:scc:privileged:${var.flo_namespace}:default"
@@ -1007,7 +1010,7 @@ resource "null_resource" "cis_default_scc_privileged" {
 
 # Wait for SCC policies to be applied and pods to start
 resource "time_sleep" "wait_for_flo_scc_policies" {
-  count           = local.global_enabled ? 1 : 0
+  count           = local.use_legacy ? 1 : 0
   create_duration = "30s"
   triggers = {
     scc_policies_applied = "1"
@@ -1019,14 +1022,14 @@ resource "time_sleep" "wait_for_flo_scc_policies" {
 # Replaces the former kubernetes_resources data source which validated the k8s
 # REST client at plan time (fails when cluster doesn't exist yet).
 resource "time_sleep" "wait_for_flo_pods" {
-  count           = local.global_enabled ? 1 : 0
+  count           = local.use_legacy ? 1 : 0
   create_duration = "60s"
   depends_on      = [time_sleep.wait_for_flo_scc_policies[0]]
 }
 
 # Create service account for node labeler via curl server-side apply — idempotent.
 resource "null_resource" "node_labeler_sa" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     host  = var.kube_host
@@ -1057,7 +1060,7 @@ resource "null_resource" "node_labeler_sa" {
 
 # Create cluster role for node labeling
 resource "null_resource" "node_labeler_role" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     host  = var.kube_host
@@ -1088,7 +1091,7 @@ resource "null_resource" "node_labeler_role" {
 
 # Bind role to service account
 resource "null_resource" "node_labeler_binding" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     host  = var.kube_host
@@ -1119,7 +1122,7 @@ resource "null_resource" "node_labeler_binding" {
 
 # Create a Job to label all nodes via curl server-side apply
 resource "null_resource" "node_labeler_job" {
-  count = local.global_enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     host  = var.kube_host
@@ -1150,6 +1153,407 @@ resource "null_resource" "node_labeler_job" {
     null_resource.f5_lifecycle_operator[0],
     null_resource.node_labeler_binding,
   ]
+}
+
+# ==============================================================================
+# Sprint 27 — kubectl mode (terraform-native)
+# ------------------------------------------------------------------------------
+# Replaces every legacy null_resource/curl + time_sleep above with:
+#   - kubernetes_namespace_v1 / kubernetes_secret_v1 (helm prerequisites)
+#   - helm_release (FLO + CIS, wait = true)
+#   - kubectl_manifest + wait_for (cert issuers, NADs, SCC bindings,
+#     node-labeler).
+# The spec locals (NAD configs, helm values) are shared with the legacy path.
+# ==============================================================================
+
+locals {
+  # FLO/CIS chart versions discovered terraform-side from the FAR manifest.
+  flo_chart_version = local.global_enabled && var.use_cos_bucket ? try(data.external.versions[0].result.flo, "") : ""
+  cis_chart_version = local.global_enabled && var.use_cos_bucket ? try(data.external.versions[0].result.cis, "") : ""
+
+  # NAD (ens3) manifest — spec.config is a JSON string, same as the legacy curl.
+  nad_ens3_manifest = {
+    apiVersion = "k8s.cni.cncf.io/v1"
+    kind       = "NetworkAttachmentDefinition"
+    metadata = {
+      name      = local.nad_name_computed
+      namespace = var.flo_namespace
+    }
+    spec = {
+      config = var.nad_cni_type == "host-device" ? local.nad_config_host_device : local.nad_config_ipvlan
+    }
+  }
+
+  nad_macvlan_manifest = {
+    apiVersion = "k8s.cni.cncf.io/v1"
+    kind       = "NetworkAttachmentDefinition"
+    metadata = {
+      name      = "macvlan-conf"
+      namespace = var.flo_namespace
+    }
+    spec = {
+      config = local.macvlan_config
+    }
+  }
+
+  selfsigned_issuer_manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "ClusterIssuer"
+    metadata   = { name = "selfsigned-cluster-issuer" }
+    spec       = { selfSigned = {} }
+  }
+
+  ca_certificate_manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "Certificate"
+    metadata = {
+      name      = "ext-ca"
+      namespace = var.cert_manager_namespace
+    }
+    spec = {
+      isCA       = true
+      commonName = "ext-ca"
+      secretName = "ext-ca"
+      issuerRef = {
+        name  = "selfsigned-cluster-issuer"
+        kind  = "ClusterIssuer"
+        group = "cert-manager.io"
+      }
+    }
+  }
+
+  ca_cluster_issuer_manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "ClusterIssuer"
+    metadata   = { name = var.cluster_issuer_name }
+    spec       = { ca = { secretName = "ext-ca" } }
+  }
+
+  scc_clusterrolebinding = {
+    flo = {
+      sa   = "flo-f5-lifecycle-operator"
+      name = "system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator"
+    }
+    cis = {
+      sa   = "f5-bigip-ctlr-serviceaccount"
+      name = "system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount"
+    }
+    cis_default = {
+      sa   = "default"
+      name = "system:openshift:scc:privileged:${var.flo_namespace}:default"
+    }
+  }
+
+  node_labeler_sa_manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata   = { name = "node-labeler", namespace = "kube-system" }
+  }
+
+  node_labeler_role_manifest = {
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRole"
+    metadata   = { name = "node-labeler" }
+    rules = [{
+      apiGroups = [""]
+      resources = ["nodes"]
+      verbs     = ["get", "list", "patch", "update"]
+    }]
+  }
+
+  node_labeler_binding_manifest = {
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRoleBinding"
+    metadata   = { name = "node-labeler" }
+    roleRef = {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind     = "ClusterRole"
+      name     = "node-labeler"
+    }
+    subjects = [{
+      kind      = "ServiceAccount"
+      name      = "node-labeler"
+      namespace = "kube-system"
+    }]
+  }
+
+  # Stable-name Job (NOT generateName) so kubectl_manifest can wait_for Complete;
+  # ttlSecondsAfterFinished GC's the finished Job so re-applies don't collide.
+  node_labeler_job_manifest = {
+    apiVersion = "batch/v1"
+    kind       = "Job"
+    metadata   = { name = "node-labeler", namespace = "kube-system" }
+    spec = {
+      backoffLimit            = 3
+      ttlSecondsAfterFinished = var.node_labeler_job_ttl_seconds
+      template = {
+        metadata = { name = "node-labeler" }
+        spec = {
+          serviceAccountName = "node-labeler"
+          restartPolicy      = "Never"
+          containers = [{
+            name    = "labeler"
+            image   = "bitnami/kubectl:latest"
+            command = ["/bin/sh", "-c", "kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully"]
+          }]
+        }
+      }
+    }
+  }
+}
+
+# --- Namespaces (helm prerequisites — precede the charts) -------------------
+
+resource "kubernetes_namespace_v1" "f5_utils" {
+  count = local.use_kubectl ? 1 : 0
+  metadata {
+    name = var.utils_namespace
+  }
+}
+
+resource "kubernetes_namespace_v1" "flo" {
+  count = local.use_kubectl && var.flo_namespace != "default" ? 1 : 0
+  metadata {
+    name = var.flo_namespace
+  }
+}
+
+# --- Secrets (image-pull + CIS login — precede the charts) ------------------
+
+resource "kubernetes_secret_v1" "far_secret_flo" {
+  count = local.use_kubectl ? 1 : 0
+  metadata {
+    name      = "far-secret"
+    namespace = var.flo_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.far_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.flo]
+}
+
+resource "kubernetes_secret_v1" "far_secret_utils" {
+  count = local.use_kubectl ? 1 : 0
+  metadata {
+    name      = "far-secret"
+    namespace = var.utils_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.far_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.f5_utils]
+}
+
+resource "kubernetes_secret_v1" "bigip_ctlr_login" {
+  count = local.use_kubectl ? 1 : 0
+  metadata {
+    name      = "f5-bigip-ctlr-login"
+    namespace = var.flo_namespace
+  }
+  type = "Opaque"
+  data = {
+    username = var.bigip_username
+    password = var.bigip_password
+    url      = replace(var.bigip_url, "https://", "")
+  }
+  depends_on = [kubernetes_namespace_v1.flo]
+}
+
+# --- cert-manager CRs (issuer chain) ----------------------------------------
+# Depend on the cert-manager helm_release (CRD-before-CR), passed in via
+# var.cert_manager_ready_dependency from the wrapping module.
+
+resource "kubectl_manifest" "selfsigned_issuer" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.selfsigned_issuer_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+}
+
+resource "kubectl_manifest" "ca_certificate" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.ca_certificate_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+
+  wait_for {
+    condition {
+      type   = "Ready"
+      status = "True"
+    }
+  }
+
+  depends_on = [kubectl_manifest.selfsigned_issuer]
+}
+
+resource "kubectl_manifest" "ca_cluster_issuer" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.ca_cluster_issuer_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+
+  wait_for {
+    condition {
+      type   = "Ready"
+      status = "True"
+    }
+  }
+
+  depends_on = [kubectl_manifest.ca_certificate]
+}
+
+# --- NADs (no status — no wait). Only need the flo namespace. ---------------
+
+resource "kubectl_manifest" "nad_ens3" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.nad_ens3_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  depends_on        = [kubernetes_namespace_v1.flo]
+}
+
+resource "kubectl_manifest" "nad_macvlan" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.nad_macvlan_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  depends_on        = [kubernetes_namespace_v1.flo]
+}
+
+# --- Charts: FLO + CIS (wait = true → real rollout readiness) ---------------
+
+resource "helm_release" "flo" {
+  count = local.use_kubectl ? 1 : 0
+
+  name             = "flo"
+  repository       = "oci://${local.far_registry_hostname}/charts"
+  chart            = "f5-lifecycle-operator"
+  version          = local.flo_chart_version
+  namespace        = var.flo_namespace
+  create_namespace = false
+
+  wait    = true
+  timeout = 300
+
+  values = [yamlencode(local.flo_helm_values)]
+
+  depends_on = [
+    kubernetes_namespace_v1.flo,
+    kubernetes_secret_v1.far_secret_flo,
+    kubectl_manifest.ca_cluster_issuer,
+    data.external.versions,
+  ]
+}
+
+resource "helm_release" "cis" {
+  count = local.use_kubectl ? 1 : 0
+
+  name             = "f5-bnk-cis"
+  repository       = "oci://${local.far_registry_hostname}/charts"
+  chart            = "f5-bnk-cis"
+  version          = local.cis_chart_version
+  namespace        = var.flo_namespace
+  create_namespace = false
+
+  wait    = true
+  timeout = 300
+
+  values = [yamlencode(local.cis_helm_values)]
+
+  depends_on = [
+    helm_release.flo,
+    kubernetes_secret_v1.bigip_ctlr_login,
+  ]
+}
+
+# --- SCC ClusterRoleBindings (no status — no wait). Need only the charts. ----
+
+resource "kubectl_manifest" "flo_scc_privileged" {
+  count             = local.use_kubectl ? 1 : 0
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  yaml_body = yamlencode({
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRoleBinding"
+    metadata   = { name = local.scc_clusterrolebinding.flo.name }
+    roleRef = {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind     = "ClusterRole"
+      name     = "system:openshift:scc:privileged"
+    }
+    subjects = [{
+      kind      = "ServiceAccount"
+      name      = local.scc_clusterrolebinding.flo.sa
+      namespace = var.flo_namespace
+    }]
+  })
+  depends_on = [helm_release.flo]
+}
+
+resource "kubectl_manifest" "cis_scc_privileged" {
+  for_each          = local.use_kubectl ? { cis = local.scc_clusterrolebinding.cis, cis_default = local.scc_clusterrolebinding.cis_default } : {}
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  yaml_body = yamlencode({
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRoleBinding"
+    metadata   = { name = each.value.name }
+    roleRef = {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind     = "ClusterRole"
+      name     = "system:openshift:scc:privileged"
+    }
+    subjects = [{
+      kind      = "ServiceAccount"
+      name      = each.value.sa
+      namespace = var.flo_namespace
+    }]
+  })
+  depends_on = [helm_release.cis]
+}
+
+# --- Node-labeler (SA → Role → Binding → Job, wait Complete) ----------------
+# Independent of cert-manager/FLO (architect: drop the cert_manager_crd_ready
+# edge); only the SA needs kube-system (always present).
+
+resource "kubectl_manifest" "node_labeler_sa" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.node_labeler_sa_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+}
+
+resource "kubectl_manifest" "node_labeler_role" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.node_labeler_role_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+}
+
+resource "kubectl_manifest" "node_labeler_binding" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.node_labeler_binding_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  depends_on        = [kubectl_manifest.node_labeler_role, kubectl_manifest.node_labeler_sa]
+}
+
+resource "kubectl_manifest" "node_labeler_job" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.node_labeler_job_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+
+  wait_for {
+    condition {
+      type   = "Complete"
+      status = "True"
+    }
+  }
+
+  depends_on = [kubectl_manifest.node_labeler_binding]
 }
 
 # ==============================================================================

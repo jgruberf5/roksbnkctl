@@ -31,6 +31,18 @@ terraform {
       source  = "hashicorp/time"
       version = ">= 0.9.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.25"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.4.0"
+    }
   }
 }
 
@@ -43,7 +55,8 @@ module "flo" {
 
   depends_on = [data.ibm_container_cluster_config.runtime_config, null_resource.cert_manager_gate]
 
-  enabled = var.deploy_bnk
+  enabled     = var.deploy_bnk
+  bnk_cr_mode = var.bnk_cr_mode
 
   cert_manager_crd_ready = true
 

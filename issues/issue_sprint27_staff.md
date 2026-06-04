@@ -171,3 +171,142 @@ provider's finalizer-aware delete handle teardown.
 - alekc/kubectl: `registry.terraform.io/providers/alekc/kubectl/latest`.
 - Integrator memory [[live-verify-high-issues]] — cluster-mutating; live
   benchmark gates closure.
+
+---
+
+## Closure — staff, 2026-06-04
+
+Implemented the terraform-native BNK phase per the architect's
+"Design — terraform module restructure" + Spike rounds 1 & 2. No Go reconciler,
+no custom provider, no `helm.sh/helm/v3`. Branch `sprint27-bnk-native-k8s`
+(not merged, not tagged).
+
+### Install-mode flag structure
+
+A single `bnk_cr_mode = "kubectl" | "legacy_curl"` variable (default `kubectl`,
+validated) gates **in-place** `count`/`for_each` on old vs new resources — NOT a
+parallel module (architect §3). Each inner module derives:
+`use_kubectl = enabled && bnk_cr_mode == "kubectl"` /
+`use_legacy = enabled && bnk_cr_mode == "legacy_curl"`. Every legacy
+`null_resource`/`time_sleep` flipped from `var.enabled ? N : 0` to
+`local.use_legacy ? N : 0` (byte-identical otherwise — the validator baseline);
+every new `helm_release`/`kubernetes_*`/`kubectl_manifest` gated on
+`local.use_kubectl`. The spec locals (`*_manifest`, `*_helm_values`, NAD/SCC
+locals) are **single-sourced** and shared by both paths (legacy reads
+`jsonencode(...)`, kubectl reads `yamlencode(...)`).
+
+Threaded: root `terraform/variables.tf` (`bnk_cr_mode`) → `terraform/main.tf`
+passes it to all four modules → each wrapper `variables.tf` + `main.tf`
+re-passes to its inner module. `required_providers` for
+`alekc/kubectl` (`>= 2.4.0`), `hashicorp/helm` (`~> 2.12`),
+`hashicorp/kubernetes` (`>= 2.25`) added to root `versions.tf` and each
+wrapper/inner module. A `provider "kubectl"` block (host/token/ca from the same
+`ibm_container_cluster_config`, `load_config_file=false`, the plan-safe
+`try(...,"")` pattern) added to each wrapper `providers.tf`; the license wrapper
+also adds `kubectl` to its explicit `providers = {}` passthrough.
+
+### roksbnkctl render / flag
+
+- `internal/config/workspace.go`: `BNKCfg.CRMode string` (`yaml:"cr_mode"`).
+- `internal/tf/vars.go` `renderBNKFields`: emits `bnk_cr_mode = "<v>"` only when
+  set (unset ⇒ upstream default `kubectl`, older configs byte-identical).
+- `internal/cli/lifecycle.go`: `flagLegacyBnk` global → `LifecycleInputs.LegacyBNK`.
+- `internal/orchestration/lifecycle.go`: `openTF` sets
+  `cctx.Workspace.BNK.CRMode = "legacy_curl"` when `in.LegacyBNK` (single
+  workspace-load site; no-op for the cluster phase).
+- `internal/cli/bnk_phase.go`: `--legacy-bnk` flag on `bnk up` + `bnk down`.
+- No new Go deps (the provider is a terraform artifact).
+- `bnk status` deferred (live CR status is already queryable via
+  `terraform output` / `internal/k8s`; the issue marks it optional/cheap-only).
+
+### HCL changes per module (kubectl mode)
+
+- **cert_manager** (`modules/cert-manager/main.tf`): `kubernetes_namespace_v1`
+  + `helm_release` (`wait=true`, `set installCRDs=true` +
+  `featureGates=ServerSideApply=true`). `cert_manager_ready_id` output ⇒
+  `helm_release.id` in kubectl mode. Legacy null_resource/helm + `time_sleep`
+  retained behind `use_legacy`.
+- **flo** (`modules/flo/main.tf`): namespaces `f5-utils`/`f5-bnk` ⇒
+  `kubernetes_namespace_v1`; `far-secret`×2 + `f5-bigip-ctlr-login` ⇒
+  `kubernetes_secret_v1` (ordered before charts). FLO + CIS ⇒ `helm_release`
+  (`wait=true`, values = `yamlencode(local.*_helm_values)` verbatim; FLO/CIS
+  versions from the unchanged terraform-side FAR discovery
+  `data.external.versions`). Cert issuer chain (selfsigned → ca_certificate
+  `wait_for condition Ready=True` → ca_cluster_issuer `wait_for condition
+  Ready=True`), 2 NADs (no wait), 3 FLO/CIS SCC bindings (no wait), node-labeler
+  SA→Role→Binding→Job ⇒ `kubectl_manifest`. Node-labeler Job given a STABLE name
+  (`node-labeler`, not the timestamp `generateName`) + `ttlSecondsAfterFinished`
+  (var `node_labeler_job_ttl_seconds`, default 600) + `wait_for condition
+  Complete=True` per the architect note. COS/IAM/version-discovery resources
+  unchanged.
+- **cne_instance** (`modules/cneinstance/main.tf`): CNEInstance ⇒
+  `kubectl_manifest` (`yaml_body = yamlencode(local.cneinstance_manifest)`,
+  `server_side_apply=true`, `field_manager="roksbnkctl"`, `wait_for condition
+  Available=True`); the ~16 SCC `ClusterRoleBinding`s ⇒ `kubectl_manifest`
+  for_each (no wait). `cneinstance_ready_id` ⇒ the CNEInstance `kubectl_manifest`
+  id in kubectl mode.
+- **license** (`modules/license/main.tf`): License ⇒ `kubectl_manifest`
+  (`yaml_body = yamlencode(local.license_manifest)` = `{jwt, operationMode}`
+  verbatim; `wait_for field { key="status.state" value="Verification Complete" }`).
+  The in-script CRD-poll + 30× PATCH-retry + `time_sleep` are deleted in kubectl
+  mode.
+
+### depends_on graph (architect §2)
+
+Serial spine kept: `H(cert_manager) → issuer chain → H(flo) → KM(cneinstance) →
+KM(license)`. `H(cis)` depends on `H(flo)` + the bigip-login secret. Edges
+DROPPED for parallelism: CNEInstance SCC bindings re-pointed from the
+CNEInstance to the FLO dependency (`var.flo_deployment_dependency`); node-labeler
+subtree no longer hangs off `cert_manager_crd_ready` (internal SA→Role→Binding→Job
+chain only); the three secrets and two NADs carry only their namespace edge.
+
+### Speed hygiene (Issue 4)
+
+ZERO `time_sleep` in the kubectl path — grep confirms every remaining
+`time_sleep` resource is gated `local.use_legacy`. All ~210s of fixed sleeps
+(`cert_manager_ready`, `wait_for_flo_scc_policies` 30, `wait_for_flo_pods` 60,
+`wait_for_cneinstance_crd` 30, `wait_for_scc_policies` 30, `wait_for_license_crd`
+30) are gone in kubectl mode, replaced by `helm_release wait=true` +
+`kubectl_manifest wait_for`. `server_side_apply=true` + `field_manager="roksbnkctl"`
+on every `kubectl_manifest` avoids the perpetual-diff pitfall, so a version-bump
+re-plans only the changed `helm_release version` + CNEInstance spec.
+
+### Gate results
+
+- `terraform fmt -check -recursive terraform/` → clean (exit 0).
+- `terraform validate` → **Success** on each of the four modules
+  (`terraform/modules/{cert_manager,flo,cne_instance,license}`) AND on the root
+  `terraform/`. `terraform init` resolves `alekc/kubectl` v2.4.1 from the public
+  registry (+ helm 2.17.0, kubernetes 3.2.0). `validate` is mode-agnostic so the
+  single pass covers both `bnk_cr_mode` values (the `count`/`for_each`
+  expressions are structurally checked regardless of value).
+- `go build ./...`, `go vet ./...`, `staticcheck ./...` → all clean (exit 0).
+
+### Deviations from the architect design
+
+1. **helm pinned `~> 2.12`, not `>= 2.12`.** The existing `providers.tf` use the
+   helm-v2 nested `kubernetes { ... }` provider-config block; helm provider v3
+   (which `>= 2.12` would float to) replaced that with a top-level `kubernetes`
+   attribute and would break the existing config. `~> 2.12` keeps v2.x (resolved
+   2.17.0) and the nested-block syntax. Same floor, narrower ceiling — no
+   behavior change vs the architect intent.
+2. **`kubernetes_namespace_v1` / `kubernetes_secret_v1`** used instead of the
+   unsuffixed names to silence the provider's deprecation warning under
+   kubernetes provider v3 (functionally identical).
+3. **License `wait_for` literal** `"Verification Complete"` taken from the
+   spike's round-1 CWC-REST evidence; still flagged as the one residual to
+   confirm on a live licensed cluster (validator) — swap to a `condition{}`
+   matcher if a stable condition proves better (same resource, one-block change).
+
+### Notes / follow-ups
+
+- Air-gap: `alekc/kubectl` is a new third-party plugin fetched at
+  `terraform init`. Connected runs are frictionless; offline installs need a
+  `terraform providers mirror` bundle (filesystem/network mirror in CLI config).
+  The root `terraform/.terraform.lock.hcl` now records the exact
+  kubectl/helm/kubernetes hashes for reproducible mirrors — left in place as an
+  untracked artifact (not committed per the no-commit constraint; the integrator
+  should commit it to lock the air-gap mirror).
+- Live cluster-mutating apply + the kubectl-vs-legacy speed benchmark + the
+  License `status.state` literal confirm are the validator's gate (not run here —
+  no live cluster).

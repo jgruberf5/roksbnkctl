@@ -91,6 +91,17 @@ variable "create_roks_cluster" {
   default     = false
 }
 
+variable "bnk_cr_mode" {
+  description = "BNK install mechanism: \"kubectl\" (terraform-native kubectl_manifest + wait_for) or \"legacy_curl\" (null_resource local-exec baseline)."
+  type        = string
+  default     = "kubectl"
+
+  validation {
+    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
+    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
+  }
+}
+
 variable "roks_cluster_dependency_id" {
   description = "roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes"
   type        = string

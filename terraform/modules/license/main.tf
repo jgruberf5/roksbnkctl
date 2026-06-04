@@ -23,6 +23,14 @@ terraform {
       source  = "hashicorp/time"
       version = ">= 0.9.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.25"
+    }
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.4.0"
+    }
   }
 }
 
@@ -34,11 +42,13 @@ module "license" {
   source = "./modules/license"
 
   providers = {
-    ibm  = ibm
-    http = http
+    ibm     = ibm
+    http    = http
+    kubectl = kubectl
   }
 
-  enabled = var.deploy_bnk
+  enabled     = var.deploy_bnk
+  bnk_cr_mode = var.bnk_cr_mode
 
   use_cos_bucket = true
   jwt_token      = ""
