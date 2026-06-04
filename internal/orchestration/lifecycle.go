@@ -64,6 +64,11 @@ type LifecycleInputs struct {
 	Auto bool
 	// NoKubeconfig is --no-kubeconfig (skip the post-apply fetch).
 	NoKubeconfig bool
+	// LegacyBNK is --legacy-bnk (bnk up/down): render bnk_cr_mode =
+	// "legacy_curl" so the BNK phase deploys the legacy null_resource/curl
+	// path instead of the default terraform-native kubectl/helm path.
+	// Sprint 27 install-mode flag.
+	LegacyBNK bool
 	// VarFiles is the chokepoint-normalized --var-file slice
 	// (absolute, os.Stat-checked) — the former flagVarFiles global.
 	VarFiles []string
@@ -448,6 +453,14 @@ func openTF(ctx context.Context, in *LifecycleInputs, needAPIKey bool) (*config.
 	}
 	if cctx.Workspace == nil {
 		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+	}
+
+	// Sprint 27: --legacy-bnk overrides the rendered bnk_cr_mode to the
+	// null_resource/curl baseline. Applied here (the single workspace-load
+	// site for the lifecycle verbs) so it lands before WriteTFVars; the
+	// cluster phase has no bnk_cr_mode consumer so this is a no-op there.
+	if in.LegacyBNK {
+		cctx.Workspace.BNK.CRMode = "legacy_curl"
 	}
 
 	var apiKey string

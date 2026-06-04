@@ -8,6 +8,17 @@ variable "enabled" {
   default     = true
 }
 
+variable "bnk_cr_mode" {
+  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_namespace) or \"legacy_curl\" (null_resource local-exec baseline)."
+  type        = string
+  default     = "kubectl"
+
+  validation {
+    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
+    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
+  }
+}
+
 variable "namespace" {
   description = "Namespace for cert-manager"
   type        = string

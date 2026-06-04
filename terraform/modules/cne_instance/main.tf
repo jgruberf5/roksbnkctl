@@ -19,6 +19,14 @@ terraform {
       source  = "hashicorp/time"
       version = ">= 0.9.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.25"
+    }
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.4.0"
+    }
   }
 }
 
@@ -29,7 +37,8 @@ terraform {
 module "cneinstance" {
   source = "./modules/cneinstance"
 
-  enabled = var.deploy_bnk
+  enabled     = var.deploy_bnk
+  bnk_cr_mode = var.bnk_cr_mode
 
   flo_namespace                      = var.flo_namespace
   utils_namespace                    = var.flo_utils_namespace
@@ -41,7 +50,8 @@ module "cneinstance" {
   kube_host  = data.ibm_container_cluster_config.runtime_config.host
   kube_token = data.ibm_container_cluster_config.runtime_config.token
 
-  flo_deployment_id = var.flo_dependency_id != null ? var.flo_dependency_id : ""
+  flo_deployment_id         = var.flo_dependency_id != null ? var.flo_dependency_id : ""
+  flo_deployment_dependency = var.flo_dependency_id
 
   cneinstance_gateway_api          = true
   cneinstance_whole_cluster        = true

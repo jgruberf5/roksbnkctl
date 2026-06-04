@@ -27,6 +27,7 @@ var (
 	flagTFSource     string
 	flagUpgradeTF    bool
 	flagNoKubeconfig bool
+	flagLegacyBnk    bool     // --legacy-bnk: render bnk_cr_mode = "legacy_curl" (Sprint 27)
 	flagVarFiles     []string // -var-file (repeatable; matches terraform's flag)
 )
 
@@ -120,6 +121,7 @@ func lifecycleInputs() *orchestration.LifecycleInputs {
 		Backend:      flagBackend,
 		Auto:         flagAuto,
 		NoKubeconfig: flagNoKubeconfig,
+		LegacyBNK:    flagLegacyBnk,
 		VarFiles:     flagVarFiles,
 
 		PromptYesNo:  promptYesNo,

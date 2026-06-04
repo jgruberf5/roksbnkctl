@@ -6,12 +6,28 @@
 
 locals {
   global_enabled = var.enabled
+  use_kubectl    = var.enabled && var.bnk_cr_mode == "kubectl"
+  use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
   jwt_token      = local.global_enabled && var.use_cos_bucket ? trimspace(data.http.jwt_download[0].response_body) : var.jwt_token
+
+  license_manifest = {
+    apiVersion = "k8s.f5net.com/v1"
+    kind       = "License"
+    metadata = {
+      name      = "bnk-license"
+      namespace = var.utils_namespace
+    }
+    spec = {
+      jwt           = local.jwt_token
+      operationMode = var.license_mode
+    }
+  }
 }
 
-# Wait for License CRD to be available (also gates on cneinstance completion)
+# Wait for License CRD to be available (legacy mode only — kubectl mode gates
+# on the FLO/CNEInstance ordering + the License status.state field).
 resource "time_sleep" "wait_for_license_crd" {
-  count           = var.enabled ? 1 : 0
+  count           = local.use_legacy ? 1 : 0
   create_duration = "30s"
   triggers = {
     cneinstance_dependency = var.cneinstance_dependency != null ? tostring(var.cneinstance_dependency) : "direct-apply"
@@ -78,9 +94,9 @@ data "http" "jwt_download" {
   }
 }
 
-# Create License CR in utils namespace via curl Server-Side Apply
+# Create License CR in utils namespace via curl Server-Side Apply (legacy mode)
 resource "null_resource" "bnk_license" {
-  count = var.enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     jwt             = local.jwt_token
@@ -148,4 +164,29 @@ resource "null_resource" "bnk_license" {
   }
 
   depends_on = [time_sleep.wait_for_license_crd[0]]
+}
+
+# ============================================================
+# Sprint 27 — kubectl mode (terraform-native)
+# ============================================================
+# License CR as a real terraform resource + wait_for the CWC-mirrored
+# status.state == "Verification Complete" (confirmed queryable from the FAR
+# License CRD; the in-script CRD-poll/PATCH-retry + time_sleep are deleted —
+# the field wait + depends_on ordering replace them). depends_on on the
+# CNEInstance (CWC/License CRD present) which itself depends on the FLO chart.
+
+resource "kubectl_manifest" "bnk_license" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.license_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+
+  wait_for {
+    field {
+      key   = "status.state"
+      value = "Verification Complete"
+    }
+  }
+
+  depends_on = [var.cneinstance_dependency]
 }

@@ -1,4 +1,7 @@
 locals {
+  use_kubectl = var.enabled && var.bnk_cr_mode == "kubectl"
+  use_legacy  = var.enabled && var.bnk_cr_mode == "legacy_curl"
+
   cneinstance_name = "${var.flo_namespace}-f5-cne-controller"
 
   # Define all service accounts that require privileged SCC
@@ -206,9 +209,10 @@ locals {
   }
 }
 
-# Wait for CNEInstance CRD to be available
+# Wait for CNEInstance CRD to be available (legacy mode only — kubectl mode
+# gates on the FLO helm_release ordering + the CNEInstance Available condition).
 resource "time_sleep" "wait_for_cneinstance_crd" {
-  count           = var.enabled ? 1 : 0
+  count           = local.use_legacy ? 1 : 0
   depends_on      = [var.flo_deployment_dependency]
   create_duration = "30s"
 
@@ -233,9 +237,9 @@ locals {
   }
 }
 
-# Create CNEInstance resource via curl Server-Side Apply
+# Create CNEInstance resource via curl Server-Side Apply (legacy mode)
 resource "null_resource" "cneinstance" {
-  count = var.enabled ? 1 : 0
+  count = local.use_legacy ? 1 : 0
 
   triggers = {
     manifest  = jsonencode(local.cneinstance_manifest)
@@ -275,10 +279,10 @@ resource "null_resource" "cneinstance" {
 # via curl server-side apply — no kubernetes provider required at plan time.
 
 resource "null_resource" "cneinstance_scc_policies" {
-  for_each = {
+  for_each = local.use_legacy ? {
     for assignment in local.scc_policy_assignments :
     "${assignment.namespace}-${assignment.service_account}" => assignment
-  }
+  } : {}
 
   triggers = {
     name      = "system:openshift:scc:privileged:${each.value.namespace}:${each.value.service_account}"
@@ -316,12 +320,66 @@ resource "null_resource" "cneinstance_scc_policies" {
 # ============================================================
 
 resource "time_sleep" "wait_for_scc_policies" {
-  count           = var.enabled ? 1 : 0
+  count           = local.use_legacy ? 1 : 0
   depends_on      = [null_resource.cneinstance_scc_policies]
   create_duration = "30s"
 
   triggers = {
     scc_policies_count = length(null_resource.cneinstance_scc_policies)
   }
+}
+
+# ============================================================
+# Sprint 27 — kubectl mode (terraform-native)
+# ============================================================
+# CNEInstance CR as a real terraform resource + wait_for the FLO-reported
+# Available condition; the SCC ClusterRoleBindings as plain kubectl_manifest
+# (no wait), re-pointed to depend on the FLO helm_release (via
+# flo_deployment_dependency) rather than on the CNEInstance so they
+# parallelize. No time_sleep.
+
+resource "kubectl_manifest" "cneinstance" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.cneinstance_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+
+  wait_for {
+    condition {
+      type   = "Available"
+      status = "True"
+    }
+  }
+
+  depends_on = [var.flo_deployment_dependency]
+}
+
+resource "kubectl_manifest" "cneinstance_scc_policies" {
+  for_each = local.use_kubectl ? {
+    for assignment in local.scc_policy_assignments :
+    "${assignment.namespace}-${assignment.service_account}" => assignment
+  } : {}
+
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  yaml_body = yamlencode({
+    apiVersion = "rbac.authorization.k8s.io/v1"
+    kind       = "ClusterRoleBinding"
+    metadata   = { name = "system:openshift:scc:privileged:${each.value.namespace}:${each.value.service_account}" }
+    roleRef = {
+      apiGroup = "rbac.authorization.k8s.io"
+      kind     = "ClusterRole"
+      name     = "system:openshift:scc:privileged"
+    }
+    subjects = [{
+      kind      = "ServiceAccount"
+      name      = each.value.service_account
+      namespace = each.value.namespace
+    }]
+  })
+
+  # Architect: depend on FLO (chart present), NOT on the CNEInstance — lets the
+  # ~16 bindings apply concurrently with the CNEInstance Available wait.
+  depends_on = [var.flo_deployment_dependency]
 }
 
