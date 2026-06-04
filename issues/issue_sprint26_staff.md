@@ -19,7 +19,7 @@
 > `up`. There is also **no length validation** anywhere today, so an
 > over-long name is only rejected by IBM Cloud mid-`apply`.
 
-`Status: open` (not yet dispatched).
+`Status: resolved` (integrated + live-verified GREEN 2026-06-04).
 
 ---
 
@@ -28,7 +28,7 @@
 **Severity**: medium (collision-prevention + UX; changes default `init`
 behavior and the rendered tfvars, but is backward-compatible for existing
 workspaces — see scope guards).
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 

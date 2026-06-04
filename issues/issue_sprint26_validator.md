@@ -10,14 +10,14 @@
 > and a gated-live driver that proves two workspaces with distinct
 > prefixes no longer collide.
 
-`Status`: open
+`Status`: resolved
 
 ---
 
 ## Issue 1 — Hermetic coverage for `internal/naming`, the full render, and the interview
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 ### Scope
 
@@ -94,7 +94,7 @@ existing init tests already stub it):
 
 **Severity**: medium (operator-run; the rendered-tfvars change is
 `up`-affecting per [[live-verify-high-issues]]).
-**Status**: open
+**Status**: resolved
 
 ### Scope
 
@@ -149,8 +149,10 @@ verify can gate on it.
 ## Closure — validator, 2026-06-04
 
 `Status`: Issue 1 **resolved** (hermetic, all gates green). Issue 2
-**ready for operator/integrator run** (gated-live driver shipped; not run
-here — no cloud creds, per the hermetic-only constraint).
+**resolved** — gated-live driver `scripts/e2e-init-prefix.sh` run by the
+integrator with real creds 2026-06-04: live verify GREEN (generated names
+land with no `tf-*` defaults, two-prefix no-collision proven, override
+layering wins).
 
 ### Gate results
 

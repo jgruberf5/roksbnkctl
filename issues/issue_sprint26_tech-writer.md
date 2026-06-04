@@ -10,7 +10,7 @@
 > transcript byte-for-byte. Ends on a GREEN / RED launch verdict that
 > unblocks the release cut.
 
-`Status`: open
+`Status`: resolved
 
 ---
 
@@ -18,7 +18,7 @@
 
 **Severity**: low (documentation; runs after integration, no behavior
 change).
-**Status**: open
+**Status**: resolved
 
 ### Scope
 

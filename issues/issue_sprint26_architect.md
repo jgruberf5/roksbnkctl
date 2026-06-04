@@ -13,7 +13,7 @@
 > length/charset constraint table — and the **operator-facing prose** in
 > the book + the configuration reference.
 
-`Status`: open
+`Status`: resolved
 
 ---
 
@@ -22,7 +22,7 @@
 **Severity**: medium (design + docs; no Go — staff owns the binary
 surface). The constraint table is a **blocking input** to staff: staff
 must not invent IBM Cloud limits.
-**Status**: open
+**Status**: resolved
 
 ### Motivation
 
