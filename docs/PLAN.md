@@ -1122,6 +1122,29 @@ A first fix attempt (terraform + Go existing-resource handoff: `use_existing_clu
 
 ---
 
+## Sprint 28 — three-phase split: Cluster / BNK / Testing (parallel + independent lifecycle) (draft, on feature branch `sprint28-three-phase-split`, stacked on Sprint 27)
+
+_Surfaced 2026-06-04 during the Sprint 27 live verify. roksbnkctl is two phases today — **cluster** (`state-cluster/`) and **trial** (`state/`), where "trial" lumps BNK (cert-manager + FLO + CNEInstance + License) AND the testing jumphosts into one state. That coupling means you can't tear down BNK while keeping the jumphosts (to reuse for testing), and the two unrelated workloads can't deploy in parallel. The live verify made the seams obvious (cert-manager phase placement; a jumphost capacity blip sinking the whole apply)._
+
+Split into **three independent phases**: **Cluster** (ROKS cluster + cluster VPC + TGW; create OR reuse) → **BNK** (k8s workloads, fully cluster-dependent) ∥ **Testing** (jumphosts; pure IBM VPC, depends on the cluster only for the network — VPC + TGW). BNK and Testing are independent → run **in parallel** after Cluster, and **tear down independently** (`bnk down` leaves the jumphosts for reuse, and vice versa). Sprint 27's real-terraform-state per phase is the prerequisite that makes independent per-phase `destroy` clean — which is why this stacks on Sprint 27.
+
+Locked decisions (recommended where noted — confirm before dispatch): **three states** (`state-cluster/`, BNK state, `state-testing/`; architect pins BNK `state/` vs `state-bnk/` + the pre-Sprint-28 migration); **parallel BNK ∥ Testing** after the Cluster phase completes (3 phases, not a 4th VPC-only phase); **create OR reuse cluster** (skip the Cluster phase via the existing `create_roks_cluster=false` + cluster-outputs handoff); a new **`roksbnkctl testing up/down`** phase command (architect resolves `testing` vs the existing `test`/`test hosts` probe group); **teardown** = `bnk down` ∥ `testing down` leave the cluster, bare `down` destroys BNK ∥ Testing then Cluster (one composite confirm), `cluster down` refuses while BNK/Testing exist; `live-verify-high-issues` applies.
+
+| Role | Scope |
+|---|---|
+| **Architect** | The three-state model + the BNK-state migration decision (state dirs, module→phase ownership — esp. the cluster VPC + the shared jumphost SSH key, the `cluster-outputs.json` fields Testing/BNK need); the `testing-phase-override` + the per-phase presence/shape model (replacing the 4-shape enum); the parallelism (up) + teardown-ordering + concurrent-stderr design; the CLI naming (`testing` vs `test`); the lifecycle book chapter + migration note. No Go. |
+| **Staff** | Split the trial phase into BNK + Testing states; the `testing-phase-override.tfvars` writer + the cluster/bnk override updates (jumphosts leave the cluster phase); expand `DetectShape` to per-phase presence; `RunTestingUp`/`Down` + the **errgroup parallel BNK∥Testing dispatch** in `RunUp`/`RunDown`; the new `roksbnkctl testing` CLI group; `bnk` → BNK-only; the `cluster down` guard; reuse-existing-cluster; the migration. No Sprint 27 module-body changes. |
+| **Validator** | Hermetic: presence/shape model, byte-exact override generation, dispatch-decision table, parallel-dispatch ordering + errgroup error propagation, the cluster-down guard. Gated-live `scripts/e2e-three-phase.sh`: parallel up + `bnk down`-leaves-testing (and inverse) + cluster-down guard + reuse-existing-cluster + migration. |
+| **Tech-writer** (light, runs after) | Drift sweep: the new `testing` command + three-phase lifecycle chapter vs the binary; the **`testing` vs `test` disambiguation**; migration note; user-facing CHANGELOG. GREEN/RED verdict. |
+
+`live-verify-high-issues` applies — cluster-mutating. The integrator runs the gated-live parallel-up + independent-down verify (and reuse-existing-cluster + migration) before merging. Hermetic dispatch/presence/override tests + the gated-live driver are the closure inputs.
+
+Version at cut: integrator-owned, after Sprint 27 ships and this branch proves out. Significant orchestration re-architecture (new state, parallel exec, new phase command) → likely a minor bump. No PRD — integrator architecture request from the Sprint 27 live verify. Stacks on `sprint27-bnk-native-k8s`; lands after 27 merges.
+
+Sprint launch: `prompts/sprint28/` scaffolded alongside this block on the `sprint28-three-phase-split` branch. Architect dispatched FIRST (the state/presence/override design is the blocking input to staff); then staff; then validator after staff lands; tech-writer after integration. See `prompts/sprint28/README.md`. **Not merged until the integrator's live verify is GREEN and Sprint 27 has merged.**
+
+---
+
 ## Sprint 27 — terraform-native BNK phase: retire null_resource/curl/sleep via helm_release + alekc/kubectl (draft, on feature branch `sprint27-bnk-native-k8s`)
 
 _Surfaced 2026-06-04 as an integrator architecture request. The BNK phase is, today, mostly terraform driving the cluster through `null_resource` + `local-exec` running `helm` and **raw `curl` server-side-apply**, with readiness gated by **~210s of static `time_sleep`** (cert 30 + FLO SCC 30 + FLO pods 60 + CNE CRD 30 + CNE SCC 30 + License CRD 30) plus helm `--wait` slack and `curl` retry loops — the FLO module alone is ~1,200 lines of this, and nothing watches real status (it's "apply, sleep, hope")._
