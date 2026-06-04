@@ -1,109 +1,91 @@
-# Sprint 27 — validator issues (hermetic reconciler tests + gated-live speed benchmark)
+# Sprint 27 — validator issues (terraform-native BNK: validate + gated-live correctness/speed benchmark + License live-confirm)
 
-> **Sprint 27 frame.** Validator proves the native `internal/bnk` reconciler
-> + `internal/k8s/wait.go` watch layer (staff `issue_sprint27_staff.md`)
-> behaves correctly AND **measures the speedup** that is the sprint's whole
-> point. Two surfaces: hermetic tests against client-go's fake clients, and a
-> gated-live e2e that times the native `bnk up` against the terraform
-> baseline and exercises the fast re-deploy path.
+> **Sprint 27 frame (re-pivoted 2026-06-04).** The BNK phase becomes
+> terraform-native — `helm_release` installs + `alekc/kubectl`
+> `kubectl_manifest` + `wait_for` for the CRs (architect spike GO). There is no
+> Go reconciler, so the fake-client unit-test surface from the original plan is
+> gone. Validator's job: light terraform-side checks, and the gated-live
+> proof that the new path is **correct, materially faster than the legacy
+> baseline, and that the License `wait_for` literal is right**.
 
-`Status`: open
+`Status`: open (re-pivoted)
 
 ---
 
-## Issue 1 — Hermetic tests for the watch layer + reconciler
+## Issue 1 — Terraform-side checks (hermetic)
 
-**Severity**: high
+**Severity**: medium
 **Status**: open
 
-Use client-go's **fake clients** so watches/conditions are testable without a
-live cluster — `k8s.io/client-go/dynamic/fake` (dynamic) and
-`k8s.io/client-go/kubernetes/fake` (typed), both support `Watch` + reactors,
-and `fakeClient.Tracker()` can be driven to flip a resource's `.status` mid-
-watch. envtest is an option only if the team already has it set up; fake
-clients are the lighter default.
+No live cluster needed:
+- `terraform fmt -check` + `terraform validate` clean on the new/modified
+  modules (both install-mode branches parse).
+- `terraform init` resolves the `alekc/kubectl` provider (confirm the version
+  constraint + that roksbnkctl's init path fetches it; record the provider
+  version pinned).
+- A static assertion that the **kubectl-mode path contains zero `time_sleep`**
+  and zero `local-exec curl` (grep the rendered/selected module), and that the
+  CNEInstance/License `kubectl_manifest` resources carry the spike's `wait_for`
+  blocks + the `depends_on` on the FLO `helm_release`.
+- Confirm the legacy-curl mode still selects the old modules unchanged (the
+  benchmark baseline is intact).
+- The small roksbnkctl render/flag Go change: `go test ./internal/tf/...`
+  asserts the install-mode toggle renders correctly; `go vet` + `staticcheck`
+  clean.
 
-`internal/k8s/wait_test.go` (new):
-- `WaitCRDEstablished`: returns immediately when the CRD already has
-  `Established=True`; blocks then unblocks when a reactor flips the condition;
-  returns an **actionable timeout** (names the resource + last-seen status)
-  when the ctx deadline passes without the condition — assert the message
-  shape, this is acceptance-critical.
-- `WaitDeploymentReady`: unblocks when `availableReplicas` reaches desired +
-  generation current; times out actionably otherwise.
-- `WaitResourceCondition` / `WaitResourceJSONPath`: drive a CNEInstance-shaped
-  and License-shaped unstructured object's `.status` via the tracker; assert
-  it returns on the architect's pinned ready-signal and not before.
-- `WaitJobComplete`: flips to `Complete`.
-
-`internal/bnk/*_test.go` (new):
-- A reconcile against fake clients applies the expected GVK set (assert SSA
-  patches recorded on the tracker for namespaces, secrets, NADs, issuers,
-  CNEInstance, License) in the right order, and emits the expected
-  `ProgressReporter` events (phase/resource/state + a non-zero `duration`).
-- **Idempotence / short-circuit**: a second reconcile against already-ready
-  state applies no changes and completes fast (assert no redundant waits).
-- **Parallelism correctness**: independent steps may complete in any order;
-  hard serial edges (cert-manager CRDs → issuers; FLO → CNEInstance →
-  License) are never violated — assert ordering invariants on the recorded
-  event stream, not wall-clock.
-- **Teardown**: `Destroy` deletes in reverse order; assert delete calls +
-  delete-watches.
-- **Failure path**: a step whose watched condition never flips surfaces the
-  actionable timeout and aborts the reconcile (no silent success).
-
-## Issue 2 — Gated-live e2e: correctness + **speed benchmark** + fast re-deploy
+## Issue 2 — Gated-live: correctness + **speed benchmark** + License confirm
 
 **Severity**: high (the speedup is the sprint's primary success metric)
 **Status**: open
 
 `scripts/e2e-bnk-native.sh` (new; mirrors the gating + `redact()` + `DRY_RUN`
-shape of `scripts/e2e-init-var-file.sh`):
+shape of `scripts/e2e-init-var-file.sh`), against an existing cluster phase:
 
-1. **Correctness**: against a real cluster (an existing cluster phase), run
-   `roksbnkctl bnk up --native`; assert cert-manager, FLO, CNEInstance, and
-   License all reach ready (query their live `.status`), and that the BNK
-   trial actually serves (reuse whatever the existing live verify asserts for
-   a healthy BNK).
-2. **Speed benchmark** — the headline metric. Time the native `bnk up`
-   end-to-end and compare against a terraform-path `bnk up` baseline on an
-   equivalent cluster. Report both wall-clocks and the delta. The native path
-   must be **materially faster** (the ~210s of terraform `time_sleep` is the
-   floor; parallelism + terraform-overhead removal should beat that). Capture
-   the per-phase timing breakdown the reconciler emits.
-3. **Fast re-deploy**: with BNK already up, bump
-   `f5_bigip_k8s_manifest_version` (or re-run unchanged) and time the
-   reconcile — assert it's markedly faster than the cold `up` and only
-   touches the delta (no full re-bootstrap; unchanged charts not re-pulled).
-4. **Timeout behavior**: optionally, point at a deliberately-unsatisfiable
-   condition (short `--timeout`) and assert the actionable timeout message +
-   non-zero exit.
-5. **`bnk down --native`**: tears everything down; assert resources gone.
+1. **Correctness**: `bnk up` in kubectl mode brings up cert-manager → FLO →
+   CNEInstance → License; assert each reaches ready (the CRs are in terraform
+   state and the apply only succeeds once `wait_for` is satisfied — so a clean
+   apply IS the readiness assertion; additionally `kubectl get` the live
+   `.status` to double-check CNEInstance `Available=True` and License
+   `status.state`).
+2. **License `status.state` live-confirm** (the one residual from the spike):
+   capture the actual terminal `.status.state` literal on the licensed cluster
+   (`kubectl get licenses.k8s.f5net.com -n f5-utils -o jsonpath='{.status.state}'`)
+   and confirm it matches the `wait_for` value (`"Verification Complete"`); if it
+   differs, report the real value so staff can pin it (or switch to the
+   `conditions[]` matcher).
+3. **Speed benchmark** — the headline. Time `bnk up` in **kubectl mode** vs
+   **legacy-curl mode** on equivalent clusters; report both wall-clocks + the
+   delta. The kubectl path must be **materially faster** (the ~210s of legacy
+   `time_sleep` is the floor). **Fail the driver if kubectl mode is not faster.**
+4. **Fast re-deploy**: with BNK up, bump `f5_bigip_k8s_manifest_version` and time
+   `bnk up` again — assert the terraform plan/apply touches only the delta
+   (changed `helm_release` + CNEInstance) and is markedly faster than a cold up.
+5. **Teardown**: `bnk down` (terraform destroy) removes the CRs cleanly; assert
+   the CNEInstance/License/issuers are gone (no orphaned CRs, no stuck namespace
+   finalizers).
 
 Gated on `IBMCLOUD_API_KEY` + an existing cluster; honors `DRY_RUN`; redacts
-secrets; exits non-zero on any assertion miss or if the native path is NOT
-faster than the baseline (the speed gate is an assertion, not a nicety).
+secrets; **exits non-zero on any correctness miss, on a wrong License literal,
+or if kubectl mode isn't faster than legacy**.
 
 ### Acceptance criteria
-1. Hermetic wait-layer + reconciler tests pass against fake clients, incl.
-   the actionable-timeout message shape, idempotent short-circuit, ordering
-   invariants, and teardown.
-2. Gated-live e2e proves correctness, **measures native-vs-terraform
-   wall-clock with the native path materially faster**, and proves the
-   fast-re-deploy delta path.
-3. `go test ./...` PASS; `go vet` + `staticcheck` clean. New test files only
-   (no edits to pre-existing `_test.go`).
+1. Terraform `fmt`/`validate`/`init` clean; no-`time_sleep`/no-`curl` assertion
+   on the kubectl path; legacy baseline intact; the render/flag Go change
+   tested + vet/staticcheck clean.
+2. Gated-live proves correctness, **measures kubectl-vs-legacy wall-clock with
+   kubectl materially faster**, confirms the License `status.state` literal, and
+   proves clean teardown + fast re-deploy.
 
 ### Files affected
-- **New**: `internal/k8s/wait_test.go`, `internal/bnk/*_test.go`,
-  `scripts/e2e-bnk-native.sh`.
+- **New**: `scripts/e2e-bnk-native.sh`; a small `internal/tf/*_test.go` for the
+  install-mode render (if staff adds the toggle there).
+- No fake-client / `internal/bnk` tests — that layer doesn't exist (terraform
+  owns the CRs).
 
 ### Related
-- `issues/issue_sprint27_staff.md` — the surface under test (esp. Issue 3
-  speed + the timing instrumentation the benchmark reads).
-- `issues/issue_sprint27_architect.md` — the pinned CRD ready-signals (so
-  tests assert the right `.status`) + the parallelism DAG (so ordering
-  invariants match).
+- `issues/issue_sprint27_staff.md` — the terraform surface under test.
+- `issues/issue_sprint27_architect.md` (Spike rounds 1 & 2) — the confirmed
+  `wait_for` blocks + the License-literal residual this driver closes.
 - `scripts/e2e-init-var-file.sh` — the gated-live driver shape to mirror.
 - Integrator memory [[live-verify-high-issues]] — cluster-mutating; the live
-  benchmark gates closure.
+  benchmark + License confirm gate closure.

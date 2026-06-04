@@ -1,35 +1,37 @@
-# Sprint 27
+# Sprint 27 (re-pivoted 2026-06-04)
 
-**Theme:** Replace the terraform-driven BNK-phase Kubernetes work (`null_resource` + `local-exec` + raw `curl` server-side-apply + static `time_sleep`) with a **native, watch-driven reconciler inside roksbnkctl** (`internal/bnk` on top of `internal/k8s`). The headline goal is **SPEED** — make a new BNK-version install deploy + test in a tight iteration loop, by watching real status conditions instead of sleeping and by running independent steps concurrently.
+**Theme:** Retire the BNK phase's terraform `null_resource` + `local-exec` + raw `curl` server-side-apply + static `time_sleep` — **terraform-natively**. Per the architect spike (FINAL VERDICT **GO** — `issues/issue_sprint27_architect.md`), keep terraform as the state keeper and replace the brittle parts with proper providers: chart installs → **`helm_release`** (`wait = true`); the `curl`-applied custom resources → **`alekc/kubectl` `kubectl_manifest` + `wait_for`** (CRs as real terraform resources, in state, watching `.status` to ready, no plan-time-CRD requirement); namespaces + secrets → the `kubernetes` provider. **No Go reconciler, no `internal/bnk`, no custom provider.**
 
-_Filed 2026-06-04 as an integrator architecture request. The BNK phase today is mostly terraform shelling out: the FLO module alone is ~1,200 lines of `local-exec` `helm` + raw `curl` apply, and readiness is gated by ~210s of pure `time_sleep` (cert 30 + FLO SCC 30 + FLO pods 60 + CNE CRD 30 + CNE SCC 30 + License CRD 30) plus helm `--wait` slack and `curl` retry loops — almost all dead waiting even when the cluster is ready in seconds. roksbnkctl already ships client-go v0.30 with a dynamic client + server-side apply (`internal/k8s/apply.go`), so the watch-driven replacement is a natural fit._
+**Primary goal: SPEED** — deploy + test a new BNK version in a tight loop. The ~210s of fixed `time_sleep` dies (`wait_for` + `helm_release wait=true` are real-readiness); terraform parallelizes independent resources; and **fast re-deploy comes free** — bump the version and `terraform plan` diffs only the changed CNEInstance spec + helm versions. Terraform *is* the delta engine, so this is *less* code than a reconciler.
+
+_The original framing (a native Go watch-reconciler in `internal/bnk`) was set aside after the spike proved `alekc/kubectl` `kubectl_manifest` + `wait_for` covers apply + state + delete + status-wait for every BNK CR — CNEInstance (`status.conditions[type=Available]==True`) and License (`status.state` / `conditions[]`), both confirmed from the FAR-shipped CRDs._
 
 ## Integrator decisions baked in (do not relitigate)
 
-1. **In-CLI reconciler, NOT an in-cluster operator.** roksbnkctl's binary drives `bnk up`/`bnk down`. No new operator image/CRD/RBAC. (FLO already reconciles the CNE lifecycle in-cluster; this sprint replaces only the terraform *bootstrap*.)
-2. **Speed is the primary success metric.** Zero fixed-sleep slack (every wait returns the instant its watched condition is true), independent steps run concurrently (`errgroup`, per the architect's dependency DAG), a fast re-deploy path reconciles only the delta on a version bump, and per-phase timings are reported. The validator's gated-live benchmark must show the native path **materially faster** than terraform.
-3. **Reuse `internal/k8s`** (dynamic SSA, field-manager `roksbnkctl`) for every CR/Secret/RBAC/NAD/Job. No reintroducing `curl` or `kubectl` shell-outs.
-4. **Keep non-K8s resources in terraform.** The IBM IAM trusted-profile/link/policy in the FLO module and the COS JWT/FAR reads are IBM Cloud API, not Kubernetes — they stay in terraform this sprint.
-5. **Helm stays in terraform (RESOLVED).** Convert the three chart installs (cert-manager, FLO, CIS) from `null_resource local-exec helm` to the proper `helm_release` provider with `wait = true`; FAR version-discovery stays terraform-side. **No `helm.sh/helm/v3` Go dependency.** Native Go replaces ONLY the `curl`-applied custom resources + their `time_sleep` gates. The architect draws the exact terraform↔Go handoff boundary (which curl'd resources are helm prerequisites vs post-install CRs); the existing curl modules stay intact as the validator's benchmark baseline.
-6. **Legacy terraform BNK path stays behind a flag** this sprint (`--native` / `--legacy-tf` or a `bnk.native_k8s` config toggle). Supports A/B during bring-up and the "don't merge to main until confident" constraint. A later sprint deletes the terraform k8s modules once native is the default.
-7. **`live-verify-high-issues` applies** — cluster-mutating + `up`-affecting. The integrator runs the gated-live correctness + speed benchmark before closing.
+1. **GO on `alekc/kubectl`** for the CR layer. No custom provider, no `internal/bnk`, no `internal/k8s/wait.go`.
+2. **`helm_release`** (`wait = true`) for cert-manager + FLO + CIS; FAR version-discovery stays terraform-side. **No `helm.sh/helm/v3` Go dep.**
+3. **`kubernetes` provider** for the helm prerequisites (namespaces + `far-secret`/`f5-bigip-ctlr-login` secrets — must precede the charts).
+4. **Legacy `curl` modules stay intact behind an install-mode flag** (`bnk_cr_mode = "kubectl" | "legacy_curl"`) as the validator's benchmark baseline.
+5. **Keep IBM IAM trusted-profile + COS reads in terraform** (unchanged).
+6. **Ready-signals are confirmed** (spike): CNEInstance `wait_for { condition { type="Available" status="True" } }`; License `wait_for { field { key="status.state" value="Verification Complete" } }` — the literal is confirmed live by the validator.
+7. **`live-verify-high-issues` applies** — cluster-mutating. The integrator runs the gated-live correctness + speed benchmark before closing/merging.
+8. **Feature branch `sprint27-bnk-native-k8s` — NOT merged to main until the integrator is confident.**
 
 ## Per-role scope
 
-See `docs/PLAN.md` Sprint 27 block + `issues/issue_sprint27_<role>.md` for full detail.
+See `docs/PLAN.md` Sprint 27 block + `issues/issue_sprint27_<role>.md` for detail.
 
 | Role | Scope |
 |---|---|
-| **Architect** | BLOCKING design inputs: (1) the terraform↔Go **handoff boundary** (which curl'd resources are helm prerequisites that stay terraform vs post-install CRs that move to Go; the no-ping-pong check; how to keep the legacy curl modules as the benchmark baseline); (2) each gated CRD's exact ready-signal, confirmed against real CRDs — esp. CNEInstance + License (`.status` shape); (3) watch-helper API + `ProgressReporter` event shape (incl. `duration`); (4/Issue 5) the safe-parallelism dependency DAG for the Go CR layer. Plus the BNK-phase book chapter + a "why we left terraform local-exec curl" concept note. No Go. |
-| **Staff** | All Go. `internal/k8s/wait.go` watch/wait primitives (CRD Established, Deployment Ready, generic CR status, Job complete — actionable timeouts). `internal/bnk` reconciler porting the four terraform modules' k8s ops as apply→watch, built for speed (errgroup parallelism, zero fixed sleeps, fast-redeploy delta path, warm clients, timing instrumentation). Orchestration seam in `RunTrialUp` + terraform gating (`deploy_bnk=false`/`deploy_cert_manager=false` for the native path), `bnk status`, native `bnk down`, the legacy flag. |
-| **Validator** | Hermetic tests against client-go **fake** dynamic/typed clients (drive `.status` via the tracker): wait-layer timeouts/short-circuits, reconciler ordering invariants + idempotence + teardown + failure path. Gated-live `scripts/e2e-bnk-native.sh`: correctness + **the speed benchmark (native vs terraform wall-clock, native must be materially faster)** + fast-re-deploy timing. |
-| **Tech-writer** (light, runs after) | Drift sweep: `bnk up/down/status --help` vs binary; BNK-phase chapter transcript re-capture; any speedup numbers must trace to the validator's measured benchmark; sweep stale "terraform-driven/`time_sleep`" BNK prose; user-facing CHANGELOG noting the legacy flag. GREEN/RED verdict. |
+| **Architect** | The terraform module-restructure design (install-vs-CR resource table, the `depends_on` graph, the install-mode-flag structure, `required_providers` + air-gap note); a conservative-`depends_on` review so terraform parallelizes; the BNK-phase book chapter + concept note. Ready-signals already done (spike). No Go, no HCL implementation. |
+| **Staff** | All terraform HCL: `helm_release` install layer + `kubernetes_namespace`/`kubernetes_secret` prereqs; `kubectl_manifest` + `wait_for` CR layer (CNEInstance/License/issuers/NADs/SCC/Job — specs reused verbatim); `alekc/kubectl` in `required_providers`; the install-mode flag gating legacy vs new. Plus the small roksbnkctl Go change to render the toggle (`internal/tf/vars.go`, `internal/cli/bnk_phase.go` `--legacy-bnk`) and optional light `bnk status`. No Go reconciler. |
+| **Validator** | Hermetic terraform checks (`fmt`/`validate`/`init` resolves `alekc/kubectl`; no-`time_sleep`/no-`curl` assertion on the kubectl path; legacy baseline intact; render-toggle Go test). Gated-live `scripts/e2e-bnk-native.sh`: correctness + **the License `status.state` live-confirm** + **the speed benchmark (kubectl vs legacy wall-clock — kubectl must be materially faster, asserted)** + fast-re-deploy + clean teardown. |
+| **Tech-writer** (light, runs after) | Drift sweep: install-mode surface vs binary; BNK-phase chapter reconciled to the terraform-native reality (`kubectl_manifest`+`wait_for`, CRs in state); speed numbers trace to the validator's measured kubectl-vs-legacy benchmark; sweep stale `curl`/`time_sleep` BNK prose; document the new `alekc/kubectl` provider dependency + air-gap caveat; user-facing CHANGELOG. GREEN/RED verdict. |
 
 ## Constraints (binding on every role)
 
 - Repo root: `/mnt/d/project/roksbnkctl`. **Feature branch `sprint27-bnk-native-k8s` — do NOT merge to main until the integrator's live correctness + speed verify is GREEN.**
-- No `curl`/`kubectl` shell-outs from Go; helm only via the Go SDK if the architect picks it.
-- Don't touch the IBM-Cloud (non-k8s) terraform resources; keep the legacy terraform BNK path working behind the flag.
-- Staff writes no `_test.go`; validator writes only new test files.
+- Terraform-native: no Go reconciler, no `internal/bnk`, no custom provider, no `curl`/`kubectl`/`helm` shell-outs (helm is `helm_release`; CRs are `kubectl_manifest`). No `helm.sh/helm/v3` Go dep.
+- CR specs port **verbatim** into `yaml_body` — change the apply mechanism, not the manifests. Keep IBM IAM + COS in terraform; keep the legacy curl modules behind the flag.
 - Do NOT tag a release; the integrator cuts. Do not commit to main; the integrator integrates on the feature branch. No `gh issue create`.
-- Hermetic tests use fake clients / `t.TempDir()`; the gated-live driver is operator-run only.
+- The gated-live driver is operator-run only.
