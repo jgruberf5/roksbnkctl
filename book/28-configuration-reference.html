@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
+            window.path_to_searchindex_js = "searchindex-07406b41.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -198,8 +198,10 @@
 </div>
 <p>The file is hand-editable; YAML is parsed with <a href="https://pkg.go.dev/gopkg.in/yaml.v3"><code>gopkg.in/yaml.v3</code></a> so anchors and aliases work but are not idiomatic for this file. Plaintext credentials in any of the regex-matched secret fields (<code>api_key</code>, <code>apikey</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>) are rejected at load time — the file fails to parse with a clear error. Base64-encoded credentials in <code>ibmcloud.api_key_b64</code> are allowed (the field name doesn’t match the rejection regex). See <a href="./14-credentials-resolver.html">Chapter 14</a>.</p>
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
-<pre><code class="language-yaml">ibmcloud:        # required
+<pre><code class="language-yaml">prefix:          # optional (since v1.8.0); workspace name-prefix base
+ibmcloud:        # required
 cluster:         # required
+resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
@@ -208,6 +210,20 @@ targets:         # optional; populated automatically by up's post-apply hook
 exec:            # optional; per-tool default-backend map
 </code></pre>
 <p>The order of the top-level keys in the file doesn’t matter; YAML is a mapping. The order shown above is the canonical render order produced by <code>roksbnkctl init</code>.</p>
+<h2 id="prefix-field"><a class="header" href="#prefix-field"><code>prefix:</code> field</a></h2>
+<pre><code class="language-yaml">prefix: acme-eu
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prefix</code></td><td>string</td><td>(empty)</td><td>lowercase RFC-1123-style label: starts with a letter, <code>[a-z0-9-]</code>, no trailing hyphen, <strong>≤ 35 chars</strong></td><td><em>(since <code>v1.8.0</code>)</em> The base for every account-scoped IBM Cloud resource name. <code>roksbnkctl</code> derives the cluster, VPCs, Transit Gateway, COS, and jumphost names from it and renders them into <code>terraform.tfvars</code>. The 35-char cap is the ROKS cluster-name limit (the tightest); a valid prefix guarantees every derived name fits its own limit. <strong>Empty / omitted ⇒ legacy behaviour</strong>: the sparse, name-less render that falls through to upstream module defaults (backward-compatible). See <a href="./13-terraform-variables.html#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a> for the full derivation table and limits.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The derived names are deterministic, so they are re-rendered on every <code>up</code> / <code>plan</code> / <code>apply</code>; the <code>prefix</code> is the single source of truth. To pin one generated name to something off-convention, override the matching variable via <code>terraform.tfvars.user</code> or <code>--var-file</code> — the override layers last and wins.</p>
 <h2 id="ibmcloud-block"><a class="header" href="#ibmcloud-block"><code>ibmcloud:</code> block</a></h2>
 <pre><code class="language-yaml">ibmcloud:
   region: ca-tor
@@ -248,6 +264,46 @@ exec:            # optional; per-tool default-backend map
 </tbody>
 </table>
 </div>
+<h2 id="resources-block"><a class="header" href="#resources-block"><code>resources:</code> block</a></h2>
+<pre><code class="language-yaml">resources:
+  transit_gateway:   { create: true }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false, existing: my-shared-client-vpc }
+</code></pre>
+<p><em>(since <code>v1.8.0</code>)</em> Per-resource create/adopt toggles, written by the <code>init</code> interview. Each key is a <code>{create, existing}</code> pair: <code>create: true</code> provisions a new prefix-named resource; <code>create: false</code> declines it and (when a still-enabled resource depends on it) <code>existing:</code> names the pre-existing resource to consume instead.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Sub-block</th><th><code>create</code> default</th><th><code>existing</code> consumed by</th><th>Renders into</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> → <code>roks_transit_gateway_name</code> when the TGW jumphost needs an existing TGW</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code></td></tr>
+<tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code>; <code>existing</code> → <code>roks_cos_instance_name</code></td><td><code>create_roks_registry_cos_instance</code>, <code>roks_cos_instance_name</code></td></tr>
+<tr><td><code>cert_manager</code></td><td><code>true</code></td><td>—</td><td><code>install_cert_manager</code></td></tr>
+<tr><td><code>bnk</code></td><td><code>true</code></td><td>—</td><td><code>deploy_bnk</code></td></tr>
+<tr><td><code>tgw_jumphost</code></td><td><code>true</code></td><td>—</td><td><code>testing_create_tgw_jumphost</code>, <code>testing_tgw_jumphost_name</code></td></tr>
+<tr><td><code>cluster_jumphosts</code></td><td><code>false</code></td><td>—</td><td><code>testing_create_cluster_jumphosts</code>, <code>testing_cluster_jumphost_name_prefix</code></td></tr>
+<tr><td><code>client_vpc</code></td><td><code>false</code> (created on demand for the TGW jumphost)</td><td><code>existing</code> → <code>testing_client_vpc_name</code> when not creating one</td><td><code>testing_create_client_vpc</code>, <code>testing_client_vpc_name</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Each entry:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>bool</td><td>per the table above</td><td><code>true</code> provisions a new, prefix-named resource. <code>false</code> declines it.</td></tr>
+<tr><td><code>existing</code></td><td>string</td><td>(empty)</td><td>The name or ID of a pre-existing resource to adopt — only consumed when <code>create: false</code> <strong>and</strong> a still-enabled resource depends on this one (e.g. the TGW jumphost needs a TGW). Renders into the resource’s <code>*_name</code> variable with the matching <code>create_* = false</code> toggle.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is <strong>additive and optional</strong>: an omitted <code>resources:</code> block (any pre-<code>v1.8.0</code> <code>config.yaml</code>) loads unchanged, and a fresh <code>init</code> writes the full block with sensible defaults. The cluster itself is <strong>not</strong> in this block — its create/adopt toggle is the existing <code>cluster.create</code> + <code>cluster.name</code> pair (Name doubles as the existing cluster id/name when <code>create: false</code>). See <a href="./13-terraform-variables.html#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</p>
 <h2 id="bnk-block"><a class="header" href="#bnk-block"><code>bnk:</code> block</a></h2>
 <pre><code class="language-yaml">bnk:
   cneinstance_size: Small
@@ -431,6 +487,7 @@ exec:            # optional; per-tool default-backend map
 <tr><th>Path</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 </thead>
 <tbody>
+<tr><td><code>prefix</code></td><td>string</td><td>(empty ⇒ legacy sparse render)</td><td>Workspace name-prefix base; ≤ 35 chars, lowercase label. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>ibmcloud.region</code></td><td>string</td><td>(prompted)</td><td>IBM Cloud region (<code>ca-tor</code>, <code>us-south</code>, …).</td></tr>
 <tr><td><code>ibmcloud.resource_group</code></td><td>string</td><td><code>default</code></td><td>Resource group name.</td></tr>
 <tr><td><code>ibmcloud.api_key_source</code></td><td>string</td><td>(chain)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code>.</td></tr>
@@ -439,6 +496,16 @@ exec:            # optional; per-tool default-backend map
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
+<tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing TGW name/ID when <code>create: false</code> and the TGW jumphost needs it.</td></tr>
+<tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
+<tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
+<tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>
+<tr><td><code>resources.bnk.create</code></td><td>bool</td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes (<code>deploy_bnk</code>).</td></tr>
+<tr><td><code>resources.tgw_jumphost.create</code></td><td>bool</td><td><code>true</code></td><td>Create the TGW test jumphost.</td></tr>
+<tr><td><code>resources.cluster_jumphosts.create</code></td><td>bool</td><td><code>false</code></td><td>Create per-zone cluster jumphosts.</td></tr>
+<tr><td><code>resources.client_vpc.create</code></td><td>bool</td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost.</td></tr>
+<tr><td><code>resources.client_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing client VPC name when <code>create: false</code>.</td></tr>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>

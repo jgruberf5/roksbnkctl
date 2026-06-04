@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
+            window.path_to_searchindex_js = "searchindex-07406b41.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -233,6 +233,69 @@
 </table>
 </div>
 <p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a>.</p>
+<h2 id="resource-naming--collision-avoidance"><a class="header" href="#resource-naming--collision-avoidance">Resource naming &amp; collision avoidance</a></h2>
+<blockquote>
+<p>Applies to workspaces created with a <strong>prefix</strong> (the default since <code>v1.8.0</code>). Pre-<code>v1.8.0</code> workspaces — those whose <code>config.yaml</code> has no <code>prefix:</code> field — keep the old behaviour: a sparse <code>terraform.tfvars</code> with no name variables, so every account-scoped resource falls through to the upstream module defaults (<code>tf-openshift-cluster</code>, <code>tf-cluster-vpc</code>, <code>tf-tgw</code>, …). See <a href="#backward-compatibility">§“Backward compatibility”</a> below.</p>
+</blockquote>
+<p>Before <code>v1.8.0</code>, <code>roksbnkctl</code> rendered a name-less <code>terraform.tfvars</code>, so every workspace inherited the <strong>same</strong> upstream module default names. Two workspaces that both created infrastructure in the same IBM Cloud account collided at the account level — the second <code>up</code> hit <code>Provided Name … is not unique</code> / <code>gateway with the same name already exists</code>. (This is the collision class that stranded the <code>canada-roks-*</code> resources behind the 2026-05-28 cleanup incident.)</p>
+<p><code>v1.8.0</code> closes that hole: a single <strong>workspace prefix</strong> becomes the base for every account-scoped IBM Cloud resource name. <code>roksbnkctl</code> derives the full name set from the prefix, validates each name against its resource type’s length/charset limit at <code>init</code> time, and renders a complete <code>terraform.tfvars</code> that names every resource explicitly.</p>
+<h3 id="prefix--name-derivation"><a class="header" href="#prefix--name-derivation">Prefix → name derivation</a></h3>
+<p>Give a workspace the prefix <code>acme-eu</code>, and <code>roksbnkctl</code> generates this name set:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resource</th><th>tfvars variable</th><th>Derived name (<code>prefix = acme-eu</code>)</th><th>Suffix</th></tr>
+</thead>
+<tbody>
+<tr><td>ROKS/OpenShift cluster</td><td><code>openshift_cluster_name</code></td><td><code>acme-eu</code></td><td><em>(none — cluster name <strong>is</strong> the prefix)</em></td></tr>
+<tr><td>Cluster VPC</td><td><code>roks_cluster_vpc_name</code></td><td><code>acme-eu-cluster-vpc</code></td><td><code>-cluster-vpc</code></td></tr>
+<tr><td>Registry COS instance</td><td><code>roks_cos_instance_name</code></td><td><code>acme-eu-registry-cos</code></td><td><code>-registry-cos</code></td></tr>
+<tr><td>Transit Gateway</td><td><code>roks_transit_gateway_name</code></td><td><code>acme-eu-tgw</code></td><td><code>-tgw</code></td></tr>
+<tr><td>Client VPC (TGW jumphost)</td><td><code>testing_client_vpc_name</code></td><td><code>acme-eu-client-vpc</code></td><td><code>-client-vpc</code></td></tr>
+<tr><td>TGW jumphost</td><td><code>testing_tgw_jumphost_name</code></td><td><code>acme-eu-jh-tgw</code></td><td><code>-jh-tgw</code></td></tr>
+<tr><td>Per-zone cluster jumphosts</td><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>acme-eu-jh</code> <em>(module appends <code>-&lt;zone&gt;</code>, e.g. <code>acme-eu-jh-us-south-1</code>)</em></td><td><code>-jh</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The names are <strong>deterministic</strong> from the prefix, so <code>roksbnkctl</code> re-derives them on every <code>up</code> / <code>plan</code> / <code>apply</code> — regeneration is always safe, and the rendered <code>terraform.tfvars</code> is a faithful record of exactly what the tool asked IBM Cloud to create.</p>
+<h3 id="why-the-cluster-name-takes-no-suffix"><a class="header" href="#why-the-cluster-name-takes-no-suffix">Why the cluster name takes no suffix</a></h3>
+<p>The cluster name deliberately <strong>equals the prefix</strong> with no suffix appended. This is load-bearing, not an oversight:</p>
+<ul>
+<li>The ROKS/OpenShift cluster name has the <strong>tightest</strong> limit of any resource here — <strong>35 characters</strong> (see the table below). Every other name is an IS resource capped at <strong>63</strong>.</li>
+<li>By making the cluster name <em>be</em> the prefix, the prefix’s own length limit becomes that same 35-character cluster limit. A prefix that’s short enough to be a valid cluster name is automatically short enough that <strong>every</strong> suffixed name fits inside 63 — the worst case is the zone-appended cluster jumphost (<code>&lt;prefix&gt;-jh-us-south-1</code>), which at a 35-char prefix reaches only 49 of its 63-char budget.</li>
+</ul>
+<blockquote>
+<p><strong>Do not “tidy” the cluster name into <code>&lt;prefix&gt;-cluster</code>.</strong> Adding a suffix to the cluster name would shrink the usable prefix length (the binding 35-char limit would now have to absorb <code>-cluster</code> too) without buying anything. The no-suffix cluster name is what lets a single prefix-length check guarantee the whole name set is valid.</p>
+</blockquote>
+<h3 id="the-length--charset-limits"><a class="header" href="#the-length--charset-limits">The length / charset limits</a></h3>
+<p><code>roksbnkctl</code> validates the prefix — and every name it derives — against these per-resource-type constraints. They are pinned from IBM Cloud’s own validators so the tool rejects a bad prefix at <code>init</code> time rather than letting IBM Cloud reject it minutes into an <code>apply</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resource kind</th><th>Max length</th><th>Charset rule</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td>ROKS / OpenShift cluster name</td><td><strong>35</strong></td><td>Start with a letter; letters, digits, and hyphen <code>-</code>; ≤ 35 chars</td><td>IBM Cloud provider docs, <code>ibm_container_cluster</code> / <code>ibm_container_vpc_cluster</code> <code>name</code> argument (“must start with a letter, can contain letters, numbers, and hyphen (-), and must be 35 characters or fewer”).</td></tr>
+<tr><td>IS resource — VPC, VSI, Transit Gateway, SSH key</td><td><strong>63</strong></td><td>Start with a lowercase letter; lowercase letters, digits, and hyphen <code>-</code>; must end alphanumeric; ≤ 63 chars (regex <code>^[a-z][-a-z0-9]*$</code> + ends <code>[a-z0-9]</code>)</td><td>terraform-provider-ibm <code>ValidateISName</code> (<code>ibm/validate/validators.go</code>).</td></tr>
+<tr><td>COS / Resource Controller instance</td><td><strong>180</strong></td><td>Permissive server-side; <code>roksbnkctl</code> reuses the lowercase-alphanumeric IS subset since the name derives from an already-validated lowercase prefix</td><td>IBM Cloud Resource Controller create-instance <code>name</code> field (“must be 180 characters or less”).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Because the prefix flows into all three, <code>roksbnkctl</code> enforces the <strong>strictest</strong> applicable rule on the prefix label itself (lowercase, start with a letter, <code>[a-z0-9-]</code>, no trailing hyphen) and the tightest <strong>length</strong> (35, from the cluster). An over-long prefix is rejected with an actionable message naming the offending resource, its computed length, its limit, and the maximum allowable prefix length — and <code>init</code> re-prompts (TTY) or hard-errors (non-TTY). There is <strong>no silent truncation or hashing</strong>.</p>
+<h3 id="namespaces-are-not-prefixed"><a class="header" href="#namespaces-are-not-prefixed">Namespaces are NOT prefixed</a></h3>
+<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — keep their conventional fixed values and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
+<h3 id="overriding-a-generated-name"><a class="header" href="#overriding-a-generated-name">Overriding a generated name</a></h3>
+<p>Every generated name is just a value in the rendered <code>terraform.tfvars</code>, so the normal <a href="#the-layering-rule">layering rule</a> overrides it. To pin a specific name (e.g. to adopt a VPC that doesn’t follow the prefix convention), set the matching variable in <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> or pass it via <code>--var-file</code>:</p>
+<pre><code class="language-bash"># Override just the Transit Gateway name for this workspace, permanently
+echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
+  &gt;&gt; ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user
+</code></pre>
+<p>The <code>.user</code> file (or <code>--var-file</code>) layers <strong>after</strong> the generated <code>terraform.tfvars</code>, so the override wins. This is the same Sprint 19 override path documented in <a href="#the-layering-rule">§“The layering rule”</a> — the prefix machinery doesn’t change it. Declining a resource at <code>init</code> time and supplying an existing one is the cleaner path for adoption; see <a href="./12-workspace-config.html#worked-example-bootstrap-a-workspace-from-scratch">Chapter 12 §“Worked example”</a>.</p>
+<h3 id="backward-compatibility"><a class="header" href="#backward-compatibility">Backward compatibility</a></h3>
+<p>The change is additive. A pre-<code>v1.8.0</code> <code>config.yaml</code> has no <code>prefix:</code> field; <code>roksbnkctl</code> detects the empty prefix and renders the <strong>old sparse <code>terraform.tfvars</code></strong> unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run <code>roksbnkctl init -w &lt;ws&gt;</code> and answer the prefix prompt.</p>
+<blockquote>
+<p><strong>Detection complement.</strong> Prefix-derived naming <em>prevents</em> the collisions described above. The forward-looking <code>roksbnkctl doctor --orphan-sweep</code> diagnostic (tracked for a later release — see <code>issues/issue_sprint25_staff.md</code>) <em>detects</em> already-stranded resources by deriving the same <code>&lt;prefix&gt;-cluster-vpc</code> / <code>&lt;prefix&gt;-tgw</code> formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.</p>
+</blockquote>
 <h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
 <p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
 <pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)

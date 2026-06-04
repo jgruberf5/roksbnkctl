@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
+            window.path_to_searchindex_js = "searchindex-07406b41.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -293,7 +293,7 @@ roksbnkctl ws list
 </code></pre>
 <p>What that one command persists:</p>
 <ul>
-<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine.</li>
+<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine. Since <code>v1.8.0</code>, <code>init --var-file</code> also sets a sanitized <code>prefix</code> (derived from the workspace name or the file’s <code>openshift_cluster_name</code>) and a default all-create <code>resources:</code> block non-interactively, so the generated base is collision-safe — and your var-file still overrides any generated name via the layering below. The prefix-driven naming concept is <a href="./13-terraform-variables.html#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</li>
 <li><strong><code>~/.roksbnkctl/myws/terraform.tfvars.user</code></strong> — a verbatim copy of your var-file at the workspace root (sibling to <code>config.yaml</code>), mode <code>0600</code>. This is the workspace-persistent override the lifecycle auto-layers on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> the trial and the cluster phases. One file serves both — internally, <code>tf.Workspace.UserTFVarsPath()</code> resolves to <code>&lt;workspace-dir&gt;/terraform.tfvars.user</code> regardless of which phase opened the workspace.</li>
 </ul>
 <h3 id="why-it-matters-subsequent-commands-just-work-on-bare--w-ws"><a class="header" href="#why-it-matters-subsequent-commands-just-work-on-bare--w-ws">Why it matters: subsequent commands Just Work on bare <code>-w &lt;ws&gt;</code></a></h3>

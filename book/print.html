@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f0308c5d.js";
+            window.path_to_searchindex_js = "searchindex-07406b41.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fadf8ffb.js"></script>
@@ -929,7 +929,7 @@ roksbnkctl ws list
 </code></pre>
 <p>What that one command persists:</p>
 <ul>
-<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine.</li>
+<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine. Since <code>v1.8.0</code>, <code>init --var-file</code> also sets a sanitized <code>prefix</code> (derived from the workspace name or the file’s <code>openshift_cluster_name</code>) and a default all-create <code>resources:</code> block non-interactively, so the generated base is collision-safe — and your var-file still overrides any generated name via the layering below. The prefix-driven naming concept is <a href="#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</li>
 <li><strong><code>~/.roksbnkctl/myws/terraform.tfvars.user</code></strong> — a verbatim copy of your var-file at the workspace root (sibling to <code>config.yaml</code>), mode <code>0600</code>. This is the workspace-persistent override the lifecycle auto-layers on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> the trial and the cluster phases. One file serves both — internally, <code>tf.Workspace.UserTFVarsPath()</code> resolves to <code>&lt;workspace-dir&gt;/terraform.tfvars.user</code> regardless of which phase opened the workspace.</li>
 </ul>
 <h3 id="why-it-matters-subsequent-commands-just-work-on-bare--w-ws"><a class="header" href="#why-it-matters-subsequent-commands-just-work-on-bare--w-ws">Why it matters: subsequent commands Just Work on bare <code>-w &lt;ws&gt;</code></a></h3>
@@ -2247,7 +2247,9 @@ roksbnkctl down --auto -w preexisting
 </div>
 <p>Direct hand-editing is supported (the file is plain YAML) but discouraged for fields that have dedicated commands — adding an SSH target via <code>roksbnkctl targets add</code> keeps the schema validation in one place.</p>
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
-<pre><code class="language-yaml">ibmcloud:        # IBM Cloud account + auth
+<pre><code class="language-yaml">prefix: acme-eu  # base for every account-scoped resource name (since v1.8.0)
+
+ibmcloud:        # IBM Cloud account + auth
   region: ca-tor
   resource_group: default
   api_key_source: keychain
@@ -2255,9 +2257,18 @@ roksbnkctl down --auto -w preexisting
 
 cluster:         # ROKS cluster identity
   create: true
-  name: tf-openshift-cluster
+  name: acme-eu   # equals prefix when init derived the name
   openshift_version: "4.18"
   workers_per_zone: 2
+
+resources:       # per-resource create/adopt toggles (since v1.8.0)
+  transit_gateway:   { create: true }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false }
 
 bnk:             # BNK trial knobs (optional; falls through to upstream HCL defaults)
   cneinstance_size: Small
@@ -2290,7 +2301,22 @@ cos:             # optional COS supply-chain config
   instance: bnk-orchestration
   bucket: bnk-schematics-resources
 </code></pre>
-<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables.</p>
+<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables. The <code>prefix:</code> field and <code>resources:</code> block (both since <code>v1.8.0</code>) are also optional — omit them and the workspace renders the legacy sparse <code>terraform.tfvars</code> (upstream module default names), which is exactly how pre-<code>v1.8.0</code> configs keep working.</p>
+<h2 id="prefix"><a class="header" href="#prefix"><code>prefix:</code></a></h2>
+<pre><code class="language-yaml">prefix: acme-eu
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prefix</code></td><td>string</td><td>empty (legacy sparse render)</td><td>The base for every account-scoped IBM Cloud resource name (cluster, VPCs, Transit Gateway, COS, jumphosts). Must be a lowercase label: start with a letter, <code>[a-z0-9-]</code>, no trailing hyphen, <strong>≤ 35 chars</strong>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Since <code>v1.8.0</code>, the <code>init</code> interview asks for a workspace <strong>prefix</strong> and derives every account-scoped resource name from it — <code>acme-eu</code> becomes cluster <code>acme-eu</code>, VPC <code>acme-eu-cluster-vpc</code>, TGW <code>acme-eu-tgw</code>, COS <code>acme-eu-registry-cos</code>, jumphosts <code>acme-eu-jh-tgw</code> / <code>acme-eu-jh-&lt;zone&gt;</code>. This stops two workspaces in the same IBM Cloud account from colliding on the old shared <code>tf-*</code> default names.</p>
+<p>The 35-char cap is the ROKS cluster-name limit (the tightest of all the resource types). <code>roksbnkctl</code> validates the prefix — and every name it derives — at <code>init</code> time and re-prompts on overflow; there is no silent truncation. An <strong>empty</strong> <code>prefix</code> keeps the legacy sparse render (no names emitted), so old configs are unaffected. The full derivation table, the per-resource length/charset limits, the source citations, and the override path live in <a href="#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</p>
 <h2 id="ibmcloud"><a class="header" href="#ibmcloud"><code>ibmcloud:</code></a></h2>
 <pre><code class="language-yaml">ibmcloud:
   region: ca-tor
@@ -2333,6 +2359,35 @@ cos:             # optional COS supply-chain config
 </table>
 </div>
 <p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code> — see <a href="#terraform-variables-terraformtfvars">Chapter 13</a> and <a href="#terraform-variable-reference">Chapter 29</a> for the full mapping.</p>
+<p>When a <code>prefix</code> is set, <code>init</code> fills <code>cluster.name</code> with the prefix itself (the cluster name carries no suffix — see <a href="#why-the-cluster-name-takes-no-suffix">Chapter 13</a>). Setting <code>cluster.create: false</code> adopts an existing cluster by name/ID via <code>cluster.name</code>, exactly as before — the cluster is <strong>not</strong> part of the <code>resources:</code> block below.</p>
+<h2 id="resources"><a class="header" href="#resources"><code>resources:</code></a></h2>
+<pre><code class="language-yaml">resources:
+  transit_gateway:   { create: true }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false, existing: shared-client-vpc }
+</code></pre>
+<p><em>(since <code>v1.8.0</code>)</em> The <code>init</code> interview’s create/adopt answers, one <code>{create, existing}</code> pair per resource. <code>create: true</code> provisions a new, prefix-named resource; <code>create: false</code> declines it, and when a still-enabled resource depends on the declined one, <code>existing:</code> names the pre-existing resource to consume instead.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Sub-block</th><th><code>create</code> default</th><th>Renders into</th><th>Asks for <code>existing</code> when…</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code> (+ <code>roks_transit_gateway_name</code>)</td><td>declined <strong>and</strong> the TGW jumphost is enabled (it needs a TGW)</td></tr>
+<tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code> (+ <code>roks_cos_instance_name</code>)</td><td>declined</td></tr>
+<tr><td><code>cert_manager</code></td><td><code>true</code></td><td><code>install_cert_manager</code></td><td>—</td></tr>
+<tr><td><code>bnk</code></td><td><code>true</code></td><td><code>deploy_bnk</code></td><td>—</td></tr>
+<tr><td><code>tgw_jumphost</code></td><td><code>true</code></td><td><code>testing_create_tgw_jumphost</code> (+ <code>testing_tgw_jumphost_name</code>)</td><td>—</td></tr>
+<tr><td><code>cluster_jumphosts</code></td><td><code>false</code></td><td><code>testing_create_cluster_jumphosts</code> (+ <code>testing_cluster_jumphost_name_prefix</code>)</td><td>—</td></tr>
+<tr><td><code>client_vpc</code></td><td><code>false</code></td><td><code>testing_create_client_vpc</code> (+ <code>testing_client_vpc_name</code>)</td><td>TGW jumphost enabled but you decline creating a new client VPC for it</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is <strong>optional and additive</strong> — omit it (any pre-<code>v1.8.0</code> config) and the legacy sparse render applies; a fresh <code>init</code> writes it in full. The deep reference, including which terraform <code>create_*</code>/<code>*_name</code> variables each toggle renders, is <a href="#resources-block">Chapter 28 §“<code>resources:</code> block”</a>.</p>
 <h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
 <pre><code class="language-yaml">bnk:
   cneinstance_size: Small
@@ -2464,6 +2519,8 @@ cos:             # optional COS supply-chain config
 <tr><th>Missing field</th><th>Behaviour</th></tr>
 </thead>
 <tbody>
+<tr><td><code>prefix</code></td><td>Empty ⇒ legacy sparse <code>terraform.tfvars</code> (no name variables; upstream <code>tf-*</code> module defaults). <code>init</code> prompts for one on a fresh interactive run.</td></tr>
+<tr><td><code>resources</code></td><td>Empty ⇒ no per-resource toggles rendered; goes with the empty-<code>prefix</code> legacy path. A fresh prefix-driven <code>init</code> writes the full block.</td></tr>
 <tr><td><code>ibmcloud.region</code></td><td><code>roksbnkctl init</code> prompts; programmatic loads error with “region is empty”.</td></tr>
 <tr><td><code>ibmcloud.api_key_source</code></td><td>Resolver walks the full chain (env → keychain → config → prompt).</td></tr>
 <tr><td><code>ibmcloud.api_key_b64</code></td><td>Skipped in the resolver chain.</td></tr>
@@ -2513,47 +2570,90 @@ cos:             # optional COS supply-chain config
 <p>If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you’ll know within one invocation.</p>
 <h2 id="worked-example-bootstrap-a-workspace-from-scratch"><a class="header" href="#worked-example-bootstrap-a-workspace-from-scratch">Worked example: bootstrap a workspace from scratch</a></h2>
 <p>End-to-end Part IV scenario: brand-new laptop, no <code>roksbnkctl</code> workspaces yet, an IBM Cloud API key in your password manager. Goal: a usable workspace with the key in the OS keychain, the right region + resource group resolved, and <code>terraform.tfvars</code> ready to drive the HCL.</p>
-<pre><code class="language-bash"># 1. roksbnkctl init — interactive bootstrap
-$ roksbnkctl init
-Workspace name [default]: dev
-IBM Cloud region [ca-tor]:
-IBM Cloud resource group [default]:
-Enter IBM Cloud API key (input hidden):
-Save the key for future runs? [Y/n]: y
-  ✓ saved to OS keychain (service: roksbnkctl, account: dev/ibmcloud_api_key)
-Cluster name [tf-openshift-cluster]: dev-cluster
-Workers per zone [1]: 2
-✓ Created workspace "dev"
+<p>The transcript below is captured against the shipped <code>v1.8.0</code> binary. Prompts are written to <strong>stderr</strong>, indented two spaces, with the label left-padded; the <code>[default]</code> (or <code>[Y/n]</code> / <code>[y/N]</code>) in brackets is what you get on a bare Enter. Here the operator types <code>acme-eu</code> for the prefix, keeps the cluster + COS + cert-manager + BNK + TGW-jumphost defaults, declines the Transit Gateway (adopting <code>shared-corp-tgw</code>), declines a new client VPC for the jumphost (adopting <code>shared-client-vpc</code>), and declines per-zone cluster jumphosts.</p>
+<pre><code class="language-text">$ roksbnkctl init -w dev
+Setting up workspace "dev"
+
+  Region                         [ca-tor]:
+
+→ Verifying IBM Cloud credentials...
+✓ IBM Cloud user you@example.com (account 1a2b3c…)
+
+  Resource group                 [default]:
+✓ Resource group "default" (id 0d1e2f…)
+
+  Workspace prefix (≤ 35 chars)  [dev]: acme-eu
+  Create new ROKS cluster?       [Y/n]: y
+  OpenShift version              [4.18]:
+  Workers per zone               [1]: 2
+  Create registry COS instance?  [Y/n]: y
+  Create Transit Gateway?        [Y/n]: n
+  Install cert-manager?          [Y/n]: y
+  Deploy BIG-IP Next (BNK)?      [Y/n]: y
+  Create TGW test jumphost?      [Y/n]: y
+  Create a new client VPC for it? [y/N]: n
+  Existing client VPC name       : shared-client-vpc
+  Existing Transit Gateway name  : shared-corp-tgw
+  Create per-zone cluster jumphosts? [y/N]: n
+
+Resolved resource names for prefix "acme-eu":
+  cluster                acme-eu
+  cluster VPC            acme-eu-cluster-vpc
+  registry COS instance  acme-eu-registry-cos
+  transit gateway        shared-corp-tgw  (existing)
+  TGW jumphost           acme-eu-jh-tgw
+  client VPC             shared-client-vpc  (existing)
+
+✓ Wrote /home/you/.roksbnkctl/dev/config.yaml
 </code></pre>
+<p>(The IBM Cloud API key is resolved before the prompts above via the <a href="#credentials-and-the-resolver-chain">credentials resolver chain</a> — env, then keychain, then the workspace <code>api_key_b64</code>, then a hidden TTY prompt that offers to save the key. When the key is already in your environment or keychain, no key prompt appears, which is the common re-<code>init</code> case shown here.)</p>
+<p>Two ordering details worth noting against the transcript: the <strong>OpenShift version</strong> and <strong>Workers per zone</strong> prompts appear only when you answer <em>yes</em> to “Create new ROKS cluster?” (a declined cluster prompts instead for an existing cluster name/ID), and the <strong>Existing Transit Gateway name</strong> prompt fires <em>after</em> the client-VPC questions — it is only asked when the TGW was declined <strong>and</strong> the TGW jumphost is enabled (the jumphost rides the gateway, so it needs the existing one’s name).</p>
+<p>Three things to note in that flow:</p>
+<ul>
+<li><strong>The prefix prompt validates and re-prompts.</strong> Enter a prefix that’s too long, starts with a digit, or has a trailing hyphen, and <code>init</code> rejects it with the offending resource, its computed length, its limit, and the maximum allowable prefix length — then asks again. In a non-TTY context (CI), an invalid default is a hard error rather than a silent truncation. The cap is 35 characters (the ROKS cluster-name limit). See <a href="#the-length--charset-limits">Chapter 13 §“The length / charset limits”</a>.</li>
+<li><strong>Declining a create toggle triggers existing-resource discovery — but only when something still needs it.</strong> Here the Transit Gateway was declined, and because the TGW jumphost is enabled (it rides the TGW), <code>init</code> asks for an existing TGW name (the <code>Existing Transit Gateway name</code> prompt). The same pattern drives the <code>Existing client VPC name</code> follow-up. Declining a resource that nothing else depends on (e.g. cluster jumphosts) just turns it off with no follow-up.</li>
+<li><strong>The resolved name plan is printed before the workspace is saved</strong>, so you see exactly what <code>roksbnkctl</code> will ask IBM Cloud to create (and which names it will <em>adopt</em> rather than create) before committing.</li>
+</ul>
 <p>The resulting <code>~/.roksbnkctl/dev/config.yaml</code>:</p>
-<pre><code class="language-yaml">ibmcloud:
+<pre><code class="language-yaml">prefix: acme-eu
+ibmcloud:
   region: ca-tor
   resource_group: default
   api_key_source: keychain
 cluster:
   create: true
-  name: dev-cluster
+  name: acme-eu
   workers_per_zone: 2
+resources:
+  transit_gateway:   { create: false, existing: shared-corp-tgw }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false, existing: shared-client-vpc }
 tf_source:
   type: embedded
 </code></pre>
-<p>That’s the minimum. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. The API key can also be supplied non-interactively from your password manager’s CLI by setting <code>IBMCLOUD_API_KEY</code> in the environment of the <code>init</code> invocation:</p>
+<p>That’s the minimum a prefix-driven workspace writes. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. A workspace created <strong>without</strong> a prefix (e.g. an old config, or <code>init --var-file</code>) omits both <code>prefix:</code> and <code>resources:</code> and renders the legacy sparse <code>terraform.tfvars</code>. The API key can also be supplied non-interactively from your password manager’s CLI by setting <code>IBMCLOUD_API_KEY</code> in the environment of the <code>init</code> invocation:</p>
 <p><code>op</code> here is the <a href="https://developer.1password.com/docs/cli/">1Password CLI</a>; the <code>op://...</code> URI is its secret-reference scheme. Any password-manager CLI that prints a secret to stdout works the same way — Bitwarden (<code>bw</code>), gopass, <code>aws secretsmanager get-secret-value</code>, Doppler, etc. — the only thing roksbnkctl cares about is that <code>IBMCLOUD_API_KEY</code> is set in the environment when <code>init</code> runs.</p>
 <pre><code class="language-bash"># Alternative: pre-set IBMCLOUD_API_KEY so init resolves it from env rather than prompting
 IBMCLOUD_API_KEY=$(op read 'op://Private/IBM Cloud/api-key') roksbnkctl init -w dev
 </code></pre>
-<p><a href="#the-ibmcloud_api_key-resolver-chain">Chapter 14 §“The <code>IBMCLOUD_API_KEY</code> resolver chain”</a> covers the full env → keychain → workspace <code>api_key_b64</code> → TTY-prompt order; this env-var path is the first link in that chain, so anything <code>init</code> resolves at bootstrap time follows the same precedence later invocations use. Once <code>init</code> has saved the key to the OS keychain (the default sink), no further prompting is needed. <code>init</code> still prompts interactively for the remaining workspace metadata (region, resource group, cluster name) — a fully non-interactive bootstrap is on the v1.x roadmap.</p>
-<p>Now render <code>terraform.tfvars</code> so subsequent <code>up</code> runs have explicit HCL inputs to point <code>--var-file</code> at:</p>
-<pre><code class="language-bash"># 2. Render terraform.tfvars from config.yaml
-$ roksbnkctl tfvars -w dev &gt; ~/.roksbnkctl/dev/terraform.tfvars
-$ head ~/.roksbnkctl/dev/terraform.tfvars
-ibmcloud_region        = "ca-tor"
-ibmcloud_resource_group = "default"
-cluster_name           = "dev-cluster"
-workers_per_zone       = 2
+<p><a href="#the-ibmcloud_api_key-resolver-chain">Chapter 14 §“The <code>IBMCLOUD_API_KEY</code> resolver chain”</a> covers the full env → keychain → workspace <code>api_key_b64</code> → TTY-prompt order; this env-var path is the first link in that chain, so anything <code>init</code> resolves at bootstrap time follows the same precedence later invocations use. Once <code>init</code> has saved the key to the OS keychain (the default sink), no further prompting is needed. <code>init</code> still prompts interactively for the remaining workspace metadata (region, resource group, workspace prefix, and the per-resource create toggles — the cluster name is <em>derived</em> from the prefix when you create a cluster, not prompted) — a fully non-interactive bootstrap is on the v1.x roadmap.</p>
+<p>You don’t render <code>terraform.tfvars</code> by hand. <code>roksbnkctl</code> derives it from <code>config.yaml</code> automatically on every <code>up</code> / <code>plan</code> / <code>apply</code>, writing it into the phase’s state directory (<code>~/.roksbnkctl/dev/state/terraform.tfvars</code>). With the <code>prefix: acme-eu</code> set above, that generated file names every account-scoped resource from the prefix:</p>
+<pre><code class="language-hcl"># ~/.roksbnkctl/dev/state/terraform.tfvars (generated; do not hand-edit)
+openshift_cluster_name    = "acme-eu"
+roks_cluster_vpc_name     = "acme-eu-cluster-vpc"
+roks_cos_instance_name    = "acme-eu-registry-cos"
+create_roks_transit_gateway = false
+roks_transit_gateway_name = "shared-corp-tgw"
+testing_tgw_jumphost_name = "acme-eu-jh-tgw"
+testing_client_vpc_name   = "shared-client-vpc"
 # ...
 </code></pre>
-<p><a href="#terraform-variables-terraformtfvars">Chapter 13</a> covers the precedence rules between <code>config.yaml</code>, <code>terraform.tfvars</code>, and <code>terraform.tfvars.user</code> (the hand-edit overlay).</p>
+<p>(The separate <code>roksbnkctl tfvars</code> <em>command</em> is unrelated — it writes a copy of the upstream <code>terraform.tfvars.example</code> starter template to edit by hand, not this config-derived render. See <a href="#roksbnkctl-tfvars--bootstrap-a-starter">Chapter 13 §“<code>roksbnkctl tfvars</code> — bootstrap a starter”</a>.)</p>
+<p><a href="#terraform-variables-terraformtfvars">Chapter 13</a> covers the precedence rules between the generated <code>terraform.tfvars</code>, <code>terraform.tfvars.user</code> (the hand-edit overlay), and <code>--var-file</code>.</p>
 <p>Finally, verify the workspace is healthy before the first real <code>up</code>:</p>
 <pre><code class="language-bash"># 3. Sanity-check
 $ roksbnkctl doctor -w dev
@@ -2630,6 +2730,69 @@ $ roksbnkctl doctor -w dev
 </table>
 </div>
 <p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="#terraform-variable-reference">Chapter 29 — Terraform variable reference</a>.</p>
+<h2 id="resource-naming--collision-avoidance"><a class="header" href="#resource-naming--collision-avoidance">Resource naming &amp; collision avoidance</a></h2>
+<blockquote>
+<p>Applies to workspaces created with a <strong>prefix</strong> (the default since <code>v1.8.0</code>). Pre-<code>v1.8.0</code> workspaces — those whose <code>config.yaml</code> has no <code>prefix:</code> field — keep the old behaviour: a sparse <code>terraform.tfvars</code> with no name variables, so every account-scoped resource falls through to the upstream module defaults (<code>tf-openshift-cluster</code>, <code>tf-cluster-vpc</code>, <code>tf-tgw</code>, …). See <a href="#backward-compatibility">§“Backward compatibility”</a> below.</p>
+</blockquote>
+<p>Before <code>v1.8.0</code>, <code>roksbnkctl</code> rendered a name-less <code>terraform.tfvars</code>, so every workspace inherited the <strong>same</strong> upstream module default names. Two workspaces that both created infrastructure in the same IBM Cloud account collided at the account level — the second <code>up</code> hit <code>Provided Name … is not unique</code> / <code>gateway with the same name already exists</code>. (This is the collision class that stranded the <code>canada-roks-*</code> resources behind the 2026-05-28 cleanup incident.)</p>
+<p><code>v1.8.0</code> closes that hole: a single <strong>workspace prefix</strong> becomes the base for every account-scoped IBM Cloud resource name. <code>roksbnkctl</code> derives the full name set from the prefix, validates each name against its resource type’s length/charset limit at <code>init</code> time, and renders a complete <code>terraform.tfvars</code> that names every resource explicitly.</p>
+<h3 id="prefix--name-derivation"><a class="header" href="#prefix--name-derivation">Prefix → name derivation</a></h3>
+<p>Give a workspace the prefix <code>acme-eu</code>, and <code>roksbnkctl</code> generates this name set:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resource</th><th>tfvars variable</th><th>Derived name (<code>prefix = acme-eu</code>)</th><th>Suffix</th></tr>
+</thead>
+<tbody>
+<tr><td>ROKS/OpenShift cluster</td><td><code>openshift_cluster_name</code></td><td><code>acme-eu</code></td><td><em>(none — cluster name <strong>is</strong> the prefix)</em></td></tr>
+<tr><td>Cluster VPC</td><td><code>roks_cluster_vpc_name</code></td><td><code>acme-eu-cluster-vpc</code></td><td><code>-cluster-vpc</code></td></tr>
+<tr><td>Registry COS instance</td><td><code>roks_cos_instance_name</code></td><td><code>acme-eu-registry-cos</code></td><td><code>-registry-cos</code></td></tr>
+<tr><td>Transit Gateway</td><td><code>roks_transit_gateway_name</code></td><td><code>acme-eu-tgw</code></td><td><code>-tgw</code></td></tr>
+<tr><td>Client VPC (TGW jumphost)</td><td><code>testing_client_vpc_name</code></td><td><code>acme-eu-client-vpc</code></td><td><code>-client-vpc</code></td></tr>
+<tr><td>TGW jumphost</td><td><code>testing_tgw_jumphost_name</code></td><td><code>acme-eu-jh-tgw</code></td><td><code>-jh-tgw</code></td></tr>
+<tr><td>Per-zone cluster jumphosts</td><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>acme-eu-jh</code> <em>(module appends <code>-&lt;zone&gt;</code>, e.g. <code>acme-eu-jh-us-south-1</code>)</em></td><td><code>-jh</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The names are <strong>deterministic</strong> from the prefix, so <code>roksbnkctl</code> re-derives them on every <code>up</code> / <code>plan</code> / <code>apply</code> — regeneration is always safe, and the rendered <code>terraform.tfvars</code> is a faithful record of exactly what the tool asked IBM Cloud to create.</p>
+<h3 id="why-the-cluster-name-takes-no-suffix"><a class="header" href="#why-the-cluster-name-takes-no-suffix">Why the cluster name takes no suffix</a></h3>
+<p>The cluster name deliberately <strong>equals the prefix</strong> with no suffix appended. This is load-bearing, not an oversight:</p>
+<ul>
+<li>The ROKS/OpenShift cluster name has the <strong>tightest</strong> limit of any resource here — <strong>35 characters</strong> (see the table below). Every other name is an IS resource capped at <strong>63</strong>.</li>
+<li>By making the cluster name <em>be</em> the prefix, the prefix’s own length limit becomes that same 35-character cluster limit. A prefix that’s short enough to be a valid cluster name is automatically short enough that <strong>every</strong> suffixed name fits inside 63 — the worst case is the zone-appended cluster jumphost (<code>&lt;prefix&gt;-jh-us-south-1</code>), which at a 35-char prefix reaches only 49 of its 63-char budget.</li>
+</ul>
+<blockquote>
+<p><strong>Do not “tidy” the cluster name into <code>&lt;prefix&gt;-cluster</code>.</strong> Adding a suffix to the cluster name would shrink the usable prefix length (the binding 35-char limit would now have to absorb <code>-cluster</code> too) without buying anything. The no-suffix cluster name is what lets a single prefix-length check guarantee the whole name set is valid.</p>
+</blockquote>
+<h3 id="the-length--charset-limits"><a class="header" href="#the-length--charset-limits">The length / charset limits</a></h3>
+<p><code>roksbnkctl</code> validates the prefix — and every name it derives — against these per-resource-type constraints. They are pinned from IBM Cloud’s own validators so the tool rejects a bad prefix at <code>init</code> time rather than letting IBM Cloud reject it minutes into an <code>apply</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resource kind</th><th>Max length</th><th>Charset rule</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td>ROKS / OpenShift cluster name</td><td><strong>35</strong></td><td>Start with a letter; letters, digits, and hyphen <code>-</code>; ≤ 35 chars</td><td>IBM Cloud provider docs, <code>ibm_container_cluster</code> / <code>ibm_container_vpc_cluster</code> <code>name</code> argument (“must start with a letter, can contain letters, numbers, and hyphen (-), and must be 35 characters or fewer”).</td></tr>
+<tr><td>IS resource — VPC, VSI, Transit Gateway, SSH key</td><td><strong>63</strong></td><td>Start with a lowercase letter; lowercase letters, digits, and hyphen <code>-</code>; must end alphanumeric; ≤ 63 chars (regex <code>^[a-z][-a-z0-9]*$</code> + ends <code>[a-z0-9]</code>)</td><td>terraform-provider-ibm <code>ValidateISName</code> (<code>ibm/validate/validators.go</code>).</td></tr>
+<tr><td>COS / Resource Controller instance</td><td><strong>180</strong></td><td>Permissive server-side; <code>roksbnkctl</code> reuses the lowercase-alphanumeric IS subset since the name derives from an already-validated lowercase prefix</td><td>IBM Cloud Resource Controller create-instance <code>name</code> field (“must be 180 characters or less”).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Because the prefix flows into all three, <code>roksbnkctl</code> enforces the <strong>strictest</strong> applicable rule on the prefix label itself (lowercase, start with a letter, <code>[a-z0-9-]</code>, no trailing hyphen) and the tightest <strong>length</strong> (35, from the cluster). An over-long prefix is rejected with an actionable message naming the offending resource, its computed length, its limit, and the maximum allowable prefix length — and <code>init</code> re-prompts (TTY) or hard-errors (non-TTY). There is <strong>no silent truncation or hashing</strong>.</p>
+<h3 id="namespaces-are-not-prefixed"><a class="header" href="#namespaces-are-not-prefixed">Namespaces are NOT prefixed</a></h3>
+<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — keep their conventional fixed values and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
+<h3 id="overriding-a-generated-name"><a class="header" href="#overriding-a-generated-name">Overriding a generated name</a></h3>
+<p>Every generated name is just a value in the rendered <code>terraform.tfvars</code>, so the normal <a href="#the-layering-rule">layering rule</a> overrides it. To pin a specific name (e.g. to adopt a VPC that doesn’t follow the prefix convention), set the matching variable in <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> or pass it via <code>--var-file</code>:</p>
+<pre><code class="language-bash"># Override just the Transit Gateway name for this workspace, permanently
+echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
+  &gt;&gt; ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user
+</code></pre>
+<p>The <code>.user</code> file (or <code>--var-file</code>) layers <strong>after</strong> the generated <code>terraform.tfvars</code>, so the override wins. This is the same Sprint 19 override path documented in <a href="#the-layering-rule">§“The layering rule”</a> — the prefix machinery doesn’t change it. Declining a resource at <code>init</code> time and supplying an existing one is the cleaner path for adoption; see <a href="#worked-example-bootstrap-a-workspace-from-scratch">Chapter 12 §“Worked example”</a>.</p>
+<h3 id="backward-compatibility"><a class="header" href="#backward-compatibility">Backward compatibility</a></h3>
+<p>The change is additive. A pre-<code>v1.8.0</code> <code>config.yaml</code> has no <code>prefix:</code> field; <code>roksbnkctl</code> detects the empty prefix and renders the <strong>old sparse <code>terraform.tfvars</code></strong> unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run <code>roksbnkctl init -w &lt;ws&gt;</code> and answer the prefix prompt.</p>
+<blockquote>
+<p><strong>Detection complement.</strong> Prefix-derived naming <em>prevents</em> the collisions described above. The forward-looking <code>roksbnkctl doctor --orphan-sweep</code> diagnostic (tracked for a later release — see <code>issues/issue_sprint25_staff.md</code>) <em>detects</em> already-stranded resources by deriving the same <code>&lt;prefix&gt;-cluster-vpc</code> / <code>&lt;prefix&gt;-tgw</code> formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.</p>
+</blockquote>
 <h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
 <p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
 <pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)
@@ -7687,8 +7850,10 @@ which one commands run against; -w/–workspace overrides for one invocation.</p
 </div>
 <p>The file is hand-editable; YAML is parsed with <a href="https://pkg.go.dev/gopkg.in/yaml.v3"><code>gopkg.in/yaml.v3</code></a> so anchors and aliases work but are not idiomatic for this file. Plaintext credentials in any of the regex-matched secret fields (<code>api_key</code>, <code>apikey</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>) are rejected at load time — the file fails to parse with a clear error. Base64-encoded credentials in <code>ibmcloud.api_key_b64</code> are allowed (the field name doesn’t match the rejection regex). See <a href="#credentials-and-the-resolver-chain">Chapter 14</a>.</p>
 <h2 id="top-level-structure-1"><a class="header" href="#top-level-structure-1">Top-level structure</a></h2>
-<pre><code class="language-yaml">ibmcloud:        # required
+<pre><code class="language-yaml">prefix:          # optional (since v1.8.0); workspace name-prefix base
+ibmcloud:        # required
 cluster:         # required
+resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
@@ -7697,6 +7862,20 @@ targets:         # optional; populated automatically by up's post-apply hook
 exec:            # optional; per-tool default-backend map
 </code></pre>
 <p>The order of the top-level keys in the file doesn’t matter; YAML is a mapping. The order shown above is the canonical render order produced by <code>roksbnkctl init</code>.</p>
+<h2 id="prefix-field"><a class="header" href="#prefix-field"><code>prefix:</code> field</a></h2>
+<pre><code class="language-yaml">prefix: acme-eu
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prefix</code></td><td>string</td><td>(empty)</td><td>lowercase RFC-1123-style label: starts with a letter, <code>[a-z0-9-]</code>, no trailing hyphen, <strong>≤ 35 chars</strong></td><td><em>(since <code>v1.8.0</code>)</em> The base for every account-scoped IBM Cloud resource name. <code>roksbnkctl</code> derives the cluster, VPCs, Transit Gateway, COS, and jumphost names from it and renders them into <code>terraform.tfvars</code>. The 35-char cap is the ROKS cluster-name limit (the tightest); a valid prefix guarantees every derived name fits its own limit. <strong>Empty / omitted ⇒ legacy behaviour</strong>: the sparse, name-less render that falls through to upstream module defaults (backward-compatible). See <a href="#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a> for the full derivation table and limits.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The derived names are deterministic, so they are re-rendered on every <code>up</code> / <code>plan</code> / <code>apply</code>; the <code>prefix</code> is the single source of truth. To pin one generated name to something off-convention, override the matching variable via <code>terraform.tfvars.user</code> or <code>--var-file</code> — the override layers last and wins.</p>
 <h2 id="ibmcloud-block"><a class="header" href="#ibmcloud-block"><code>ibmcloud:</code> block</a></h2>
 <pre><code class="language-yaml">ibmcloud:
   region: ca-tor
@@ -7737,6 +7916,46 @@ exec:            # optional; per-tool default-backend map
 </tbody>
 </table>
 </div>
+<h2 id="resources-block"><a class="header" href="#resources-block"><code>resources:</code> block</a></h2>
+<pre><code class="language-yaml">resources:
+  transit_gateway:   { create: true }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false, existing: my-shared-client-vpc }
+</code></pre>
+<p><em>(since <code>v1.8.0</code>)</em> Per-resource create/adopt toggles, written by the <code>init</code> interview. Each key is a <code>{create, existing}</code> pair: <code>create: true</code> provisions a new prefix-named resource; <code>create: false</code> declines it and (when a still-enabled resource depends on it) <code>existing:</code> names the pre-existing resource to consume instead.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Sub-block</th><th><code>create</code> default</th><th><code>existing</code> consumed by</th><th>Renders into</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> → <code>roks_transit_gateway_name</code> when the TGW jumphost needs an existing TGW</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code></td></tr>
+<tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code>; <code>existing</code> → <code>roks_cos_instance_name</code></td><td><code>create_roks_registry_cos_instance</code>, <code>roks_cos_instance_name</code></td></tr>
+<tr><td><code>cert_manager</code></td><td><code>true</code></td><td>—</td><td><code>install_cert_manager</code></td></tr>
+<tr><td><code>bnk</code></td><td><code>true</code></td><td>—</td><td><code>deploy_bnk</code></td></tr>
+<tr><td><code>tgw_jumphost</code></td><td><code>true</code></td><td>—</td><td><code>testing_create_tgw_jumphost</code>, <code>testing_tgw_jumphost_name</code></td></tr>
+<tr><td><code>cluster_jumphosts</code></td><td><code>false</code></td><td>—</td><td><code>testing_create_cluster_jumphosts</code>, <code>testing_cluster_jumphost_name_prefix</code></td></tr>
+<tr><td><code>client_vpc</code></td><td><code>false</code> (created on demand for the TGW jumphost)</td><td><code>existing</code> → <code>testing_client_vpc_name</code> when not creating one</td><td><code>testing_create_client_vpc</code>, <code>testing_client_vpc_name</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Each entry:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create</code></td><td>bool</td><td>per the table above</td><td><code>true</code> provisions a new, prefix-named resource. <code>false</code> declines it.</td></tr>
+<tr><td><code>existing</code></td><td>string</td><td>(empty)</td><td>The name or ID of a pre-existing resource to adopt — only consumed when <code>create: false</code> <strong>and</strong> a still-enabled resource depends on this one (e.g. the TGW jumphost needs a TGW). Renders into the resource’s <code>*_name</code> variable with the matching <code>create_* = false</code> toggle.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is <strong>additive and optional</strong>: an omitted <code>resources:</code> block (any pre-<code>v1.8.0</code> <code>config.yaml</code>) loads unchanged, and a fresh <code>init</code> writes the full block with sensible defaults. The cluster itself is <strong>not</strong> in this block — its create/adopt toggle is the existing <code>cluster.create</code> + <code>cluster.name</code> pair (Name doubles as the existing cluster id/name when <code>create: false</code>). See <a href="#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</p>
 <h2 id="bnk-block"><a class="header" href="#bnk-block"><code>bnk:</code> block</a></h2>
 <pre><code class="language-yaml">bnk:
   cneinstance_size: Small
@@ -7920,6 +8139,7 @@ exec:            # optional; per-tool default-backend map
 <tr><th>Path</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 </thead>
 <tbody>
+<tr><td><code>prefix</code></td><td>string</td><td>(empty ⇒ legacy sparse render)</td><td>Workspace name-prefix base; ≤ 35 chars, lowercase label. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>ibmcloud.region</code></td><td>string</td><td>(prompted)</td><td>IBM Cloud region (<code>ca-tor</code>, <code>us-south</code>, …).</td></tr>
 <tr><td><code>ibmcloud.resource_group</code></td><td>string</td><td><code>default</code></td><td>Resource group name.</td></tr>
 <tr><td><code>ibmcloud.api_key_source</code></td><td>string</td><td>(chain)</td><td><code>env</code> | <code>keychain</code> | <code>config</code> | <code>prompt</code>.</td></tr>
@@ -7928,6 +8148,16 @@ exec:            # optional; per-tool default-backend map
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
+<tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing TGW name/ID when <code>create: false</code> and the TGW jumphost needs it.</td></tr>
+<tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
+<tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
+<tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>
+<tr><td><code>resources.bnk.create</code></td><td>bool</td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes (<code>deploy_bnk</code>).</td></tr>
+<tr><td><code>resources.tgw_jumphost.create</code></td><td>bool</td><td><code>true</code></td><td>Create the TGW test jumphost.</td></tr>
+<tr><td><code>resources.cluster_jumphosts.create</code></td><td>bool</td><td><code>false</code></td><td>Create per-zone cluster jumphosts.</td></tr>
+<tr><td><code>resources.client_vpc.create</code></td><td>bool</td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost.</td></tr>
+<tr><td><code>resources.client_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing client VPC name when <code>create: false</code>.</td></tr>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
