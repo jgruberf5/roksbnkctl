@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/naming"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -182,38 +184,31 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Resource group %q (id %s)\n\n", rgName, rgID)
 
-	create := dCreate
-	if seeds.HasCreateCluster {
-		create = seeds.CreateCluster
-	} else {
-		create = promptYesNo("Create new ROKS cluster?", dCreate)
-	}
-
-	cluster := config.ClusterCfg{Create: create}
-	if create {
-		if seeds.HasClusterName {
-			cluster.Name = seeds.ClusterName
-		} else {
-			cluster.Name = promptString("Cluster name", dCluster)
-		}
-		if seeds.HasOCPVersion {
-			cluster.OpenShiftVersion = seeds.OCPVersion
-		} else {
-			cluster.OpenShiftVersion = promptString("OpenShift version", dOCP)
-		}
-		if seeds.HasWorkersPerZone {
-			cluster.WorkersPerZone = seeds.WorkersPerZone
-		} else {
-			cluster.WorkersPerZone = promptInt("Workers per zone", dWorkers)
+	// Sprint 26 — prefix + per-resource create toggles. Two flows:
+	//
+	//   - --var-file: derive the prefix non-interactively (from the file's
+	//     openshift_cluster_name, else the sanitized workspace name) and
+	//     default every resource to "create", so the generated base is
+	//     collision-safe and the operator's file still overrides it via
+	//     terraform.tfvars.user layering. The cluster block keeps the
+	//     Sprint 19 seed-driven behaviour.
+	//   - interactive: run the prefix loop (validate + re-prompt), the
+	//     per-resource create toggles, and the existing-resource discovery
+	//     prompts for declined-but-depended-on resources.
+	var (
+		cluster   config.ClusterCfg
+		prefix    string
+		resources *config.ResourcesCfg
+	)
+	if varFilePath != "" {
+		cluster, prefix, resources, err = seedVarFileInterview(seeds, dCreate, dCluster, dOCP, dWorkers, cctx.WorkspaceName)
+		if err != nil {
+			return err
 		}
 	} else {
-		if seeds.HasClusterName {
-			cluster.Name = seeds.ClusterName
-		} else {
-			cluster.Name = promptString("Existing cluster name or ID", dCluster)
-		}
-		if cluster.Name == "" {
-			return errors.New("existing cluster name is required when not creating")
+		cluster, prefix, resources, err = runPrefixInterview(cctx, dCreate, dOCP, dWorkers)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -227,9 +222,15 @@ func runInit(_ *cobra.Command, _ []string) error {
 			Region:        region,
 			ResourceGroup: rgName,
 		},
-		Cluster:  cluster,
-		TFSource: tfCfg,
+		Cluster:   cluster,
+		Prefix:    prefix,
+		Resources: resources,
+		TFSource:  tfCfg,
 	}
+
+	// Show the resolved name plan so the operator sees exactly what
+	// roksbnkctl will ask IBM Cloud to create (or reuse).
+	printNamePlan(os.Stderr, ws)
 	if err := config.SaveWorkspace(cctx.WorkspaceName, ws); err != nil {
 		return fmt.Errorf("saving workspace: %w", err)
 	}
@@ -290,6 +291,219 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
 	return nil
+}
+
+// allCreateResources returns a ResourcesCfg with every toggle set to
+// create + no existing refs — the default the non-interactive (--var-file
+// and re-init-without-answers) flows land so the generated base is
+// collision-safe.
+func allCreateResources() *config.ResourcesCfg {
+	return &config.ResourcesCfg{
+		TransitGateway:   config.ResourceToggle{Create: true},
+		RegistryCOS:      config.ResourceToggle{Create: true},
+		CertManager:      config.ResourceToggle{Create: true},
+		BNK:              config.ResourceToggle{Create: true},
+		TGWJumphost:      config.ResourceToggle{Create: true},
+		ClusterJumphosts: config.ResourceToggle{Create: false},
+		ClientVPC:        config.ResourceToggle{Create: true},
+	}
+}
+
+// seedVarFileInterview builds the cluster + prefix + resources for the
+// --var-file flow. The cluster block keeps the Sprint 19 seed-driven
+// behaviour; the prefix is derived non-interactively (the file's
+// openshift_cluster_name sanitized, else the sanitized workspace name) and
+// every resource defaults to create. The generated base is collision-safe;
+// the operator's verbatim terraform.tfvars.user still overrides it via
+// terraform's var-file layering.
+func seedVarFileInterview(seeds varFileSeeds, dCreate bool, dCluster, dOCP string, dWorkers int, workspaceName string) (config.ClusterCfg, string, *config.ResourcesCfg, error) {
+	create := dCreate
+	if seeds.HasCreateCluster {
+		create = seeds.CreateCluster
+	}
+	cluster := config.ClusterCfg{Create: create}
+	if create {
+		if seeds.HasClusterName {
+			cluster.Name = seeds.ClusterName
+		} else {
+			cluster.Name = dCluster
+		}
+		if seeds.HasOCPVersion {
+			cluster.OpenShiftVersion = seeds.OCPVersion
+		} else {
+			cluster.OpenShiftVersion = dOCP
+		}
+		if seeds.HasWorkersPerZone {
+			cluster.WorkersPerZone = seeds.WorkersPerZone
+		} else {
+			cluster.WorkersPerZone = dWorkers
+		}
+	} else {
+		if seeds.HasClusterName {
+			cluster.Name = seeds.ClusterName
+		} else {
+			cluster.Name = dCluster
+		}
+		if cluster.Name == "" {
+			return config.ClusterCfg{}, "", nil, errors.New("existing cluster name is required when not creating")
+		}
+	}
+
+	// Prefix: prefer the file's cluster name, else the workspace name.
+	seedName := workspaceName
+	if seeds.HasClusterName && seeds.ClusterName != "" {
+		seedName = seeds.ClusterName
+	}
+	prefix := naming.SanitizeToPrefix(seedName)
+	return cluster, prefix, allCreateResources(), nil
+}
+
+// runPrefixInterview runs the interactive Sprint 26 interview body: the
+// prefix loop, the cluster create toggle, and the per-resource create
+// toggles + existing-resource discovery prompts. It returns the resolved
+// cluster cfg, the validated prefix, and the populated resources block.
+//
+// The cluster NAME is derived from the prefix when creating (so it is not
+// prompted); when not creating, the operator supplies the existing cluster
+// id/name.
+func runPrefixInterview(cctx *config.Context, dCreate bool, dOCP string, dWorkers int) (config.ClusterCfg, string, *config.ResourcesCfg, error) {
+	prefix, err := promptPrefix(cctx)
+	if err != nil {
+		return config.ClusterCfg{}, "", nil, err
+	}
+
+	res := &config.ResourcesCfg{}
+
+	// Cluster — created cluster's name is the prefix; declined → existing
+	// cluster id/name.
+	create := promptYesNo("Create new ROKS cluster?", dCreate)
+	cluster := config.ClusterCfg{Create: create}
+	if create {
+		cluster.Name = naming.Derive(prefix).ClusterName
+		cluster.OpenShiftVersion = promptString("OpenShift version", dOCP)
+		cluster.WorkersPerZone = promptInt("Workers per zone", dWorkers)
+		// Registry COS is only meaningful when the cluster is created.
+		res.RegistryCOS.Create = promptYesNo("Create registry COS instance?", true)
+		if !res.RegistryCOS.Create {
+			res.RegistryCOS.Existing = promptString("Existing COS instance name", "")
+		}
+	} else {
+		cluster.Name = promptString("Existing cluster name or ID", "")
+		if cluster.Name == "" {
+			return config.ClusterCfg{}, "", nil, errors.New("existing cluster name is required when not creating")
+		}
+		// No cluster create ⇒ no registry COS to manage here.
+		res.RegistryCOS.Create = false
+	}
+
+	// Transit gateway. When declined, an enabled TGW jumphost needs the
+	// existing gateway's name to connect its client VPC — prompt for it
+	// after we know the jumphost decision below, but capture the create
+	// toggle now.
+	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
+
+	// In-cluster services.
+	res.CertManager.Create = promptYesNo("Install cert-manager?", true)
+	res.BNK.Create = promptYesNo("Deploy BIG-IP Next (BNK)?", true)
+
+	// TGW test jumphost (+ its client VPC).
+	res.TGWJumphost.Create = promptYesNo("Create TGW test jumphost?", true)
+	if res.TGWJumphost.Create {
+		res.ClientVPC.Create = promptYesNo("Create a new client VPC for it?", false)
+		if !res.ClientVPC.Create {
+			res.ClientVPC.Existing = promptString("Existing client VPC name", "")
+		}
+		// The TGW jumphost connects through the transit gateway; if the
+		// gateway is not being created, we need its existing name.
+		if !res.TransitGateway.Create {
+			res.TransitGateway.Existing = promptString("Existing Transit Gateway name", "")
+		}
+	} else {
+		// No TGW jumphost ⇒ no client VPC, and no dependent forcing the
+		// existing-TGW-name prompt.
+		res.ClientVPC.Create = false
+	}
+
+	// Per-zone cluster jumphosts (default off).
+	res.ClusterJumphosts.Create = promptYesNo("Create per-zone cluster jumphosts?", false)
+
+	return cluster, prefix, res, nil
+}
+
+// promptPrefix runs the prefix loop: default = the existing workspace's
+// prefix (re-init) else SanitizeToPrefix(workspaceName); prompt →
+// ValidatePrefix; on failure print the actionable message + re-prompt. In a
+// non-TTY run it validates the default and hard-errors if it is invalid
+// (mirroring the non-interactive cred-resolver pattern). Loops a bounded
+// number of times so a pathological TTY can't spin forever.
+func promptPrefix(cctx *config.Context) (string, error) {
+	def := naming.SanitizeToPrefix(cctx.WorkspaceName)
+	if cctx.Workspace != nil && cctx.Workspace.Prefix != "" {
+		def = cctx.Workspace.Prefix
+	}
+
+	label := fmt.Sprintf("Workspace prefix (≤ %d chars)", naming.MaxPrefixLen())
+
+	if !isTTY() {
+		if err := naming.ValidatePrefix(def); err != nil {
+			return "", fmt.Errorf("non-interactive init: default prefix %q is invalid: %w", def, err)
+		}
+		return def, nil
+	}
+
+	for attempt := 0; attempt < 100; attempt++ {
+		candidate := promptString(label, def)
+		if err := naming.ValidatePrefix(candidate); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %v\n", err)
+			continue
+		}
+		return candidate, nil
+	}
+	return "", errors.New("too many invalid prefix attempts")
+}
+
+// printNamePlan writes the resolved naming.Plan to w so the operator sees
+// the generated (or reused) resource names before the config is saved. A
+// legacy empty-prefix workspace prints nothing (the upstream module
+// defaults still apply).
+func printNamePlan(w io.Writer, ws *config.Workspace) {
+	if ws.Prefix == "" {
+		return
+	}
+	plan := naming.Derive(ws.Prefix)
+	res := ws.Resources
+	if res == nil {
+		res = allCreateResources()
+	}
+
+	fmt.Fprintf(w, "\nResolved resource names for prefix %q:\n", ws.Prefix)
+	clusterName := plan.ClusterName
+	if !ws.Cluster.Create {
+		clusterName = ws.Cluster.Name + "  (existing)"
+	}
+	fmt.Fprintf(w, "  cluster                %s\n", clusterName)
+	fmt.Fprintf(w, "  cluster VPC            %s\n", plan.ClusterVPCName)
+	fmt.Fprintf(w, "  registry COS instance  %s\n", planNameOrExisting(res.RegistryCOS, plan.COSInstanceName))
+	fmt.Fprintf(w, "  transit gateway        %s\n", planNameOrExisting(res.TransitGateway, plan.TransitGatewayName))
+	if res.TGWJumphost.Create {
+		fmt.Fprintf(w, "  TGW jumphost           %s\n", plan.TGWJumphostName)
+		fmt.Fprintf(w, "  client VPC             %s\n", planNameOrExisting(res.ClientVPC, plan.ClientVPCName))
+	}
+	if res.ClusterJumphosts.Create {
+		fmt.Fprintf(w, "  cluster jumphosts      %s-<zone>\n", plan.ClusterJumphostPrefix)
+	}
+}
+
+// planNameOrExisting renders the derived name when the toggle creates the
+// resource, or the operator's existing name (annotated) when it reuses one.
+func planNameOrExisting(t config.ResourceToggle, derived string) string {
+	if t.Create {
+		return derived
+	}
+	if t.Existing != "" {
+		return t.Existing + "  (existing)"
+	}
+	return "(not managed)"
 }
 
 // runUpgradeTF re-resolves the TF source ref against the workspace's

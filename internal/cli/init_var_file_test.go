@@ -43,6 +43,7 @@ import (
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/naming"
 )
 
 // hasInitVarFileFlag reports whether staff Issue 1 has landed by
@@ -259,6 +260,21 @@ func TestInitVarFile_ConfigSeeding(t *testing.T) {
 	}
 	if !ws.Cluster.Create {
 		t.Errorf("AC2: Cluster.Create: got false, want true (from create_roks_cluster)")
+	}
+
+	// Sprint 26 — the --var-file path now ALSO sets a sanitized Prefix
+	// (seeded from the file's openshift_cluster_name, else the workspace
+	// name) + an all-create resources block, so the generated base is
+	// collision-safe while the operator's terraform.tfvars.user still wins
+	// via layering. Intended additive expectation, not a regression.
+	wantPrefix := naming.SanitizeToPrefix("test-cluster") // == the fixture's openshift_cluster_name
+	if ws.Prefix != wantPrefix {
+		t.Errorf("AC2 (Sprint 26): ws.Prefix = %q; want sanitized %q (from openshift_cluster_name)", ws.Prefix, wantPrefix)
+	}
+	if ws.Resources == nil {
+		t.Error("AC2 (Sprint 26): ws.Resources is nil; the --var-file path must default to an all-create resources block")
+	} else if !ws.Resources.TransitGateway.Create {
+		t.Error("AC2 (Sprint 26): ws.Resources.TransitGateway.Create = false; --var-file defaults to all-create")
 	}
 }
 

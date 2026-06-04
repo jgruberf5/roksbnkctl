@@ -18,6 +18,33 @@
 #
 # Required (no default):
 #   ibmcloud_api_key
+#
+# ------------------------------------------------------------
+# Using roksbnkctl? You normally do NOT hand-author these names.
+#
+# Since v1.8.0, roksbnkctl generates every account-scoped
+# resource name from a single workspace PREFIX collected at
+# `roksbnkctl init`:
+#
+#   openshift_cluster_name               = <prefix>
+#   roks_cluster_vpc_name                = <prefix>-cluster-vpc
+#   roks_cos_instance_name               = <prefix>-registry-cos
+#   roks_transit_gateway_name            = <prefix>-tgw
+#   testing_client_vpc_name              = <prefix>-client-vpc
+#   testing_tgw_jumphost_name            = <prefix>-jh-tgw
+#   testing_cluster_jumphost_name_prefix = <prefix>-jh   (module
+#                                          appends -<zone>)
+#
+# This file is the OVERRIDE REFERENCE: copy it (or any subset)
+# to ~/.roksbnkctl/<workspace>/terraform.tfvars.user (or pass it
+# via --var-file) and roksbnkctl layers it LAST, so any value
+# here overrides the prefix-generated name. The per-variable
+# examples below are kept intact for exactly that purpose.
+#
+# Running terraform directly (no roksbnkctl)? The defaults below
+# are static `tf-*` placeholders and WILL collide across stacks
+# in the same IBM Cloud account — set unique names per stack.
+# ------------------------------------------------------------
 # ============================================================
 
 
