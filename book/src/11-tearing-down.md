@@ -1,5 +1,14 @@
 # Tearing down
 
+> **Three-phase note.** With the Cluster / BNK / Testing split there is now a
+> fourth destroy verb, `roksbnkctl testing down` (destroys the jumphost rig,
+> leaving the cluster and BNK intact), and the bare `roksbnkctl down` tears
+> down **BNK || Testing in parallel, then the cluster**. `cluster down` refuses
+> while **either** BNK or Testing state exists. The decision tree below is
+> written for the earlier two-phase shape; see
+> [Chapter 8a §"Teardown ordering and the `cluster down` guard"](./08a-three-phase-lifecycle.md#teardown-ordering-and-the-cluster-down-guard)
+> for the three-phase ordering and guard.
+
 `roksbnkctl down`, `roksbnkctl bnk down`, and `roksbnkctl cluster down` are the three destroy verbs — the inverses of [`up`](./10-deploying-bnk-trials.md), [`bnk up`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group), and [`cluster up`](./08-cluster-phase.md) respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you'll hit if you ask for the wrong one, what survives a destroy, the `--auto` flag for non-interactive runs, and the workspace-cleanup story.
 
 ## The phase-aware decision tree
