@@ -1,5 +1,13 @@
 # The cluster phase (cluster up/down)
 
+> **As of the three-phase split, a workspace is Cluster / BNK / Testing — not
+> two phases.** This chapter covers the Cluster phase specifically; the BNK
+> trial and the testing jumphosts are now separate sibling phases that deploy
+> in parallel on top. The "trial phase" language below predates the split and
+> now means the **BNK phase** (the jumphosts moved to their own Testing
+> phase). See [Chapter 8a — The three-phase lifecycle](./08a-three-phase-lifecycle.md)
+> for the current model, parallel `up`, and `roksbnkctl testing up/down`.
+
 A `roksbnkctl` workspace is **two phases on top of each other**: a durable **cluster phase** (the ROKS cluster + cluster-shared services that take 30+ minutes to provision) and a short-lived **trial phase** (the BNK trial that iterates on top in 5-10 minutes). The cluster phase is exposed as its own command pair, `roksbnkctl cluster up` / `roksbnkctl cluster down`, so the cluster survives across many BNK trial cycles.
 
 > **As of v1.1.0, this two-phase shape is the default for every new workspace.** A fresh `roksbnkctl up` provisions the cluster phase first, then the trial phase, against separate state directories. Tearing down only the trial — the common iteration case — uses [`roksbnkctl bnk down`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group) and leaves the cluster intact. The unscoped `up` / `down` verbs are now shape-aware composites that delegate to the right phase commands underneath.
