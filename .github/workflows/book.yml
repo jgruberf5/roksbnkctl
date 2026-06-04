@@ -25,11 +25,19 @@ on:
       - 'book/**'
       - '.github/workflows/book.yml'
 
+# peaceiris/actions-mdbook@v2 (its latest major) still declares
+# runs.using: node20 — there is no Node-24 release to bump to yet. Force
+# the runner to execute Node-20 JS actions under Node 24 so this workflow
+# stays off the deprecated runtime. Drop this once actions-mdbook ships a
+# node24 release. (All other actions in the repo are already on node24.)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
