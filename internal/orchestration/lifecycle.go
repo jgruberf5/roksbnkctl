@@ -234,7 +234,7 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	// actionable roksbnkctl-level message when neither a snapshot, a
 	// --var-file, nor an init --var-file-seeded terraform.tfvars.user is
 	// available (validator Issue 3 option (b) + Sprint 19 init --var-file).
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "plan"); err != nil {
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "plan"); err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
@@ -278,7 +278,7 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// only exists on the *second* phase of a `up` and contains no
 	// secrets / user inputs, so it doesn't count as "the user supplied
 	// the inputs" for this gate.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "apply"); err != nil {
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "apply"); err != nil {
 		return err
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
@@ -389,7 +389,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// Option (b): no snapshot, no --var-file, AND no
 	// init --var-file-seeded terraform.tfvars.user → actionable error
 	// before terraform sees a stack of bare missing-required-var lines.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), "trial", "down"); err != nil {
+	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "down"); err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
