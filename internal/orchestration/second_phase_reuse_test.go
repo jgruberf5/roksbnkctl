@@ -265,7 +265,7 @@ func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
 		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
 		"create_roks_transit_gateway = false\n" +
 		"create_roks_registry_cos_instance = false\n" +
-		"deploy_cert_manager = false\n" +
+		"deploy_cert_manager = true\n" +
 		"testing_create_cluster_jumphosts = false\n" +
 		"testing_create_tgw_jumphost = false\n" +
 		"testing_create_client_vpc = false\n"
@@ -286,27 +286,29 @@ func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
 	// fires.
 	const wantNeighbours = "create_roks_transit_gateway = false\n" +
 		"create_roks_registry_cos_instance = false\n" +
-		"deploy_cert_manager = false\n" +
+		"deploy_cert_manager = true\n" +
 		"testing_create_cluster_jumphosts = false\n"
 	if !strings.Contains(got, wantNeighbours) {
 		t.Errorf("Sprint 23 round-1+2 gates are not adjacent to their required neighbours.\n--- want ---\n%s\n--- got ---\n%s",
 			wantNeighbours, got)
 	}
 
-	// Defence in depth: the leak signatures for BOTH Sprint 23 rounds
-	// must NOT survive in any form. The override file is generated, so
-	// any variant of `true` for either flag is a regression. (Header
-	// comments legitimately mention these flags by name, so we don't
-	// grep for commented-out forms — only for active assignments to
-	// true.)
+	// Defence in depth. create_roks_registry_cos_instance must stay false
+	// (Sprint 23 round-1 leak guard — the cluster phase owns the registry
+	// COS). deploy_cert_manager must stay TRUE here: Sprint 27 moved
+	// cert-manager INTO the bnk phase (it's provider-based and can't deploy
+	// during cluster creation), so an active `deploy_cert_manager = false`
+	// in this override is now the regression. (Header comments legitimately
+	// mention these flags by name; an active assignment is `= <value>` with
+	// no leading `#`, so the substring forms below only match real lines.)
 	for _, leak := range []string{
 		`create_roks_registry_cos_instance = true`,
 		`create_roks_registry_cos_instance=true`,
-		`deploy_cert_manager = true`,
-		`deploy_cert_manager=true`,
+		"\ndeploy_cert_manager = false\n",
+		"\ndeploy_cert_manager=false\n",
 	} {
 		if strings.Contains(got, leak) {
-			t.Errorf("override carries Sprint 23 leak signature %q\n--- override ---\n%s", leak, got)
+			t.Errorf("override carries a phase-gating regression %q\n--- override ---\n%s", leak, got)
 		}
 	}
 }
