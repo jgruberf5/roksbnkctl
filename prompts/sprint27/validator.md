@@ -1,26 +1,29 @@
-You are the **validator** agent for Sprint 27 of the roksbnkctl project. Repo root: `/mnt/d/project/roksbnkctl`. Feature branch: `sprint27-bnk-native-k8s` (do NOT merge to main). You run with no memory of prior conversation, AFTER staff has landed the reconciler.
+You are the **validator** agent for Sprint 27 (re-pivoted) of the roksbnkctl project. Repo root: `/mnt/d/project/roksbnkctl`. Feature branch: `sprint27-bnk-native-k8s` (do NOT merge to main). You run AFTER staff lands the terraform changes.
 
-## Read first (in this order)
-1. `prompts/sprint27/README.md` — integrator decisions (SPEED is the primary success metric).
-2. `issues/issue_sprint27_validator.md` — your full issue (Issue 1 hermetic + Issue 2 gated-live speed benchmark).
-3. Staff's landed code + closure in `issues/issue_sprint27_staff.md` — the EXACT API you test against: `internal/k8s/wait.go` (`WaitCRDEstablished`, `WaitDeploymentReady`, `WaitResourceCondition`, `WaitResourceJSONPath`, `WaitJobComplete`), `internal/bnk` (`Reconciler`, `ProgressReporter`), the `bnk status`/`--native` CLI.
-4. The architect's pinned CRD ready-signals + parallelism DAG in `issues/issue_sprint27_architect.md` — so your tests assert the right `.status` and the right ordering invariants.
-5. `scripts/e2e-init-var-file.sh` — the gated-live driver shape (gating, `redact()`, `DRY_RUN`) to mirror.
+## What you're validating: terraform-native BNK (no Go reconciler)
+`helm_release` installs + `alekc/kubectl` `kubectl_manifest` + `wait_for` for the CRs. There is no `internal/bnk` and no fake-client unit surface — validation is terraform-side checks + a gated-live correctness/speed/License-confirm driver.
+
+## Read first
+1. `prompts/sprint27/README.md` — integrator decisions.
+2. `issues/issue_sprint27_validator.md` — your Issues 1 (hermetic terraform checks) + 2 (gated-live).
+3. Staff's landed terraform + closure in `issues/issue_sprint27_staff.md`; the architect spike's confirmed `wait_for` blocks in `issues/issue_sprint27_architect.md`.
+4. `scripts/e2e-init-var-file.sh` — the gated-live driver shape (gating, `redact()`, `DRY_RUN`) to mirror.
 
 ## Tasks
-### Issue 1 — hermetic (client-go fake clients; drive `.status` via the tracker)
-- `internal/k8s/wait_test.go`: each wait helper returns on the real condition, short-circuits when already satisfied, and returns an **actionable timeout naming the resource + last status** on ctx deadline (assert the message shape — acceptance-critical). Use `k8s.io/client-go/dynamic/fake` + `kubernetes/fake`; flip `.status` mid-watch via reactors / `Tracker()`.
-- `internal/bnk/*_test.go`: reconcile against fake clients applies the expected GVK set in valid order + emits expected `ProgressReporter` events (with non-zero `duration`); idempotent short-circuit on a second run; **ordering invariants** on hard serial edges (cert-manager CRDs → issuers; FLO → CNEInstance → License) hold while independent steps may interleave; reverse-order `Destroy`; failure path surfaces the actionable timeout.
+### Issue 1 — hermetic (no cluster)
+- `terraform fmt -check` + `terraform validate` clean on the new/modified modules in BOTH install-modes; `terraform init` resolves `alekc/kubectl` (record the pinned version).
+- Static assertions: the **kubectl-mode path has zero `time_sleep` and zero `local-exec curl`**; the CNEInstance/License `kubectl_manifest`s carry the spike's `wait_for` + `depends_on` on the FLO `helm_release`; the legacy-curl mode still selects the old modules unchanged (baseline intact).
+- The render/flag Go change: `go test ./internal/tf/...` for the install-mode toggle; `go vet` + `staticcheck` clean.
 
 ### Issue 2 — gated-live `scripts/e2e-bnk-native.sh`
-- Correctness: `bnk up --native` against a real cluster → cert-manager/FLO/CNEInstance/License all reach ready (query live `.status`).
-- **Speed benchmark (headline)**: time native `bnk up` vs a terraform-path baseline; report both wall-clocks + delta; **fail if native is not materially faster** (the ~210s terraform `time_sleep` is the floor). Capture the reconciler's per-phase timings.
-- Fast re-deploy: bump the manifest version (or re-run) and time it — assert markedly faster than cold `up`, delta-only.
-- Timeout behavior (short `--timeout` → actionable message + non-zero exit); `bnk down --native` removes everything.
-- Gated on `IBMCLOUD_API_KEY` + existing cluster; honors `DRY_RUN`; redacts secrets; non-zero exit on any miss OR if native isn't faster.
+- Correctness: `bnk up` (kubectl mode) → cert-manager/FLO/CNEInstance/License ready (a clean apply IS the readiness assertion since `wait_for` gates it; also `kubectl get` the live `.status`).
+- **License `status.state` live-confirm** (the spike residual): `kubectl get licenses.k8s.f5net.com -n f5-utils -o jsonpath='{.status.state}'` — confirm it matches the `wait_for` value (`"Verification Complete"`); if not, REPORT the real value for staff to pin.
+- **Speed benchmark (headline)**: time `bnk up` kubectl-mode vs legacy-curl-mode; report both wall-clocks + delta; **fail if kubectl isn't materially faster** (~210s of legacy `time_sleep` is the floor).
+- Fast re-deploy: bump the manifest version, re-`up`, assert delta-only + faster than cold.
+- Teardown: `bnk down` removes the CRs cleanly (no orphaned CRs / stuck namespace finalizers).
+- Gated on `IBMCLOUD_API_KEY` + existing cluster; honors `DRY_RUN`; redacts secrets; non-zero exit on any correctness miss, wrong License literal, or kubectl-not-faster.
 
 ## Critical constraints
-- New test files only; no edits to pre-existing `_test.go`. Hermetic tests use fake clients (no live cluster).
-- If a test reveals a real production bug, document it in your closure for the integrator — do NOT fix staff's code yourself.
-- `go test ./...` PASS; `go vet ./...` + `staticcheck ./...` clean before you close.
-- Do not commit to main; do not tag. Append a `## Closure — validator, <date>` with the sub-case → assertion map, the `go test` output, and (when the integrator runs it) the measured native-vs-terraform wall-clock numbers.
+- New files only (`scripts/e2e-bnk-native.sh`, a small `internal/tf/*_test.go` if staff put the toggle there). No fake-client/`internal/bnk` tests — that layer doesn't exist.
+- If a test reveals a real bug, document it in your closure for the integrator — don't fix staff's code.
+- Do not commit to main; do not tag. Append a `## Closure — validator, <date>` with the checks, the gated-live sub-case map, and (when the integrator runs it) the measured kubectl-vs-legacy wall-clocks + the confirmed License literal. Report back.

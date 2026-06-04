@@ -1,177 +1,130 @@
-# Sprint 27 — architect issues (helm strategy, CRD ready-signal schemas, watch-API design, book)
+# Sprint 27 — architect issues (terraform module restructure design + book) — terraform-native via alekc/kubectl
 
-> **Sprint 27 frame.** Replace the terraform-driven BNK-phase Kubernetes
-> work (`null_resource` + `local-exec` + raw `curl` server-side-apply +
-> static `time_sleep`) with a native, watch-driven reconciler inside
-> roksbnkctl (`internal/bnk`, building on `internal/k8s`). Staff
-> (`issue_sprint27_staff.md`) owns the Go. This issue owns the **design
-> inputs staff codes against** — the helm strategy, the exact
-> ready-signal for each CRD the watches gate on, and the watch-helper API
-> shape — plus the operator-facing prose.
+> **Sprint 27 frame (re-pivoted 2026-06-04).** Replace the terraform-driven
+> BNK-phase Kubernetes work (`null_resource` + `local-exec` + raw `curl`
+> server-side-apply + static `time_sleep`) — but **terraform-natively**, not
+> with a Go reconciler. Per the architect spike below (**FINAL VERDICT: GO**),
+> the CR layer moves to the **`alekc/kubectl` `kubectl_manifest` + `wait_for`**
+> provider (CRs as real terraform resources, in state, watch `.status` to
+> ready, no plan-time-CRD requirement) and the chart installs move to
+> `helm_release`. There is **no custom provider and no in-CLI Go reconciler**.
+> This issue owns the **terraform module-restructure design** staff implements,
+> plus the operator-facing prose. The CRD ready-signals are **already confirmed**
+> (see "Spike rounds 1 & 2" below).
 
-`Status`: open
+`Status`: open (re-pivoted)
+
+> **Re-pivot note.** The original architect issues (Go-reconciler handoff
+> boundary, a watch-helper API, an errgroup parallelism DAG) are **obsolete** —
+> superseded by the GO spike. The reframed deliverables below are the
+> terraform-native ones. The spike sections (rounds 1 & 2) are the binding
+> decision record and stay verbatim.
 
 ---
 
-## Issue 1 — Terraform↔Go handoff boundary (helm decision RESOLVED)
-
-**Severity**: high (the boundary is a BLOCKING input — staff can't structure
-the install layer vs the Go CR layer without it)
-**Status**: open
-
-**Decision (integrator 2026-06-04):** Helm stays in terraform. Convert the
-three chart installs (cert-manager, f5-lifecycle-operator, f5-bnk-cis) from
-`null_resource` + `local-exec helm` to the proper **`helm_release` provider**
-with `wait = true` (real readiness, no `time_sleep`); FAR version-discovery
-stays terraform-side. **No `helm.sh/helm/v3` Go dependency.** Native Go
-replaces ONLY the `curl`-applied custom resources + their `time_sleep` gates.
-
-Your job is to draw the **exact handoff boundary** so the BNK phase is a clean
-two-stage flow (terraform installs → Go reconciles CRs) with no ping-pong:
-
-1. For each currently-`curl`'d resource in the four modules, classify it as
-   **terraform (helm prerequisite)** or **Go (post-install CR)**. The hard
-   cases to get right:
-   - **Namespaces + secrets** (`f5-utils`/`flo`, `far-secret`,
-     `f5-bigip-ctlr-login`): must exist BEFORE the charts (image-pull secret;
-     `helm_release wait=true` would block on `ImagePullBackOff` otherwise) →
-     terraform `kubernetes_namespace`/`kubernetes_secret`. Confirm.
-   - **cert-manager `ClusterIssuer`/`Certificate`/CA issuer**: FLO's helm
-     values *reference* the issuer, but does FLO consume it at **install**
-     time (must pre-exist → terraform) or only at **runtime** when it issues
-     certs during CNEInstance reconcile (can be Go, post-handoff)? This
-     determines whether they're terraform or Go. Verify against FLO chart
-     behavior — do not guess.
-   - **NADs, SCC bindings, node-labeler Job, CNEInstance, License**: post-
-     install → Go.
-2. Confirm there is **no resource that a `helm_release` depends on which is
-   produced by the Go layer** (that would force terraform→Go→terraform
-   ping-pong). If one exists, push it into terraform.
-3. Recommend how to keep the **legacy `curl`-based modules intact as the
-   benchmark baseline** while adding the new helm_release path (flag-selected
-   install-mode variable vs a parallel slim module set) — the validator times
-   native vs legacy, so both must run.
-
-Output: the resource-by-resource boundary table + the install-DAG vs Go-DAG
-split, in your closure.
-
-## Issue 2 — CRD ready-signal schemas (BLOCKING input to the watches)
+## Issue 1 — Terraform module restructure design (BLOCKING input to staff)
 
 **Severity**: high
 **Status**: open
 
-The whole point of the sprint is to **watch real status instead of sleeping**.
-For each gated resource, pin the exact field/condition that means "ready" so
-staff's `internal/k8s/wait.go` watches the right thing. Confirm against the
-live CRDs (read the CRD `openAPIV3Schema` / `kubectl get <cr> -o yaml` on a
-running cluster, or the upstream CRD definitions) — do NOT guess:
+Design the new terraform structure staff implements (it's all terraform now —
+no Go-side boundary, so the old "handoff/ping-pong" problem is gone):
 
-| Resource | GVR | Ready signal to confirm |
-|----------|-----|-------------------------|
-| CustomResourceDefinition | `apiextensions.k8s.io/v1` | `status.conditions[type=Established].status==True` |
-| cert-manager `Certificate` | `cert-manager.io/v1` | `status.conditions[type=Ready].status==True` |
-| cert-manager `ClusterIssuer` | `cert-manager.io/v1` | `status.conditions[type=Ready].status==True` |
-| Deployment (cert-manager, FLO, CIS) | `apps/v1` | `availableReplicas==spec.replicas` & current `observedGeneration` |
-| **CNEInstance** | `k8s.f5.com/v1` | **unknown — confirm**: `.status.phase`? a `conditions[]`? what value == deployed? |
-| **License** | `k8s.f5net.com/v1` | **unknown — confirm**: `.status.phase`/`.status.licensed`? what value == active? |
-| node-labeler `Job` | `batch/v1` | `status.conditions[type=Complete].status==True` |
+1. **Install layer**: which resources become `helm_release` (cert-manager, FLO,
+   CIS — `wait = true`) and which helm *prerequisites* become `kubernetes`
+   provider resources (`f5-utils`/`flo` namespaces, `far-secret`/
+   `f5-bigip-ctlr-login` secrets — they must precede the charts or
+   `helm_release wait=true` blocks on `ImagePullBackOff`). Specify provider
+   config wiring from the existing `ibm_container_cluster_config`.
+2. **CR layer**: the list of `kubectl_manifest` resources (ClusterIssuer/
+   Certificate/CA-issuer, the 2 NADs, the SCC `ClusterRoleBinding`s, node-labeler
+   Job, CNEInstance, License) with their `wait_for` blocks (from the spike) and
+   their `depends_on` edges (CNEInstance/License → FLO `helm_release` for
+   CRD-before-CR). Confirm cert-manager CRs depend on the cert-manager
+   `helm_release`.
+3. **Install-mode flag**: the cleanest way to keep the legacy `curl` modules
+   intact as the validator's benchmark baseline while adding the new path —
+   a `bnk_cr_mode = "kubectl" | "legacy_curl"` variable gating `count`/`for_each`
+   on the old vs new resources, vs a parallel slim module. Recommend one.
+4. **`required_providers`**: where `alekc/kubectl` is declared, and the
+   `terraform init` / air-gap implication for roksbnkctl's embedded terraform.
 
-The CNEInstance and License ready-signals are the two unknowns that matter
-most (today terraform never checks them — it just sleeps). Get these right;
-they define `WaitResourceCondition` vs `WaitResourceJSONPath` usage in staff
-Issue 1.
+Output: the resource-by-resource install-vs-CR table + the `depends_on` graph +
+the install-mode-flag recommendation, in your closure.
 
-## Issue 3 — Watch-helper API shape + reconciler progress contract
+## Issue 2 — CRD ready-signals — DONE (see Spike rounds 1 & 2)
 
-**Severity**: medium
+**Severity**: high
+**Status**: resolved
+
+Confirmed in the spike (rounds 1 & 2 below), read from the FAR-shipped CRDs:
+- **CNEInstance** (`k8s.f5.com/v1`): `status.conditions[type=Available]==True`
+  → `wait_for { condition { type="Available" status="True" } }`.
+- **License** (`k8s.f5net.com/v1`): `status.state` (CPCL; printer column;
+  +`status.conditions[]` fallback) → `wait_for { field { key="status.state"
+  value="Verification Complete" } }` — **confirm the literal on a live licensed
+  cluster** (validator), the one residual.
+- cert-manager `Certificate`/`ClusterIssuer`: `conditions[type=Ready]==True`;
+  node-labeler `Job`: `conditions[type=Complete]==True`.
+
+## Issue 3 — Terraform ordering / parallelism review
+
+**Severity**: medium (supports the speed goal)
 **Status**: open
 
-Co-design (with staff) the small surface in `internal/k8s/wait.go` and the
-`internal/bnk` progress-reporter interface so the CLI's live status and the
-`bnk status` command have a stable contract. Recommend client-go's
-`tools/watch` (`watchtools.UntilWithSync`) over hand-rolled loops, and a
-`ProgressReporter` event shape (`{phase, resource, state, message, duration}`)
-that both stderr rendering and validator's hermetic assertions consume (note
-the `duration` field — see Issue 5). Keep it small — this is an API-review
-deliverable, not Go you write.
-
-## Issue 5 — Safe-parallelism dependency DAG (BLOCKING input to the speed work)
-
-**Severity**: high (speed is the sprint's primary motivation — see staff
-Issue 3)
-**Status**: open
-
-The watch-based design exists to make the BNK phase **fast** (the integrator's
-stated goal: deploy + test new versions in a tight loop). Staff parallelizes
-independent steps via `errgroup`; to do that safely they need an authoritative
-**dependency DAG** — which steps genuinely depend on which, and which can run
-concurrently. Today terraform serializes almost everything via `depends_on`;
-much of that ordering is conservative, not required.
-
-Produce the DAG: for every reconcile step (namespaces, the 3 secrets, the 2
-NADs, self-signed issuer + ext-ca Certificate + CA issuer, cert-manager
-install, FLO/CIS installs, the SCC bindings, node-labeler Job, CNEInstance,
-License, FAR version discovery), state its **true** prerequisites and what it
-can run alongside. Call out the hard serial edges (cert-manager CRDs
-Established → issuers; FLO Deployment Ready → CNEInstance; CNEInstance CRD
-Established → License) versus the wide parallel fan-outs (namespaces ∥;
-secrets ∥ NADs ∥ issuer; node-labeler Job ∥ helm installs). Flag any ordering
-that LOOKS required in terraform but isn't (e.g. an SCC binding that only
-needs its namespace, not the whole FLO install).
-
-Also recommend: a sensible default concurrency cap, per-watch timeout
-defaults, and which steps are worth caching across runs (FAR OCI pull keyed by
-version) for the fast-re-deploy path. This DAG is what lets staff turn ~210s
-of serial sleep into a few seconds of parallel watching.
+Speed depends partly on terraform parallelizing independent resources. Today the
+modules serialize almost everything via `depends_on`; much of that is
+conservative, not required. Review which `depends_on` edges are **genuinely**
+needed (cert-manager `helm_release` → cert CRs; FLO `helm_release` → CNEInstance
+→ License) vs which can drop so terraform's default `-parallelism` applies NADs,
+secrets, SCC bindings, and issuers concurrently. Flag any conservative edge to
+remove. (This replaces the obsolete errgroup DAG — terraform does the
+parallelism; we just stop over-serializing it.)
 
 ## Issue 4 — Book authoring
 
 **Severity**: low
 **Status**: open
 
-- Rewrite the BNK-phase chapter: the deployment now runs as a native
-  watch-driven reconcile (cert-manager → FLO → CNEInstance → License), what
-  each phase waits on, and how `bnk status` reports live state. Explain the
-  `--native` / legacy-terraform flag during the transition.
-- A concept note: "why we moved the BNK phase off terraform local-exec" —
-  eventual consistency, real readiness via watches vs. fixed sleeps, status
-  reporting. Cross-link the troubleshooting chapter (timeouts now name the
-  resource + last status).
-- Note explicitly that the IBM IAM trusted-profile + COS reads stay in
-  terraform.
-- Mark any transcript output illustrative (tech-writer re-captures).
+- Rewrite the BNK-phase chapter: the deployment is now terraform-native —
+  `helm_release` installs + `kubectl_manifest` + `wait_for` for the CRs, gating
+  on real `.status` (CNEInstance `Available`, License `state`) instead of
+  `time_sleep`. Explain the install-mode flag (kubectl vs legacy-curl) during
+  the transition and that the CRs are now real terraform state (`plan`/`destroy`/
+  drift).
+- A concept note: "why we retired the BNK `null_resource`/`curl`/`sleep`" —
+  eventual consistency, real readiness via `wait_for` vs fixed sleeps, the
+  plan-time-CRD problem that `alekc/kubectl` solves, the speed win.
+- Note: IBM IAM trusted-profile + COS reads stay in terraform; the new
+  `alekc/kubectl` provider dependency (+ air-gap mirror caveat).
+- Mark transcript output illustrative (tech-writer re-captures).
 
 ### Scope guards
-- **No Go** — `internal/k8s`, `internal/bnk`, `internal/orchestration`,
-  `internal/cli` are staff's. You ship decisions + schemas + prose.
-- Verify CRD ready-signals against real definitions, not guesses; cite the
-  source.
+- **No Go, no terraform implementation** — staff implements the HCL. You ship
+  the design + prose. Ready-signals are already verified (spike); don't re-do.
 - mdbook builds (docker image) clean; verify cross-links.
 
 ### Acceptance criteria
-1. Terraform↔Go handoff boundary drawn: a resource-by-resource
-   terraform(install/prereq)-vs-Go(post-install CR) table, the
-   no-ping-pong check, and the legacy-baseline-preservation recommendation.
-2. Every gated resource's ready-signal confirmed + cited (especially
-   CNEInstance + License).
-3. Watch-helper API + progress-event shape (incl. `duration`) agreed with
-   staff.
-4. Safe-parallelism dependency DAG produced (Issue 5) — hard serial edges vs
-   parallel fan-outs, concurrency cap, watch-timeout defaults, cacheable
-   steps.
-5. BNK-phase chapter + concept note authored; IBM-IAM-stays-in-terraform
-   noted; the speed motivation explained.
+1. Terraform module-restructure design produced: install-vs-CR table,
+   `depends_on` graph, install-mode-flag recommendation, `required_providers` +
+   air-gap note.
+2. (Ready-signals — already done in the spike.)
+3. Conservative-`depends_on` review delivered (which edges to drop for
+   parallelism).
+4. BNK-phase chapter + concept note authored; IBM-IAM + the new provider
+   dependency noted.
 
 ### Files affected
-- This ledger / `resolved_sprint27_architect.md` (decisions + schemas).
+- This ledger (design output appended to the spike).
 - `book/src/**` (BNK-phase chapter, concept note), `book/src/SUMMARY.md` only
   if a new entry is added.
 
 ### Related
-- `issues/issue_sprint27_staff.md` Issues 1-3 — consume these decisions.
-- `terraform/modules/{flo,cne_instance,license,cert_manager}/` — the current
-  behavior being ported; the CR specs to read.
-- `internal/k8s/client.go` / `apply.go` — the reused client surface.
+- `issues/issue_sprint27_staff.md` — consumes this design + the spike's
+  `wait_for` blocks.
+- `terraform/modules/{flo,cne_instance,license,cert_manager}/` — the curl bodies
+  being replaced (specs reused verbatim).
+- alekc/kubectl: `registry.terraform.io/providers/alekc/kubectl/latest`.
 
 ---
 
