@@ -50,7 +50,7 @@ jobs:
     # workflow_dispatch + release-branch pushes still run.
     if: github.repository == 'jgruberf5/roksbnkctl'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Preflight — required secrets present
         # Fail-fast (early-exit with a clear message) if a required secret is
@@ -68,7 +68,7 @@ jobs:
           IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
           E2E_TFVARS_CONTENT: ${{ secrets.E2E_TFVARS_CONTENT }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # Track go.mod's `go` directive — same as ci.yml. The
           # testcontainers-go transitive otel deps require Go 1.25+.
@@ -131,7 +131,7 @@ jobs:
       - name: Upload e2e logs
         # Run even on failure so the integrator can investigate.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-full-logs-${{ github.run_id }}
           path: /tmp/roksbnkctl-e2e*/
