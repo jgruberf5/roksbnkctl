@@ -9,14 +9,14 @@
 > any speed claim traces to the validator's measured benchmark. Ends on a
 > GREEN/RED verdict.
 
-`Status`: open (re-pivoted)
+`Status`: resolved (drift sweep GREEN; integrator live-verify gates merge)
 
 ---
 
 ## Issue 1 — Drift sweep over the integrated terraform-native BNK tree
 
 **Severity**: low
-**Status**: open
+**Status**: resolved
 
 Build the integrated binary, then sweep:
 
