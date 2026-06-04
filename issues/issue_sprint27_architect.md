@@ -12,7 +12,7 @@
 > plus the operator-facing prose. The CRD ready-signals are **already confirmed**
 > (see "Spike rounds 1 & 2" below).
 
-`Status`: open (re-pivoted)
+`Status`: resolved (spike + design + book delivered; integrator live-verify gates merge)
 
 > **Re-pivot note.** The original architect issues (Go-reconciler handoff
 > boundary, a watch-helper API, an errgroup parallelism DAG) are **obsolete** —
@@ -25,7 +25,7 @@
 ## Issue 1 — Terraform module restructure design (BLOCKING input to staff)
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 Design the new terraform structure staff implements (it's all terraform now —
 no Go-side boundary, so the old "handoff/ping-pong" problem is gone):
@@ -70,7 +70,7 @@ Confirmed in the spike (rounds 1 & 2 below), read from the FAR-shipped CRDs:
 ## Issue 3 — Terraform ordering / parallelism review
 
 **Severity**: medium (supports the speed goal)
-**Status**: open
+**Status**: resolved
 
 Speed depends partly on terraform parallelizing independent resources. Today the
 modules serialize almost everything via `depends_on`; much of that is
@@ -84,7 +84,7 @@ parallelism; we just stop over-serializing it.)
 ## Issue 4 — Book authoring
 
 **Severity**: low
-**Status**: open
+**Status**: resolved
 
 - Rewrite the BNK-phase chapter: the deployment is now terraform-native —
   `helm_release` installs + `kubectl_manifest` + `wait_for` for the CRs, gating

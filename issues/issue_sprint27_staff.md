@@ -26,7 +26,7 @@
 > + helm versions and applies those, watching readiness. Terraform *is* the
 > delta engine, so this is *less* code than a bespoke reconciler.
 
-`Status: open` (re-pivoted; not yet dispatched).
+`Status: resolved` (terraform-native implementation landed; integrator live-verify gates merge).
 
 ### Locked decisions (integrator, do NOT relitigate)
 - **GO on `alekc/kubectl`** for the CR layer (architect spike GO). No custom
@@ -45,7 +45,7 @@
 ## Issue 1 — Terraform install layer: `helm_release` + `kubernetes` provider
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 Per the architect's boundary (`issue_sprint27_architect.md` Issue 1):
 - Convert cert-manager / f5-lifecycle-operator / f5-bnk-cis from
@@ -63,7 +63,7 @@ Per the architect's boundary (`issue_sprint27_architect.md` Issue 1):
 ## Issue 2 — Terraform CR layer: `alekc/kubectl` `kubectl_manifest` + `wait_for`
 
 **Severity**: high (the core retirement of `curl` + `time_sleep`)
-**Status**: open
+**Status**: resolved
 
 Add `alekc/kubectl` to each relevant module's `required_providers` and replace
 every `null_resource` + `curl` CR apply (and its `time_sleep`) with a
@@ -90,7 +90,7 @@ provider's finalizer-aware delete handle teardown.
 ## Issue 3 — Provider wiring, install-mode flag, roksbnkctl integration
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 - **Provider availability**: roksbnkctl drives terraform via terraform-exec;
   `terraform init` fetches `alekc/kubectl` from the registry automatically.
@@ -114,7 +114,7 @@ provider's finalizer-aware delete handle teardown.
 ## Issue 4 — Speed verification hooks
 
 **Severity**: medium (speed is the primary motivation)
-**Status**: open
+**Status**: resolved
 
 - Ensure the new path has **zero `time_sleep`** in the kubectl path (grep the
   new modules — any remaining `time_sleep` is a bug).

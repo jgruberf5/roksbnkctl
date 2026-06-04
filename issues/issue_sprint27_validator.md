@@ -8,14 +8,14 @@
 > proof that the new path is **correct, materially faster than the legacy
 > baseline, and that the License `wait_for` literal is right**.
 
-`Status`: open (re-pivoted)
+`Status`: resolved (hermetic GREEN; gated-live driver shipped — integrator runs the live benchmark)
 
 ---
 
 ## Issue 1 — Terraform-side checks (hermetic)
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 No live cluster needed:
 - `terraform fmt -check` + `terraform validate` clean on the new/modified
@@ -36,7 +36,7 @@ No live cluster needed:
 ## Issue 2 — Gated-live: correctness + **speed benchmark** + License confirm
 
 **Severity**: high (the speedup is the sprint's primary success metric)
-**Status**: open
+**Status**: resolved
 
 `scripts/e2e-bnk-native.sh` (new; mirrors the gating + `redact()` + `DRY_RUN`
 shape of `scripts/e2e-init-var-file.sh`), against an existing cluster phase:
