@@ -81,8 +81,20 @@ const appliedReplayFile = ".applied-replay.tfvars"
 //   - run `roksbnkctl init --var-file <path> -w <ws>` once to seed the
 //     workspace-persistent override — `hasUserTFVars` is true on every
 //     subsequent verb against that workspace.
-func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, hasUserTFVars bool, phase, verb string) error {
-	if len(replayed) > 0 || len(userVarFiles) > 0 || hasUserTFVars {
+// configRendersComplete (Sprint 27) is true when the workspace's config.yaml
+// carries a `prefix:` — i.e. it is a Sprint 26 prefix-driven workspace, whose
+// `internal/tf/vars.go:RenderTFVars` emits a COMPLETE tfvars (region, resource
+// group, every prefix-derived resource name, and the create/deploy toggles).
+// Combined with `ibmcloud_api_key` (always supplied via the TF_VAR env var,
+// never a tfvars file) and the upstream module defaults for everything else,
+// that auto-rendered `state*/terraform.tfvars` is self-sufficient — so a bare
+// `-w <ws>` plan/apply/down works WITHOUT a snapshot or `--var-file`. Without
+// it (legacy empty-prefix workspaces render the old sparse tfvars), the gate
+// still fires. This closes the gap where a prefix workspace whose first `up`
+// failed (no applied snapshot written) and that was init'd without
+// `--var-file` (no terraform.tfvars.user) could not be `down`'d at all.
+func RequireSnapshotOrVarFile(replayed []string, userVarFiles []string, hasUserTFVars, configRendersComplete bool, phase, verb string) error {
+	if len(replayed) > 0 || len(userVarFiles) > 0 || hasUserTFVars || configRendersComplete {
 		return nil
 	}
 	return fmt.Errorf(

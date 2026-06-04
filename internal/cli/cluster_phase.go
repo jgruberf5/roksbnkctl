@@ -412,7 +412,7 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 			userVF = append(userVF, vf)
 		}
 	}
-	if err := orchestration.RequireSnapshotOrVarFile(appliedVF, userVF, tfws.HasUserTFVars(), "cluster", "cluster down"); err != nil {
+	if err := orchestration.RequireSnapshotOrVarFile(appliedVF, userVF, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "cluster", "cluster down"); err != nil {
 		return err
 	}
 	varFiles = append(append([]string{}, appliedVF...), varFiles...)
