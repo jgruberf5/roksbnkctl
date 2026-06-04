@@ -65,6 +65,73 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 
 For the full list with types and per-field descriptions, see `terraform/variables.tf` directly — link [here](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf) — or the auto-generated [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md).
 
+## Resource naming & collision avoidance
+
+> Applies to workspaces created with a **prefix** (the default since `v1.8.0`). Pre-`v1.8.0` workspaces — those whose `config.yaml` has no `prefix:` field — keep the old behaviour: a sparse `terraform.tfvars` with no name variables, so every account-scoped resource falls through to the upstream module defaults (`tf-openshift-cluster`, `tf-cluster-vpc`, `tf-tgw`, …). See [§"Backward compatibility"](#backward-compatibility) below.
+
+Before `v1.8.0`, `roksbnkctl` rendered a name-less `terraform.tfvars`, so every workspace inherited the **same** upstream module default names. Two workspaces that both created infrastructure in the same IBM Cloud account collided at the account level — the second `up` hit `Provided Name … is not unique` / `gateway with the same name already exists`. (This is the collision class that stranded the `canada-roks-*` resources behind the 2026-05-28 cleanup incident.)
+
+`v1.8.0` closes that hole: a single **workspace prefix** becomes the base for every account-scoped IBM Cloud resource name. `roksbnkctl` derives the full name set from the prefix, validates each name against its resource type's length/charset limit at `init` time, and renders a complete `terraform.tfvars` that names every resource explicitly.
+
+### Prefix → name derivation
+
+Give a workspace the prefix `acme-eu`, and `roksbnkctl` generates this name set:
+
+| Resource | tfvars variable | Derived name (`prefix = acme-eu`) | Suffix |
+|---|---|---|---|
+| ROKS/OpenShift cluster | `openshift_cluster_name` | `acme-eu` | *(none — cluster name **is** the prefix)* |
+| Cluster VPC | `roks_cluster_vpc_name` | `acme-eu-cluster-vpc` | `-cluster-vpc` |
+| Registry COS instance | `roks_cos_instance_name` | `acme-eu-registry-cos` | `-registry-cos` |
+| Transit Gateway | `roks_transit_gateway_name` | `acme-eu-tgw` | `-tgw` |
+| Client VPC (TGW jumphost) | `testing_client_vpc_name` | `acme-eu-client-vpc` | `-client-vpc` |
+| TGW jumphost | `testing_tgw_jumphost_name` | `acme-eu-jh-tgw` | `-jh-tgw` |
+| Per-zone cluster jumphosts | `testing_cluster_jumphost_name_prefix` | `acme-eu-jh` *(module appends `-<zone>`, e.g. `acme-eu-jh-us-south-1`)* | `-jh` |
+
+The names are **deterministic** from the prefix, so `roksbnkctl` re-derives them on every `up` / `plan` / `apply` — regeneration is always safe, and the rendered `terraform.tfvars` is a faithful record of exactly what the tool asked IBM Cloud to create.
+
+### Why the cluster name takes no suffix
+
+The cluster name deliberately **equals the prefix** with no suffix appended. This is load-bearing, not an oversight:
+
+- The ROKS/OpenShift cluster name has the **tightest** limit of any resource here — **35 characters** (see the table below). Every other name is an IS resource capped at **63**.
+- By making the cluster name *be* the prefix, the prefix's own length limit becomes that same 35-character cluster limit. A prefix that's short enough to be a valid cluster name is automatically short enough that **every** suffixed name fits inside 63 — the worst case is the zone-appended cluster jumphost (`<prefix>-jh-us-south-1`), which at a 35-char prefix reaches only 49 of its 63-char budget.
+
+> **Do not "tidy" the cluster name into `<prefix>-cluster`.** Adding a suffix to the cluster name would shrink the usable prefix length (the binding 35-char limit would now have to absorb `-cluster` too) without buying anything. The no-suffix cluster name is what lets a single prefix-length check guarantee the whole name set is valid.
+
+### The length / charset limits
+
+`roksbnkctl` validates the prefix — and every name it derives — against these per-resource-type constraints. They are pinned from IBM Cloud's own validators so the tool rejects a bad prefix at `init` time rather than letting IBM Cloud reject it minutes into an `apply`:
+
+| Resource kind | Max length | Charset rule | Source |
+|---|---|---|---|
+| ROKS / OpenShift cluster name | **35** | Start with a letter; letters, digits, and hyphen `-`; ≤ 35 chars | IBM Cloud provider docs, `ibm_container_cluster` / `ibm_container_vpc_cluster` `name` argument ("must start with a letter, can contain letters, numbers, and hyphen (-), and must be 35 characters or fewer"). |
+| IS resource — VPC, VSI, Transit Gateway, SSH key | **63** | Start with a lowercase letter; lowercase letters, digits, and hyphen `-`; must end alphanumeric; ≤ 63 chars (regex `^[a-z][-a-z0-9]*$` + ends `[a-z0-9]`) | terraform-provider-ibm `ValidateISName` (`ibm/validate/validators.go`). |
+| COS / Resource Controller instance | **180** | Permissive server-side; `roksbnkctl` reuses the lowercase-alphanumeric IS subset since the name derives from an already-validated lowercase prefix | IBM Cloud Resource Controller create-instance `name` field ("must be 180 characters or less"). |
+
+Because the prefix flows into all three, `roksbnkctl` enforces the **strictest** applicable rule on the prefix label itself (lowercase, start with a letter, `[a-z0-9-]`, no trailing hyphen) and the tightest **length** (35, from the cluster). An over-long prefix is rejected with an actionable message naming the offending resource, its computed length, its limit, and the maximum allowable prefix length — and `init` re-prompts (TTY) or hard-errors (non-TTY). There is **no silent truncation or hashing**.
+
+### Namespaces are NOT prefixed
+
+Kubernetes namespaces — `cert_manager_namespace` (`cert-manager`), `flo_namespace` (`f5-bnk`), `flo_utils_namespace` (`f5-utils`) — keep their conventional fixed values and are **never** prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the **same** cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only **account-scoped** IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.
+
+### Overriding a generated name
+
+Every generated name is just a value in the rendered `terraform.tfvars`, so the normal [layering rule](#the-layering-rule) overrides it. To pin a specific name (e.g. to adopt a VPC that doesn't follow the prefix convention), set the matching variable in `~/.roksbnkctl/<ws>/terraform.tfvars.user` or pass it via `--var-file`:
+
+```bash
+# Override just the Transit Gateway name for this workspace, permanently
+echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
+  >> ~/.roksbnkctl/<ws>/terraform.tfvars.user
+```
+
+The `.user` file (or `--var-file`) layers **after** the generated `terraform.tfvars`, so the override wins. This is the same Sprint 19 override path documented in [§"The layering rule"](#the-layering-rule) — the prefix machinery doesn't change it. Declining a resource at `init` time and supplying an existing one is the cleaner path for adoption; see [Chapter 12 §"Worked example"](./12-workspace-config.md#worked-example-bootstrap-a-workspace-from-scratch).
+
+### Backward compatibility
+
+The change is additive. A pre-`v1.8.0` `config.yaml` has no `prefix:` field; `roksbnkctl` detects the empty prefix and renders the **old sparse `terraform.tfvars`** unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run `roksbnkctl init -w <ws>` and answer the prefix prompt.
+
+> **Detection complement.** Prefix-derived naming *prevents* the collisions described above. The forward-looking `roksbnkctl doctor --orphan-sweep` diagnostic (tracked for a later release — see `issues/issue_sprint25_staff.md`) *detects* already-stranded resources by deriving the same `<prefix>-cluster-vpc` / `<prefix>-tgw` formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.
+
 ## The layering rule
 
 When `roksbnkctl up` (or `plan`/`apply`/`destroy`) invokes Terraform, it composes three layers of tfvars in this order:

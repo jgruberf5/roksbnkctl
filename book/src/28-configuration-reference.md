@@ -20,8 +20,10 @@ The file is hand-editable; YAML is parsed with [`gopkg.in/yaml.v3`](https://pkg.
 ## Top-level structure
 
 ```yaml
+prefix:          # optional (since v1.8.0); workspace name-prefix base
 ibmcloud:        # required
 cluster:         # required
+resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
@@ -31,6 +33,18 @@ exec:            # optional; per-tool default-backend map
 ```
 
 The order of the top-level keys in the file doesn't matter; YAML is a mapping. The order shown above is the canonical render order produced by `roksbnkctl init`.
+
+## `prefix:` field
+
+```yaml
+prefix: acme-eu
+```
+
+| Field | Type | Default | Allowed | Notes |
+|---|---|---|---|---|
+| `prefix` | string | (empty) | lowercase RFC-1123-style label: starts with a letter, `[a-z0-9-]`, no trailing hyphen, **≤ 35 chars** | *(since `v1.8.0`)* The base for every account-scoped IBM Cloud resource name. `roksbnkctl` derives the cluster, VPCs, Transit Gateway, COS, and jumphost names from it and renders them into `terraform.tfvars`. The 35-char cap is the ROKS cluster-name limit (the tightest); a valid prefix guarantees every derived name fits its own limit. **Empty / omitted ⇒ legacy behaviour**: the sparse, name-less render that falls through to upstream module defaults (backward-compatible). See [Chapter 13 §"Resource naming & collision avoidance"](./13-terraform-variables.md#resource-naming--collision-avoidance) for the full derivation table and limits. |
+
+The derived names are deterministic, so they are re-rendered on every `up` / `plan` / `apply`; the `prefix` is the single source of truth. To pin one generated name to something off-convention, override the matching variable via `terraform.tfvars.user` or `--var-file` — the override layers last and wins.
 
 ## `ibmcloud:` block
 
@@ -65,6 +79,40 @@ cluster:
 | `name` | string | — (prompted by `init`) | RFC 1123 DNS label | The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator. |
 | `openshift_version` | string | `4.18` | any version IBM Cloud's catalog accepts | Pinned to a minor (`4.18`) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for "latest". |
 | `workers_per_zone` | integer | `1` | 1+ | Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone. |
+
+## `resources:` block
+
+```yaml
+resources:
+  transit_gateway:   { create: true }
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: false }
+  client_vpc:        { create: false, existing: my-shared-client-vpc }
+```
+
+*(since `v1.8.0`)* Per-resource create/adopt toggles, written by the `init` interview. Each key is a `{create, existing}` pair: `create: true` provisions a new prefix-named resource; `create: false` declines it and (when a still-enabled resource depends on it) `existing:` names the pre-existing resource to consume instead.
+
+| Sub-block | `create` default | `existing` consumed by | Renders into |
+|---|---|---|---|
+| `transit_gateway` | `true` | `create_roks_transit_gateway`; `existing` → `roks_transit_gateway_name` when the TGW jumphost needs an existing TGW | `create_roks_transit_gateway`, `roks_transit_gateway_name` |
+| `registry_cos` | `true` | `create_roks_registry_cos_instance`; `existing` → `roks_cos_instance_name` | `create_roks_registry_cos_instance`, `roks_cos_instance_name` |
+| `cert_manager` | `true` | — | `install_cert_manager` |
+| `bnk` | `true` | — | `deploy_bnk` |
+| `tgw_jumphost` | `true` | — | `testing_create_tgw_jumphost`, `testing_tgw_jumphost_name` |
+| `cluster_jumphosts` | `false` | — | `testing_create_cluster_jumphosts`, `testing_cluster_jumphost_name_prefix` |
+| `client_vpc` | `false` (created on demand for the TGW jumphost) | `existing` → `testing_client_vpc_name` when not creating one | `testing_create_client_vpc`, `testing_client_vpc_name` |
+
+Each entry:
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `create` | bool | per the table above | `true` provisions a new, prefix-named resource. `false` declines it. |
+| `existing` | string | (empty) | The name or ID of a pre-existing resource to adopt — only consumed when `create: false` **and** a still-enabled resource depends on this one (e.g. the TGW jumphost needs a TGW). Renders into the resource's `*_name` variable with the matching `create_* = false` toggle. |
+
+The block is **additive and optional**: an omitted `resources:` block (any pre-`v1.8.0` `config.yaml`) loads unchanged, and a fresh `init` writes the full block with sensible defaults. The cluster itself is **not** in this block — its create/adopt toggle is the existing `cluster.create` + `cluster.name` pair (Name doubles as the existing cluster id/name when `create: false`). See [Chapter 13 §"Resource naming & collision avoidance"](./13-terraform-variables.md#resource-naming--collision-avoidance).
 
 ## `bnk:` block
 
@@ -222,6 +270,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 
 | Path | Type | Default | Notes |
 |---|---|---|---|
+| `prefix` | string | (empty ⇒ legacy sparse render) | Workspace name-prefix base; ≤ 35 chars, lowercase label. Since `v1.8.0`. |
 | `ibmcloud.region` | string | (prompted) | IBM Cloud region (`ca-tor`, `us-south`, …). |
 | `ibmcloud.resource_group` | string | `default` | Resource group name. |
 | `ibmcloud.api_key_source` | string | (chain) | `env` \| `keychain` \| `config` \| `prompt`. |
@@ -230,6 +279,16 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.name` | string | (prompted) | Cluster name. |
 | `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
+| `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
+| `resources.transit_gateway.existing` | string | (empty) | Existing TGW name/ID when `create: false` and the TGW jumphost needs it. |
+| `resources.registry_cos.create` | bool | `true` | Create the registry COS instance vs adopt an existing one. |
+| `resources.registry_cos.existing` | string | (empty) | Existing COS instance name when `create: false`. |
+| `resources.cert_manager.create` | bool | `true` | Install cert-manager (`install_cert_manager`). |
+| `resources.bnk.create` | bool | `true` | Deploy BIG-IP Next for Kubernetes (`deploy_bnk`). |
+| `resources.tgw_jumphost.create` | bool | `true` | Create the TGW test jumphost. |
+| `resources.cluster_jumphosts.create` | bool | `false` | Create per-zone cluster jumphosts. |
+| `resources.client_vpc.create` | bool | `false` | Create a new client VPC for the TGW jumphost. |
+| `resources.client_vpc.existing` | string | (empty) | Existing client VPC name when `create: false`. |
 | `bnk.cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large`. |
 | `bnk.far_repo_url` | string | `repo.f5.com` | FAR image registry URL. |
 | `bnk.manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | f5-bigip-k8s-manifest chart version. |

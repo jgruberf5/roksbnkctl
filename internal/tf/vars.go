@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/naming"
 )
 
 // WriteTFVars renders the workspace config into terraform.tfvars at path.
@@ -25,90 +26,26 @@ func WriteTFVars(path string, ws *config.Workspace, kubeconfigDir, scratchDir st
 	return RenderTFVars(f, ws, kubeconfigDir, scratchDir)
 }
 
-// RenderTFVarsWithClusterOutputs renders the workspace tfvars and, when
-// a cluster-phase ClusterOutputs is present, appends the second-phase
-// existing-resource reuse toggles (issues/issue_sprint16_validator.md
-// Issue 2 — phase handoff).
-//
-// The `up` flow applies the same roks_cluster/testing terraform across
-// two independent state files. The cluster phase (state-cluster/) creates
-// the cluster VPC / transit gateway / client VPC and records vpc_id in
-// cluster-outputs.json. Without a handoff, the second (bnk/testing) phase
-// runs the same modules against its own state/ and plans to *create*
-// those same-named resources — IBM Cloud rejects the duplicates. These
-// toggles make the second phase REUSE them (the terraform reuse plumbing
-// already exists; this is wiring, not new design — README decision 5).
-//
-// Contract (asserted by internal/tf/secondphase_handoff_test.go, the
-// validator's hermetic Issue 2 regression — the cross-agent seam):
-//
-//   - co == nil               → output is byte-identical to
-//     RenderTFVars(w, ws, kubeconfigDir, scratchDir). The first/cluster
-//     phase (no cluster-outputs.json yet) is unperturbed, keeping
-//     validator Issue 1's parity gate GREEN.
-//   - co != nil, co.VPCID==""  → defensive create path: a half-written
-//     cluster-outputs.json must NOT silently flip
-//     use_existing_cluster_vpc=true (an empty existing_cluster_vpc_id
-//     would fail the submodule's data.ibm_is_vpc lookup).
-//   - co != nil, co.VPCID!=""  → append the reuse toggles:
-//     use_existing_cluster_vpc  = true
-//     existing_cluster_vpc_id   = "<co.VPCID>"
-//     create_roks_transit_gateway = false
-//     testing_create_client_vpc = false
-//
-// Transit-gateway reuse: the cluster submodule has NO existing-TG data
-// lookup (only the create_transit_gateway count toggle), so the smaller-
-// surface, symmetric option is for the second phase to NOT manage the TG
-// (create_roks_transit_gateway = false). The cluster phase already
-// created the gateway and connected the cluster VPC; the testing module
-// looks the gateway up by name (data.ibm_tg_gateway.transit_gateway) for
-// its own client-VPC connection, so phase 2 needs the TG to *exist*, not
-// to be managed here.
-//
-// testing_client_vpc_name is intentionally NOT emitted: ClusterOutputs
-// carries no client-VPC name and config.Workspace has no field for it.
-// The name only ever comes from the user's terraform.tfvars.user (or the
-// module default) and that same value flows in BOTH phases, so flipping
-// only testing_create_client_vpc = false makes module.testing look up
-// the existing client VPC by the same name the cluster phase created it
-// with — correct without guessing a name.
-func RenderTFVarsWithClusterOutputs(w io.Writer, ws *config.Workspace, co *config.ClusterOutputs, kubeconfigDir, scratchDir string) error {
-	if err := RenderTFVars(w, ws, kubeconfigDir, scratchDir); err != nil {
-		return err
-	}
-	// No usable handoff (first/cluster phase, fresh workspace, or a
-	// half-written cluster-outputs.json without a vpc_id) → leave the
-	// render byte-identical to the create path.
-	if co == nil || co.VPCID == "" {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "# Second-phase existing-resource handoff (issue_sprint16_validator.md Issue 2):"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "# cluster-outputs.json exists, so the cluster phase already created the"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "# cluster VPC / transit gateway / client VPC. Reuse them instead of"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "# planning duplicate same-named resources (IBM Cloud duplicate-name failure)."); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "use_existing_cluster_vpc = true\n")
-	fmt.Fprintf(w, "existing_cluster_vpc_id = %q\n", co.VPCID)
-	fmt.Fprintf(w, "create_roks_transit_gateway = false\n")
-	fmt.Fprintf(w, "testing_create_client_vpc = false\n")
-	return nil
-}
-
 // RenderTFVars writes the tfvars body to w. Exposed for tests / callers
 // that want to inspect the rendering before committing it to disk.
 //
-// Only fields the user has explicitly set in config.yaml are emitted —
-// the rest fall through to the upstream TF module's own defaults.
+// Two render modes, selected by ws.Prefix:
+//
+//   - ws.Prefix == "" (legacy config): the SPARSE render — only the fields
+//     the user explicitly set in config.yaml are emitted; every resource
+//     name falls through to the upstream TF module defaults. This path is
+//     byte-identical to pre-Sprint-26 and is what an un-migrated
+//     config.yaml renders.
+//   - ws.Prefix != "" (Sprint 26 prefix-driven config): the FULL render —
+//     every account-scoped resource NAME is derived from the prefix via
+//     internal/naming.Derive and emitted, alongside each resource's
+//     create/reuse toggle, so two workspaces that both create infra no
+//     longer collide on the upstream module's default names. Each variable
+//     is emitted EXACTLY ONCE (in-file duplicates are a terraform error);
+//     the separate bnk-phase-override.tfvars (live second-phase handoff)
+//     and any terraform.tfvars.user still layer LAST as their own
+//     -var-file and override these via terraform's last-wins precedence —
+//     they are cross-file, never in-file duplicates.
 //
 // kubeconfigDir + scratchDir are roksbnkctl-managed paths threaded into the
 // upstream TF; the upstream defaults for both target the bnk runner
@@ -125,6 +62,39 @@ func RenderTFVars(w io.Writer, ws *config.Workspace, kubeconfigDir, scratchDir s
 	}
 	fmt.Fprintln(w)
 
+	if ws.Prefix != "" {
+		if err := renderFullBody(w, ws); err != nil {
+			return err
+		}
+	} else {
+		if err := renderSparseBody(w, ws); err != nil {
+			return err
+		}
+	}
+
+	// Kubeconfig scratch dir. Overrides the module-internal /work/.bnk/...
+	// default which only works inside the bnk runner image. Threaded to
+	// each submodule by the root TF (v0.6.8+); older TF versions print a
+	// "variable not declared" warning but otherwise behave the same.
+	if kubeconfigDir != "" {
+		fmt.Fprintf(w, "kubeconfig_dir = %q\n", kubeconfigDir)
+	}
+
+	// FLO scratch dir for FAR auth tarball + f5-manifest extraction.
+	// Same /work problem class as kubeconfig_dir. Threaded by the root
+	// TF (v0.6.9+) to module.flo, which derives manifest_download_dir
+	// as ${scratch_dir}/f5-manifest automatically.
+	if scratchDir != "" {
+		fmt.Fprintf(w, "scratch_dir = %q\n", scratchDir)
+	}
+
+	return nil
+}
+
+// renderSparseBody is the legacy (empty-Prefix) render body: only fields the
+// user explicitly set in config.yaml are emitted; resource names fall
+// through to the upstream module defaults. Byte-identical to pre-Sprint-26.
+func renderSparseBody(w io.Writer, ws *config.Workspace) error {
 	// IBM Cloud
 	if ws.IBMCloud.Region != "" {
 		fmt.Fprintf(w, "ibmcloud_cluster_region = %q\n", ws.IBMCloud.Region)
@@ -153,7 +123,117 @@ func RenderTFVars(w io.Writer, ws *config.Workspace, kubeconfigDir, scratchDir s
 		}
 	}
 
-	// BNK
+	renderBNKFields(w, ws)
+	return nil
+}
+
+// renderFullBody is the Sprint 26 prefix-driven render body: it derives the
+// full account-scoped name set from ws.Prefix and emits each resource's
+// create/reuse toggle + name EXACTLY ONCE. The operator's first-phase
+// intent is captured here; the separate phase-override + user var-files
+// layer last and override via terraform precedence (cross-file, not
+// in-file).
+//
+// A resource's name carrier depends on its create toggle: a CREATED
+// resource gets the prefix-derived name (so two workspaces don't collide);
+// a DECLINED-but-depended-on resource gets the operator's Existing name/ID
+// so the dependent looks it up by name.
+func renderFullBody(w io.Writer, ws *config.Workspace) error {
+	plan := naming.Derive(ws.Prefix)
+
+	// Resources may be nil on a prefix-set config that predates the
+	// resources block (defensive); treat a nil block as all-create with no
+	// existing refs, matching the --var-file default.
+	res := ws.Resources
+	if res == nil {
+		res = &config.ResourcesCfg{
+			TransitGateway:   config.ResourceToggle{Create: true},
+			RegistryCOS:      config.ResourceToggle{Create: true},
+			CertManager:      config.ResourceToggle{Create: true},
+			BNK:              config.ResourceToggle{Create: true},
+			TGWJumphost:      config.ResourceToggle{Create: true},
+			ClusterJumphosts: config.ResourceToggle{Create: true},
+			ClientVPC:        config.ResourceToggle{Create: true},
+		}
+	}
+
+	// IBM Cloud region + resource group.
+	if ws.IBMCloud.Region != "" {
+		fmt.Fprintf(w, "ibmcloud_cluster_region = %q\n", ws.IBMCloud.Region)
+	}
+	if ws.IBMCloud.ResourceGroup != "" {
+		fmt.Fprintf(w, "ibmcloud_resource_group = %q\n", ws.IBMCloud.ResourceGroup)
+	}
+
+	// Cluster. Created → openshift_cluster_name = <prefix>; existing →
+	// roks_cluster_id_or_name = <Cluster.Name>. Reuses ClusterCfg, where
+	// Name doubles as the existing id/name when Create=false.
+	fmt.Fprintf(w, "create_roks_cluster = %v\n", ws.Cluster.Create)
+	if ws.Cluster.Create {
+		fmt.Fprintf(w, "openshift_cluster_name = %q\n", plan.ClusterName)
+		if ws.Cluster.OpenShiftVersion != "" {
+			fmt.Fprintf(w, "openshift_cluster_version = %q\n", ws.Cluster.OpenShiftVersion)
+		}
+		if ws.Cluster.WorkersPerZone > 0 {
+			fmt.Fprintf(w, "roks_workers_per_zone = %d\n", ws.Cluster.WorkersPerZone)
+		}
+	} else if ws.Cluster.Name != "" {
+		fmt.Fprintf(w, "roks_cluster_id_or_name = %q\n", ws.Cluster.Name)
+	}
+
+	// Cluster VPC — always created by the cluster phase under the derived
+	// name (no standalone toggle; it follows the cluster).
+	fmt.Fprintf(w, "roks_cluster_vpc_name = %q\n", plan.ClusterVPCName)
+
+	// Registry COS instance. Only meaningful when the cluster is created;
+	// the upstream count gate is (create_cluster && create_cos_instance).
+	fmt.Fprintf(w, "create_roks_registry_cos_instance = %v\n", res.RegistryCOS.Create)
+	if res.RegistryCOS.Create {
+		fmt.Fprintf(w, "roks_cos_instance_name = %q\n", plan.COSInstanceName)
+	} else if res.RegistryCOS.Existing != "" {
+		fmt.Fprintf(w, "roks_cos_instance_name = %q\n", res.RegistryCOS.Existing)
+	}
+
+	// Transit gateway.
+	fmt.Fprintf(w, "create_roks_transit_gateway = %v\n", res.TransitGateway.Create)
+	if res.TransitGateway.Create {
+		fmt.Fprintf(w, "roks_transit_gateway_name = %q\n", plan.TransitGatewayName)
+	} else if res.TransitGateway.Existing != "" {
+		fmt.Fprintf(w, "roks_transit_gateway_name = %q\n", res.TransitGateway.Existing)
+	}
+
+	// In-cluster services (no prefixed names; namespaces stay fixed).
+	fmt.Fprintf(w, "install_cert_manager = %v\n", res.CertManager.Create)
+	fmt.Fprintf(w, "deploy_bnk = %v\n", res.BNK.Create)
+
+	// TGW test jumphost.
+	fmt.Fprintf(w, "testing_create_tgw_jumphost = %v\n", res.TGWJumphost.Create)
+	if res.TGWJumphost.Create {
+		fmt.Fprintf(w, "testing_tgw_jumphost_name = %q\n", plan.TGWJumphostName)
+	}
+
+	// Client VPC (for the TGW jumphost).
+	fmt.Fprintf(w, "testing_create_client_vpc = %v\n", res.ClientVPC.Create)
+	if res.ClientVPC.Create {
+		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", plan.ClientVPCName)
+	} else if res.ClientVPC.Existing != "" {
+		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", res.ClientVPC.Existing)
+	}
+
+	// Per-zone cluster jumphosts (the module appends -<zone> to the prefix).
+	fmt.Fprintf(w, "testing_create_cluster_jumphosts = %v\n", res.ClusterJumphosts.Create)
+	if res.ClusterJumphosts.Create {
+		fmt.Fprintf(w, "testing_cluster_jumphost_name_prefix = %q\n", plan.ClusterJumphostPrefix)
+	}
+
+	renderBNKFields(w, ws)
+	return nil
+}
+
+// renderBNKFields emits the BNK tuning fields shared by both render modes.
+// Each is emitted only when set in config.yaml, so neither render path
+// duplicates a variable.
+func renderBNKFields(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -163,22 +243,4 @@ func RenderTFVars(w io.Writer, ws *config.Workspace, kubeconfigDir, scratchDir s
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)
 	}
-
-	// Kubeconfig scratch dir. Overrides the module-internal /work/.bnk/...
-	// default which only works inside the bnk runner image. Threaded to
-	// each submodule by the root TF (v0.6.8+); older TF versions print a
-	// "variable not declared" warning but otherwise behave the same.
-	if kubeconfigDir != "" {
-		fmt.Fprintf(w, "kubeconfig_dir = %q\n", kubeconfigDir)
-	}
-
-	// FLO scratch dir for FAR auth tarball + f5-manifest extraction.
-	// Same /work problem class as kubeconfig_dir. Threaded by the root
-	// TF (v0.6.9+) to module.flo, which derives manifest_download_dir
-	// as ${scratch_dir}/f5-manifest automatically.
-	if scratchDir != "" {
-		fmt.Fprintf(w, "scratch_dir = %q\n", scratchDir)
-	}
-
-	return nil
 }
