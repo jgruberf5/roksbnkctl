@@ -28,10 +28,16 @@ provider "helm" {
 }
 
 # alekc/kubectl — applies free-form CR YAML as real terraform resources with
-# no plan-time CRD schema lookup. Wired from ibm_container_cluster_config;
-# try(..., "") keeps it plan-safe before the cluster exists.
+# no plan-time CRD schema lookup. Wired from ibm_container_cluster_config.
+# NOTE: alekc/kubectl validates its config EAGERLY (unlike the lazy
+# kubernetes/helm providers above), so an EMPTY host fails plan with "no
+# configuration has been provided" before the cluster exists
+# (create_roks_cluster = true → cluster_config is count=0). The non-empty
+# placeholder host below lets the provider configure; it is never dialed —
+# kubectl_manifest resources are count-gated off until the cluster exists, and
+# the BNK phase (create_roks_cluster=false) resolves the real host.
 provider "kubectl" {
-  host                   = try(data.ibm_container_cluster_config.cluster_config[0].host, "")
+  host                   = try(data.ibm_container_cluster_config.cluster_config[0].host, "https://localhost")
   token                  = try(data.ibm_container_cluster_config.cluster_config[0].token, "")
   cluster_ca_certificate = try(base64decode(data.ibm_container_cluster_config.cluster_config[0].ca_certificate), null)
   load_config_file       = false
