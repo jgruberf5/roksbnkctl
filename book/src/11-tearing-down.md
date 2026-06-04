@@ -50,7 +50,7 @@ This is the safe default — `down` always does the right thing regardless of sh
 
 ### `roksbnkctl bnk down` — destroy the BNK trial only
 
-New in v1.1.0. Tears down everything the trial phase created — the `flo` Helm release, `cne_instance`, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens — and leaves the cluster running.
+New in v1.1.0. Tears down everything the trial phase created — the `flo` / `cis` Helm releases, the `cne_instance` and `license` custom resources, and the cluster-side namespaces / Secrets / ServiceAccounts / RoleBindings / SCC bindings — and leaves the cluster running. In the default terraform-native path these are all real terraform resources (`helm_release`, `kubernetes_*`, and `alekc/kubectl` `kubectl_manifest`), so `bnk down` is an ordinary `terraform destroy` that deletes the CRs finalizer-aware — no destroy-time `curl`. (On a `--legacy-bnk` trial the same destroy removes the legacy `null_resource`-applied objects instead.)
 
 ```bash
 roksbnkctl bnk down

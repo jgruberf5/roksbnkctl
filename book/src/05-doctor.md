@@ -47,7 +47,7 @@ Failure mode: `not on PATH`. Fix: install Terraform from [terraform.io](https://
 
 ### `helm` — required
 
-The second **hard-required** binary, added in v1.0.2. The bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. Without `helm` on `PATH`, the apply fails partway through the cluster lifecycle with:
+The second **hard-required** binary (doctor flags it required), added in v1.0.2. In the legacy BNK path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. Without `helm` on `PATH`, that path fails partway through the cluster lifecycle with:
 
 ```
 Error: local-exec provisioner error
@@ -72,7 +72,7 @@ brew install helm
 choco install kubernetes-helm
 ```
 
-A v1.x effort to refactor the `cert_manager` / `flo` / `cne_instance` modules onto the `helm_release` terraform resource type (which uses the `hashicorp/helm` provider's embedded Helm 3 runtime) would eliminate this host requirement. Tracked in [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".
+The default BNK path now installs the `cert_manager` / `flo` / `cne_instance` charts via the `helm_release` terraform resource (which uses the `hashicorp/helm` provider's embedded Helm 3 runtime — no host `helm` is shelled out); only the legacy `--legacy-bnk` path still shells out to host `helm`. Doctor continues to flag `helm` required (so the legacy path and any older workspace stay supported); a future release that drops the legacy path can relax this check. See [Chapter 10 §"The terraform-native deployment model"](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model).
 
 ### `iperf3` — informational
 
