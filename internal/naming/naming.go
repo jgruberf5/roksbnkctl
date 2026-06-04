@@ -188,8 +188,8 @@ func ValidatePrefix(prefix string) error {
 	for _, d := range derivedNames(prefix) {
 		if len(d.effective) > d.constraint.maxLen {
 			return fmt.Errorf(
-				"workspace prefix %q is too long: derived %s %q is %d chars, over the %d-char limit. "+
-					"Maximum prefix length for this naming scheme is %d (currently %d).",
+				"workspace prefix %q is too long: derived %s %q is %d chars, over the %d-char limit "+
+					"(max prefix length for this naming scheme is %d, currently %d)",
 				prefix, d.constraint.describe, d.effective, len(d.effective), d.constraint.maxLen,
 				maxPrefixLen(), len(prefix),
 			)
