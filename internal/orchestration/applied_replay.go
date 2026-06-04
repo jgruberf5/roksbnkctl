@@ -81,6 +81,7 @@ const appliedReplayFile = ".applied-replay.tfvars"
 //   - run `roksbnkctl init --var-file <path> -w <ws>` once to seed the
 //     workspace-persistent override — `hasUserTFVars` is true on every
 //     subsequent verb against that workspace.
+//
 // configRendersComplete (Sprint 27) is true when the workspace's config.yaml
 // carries a `prefix:` — i.e. it is a Sprint 26 prefix-driven workspace, whose
 // `internal/tf/vars.go:RenderTFVars` emits a COMPLETE tfvars (region, resource
