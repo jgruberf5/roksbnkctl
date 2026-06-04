@@ -10,7 +10,7 @@ Pre-built binaries are attached to every [GitHub Release](https://github.com/jgr
 - **Git** to clone the repository (only if building from source — not needed if you grab a pre-built binary).
 - **Go 1.25 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build or a pre-built release binary.
 - **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`.
-- **Helm 3 on PATH** at runtime — required during `roksbnkctl up`. The bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install`; without `helm` the apply errors out with `exit status 127 — helm: not found`.
+- **Helm 3 on PATH** at runtime — `doctor` flags it as required during `roksbnkctl up`. In the legacy BNK path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install`, so without `helm` that path errors out with `exit status 127 — helm: not found`. The default terraform-native path installs the charts via the `helm_release` resource instead (in-process via the `hashicorp/helm` provider — see [Chapter 10 §"The terraform-native deployment model"](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model)); installing `helm` keeps `doctor` green and the legacy path available.
 
 The remaining tools (`ibmcloud`, `kubectl`, `oc`, `iperf3`, `docker`) are optional and only needed for the corresponding passthrough or backend.
 
@@ -18,13 +18,13 @@ You do not need Docker installed to *use* `roksbnkctl` with the default `local` 
 
 ## Installing prerequisites
 
-Install paths per platform. `terraform` and `helm` are strictly required for v1.0 (`helm` is invoked by terraform's `local-exec` provisioners during `roksbnkctl up`); the rest are optional, install only what you need.
+Install paths per platform. `terraform` and `helm` are flagged required by `doctor` (`helm` is invoked by terraform's `local-exec` provisioners in the legacy `--legacy-bnk` BNK path; the default terraform-native path installs charts via the `helm_release` provider — keep `helm` installed to stay green and to keep the legacy path available); the rest are optional, install only what you need.
 
 ### macOS — Homebrew
 
 ```bash
 brew install terraform               # required
-brew install helm                    # required — terraform `local-exec` provisioner shells out to `helm`
+brew install helm                    # flagged required by doctor — the legacy --legacy-bnk path's `local-exec` provisioner shells out to `helm` (the default path uses the helm_release provider)
 brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
 brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough (`roksbnkctl k *` is internalised)
 brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:<t>` throughput tests
@@ -53,7 +53,7 @@ https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
   | sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update && sudo apt-get install -y terraform
 
-# helm 3 — required (terraform's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`)
+# helm 3 — flagged required by doctor (the legacy --legacy-bnk path's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`; the default path uses the helm_release provider in-process)
 curl https://baltocdn.com/helm/signing.asc \
   | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] \
@@ -280,7 +280,7 @@ The Windows limitations are tracked in PRD 01 (the SSH client design) and largel
 The v1.0 cluster lifecycle needs two binaries on `PATH`:
 
 - **`terraform` (>= 1.5)** — hard-required for any cluster lifecycle command (`up`, `down`, `plan`, `apply`).
-- **`helm` (3.x)** — hard-required during `roksbnkctl up`. The bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install`. Without it, the apply fails with `exit status 127 — helm: not found`. (A v1.x effort to refactor those modules onto the `helm_release` terraform resource would eliminate the host requirement; tracked in [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) §"What's deliberately deferred to post-v1.0".)
+- **`helm` (3.x)** — flagged required by `doctor` during `roksbnkctl up`. In the legacy BNK path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install`, and without it that path fails with `exit status 127 — helm: not found`. The default terraform-native path installs the charts via the `helm_release` resource instead — the `hashicorp/helm` provider speaks the Helm 3 protocol via an embedded Go runtime, so no host `helm` is shelled out (the refactor onto `helm_release` that this once deferred has landed for the BNK phase; see [Chapter 10](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model)). Keeping `helm` installed keeps `doctor` green and the legacy path available.
 
 Optional binaries — only needed for the corresponding passthrough or fallback path:
 

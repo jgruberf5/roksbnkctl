@@ -32,6 +32,7 @@ Source: `terraform/variables.tf`
 | `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
 | `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped. | no |
+| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: `"kubectl"` (terraform-native — `helm_release` + `kubernetes_*` + `alekc/kubectl` `kubectl_manifest` + `wait_for`) or `"legacy_curl"` (the `null_resource`/`curl`/`time_sleep` baseline). `roksbnkctl` renders this from `bnk.cr_mode` / the `--legacy-bnk` flag. Validated to one of the two values. | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository URL for Docker and Helm images | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this) | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |

@@ -82,6 +82,7 @@ single-state workspaces (use `roksbnkctl down` there).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--legacy-bnk` | `bool` | `false` | destroy BNK custom resources rendered in the legacy null_resource/curl mode (`bnk_cr_mode=legacy_curl`); must match the mode used at `bnk up` |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
@@ -109,6 +110,7 @@ Use `roksbnkctl up` on those workspaces.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip confirmation prompts (cluster-bootstrap + apply) |
+| `--legacy-bnk` | `bool` | `false` | deploy the BNK custom resources via the legacy null_resource/curl path (`bnk_cr_mode=legacy_curl`) instead of the default terraform-native kubectl/helm path |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
