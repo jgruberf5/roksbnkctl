@@ -519,3 +519,274 @@ destroy, and gate on **actual** readiness for BOTH CRs. Only one pre-merge task
 remains and it is a value lookup, not an architecture risk: confirm the exact
 `status.state` "licensed" literal on a live cluster. Legacy `curl` modules stay
 behind the install-mode flag as the validator baseline (unchanged from round 1).
+
+---
+
+## Design — terraform module restructure (architect, 2026-06-04)
+
+This is the BLOCKING design input to staff. It consumes the spike (rounds 1 & 2
+above) verbatim — the `wait_for` blocks and the GO verdict are the spike's; this
+section does the module-restructure mechanics: the install-vs-CR classification,
+the `depends_on` graph (with the edges to DROP for parallelism), the
+install-mode-flag structure, and the `required_providers` / air-gap note.
+
+### 0. Read of the current modules (what exists today)
+
+Every Kubernetes mutation in the four modules is a `null_resource` +
+`local-exec` shell (raw `curl` server-side-apply, or a `helm upgrade --install`
+shell), gated by `time_sleep`. There is **no `kubernetes`, `helm`, or
+`kubectl` provider doing real work** — the `kubernetes`/`helm` providers in
+`providers.tf` are declared but only the `null_resource`/`curl` path mutates
+the cluster (the comment "no kubernetes provider required at plan time" in
+`cneinstance/main.tf:275` is the load-bearing reason). The restructure replaces
+that shell layer with three real providers: `helm` (`helm_release`),
+`kubernetes` (`kubernetes_namespace`/`kubernetes_secret`), and `alekc/kubectl`
+(`kubectl_manifest` + `wait_for`). The `local.*_manifest` / `local.*_helm_values`
+locals and the COS/IAM data sources are **unchanged** — only the apply mechanism
+changes.
+
+Inventory of the cluster-mutating resources (the `time_sleep` accounting is what
+the speed goal kills):
+
+| # | Current resource | Module | Today | `time_sleep` it owns/gates |
+|---|---|---|---|---|
+| 1 | `null_resource.cert_manager_namespace` | cert_manager | curl/kubectl ns | — |
+| 2 | `null_resource.cert_manager` | cert_manager | `helm upgrade --install` | — |
+| 3 | `time_sleep.cert_manager_ready` | cert_manager | fixed sleep | `post_deployment_delay` (≈30–60s) |
+| 4 | `null_resource.f5_utils` | flo | curl ns (+ finalizer sweep) | — |
+| 5 | `null_resource.flo_namespace` | flo | curl ns (+ finalizer sweep) | — |
+| 6 | `null_resource.far_secret_flo` | flo | curl Secret (dockerconfigjson) | — |
+| 7 | `null_resource.far_secret_utils` | flo | curl Secret (dockerconfigjson) | — |
+| 8 | `null_resource.bigip_ctlr_login` | flo | curl Secret (Opaque) | — |
+| 9 | `null_resource.cluster_issuers` (selfsigned) | flo | curl CR ClusterIssuer | — |
+| 10 | `null_resource.ca_certificate` | flo | curl CR Certificate | — |
+| 11 | `null_resource.ca_cluster_issuer` | flo | curl CR ClusterIssuer (CA) | — |
+| 12 | `null_resource.network_attachment_definition` | flo | curl CR NAD (ens3) | — |
+| 13 | `null_resource.macvlan_network_attachment_definition` | flo | curl CR NAD (macvlan) | — |
+| 14 | `null_resource.f5_lifecycle_operator` | flo | `helm upgrade --install` (FLO) | — |
+| 15 | `null_resource.f5_bnk_cis` | flo | `helm upgrade --install` (CIS) | — |
+| 16 | `null_resource.flo_scc_privileged` | flo | curl CR ClusterRoleBinding | — |
+| 17 | `null_resource.cis_scc_privileged` | flo | curl CR ClusterRoleBinding | — |
+| 18 | `null_resource.cis_default_scc_privileged` | flo | curl CR ClusterRoleBinding | — |
+| 19 | `time_sleep.wait_for_flo_scc_policies` | flo | fixed sleep | 30s |
+| 20 | `time_sleep.wait_for_flo_pods` | flo | fixed sleep | 60s |
+| 21 | `null_resource.node_labeler_sa` | flo | curl SA | — |
+| 22 | `null_resource.node_labeler_role` | flo | curl ClusterRole | — |
+| 23 | `null_resource.node_labeler_binding` | flo | curl ClusterRoleBinding | — |
+| 24 | `null_resource.node_labeler_job` | flo | curl Job (POST) | — |
+| 25 | `time_sleep.wait_for_cneinstance_crd` | cne_instance | fixed sleep | 30s |
+| 26 | `null_resource.cneinstance` | cne_instance | curl CR CNEInstance | — |
+| 27 | `null_resource.cneinstance_scc_policies` (for_each, ~16) | cne_instance | curl CR ClusterRoleBinding ×N | — |
+| 28 | `time_sleep.wait_for_scc_policies` | cne_instance | fixed sleep | 30s |
+| 29 | `time_sleep.wait_for_license_crd` | license | fixed sleep | 30s |
+| 30 | `null_resource.bnk_license` (+ in-script 30×10s CRD poll, 30×10s PATCH retry) | license | curl CR License | (in-script, up to ~5min) |
+
+Fixed-`time_sleep` total on the happy path: **≈210s** of pure guesswork
+(`cert_manager_ready` + `wait_for_flo_scc_policies` 30 + `wait_for_flo_pods` 60 +
+`wait_for_cneinstance_crd` 30 + `wait_for_scc_policies` 30 + `wait_for_license_crd`
+30), plus the in-script polls. Every one of these is replaced by real readiness
+(`helm_release wait=true` / `kubectl_manifest wait_for`) or simply deleted.
+
+### 1. Resource-by-resource install-vs-CR classification table
+
+Target type legend: **H** = `helm_release`; **KNs** = `kubernetes_namespace`;
+**KSec** = `kubernetes_secret`; **KM** = `alekc/kubectl` `kubectl_manifest`;
+**DROP** = delete entirely (the `time_sleep` gates — real readiness replaces
+them); **keep** = IBM/COS/IAM terraform resources, unchanged.
+
+| Current resource | → Target | `wait_for` / `wait` | Notes |
+|---|---|---|---|
+| `cert_manager_namespace` | **KNs** `cert-manager` | n/a | precede the chart |
+| `cert_manager` | **H** `cert_manager` (`wait=true`) | helm waits for rollout + `installCRDs=true` | `set { installCRDs=true, featureGates=ServerSideApply=true }`; repo+version from vars |
+| `cert_manager_ready` (`time_sleep`) | **DROP** | — | `helm_release wait=true` + the cert CRs' own `wait_for` replace it |
+| `f5_utils` namespace | **KNs** `f5-utils` | n/a | drop the curl finalizer-sweep; `kubernetes_namespace` + `kubectl_manifest` finalizer-aware destroy handles teardown |
+| `flo_namespace` | **KNs** `f5-bnk` (skip if `default`) | n/a | same |
+| `far_secret_flo` | **KSec** `far-secret` (flo ns) | n/a | `type=kubernetes.io/dockerconfigjson`, `.dockerconfigjson` = `local.far_docker_config_b64` |
+| `far_secret_utils` | **KSec** `far-secret` (utils ns) | n/a | same |
+| `bigip_ctlr_login` | **KSec** `f5-bigip-ctlr-login` (flo ns) | n/a | `type=Opaque`, username/password/url |
+| `cluster_issuers` (selfsigned) | **KM** | **no wait** (ClusterIssuer is fast; the `Certificate` is the gate) | depends_on cert-manager `helm_release` |
+| `ca_certificate` | **KM** | `condition { type="Ready" status="True" }` | the real CA-readiness gate; depends_on selfsigned issuer |
+| `ca_cluster_issuer` (CA) | **KM** | **no wait** (or `condition{type="Ready"...}`) | depends_on `ca_certificate` (needs `ext-ca` secret) |
+| `network_attachment_definition` (ens3) | **KM** | **no wait** | NAD has no status; depends_on flo namespace KNs |
+| `macvlan_network_attachment_definition` | **KM** | **no wait** | same |
+| `f5_lifecycle_operator` | **H** `flo` (`wait=true`) | helm waits for FLO rollout — installs the CR**D**s | values = `local.flo_helm_values` verbatim; version from `data.external.versions` (FAR discovery stays terraform-side) |
+| `f5_bnk_cis` | **H** `cis` (`wait=true`) | helm waits for CIS rollout | values = `local.cis_helm_values` verbatim; CIS version from FAR discovery |
+| `flo_scc_privileged` | **KM** | **no wait** | ClusterRoleBinding; depends_on flo `helm_release` |
+| `cis_scc_privileged` | **KM** | **no wait** | depends_on cis `helm_release` |
+| `cis_default_scc_privileged` | **KM** | **no wait** | depends_on cis `helm_release` |
+| `wait_for_flo_scc_policies` (`time_sleep` 30s) | **DROP** | — | SCC bindings are synchronous applies; no propagation sleep needed |
+| `wait_for_flo_pods` (`time_sleep` 60s) | **DROP** | — | replaced by `helm_release wait=true` (FLO rollout) + the CNEInstance `Available` wait downstream |
+| `node_labeler_sa` | **KM** | **no wait** | SA; kube-system |
+| `node_labeler_role` | **KM** | **no wait** | ClusterRole |
+| `node_labeler_binding` | **KM** | **no wait** | ClusterRoleBinding; depends_on role |
+| `node_labeler_job` | **KM** | `condition { type="Complete" status="True" }` | the Job's real completion gate (today it is fire-and-forget POST with a generated name; pin a stable name or keep generate-name + a `wait` — see §note) |
+| `wait_for_cneinstance_crd` (`time_sleep` 30s) | **DROP** | — | CRD is installed by the FLO `helm_release`; ordering via `depends_on`, not sleep |
+| `cneinstance` | **KM** | `condition { type="Available" status="True" }` | spec = `local.cneinstance_manifest` verbatim; `server_side_apply=true`, `field_manager="roksbnkctl"`; depends_on flo `helm_release` |
+| `cneinstance_scc_policies` (for_each ~16) | **KM** (for_each preserved) | **no wait** | ClusterRoleBindings; depends_on flo `helm_release` (NOT on `cneinstance` — see §2 DROP) |
+| `wait_for_scc_policies` (`time_sleep` 30s) | **DROP** | — | SCC bindings synchronous |
+| `wait_for_license_crd` (`time_sleep` 30s) | **DROP** | — | License CRD ships in the SPK/CNF CRD charts pulled in by the FLO `helm_release`; ordering via `depends_on` |
+| `bnk_license` | **KM** | `field { key="status.state" value="Verification Complete" }` (validator confirms literal) | spec = `{jwt, operationMode}` verbatim; in-script CRD-poll/PATCH-retry deleted (the `field` wait + `depends_on` replace it); depends_on flo `helm_release` (+ cneinstance) |
+| COS data sources, `iam_token`, `jwt_download`, `extract_flo_version`, `data.external.versions`, `ibm_iam_trusted_profile*` | **keep** | — | unchanged terraform; FAR version discovery + IBM IAM/COS stay terraform-side |
+
+Provider wiring (all three) comes from the **same** `data
+"ibm_container_cluster_config"` already in each `providers.tf`. Add a `helm`
+provider block (cert_manager + cne_instance/license modules don't have one yet —
+flo/license already do) and an `alekc/kubectl` provider block, both fed
+`host`/`token`/`cluster_ca_certificate` exactly like the existing `kubernetes`
+provider:
+
+```hcl
+provider "kubectl" {            # alekc/kubectl
+  host                   = try(data.ibm_container_cluster_config.cluster_config[0].host, "")
+  token                  = try(data.ibm_container_cluster_config.cluster_config[0].token, "")
+  cluster_ca_certificate = try(base64decode(data.ibm_container_cluster_config.cluster_config[0].ca_certificate), null)
+  load_config_file       = false
+}
+```
+
+The `try(..., "")` / `count = create_roks_cluster ? 0 : 1` pattern that keeps the
+provider config plan-safe when the cluster doesn't exist yet is **preserved
+unchanged** — it is exactly why `alekc/kubectl` (no plan-time schema lookup) is
+required over `hashicorp/kubernetes_manifest`.
+
+### 2. The `depends_on` graph — genuinely-required serial edges + edges to DROP
+
+**Keep (genuinely required — CRD-before-CR / secret-before-chart / issuer chain):**
+
+```
+KNs(cert-manager) ─▶ H(cert_manager)
+H(cert_manager) ─▶ KM(selfsigned issuer) ─▶ KM(ca_certificate, wait Ready)
+                                            └▶ KM(ca_cluster_issuer)
+KNs(f5-bnk), KNs(f5-utils) ─▶ KSec(far-secret×2, bigip-ctlr-login)   # secret-before-chart
+KSec(far-secret flo), KM(ca_cluster_issuer), data.external.versions ─▶ H(flo, wait=true)
+H(flo) ─▶ H(cis, wait=true)                       # cis needs the issuer + far-secret too
+H(flo) ─▶ KM(cneinstance, wait Available)         # CRD installed by flo chart
+H(flo) ─▶ KM(license, wait status.state)          # License CRD ships via flo chart's SPK/CNF CRD deps
+KM(cneinstance) ─▶ KM(license)                     # CWC/cneinstance present before license verify (spike rec)
+KM(node_labeler_role) ─▶ KM(node_labeler_binding) ─▶ KM(node_labeler_job, wait Complete)
+```
+
+The single mandatory serial spine for the speed-critical path is:
+`H(cert_manager) → ca-issuer chain → H(flo) → KM(cneinstance) → KM(license)`.
+Everything else hangs off it and parallelizes.
+
+**DROP (conservative edges — terraform's default `-parallelism=10` runs these
+concurrently once the edge is gone):**
+
+| Current edge (conservative) | Why it can drop |
+|---|---|
+| `cneinstance_scc_policies depends_on cneinstance` (today line 311) | The ~16 SCC ClusterRoleBindings only need the FLO chart present (the SCC ClusterRole `system:openshift:scc:privileged` is cluster-builtin; the SAs are created by the chart). Re-point `depends_on` from `cneinstance` to `H(flo)`. They then apply **concurrently with** the CNEInstance wait instead of after it — removes ~16 serialized applies from the critical path. |
+| NADs `depends_on flo_namespace` only | Correct and minimal — keep (just the namespace). The two NADs already parallelize with each other; do **not** add any edge to the issuers or secrets. |
+| `bigip_ctlr_login` / `far_secret_*` serialized after namespace | Keep the namespace edge; the three secrets have **no** inter-dependency — let them apply concurrently (they already do via separate resources; ensure no artificial `depends_on` chains them). |
+| The cert issuers (`selfsigned`/`ca_certificate`/`ca_cluster_issuer`) chained — **keep** | This chain is real (CA cert needs the selfsigned issuer; the CA issuer needs the `ext-ca` secret the Certificate emits). Do not drop. |
+| `node_labeler_*` chained off `cert_manager_crd_ready` (today `node_labeler_sa depends_on var.cert_manager_crd_ready`) | The node-labeler SA/Role/Binding/Job have **nothing** to do with cert-manager. Drop the `cert_manager_crd_ready` edge; the node-labeler subtree only needs the flo namespace (for the SA) and runs **fully concurrently** with the cert/flo install. Keep only the internal SA→Role→Binding→Job chain. |
+| `f5_bnk_cis depends_on ca_cluster_issuer` AND `f5_lifecycle_operator depends_on ca_cluster_issuer` — **keep** (CIS/FLO consume the ClusterIssuer via `certmgr.clusterIssuer`) | Keep both. |
+| The two `time_sleep` SCC waits + the two CRD-wait sleeps + `wait_for_flo_pods` | DROP entirely (covered above) — these are the bulk of the ~210s. |
+
+Net parallelism win: the NADs, the three secrets, the node-labeler subtree, and
+the ~16 CNEInstance SCC bindings all move **off** the critical path and run
+concurrently with the cert-manager→FLO install and the CNEInstance `Available`
+wait. The only thing the CNEInstance `Available` wait blocks is the License
+(which genuinely needs CWC up).
+
+### 3. Install-mode-flag structure — RECOMMENDATION
+
+**Recommend: a single `bnk_cr_mode` variable gating `count`/`for_each` on the
+old vs new resources, IN-PLACE in the existing modules — NOT a parallel slim
+module.**
+
+```hcl
+variable "bnk_cr_mode" {
+  type    = string
+  default = "kubectl"
+  validation {
+    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
+    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
+  }
+}
+
+locals {
+  use_kubectl = var.enabled && var.bnk_cr_mode == "kubectl"
+  use_legacy  = var.enabled && var.bnk_cr_mode == "legacy_curl"
+}
+```
+
+Then every legacy `null_resource`/`time_sleep` gets `count = local.use_legacy ? <existing> : 0`
+(replacing today's `var.enabled ? 1 : 0`), and every new `helm_release` /
+`kubernetes_*` / `kubectl_manifest` gets `count = local.use_kubectl ? 1 : 0`
+(or `for_each = local.use_kubectl ? {...} : {}` for the SCC sets). The
+`local.*_manifest` / `local.*_helm_values` locals are **shared by both paths** —
+the legacy curl reads `jsonencode(local.cneinstance_manifest)`, the new path
+reads `yamlencode(local.cneinstance_manifest)` — so the spec stays single-sourced
+and the validator's "same manifest, different mechanism" benchmark is exact.
+
+Why in-place `count` over a parallel module:
+
+1. **Shared spec locals** — a parallel module would duplicate the ~200-line
+   `cneinstance_spec`, the `*_helm_values`, the NAD/SCC locals, and the COS/IAM
+   data sources, or force them into a third shared module. `count` keeps one
+   copy; the benchmark compares mechanism, not a forked spec.
+2. **One provider-wiring site** — the `ibm_container_cluster_config` →
+   provider plumbing lives once per module; a parallel module doubles it.
+3. **The validator's baseline must be byte-identical to today** — `count` leaves
+   the legacy resources literally unchanged (only the `count` expression flips),
+   so the "legacy_curl is the unchanged benchmark" guarantee is trivially true.
+4. **Cutover is a one-line default flip** — ship `default = "kubectl"`; an
+   operator pins `legacy_curl` to A/B. Post-Sprint-27, deleting the legacy path
+   is a mechanical `count`-block + `null_resource` removal with no module surgery.
+
+The roksbnkctl Go side renders this as one tfvar (`bnk_cr_mode`) — staff wires
+`internal/tf/vars.go` + a `--legacy-bnk` flag on the bnk phase that sets
+`bnk_cr_mode = "legacy_curl"` (default kubectl). No reconciler.
+
+**One implementation note for the node-labeler Job (KM target):** today it POSTs
+a Job with a timestamp-generated name (`node-labeler-$(date)`), so it is not a
+declarative resource. For `kubectl_manifest` + `wait_for {condition
+type=Complete}` it needs a **stable** name (e.g. `node-labeler`) with the Job
+spec's `ttlSecondsAfterFinished` set so re-applies don't collide, OR keep
+`generateName` and accept no `wait_for`. Recommend the stable-name + TTL form so
+the Job's completion is a real gate. Staff's call on the exact TTL.
+
+### 4. `required_providers` + `terraform init` / air-gap implication
+
+Add to each restructured module's `versions.tf` (`flo`, `cne_instance`,
+`license`, `cert_manager`):
+
+```hcl
+terraform {
+  required_providers {
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.4.0"      # v2.4.1 is the spike-checked latest (2026-06-01)
+    }
+    helm       = { source = "hashicorp/helm",       version = ">= 2.12" }
+    kubernetes = { source = "hashicorp/kubernetes",  version = ">= 2.25" }
+    # existing: ibm, null (legacy path), local, http, external, time (legacy path)
+  }
+}
+```
+
+`alekc/kubectl` is on the **public** registry
+(`registry.terraform.io/providers/alekc/kubectl`). For roksbnkctl's embedded
+terraform this is a **new third-party plugin** that must be fetched at
+`terraform init`. Implications:
+
+- **Connected runs:** zero friction — `terraform init` pulls it like any
+  provider. (Today the curl path needed only `curl`+`base64` on the runner; the
+  new path needs the plugin instead. Net dependency shifts from "shell tools on
+  the runner" to "a registry plugin at init".)
+- **Air-gapped / offline ROKS installs:** the provider must be pre-staged. Two
+  supported options, document both:
+  1. `terraform providers mirror ./mirror` against a connected machine, ship the
+     `mirror/` bundle, and point the air-gapped runner at it via a
+     `provider_installation { filesystem_mirror { path = "./mirror" } }` block in
+     the CLI config (`.terraformrc` / `TF_CLI_CONFIG_FILE`).
+  2. A network mirror (`provider_installation { network_mirror { url = ... } }`)
+     if the site runs an internal registry.
+- roksbnkctl already vendors/pins the IBM + hashicorp providers for its embedded
+  terraform; `alekc/kubectl` joins that pin set. The version is pinned
+  `>= 2.4.0` (floor at the spike-verified release); the lockfile (`.terraform.lock.hcl`)
+  records the exact hash so air-gap mirrors are reproducible. This is the **one
+  new supply-chain dependency** the sprint introduces and the tech-writer must
+  surface it in the provider/air-gap docs.
+
