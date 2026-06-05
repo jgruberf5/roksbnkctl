@@ -36,7 +36,7 @@ func TestOpenReadOnly_NeverApplied_NoStateNoSideEffects(t *testing.T) {
 		t.Errorf("OpenReadOnly fetched source for a never-applied phase (tf-source exists) — side-effect leak")
 	}
 	if _, statErr := os.Stat(filepath.Join(stateDir, "terraform")); !os.IsNotExist(statErr) {
-		t.Errorf("OpenReadOnly created TF_DATA_DIR for a never-applied phase — side-effect leak")
+		t.Errorf("OpenReadOnly created a terraform data dir for a never-applied phase — side-effect leak")
 	}
 }
 

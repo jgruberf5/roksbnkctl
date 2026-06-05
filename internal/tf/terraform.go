@@ -39,8 +39,10 @@ type Workspace struct {
 //
 //   - Locates `terraform` on PATH; clear error if missing.
 //   - Resolves the TF source via FetchSource (downloads if needed).
-//   - Constructs a terraform-exec handle with TF_DATA_DIR pointing at
-//     stateDir/terraform/, so .terraform/ doesn't pollute the source dir.
+//   - Constructs a terraform-exec handle whose working dir is the resolved
+//     (per-phase) source dir; terraform's .terraform/ data dir defaults
+//     there. We do NOT set a process-global TF_DATA_DIR — that would race
+//     between concurrent phases (see the note at the env block below).
 //   - Exports apiKey as TF_VAR_ibmcloud_api_key in the env terraform sees.
 //     The key is never written to disk by roksbnkctl.
 //
@@ -136,15 +138,27 @@ terraform {
 	// terraform-exec inherits the roksbnkctl process env when SetEnv is
 	// NOT called. We deliberately don't call SetEnv: it explicitly
 	// rejects TF_VAR_* keys ("manual setting of env var TF_VAR_X
-	// detected"), and we want to pass apiKey as TF_VAR_ibmcloud_api_key
-	// rather than as a `tfexec.Var()` option (which would land the key
-	// in argv / `ps` output).
+	// detected") AND replaces (rather than merges) the inherited env, so
+	// routing apiKey through it is impossible without exposing the key in
+	// argv via a `tfexec.Var()` option (visible in `ps`). We therefore
+	// keep apiKey on the process env as TF_VAR_ibmcloud_api_key — a
+	// process-global set, but every phase of a given workspace uses the
+	// SAME key, so the concurrent BNK∥Testing applies race only to an
+	// identical value (benign).
 	//
-	// Setting on the roksbnkctl process env is acceptable because roksbnkctl
-	// runs one terraform operation per invocation and exits.
-	if err := os.Setenv("TF_DATA_DIR", filepath.Join(stateDir, "terraform")); err != nil {
-		return nil, fmt.Errorf("setting TF_DATA_DIR: %w", err)
-	}
+	// We deliberately do NOT set a process-global TF_DATA_DIR. It used to
+	// point .terraform/ at <stateDir>/terraform, but a process-global is
+	// unsafe once phases apply concurrently (Sprint 28): the BNK and
+	// Testing goroutines would clobber each other's TF_DATA_DIR between
+	// os.Setenv and the terraform child spawn, so one phase's apply would
+	// init against the other phase's backend — surfacing as
+	// "Backend configuration block has changed". Instead we let terraform
+	// default .terraform/ into the working dir (sourceDir), which is
+	// per-phase (<stateDir>/tf-source/...) and therefore already isolated.
+	// The backend override pins state to an absolute
+	// <stateDir>/terraform.tfstate, so the data-dir location doesn't move
+	// the state file, and FetchSource rewrites source files over the top
+	// (no RemoveAll), so .terraform/ persists across `up`s.
 	if apiKey != "" {
 		if err := os.Setenv("TF_VAR_ibmcloud_api_key", apiKey); err != nil {
 			return nil, fmt.Errorf("setting TF_VAR_ibmcloud_api_key: %w", err)
@@ -404,14 +418,15 @@ func OpenReadOnly(
 	}
 	// State exists ⇒ source was already fetched by the prior apply ⇒
 	// Open is side-effect-safe (no init, no network). Reuse it so the
-	// read-only run inherits the exact same sourceDir cwd + TF_DATA_DIR
-	// side-effect (Sprint 13: the CLI layer must NOT re-derive these).
+	// read-only run inherits the exact same sourceDir cwd, where
+	// terraform's .terraform/ data dir lives (Sprint 13: the CLI layer
+	// must NOT re-derive these).
 	return Open(ctx, name, wsCfg, stateDir, "", nil, nil)
 }
 
 // RunReadOnly shells the prepared terraform binary with argv, running in
-// the resolved source dir (w.sourceDir) with the process env that Open
-// already configured (TF_DATA_DIR points at <stateDir>/terraform). The
+// the resolved source dir (w.sourceDir), where terraform finds its
+// .terraform/ data dir (providers/modules/backend config). The
 // argv allowlist / mutation-flag policy is enforced by the CLI layer
 // (internal/cli/terraform.go) — the tf package owns only the safe exec.
 //
@@ -434,9 +449,10 @@ func (w *Workspace) RunReadOnly(ctx context.Context, argv []string) (string, err
 	}
 	cmd := exec.CommandContext(ctx, tfBin, argv...)
 	cmd.Dir = w.sourceDir
-	// Open already set TF_DATA_DIR on the roksbnkctl process env; inherit
-	// it (and the rest of the env) — do NOT re-derive it at the CLI
-	// layer. That re-derivation is exactly the Sprint 13 bug class.
+	// cwd=w.sourceDir is where terraform's .terraform/ data dir lives, so
+	// the read-only verb finds providers/modules without any TF_DATA_DIR.
+	// Inherit the process env (api key etc.); do NOT re-derive cwd at the
+	// CLI layer — that re-derivation is exactly the Sprint 13 bug class.
 	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
