@@ -230,7 +230,12 @@
     "upserts",
     "USERPROFILE",
     "vcpu",
-    "yamlencode"
+    "yamlencode",
+    "bluemix",
+    "errgroup",
+    "initialise",
+    "internalising",
+    "jjsg"
   ],
   "ignorePaths": [
     "book/book/**",
