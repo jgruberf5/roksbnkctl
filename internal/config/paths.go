@@ -37,6 +37,19 @@ func BaseDir() (string, error) {
 	return filepath.Join(home, defaultBaseDirName), nil
 }
 
+// PluginCacheDir: ~/.roksbnkctl/plugin-cache/ — the shared terraform
+// provider plugin cache (TF_PLUGIN_CACHE_DIR). One cache across every
+// workspace and phase so each provider downloads ONCE and is linked from
+// the cache thereafter, instead of re-downloading ~440 MB of providers per
+// phase/workspace.
+func PluginCacheDir() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "plugin-cache"), nil
+}
+
 // GlobalConfigPath: ~/.roksbnkctl/config.yaml
 func GlobalConfigPath() (string, error) {
 	base, err := BaseDir()
