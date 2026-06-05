@@ -338,6 +338,35 @@ resource "time_sleep" "wait_for_scc_policies" {
 # flo_deployment_dependency) rather than on the CNEInstance so they
 # parallelize. No time_sleep.
 
+# The OpenShift ingress operator installs a ValidatingAdmissionPolicyBinding
+# (openshift-ingress-operator-gatewayapi-crd-admission) that blocks
+# third-party Gateway API CRD creation. The FLO operator reconciles the
+# CNEInstance by creating the Gateway API CRDs (e.g.
+# backendtlspolicies.gateway.networking.k8s.io) at the version BNK requires,
+# so that binding must be gone first. The cluster phase deletes it once at
+# cluster-creation, but the ingress operator reconciles it back within minutes
+# — long before the now-decoupled BNK phase runs — so delete it again HERE,
+# immediately before the CNEInstance triggers CRD creation. Runs on every apply
+# (timestamp trigger) so a reconciled-back binding is re-removed on retries;
+# idempotent and best-effort (|| true). Mirrors the cluster module's
+# delete_gatewayapi_admission_policy, which only fires when create_cluster=true.
+resource "null_resource" "delete_gatewayapi_admission_policy" {
+  count = local.use_kubectl ? 1 : 0
+
+  triggers = {
+    always_run = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        "${var.kube_host}/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" \
+        -o /dev/null -w "%%{http_code}" || true
+    EOT
+  }
+}
+
 resource "kubectl_manifest" "cneinstance" {
   count             = local.use_kubectl ? 1 : 0
   yaml_body         = yamlencode(local.cneinstance_manifest)
@@ -351,7 +380,10 @@ resource "kubectl_manifest" "cneinstance" {
     }
   }
 
-  depends_on = [var.flo_deployment_dependency]
+  depends_on = [
+    var.flo_deployment_dependency,
+    null_resource.delete_gatewayapi_admission_policy,
+  ]
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {
