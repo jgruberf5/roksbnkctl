@@ -11,6 +11,7 @@ spec:
       "type": "host-device",
       "pciBusID": "{{ .ExternalPCI }}"
     }
+{{- if .HasInternal }}
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -25,3 +26,4 @@ spec:
       "type": "host-device",
       "pciBusID": "{{ .InternalPCI }}"
     }
+{{- end }}

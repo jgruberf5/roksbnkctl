@@ -55,14 +55,17 @@ func Phase03Subnets(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 		}
 		st.Set("PUBLIC_SUBNETS", strings.Join(publicIDs, ","))
 		st.Set("PRIVATE_SUBNETS", strings.Join(privateIDs, ","))
-		// data-path placeholders (host-device pattern).
-		if cl.Pattern == "host-device" && cl.Network.DataPath != nil {
+		// data-path placeholders (BNK patterns). External always; internal only
+		// for dual-interface.
+		if cl.IsBNKPattern() && cl.Network.DataPath != nil {
 			fmt.Fprintf(os.Stderr, "[phase 03] dry-run: would create BNK_EXT_SUBNET %s in %s\n",
 				cl.Network.DataPath.External.CIDR, cl.Network.DataPath.External.AZ)
-			fmt.Fprintf(os.Stderr, "[phase 03] dry-run: would create BNK_INT_SUBNET %s in %s\n",
-				cl.Network.DataPath.Internal.CIDR, cl.Network.DataPath.Internal.AZ)
 			st.Set("BNK_EXT_SUBNET", "dry-run-subnet-bnk-ext")
-			st.Set("BNK_INT_SUBNET", "dry-run-subnet-bnk-int")
+			if cl.HasInternalInterface() {
+				fmt.Fprintf(os.Stderr, "[phase 03] dry-run: would create BNK_INT_SUBNET %s in %s\n",
+					cl.Network.DataPath.Internal.CIDR, cl.Network.DataPath.Internal.AZ)
+				st.Set("BNK_INT_SUBNET", "dry-run-subnet-bnk-int")
+			}
 		}
 		return nil
 	}
@@ -70,8 +73,9 @@ func Phase03Subnets(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	st.Set("PUBLIC_SUBNETS", strings.Join(publicIDs, ","))
 	st.Set("PRIVATE_SUBNETS", strings.Join(privateIDs, ","))
 
-	// host-device: create data-path subnets.
-	if cl.Pattern == "host-device" && cl.Network.DataPath != nil {
+	// BNK patterns: create data-path subnets. External always; internal only for
+	// dual-interface (single-interface patterns reach backends over CNI).
+	if cl.IsBNKPattern() && cl.Network.DataPath != nil {
 		extID, err := ensureDataPathSubnet(ctx, clients.EC2, name, vpcID,
 			cl.Network.DataPath.External, tags.CompSubnetBNKExt, cl.Tags, cl.Metadata.Labels)
 		if err != nil {
@@ -79,12 +83,14 @@ func Phase03Subnets(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 		}
 		st.Set("BNK_EXT_SUBNET", extID)
 
-		intID, err := ensureDataPathSubnet(ctx, clients.EC2, name, vpcID,
-			cl.Network.DataPath.Internal, tags.CompSubnetBNKInt, cl.Tags, cl.Metadata.Labels)
-		if err != nil {
-			return fmt.Errorf("phase03: BNK int subnet: %w", err)
+		if cl.HasInternalInterface() {
+			intID, err := ensureDataPathSubnet(ctx, clients.EC2, name, vpcID,
+				cl.Network.DataPath.Internal, tags.CompSubnetBNKInt, cl.Tags, cl.Metadata.Labels)
+			if err != nil {
+				return fmt.Errorf("phase03: BNK int subnet: %w", err)
+			}
+			st.Set("BNK_INT_SUBNET", intID)
 		}
-		st.Set("BNK_INT_SUBNET", intID)
 	}
 
 	return st.Save()

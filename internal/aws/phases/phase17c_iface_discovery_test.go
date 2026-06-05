@@ -7,6 +7,7 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
+	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
 
 // ─── matchInterfaces tests ────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ func TestPhase17cIfaceDiscovery_DryRun_SetsConstants(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := state.Load(dir)
 	cl := testCluster()
+	cl.Pattern = intent.PatternDualInterface // dual sets both external + internal constants
 
 	// Dry-run must NOT require clients.K8s (it may be nil).
 	clients := &Clients{Profile: "test"} // K8s is nil
@@ -206,7 +208,7 @@ func TestIfaceMappingResolved_AllSet(t *testing.T) {
 	st.Set("INTERNAL_IFNAME", "ens7")
 	st.Set("EXTERNAL_PCI", "0000:00:08.0")
 	st.Set("INTERNAL_PCI", "0000:00:07.0")
-	if !ifaceMappingResolved(st) {
+	if !ifaceMappingResolved(st, true) {
 		t.Error("expected resolved when all 4 keys set, got false")
 	}
 }
@@ -221,10 +223,31 @@ func TestIfaceMappingResolved_EachKeyMissingMeansNotResolved(t *testing.T) {
 					st.Set(k, "somevalue")
 				}
 			}
-			if ifaceMappingResolved(st) {
+			if ifaceMappingResolved(st, true) {
 				t.Errorf("expected not resolved when %s is missing, got true", missing)
 			}
 		})
+	}
+}
+
+// TestIfaceMappingResolved_SingleInterface resolves on the external pair alone;
+// the internal keys are not required when hasInternal is false.
+func TestIfaceMappingResolved_SingleInterface(t *testing.T) {
+	st, _ := state.Load(t.TempDir())
+	st.Set("EXTERNAL_IFNAME", "ens8")
+	st.Set("EXTERNAL_PCI", "0000:00:08.0")
+	// INTERNAL_* deliberately unset.
+	if !ifaceMappingResolved(st, false) {
+		t.Error("expected resolved for single-interface with external pair set, got false")
+	}
+	if ifaceMappingResolved(st, true) {
+		t.Error("expected NOT resolved when hasInternal=true but internal keys missing")
+	}
+	// Missing external PCI → not resolved even single-interface.
+	st2, _ := state.Load(t.TempDir())
+	st2.Set("EXTERNAL_IFNAME", "ens8")
+	if ifaceMappingResolved(st2, false) {
+		t.Error("expected not resolved when EXTERNAL_PCI missing")
 	}
 }
 

@@ -51,10 +51,13 @@ metadata:
   labels:
     purpose: bnk-demo
 
-# pattern selects the data-path variant.
-# host-device: TMM runs directly on EC2 host NIC interfaces (no SR-IOV vfio).
-#              Required for the demo. Needs network.dataPath (external + internal
-#              TMM subnets) and a node group of >= 3 nodes.
+# pattern selects the BNK interface topology + binding. One of:
+#   external-only   single external (ingress) interface, CNI backend  (host-device)
+#   dual-interface  external + internal interface, CNI backend         (host-device)
+#   sriov-external  single external via SR-IOV/vfio-pci, CNI backend   (experimental)
+# host-device is the legacy alias for dual-interface (normalized at load) and is
+# what the demo uses: TMM on EC2 host NIC interfaces (no SR-IOV vfio). dual-interface
+# needs network.dataPath (external + internal TMM subnets) and a node group >= 3.
 pattern: host-device
 
 # demo marks this as a demo deployment. Equivalent to passing --demo on the CLI.

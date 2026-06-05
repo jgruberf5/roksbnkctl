@@ -74,6 +74,12 @@ func TestDryRun_AllPhasesEndToEnd(t *testing.T) {
 		Profile: "test",
 	}
 	cl := sydTracerCluster()
+	// dual-interface so Phase 17 sets both INTERNAL_ENI + EXTERNAL_ENI placeholders.
+	cl.Pattern = intent.PatternDualInterface
+	cl.Network.DataPath = &intent.DataPathSpec{
+		External: intent.SubnetSpec{CIDR: "10.0.10.0/24", AZ: "ap-southeast-2a"},
+		Internal: intent.SubnetSpec{CIDR: "10.0.20.0/24", AZ: "ap-southeast-2a"},
+	}
 	// Add cluster spec for phases 08/10/11.
 	cl.ClusterSpec = &intent.ClusterSpec{
 		KubernetesVersion: "1.30",

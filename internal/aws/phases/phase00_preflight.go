@@ -16,28 +16,35 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
 
-// HostDeviceMinENIs is the minimum number of network interfaces an EC2
-// instance type must support for the host-device data-plane pattern.
+// bnkMinENIs returns the minimum number of network interfaces an EC2 instance
+// type must support for a cluster's BNK interface pattern: the primary ENI plus
+// one TMM data-plane secondary per interface.
 //
-// The TMM-target node attaches: primary (device 0) + EKS CNI (device 1,
-// auto-allocated by the aws-node DaemonSet for pod networking) + BNK
-// INTERNAL (device 2, ens7) + BNK EXTERNAL (device 3, ens8) = 4 ENIs.
+//	external-only / sriov-external: 2 (primary + external secondary)
+//	dual-interface:                 3 (primary + external + internal secondaries)
 //
-// Smaller instance types (t3.medium/large, m5.large) cap at 3 ENIs and
-// will fail phase 17 with AttachmentLimitExceeded when the second TMM
-// secondary tries to attach. m5.xlarge is the minimum viable instance.
-const HostDeviceMinENIs = 4
+// No dedicated EKS-CNI secondary is counted: VPC CNI prefix delegation
+// (Phase 08b) serves pod IPs from /28 prefixes on the primary ENI, so the CNI
+// stays on the primary and never claims a secondary. An instance type below the
+// floor fails phase 17 with AttachmentLimitExceeded when the last TMM secondary
+// tries to attach; m5.xlarge is the minimum viable instance for either floor.
+func bnkMinENIs(cl *intent.Cluster) int {
+	if cl.HasInternalInterface() {
+		return 3
+	}
+	return 2
+}
 
-// HostDeviceMinVCPUs is the minimum vCPU count required for the host-device
-// pattern. BNK 2.3 Small profile requires at least 16 vCPUs on the TMM node.
+// HostDeviceMinVCPUs is the minimum vCPU count required for a BNK pattern.
+// BNK 2.3 Small profile requires at least 16 vCPUs on the TMM node.
 const HostDeviceMinVCPUs = 16
 
-// HostDeviceMinMemoryMiB is the minimum memory (MiB) required for the
-// host-device pattern. BNK 2.3 Small profile requires at least 64 GiB.
+// HostDeviceMinMemoryMiB is the minimum memory (MiB) required for a BNK pattern.
+// BNK 2.3 Small profile requires at least 64 GiB.
 const HostDeviceMinMemoryMiB = 65536
 
-// HostDeviceMinDesiredSize is the minimum node group desired size for the
-// host-device pattern. dSSM requires a quorum of ≥3 nodes.
+// HostDeviceMinDesiredSize is the minimum node group desired size for a BNK
+// pattern. dSSM requires a quorum of ≥3 nodes.
 const HostDeviceMinDesiredSize = 3
 
 // Phase00Preflight runs the pre-flight checks before any provisioning begins:
@@ -65,8 +72,8 @@ func Phase00Preflight(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	}
 	fmt.Fprintf(os.Stderr, "[phase 00] authenticated: account=%s\n", account)
 
-	// Validate instance type + node group capacity for host-device pattern.
-	if !dryRun && cl.Pattern == "host-device" {
+	// Validate instance type + node group capacity for BNK interface patterns.
+	if !dryRun && cl.IsBNKPattern() {
 		if err := checkHostDeviceCapacity(ctx, cl, clients.EC2); err != nil {
 			return fmt.Errorf("phase00: %w", err)
 		}
@@ -85,10 +92,12 @@ func Phase00Preflight(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	return nil
 }
 
-// checkHostDeviceCapacity validates that the first node group meets all
-// host-device pattern minimums (ENIs, vCPUs, memory, desiredSize) before any
-// AWS resource creation. All failures are aggregated so the operator sees the
-// full picture in one shot rather than discovering them sequentially.
+// checkHostDeviceCapacity validates that the first node group meets all BNK
+// pattern minimums (ENIs, vCPUs, memory, desiredSize) before any AWS resource
+// creation. The ENI floor is pattern-dependent (see bnkMinENIs); vCPU/memory/
+// desiredSize are shared across every BNK pattern. All failures are aggregated
+// so the operator sees the full picture in one shot rather than discovering
+// them sequentially.
 //
 // See docs/audits/slice-12-cold-start-audit.md §5 for rationale.
 func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2API) error {
@@ -114,16 +123,17 @@ func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2AP
 
 	var errs []error
 
-	// ENI check.
+	// ENI check (pattern-dependent floor).
+	minENIs := bnkMinENIs(cl)
 	if info.NetworkInfo == nil || info.NetworkInfo.MaximumNetworkInterfaces == nil {
 		errs = append(errs, fmt.Errorf("ec2:DescribeInstanceTypes %q: missing network info", instanceType))
 	} else {
 		maxENIs := int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces))
-		if maxENIs < HostDeviceMinENIs {
+		if maxENIs < minENIs {
 			errs = append(errs, fmt.Errorf(
-				"pattern=host-device requires an EC2 instance type with at least %d network interfaces (primary + EKS CNI + 2 BNK secondaries); "+
+				"pattern %s requires an EC2 instance type with at least %d network interfaces (primary + %d TMM data-plane secondary); "+
 					"%q supports only %d. Bump cluster.nodeGroups[0].instanceType to m5.xlarge or larger",
-				HostDeviceMinENIs, instanceType, maxENIs,
+				cl.Pattern, minENIs, minENIs-1, instanceType, maxENIs,
 			))
 		}
 	}
@@ -133,8 +143,8 @@ func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2AP
 		vcpus := int(*info.VCpuInfo.DefaultVCpus)
 		if vcpus < HostDeviceMinVCPUs {
 			errs = append(errs, fmt.Errorf(
-				"pattern=host-device requires at least %d vCPUs (BNK 2.3 Small minimum); %q has %d vCPUs",
-				HostDeviceMinVCPUs, instanceType, vcpus,
+				"pattern %s requires at least %d vCPUs (BNK 2.3 Small minimum); %q has %d vCPUs",
+				cl.Pattern, HostDeviceMinVCPUs, instanceType, vcpus,
 			))
 		}
 	}
@@ -144,8 +154,8 @@ func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2AP
 		memMiB := *info.MemoryInfo.SizeInMiB
 		if memMiB < HostDeviceMinMemoryMiB {
 			errs = append(errs, fmt.Errorf(
-				"pattern=host-device requires at least %d MiB memory (64 GiB, BNK 2.3 Small minimum); %q has %d MiB",
-				HostDeviceMinMemoryMiB, instanceType, memMiB,
+				"pattern %s requires at least %d MiB memory (64 GiB, BNK 2.3 Small minimum); %q has %d MiB",
+				cl.Pattern, HostDeviceMinMemoryMiB, instanceType, memMiB,
 			))
 		}
 	}
@@ -153,8 +163,8 @@ func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2AP
 	// DesiredSize check (dSSM quorum requires ≥3).
 	if ng.DesiredSize > 0 && ng.DesiredSize < HostDeviceMinDesiredSize {
 		errs = append(errs, fmt.Errorf(
-			"pattern=host-device requires cluster.nodeGroups[0].desiredSize >= %d (dSSM quorum requires ≥3); got %d",
-			HostDeviceMinDesiredSize, ng.DesiredSize,
+			"pattern %s requires cluster.nodeGroups[0].desiredSize >= %d (dSSM quorum requires ≥3); got %d",
+			cl.Pattern, HostDeviceMinDesiredSize, ng.DesiredSize,
 		))
 	}
 
@@ -162,7 +172,7 @@ func checkHostDeviceCapacity(ctx context.Context, cl *intent.Cluster, ec2c EC2AP
 		return errors.Join(errs...)
 	}
 
-	fmt.Fprintf(os.Stderr, "[phase 00] instance-type %s OK for host-device: %d ENIs, desiredSize=%d\n",
-		instanceType, int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces)), ng.DesiredSize)
+	fmt.Fprintf(os.Stderr, "[phase 00] instance-type %s OK for pattern %s: %d ENIs (min %d), desiredSize=%d\n",
+		instanceType, cl.Pattern, int(aws.ToInt32(info.NetworkInfo.MaximumNetworkInterfaces)), minENIs, ng.DesiredSize)
 	return nil
 }

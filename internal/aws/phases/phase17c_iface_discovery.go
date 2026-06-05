@@ -48,15 +48,18 @@ type ifaceInfo struct {
 // Lifecycle order: Phase17 → Phase17b → Phase17c → Phase18 → ...
 func Phase17cIfaceDiscovery(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
+	hasInternal := cl.HasInternalInterface()
 	fmt.Fprintf(os.Stderr, "[phase 17c] iface-discovery: cluster=%s\n", cl.Metadata.Name)
 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "[phase 17c] dry-run: setting iface constants from architecture defaults")
 		st.Set("EXTERNAL_IFNAME", ExternalIFName)
-		st.Set("INTERNAL_IFNAME", InternalIFName)
 		st.Set("EXTERNAL_PCI", ExternalPCI)
-		st.Set("INTERNAL_PCI", InternalPCI)
 		st.Set("CLOUD_HOST_DEVICE_NAME", ExternalIFName)
+		if hasInternal {
+			st.Set("INTERNAL_IFNAME", InternalIFName)
+			st.Set("INTERNAL_PCI", InternalPCI)
+		}
 		st.Set("IFACE_DISCOVERY_AT", "dry-run")
 		return nil
 	}
@@ -65,14 +68,15 @@ func Phase17cIfaceDiscovery(ctx context.Context, cl *intent.Cluster, st *state.S
 		return fmt.Errorf("phase17c: Clients.K8s is nil — call clients.AttachK8s(kubeconfigPath) first")
 	}
 
-	// Read prerequisites from state.
-	intMAC := st.Get("INTERNAL_ENI_MAC")
-	if intMAC == "" {
-		return fmt.Errorf("phase17c: INTERNAL_ENI_MAC not in state (run phase17 first)")
-	}
+	// Read prerequisites from state. The internal MAC exists only for
+	// dual-interface; single-interface patterns discover the external ENI only.
 	extMAC := st.Get("EXTERNAL_ENI_MAC")
 	if extMAC == "" {
 		return fmt.Errorf("phase17c: EXTERNAL_ENI_MAC not in state (run phase17 first)")
+	}
+	intMAC := st.Get("INTERNAL_ENI_MAC")
+	if hasInternal && intMAC == "" {
+		return fmt.Errorf("phase17c: INTERNAL_ENI_MAC not in state (run phase17 first)")
 	}
 	nodeName := st.Get("TMM_NODE_NAME")
 	if nodeName == "" {
@@ -83,7 +87,7 @@ func Phase17cIfaceDiscovery(ctx context.Context, cl *intent.Cluster, st *state.S
 	// is Running, the secondary ENIs have already been claimed by the running TMM
 	// pod (moved into its netns) — a host-netns discovery pod cannot see them, so
 	// re-discovery would spuriously fail. Skip and keep the resolved mapping.
-	if ifaceMappingResolved(st) {
+	if ifaceMappingResolved(st, hasInternal) {
 		running, err := tmmPodRunning(ctx, clients.K8s, InstanceNamespace)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[phase 17c] warning: could not check TMM pod status (%v); proceeding with discovery\n", err)
@@ -135,15 +139,22 @@ func Phase17cIfaceDiscovery(ctx context.Context, cl *intent.Cluster, st *state.S
 		return fmt.Errorf("phase17c: MAC matching: %w", err)
 	}
 
-	// Persist to state.
+	// Persist to state. Internal keys only for dual-interface (intIf/intPCI are
+	// empty for single-interface patterns).
 	st.Set("EXTERNAL_IFNAME", extIf)
-	st.Set("INTERNAL_IFNAME", intIf)
 	st.Set("EXTERNAL_PCI", extPCI)
-	st.Set("INTERNAL_PCI", intPCI)
 	st.Set("CLOUD_HOST_DEVICE_NAME", extIf)
+	if hasInternal {
+		st.Set("INTERNAL_IFNAME", intIf)
+		st.Set("INTERNAL_PCI", intPCI)
+	}
 	st.Set("IFACE_DISCOVERY_AT", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintf(os.Stderr, "[phase 17c] discovered: external=%s(%s) internal=%s(%s)\n",
-		extIf, extPCI, intIf, intPCI)
+	if hasInternal {
+		fmt.Fprintf(os.Stderr, "[phase 17c] discovered: external=%s(%s) internal=%s(%s)\n",
+			extIf, extPCI, intIf, intPCI)
+	} else {
+		fmt.Fprintf(os.Stderr, "[phase 17c] discovered: external=%s(%s)\n", extIf, extPCI)
+	}
 
 	if err := st.Save(); err != nil {
 		return fmt.Errorf("phase17c: saving state: %w", err)
@@ -184,8 +195,11 @@ func Phase17cIfaceDiscoveryDown(ctx context.Context, _ *intent.Cluster, st *stat
 
 // matchInterfaces matches extMAC and intMAC (case-insensitive) against the
 // discovered map[mac]ifaceInfo emitted by the probe pod. Returns the ifname
-// and PCI bus address for each. Hard-fails (naming both MACs + dumping the map)
-// if either MAC is not found.
+// and PCI bus address for each. Hard-fails (naming the missing MAC(s) + dumping
+// the map) if a required MAC is not found.
+//
+// An empty intMAC means the cluster is single-interface (external-only): the
+// internal interface is not required, and intIf/intPCI are returned empty.
 func matchInterfaces(discovered map[string]ifaceInfo, extMAC, intMAC string) (extIf, extPCI, intIf, intPCI string, err error) {
 	extKey := strings.ToLower(extMAC)
 	intKey := strings.ToLower(intMAC)
@@ -206,7 +220,7 @@ func matchInterfaces(discovered map[string]ifaceInfo, extMAC, intMAC string) (ex
 	if extIf == "" {
 		missing = append(missing, fmt.Sprintf("external MAC %s", extMAC))
 	}
-	if intIf == "" {
+	if intMAC != "" && intIf == "" {
 		missing = append(missing, fmt.Sprintf("internal MAC %s", intMAC))
 	}
 	if len(missing) > 0 {
@@ -228,10 +242,16 @@ func podLogs(ctx context.Context, clientset kubernetes.Interface, ns, name strin
 }
 
 // ifaceMappingResolved reports whether a prior successful phase17c run already
-// persisted the data-path iface mapping.
-func ifaceMappingResolved(st *state.State) bool {
-	return st.Get("EXTERNAL_IFNAME") != "" && st.Get("INTERNAL_IFNAME") != "" &&
-		st.Get("EXTERNAL_PCI") != "" && st.Get("INTERNAL_PCI") != ""
+// persisted the data-path iface mapping. The internal keys are required only
+// for dual-interface; single-interface patterns resolve on the external pair.
+func ifaceMappingResolved(st *state.State, hasInternal bool) bool {
+	if st.Get("EXTERNAL_IFNAME") == "" || st.Get("EXTERNAL_PCI") == "" {
+		return false
+	}
+	if hasInternal {
+		return st.Get("INTERNAL_IFNAME") != "" && st.Get("INTERNAL_PCI") != ""
+	}
+	return true
 }
 
 // shouldSkipIfaceDiscovery is the pure skip decision: skip only when the mapping

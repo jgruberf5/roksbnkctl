@@ -68,12 +68,15 @@ type BnkSpec struct {
 	PalCpuSet string `yaml:"palCpuSet,omitempty"`
 }
 
-// DataPathSpec describes the two TMM data-plane subnets required when
-// pattern: host-device is set. External is the TMM client-side (public-ish)
-// subnet; Internal is the TMM backend-side (private) subnet.
+// DataPathSpec describes the TMM data-plane subnets required by every BNK
+// interface pattern. External (BNK_EXT) is the TMM client-side ingress subnet
+// and is required by all patterns. Internal (BNK_INT) is the TMM backend-side
+// subnet and is used only by pattern: dual-interface; single-interface patterns
+// (external-only, sriov-external) leave it empty and reach in-cluster backends
+// over CNI.
 type DataPathSpec struct {
-	External SubnetSpec   `yaml:"external"` // BNK_EXT — TMM client-side subnet
-	Internal SubnetSpec   `yaml:"internal"` // BNK_INT — TMM backend-side subnet
+	External SubnetSpec   `yaml:"external"`           // BNK_EXT — TMM client-side subnet (all patterns)
+	Internal SubnetSpec   `yaml:"internal,omitempty"` // BNK_INT — TMM backend-side subnet (dual-interface only)
 	SelfIPs  *SelfIPsSpec `yaml:"selfIPs,omitempty"`
 }
 
@@ -109,8 +112,11 @@ type Cluster struct {
 	// (slice 3+). Optional for slices 1+2 (network + IAM only). Required
 	// when running phases 08+.
 	ClusterSpec *ClusterSpec `yaml:"cluster,omitempty"`
-	// Pattern selects internal/k8s/manifests/<pattern>/ (not used in slice 1).
-	// Loaded here for forward-compat so later slices don't change the struct.
+	// Pattern selects the BNK data-plane interface topology + binding. One of
+	// PatternExternalOnly, PatternDualInterface, PatternSRIOVExternal — or the
+	// legacy alias "host-device" (= dual-interface), normalized at Load. Empty
+	// means a network-only/tracer cluster (no BNK data plane). See the
+	// IsBNKPattern/HasInternalInterface/DataplaneBinding helpers.
 	Pattern string `yaml:"pattern,omitempty"`
 	// Forge declares the bnk-forge integration shape (slice 4+). Optional;
 	// when omitted the new Go-SDK phased path skips the forge handoff
@@ -192,8 +198,9 @@ type Network struct {
 	Subnets Subnets  `yaml:"subnets"`
 	// NatGateways is 1 (cost-optimised) or the number of AZs (HA).
 	NatGateways int `yaml:"natGateways"`
-	// DataPath declares the two TMM data-plane subnets (slice 7+).
-	// Required when pattern: host-device is set.
+	// DataPath declares the TMM data-plane subnets (slice 7+).
+	// Required by every BNK interface pattern (external subnet always; internal
+	// subnet only for dual-interface).
 	DataPath *DataPathSpec `yaml:"dataPath,omitempty"`
 }
 
@@ -366,6 +373,78 @@ func (f *FloSpec) FLOVersion() string {
 	return f.Version
 }
 
+// BNK interface patterns. A pattern fixes two orthogonal axes of the TMM data
+// plane: interface *topology* (single external vs external+internal) and
+// interface *binding* (kernel host-device vs SR-IOV/vfio-pci DPDK).
+//
+//	pattern          topology          binding       backend pods
+//	external-only    1 (external)      host-device   CNI
+//	dual-interface   2 (ext+internal)  host-device   CNI   (legacy alias: host-device)
+//	sriov-external   1 (external)      sriov/vfio     CNI   (experimental, gated)
+//
+// The phases read intent through the IsBNKPattern/HasInternalInterface/
+// DataplaneBinding helpers rather than comparing this string directly, so a new
+// preset (e.g. dual+sriov) only needs a row in those helpers.
+const (
+	// PatternExternalOnly: single external interface for ingress, CNI backend (A).
+	PatternExternalOnly = "external-only"
+	// PatternDualInterface: external ingress + internal server-side interface, CNI backend (B).
+	// This is the topology the codebase has always provisioned.
+	PatternDualInterface = "dual-interface"
+	// PatternSRIOVExternal: single external interface bound via SR-IOV/vfio-pci
+	// DPDK instead of kernel host-device, CNI backend (C). Reserved but gated
+	// behind a live ENA/vfio feasibility spike — see validatePattern.
+	PatternSRIOVExternal = "sriov-external"
+	// PatternHostDevice is the legacy alias for PatternDualInterface. Accepted in
+	// cluster.yaml for backward-compat (existing examples/state); normalized to
+	// dual-interface at Load so downstream code sees a single canonical value.
+	PatternHostDevice = "host-device"
+)
+
+// normalizePattern maps the legacy host-device alias onto dual-interface and
+// returns the canonical pattern string. Empty stays empty. Idempotent, so it is
+// safe to call on already-normalized values (the helpers rely on this).
+func normalizePattern(p string) string {
+	if p == PatternHostDevice {
+		return PatternDualInterface
+	}
+	return p
+}
+
+// IsBNKPattern reports whether the pattern provisions a BNK data plane — any of
+// external-only, dual-interface, sriov-external. Empty (network-only/tracer) is
+// false. Phases that touch BNK gate on this instead of "== host-device".
+func (c *Cluster) IsBNKPattern() bool {
+	switch normalizePattern(c.Pattern) {
+	case PatternExternalOnly, PatternDualInterface, PatternSRIOVExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+// HasInternalInterface reports whether a second (internal, server-side) ENI,
+// data-path subnet, NetworkAttachmentDefinition and F5SPKVlan should be
+// provisioned. True only for dual-interface. Single-interface patterns reach
+// in-cluster backends over CNI and have no internal interface.
+func (c *Cluster) HasInternalInterface() bool {
+	return normalizePattern(c.Pattern) == PatternDualInterface
+}
+
+// DataplaneBinding returns how TMM binds its external interface: "host-device"
+// (kernel netdevice via Multus) or "sriov" (vfio-pci DPDK). Non-BNK patterns
+// return "".
+func (c *Cluster) DataplaneBinding() string {
+	switch normalizePattern(c.Pattern) {
+	case PatternExternalOnly, PatternDualInterface:
+		return "host-device"
+	case PatternSRIOVExternal:
+		return "sriov"
+	default:
+		return ""
+	}
+}
+
 // StateDir returns the path to the IDs-cache directory for this cluster
 // relative to the caller's working directory. Callers that need an absolute
 // path should use filepath.Abs on the result.
@@ -454,6 +533,11 @@ const EmbeddedCertManagerVersion = "1.16.1"
 // applyDefaults fills in zero-value fields with their documented defaults.
 // Called before validate so validation sees the post-default values.
 func applyDefaults(c *Cluster) {
+	// Normalize the legacy host-device alias to the canonical dual-interface
+	// pattern up front so every default below + every downstream phase sees one
+	// value. Must run before the IsBNKPattern()/HasInternalInterface() checks.
+	c.Pattern = normalizePattern(c.Pattern)
+
 	if c.ClusterSpec != nil {
 		if c.ClusterSpec.KubernetesVersion == "" {
 			c.ClusterSpec.KubernetesVersion = "1.30"
@@ -461,35 +545,35 @@ func applyDefaults(c *Cluster) {
 		for i := range c.ClusterSpec.NodeGroups {
 			ng := &c.ClusterSpec.NodeGroups[i]
 			if ng.InstanceType == "" {
-				// host-device pattern needs ≥4 ENIs (primary + EKS CNI + 2 BNK secondaries)
-				// AND ≥16 vCPU / ≥64 GB for the full BNK 2.3 Small control plane + TMM
-				// packed onto one labeled node. m6i.4xlarge is the documented minimum per
-				// docs/audits/slice-09-aws-gpu-setup-audit.md row 27 and slice-12 audit.
-				// Other patterns can run on smaller workers.
-				if c.Pattern == "host-device" {
+				// BNK patterns need ≥16 vCPU / ≥64 GB for the full BNK 2.3 Small
+				// control plane + TMM packed onto one labeled node, plus enough ENIs
+				// for the TMM data-plane secondaries. m6i.4xlarge is the documented
+				// minimum per docs/audits/slice-09-aws-gpu-setup-audit.md row 27 and
+				// slice-12 audit. Non-BNK (network-only) clusters use smaller workers.
+				if c.IsBNKPattern() {
 					ng.InstanceType = "m6i.4xlarge"
 				} else {
 					ng.InstanceType = "t3.medium"
 				}
 			}
 			if ng.DesiredSize == 0 {
-				// host-device pattern needs ≥3 nodes for dSSM quorum (slice-09 audit row 28,
-				// un-deferred 2026-05-24). Other patterns default to 1.
-				if c.Pattern == "host-device" {
+				// BNK patterns need ≥3 nodes for dSSM quorum (slice-09 audit row 28,
+				// un-deferred 2026-05-24). Non-BNK clusters default to 1.
+				if c.IsBNKPattern() {
 					ng.DesiredSize = 3
 				} else {
 					ng.DesiredSize = 1
 				}
 			}
 			if ng.MinSize == 0 {
-				if c.Pattern == "host-device" {
+				if c.IsBNKPattern() {
 					ng.MinSize = 3
 				} else {
 					ng.MinSize = 1
 				}
 			}
 			if ng.MaxSize == 0 {
-				if c.Pattern == "host-device" {
+				if c.IsBNKPattern() {
 					ng.MaxSize = 4
 				} else {
 					ng.MaxSize = 2
@@ -500,11 +584,11 @@ func applyDefaults(c *Cluster) {
 			}
 		}
 
-		// host-device pattern: auto-inject role=bnk into the first node group's
+		// BNK patterns: auto-inject role=bnk into the first node group's
 		// labels if not already set. Phase 16 reads `kubectl get nodes -l role=bnk`
 		// to find the TMM-target node — missing this label causes a "no nodes found"
 		// failure at Phase 16 entry. Preserve an explicitly-set value.
-		if c.Pattern == "host-device" && len(c.ClusterSpec.NodeGroups) > 0 {
+		if c.IsBNKPattern() && len(c.ClusterSpec.NodeGroups) > 0 {
 			ng := &c.ClusterSpec.NodeGroups[0]
 			if ng.Labels == nil {
 				ng.Labels = make(map[string]string)
@@ -585,11 +669,13 @@ func applyDefaults(c *Cluster) {
 		c.Demo.TTL = DefaultDemoTTL
 	}
 
-	// host-device pattern: auto-derive TMM SelfIPs as <subnet>.240 when not
-	// explicitly set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
-	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST
-	// be assigned as secondary IPs on each ENI (Phase 17).
-	if c.Pattern == "host-device" && c.Network.DataPath != nil {
+	// BNK patterns: auto-derive TMM SelfIPs as <subnet>.240 when not explicitly
+	// set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
+	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST be
+	// assigned as secondary IPs on each ENI (Phase 17). The internal SelfIP is
+	// only derived for dual-interface — single-interface patterns have no
+	// internal ENI.
+	if c.IsBNKPattern() && c.Network.DataPath != nil {
 		if c.Network.DataPath.SelfIPs == nil {
 			c.Network.DataPath.SelfIPs = &SelfIPsSpec{}
 		}
@@ -602,7 +688,7 @@ func applyDefaults(c *Cluster) {
 				}
 			}
 		}
-		if sip.Internal == "" {
+		if c.HasInternalInterface() && sip.Internal == "" {
 			if ip, p := DeriveSelfIP(c.Network.DataPath.Internal.CIDR, 240); ip != "" {
 				sip.Internal = ip
 				if sip.PrefixLen == 0 {
@@ -684,20 +770,42 @@ func validate(c *Cluster) error {
 }
 
 // validatePattern checks pattern-specific constraints.
-// host-device: network.dataPath is required; both external/internal AZs must
-// appear in network.azs.
+//
+//   - Empty pattern (network-only/tracer) is always valid.
+//   - The value must be a recognised BNK pattern (or the host-device alias,
+//     already normalized to dual-interface by applyDefaults).
+//   - sriov-external is reserved but gated behind the ENA/vfio spike → hard error.
+//   - All BNK patterns require network.dataPath.external{cidr,az}.
+//   - dual-interface additionally requires network.dataPath.internal{cidr,az};
+//     single-interface patterns must NOT set an internal block.
+//   - Every referenced AZ must appear in network.azs.
+//   - All BNK patterns require desiredSize >= 3 (dSSM quorum).
 func validatePattern(c *Cluster) error {
 	if c.Pattern == "" {
 		return nil
 	}
-	if c.Pattern != "host-device" {
-		return fmt.Errorf("pattern %q is not a recognised value (expected host-device)", c.Pattern)
+	if !c.IsBNKPattern() {
+		return fmt.Errorf("pattern %q is not a recognised value "+
+			"(expected one of: external-only, dual-interface, sriov-external; or the host-device alias)", c.Pattern)
 	}
-	// host-device requires dataPath.
+	// sriov-external is reserved in the schema but not yet enabled: the
+	// SR-IOV/vfio-pci dataplane on AWS ENA is undocumented/unsupported by F5 on
+	// the EKS host build and gated behind a live testpmd feasibility spike.
+	if normalizePattern(c.Pattern) == PatternSRIOVExternal {
+		return fmt.Errorf("pattern sriov-external is experimental and not yet enabled: " +
+			"the SR-IOV/vfio-pci dataplane on AWS ENA is unproven and unsupported by F5 on the EKS host build, " +
+			"and is gated behind a live testpmd feasibility spike (see docs/spikes/sriov-ena-vfio/README.md). " +
+			"Use pattern: external-only for a single-interface deployment")
+	}
+
+	// All BNK patterns need the external data-path subnet.
 	if c.Network.DataPath == nil {
-		return fmt.Errorf("pattern host-device requires network.dataPath to be set")
+		return fmt.Errorf("pattern %s requires network.dataPath (external subnet) to be set", c.Pattern)
 	}
 	dp := c.Network.DataPath
+	if dp.External.CIDR == "" || dp.External.AZ == "" {
+		return fmt.Errorf("pattern %s requires network.dataPath.external.{cidr,az}", c.Pattern)
+	}
 	azSet := make(map[string]bool, len(c.Network.AZs))
 	for _, az := range c.Network.AZs {
 		azSet[az] = true
@@ -705,16 +813,29 @@ func validatePattern(c *Cluster) error {
 	if !azSet[dp.External.AZ] {
 		return fmt.Errorf("network.dataPath.external.az %q is not in network.azs %v", dp.External.AZ, c.Network.AZs)
 	}
-	if !azSet[dp.Internal.AZ] {
-		return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
+
+	// Internal subnet: required for dual-interface, forbidden for single-interface
+	// patterns (where it would be silently ignored otherwise).
+	if c.HasInternalInterface() {
+		if dp.Internal.CIDR == "" || dp.Internal.AZ == "" {
+			return fmt.Errorf("pattern dual-interface requires network.dataPath.internal.{cidr,az}")
+		}
+		if !azSet[dp.Internal.AZ] {
+			return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
+		}
+	} else if dp.Internal.CIDR != "" || dp.Internal.AZ != "" {
+		return fmt.Errorf("pattern %s is single-interface; remove network.dataPath.internal "+
+			"(the internal subnet is only used by pattern: dual-interface)", c.Pattern)
 	}
-	if c.Pattern == "host-device" && c.ClusterSpec != nil {
+
+	// dSSM quorum applies to every BNK pattern.
+	if c.ClusterSpec != nil {
 		for i, ng := range c.ClusterSpec.NodeGroups {
 			if ng.DesiredSize > 0 && ng.DesiredSize < 3 {
 				return fmt.Errorf(
-					"pattern host-device requires cluster.nodeGroups[%d].desiredSize >= 3 (dSSM quorum), got %d. "+
+					"pattern %s requires cluster.nodeGroups[%d].desiredSize >= 3 (dSSM quorum), got %d. "+
 						"See docs/audits/slice-12-cold-start-audit.md",
-					i, ng.DesiredSize,
+					c.Pattern, i, ng.DesiredSize,
 				)
 			}
 		}
@@ -733,9 +854,9 @@ func validateTesting(c *Cluster) error {
 	}
 	jh := c.Testing.Jumphost
 	if jh.Enabled {
-		if c.Pattern != "host-device" || c.Network.DataPath == nil {
+		if !c.IsBNKPattern() || c.Network.DataPath == nil {
 			return fmt.Errorf("testing.jumphost requires network.dataPath (BNK_EXT subnet) " +
-				"which is only created when pattern: host-device is set")
+				"which is only created for a BNK interface pattern (external-only, dual-interface)")
 		}
 	}
 	if jh.InstanceType != "" && !instanceTypeRE.MatchString(jh.InstanceType) {

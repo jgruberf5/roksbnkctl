@@ -15,5 +15,7 @@ data:
             subnet_id: "{{ .MGMTSubnet }}"
           - cidr: "{{ .BNKExtCidr }}"
             subnet_id: "{{ .BNKExtSubnet }}"
+{{- if .HasInternal }}
           - cidr: "{{ .BNKIntCidr }}"
             subnet_id: "{{ .BNKIntSubnet }}"
+{{- end }}

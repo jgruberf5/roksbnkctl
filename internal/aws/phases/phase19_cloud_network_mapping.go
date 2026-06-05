@@ -38,7 +38,7 @@ func Phase19CloudNetworkMapping(ctx context.Context, cl *intent.Cluster, st *sta
 	fmt.Fprintf(os.Stderr, "[phase 19] cloud-network-mapping: cluster=%s\n", name)
 
 	// Persist host-device constants to state for observability + Pass 3.
-	persistHostDeviceConstants(st)
+	persistHostDeviceConstants(st, cl.HasInternalInterface())
 
 	// Also alias MGMT_SUBNET from PUBLIC_SUBNETS[0] if not already set.
 	if err := ensureMGMTSubnetAlias(st); err != nil {
@@ -112,12 +112,15 @@ func Phase19CloudNetworkMappingDown(ctx context.Context, _ *intent.Cluster, st *
 // CLOUD_HOST_DEVICE_NAME are NOT written here. Phase 17c (iface-discovery) is
 // the sole writer of those keys. Writing them here would clobber the values
 // discovered on-node since phase 19 runs AFTER phase 17c.
-func persistHostDeviceConstants(st *state.State) {
+func persistHostDeviceConstants(st *state.State, hasInternal bool) {
 	st.Set("INSTANCE_NS", InstanceNamespace)
 	st.Set("OPERATOR_NS", OperatorNamespace)
 	st.Set("EXTERNAL_NAD", ExternalNAD)
-	st.Set("INTERNAL_NAD", InternalNAD)
 	st.Set("CLOUD_HOST_DEVICE_TAG", CloudHostDeviceTag)
+	// Internal NAD only exists for dual-interface.
+	if hasInternal {
+		st.Set("INTERNAL_NAD", InternalNAD)
+	}
 }
 
 // ensureMGMTSubnetAlias writes MGMT_SUBNET = PUBLIC_SUBNETS[0]. ALWAYS

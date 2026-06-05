@@ -25,6 +25,7 @@ spec:
   prefixlen_v4: {{ .TmmSelfIPPrefixLen }}
   tag: 0
   auto_lasthop: AUTO_LASTHOP_ENABLED
+{{- if .HasInternal }}
 ---
 apiVersion: k8s.f5net.com/v1
 kind: F5SPKVlan
@@ -41,3 +42,4 @@ spec:
   prefixlen_v4: {{ .TmmSelfIPPrefixLen }}
   tag: 0
   auto_lasthop: AUTO_LASTHOP_ENABLED
+{{- end }}

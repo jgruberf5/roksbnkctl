@@ -95,18 +95,18 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		return fmt.Errorf("phase10: PUBLIC_SUBNETS not in state (run phase03 first)")
 	}
 
-	// For host-device pattern: pin the node group to the public subnet that
-	// shares an AZ with the data-path subnets. EKS picks an AZ from the node
+	// For BNK patterns: pin the node group to the public subnet that shares an
+	// AZ with the external data-path subnet. EKS picks an AZ from the node
 	// group's subnet set when launching the node; if we pass both AZs, EKS may
 	// land the node in the wrong AZ and Phase 17 ENI attach fails with
 	// "not in the same availability zone".
-	if cl.Pattern == "host-device" && cl.Network.DataPath != nil {
+	if cl.IsBNKPattern() && cl.Network.DataPath != nil {
 		targetAZ := cl.Network.DataPath.External.AZ
 		filtered := filterSubnetsByAZ(publicSubnets, cl.Network.Subnets.Public, targetAZ)
 		if len(filtered) == 0 {
 			return fmt.Errorf("phase10: no public subnet matches data-path AZ %q", targetAZ)
 		}
-		fmt.Fprintf(os.Stderr, "[phase 10] host-device pattern: pinning node group to AZ=%s (subnets=%v)\n", targetAZ, filtered)
+		fmt.Fprintf(os.Stderr, "[phase 10] BNK pattern: pinning node group to AZ=%s (subnets=%v)\n", targetAZ, filtered)
 		publicSubnets = filtered
 	}
 
