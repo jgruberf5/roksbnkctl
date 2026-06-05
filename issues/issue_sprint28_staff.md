@@ -30,7 +30,7 @@
 > **parallel** after Cluster, and **tear down independently** (`bnk down`
 > leaves the jumphosts for reuse, and vice versa).
 
-`Status: open` (not yet dispatched).
+`Status: resolved` (three-phase impl landed; integrator-verified gates).
 
 ### Locked decisions (integrator; recommended where noted — confirm before dispatch)
 - **Three states**: `state-cluster/`, BNK state, `state-testing/`. (Architect
@@ -57,7 +57,7 @@
 ## Issue 1 — Split the trial phase into BNK + Testing states
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 Today `state/` = trial = BNK + testing (the `testing` module's jumphosts run
 in the cluster phase via config; the trial phase forces `testing_create_*=false`
@@ -93,7 +93,7 @@ existing workspaces; document the path.
 ## Issue 2 — Expand shape detection + phase model for three phases
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 `config.DetectShape` (`internal/config/tfstate.go`) returns 4 shapes today
 (Empty/ClusterOnly/Split/LegacySingle) by inspecting `state-cluster/` and
@@ -107,7 +107,7 @@ managed-`ibm_container_vpc_cluster` signal for the cluster-present check.
 ## Issue 3 — Parallel up + the `testing` phase, in orchestration + CLI
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 - **`RunTestingUp` / `RunTestingDown`** (`internal/orchestration/`): mirror
   `RunTrialUp`/`RunTrialDown` but for `state-testing/` with the
@@ -128,7 +128,7 @@ managed-`ibm_container_vpc_cluster` signal for the cluster-present check.
 ## Issue 4 — Independent teardown + guards
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 - `roksbnkctl bnk down` → BNK state only (cluster + testing untouched).
 - `roksbnkctl testing down` → testing state only (cluster + BNK untouched) —

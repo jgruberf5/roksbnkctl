@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "terraform_version": "1.9.0",
+  "serial": 5,
+  "lineage": "44444444-4444-4444-4444-444444444444",
+  "outputs": {},
+  "resources": [
+    {
+      "module": "module.testing",
+      "mode": "managed",
+      "type": "tls_private_key",
+      "name": "jumphost_shared_key",
+      "provider": "provider[\"registry.terraform.io/hashicorp/tls\"]",
+      "instances": []
+    },
+    {
+      "module": "module.testing",
+      "mode": "managed",
+      "type": "ibm_is_instance",
+      "name": "tgw_jumphost",
+      "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
+      "instances": []
+    }
+  ],
+  "check_results": null
+}
