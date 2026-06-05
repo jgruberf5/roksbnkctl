@@ -180,6 +180,7 @@ resource "kubectl_manifest" "bnk_license" {
   yaml_body         = yamlencode(local.license_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 
   wait_for {
     field {

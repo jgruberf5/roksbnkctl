@@ -372,6 +372,7 @@ resource "kubectl_manifest" "cneinstance" {
   yaml_body         = yamlencode(local.cneinstance_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 
   wait_for {
     condition {
@@ -394,6 +395,7 @@ resource "kubectl_manifest" "cneinstance_scc_policies" {
 
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   yaml_body = yamlencode({
     apiVersion = "rbac.authorization.k8s.io/v1"
     kind       = "ClusterRoleBinding"
