@@ -189,3 +189,125 @@ managed-`ibm_container_vpc_cluster` signal for the cluster-present check.
   branch stacks on it.
 - Integrator memory [[live-verify-high-issues]] — cluster-mutating; the live
   parallel-up + independent-down verify gates closure.
+
+---
+
+## Closure — staff, 2026-06-04
+
+All four issues implemented per the architect's `## Design — three-phase
+model` section. Orchestration/state/CLI + the testing split only — no
+Sprint 27 BNK terraform-module-body changes; the `testing` module is reused
+as-is. Branch `sprint28-three-phase-split`; not committed/tagged.
+
+### State split (Issue 1)
+- **`state-testing/`** added: `config.WorkspaceTestingStateDir` +
+  `testingStateSubdir` const (`internal/config/paths.go`). **BNK keeps
+  `state/`** per the architect's §1a decision (zero migration for the BNK
+  modules) — `WorkspaceStateDir`/`WorkspaceClusterStateDir` unchanged.
+- **TGW name handoff**: added `TransitGatewayName` to `ClusterOutputs`
+  (`internal/config/cluster_outputs.go`); `persistClusterOutputs`
+  (`cluster_phase.go`) stamps it from the `roks_transit_gateway_name` root
+  output; `cluster show` prints it when set. Empty on `cluster register`
+  (testing phase falls back to the config-rendered name).
+- **Jumphosts evicted from the cluster phase**: `clusterPhaseOverrideContent`
+  now also forces `testing_create_tgw_jumphost/cluster_jumphosts/client_vpc
+  = false` (the shared SSH key drops to count=0 in `state-cluster/` and
+  lives only in `state-testing/`).
+- **`testing-phase-override.tfvars` writer**:
+  `writeTestingPhaseOverride[At]` (`internal/orchestration/second_phase_reuse.go`),
+  mirroring `writeBnkPhaseOverrideAt`. Sets only the architectural-off flags
+  (`create_roks_cluster`/`deploy_bnk`/`deploy_cert_manager`/
+  `create_roks_transit_gateway`/`create_roks_registry_cos_instance=false`)
+  + the VPC/TGW reuse inputs (`use_existing_cluster_vpc`,
+  `existing_cluster_vpc_id`, `cluster_vpc_id`, `roks_cluster_id_or_name`,
+  and `testing_transit_gateway_name` when non-empty). It does **NOT** pin
+  `testing_create_*` — those flow from the user's render (architect §2a, so
+  "TGW jumphost only" keeps working). bnk-phase-override byte-content
+  unchanged (validator byte-gate stays stable); only its header comment
+  notes Testing is its own phase now.
+- The applied-tfvars snapshot/replay + `tf.phaseLabel` learned a "testing"
+  phase (`internal/config/applied_tfvars.go`,
+  `internal/orchestration/applied_replay.go`, `internal/tf/terraform.go`).
+
+### Presence model (Issue 2)
+- New `config.Presence{Cluster,BNK,Testing,Legacy bool}` +
+  `DetectPresence` (`internal/config/tfstate.go`): per-state-dir managed
+  scan. Cluster = managed `ibm_container_vpc_cluster` in `state-cluster/`;
+  Legacy = same signal in `state/` (forces BNK/Testing false); BNK =
+  `state/` has managed resources and not Legacy; Testing = `state-testing/`
+  has managed resources. The `ibm_container_vpc_cluster` signal is
+  preserved via a generalized `stateHasManagedClusterResource`
+  (= the old `trialStateHasClusterModules`). Added
+  `TestingMigrationNeeded` (jumphosts still in `state/` + `state-testing/`
+  empty) and `stateHasManagedModule`. **`DetectShape` is left intact** as
+  the thin enum wrapper for the unported callers (`inspect.go`,
+  `cluster up`/`bnk up`/`bnk down` legacy refusals, `tf.phaseLabel`).
+- `RunUp`/`RunDown` and the `cluster down` guard now branch on `Presence`.
+
+### Parallel dispatch + testing phase (Issue 3)
+- New `internal/orchestration/testing_phase.go`: `RunTestingUp`/
+  `RunTestingDown` (serial CLI entry points) + `runTestingUp`/`runTestingDown`
+  (prefix-writer-aware leaves) against `state-testing/` with the
+  testing-phase override + handoff. **The `tryAutoJumphost`/
+  `tryAutoClusterJumphosts` SSH-target seeding now runs in the Testing
+  phase** (kept as harmless no-ops on the legacy/trial path for back-compat).
+- **`RunUp`**: Cluster serial-first → **BNK ∥ Testing via
+  `golang.org/x/sync/errgroup`** (`runBNKAndTestingParallel`). One composite
+  confirm up front, then `in.Auto=true` for both legs. Reuse-existing-cluster
+  (cluster-outputs.json present, no `state-cluster/`) is treated as
+  "cluster present" → cluster phase skipped.
+- **Concurrent stderr**: `prefixWriter` (`[bnk] `/`[testing] `, shared
+  mutex, line-buffered + flush) per architect §3b; threaded into the
+  BNK/trial leg via a new optional `LifecycleInputs.Stderr` (`in.errOut()`),
+  and into `tf.Open`'s stderr. Cluster phase stays unprefixed/serial.
+- **CLI**: new `internal/cli/testing_phase.go` →
+  `roksbnkctl testing up/down/migrate`, wired in `root.go` via its `init()`.
+  `bnk up/down` already target the BNK state only (the bnk-phase override
+  forces `testing_create_*=false`), so no jumphosts there.
+
+### Teardown + guards (Issue 4)
+- **`RunDown`**: composite confirm naming the present phases → **BNK ∥
+  Testing in parallel** (errgroup, only the present phases) → **Cluster**
+  after both (reverse-dependency). `cluster-outputs.json` deleted only on
+  `cluster down` (unchanged).
+- **`bnk down`** → BNK state only (footer updated: testing jumphosts also
+  intact). **`testing down`** → `state-testing/` only (cluster + BNK
+  untouched; nudges `testing migrate` if jumphosts still in `state/`).
+- **`cluster down` guard** (`cluster_phase.go`) now refuses while **BNK OR
+  Testing** presence is set (names the present phase(s) + the verbs);
+  it's a correctness guard, `--auto` does not bypass.
+
+### Migration mechanism
+`roksbnkctl testing migrate` → `orchestration.MigrateJumphostsToTesting`:
+gates on `TestingMigrationNeeded`, opens+inits the BNK (`state/`) workspace,
+then `terraform state mv -state=state/… -state-out=state-testing/…
+module.testing module.testing` (no cloud churn; the shared SSH key moves
+with the module). Implemented as a direct `terraform state mv` shell-out on
+`tf.Workspace.StateMvTo` (NOT terraform-exec's typed StateMv, whose
+`-state`/`-state-out` options are deprecated → would trip staticcheck
+SA1019). After migrating: re-`bnk up` reconciles the now-jumphost-free BNK
+state (bnk-override already forces `testing_create_*=false`, so a clean
+no-op plan), and `testing up` adopts the moved resources. The bare `up`
+surfaces the same one-line nudge (never auto-runs). Legacy single-state and
+fresh workspaces are untouched (down/re-up is the documented escape hatch).
+
+### Deviations from the architect design
+- None functional. Two implementation notes: (1) the jumphost `state mv` is
+  shelled directly rather than via terraform-exec's typed `StateMv` to keep
+  staticcheck (SA1019) clean — same `terraform state mv` semantics. (2) The
+  bare `up` composite confirmation is taken once **before** the parallel
+  plan/apply (rather than plan-then-confirm), the symmetric analogue of the
+  §3c single-confirm-up-front teardown — required because two confirm-after-
+  plan prompts can't share one TTY during a concurrent apply. `--auto`
+  (CI/scripted) is unaffected.
+
+### Gate results (all GREEN)
+- `gofmt -l .` → empty (after `gofmt -w` on cluster_phase.go +
+  cluster_outputs.go).
+- `go build ./...` → clean.
+- `go vet ./...` → clean.
+- `$(go env GOPATH)/bin/staticcheck ./...` → clean (exit 0).
+- `go test ./...` → all packages pass (no `_test.go` added — validator's
+  surface; existing suite green, incl. the frozen override/dispatch tests).
+- `go.mod`: `golang.org/x/sync` promoted indirect → direct require
+  (`go mod tidy`).

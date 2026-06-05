@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
@@ -73,6 +75,13 @@ type LifecycleInputs struct {
 	// (absolute, os.Stat-checked) — the former flagVarFiles global.
 	VarFiles []string
 
+	// Stderr, when non-nil, is the writer the BNK/trial-phase leaf helpers
+	// (and the underlying terraform handle) print to instead of os.Stderr.
+	// Sprint 28 parallel up/down sets it to a line-prefixed ([bnk] )
+	// writer so the concurrent BNK ∥ Testing output interleaves readably;
+	// nil everywhere else → os.Stderr, byte-identical to prior behavior.
+	Stderr io.Writer
+
 	// PromptYesNo is the cli-resident TTY confirmation prompt
 	// (cli.promptYesNo) — injected so a non-TTY run keeps returning the
 	// default exactly as before.
@@ -91,21 +100,35 @@ type LifecycleInputs struct {
 	MapOutput    func(outputs map[string]tfexec.OutputMeta, key string) map[string]string
 }
 
+// errOut returns the writer the BNK/trial-phase helpers print to —
+// in.Stderr when the parallel path set a prefixed writer, else os.Stderr.
+func (in *LifecycleInputs) errOut() io.Writer {
+	if in != nil && in.Stderr != nil {
+		return in.Stderr
+	}
+	return os.Stderr
+}
+
 // ── lifecycle implementations ───────────────────────────────────────
 
-// RunUp is the shape-aware composite dispatcher for the top-level
-// `roksbnkctl up`. It detects the workspace's on-disk shape and routes
-// to the right phase combination per PRD 06 §"Dispatch table":
+// RunUp is the presence-aware composite dispatcher for the top-level
+// `roksbnkctl up` (Sprint 28 three-phase split). It detects per-phase
+// presence and routes per the architect's §2d dispatch table:
 //
-//   - LegacySingle → monolithic trial up (preserves v1.0.x byte-for-byte:
-//     one terraform apply against the trial state, which still carries
-//     the cluster modules in pre-split workspaces).
-//   - Empty / Split → cluster up first (no-op refresh on Split), then
-//     trial up.
-//   - ClusterOnly → trial up directly (cluster already provisioned).
+//   - Legacy single-state → monolithic trial up (preserves v1.0.x
+//     byte-for-byte: one terraform apply against the trial state, which
+//     still carries the cluster modules in pre-split workspaces).
+//   - Otherwise → Cluster serial-first (created when absent; a no-op
+//     refresh when present or when reusing a registered cluster), then
+//     BNK ∥ Testing concurrently (errgroup), bringing up only the phases
+//     that need it.
 //
-// The composite is a pure dispatcher — no business logic of its own.
-// All the terraform / docker / retry behavior lives in the leaf helpers.
+// "Reuse an existing cluster" (cluster-outputs.json present, no
+// state-cluster/) is treated as "Cluster present": the cluster phase is
+// skipped and BNK ∥ Testing deploy against the registered cluster.
+//
+// The composite is a pure dispatcher — all terraform / docker / retry
+// behavior lives in the leaf helpers.
 func RunUp(ctx context.Context, in *LifecycleInputs) error {
 	if err := in.RejectOnFlag("up"); err != nil {
 		return err
@@ -118,31 +141,79 @@ func RunUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	shape, err := config.DetectShape(cctx.WorkspaceName)
+	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
-		return fmt.Errorf("detecting workspace shape: %w", err)
+		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	switch shape {
-	case config.ShapeLegacySingle:
-		// Cluster + trial share one state file — the monolithic path
-		// applies the whole HCL tree in one terraform run, matching
+	if pres.Legacy {
+		// Cluster + BNK + jumphosts share one state file — the monolithic
+		// path applies the whole HCL tree in one terraform run, matching
 		// v1.0.x semantics exactly.
 		return RunTrialUp(ctx, in)
-	case config.ShapeEmpty, config.ShapeSplit:
-		// Empty: brand-new workspace; cluster up creates the cluster
-		// phase, then trial up adds the BNK trial layer on top.
-		// Split: cluster up is a no-op refresh (PRD 06 open Q on
-		// `--skip-cluster-refresh`); trial up applies any drift /
-		// tfvars changes.
+	}
+
+	// Nudge (not auto-run) the pre-Sprint-28 jumphost migration: the
+	// jumphosts still live in the BNK state and state-testing/ is empty.
+	if mig, merr := config.TestingMigrationNeeded(cctx.WorkspaceName); merr == nil && mig {
+		fmt.Fprintln(os.Stderr,
+			"note: this workspace's jumphosts still live in the BNK state (pre-Sprint-28 layout).")
+		fmt.Fprintln(os.Stderr,
+			"      run `roksbnkctl testing migrate` to split them into state-testing/ before `testing down` can manage them independently.")
+	}
+
+	// Cluster serial-first (both downstreams need it). Skip it when a
+	// cluster is already present in state-cluster/ OR when reusing a
+	// registered cluster (cluster-outputs.json present, no state-cluster/).
+	reuse := false
+	if !pres.Cluster {
+		if _, rerr := config.ReadClusterOutputs(cctx.WorkspaceName); rerr == nil {
+			reuse = true
+		}
+	}
+	if !reuse {
 		if err := in.RunClusterUp(ctx); err != nil {
 			return err
 		}
-		return RunTrialUp(ctx, in)
-	case config.ShapeClusterOnly:
-		return RunTrialUp(ctx, in)
-	default:
-		return fmt.Errorf("unrecognised workspace shape %v", shape)
+	} else {
+		fmt.Fprintln(os.Stderr, "→ Reusing the registered cluster (cluster-outputs.json) — skipping the cluster phase.")
 	}
+
+	// BNK ∥ Testing concurrently. Both depend only on the now-present
+	// cluster, not on each other.
+	return runBNKAndTestingParallel(ctx, in)
+}
+
+// runBNKAndTestingParallel brings up the BNK and Testing phases
+// concurrently after the cluster phase has completed (architect §3a/§3b).
+// Each phase's stderr is line-prefixed ([bnk] / [testing]) under a shared
+// mutex so the concurrent output is readable. The errgroup's first
+// non-nil error cancels the other phase's context; RunUp returns it. The
+// single apply confirmation is taken here ONCE (then in.Auto flipped) so
+// the two concurrent legs don't race two prompts onto one TTY.
+func runBNKAndTestingParallel(ctx context.Context, in *LifecycleInputs) error {
+	if !in.Auto {
+		if !in.PromptYesNo("Apply the BNK and Testing phases (run in parallel)?", false) {
+			return errors.New("aborted")
+		}
+	}
+	// Both concurrent legs share one decision; never prompt mid-parallel.
+	bnkErr, testErr := newPrefixWriters(os.Stderr)
+	bnkIn := *in
+	bnkIn.Auto = true
+	bnkIn.Stderr = bnkErr
+	testIn := *in
+	testIn.Auto = true
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		defer bnkErr.flush()
+		return RunTrialUp(gctx, &bnkIn)
+	})
+	g.Go(func() error {
+		defer testErr.flush()
+		return runTestingUp(gctx, &testIn, testErr)
+	})
+	return g.Wait()
 }
 
 // RunTrialUp = plan + confirm + apply + (optional) kubeconfig fetch
@@ -171,25 +242,28 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	// cluster-outputs.json → extraVF is nil and the run is byte-identical
 	// to the create path (fresh/legacy single-state unchanged) — Issue 2
 	// round 2, symmetric with cluster-phase-override.tfvars.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace)
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
 	if err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 
-	fmt.Fprintln(os.Stderr, "→ terraform plan")
+	w := in.errOut()
+	fmt.Fprintln(w, "→ terraform plan")
 	changes, err := tfws.Plan(ctx, varFiles...)
 	if err != nil {
 		return err
 	}
 	if !changes {
-		fmt.Fprintln(os.Stderr, "✓ no changes")
+		fmt.Fprintln(w, "✓ no changes")
 		// Even with no infra changes, fetching the kubeconfig is useful
 		// (cluster may already exist; user wants creds locally).
 		tryAutoKubeconfig(ctx, in, cctx, tfws)
-		// Same for the jumphost target — if it was provisioned by an
-		// earlier apply, populate the workspace's targets:jumphost so
-		// `--on jumphost` works without manual config.
+		// Jumphost SSH-target seeding moved to the Testing phase (Sprint
+		// 28). These calls remain as best-effort no-ops here for the
+		// legacy single-state path (where the jumphosts still live in the
+		// trial state); on a split BNK state there are no jumphost outputs
+		// so they skip silently.
 		tryAutoJumphost(ctx, in, cctx, tfws)
 		tryAutoClusterJumphosts(ctx, in, cctx, tfws)
 		return nil
@@ -198,7 +272,7 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 		return errors.New("aborted")
 	}
 
-	fmt.Fprintln(os.Stderr, "→ terraform apply")
+	fmt.Fprintln(w, "→ terraform apply")
 	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
 		return err
 	}
@@ -260,7 +334,7 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// Second-phase preamble (Issue 2 round 2 — phase handoff). See
 	// RunTrialUp. extraVF is nil (byte-identical to the create path)
 	// when there is no cluster-outputs.json.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace)
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
 	if err != nil {
 		return err
 	}
@@ -292,20 +366,21 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	return nil
 }
 
-// RunDown is the shape-aware composite dispatcher for top-level
-// `roksbnkctl down`. Detects the workspace's on-disk shape and routes
-// per PRD 06 §"Dispatch table":
+// RunDown is the presence-aware composite dispatcher for top-level
+// `roksbnkctl down` (Sprint 28 three-phase split). It detects per-phase
+// presence and routes per the architect's §2d/§3c teardown ordering:
 //
-//   - LegacySingle → monolithic trial down (one terraform destroy
+//   - Legacy single-state → monolithic trial down (one terraform destroy
 //     against the trial state; same v1.0.x behavior).
-//   - Empty        → error "nothing to destroy".
-//   - Split        → trial down, then cluster down (tear down in the
-//     reverse order they were created so trial doesn't get orphaned
-//     against a missing cluster).
-//   - ClusterOnly  → cluster down.
+//   - nothing present     → error "nothing to destroy".
+//   - otherwise           → ONE composite confirmation naming the present
+//     phases, then destroy BNK ∥ Testing in parallel (independent of each
+//     other), then Cluster after both (reverse-dependency order — both
+//     reference the cluster VPC/TGW).
 //
-// Pure dispatcher; all destroy / confirmation logic lives in the leaf
-// helpers.
+// Pure dispatcher; all destroy logic lives in the leaf helpers. The
+// single-confirm-then-in.Auto=true pattern means the parallel legs + the
+// cluster leg don't each re-prompt.
 func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if err := in.RejectOnFlag("down"); err != nil {
 		return err
@@ -315,43 +390,66 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	shape, err := config.DetectShape(cctx.WorkspaceName)
+	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
-		return fmt.Errorf("detecting workspace shape: %w", err)
+		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	switch shape {
-	case config.ShapeLegacySingle:
+	if pres.Legacy {
 		return RunTrialDown(ctx, in)
-	case config.ShapeEmpty:
+	}
+	if !pres.Any() {
 		return errors.New("nothing to destroy in this workspace")
-	case config.ShapeSplit:
-		// Composite teardown: take confirmation ONCE up front with copy
-		// that names both phases, then flip in.Auto=true so the trial
-		// + cluster leaves don't each re-prompt. The cli adapter's
-		// RunClusterDown closure mirrors in.Auto onto flagAuto so the
-		// (still cli-resident) runClusterDown sees the same decision.
-		// Pre-Sprint 22 the leaves each prompted, and users who said
-		// "yes" to the trial-down prompt sometimes hit Enter on the
-		// (defaults-to-No) cluster-down prompt and ended up with bnk
-		// gone + cluster still running.
-		if !in.Auto {
-			fmt.Fprintf(os.Stderr,
-				"This will destroy BOTH the BNK trial AND the cluster phase for workspace %q (ROKS + transit gateway + registry COS + cert-manager + jumphost).\n",
-				cctx.WorkspaceName)
-			if !in.PromptYesNo("Continue?", false) {
-				return errors.New("aborted")
-			}
-			in.Auto = true
+	}
+
+	// Compose the confirmation copy from the present phases.
+	var phases []string
+	if pres.BNK {
+		phases = append(phases, "BNK trial")
+	}
+	if pres.Testing {
+		phases = append(phases, "testing jumphosts")
+	}
+	if pres.Cluster {
+		phases = append(phases, "cluster (ROKS + transit gateway + registry COS)")
+	}
+	if !in.Auto {
+		fmt.Fprintf(os.Stderr,
+			"This will destroy the following phases for workspace %q: %s.\n",
+			cctx.WorkspaceName, strings.Join(phases, ", "))
+		if !in.PromptYesNo("Continue?", false) {
+			return errors.New("aborted")
 		}
-		if err := RunTrialDown(ctx, in); err != nil {
+		in.Auto = true
+	}
+
+	// BNK ∥ Testing in parallel (independent), then Cluster after both.
+	if pres.BNK || pres.Testing {
+		bnkErr, testErr := newPrefixWriters(os.Stderr)
+		g, gctx := errgroup.WithContext(ctx)
+		if pres.BNK {
+			bnkIn := *in
+			bnkIn.Stderr = bnkErr
+			g.Go(func() error {
+				defer bnkErr.flush()
+				return RunTrialDown(gctx, &bnkIn)
+			})
+		}
+		if pres.Testing {
+			testIn := *in
+			g.Go(func() error {
+				defer testErr.flush()
+				return runTestingDown(gctx, &testIn, testErr)
+			})
+		}
+		if err := g.Wait(); err != nil {
 			return err
 		}
-		return in.RunClusterDown(ctx)
-	case config.ShapeClusterOnly:
-		return in.RunClusterDown(ctx)
-	default:
-		return fmt.Errorf("unrecognised workspace shape %v", shape)
 	}
+
+	if pres.Cluster {
+		return in.RunClusterDown(ctx)
+	}
+	return nil
 }
 
 // RunTrialDown = destroy against the trial state dir with a
@@ -370,8 +468,9 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	w := in.errOut()
 	if !in.Auto {
-		fmt.Fprintf(os.Stderr, "This will destroy workspace %q's resources.\n", cctx.WorkspaceName)
+		fmt.Fprintf(w, "This will destroy workspace %q's resources.\n", cctx.WorkspaceName)
 		if !in.PromptYesNo("Continue?", false) {
 			return errors.New("aborted")
 		}
@@ -393,7 +492,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 		return err
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
-	fmt.Fprintln(os.Stderr, "→ terraform destroy")
+	fmt.Fprintln(w, "→ terraform destroy")
 	return tfws.Destroy(ctx, varFiles...)
 }
 
@@ -480,7 +579,7 @@ func openTF(ctx context.Context, in *LifecycleInputs, needAPIKey bool) (*config.
 		return nil, nil, err
 	}
 
-	tfws, err := tf.Open(ctx, cctx.WorkspaceName, cctx.Workspace, stateDir, apiKey, os.Stdout, os.Stderr)
+	tfws, err := tf.Open(ctx, cctx.WorkspaceName, cctx.Workspace, stateDir, apiKey, os.Stdout, in.errOut())
 	if err != nil {
 		return nil, nil, err
 	}

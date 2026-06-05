@@ -14,6 +14,7 @@ const (
 	workspaceConfigFile = "config.yaml"
 	stateSubdir         = "state"
 	clusterStateSubdir  = "state-cluster"
+	testingStateSubdir  = "state-testing"
 	clusterOutputsFile  = "cluster-outputs.json"
 
 	// ROKSBNKCTLHomeEnv overrides the default ~/.roksbnkctl base. Used by tests
@@ -81,6 +82,23 @@ func WorkspaceClusterStateDir(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, clusterStateSubdir), nil
+}
+
+// WorkspaceTestingStateDir: ~/.roksbnkctl/<name>/state-testing/ — separate TF
+// state tree for the `roksbnkctl testing up/down` phase (Sprint 28 three-phase
+// split). The testing jumphosts (pure IBM VPC) live here, decoupled from both
+// the cluster phase (state-cluster/) and the BNK phase (state/), so `bnk down`
+// leaves the jumphosts and `testing down` leaves BNK.
+//
+// Note the naming asymmetry: the BNK phase keeps the original WorkspaceStateDir
+// (state/) — see the architect's Sprint 28 design §1a (BNK keeps state/, zero
+// migration; only the jumphosts move out).
+func WorkspaceTestingStateDir(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, testingStateSubdir), nil
 }
 
 // WorkspaceClusterOutputsPath: ~/.roksbnkctl/<name>/cluster-outputs.json —

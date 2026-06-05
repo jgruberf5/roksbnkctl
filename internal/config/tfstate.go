@@ -150,6 +150,173 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 	}
 }
 
+// Presence is the Sprint 28 per-phase presence model that replaces the
+// combinatorial WorkspaceShape enum for the three-phase dispatchers
+// (Cluster / BNK / Testing). Each field is an independent boolean
+// derived purely from the per-phase state dir — no terraform / cloud
+// calls, same contract as DetectShape. See
+// issues/issue_sprint28_architect.md §2c.
+//
+// Legacy is special: when a workspace is a v1.0.x single-state monolith
+// (cluster modules live in state/), Legacy is true and BNK / Testing are
+// reported false — the monolith is its own world and the phase verbs
+// refuse on it. Cluster may still be reported true via state-cluster/ in
+// the unusual case both exist, but in practice a legacy workspace has no
+// state-cluster/.
+type Presence struct {
+	Cluster bool // state-cluster/ has managed resources (the ROKS cluster)
+	BNK     bool // state/ has managed BNK resources (and is NOT legacy-monolith)
+	Testing bool // state-testing/ has managed resources (the jumphosts)
+	Legacy  bool // state/ carries cluster modules (v1.0.x single-state)
+}
+
+// Any reports whether at least one of the three phases (or the legacy
+// monolith) has resources — i.e. the workspace is non-empty.
+func (p Presence) Any() bool {
+	return p.Cluster || p.BNK || p.Testing || p.Legacy
+}
+
+// DetectPresence inspects on-disk state for `workspace` and reports the
+// per-phase presence (Sprint 28). Pure filesystem + JSON-decode of the
+// three tfstate files; missing files are treated as "no resources".
+// Malformed JSON surfaces as an error so dispatch doesn't misroute.
+//
+// Detection rules (architect §2c):
+//   - Cluster = state-cluster/ has a managed ibm_container_vpc_cluster
+//     under a clusterPhaseModules prefix (the authoritative cluster
+//     signal, retargeted at the cluster state).
+//   - Legacy  = state/ carries that same managed-cluster signal (the
+//     v1.0.x monolith). When Legacy, BNK and Testing are forced false.
+//   - BNK     = state/ has ≥1 managed resource AND not Legacy.
+//   - Testing = state-testing/ has ≥1 managed resource.
+func DetectPresence(workspace string) (Presence, error) {
+	var p Presence
+
+	bnkDir, err := WorkspaceStateDir(workspace)
+	if err != nil {
+		return p, err
+	}
+	clusterDir, err := WorkspaceClusterStateDir(workspace)
+	if err != nil {
+		return p, err
+	}
+	testingDir, err := WorkspaceTestingStateDir(workspace)
+	if err != nil {
+		return p, err
+	}
+	bnkState := filepath.Join(bnkDir, "terraform.tfstate")
+	clusterState := filepath.Join(clusterDir, "terraform.tfstate")
+	testingState := filepath.Join(testingDir, "terraform.tfstate")
+
+	// Cluster — managed ibm_container_vpc_cluster in state-cluster/.
+	clusterHasCluster, err := stateHasManagedClusterResource(clusterState)
+	if err != nil {
+		return p, err
+	}
+	p.Cluster = clusterHasCluster
+
+	// Legacy / BNK — both keyed off state/.
+	bnkHas, err := tfstateHasResources(bnkState)
+	if err != nil {
+		return p, err
+	}
+	if bnkHas {
+		legacy, lerr := stateHasManagedClusterResource(bnkState)
+		if lerr != nil {
+			return p, lerr
+		}
+		if legacy {
+			p.Legacy = true
+		} else {
+			p.BNK = true
+		}
+	}
+
+	// Testing — any managed resource in state-testing/.
+	testingHas, err := tfstateHasResources(testingState)
+	if err != nil {
+		return p, err
+	}
+	p.Testing = testingHas
+
+	return p, nil
+}
+
+// TestingMigrationNeeded reports the Sprint 28 migration condition: the
+// jumphosts (module.testing.*) still live in the BNK state (state/) AND
+// state-testing/ has no resources yet. This is the pre-Sprint-28 split
+// workspace whose jumphosts need evicting from state/ into state-testing/
+// (architect §1d). Pure filesystem; surfaced as a one-line nudge, never
+// auto-run.
+func TestingMigrationNeeded(workspace string) (bool, error) {
+	bnkDir, err := WorkspaceStateDir(workspace)
+	if err != nil {
+		return false, err
+	}
+	testingDir, err := WorkspaceTestingStateDir(workspace)
+	if err != nil {
+		return false, err
+	}
+	bnkState := filepath.Join(bnkDir, "terraform.tfstate")
+	testingState := filepath.Join(testingDir, "terraform.tfstate")
+
+	bnkHasTesting, err := stateHasManagedModule(bnkState, "module.testing")
+	if err != nil {
+		return false, err
+	}
+	if !bnkHasTesting {
+		return false, nil
+	}
+	testingHas, err := tfstateHasResources(testingState)
+	if err != nil {
+		return false, err
+	}
+	return !testingHas, nil
+}
+
+// stateHasManagedClusterResource is the generalized form of
+// trialStateHasClusterModules, retargetable at any state file (Sprint 28
+// reuses it for both the legacy-detection on state/ and the
+// cluster-present check on state-cluster/). Same three filters: managed
+// mode, type == ibm_container_vpc_cluster, module under a
+// clusterPhaseModules prefix.
+func stateHasManagedClusterResource(path string) (bool, error) {
+	return trialStateHasClusterModules(path)
+}
+
+// stateHasManagedModule reports whether `path` carries at least one
+// MANAGED resource whose module address equals `prefix` or begins with
+// `prefix + "."`. Used by TestingMigrationNeeded to detect jumphosts
+// (module.testing.*) lingering in the BNK state. Data-source reads
+// (mode == "data") don't count — only ownership.
+func stateHasManagedModule(path, prefix string) (bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	var s struct {
+		Resources []struct {
+			Mode   string `json:"mode"`
+			Module string `json:"module"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return false, err
+	}
+	for _, r := range s.Resources {
+		if r.Mode != "managed" {
+			continue
+		}
+		if r.Module == prefix || strings.HasPrefix(r.Module, prefix+".") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // tfstateHasResources reports whether `path` is a terraform.tfstate
 // with at least one resource in `state.resources`. Missing file →
 // (false, nil): not-yet-applied workspaces aren't an error. Malformed
