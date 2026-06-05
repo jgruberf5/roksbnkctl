@@ -10,7 +10,17 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
+	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
+
+// eniTestCluster returns the shared tracer fixture marked dual-interface so
+// Phase 17 provisions BOTH the external and internal data-plane ENIs (these
+// tests assert on INTERNAL_ENI/INTERNAL_ENI_MAC).
+func eniTestCluster() *intent.Cluster {
+	cl := testCluster()
+	cl.Pattern = intent.PatternDualInterface
+	return cl
+}
 
 // stateWithENIPrereqs returns a state pre-populated with Phase17 required keys.
 func stateWithENIPrereqs(t *testing.T) (*state.State, string) {
@@ -32,7 +42,7 @@ func TestPhase17SecondaryENIs_DryRun(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
 	st, _ := state.Load(dir)
-	cl := testCluster()
+	cl := eniTestCluster()
 	ec2m := &mockEC2{}
 
 	if err := Phase17SecondaryENIs(context.Background(), cl, st, testClients(ec2m), true); err != nil {
@@ -75,7 +85,7 @@ func TestPhase17SecondaryENIs_MissingPrereqs(t *testing.T) {
 			awsmw.ResetForTest()
 			st, _ := stateWithENIPrereqs(t)
 			st.Set(tc.omitKey, "")
-			cl := testCluster()
+			cl := eniTestCluster()
 
 			err := Phase17SecondaryENIs(context.Background(), cl, st, testClients(&mockEC2{}), false)
 			if err == nil {
@@ -94,7 +104,7 @@ func TestPhase17SecondaryENIs_MissingPrereqs(t *testing.T) {
 func TestPhase17SecondaryENIs_TagDiscoveryAndAttach(t *testing.T) {
 	awsmw.ResetForTest()
 	st, _ := stateWithENIPrereqs(t)
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	mac := "0a:1b:2c:3d:4e:5f"
 	// DescribeNetworkInterfaces returns ENI with no attachment — both tag-discovery
@@ -144,7 +154,7 @@ func TestPhase17SecondaryENIs_Idempotent(t *testing.T) {
 	st, _ := stateWithENIPrereqs(t)
 	st.Set("INTERNAL_ENI", "eni-existing-int")
 	st.Set("EXTERNAL_ENI", "eni-existing-ext")
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	instanceID := "i-0123456789abcdef0"
 	mac := "0a:1b:2c:3d:4e:5f"
@@ -190,7 +200,7 @@ func TestPhase17SecondaryENIs_Idempotent(t *testing.T) {
 func TestPhase17SecondaryENIs_MACLowercased(t *testing.T) {
 	awsmw.ResetForTest()
 	st, _ := stateWithENIPrereqs(t)
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	// EC2 returns mixed-case MAC.
 	mac := "0A:1B:2C:3D:4E:5F"
@@ -226,7 +236,7 @@ func TestPhase17SecondaryENIs_TagHitMACCaptured(t *testing.T) {
 	awsmw.ResetForTest()
 	st, _ := stateWithENIPrereqs(t)
 	// No ENI IDs pre-set in state — forces tag-discovery.
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	mac := "aa:bb:cc:dd:ee:ff"
 	instanceID := "i-0123456789abcdef0"
@@ -262,7 +272,7 @@ func TestPhase17SecondaryENIsDown_ToleratesNotFound(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
 	st, _ := state.Load(dir) // empty state
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	// DescribeNetworkInterfaces returns empty (tag lookup finds nothing).
 	ec2m := &mockEC2{
@@ -284,7 +294,7 @@ func TestPhase17SecondaryENIsDown_DetachesAndDeletes(t *testing.T) {
 	st, _ := state.Load(dir)
 	st.Set("INTERNAL_ENI", "eni-int-1")
 	st.Set("EXTERNAL_ENI", "eni-ext-1")
-	cl := testCluster()
+	cl := eniTestCluster()
 
 	// DescribeNetworkInterfaces returns ENIs with status Available (already
 	// detached) — simplifies the down path (no detach needed, direct delete).

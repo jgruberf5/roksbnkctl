@@ -60,15 +60,16 @@ var phase24bConfigMapWait = 3 * time.Minute
 // Idempotency: if --tls --insecure already appears in readiness_probe.sh, the
 // ConfigMap is not updated and no pods are bounced.
 //
-// Skipped silently when cl.Pattern != "host-device".
+// Skipped silently when the cluster is not a BNK pattern (the dSSM cold-start
+// fix applies to every BNK pattern).
 //
 // D-005: CheckAuthOrDie called at entry.
 func Phase24bDSSMInsecureOverlay(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	fmt.Fprintln(os.Stderr, "[phase 24b] DSSM --insecure readiness probe overlay")
 
-	if cl != nil && cl.Pattern != "host-device" {
-		fmt.Fprintf(os.Stderr, "[phase 24b] skipped: pattern=%q (host-device only)\n", cl.Pattern)
+	if cl != nil && !cl.IsBNKPattern() {
+		fmt.Fprintf(os.Stderr, "[phase 24b] skipped: pattern=%q (BNK patterns only)\n", cl.Pattern)
 		return nil
 	}
 

@@ -34,7 +34,9 @@ spec:
     imagePullPolicy: Always
   networkAttachments:
     - {{ .ExternalNAD }}
+{{- if .HasInternal }}
     - {{ .InternalNAD }}
+{{- end }}
   dynamicRouting:
     enabled: true
   firewallACL:
@@ -98,15 +100,21 @@ spec:
           value: "TRUE"
         - name: TMM_GENERIC_SOCKET_DRIVER
           value: "true"
-        # Pattern B (F5 Multi-AZ PDF p.27): ROBIN_VFIO_RESOURCE_N binds to the Nth NAD
-        # listed in CNEInstance.spec.networkAttachments. Order is external, internal
-        # → trunk 1.1 = ens8 (BNK_EXT), trunk 1.2 = ens7 (BNK_INT).
+        # ROBIN_VFIO_RESOURCE_N binds to the Nth NAD listed in
+        # CNEInstance.spec.networkAttachments (F5 Multi-AZ PDF p.27). Order is
+        # external first → trunk 1.1 = ens8 (BNK_EXT); for dual-interface the
+        # internal NAD adds trunk 1.2 = ens7 (BNK_INT). Single-interface patterns
+        # (external-only) list only the external resource.
         # PCIDEVICE_INTEL_COM_<UPPERCASE_IFNAME> provides the PCI BDF for each ifname.
         - name: ROBIN_VFIO_RESOURCE_1
           value: "{{ .ExternalIFName }}"
+{{- if .HasInternal }}
         - name: ROBIN_VFIO_RESOURCE_2
           value: "{{ .InternalIFName }}"
+{{- end }}
         - name: PCIDEVICE_INTEL_COM_{{ .ExternalIFUpper }}
           value: "{{ .ExternalPCI }}"
+{{- if .HasInternal }}
         - name: PCIDEVICE_INTEL_COM_{{ .InternalIFUpper }}
           value: "{{ .InternalPCI }}"
+{{- end }}

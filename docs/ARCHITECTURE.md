@@ -234,33 +234,57 @@ Other per-cluster runtime files share the same directory:
 
 ---
 
-## 6 · The host-device data-path pattern
+## 6 · The BNK interface patterns
 
-`pattern:` selects how TMM (the BIG-IP Next traffic management
-microkernel) gets its data-plane network interfaces. The supported pattern is
-`host-device`, where TMM attaches directly to host NIC interfaces backed by
-dedicated AWS ENIs.
+`pattern:` selects how TMM (the BIG-IP Next traffic management microkernel) gets
+its data-plane network interfaces. A pattern fixes **two orthogonal axes** —
+interface *topology* (single external vs external + internal) and interface
+*binding* (kernel `host-device` vs SR-IOV/`vfio-pci` DPDK). Backend pods are
+always reached over the CNI (`TMM_CALICO_ROUTER: default`).
 
-Conceptually, for `host-device`:
+| `pattern:` | Topology | Binding | Internal subnet | Min ENIs | Status |
+|---|---|---|---|---|---|
+| `external-only` | external only | host-device | no | 2 | supported |
+| `dual-interface` | external + internal | host-device | yes | 3 | supported |
+| `sriov-external` | external only | sriov / vfio-pci | no | 2 | **gated (experimental)** |
 
-- `network.dataPath` declares two dedicated subnets — **external** (TMM
-  client-side) and **internal** (TMM backend-side) — separate from the worker
-  and EKS subnets.
-- The provisioning phases label a single worker node to host TMM, then attach
-  one secondary ENI from each data-path subnet to that node.
-- TMM SelfIP addresses are assigned as secondary private IPs on those ENIs (AWS
-  will not route a SelfIP to an ENI otherwise) and announced inside the TMM pod
-  network namespace via the F5 SPK VLAN custom resources.
-- Kubernetes-side prerequisites — a cloud-network-mapping ConfigMap, host-device
-  NetworkAttachmentDefinitions, and an IRSA service account — wire the
-  cne-controller and TMM to these interfaces.
+`host-device` is the **legacy alias** for `dual-interface` (normalized at load),
+so existing configs keep working unchanged. The phases read intent through three
+capability helpers on `Cluster` — `IsBNKPattern()`, `HasInternalInterface()`,
+`DataplaneBinding()` — rather than comparing the pattern string, so a fourth
+preset (e.g. dual + sriov) only needs a row in those helpers.
 
-The pattern carries hardware minimums (enough ENI slots and CPU/memory for the
-BNK control plane plus TMM on one labeled node, and enough nodes for dSSM
-quorum), which preflight checks before provisioning. An optional test jumphost
-(`testing.jumphost.enabled`) provisions a multi-ENI instance plus an EC2 Instance
-Connect Endpoint inside the external data-path subnet so operators can verify
-TMM SelfIP routing without standing up EC2 by hand.
+Common to every BNK pattern:
+
+- `network.dataPath.external` declares the TMM client-side / ingress subnet,
+  separate from the worker and EKS subnets.
+- The phases label one worker node to host TMM, attach the external secondary
+  ENI (device-index 3) from the external subnet to it, assign the TMM external
+  SelfIP as a secondary private IP on that ENI (AWS won't route a SelfIP
+  otherwise), and announce it inside the TMM pod netns via an F5 SPK VLAN CR.
+- Kubernetes prerequisites — a cloud-network-mapping ConfigMap, the external
+  NetworkAttachmentDefinition, and an IRSA service account — wire the
+  cne-controller and TMM to the interface.
+
+`dual-interface` additionally declares `network.dataPath.internal` (the TMM
+backend-side / server-side subnet, for reaching a backend in another cluster or
+location), attaches a second secondary ENI (device-index 2), and adds the
+internal NAD + `int-vlan`. Single-interface patterns omit all of that and reach
+in-cluster backends over the CNI; the internal block is rejected at validation.
+
+The **ENI floor** is `primary + one TMM secondary per data-plane interface` — 2
+for single-interface, 3 for dual. No dedicated EKS-CNI secondary is counted
+because VPC CNI prefix delegation keeps pod IPs on the primary ENI. Preflight
+also enforces CPU/memory and dSSM node-quorum minimums before provisioning. An
+optional test jumphost (`testing.jumphost.enabled`) provisions a multi-ENI
+instance plus an EC2 Instance Connect Endpoint inside the external data-path
+subnet so operators can verify TMM SelfIP routing without standing up EC2 by
+hand; it works for any BNK pattern.
+
+`sriov-external` is reserved in the schema but **blocked at validation** pending a
+live ENA/`vfio-pci` feasibility spike — SR-IOV/DPDK on AWS ENA is undocumented
+and unsupported by F5 on the EKS host build. See
+`docs/spikes/sriov-ena-vfio/README.md` for the go/no-go gate.
 
 ---
 

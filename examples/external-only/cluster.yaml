@@ -1,0 +1,93 @@
+# cluster.yaml — external-only (single-interface) BNK-on-EKS deployment.
+#
+# Pattern A: TMM gets ONE data-plane interface (the external/ingress ENI) and
+# reaches in-cluster backend pods over the CNI (TMM_CALICO_ROUTER: default).
+# There is no internal/server-side interface — use pattern: dual-interface for
+# that (e.g. when TMM must reach a backend in another cluster or location).
+#
+# Differences from the dual-interface demo (examples/demo/cluster.yaml):
+#   - pattern: external-only (vs host-device / dual-interface).
+#   - network.dataPath has only `external` (no `internal` subnet).
+#   - One TMM secondary ENI instead of two → the preflight ENI floor is 2
+#     (primary + external) instead of 3; m5.xlarge or larger still applies for
+#     vCPU/memory. m6i.4xlarge is the default.
+#   - Phase 17 attaches only the external ENI (device-index 3); Phase 20 applies
+#     only the external NAD; Phase 23b applies only ext-vlan + the GatewayClass;
+#     the CNEInstance lists a single networkAttachment.
+#
+# Quick start:
+#   awsbnkctl validate examples/external-only/cluster.yaml
+#   awsbnkctl up --config examples/external-only/cluster.yaml --dry-run
+#   awsbnkctl up --config examples/external-only/cluster.yaml
+
+apiVersion: awsbnkctl/v1
+kind: Cluster
+
+metadata:
+  name: bnk-extonly
+  region: ap-southeast-2
+  labels:
+    purpose: bnk-external-only
+
+# external-only: single external (ingress) interface, CNI backend.
+pattern: external-only
+
+network:
+  vpcCidr: 10.0.0.0/16
+
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.2.0/24
+        az: ap-southeast-2b
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.12.0/24
+        az: ap-southeast-2b
+
+  # dataPath: external subnet ONLY for single-interface patterns. The default
+  # Gateway VIP is derived as <external network>.100 (10.0.10.100) and the TMM
+  # external SelfIP as <subnet>.240 (10.0.10.240) unless overridden. Do NOT add
+  # an `internal:` block here — validation rejects it for external-only.
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24      # BNK_EXT — TMM client-side / ingress VLAN
+      az: ap-southeast-2a
+
+  natGateways: 1
+
+# cluster: EKS control plane + managed node group. external-only defaults match
+# the other BNK patterns: instanceType m6i.4xlarge, desired/min 3, max 4,
+# role=bnk on the first node group (3 nodes for the dSSM quorum).
+cluster:
+  kubernetesVersion: "1.30"
+  nodeGroups:
+    - name: default
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
+      diskSize: 50
+
+# bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths
+# with your own files before running `up` (gitignored).
+bnk:
+  farArchive: ./cne_pull_64.json     # REPLACE with your F5 FAR pull credentials JSON
+  jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
+
+# testing.jumphost works for external-only too — it lives in the BNK_EXT subnet,
+# which every BNK pattern creates. Use it to curl the VIP without standing up EC2.
+testing:
+  jumphost:
+    enabled: true
+    instanceType: t3.small
+    mgmtSubnetIndex: 0
+
+tags:
+  env: dev

@@ -23,12 +23,21 @@ const (
 	eniDetachTimeout = 3 * time.Minute
 )
 
-// Phase17SecondaryENIs creates, tags, and attaches the two TMM data-plane ENIs
-// to the TMM-target instance.
+// Phase17SecondaryENIs creates, tags, and attaches the TMM data-plane ENIs to
+// the TMM-target instance.
 //
-// ENI assignment:
-//   - INTERNAL_ENI: BNK_INT_SUBNET, device-index 2 → ens7, tag f5-cne-device=ens7
+// ENI assignment (interface topology depends on the cluster's BNK pattern):
 //   - EXTERNAL_ENI: BNK_EXT_SUBNET, device-index 3 → ens8, tag f5-cne-device=ens8
+//     (all BNK patterns — the ingress interface).
+//   - INTERNAL_ENI: BNK_INT_SUBNET, device-index 2 → ens7, tag f5-cne-device=ens7
+//     (dual-interface only — the server-side interface). Single-interface
+//     patterns (external-only, sriov-external) skip it and reach in-cluster
+//     backends over CNI.
+//
+// The external ENI keeps device-index 3 regardless of topology so the proven
+// dual-interface placement is unchanged; single-interface clusters simply leave
+// device-index 2 empty (gaps are fine — idx 1 is already empty under prefix
+// delegation).
 //
 // Tags: standard awsbnkctl:* scheme + f5-cne-device=<ifname> + node.k8s.amazonaws.com/no_manage=true.
 // Source/dest check disabled (required for TMM routing).
@@ -40,24 +49,25 @@ const (
 func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name
+	hasInternal := cl.HasInternalInterface()
 	fmt.Fprintf(os.Stderr, "[phase 17] secondary ENIs: cluster=%s\n", name)
 
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "[phase 17] dry-run: would create + attach INTERNAL_ENI (ens7, idx=2) and EXTERNAL_ENI (ens8, idx=3)")
-		st.Set("INTERNAL_ENI", "eni-dry-run-int")
 		st.Set("EXTERNAL_ENI", "eni-dry-run-ext")
-		st.Set("INTERNAL_ENI_MAC", "02:00:00:00:00:02")
 		st.Set("EXTERNAL_ENI_MAC", "02:00:00:00:00:03")
+		if hasInternal {
+			fmt.Fprintln(os.Stderr, "[phase 17] dry-run: would create + attach INTERNAL_ENI (ens7, idx=2) and EXTERNAL_ENI (ens8, idx=3)")
+			st.Set("INTERNAL_ENI", "eni-dry-run-int")
+			st.Set("INTERNAL_ENI_MAC", "02:00:00:00:00:02")
+		} else {
+			fmt.Fprintln(os.Stderr, "[phase 17] dry-run: would create + attach EXTERNAL_ENI (ens8, idx=3) only (single-interface pattern)")
+		}
 		return nil
 	}
 
 	instanceID := st.Get("TMM_INSTANCE_ID")
 	if instanceID == "" {
 		return fmt.Errorf("phase17: TMM_INSTANCE_ID not in state (run phase16 first)")
-	}
-	intSubnet := st.Get("BNK_INT_SUBNET")
-	if intSubnet == "" {
-		return fmt.Errorf("phase17: BNK_INT_SUBNET not in state (run phase03 first)")
 	}
 	extSubnet := st.Get("BNK_EXT_SUBNET")
 	if extSubnet == "" {
@@ -68,23 +78,17 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase17: SG_BNK_DATA not in state (run phase07 first)")
 	}
 
-	// Internal ENI: device-index 2 → ens7.
-	intENI, err := ensureSecondaryENI(ctx, clients.EC2, name, intSubnet, sgID,
-		tags.CompENIInternal, "ens7", cl.Tags, cl.Metadata.Labels, st, "INTERNAL_ENI")
-	if err != nil {
-		return fmt.Errorf("phase17: internal ENI: %w", err)
+	// Internal subnet is required only for dual-interface. Validate it up front
+	// (before any ENI creation) so a missing key fails fast with a clear error.
+	var intSubnet string
+	if hasInternal {
+		intSubnet = st.Get("BNK_INT_SUBNET")
+		if intSubnet == "" {
+			return fmt.Errorf("phase17: BNK_INT_SUBNET not in state (run phase03 first)")
+		}
 	}
-	st.Set("INTERNAL_ENI", intENI)
 
-	// Capture MAC for internal ENI (always — covers state-hit and tag-hit paths).
-	intMAC, err := eniMAC(ctx, clients.EC2, intENI)
-	if err != nil {
-		return fmt.Errorf("phase17: capturing internal ENI MAC: %w", err)
-	}
-	st.Set("INTERNAL_ENI_MAC", intMAC)
-	fmt.Fprintf(os.Stderr, "[phase 17] INTERNAL_ENI_MAC=%s\n", intMAC)
-
-	// External ENI: device-index 3 → ens8.
+	// External ENI: device-index 3 → ens8 (every BNK pattern).
 	extENI, err := ensureSecondaryENI(ctx, clients.EC2, name, extSubnet, sgID,
 		tags.CompENIExternal, "ens8", cl.Tags, cl.Metadata.Labels, st, "EXTERNAL_ENI")
 	if err != nil {
@@ -100,14 +104,32 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	st.Set("EXTERNAL_ENI_MAC", extMAC)
 	fmt.Fprintf(os.Stderr, "[phase 17] EXTERNAL_ENI_MAC=%s\n", extMAC)
 
-	// Attach internal at device-index 2.
-	if err := attachENIIfNeeded(ctx, clients.EC2, intENI, instanceID, 2); err != nil {
-		return fmt.Errorf("phase17: attaching internal ENI %s: %w", intENI, err)
-	}
-	// Attach external at device-index 3.
 	if err := attachENIIfNeeded(ctx, clients.EC2, extENI, instanceID, 3); err != nil {
 		return fmt.Errorf("phase17: attaching external ENI %s: %w", extENI, err)
 	}
+
+	// Internal ENI: device-index 2 → ens7 (dual-interface only).
+	var intENI string
+	if hasInternal {
+		intENI, err = ensureSecondaryENI(ctx, clients.EC2, name, intSubnet, sgID,
+			tags.CompENIInternal, "ens7", cl.Tags, cl.Metadata.Labels, st, "INTERNAL_ENI")
+		if err != nil {
+			return fmt.Errorf("phase17: internal ENI: %w", err)
+		}
+		st.Set("INTERNAL_ENI", intENI)
+
+		intMAC, err := eniMAC(ctx, clients.EC2, intENI)
+		if err != nil {
+			return fmt.Errorf("phase17: capturing internal ENI MAC: %w", err)
+		}
+		st.Set("INTERNAL_ENI_MAC", intMAC)
+		fmt.Fprintf(os.Stderr, "[phase 17] INTERNAL_ENI_MAC=%s\n", intMAC)
+
+		if err := attachENIIfNeeded(ctx, clients.EC2, intENI, instanceID, 2); err != nil {
+			return fmt.Errorf("phase17: attaching internal ENI %s: %w", intENI, err)
+		}
+	}
+
 	// Phase 17c (iface-discovery) runs after this phase and resolves the actual
 	// Linux ifname + PCI bus address for each ENI by MAC matching on the node.
 	// The hardcoded ens7/ens8 names are now FALLBACK constants only — phase 17c
@@ -127,7 +149,7 @@ func Phase17SecondaryENIs(ctx context.Context, cl *intent.Cluster, st *state.Sta
 			}
 			st.Set("TMM_EXT_SELFIP", c.SelfIPs.External)
 		}
-		if c.SelfIPs.Internal != "" {
+		if hasInternal && c.SelfIPs.Internal != "" {
 			if err := assignSelfIPIfNeeded(ctx, clients.EC2, intENI, c.SelfIPs.Internal); err != nil {
 				return fmt.Errorf("phase17: assigning internal SelfIP %s to %s: %w", c.SelfIPs.Internal, intENI, err)
 			}

@@ -13,8 +13,15 @@ import (
 )
 
 func newHostDeviceCluster(instanceType string) *intent.Cluster {
+	return newPatternCluster("host-device", instanceType)
+}
+
+// newPatternCluster builds a minimal cluster fixture for a given BNK pattern.
+// Pattern is set directly (no Load/applyDefaults), so the legacy "host-device"
+// alias is normalized by the capability helpers, not rewritten on the struct.
+func newPatternCluster(pattern, instanceType string) *intent.Cluster {
 	cl := &intent.Cluster{}
-	cl.Pattern = "host-device"
+	cl.Pattern = pattern
 	cl.ClusterSpec = &intent.ClusterSpec{
 		NodeGroups: []intent.NodeGroupSpec{
 			{Name: "default", InstanceType: instanceType, DesiredSize: 3, MinSize: 1, MaxSize: 5, DiskSize: 50},
@@ -51,17 +58,48 @@ func TestCheckHostDeviceCapacity_OK(t *testing.T) {
 }
 
 func TestCheckHostDeviceCapacity_TooSmall(t *testing.T) {
+	// dual-interface floor is 3 ENIs; a 2-ENI type fails the ENI check.
 	cl := newHostDeviceCluster("t3.medium")
-	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("t3.medium", 3, 2, 4096)}
+	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("t3.medium", 2, 2, 4096)}
 	err := checkHostDeviceCapacity(context.Background(), cl, m)
 	if err == nil {
-		t.Fatal("expected error for t3.medium (3 ENIs), got nil")
+		t.Fatal("expected error for t3.medium (2 ENIs), got nil")
 	}
-	if !strings.Contains(err.Error(), "host-device requires") {
-		t.Errorf("error %q does not mention 'host-device requires'", err)
+	if !strings.Contains(err.Error(), "network interfaces") {
+		t.Errorf("error %q does not mention 'network interfaces'", err)
 	}
 	if !strings.Contains(err.Error(), "m5.xlarge") {
 		t.Errorf("error %q does not suggest m5.xlarge", err)
+	}
+}
+
+// TestCheckCapacity_DualInterface_ENIFloor3 asserts a 3-ENI type clears the
+// dual-interface floor on the ENI axis (other axes still apply).
+func TestCheckCapacity_DualInterface_ENIFloor3(t *testing.T) {
+	cl := newPatternCluster("dual-interface", "m5.xlarge")
+	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("m5.xlarge", 3, 16, 65536)}
+	if err := checkHostDeviceCapacity(context.Background(), cl, m); err != nil {
+		t.Fatalf("expected nil for dual-interface with 3 ENIs/16 vCPU/64GiB, got %v", err)
+	}
+}
+
+// TestCheckCapacity_ExternalOnly_ENIFloor2 asserts the single-interface floor is
+// 2: a 2-ENI type passes, a 1-ENI type fails the ENI check.
+func TestCheckCapacity_ExternalOnly_ENIFloor2(t *testing.T) {
+	ok := newPatternCluster("external-only", "m5.xlarge")
+	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("m5.xlarge", 2, 16, 65536)}
+	if err := checkHostDeviceCapacity(context.Background(), ok, m); err != nil {
+		t.Fatalf("expected nil for external-only with 2 ENIs/16 vCPU/64GiB, got %v", err)
+	}
+
+	bad := newPatternCluster("external-only", "small.type")
+	m2 := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("small.type", 1, 16, 65536)}
+	err := checkHostDeviceCapacity(context.Background(), bad, m2)
+	if err == nil {
+		t.Fatal("expected error for external-only with 1 ENI, got nil")
+	}
+	if !strings.Contains(err.Error(), "network interfaces") {
+		t.Errorf("error %q does not mention 'network interfaces'", err)
 	}
 }
 
@@ -144,10 +182,10 @@ func TestCheckHostDeviceCapacity_InsufficientDesiredSize(t *testing.T) {
 }
 
 func TestCheckHostDeviceCapacity_AllFailures(t *testing.T) {
-	// t3.medium equivalent: 3 ENI, 2 vCPU, 4 GiB (4096 MiB), DesiredSize=1.
+	// t3.medium equivalent: 2 ENI (< dual floor 3), 2 vCPU, 4 GiB (4096 MiB), DesiredSize=1.
 	cl := newHostDeviceCluster("t3.medium")
 	cl.ClusterSpec.NodeGroups[0].DesiredSize = 1
-	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("t3.medium", 3, 2, 4096)}
+	m := &mockEC2{describeInstanceTypesOut: makeInstanceTypesOut("t3.medium", 2, 2, 4096)}
 	err := checkHostDeviceCapacity(context.Background(), cl, m)
 	if err == nil {
 		t.Fatal("expected aggregated error, got nil")

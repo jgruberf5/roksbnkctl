@@ -127,10 +127,11 @@ type CloudNetworkMappingVars struct {
 	AZ           string // first AZ from cl.Network.AZs
 	MGMTSubnet   string // MGMT_SUBNET (= first public subnet ID)
 	BNKExtSubnet string // BNK_EXT_SUBNET from state
-	BNKIntSubnet string // BNK_INT_SUBNET from state
+	BNKIntSubnet string // BNK_INT_SUBNET from state (dual-interface only)
 	MGMTCidr     string // first public subnet CIDR
 	BNKExtCidr   string // cl.Network.DataPath.External.Cidr
-	BNKIntCidr   string // cl.Network.DataPath.Internal.Cidr
+	BNKIntCidr   string // cl.Network.DataPath.Internal.Cidr (dual-interface only)
+	HasInternal  bool   // render the internal subnet entry (dual-interface only)
 }
 
 // RenderCloudNetworkMapping renders the cloud-network-mapping ConfigMap
@@ -145,7 +146,7 @@ func RenderCloudNetworkMapping(tmpl []byte, cl *intent.Cluster, getter func(stri
 		return nil, fmt.Errorf("render: network.subnets.public is empty")
 	}
 	if cl.Network.DataPath == nil {
-		return nil, fmt.Errorf("render: network.dataPath is nil (required for host-device pattern)")
+		return nil, fmt.Errorf("render: network.dataPath is nil (required for BNK patterns)")
 	}
 	mgmtSubnet := getter("MGMT_SUBNET")
 	if mgmtSubnet == "" {
@@ -155,18 +156,24 @@ func RenderCloudNetworkMapping(tmpl []byte, cl *intent.Cluster, getter func(stri
 	if bnkExtSubnet == "" {
 		return nil, fmt.Errorf("render: BNK_EXT_SUBNET not in state (Phase 03 must run first)")
 	}
-	bnkIntSubnet := getter("BNK_INT_SUBNET")
-	if bnkIntSubnet == "" {
-		return nil, fmt.Errorf("render: BNK_INT_SUBNET not in state (Phase 03 must run first)")
-	}
+	hasInternal := cl.HasInternalInterface()
 	vars := CloudNetworkMappingVars{
 		AZ:           cl.Network.AZs[0],
 		MGMTSubnet:   mgmtSubnet,
 		BNKExtSubnet: bnkExtSubnet,
-		BNKIntSubnet: bnkIntSubnet,
 		MGMTCidr:     cl.Network.Subnets.Public[0].CIDR,
 		BNKExtCidr:   cl.Network.DataPath.External.CIDR,
-		BNKIntCidr:   cl.Network.DataPath.Internal.CIDR,
+		HasInternal:  hasInternal,
+	}
+	// Internal subnet entry only for dual-interface; single-interface patterns
+	// reach in-cluster backends over CNI and have no BNK_INT subnet.
+	if hasInternal {
+		bnkIntSubnet := getter("BNK_INT_SUBNET")
+		if bnkIntSubnet == "" {
+			return nil, fmt.Errorf("render: BNK_INT_SUBNET not in state (Phase 03 must run first)")
+		}
+		vars.BNKIntSubnet = bnkIntSubnet
+		vars.BNKIntCidr = cl.Network.DataPath.Internal.CIDR
 	}
 	return Render(tmpl, vars)
 }
@@ -205,6 +212,7 @@ type NADVars struct {
 	InternalNADName string // internal-netdevice
 	ExternalPCI     string // 0000:00:08.0
 	InternalPCI     string // 0000:00:07.0
+	HasInternal     bool   // render the internal NAD (dual-interface only)
 }
 
 // orDefault returns getter(key) if non-empty, otherwise def.
@@ -219,13 +227,15 @@ func orDefault(getter func(string) string, key, def string) string {
 // RenderNADs renders the host-device NADs template for the given namespace.
 // PCI bus addresses are sourced from the state getter (set by phase 17c iface-
 // discovery). Falls back to architecture constants when the getter returns "".
-func RenderNADs(tmpl []byte, namespace string, getter func(string) string) ([]byte, error) {
+// hasInternal controls whether the internal NAD is emitted (dual-interface only).
+func RenderNADs(tmpl []byte, namespace string, hasInternal bool, getter func(string) string) ([]byte, error) {
 	vars := NADVars{
 		Namespace:       namespace,
 		ExternalNADName: "external-netdevice",
 		InternalNADName: "internal-netdevice",
 		ExternalPCI:     orDefault(getter, "EXTERNAL_PCI", "0000:00:08.0"), // ens8, device-index 3
 		InternalPCI:     orDefault(getter, "INTERNAL_PCI", "0000:00:07.0"), // ens7, device-index 2
+		HasInternal:     hasInternal,
 	}
 	return Render(tmpl, vars)
 }
@@ -272,6 +282,7 @@ type CNEInstanceVars struct {
 	InternalPCI         string // 0000:00:07.0 (or discovered value)
 	CloudHostDeviceName string // ens8 (or discovered value)
 	CloudHostDeviceTag  string // f5-cne-device
+	HasInternal         bool   // list the internal NAD + internal ROBIN/PCIDEVICE env (dual-interface only)
 }
 
 // RenderCNEInstance renders the CNEInstance CR template with vars derived
@@ -317,6 +328,7 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 		InternalPCI:         orDefault(getter, "INTERNAL_PCI", "0000:00:07.0"),
 		CloudHostDeviceName: orDefault(getter, "CLOUD_HOST_DEVICE_NAME", extIFName),
 		CloudHostDeviceTag:  "f5-cne-device",
+		HasInternal:         cl.HasInternalInterface(),
 	}
 	return Render(tmpl, vars)
 }
@@ -367,17 +379,21 @@ type F5SPKVlanVars struct {
 	TmmExtSelfIP       string // e.g. 10.0.10.240
 	TmmIntSelfIP       string // e.g. 10.0.20.240
 	TmmSelfIPPrefixLen int    // typically 24
+	HasInternal        bool   // render the int-vlan CR (dual-interface only)
 }
 
-// RenderF5SPKVlan renders the F5SPKVlan CR template for the host-device
-// pattern. Caller supplies the SelfIP values from cl.Network.DataPath.SelfIPs
-// (auto-derived by intent.applyDefaults when not explicitly set).
-func RenderF5SPKVlan(tmpl []byte, selfExt, selfInt string, prefixLen int) ([]byte, error) {
+// RenderF5SPKVlan renders the F5SPKVlan CR template for a BNK pattern. Caller
+// supplies the SelfIP values from cl.Network.DataPath.SelfIPs (auto-derived by
+// intent.applyDefaults when not explicitly set). hasInternal controls whether
+// the int-vlan CR is emitted (dual-interface only); selfInt is ignored when
+// false.
+func RenderF5SPKVlan(tmpl []byte, selfExt, selfInt string, prefixLen int, hasInternal bool) ([]byte, error) {
 	vars := F5SPKVlanVars{
 		InstanceNS:         cneInstanceNamespace,
 		TmmExtSelfIP:       selfExt,
 		TmmIntSelfIP:       selfInt,
 		TmmSelfIPPrefixLen: prefixLen,
+		HasInternal:        hasInternal,
 	}
 	return Render(tmpl, vars)
 }

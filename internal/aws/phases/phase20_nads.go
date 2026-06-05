@@ -37,10 +37,18 @@ func Phase20NADs(ctx context.Context, cl *intent.Cluster, st *state.State, clien
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 20] NADs: cluster=%s\n", name)
 
+	hasInternal := cl.HasInternalInterface()
+
 	if dryRun {
-		fmt.Fprintf(os.Stderr,
-			"[phase 20] dry-run: would apply NADs (%s + %s) in %s and default\n",
-			ExternalNAD, InternalNAD, InstanceNamespace)
+		if hasInternal {
+			fmt.Fprintf(os.Stderr,
+				"[phase 20] dry-run: would apply NADs (%s + %s) in %s and default\n",
+				ExternalNAD, InternalNAD, InstanceNamespace)
+		} else {
+			fmt.Fprintf(os.Stderr,
+				"[phase 20] dry-run: would apply NAD (%s) in %s and default (single-interface)\n",
+				ExternalNAD, InstanceNamespace)
+		}
 		st.Set("NADS_APPLIED_AT", "dry-run")
 		return nil
 	}
@@ -56,7 +64,7 @@ func Phase20NADs(ctx context.Context, cl *intent.Cluster, st *state.State, clien
 	}
 
 	for _, ns := range nadNamespaces {
-		rendered, err := render.RenderNADs(tmplBytes, ns, st.Get)
+		rendered, err := render.RenderNADs(tmplBytes, ns, hasInternal, st.Get)
 		if err != nil {
 			return fmt.Errorf("phase20: rendering NADs for namespace %s: %w", ns, err)
 		}

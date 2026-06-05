@@ -416,7 +416,7 @@ intPCI: {{ .InternalPCI }}
 `)
 
 func TestRenderNADs_Substitution(t *testing.T) {
-	out, err := RenderNADs(nadsTmpl, "f5-cne-system", func(string) string { return "" })
+	out, err := RenderNADs(nadsTmpl, "f5-cne-system", true, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestRenderNADs_Substitution(t *testing.T) {
 }
 
 func TestRenderNADs_DefaultNamespace(t *testing.T) {
-	out, err := RenderNADs(nadsTmpl, "default", func(string) string { return "" })
+	out, err := RenderNADs(nadsTmpl, "default", true, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs default ns: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestRenderNADs_Constants(t *testing.T) {
 	// Verify the hardcoded constants are correct (these are architecture constraints).
 	// NADs select by PCI bus address (robust against udev interface-name drift).
 	tmpl := []byte(`{{ .ExternalPCI }} {{ .InternalPCI }} {{ .ExternalNADName }} {{ .InternalNADName }}`)
-	out, err := RenderNADs(tmpl, "f5-cne-system", func(string) string { return "" })
+	out, err := RenderNADs(tmpl, "f5-cne-system", true, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("RenderNADs constants: %v", err)
 	}
@@ -475,6 +475,8 @@ func TestRenderNADs_Constants(t *testing.T) {
 func cneInstanceCluster() *intent.Cluster {
 	return &intent.Cluster{
 		Metadata: intent.Metadata{Name: "syd-tracer", Region: "ap-southeast-2"},
+		// dual-interface so the rendered CR lists both NADs + internal ROBIN/PCIDEVICE env.
+		Pattern: intent.PatternDualInterface,
 		Bnk: &intent.BnkSpec{
 			FARArchive:       "/dev/null",
 			JWT:              "/dev/null",
@@ -619,7 +621,7 @@ intPCI: {{ .InternalPCI }}
 		"EXTERNAL_PCI": "0000:00:0a.0",
 		"INTERNAL_PCI": "0000:00:09.0",
 	})
-	out, err := RenderNADs(tmpl, "f5-cne-system", getter)
+	out, err := RenderNADs(tmpl, "f5-cne-system", true, getter)
 	if err != nil {
 		t.Fatalf("RenderNADs (populated getter): %v", err)
 	}
@@ -638,7 +640,7 @@ func TestRenderNADs_GetterPCI_EmptyFallsBackToConstants(t *testing.T) {
 intPCI: {{ .InternalPCI }}
 `)
 	getter := func(string) string { return "" }
-	out, err := RenderNADs(tmpl, "f5-cne-system", getter)
+	out, err := RenderNADs(tmpl, "f5-cne-system", true, getter)
 	if err != nil {
 		t.Fatalf("RenderNADs (empty getter): %v", err)
 	}

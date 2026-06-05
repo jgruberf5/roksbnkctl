@@ -606,7 +606,14 @@
     "unregister",
     "unregisters",
     "unregistered",
-    "proxyprotocoll"
+    "proxyprotocoll",
+    "DPDK",
+    "dpdk",
+    "testpmd",
+    "txrx",
+    "noiommu",
+    "devbind",
+    "enav"
   ],
   "ignorePaths": [
     "go.sum",

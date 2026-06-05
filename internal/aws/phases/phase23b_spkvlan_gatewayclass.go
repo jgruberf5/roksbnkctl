@@ -59,19 +59,27 @@ var gatewayClassGVR = schema.GroupVersionResource{
 // reaches Reconciled, so we wait for BOTH CRDs before applying either CR
 // (FLO can take 10+ min on a cold cluster).
 //
-// Skipped when cl.Pattern != "host-device".
+// The int-vlan is applied only for dual-interface; single-interface patterns
+// (external-only) get just ext-vlan + GatewayClass.
+//
+// Skipped when the cluster is not a BNK pattern.
 // SSO sentinel: CheckAuthOrDie at entry.
 func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name
-	if cl.Pattern != "host-device" {
-		fmt.Fprintf(os.Stderr, "[phase 23b] skipped: pattern=%q (host-device only)\n", cl.Pattern)
+	if !cl.IsBNKPattern() {
+		fmt.Fprintf(os.Stderr, "[phase 23b] skipped: pattern=%q (BNK patterns only)\n", cl.Pattern)
 		return nil
 	}
+	hasInternal := cl.HasInternalInterface()
 	fmt.Fprintf(os.Stderr, "[phase 23b] F5SPKVlan + GatewayClass: cluster=%s\n", name)
 
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "[phase 23b] dry-run: would wait for F5SPKVlan CRD then apply ext-vlan + int-vlan + GatewayClass")
+		if hasInternal {
+			fmt.Fprintln(os.Stderr, "[phase 23b] dry-run: would wait for F5SPKVlan CRD then apply ext-vlan + int-vlan + GatewayClass")
+		} else {
+			fmt.Fprintln(os.Stderr, "[phase 23b] dry-run: would wait for F5SPKVlan CRD then apply ext-vlan + GatewayClass (single-interface)")
+		}
 		st.Set("F5SPKVLAN_APPLIED_AT", "dry-run")
 		st.Set("GATEWAYCLASS_NAME", name+"-gatewayclass")
 		return nil
@@ -84,8 +92,11 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 		return fmt.Errorf("phase23b: cl.Network.DataPath.SelfIPs not set (intent.applyDefaults should derive from CIDRs)")
 	}
 	selfIPs := cl.Network.DataPath.SelfIPs
-	if selfIPs.External == "" || selfIPs.Internal == "" {
-		return fmt.Errorf("phase23b: external/internal SelfIP not derivable — DataPath subnets must be /24 (see DeriveSelfIP)")
+	if selfIPs.External == "" {
+		return fmt.Errorf("phase23b: external SelfIP not derivable — DataPath external subnet must be /24 (see DeriveSelfIP)")
+	}
+	if hasInternal && selfIPs.Internal == "" {
+		return fmt.Errorf("phase23b: internal SelfIP not derivable — DataPath internal subnet must be /24 (see DeriveSelfIP)")
 	}
 
 	// Wait for the F5SPKVlan CRD (installed by FLO after CNEInstance reconciles).
@@ -112,12 +123,16 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 	if err != nil {
 		return fmt.Errorf("phase23b: reading f5spkvlan template: %w", err)
 	}
-	spkRendered, err := render.RenderF5SPKVlan(spkTmpl, selfIPs.External, selfIPs.Internal, selfIPs.PrefixLen)
+	spkRendered, err := render.RenderF5SPKVlan(spkTmpl, selfIPs.External, selfIPs.Internal, selfIPs.PrefixLen, hasInternal)
 	if err != nil {
 		return fmt.Errorf("phase23b: rendering f5spkvlan: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "[phase 23b] applying F5SPKVlan ext-vlan (selfip=%s) + int-vlan (selfip=%s)\n",
-		selfIPs.External, selfIPs.Internal)
+	if hasInternal {
+		fmt.Fprintf(os.Stderr, "[phase 23b] applying F5SPKVlan ext-vlan (selfip=%s) + int-vlan (selfip=%s)\n",
+			selfIPs.External, selfIPs.Internal)
+	} else {
+		fmt.Fprintf(os.Stderr, "[phase 23b] applying F5SPKVlan ext-vlan (selfip=%s)\n", selfIPs.External)
+	}
 	if err := applyRawYAML(ctx, clients, spkRendered); err != nil {
 		return fmt.Errorf("phase23b: applying F5SPKVlan: %w", err)
 	}
@@ -144,10 +159,11 @@ func Phase23bSPKVlanGatewayClass(ctx context.Context, cl *intent.Cluster, st *st
 
 // Phase23bSPKVlanGatewayClassDown deletes the F5SPKVlan CRs (ext-vlan + int-vlan)
 // and the cluster-scoped GatewayClass. Tolerates NotFound everywhere.
-// Skipped silently when cl.Pattern != "host-device".
+// Skipped silently when the cluster is not a BNK pattern. Deleting a
+// non-existent int-vlan (single-interface clusters) is tolerated via NotFound.
 func Phase23bSPKVlanGatewayClassDown(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
-	if cl.Pattern != "host-device" {
+	if !cl.IsBNKPattern() {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "[phase 23b down] F5SPKVlan + GatewayClass: cluster=%s\n", cl.Metadata.Name)
