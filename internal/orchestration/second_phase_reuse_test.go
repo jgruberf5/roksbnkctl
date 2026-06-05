@@ -312,3 +312,169 @@ func TestWriteBnkPhaseOverride_Sprint23ByteIdenticalBlock(t *testing.T) {
 		}
 	}
 }
+
+// ── Sprint 28: testing-phase override byte-exact pins ───────────────────
+
+// TestWriteTestingPhaseOverride_ByteExactBlock_WithTGW pins the EXACT bytes
+// the new testing-phase override emits when the cluster handoff carries a
+// transit-gateway name. Mirrors the byte-exact discipline of the Sprint 23
+// bnk-override test above: any reorder, any whitespace drift, any dropped or
+// added line fails the match.
+//
+// Per the architect's §2a the override sets ONLY the architectural-off flags
+// (create_roks_cluster / deploy_bnk / deploy_cert_manager /
+// create_roks_transit_gateway / create_roks_registry_cos_instance = false) +
+// the VPC/TGW reuse inputs. It must NOT pin testing_create_* — those flow from
+// the user's render so "TGW jumphost only, no cluster jumphosts" keeps working.
+func TestWriteTestingPhaseOverride_ByteExactBlock_WithTGW(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterName:        "canada-roks",
+		ClusterID:          "crt-cluster-id",
+		VPCID:              "r038-ef6305af-vpc",
+		TransitGatewayName: "canada-roks-tgw",
+		Source:             "cluster-up",
+	}
+	p, err := writeTestingPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeTestingPhaseOverrideAt: %v", err)
+	}
+	if filepath.Base(p) != testingPhaseOverrideFile {
+		t.Fatalf("override path %q must end in %q", p, testingPhaseOverrideFile)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+
+	// The full forced block, byte-identical, in exact order with single-LF
+	// separators. clusterIdentity prefers the ID, so roks_cluster_id_or_name
+	// is the cluster ID. cluster_vpc_id == existing_cluster_vpc_id == VPCID.
+	const wantBlock = "create_roks_cluster = false\n" +
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n" +
+		"use_existing_cluster_vpc = true\n" +
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
+		"# existing_cluster_vpc_id is the cluster VPC; cluster_vpc_id below is the same value\n" +
+		"cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
+		"create_roks_transit_gateway = false\n" +
+		"create_roks_registry_cos_instance = false\n" +
+		"deploy_bnk = false\n" +
+		"deploy_cert_manager = false\n" +
+		"testing_transit_gateway_name = \"canada-roks-tgw\"\n"
+	if !strings.Contains(got, wantBlock) {
+		t.Fatalf("testing-phase override missing the byte-identical block.\n--- want block ---\n%s\n--- got file ---\n%s", wantBlock, got)
+	}
+
+	// The override must NOT pin any testing_create_* toggle (those flow from
+	// the user's render — §2a). A literal active assignment is `= <value>`
+	// with no leading `#`; assert none of the three appear in any form.
+	for _, forbidden := range []string{
+		"testing_create_tgw_jumphost",
+		"testing_create_cluster_jumphosts",
+		"testing_create_client_vpc",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("testing-phase override must NOT pin %q (it flows from the user render); found it\n--- override ---\n%s", forbidden, got)
+		}
+	}
+
+	// And it must never re-enable the cluster/BNK it is suppressing, nor leak
+	// the API key.
+	for _, bad := range []string{
+		"create_roks_cluster = true",
+		"deploy_bnk = true",
+		"use_existing_cluster_vpc = false",
+		"api_key",
+	} {
+		if strings.Contains(got, bad) {
+			t.Errorf("testing-phase override carries forbidden content %q\n--- override ---\n%s", bad, got)
+		}
+	}
+}
+
+// TestWriteTestingPhaseOverride_OmitsTGWLineWhenNameEmpty pins §2a's
+// conditional: when the handoff has no transit_gateway_name (e.g. a
+// `cluster register` with no TGW output), the testing_transit_gateway_name
+// line is OMITTED entirely so the normal config.yaml render supplies it. The
+// file then ends right after `deploy_cert_manager = false`.
+func TestWriteTestingPhaseOverride_OmitsTGWLineWhenNameEmpty(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterName: "canada-roks",
+		ClusterID:   "crt-cluster-id",
+		VPCID:       "r038-ef6305af-vpc",
+		// TransitGatewayName intentionally empty.
+		Source: "cluster-register",
+	}
+	p, err := writeTestingPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeTestingPhaseOverrideAt: %v", err)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+
+	if strings.Contains(got, "testing_transit_gateway_name") {
+		t.Errorf("empty TGW name must OMIT the testing_transit_gateway_name line\n--- override ---\n%s", got)
+	}
+	// The architectural-off block + reuse inputs are still all present and the
+	// file ends at deploy_cert_manager = false (no dangling TGW line).
+	const wantTail = "deploy_bnk = false\n" +
+		"deploy_cert_manager = false\n"
+	if !strings.HasSuffix(got, wantTail) {
+		t.Errorf("override (no TGW) must end at deploy_cert_manager = false\n--- override ---\n%q", got)
+	}
+	// VPC reuse inputs still pinned.
+	for _, want := range []string{
+		`existing_cluster_vpc_id = "r038-ef6305af-vpc"`,
+		`cluster_vpc_id = "r038-ef6305af-vpc"`,
+		`roks_cluster_id_or_name = "crt-cluster-id"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("override (no TGW) missing reuse input %q\n--- override ---\n%s", want, got)
+		}
+	}
+}
+
+// TestWriteBnkPhaseOverride_Sprint28ByteUnchanged re-pins (Sprint 28 frame)
+// that the bnk-phase override's forced VALUE block is BYTE-UNCHANGED by the
+// three-phase split — only its header comment was updated to note Testing is
+// now its own phase. This is the validator's standing byte-stability gate: the
+// Testing split must not perturb the BNK override the live BNK phase depends
+// on. Identical assertion content to the Sprint 23 block test, restated here
+// as the Sprint 28 stability anchor.
+func TestWriteBnkPhaseOverride_Sprint28ByteUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterName: "canada-roks",
+		ClusterID:   "crt-cluster-id",
+		VPCID:       "r038-ef6305af-vpc",
+		Source:      "cluster-up",
+	}
+	p, err := writeBnkPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeBnkPhaseOverrideAt: %v", err)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+
+	const wantBlock = "create_roks_cluster = false\n" +
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n" +
+		"use_existing_cluster_vpc = true\n" +
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
+		"create_roks_transit_gateway = false\n" +
+		"create_roks_registry_cos_instance = false\n" +
+		"deploy_cert_manager = true\n" +
+		"testing_create_cluster_jumphosts = false\n" +
+		"testing_create_tgw_jumphost = false\n" +
+		"testing_create_client_vpc = false\n"
+	if !strings.Contains(got, wantBlock) {
+		t.Fatalf("bnk-phase override forced block drifted under the Sprint 28 split (must be byte-unchanged).\n--- want ---\n%s\n--- got ---\n%s", wantBlock, got)
+	}
+}

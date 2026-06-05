@@ -9,14 +9,14 @@
 > prose. The decomposition: BNK depends fully on the Cluster (k8s); Testing
 > depends on the Cluster only for the network (cluster VPC + TGW, no k8s).
 
-`Status`: open
+`Status`: resolved (design + book delivered)
 
 ---
 
 ## Issue 1 — Three-state model + the BNK-state migration decision (BLOCKING)
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 Today: `state-cluster/` (cluster) + `state/` (trial = BNK + testing). Design
 the three-state layout and pin the migration:
@@ -44,7 +44,7 @@ the three-state layout and pin the migration:
 ## Issue 2 — Phase-override + shape-presence design (BLOCKING)
 
 **Severity**: high
-**Status**: open
+**Status**: resolved
 
 - **testing-phase-override.tfvars** (new): specify the exact forced tfvars
   (`create_roks_cluster=false`, `use_existing_cluster_vpc=true`,
@@ -62,7 +62,7 @@ the three-state layout and pin the migration:
 ## Issue 3 — Parallelism + teardown ordering design
 
 **Severity**: high (the speed + lifecycle goals)
-**Status**: open
+**Status**: resolved
 
 - **Up ordering**: Cluster (serial, first — both depend on it) → BNK ∥ Testing
   (`errgroup`). Recommend: does the bare `up` block on Cluster fully completing
@@ -82,7 +82,7 @@ the three-state layout and pin the migration:
 ## Issue 4 — CLI surface + naming
 
 **Severity**: medium
-**Status**: open
+**Status**: resolved
 
 Pin the command tree: a new `roksbnkctl testing up/down` (phase command,
 parallel to `cluster`/`bnk`) — recommend this name and explicitly distinguish
@@ -95,7 +95,7 @@ connectivity/DNS/throughput probes, not provisions jumphosts). If `testing` vs
 ## Issue 5 — Book authoring
 
 **Severity**: low
-**Status**: open
+**Status**: resolved
 
 - Rewrite the lifecycle/phases chapter for three phases: the dependency graph,
   parallel `up`, per-phase `up`/`down`, the `bnk down`-leaves-testing capability,
