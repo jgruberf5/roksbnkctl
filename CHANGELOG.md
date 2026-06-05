@@ -44,6 +44,7 @@ Sprint 27 — **the BNK trial phase is now terraform-native.** The trial layer u
 ### Fixed
 
 - **The terraform-native FLO/CIS chart pulls now authenticate to `repo.f5.com`.** The `helm_release.flo` / `helm_release.cis` resources pull from `oci://<far_repo>/charts` but passed no registry credentials, so the in-process helm provider pulled the charts anonymously and the registry returned **403 Forbidden** (`failed to fetch anonymous token … scope=repository:charts/f5-lifecycle-operator:pull`). The legacy shell path logged in first (`helm registry login -u _json_key_base64 --password-stdin <far_repo>`); the terraform-native path now passes the same FAR service-account credentials via `repository_username` / `repository_password`. Found by the gated-live BNK verify.
+- **FLO/CIS `helm_release` no longer blocks on helm-level readiness.** The conversion set `wait = true` on the FLO and CIS chart installs, but the legacy `helm upgrade --install` for both used `--wait=false` — the operator charts deploy fire-and-forget and real readiness is gated downstream by the CNEInstance / License CR `wait_for` status conditions. With `wait = true` the FLO operator Deployment's helm readiness raced the cert-manager-issued webhook certs applied later and timed out (`context deadline exceeded`, "release … has a failed status"). Restored `wait = false` for flo + cis (cert-manager keeps `wait = true`). Found by the gated-live BNK verify.
 
 ### Notes
 
