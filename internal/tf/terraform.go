@@ -159,6 +159,24 @@ terraform {
 	// <stateDir>/terraform.tfstate, so the data-dir location doesn't move
 	// the state file, and FetchSource rewrites source files over the top
 	// (no RemoveAll), so .terraform/ persists across `up`s.
+	// Shared provider plugin cache (TF_PLUGIN_CACHE_DIR): each provider
+	// downloads ONCE into ~/.roksbnkctl/plugin-cache and every phase /
+	// workspace links it from there, instead of re-fetching ~440 MB of
+	// providers per phase. Process-global like the api key below, but the
+	// same value for every phase; the parallel `up` inits each phase
+	// sequentially (before the concurrent apply), so there's no concurrent
+	// cache write. terraform ignores TF_PLUGIN_CACHE_DIR unless the dir
+	// already exists, so MkdirAll it; degrade silently to per-phase
+	// downloads if we can't create it.
+	if cacheDir, cerr := config.PluginCacheDir(); cerr == nil {
+		if os.MkdirAll(cacheDir, 0o755) == nil {
+			_ = os.Setenv("TF_PLUGIN_CACHE_DIR", cacheDir)
+			// We ship no committed lock file, so let the cache populate the
+			// per-workspace lock with single-platform (h1:) hashes instead
+			// of erroring on the absent zip (zh:) checksums.
+			_ = os.Setenv("TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE", "1")
+		}
+	}
 	if apiKey != "" {
 		if err := os.Setenv("TF_VAR_ibmcloud_api_key", apiKey); err != nil {
 			return nil, fmt.Errorf("setting TF_VAR_ibmcloud_api_key: %w", err)
