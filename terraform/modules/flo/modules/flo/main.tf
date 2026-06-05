@@ -1370,6 +1370,7 @@ resource "kubectl_manifest" "selfsigned_issuer" {
   yaml_body         = yamlencode(local.selfsigned_issuer_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 }
 
 resource "kubectl_manifest" "ca_certificate" {
@@ -1377,6 +1378,7 @@ resource "kubectl_manifest" "ca_certificate" {
   yaml_body         = yamlencode(local.ca_certificate_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 
   wait_for {
     condition {
@@ -1393,6 +1395,7 @@ resource "kubectl_manifest" "ca_cluster_issuer" {
   yaml_body         = yamlencode(local.ca_cluster_issuer_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 
   wait_for {
     condition {
@@ -1411,6 +1414,7 @@ resource "kubectl_manifest" "nad_ens3" {
   yaml_body         = yamlencode(local.nad_ens3_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   depends_on        = [kubernetes_namespace_v1.flo]
 }
 
@@ -1419,6 +1423,7 @@ resource "kubectl_manifest" "nad_macvlan" {
   yaml_body         = yamlencode(local.nad_macvlan_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   depends_on        = [kubernetes_namespace_v1.flo]
 }
 
@@ -1495,6 +1500,7 @@ resource "kubectl_manifest" "flo_scc_privileged" {
   count             = local.use_kubectl ? 1 : 0
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   yaml_body = yamlencode({
     apiVersion = "rbac.authorization.k8s.io/v1"
     kind       = "ClusterRoleBinding"
@@ -1517,6 +1523,7 @@ resource "kubectl_manifest" "cis_scc_privileged" {
   for_each          = local.use_kubectl ? { cis = local.scc_clusterrolebinding.cis, cis_default = local.scc_clusterrolebinding.cis_default } : {}
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   yaml_body = yamlencode({
     apiVersion = "rbac.authorization.k8s.io/v1"
     kind       = "ClusterRoleBinding"
@@ -1544,6 +1551,7 @@ resource "kubectl_manifest" "node_labeler_sa" {
   yaml_body         = yamlencode(local.node_labeler_sa_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 }
 
 resource "kubectl_manifest" "node_labeler_role" {
@@ -1551,6 +1559,7 @@ resource "kubectl_manifest" "node_labeler_role" {
   yaml_body         = yamlencode(local.node_labeler_role_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 }
 
 resource "kubectl_manifest" "node_labeler_binding" {
@@ -1558,6 +1567,7 @@ resource "kubectl_manifest" "node_labeler_binding" {
   yaml_body         = yamlencode(local.node_labeler_binding_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
   depends_on        = [kubectl_manifest.node_labeler_role, kubectl_manifest.node_labeler_sa]
 }
 
@@ -1566,6 +1576,7 @@ resource "kubectl_manifest" "node_labeler_job" {
   yaml_body         = yamlencode(local.node_labeler_job_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
+  force_conflicts   = true
 
   wait_for {
     condition {
