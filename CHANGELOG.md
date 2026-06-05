@@ -11,7 +11,11 @@ Sprint 28 — **the deployment is now three independent phases: Cluster, BNK, an
 ### Added
 
 - **`roksbnkctl testing up / down / migrate`** — a new top-level phase command that provisions and destroys the testing jumphosts (TGW jumphost, per-AZ cluster jumphosts, client VPC) independently of BNK. It's pure IBM VPC — no Kubernetes. **Not to be confused with `roksbnkctl test` / `test hosts`**, which *run* connectivity/DNS/throughput probes and provision nothing; the `testing --help` text and [Chapter 8a §"`testing` vs `test`"](book/src/08a-three-phase-lifecycle.md) call out the distinction. `testing migrate` moves a pre-Sprint-28 workspace's jumphosts out of the combined BNK state into `state-testing/` (a `terraform state mv` — no cloud churn, jumphosts keep their IPs/known_hosts). Documented in the regenerated [command reference](book/src/27-command-reference.md).
-- **Parallel `up`** — a fresh `roksbnkctl up` provisions the Cluster phase first (both downstreams need it), then brings up **BNK and Testing concurrently**; their interleaved output is line-prefixed (`[bnk]` / `[testing]`) so it stays readable.
+- **Parallel `up`** — a fresh `roksbnkctl up` provisions the Cluster phase first (both downstreams need it), then brings up **BNK and Testing concurrently**; their interleaved output is line-prefixed (`[bnk]` / `[testing]`) so it stays readable. Without `--auto`, `up` **plans both phases first** (sequentially, so each diff is cleanly attributed) and then asks a **separate confirmation for each** — `Apply BNK plan?` / `Apply Testing plan?` — before applying the approved phases in parallel. Approving only one brings up just that phase (e.g. redeploy BNK without touching the jumphosts); a phase whose plan is a no-op is skipped without prompting. (Two concurrent `terraform apply`s can't each own an interactive prompt on one terminal, so the approvals are taken up front.)
+
+### Fixed
+
+- **Parallel `up` no longer fails with `Backend configuration block has changed`.** The terraform data dir (`.terraform/`) was pointed at each phase's state via a process-global `TF_DATA_DIR` (`os.Setenv`) — safe when phases ran serially, but the Sprint 28 BNK ∥ Testing legs race on that global: one phase's apply would initialize against the other phase's backend. The data dir now defaults into each phase's already-distinct per-phase source dir (no global env), so concurrent applies are isolated. State location is unaffected (the backend override pins it to an absolute per-phase path) and the provider cache still persists across `up`s.
 
 ### Changed
 

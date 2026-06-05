@@ -129,6 +129,15 @@ The two parallel phases' output is **line-prefixed** (`[bnk]` / `[testing]`)
 so you can follow each independently. The Cluster phase, being serial, prints
 unprefixed.
 
+Without `--auto`, `up` **plans both phases first** (sequentially, so each diff
+is cleanly attributed), then asks a **separate confirmation for each** —
+`Apply BNK plan? [y/N]` and `Apply Testing plan? [y/N]`. Two concurrent
+applies can't each own an interactive prompt on one terminal, so the approval
+is taken up front; the approved phases then apply **in parallel**. Approving
+only one (e.g. `y` to BNK, `N` to Testing) brings up just that phase — handy
+when you want to redeploy the BNK trial without touching the jumphosts. A
+phase whose plan shows no changes is skipped without prompting.
+
 Why Cluster-completes-first rather than starting Testing the moment the
 cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
 Testing is a handful of VSIs (minutes). Starting Testing against a half-built

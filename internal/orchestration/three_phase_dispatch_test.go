@@ -293,6 +293,38 @@ func TestClusterDownGuard_RefusesWithBNKorTesting_AutoDoesNotBypass(t *testing.T
 	}
 }
 
+// TestApplyDecision_SelectiveConfirm pins the per-phase apply selection
+// (Sprint 28 separate confirms): a phase applies iff it had plan changes
+// AND (--auto OR the operator confirmed it). Declining one phase still
+// applies the other; --auto applies every changed phase; a confirm on a
+// no-change phase is inert.
+func TestApplyDecision_SelectiveConfirm(t *testing.T) {
+	cases := []struct {
+		name                          string
+		bnkChanges, testChanges, auto bool
+		confirmBNK, confirmTest       bool
+		wantBNK, wantTest             bool
+	}{
+		{"both changed, both confirmed", true, true, false, true, true, true, true},
+		{"both changed, decline testing", true, true, false, true, false, true, false},
+		{"both changed, decline bnk", true, true, false, false, true, false, true},
+		{"both changed, decline both", true, true, false, false, false, false, false},
+		{"auto applies all changed", true, true, true, false, false, true, true},
+		{"no changes never applies", false, false, false, true, true, false, false},
+		{"auto + no changes is noop", false, false, true, false, false, false, false},
+		{"only bnk changed, confirmed", true, false, false, true, false, true, false},
+		{"confirm inert without changes", false, true, false, true, true, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotBNK, gotTest := applyDecision(c.bnkChanges, c.testChanges, c.auto, c.confirmBNK, c.confirmTest)
+			if gotBNK != c.wantBNK || gotTest != c.wantTest {
+				t.Errorf("applyDecision = (bnk=%v test=%v), want (bnk=%v test=%v)", gotBNK, gotTest, c.wantBNK, c.wantTest)
+			}
+		})
+	}
+}
+
 // ── parallel-dispatch plumbing ──────────────────────────────────────────
 
 // TestPrefixWriter_ConcurrentLinesNeverInterleave drives the two
