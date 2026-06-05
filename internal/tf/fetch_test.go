@@ -9,6 +9,45 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
+// TestEnsureProvidersExecutable_HealsNonExec pins the self-heal for the
+// stale 0644 provider binaries an earlier `all:`-embedding build extracted:
+// chmod +x the provider plugins, leave sibling files (LICENSE.txt) alone.
+func TestEnsureProvidersExecutable_HealsNonExec(t *testing.T) {
+	src := t.TempDir()
+	dir := filepath.Join(src, ".terraform", "providers", "registry.terraform.io",
+		"hashicorp", "null", "3.3.0", "linux_amd64")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prov := filepath.Join(dir, "terraform-provider-null_v3.3.0_x5")
+	if err := os.WriteFile(prov, []byte("#!/bin/true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lic := filepath.Join(dir, "LICENSE.txt")
+	if err := os.WriteFile(lic, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureProvidersExecutable(src)
+
+	if info, err := os.Stat(prov); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&0o111 == 0 {
+		t.Errorf("provider binary not made executable: mode=%v", info.Mode())
+	}
+	if info, err := os.Stat(lic); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&0o111 != 0 {
+		t.Errorf("non-provider sibling got an execute bit: mode=%v", info.Mode())
+	}
+}
+
+// TestEnsureProvidersExecutable_NoTree is a no-op / no-panic guard when the
+// source dir has no .terraform/providers yet (a never-applied phase).
+func TestEnsureProvidersExecutable_NoTree(t *testing.T) {
+	EnsureProvidersExecutable(t.TempDir()) // must not panic
+}
+
 func TestFetchSource_Local_OK(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := config.TFSourceCfg{Type: "local", Path: tmp}

@@ -98,6 +98,12 @@ func Open(
 	if err != nil {
 		return nil, err
 	}
+	// Heal any non-executable provider binaries left in this source dir's
+	// .terraform/providers by an earlier roksbnkctl build that extracted
+	// the embedded provider cache 0644 — otherwise terraform "reuses" them
+	// and the plan dies with "fork/exec ...: permission denied". No-op for
+	// terraform's own 0755 installs.
+	EnsureProvidersExecutable(sourceDir)
 
 	// Write a backend override pointing terraform's local backend at our
 	// workspace state file. Replaces the deprecated `-state=<path>` flag
