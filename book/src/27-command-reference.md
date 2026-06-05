@@ -82,7 +82,7 @@ single-state workspaces (use `roksbnkctl down` there).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the destroy confirmation |
-| `--legacy-bnk` | `bool` | `false` | destroy BNK custom resources rendered in the legacy null_resource/curl mode (`bnk_cr_mode=legacy_curl`); must match the mode used at `bnk up` |
+| `--legacy-bnk` | `bool` | `false` | destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
@@ -110,7 +110,7 @@ Use `roksbnkctl up` on those workspaces.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip confirmation prompts (cluster-bootstrap + apply) |
-| `--legacy-bnk` | `bool` | `false` | deploy the BNK custom resources via the legacy null_resource/curl path (`bnk_cr_mode=legacy_curl`) instead of the default terraform-native kubectl/helm path |
+| `--legacy-bnk` | `bool` | `false` | deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
@@ -124,7 +124,7 @@ Manage the ROKS cluster as a durable, reusable resource that
 sits underneath your BNK trials.
 
 Commands:
-  roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
+  roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
   roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
   roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
   roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json
@@ -198,15 +198,15 @@ Provision the ROKS cluster (and cluster-shared services) only
 roksbnkctl cluster up [flags]
 ```
 
-Runs terraform apply with deploy_bnk=false forced — creates the
-ROKS cluster, transit gateway, registry COS, cert-manager, and the test
-jumphost, but skips the BNK trial modules (flo, cne_instance, license).
-On success, writes the cluster's identity to
+Creates the durable cluster-shared infrastructure only — the ROKS
+cluster, transit gateway, and registry COS. cert-manager and the BNK trial
+modules (flo, cne_instance, license) deploy in the BNK phase; the jumphosts
+deploy in the testing phase. On success, writes the cluster's identity to
 ~/.roksbnkctl/`<workspace>`/cluster-outputs.json so subsequent `roksbnkctl up`
-runs can deploy BNK trials onto this cluster.
+runs can deploy the BNK and testing phases onto this cluster.
 
 Uses a separate state directory (~/.roksbnkctl/`<workspace>`/state-cluster/)
-so it doesn't tangle with BNK-trial state.
+so it doesn't tangle with BNK or testing state.
 
 **Flags**
 
@@ -1173,6 +1173,84 @@ probe (GSLB-aware)".
 
 ← back to [`roksbnkctl test`](#roksbnkctl-test)
 
+### `roksbnkctl test hosts`
+
+Manage test.connectivity.extra_hosts in the workspace config
+
+Test hosts are URLs probed by `roksbnkctl test connectivity` and
+(in workspace-driven mode) `roksbnkctl test dns`. They are stored under
+`test.connectivity.extra_hosts` in the workspace's config.yaml.
+
+This command group is the first-class CLI for managing that slice —
+without it, the only path is hand-editing
+~/.roksbnkctl/`<workspace>`/config.yaml. Mirrors `roksbnkctl targets`'
+ergonomics: idempotent add/remove, `-o json` on list.
+
+← back to [`roksbnkctl test`](#roksbnkctl-test)
+
+#### `roksbnkctl test hosts add`
+
+Append URLs to test.connectivity.extra_hosts (idempotent)
+
+```
+roksbnkctl test hosts add <url> [<url> ...]
+```
+
+Appends each `<url>` to test.connectivity.extra_hosts. Idempotent —
+adding an already-present URL is a no-op (logs to stderr; exit 0).
+
+Each `<url>` is validated via the std-lib url.Parse; non-URLs are
+rejected with an actionable error naming the offending arg. Insertion
+order is preserved.
+
+← back to [`roksbnkctl test hosts`](#roksbnkctl-test-hosts)
+
+#### `roksbnkctl test hosts clear`
+
+Remove ALL entries from test.connectivity.extra_hosts
+
+```
+roksbnkctl test hosts clear [flags]
+```
+
+Clears test.connectivity.extra_hosts. Confirmation prompt defaults to
+No; pass `--auto` to skip the prompt (matches the
+`roksbnkctl down` / `cluster down` confirmation pattern).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the confirmation prompt |
+
+← back to [`roksbnkctl test hosts`](#roksbnkctl-test-hosts)
+
+#### `roksbnkctl test hosts list`
+
+List configured test hosts (one per line; -o json for array)
+
+Prints the workspace's test.connectivity.extra_hosts one per line on
+stdout. Empty list emits zero bytes + exit 0 (NOT an error;
+distinguishes "nothing configured" from "command failed" by exit code).
+
+With `-o json`, emits the slice as a JSON array (`[]` when empty).
+
+← back to [`roksbnkctl test hosts`](#roksbnkctl-test-hosts)
+
+#### `roksbnkctl test hosts remove`
+
+Remove URLs from test.connectivity.extra_hosts (idempotent)
+
+```
+roksbnkctl test hosts remove <url> [<url> ...]
+```
+
+Removes each `<url>` from test.connectivity.extra_hosts. Idempotent —
+removing an absent URL is a no-op (logs to stderr; exit 0). Preserves
+the order of remaining entries.
+
+← back to [`roksbnkctl test hosts`](#roksbnkctl-test-hosts)
+
 ### `roksbnkctl test list`
 
 List available test suites
@@ -1203,6 +1281,87 @@ fixture lifecycle is wired.
 | `--mode` | `string` | `north-south` | throughput mode: north-south \| east-west |
 
 ← back to [`roksbnkctl test`](#roksbnkctl-test)
+
+## `roksbnkctl testing`
+
+Testing-phase (jumphost) lifecycle — provisions the test rig
+
+Manage the testing jumphost infrastructure (TGW jumphost, per-AZ
+cluster jumphosts, client VPC) as an independent phase that sits beside the
+BNK phase on top of a shared cluster. Pure IBM VPC — no Kubernetes.
+
+Commands:
+  roksbnkctl testing up       Provision the jumphosts (needs a cluster: VPC + transit gateway)
+  roksbnkctl testing down     Destroy the jumphosts, leaving the cluster and BNK intact
+  roksbnkctl testing migrate  Move pre-Sprint-28 jumphosts out of the BNK state into state-testing/
+
+This is the provisioning phase. To RUN connectivity/DNS/throughput probes
+against a deployed environment, use `roksbnkctl test` (and
+`roksbnkctl test hosts` to manage the probe target list) — those
+provision nothing.
+
+### `roksbnkctl testing down`
+
+Destroy the testing jumphosts, leaving the cluster and BNK
+
+```
+roksbnkctl testing down [flags]
+```
+
+Destroys only the testing jumphost resources (state-testing/), leaving
+the cluster phase and the BNK phase intact. The inverse of `bnk down`:
+each phase tears down independently.
+
+Refuses when there's no testing state to destroy, and on legacy
+single-state workspaces (use `roksbnkctl down` there).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl testing`](#roksbnkctl-testing)
+
+### `roksbnkctl testing migrate`
+
+Move pre-Sprint-28 jumphosts from the BNK state into state-testing/
+
+One-shot migration for workspaces provisioned before the Sprint 28
+three-phase split, where the jumphosts (module.testing.*) still live in the
+BNK state (state/). Moves them into state-testing/ with no cloud churn
+(terraform state mv) so the live jumphosts are preserved.
+
+After migrating, re-run `roksbnkctl bnk up` to reconcile the
+now-jumphost-free BNK state, and `roksbnkctl testing up` to adopt the
+moved jumphosts (plan shows a no-op).
+
+← back to [`roksbnkctl testing`](#roksbnkctl-testing)
+
+### `roksbnkctl testing up`
+
+Provision the testing jumphosts (cluster must exist)
+
+```
+roksbnkctl testing up [flags]
+```
+
+Provisions the testing jumphosts against the existing cluster's VPC +
+transit gateway (read from cluster-outputs.json). Runs in its own state
+(state-testing/), independent of the BNK phase — `bnk down` leaves
+the jumphosts and `testing down` leaves BNK.
+
+Refuses on legacy single-state workspaces (use `roksbnkctl up`).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl testing`](#roksbnkctl-testing)
 
 ## `roksbnkctl tfvars`
 

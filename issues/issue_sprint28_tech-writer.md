@@ -6,14 +6,14 @@
 > command reference, CHANGELOG — against the built binary's actual behavior.
 > GREEN/RED verdict.
 
-`Status`: open
+`Status`: resolved (drift sweep done — integrator did it directly after the WSL /tmp agent-hang)
 
 ---
 
 ## Issue 1 — Drift sweep over the integrated three-phase tree
 
 **Severity**: low
-**Status**: open
+**Status**: resolved
 
 Build the binary, then sweep:
 
@@ -52,3 +52,43 @@ Build the binary, then sweep:
 - `issues/issue_sprint28_architect.md` + `..._staff.md` closures.
 - Per-finding fields use `**Verdict**:` (not `**Status**:`) per the `a2b78da`
   convention.
+
+---
+
+## Closure — tech-writer, 2026-06-05
+
+Done by the integrator directly (not a dispatched agent — the validator agent
+had hung 8h on a WSL `/tmp` write, so this role was finished in-process to avoid
+a repeat). Built the binary to `/tmp/rbk-s28` and reconciled the docs against it.
+
+### Findings (Verdict each)
+1. **Command reference** — **Verdict: GREEN (fixed).** `book/src/27-command-reference.md`
+   is auto-generated (`tools/refgen/cobra-md`); regenerated it so the new
+   `roksbnkctl testing up/down/migrate` group is documented from the live cobra
+   tree (§"`roksbnkctl testing`").
+2. **Stale `cluster up` help** — **Verdict: GREEN (fixed in the binary).** The
+   `clusterUpCmd` Long + the cluster command-group summary still claimed the
+   cluster phase creates cert-manager (moved to BNK in Sprint 27) and the
+   jumphost (moved to Testing in Sprint 28). Corrected the two doc strings in
+   `internal/cli/cluster_phase.go` so the regenerated reference is accurate.
+3. **`testing` vs `test` disambiguation** — **Verdict: GREEN.** Staff baked the
+   distinction into the `testing --help` text ("This is the provisioning phase.
+   To RUN probes use `roksbnkctl test`…"), and the architect's Chapter 8a carries
+   the §"`testing` vs `test`" callout. The CHANGELOG entry repeats it.
+4. **BNK-phase chapter / lifecycle** — **Verdict: GREEN.** Chapter 8a
+   (architect-authored) matches the binary's three-phase reality; the migration
+   path is documented; transcripts remain illustrative.
+5. **CHANGELOG** — **Verdict: GREEN.** Added a user-facing "Unreleased — feature
+   branch `sprint28-three-phase-split`" section above the Sprint 27 one (three
+   phases, parallel up, independent bnk/testing teardown + reuse jumphosts,
+   reuse-existing-cluster, the new `testing` command, the migration, the
+   feature-branch/integrator-gated note).
+
+### Residual
+- mdbook full HTML+PDF build not re-run here (docker toolchain; the architect
+  built Chapter 8a GREEN earlier, and the regenerated reference + CHANGELOG are
+  valid markdown) — re-verify on the release host before the cut.
+- Illustrative transcripts get a byte-for-byte re-capture on a live cluster.
+
+### Verdict — **GREEN** (doc-complete). The integrator still gates merge on the
+live parallel-up + independent-down verify and Sprint 27 merging first.
