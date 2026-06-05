@@ -183,37 +183,90 @@ func RunUp(ctx context.Context, in *LifecycleInputs) error {
 	return runBNKAndTestingParallel(ctx, in)
 }
 
-// runBNKAndTestingParallel brings up the BNK and Testing phases
-// concurrently after the cluster phase has completed (architect §3a/§3b).
-// Each phase's stderr is line-prefixed ([bnk] / [testing]) under a shared
-// mutex so the concurrent output is readable. The errgroup's first
-// non-nil error cancels the other phase's context; RunUp returns it. The
-// single apply confirmation is taken here ONCE (then in.Auto flipped) so
-// the two concurrent legs don't race two prompts onto one TTY.
+// runBNKAndTestingParallel brings up the BNK and Testing phases after the
+// cluster phase has completed (architect §3a/§3b). Two concurrent
+// `terraform apply`s can't each own an interactive approval prompt on one
+// TTY, so the flow is:
+//
+//  1. PLAN both phases sequentially (plan is cheap relative to apply, and
+//     sequential output is cleanly attributable for the review);
+//  2. CONFIRM each phase that has changes, independently — the operator can
+//     approve BNK and skip Testing (or vice-versa), bringing up just one
+//     phase. --auto applies every changed phase without prompting;
+//  3. APPLY the approved phases CONCURRENTLY (the expensive step), each
+//     phase's stderr line-prefixed ([bnk] / [testing]) under a shared
+//     mutex. The errgroup's first non-nil error cancels the sibling's apply
+//     context; the error is surfaced to the caller.
 func runBNKAndTestingParallel(ctx context.Context, in *LifecycleInputs) error {
-	if !in.Auto {
-		if !in.PromptYesNo("Apply the BNK and Testing phases (run in parallel)?", false) {
-			return errors.New("aborted")
-		}
-	}
-	// Both concurrent legs share one decision; never prompt mid-parallel.
 	bnkErr, testErr := newPrefixWriters(os.Stderr)
 	bnkIn := *in
-	bnkIn.Auto = true
 	bnkIn.Stderr = bnkErr
-	testIn := *in
-	testIn.Auto = true
 
+	// ── 1. Plan both phases (sequential → clean, attributable diffs). ──
+	fmt.Fprintln(os.Stderr, "→ Planning BNK phase…")
+	bnkChanges, bnkApply, err := prepareBNKUp(ctx, &bnkIn)
+	bnkErr.flush()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "→ Planning Testing phase…")
+	testChanges, testApply, err := prepareTestingUp(ctx, in, testErr)
+	testErr.flush()
+	if err != nil {
+		return err
+	}
+
+	// ── 2. Confirm each changed phase independently (real TTY, serial). ──
+	confirmBNK, confirmTest := false, false
+	if !in.Auto {
+		if bnkChanges {
+			confirmBNK = in.PromptYesNo("Apply BNK plan?", false)
+		}
+		if testChanges {
+			confirmTest = in.PromptYesNo("Apply Testing plan?", false)
+		}
+	}
+	runBNK, runTest := applyDecision(bnkChanges, testChanges, in.Auto, confirmBNK, confirmTest)
+	if bnkChanges && !runBNK {
+		fmt.Fprintln(os.Stderr, "✓ BNK skipped")
+	}
+	if testChanges && !runTest {
+		fmt.Fprintln(os.Stderr, "✓ testing skipped")
+	}
+	if !runBNK && !runTest {
+		// Nothing to apply: success if both phases were no-ops, "aborted"
+		// if the operator declined every phase that had changes.
+		if bnkChanges || testChanges {
+			return errors.New("aborted")
+		}
+		return nil
+	}
+
+	// ── 3. Apply the approved phases concurrently (the expensive step). ──
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		defer bnkErr.flush()
-		return RunTrialUp(gctx, &bnkIn)
-	})
-	g.Go(func() error {
-		defer testErr.flush()
-		return runTestingUp(gctx, &testIn, testErr)
-	})
+	if runBNK {
+		g.Go(func() error {
+			defer bnkErr.flush()
+			return bnkApply(gctx)
+		})
+	}
+	if runTest {
+		g.Go(func() error {
+			defer testErr.flush()
+			return testApply(gctx)
+		})
+	}
 	return g.Wait()
+}
+
+// applyDecision selects which of the two parallel phases to apply. A phase
+// runs iff its plan had changes AND (we're in --auto OR the operator
+// confirmed it). Separate per-phase confirms are what let the operator
+// bring up just one phase (approve BNK, skip Testing).
+func applyDecision(bnkChanges, testChanges, auto, confirmBNK, confirmTest bool) (runBNK, runTest bool) {
+	runBNK = bnkChanges && (auto || confirmBNK)
+	runTest = testChanges && (auto || confirmTest)
+	return
 }
 
 // RunTrialUp = plan + confirm + apply + (optional) kubeconfig fetch
@@ -230,9 +283,34 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
 		return runTerraformLifecycleDocker(ctx, in, spec, "up")
 	}
-	cctx, tfws, err := openTF(ctx, in, true)
+	changes, apply, err := prepareBNKUp(ctx, in)
 	if err != nil {
 		return err
+	}
+	if !changes {
+		return nil
+	}
+	if !in.Auto && !in.PromptYesNo("Apply this plan?", false) {
+		return errors.New("aborted")
+	}
+	return apply(ctx)
+}
+
+// prepareBNKUp does the open + render + init + plan for the BNK (trial)
+// phase and reports whether the plan has changes. When it does, it returns
+// an apply closure (terraform apply + kubeconfig/jumphost post-steps) that
+// the caller runs after confirming; the closure takes its own context so
+// the parallel orchestrator can cancel a sibling's apply. When there are no
+// changes the best-effort kubeconfig/jumphost post-steps have already run
+// and the returned apply is nil.
+//
+// Splitting plan from apply is what lets runBNKAndTestingParallel plan both
+// phases, confirm each, then apply only the approved ones — while the
+// serial `bnk up` (RunTrialUp) keeps its single "Apply this plan?" gate.
+func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.Context) error, error) {
+	cctx, tfws, err := openTF(ctx, in, true)
+	if err != nil {
+		return false, nil, err
 	}
 	// Second-phase preamble: renders tfvars and, when this workspace
 	// already has a cluster-outputs.json (the cluster phase created the
@@ -244,7 +322,7 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	// round 2, symmetric with cluster-phase-override.tfvars.
 	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
 	if err != nil {
-		return err
+		return false, nil, err
 	}
 	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 
@@ -252,7 +330,7 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 	fmt.Fprintln(w, "→ terraform plan")
 	changes, err := tfws.Plan(ctx, varFiles...)
 	if err != nil {
-		return err
+		return false, nil, err
 	}
 	if !changes {
 		fmt.Fprintln(w, "✓ no changes")
@@ -266,20 +344,19 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 		// so they skip silently.
 		tryAutoJumphost(ctx, in, cctx, tfws)
 		tryAutoClusterJumphosts(ctx, in, cctx, tfws)
+		return false, nil, nil
+	}
+	apply := func(actx context.Context) error {
+		fmt.Fprintln(w, "→ terraform apply")
+		if err := applyWithRetry(actx, tfws, varFiles); err != nil {
+			return err
+		}
+		tryAutoKubeconfig(actx, in, cctx, tfws)
+		tryAutoJumphost(actx, in, cctx, tfws)
+		tryAutoClusterJumphosts(actx, in, cctx, tfws)
 		return nil
 	}
-	if !in.Auto && !in.PromptYesNo("Apply this plan?", false) {
-		return errors.New("aborted")
-	}
-
-	fmt.Fprintln(w, "→ terraform apply")
-	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
-		return err
-	}
-	tryAutoKubeconfig(ctx, in, cctx, tfws)
-	tryAutoJumphost(ctx, in, cctx, tfws)
-	tryAutoClusterJumphosts(ctx, in, cctx, tfws)
-	return nil
+	return true, apply, nil
 }
 
 // RunPlan = plan only. Read-only — never prompts.

@@ -140,44 +140,60 @@ func RunTestingDown(ctx context.Context, in *LifecycleInputs) error {
 // [testing] line prefix + the shared output mutex; nil → serial path
 // (os.Stderr, prompts allowed).
 func runTestingUp(ctx context.Context, in *LifecycleInputs, out *prefixWriter) error {
-	w := errWriter(out)
-	cctx, tfws, err := openTestingTF(ctx, in, out)
+	changes, apply, err := prepareTestingUp(ctx, in, out)
 	if err != nil {
 		return err
 	}
+	if !changes {
+		return nil
+	}
+	if !in.Auto && !in.PromptYesNo("Apply this plan?", false) {
+		return errors.New("aborted")
+	}
+	return apply(ctx)
+}
+
+// prepareTestingUp does the open + render + init + plan for the Testing
+// phase and reports whether the plan has changes, returning an apply
+// closure (terraform apply + jumphost SSH-target seeding) when it does. The
+// closure takes its own context so the parallel orchestrator can cancel a
+// sibling's apply. Symmetric with prepareBNKUp — see its doc for why plan
+// and apply are split (parallel plan-both → confirm-each → apply-approved).
+func prepareTestingUp(ctx context.Context, in *LifecycleInputs, out *prefixWriter) (bool, func(context.Context) error, error) {
+	w := errWriter(out)
+	cctx, tfws, err := openTestingTF(ctx, in, out)
+	if err != nil {
+		return false, nil, err
+	}
 	extraVF, err := writeAndInitTestingPhase(ctx, tfws, cctx.Workspace, in.Workspace, out)
 	if err != nil {
-		return err
+		return false, nil, err
 	}
 	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 
 	fmt.Fprintln(w, "→ terraform plan (testing phase)")
 	changes, err := tfws.Plan(ctx, varFiles...)
 	if err != nil {
-		return err
+		return false, nil, err
 	}
 	if !changes {
 		fmt.Fprintln(w, "✓ no changes")
 		tryAutoJumphost(ctx, in, cctx, tfws)
 		tryAutoClusterJumphosts(ctx, in, cctx, tfws)
+		return false, nil, nil
+	}
+	apply := func(actx context.Context) error {
+		fmt.Fprintln(w, "→ terraform apply (testing phase)")
+		if err := applyWithRetry(actx, tfws, varFiles); err != nil {
+			return err
+		}
+		// SSH-target seeding now lives with the Testing phase (it owns the
+		// jumphosts). Pre-Sprint-28 these ran after the trial apply.
+		tryAutoJumphost(actx, in, cctx, tfws)
+		tryAutoClusterJumphosts(actx, in, cctx, tfws)
 		return nil
 	}
-	// On the parallel path the composite confirms ONCE up front and flips
-	// in.Auto=true, so this prompt only fires for a direct serial
-	// `testing up`.
-	if !in.Auto && !in.PromptYesNo("Apply this plan?", false) {
-		return errors.New("aborted")
-	}
-
-	fmt.Fprintln(w, "→ terraform apply (testing phase)")
-	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
-		return err
-	}
-	// SSH-target seeding now lives with the Testing phase (it owns the
-	// jumphosts). Pre-Sprint-28 these ran after the trial apply.
-	tryAutoJumphost(ctx, in, cctx, tfws)
-	tryAutoClusterJumphosts(ctx, in, cctx, tfws)
-	return nil
+	return true, apply, nil
 }
 
 // runTestingDown = destroy against state-testing/, leaving the cluster +
