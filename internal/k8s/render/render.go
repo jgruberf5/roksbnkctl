@@ -240,6 +240,26 @@ func RenderNADs(tmpl []byte, namespace string, hasInternal bool, getter func(str
 	return Render(tmpl, vars)
 }
 
+// ─── sriov-external dataplane (vfio/DPDK) ─────────────────────────────────────
+
+// SriovVars holds substitution variables for the sriov-external manifests
+// (vfio-node-prep, sriovdp, network-attachment-defs). Each template uses a
+// subset; passing the full struct is harmless.
+type SriovVars struct {
+	ExternalPCI     string // the external ENA PCI BDF (e.g. 0000:00:08.0)
+	Namespace       string // target namespace (f5-cne-system / default)
+	ExternalNADName string // external-sriov
+}
+
+// RenderSriov renders any sriov-external template with the given values.
+func RenderSriov(tmpl []byte, externalPCI, namespace, nadName string) ([]byte, error) {
+	return Render(tmpl, SriovVars{
+		ExternalPCI:     externalPCI,
+		Namespace:       namespace,
+		ExternalNADName: nadName,
+	})
+}
+
 // ─── CNEInstance CR ────────────────────────────────────────────────────────
 
 // cneInstanceNamespace is the k8s namespace for CNEInstance and related resources.
@@ -283,6 +303,7 @@ type CNEInstanceVars struct {
 	CloudHostDeviceName string // ens8 (or discovered value)
 	CloudHostDeviceTag  string // f5-cne-device
 	HasInternal         bool   // list the internal NAD + internal ROBIN/PCIDEVICE env (dual-interface only)
+	Sriov               bool   // sriov-external: drop TMM_GENERIC_SOCKET_DRIVER + let the device plugin inject PCIDEVICE_INTEL_COM
 }
 
 // RenderCNEInstance renders the CNEInstance CR template with vars derived
@@ -300,6 +321,13 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 	cvars := CertChainVarsFromCluster(cl)
 	extIFName := orDefault(getter, "EXTERNAL_IFNAME", "ens8")
 	intIFName := orDefault(getter, "INTERNAL_IFNAME", "ens7")
+	sriov := cl.DataplaneBinding() == "sriov"
+	// sriov-external attaches the sriov NAD (external-sriov, backed by the
+	// device-plugin vfio resource) instead of the host-device NAD.
+	externalNAD := "external-netdevice"
+	if sriov {
+		externalNAD = "external-sriov"
+	}
 	vars := CNEInstanceVars{
 		// Operator-knobs
 		DeploymentSize:   cl.Bnk.DeploymentSize,
@@ -318,7 +346,7 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 		FARSecretName:       "far-secret",
 		VPCID:               vpcID,
 		AWSRegion:           cl.Metadata.Region,
-		ExternalNAD:         "external-netdevice",
+		ExternalNAD:         externalNAD,
 		InternalNAD:         "internal-netdevice",
 		ExternalIFName:      extIFName,
 		InternalIFName:      intIFName,
@@ -329,6 +357,7 @@ func RenderCNEInstance(tmpl []byte, cl *intent.Cluster, getter func(string) stri
 		CloudHostDeviceName: orDefault(getter, "CLOUD_HOST_DEVICE_NAME", extIFName),
 		CloudHostDeviceTag:  "f5-cne-device",
 		HasInternal:         cl.HasInternalInterface(),
+		Sriov:               sriov,
 	}
 	return Render(tmpl, vars)
 }

@@ -506,6 +506,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}); err != nil {
 		return err
 	}
+	// Phase 20b: sriov-external dataplane (vfio node-prep + device-plugin + passthru
+	// NAD). No-op unless DataplaneBinding()=="sriov". Must run before the CNEInstance
+	// (phase 22) so the intel.com/ens8 resource is advertised when TMM schedules.
+	if err := stage(4, "sriov-dataplane", func() error {
+		return phases.Phase20bSriovDataplane(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
 	// Phase 21: IRSA ServiceAccount pre-creation with eks.amazonaws.com/role-arn annotation.
 	if err := stage(4, "irsa-sa", func() error {
 		return phases.Phase21IRSASA(ctx, cl, st, clients, dryRun)

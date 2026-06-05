@@ -37,6 +37,13 @@ func Phase20NADs(ctx context.Context, cl *intent.Cluster, st *state.State, clien
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 20] NADs: cluster=%s\n", name)
 
+	// sriov-external uses the passthru sriov NAD applied by Phase20bSriovDataplane,
+	// not the host-device NADs — skip here.
+	if cl.DataplaneBinding() == "sriov" {
+		fmt.Fprintln(os.Stderr, "[phase 20] skipped: sriov dataplane (sriov NAD applied by phase 20b)")
+		return nil
+	}
+
 	hasInternal := cl.HasInternalInterface()
 
 	if dryRun {

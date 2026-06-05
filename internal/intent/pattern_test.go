@@ -187,7 +187,10 @@ pattern: external-only
 
 // ─── sriov-external gate ─────────────────────────────────────────────────────
 
-func TestLoad_SRIOVExternal_BlockedPendingSpike(t *testing.T) {
+// TestLoad_SRIOVExternal_AllowedExperimental verifies sriov-external now loads
+// (the vfio substrate is proven) as a single-interface, sriov-binding pattern —
+// it emits an experimental warning to stderr but is no longer a hard error.
+func TestLoad_SRIOVExternal_AllowedExperimental(t *testing.T) {
 	yaml := `
 apiVersion: awsbnkctl/v1
 kind: Cluster
@@ -211,15 +214,57 @@ network:
       cidr: 10.0.10.0/24
       az: ap-southeast-2a
 pattern: sriov-external
+cluster:
+  nodeGroups:
+    - name: ng
 `
 	dir := t.TempDir()
 	p := writeFile(t, dir, "cluster.yaml", yaml)
-	_, err := Load(p)
-	if err == nil {
-		t.Fatal("expected sriov-external to be blocked pending spike, got nil")
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("sriov-external should load (experimental, not blocked): %v", err)
 	}
-	if !containsStr(err.Error(), "experimental") {
-		t.Errorf("error should flag sriov-external as experimental: %v", err)
+	if c.DataplaneBinding() != "sriov" {
+		t.Errorf("sriov-external binding = %q, want sriov", c.DataplaneBinding())
+	}
+	if c.HasInternalInterface() {
+		t.Error("sriov-external is single-interface; must not report an internal interface")
+	}
+}
+
+// TestLoad_SRIOVExternal_ForbidsInternal keeps the single-interface guard for sriov.
+func TestLoad_SRIOVExternal_ForbidsInternal(t *testing.T) {
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: sriov
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+    internal:
+      cidr: 10.0.20.0/24
+      az: ap-southeast-2a
+pattern: sriov-external
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	if _, err := Load(p); err == nil || !containsStr(err.Error(), "single-interface") {
+		t.Fatalf("expected single-interface rejection of internal block, got %v", err)
 	}
 }
 

@@ -788,14 +788,14 @@ func validatePattern(c *Cluster) error {
 		return fmt.Errorf("pattern %q is not a recognised value "+
 			"(expected one of: external-only, dual-interface, sriov-external; or the host-device alias)", c.Pattern)
 	}
-	// sriov-external is reserved in the schema but not yet enabled: the
-	// SR-IOV/vfio-pci dataplane on AWS ENA is undocumented/unsupported by F5 on
-	// the EKS host build and gated behind a live testpmd feasibility spike.
+	// sriov-external is EXPERIMENTAL. The SR-IOV/vfio-pci DPDK substrate is proven
+	// live on AL2023 EKS nodes (ENA→vfio-pci No-IOMMU, clean testpmd RX+TX — see
+	// docs/spikes/sriov-ena-vfio/README.md). TMM's own vfio dataplane on the Host
+	// build is still being validated. Warn loudly but allow it through so it can
+	// be exercised end-to-end.
 	if normalizePattern(c.Pattern) == PatternSRIOVExternal {
-		return fmt.Errorf("pattern sriov-external is experimental and not yet enabled: " +
-			"the SR-IOV/vfio-pci dataplane on AWS ENA is unproven and unsupported by F5 on the EKS host build, " +
-			"and is gated behind a live testpmd feasibility spike (see docs/spikes/sriov-ena-vfio/README.md). " +
-			"Use pattern: external-only for a single-interface deployment")
+		fmt.Fprintln(os.Stderr, "[warn] pattern sriov-external is EXPERIMENTAL: SR-IOV/vfio-pci DPDK dataplane "+
+			"(vfio substrate proven; TMM-on-vfio under validation — docs/spikes/sriov-ena-vfio/README.md)")
 	}
 
 	// All BNK patterns need the external data-path subnet.

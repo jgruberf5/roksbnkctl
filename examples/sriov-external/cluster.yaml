@@ -1,0 +1,92 @@
+# cluster.yaml — sriov-external (single-interface, SR-IOV/vfio DPDK) BNK-on-EKS.
+#
+# Pattern C: like external-only (ONE external/ingress interface, CNI backend) but
+# TMM drives the data plane via DPDK over the ENA bound to vfio-pci, instead of
+# the kernel socket driver. EXPERIMENTAL — validated end-to-end live (HTTP 200
+# through TMM-on-vfio); see docs/spikes/sriov-ena-vfio/README.md.
+#
+# How it differs from external-only (host-device/sock):
+#   - The external ENA is bound to vfio-pci (No-IOMMU) on the node by the
+#     vfio-node-prep DaemonSet (Phase 20b). Stock AL2023 — no custom AMI.
+#   - The sriov-network-device-plugin exposes it as resource intel.com/ens8;
+#     the NAD is `external-sriov` (type: passthru, NOT sriov-cni).
+#   - The CNEInstance drops TMM_GENERIC_SOCKET_DRIVER → TMM uses the DPDK/vfio
+#     driver; the device plugin injects /dev/vfio + PCIDEVICE_INTEL_COM_ENS8.
+#   - Single external ENI (preflight floor 2); no internal interface.
+#
+# Quick start:
+#   awsbnkctl validate examples/sriov-external/cluster.yaml
+#   awsbnkctl up --config examples/sriov-external/cluster.yaml --dry-run
+#   awsbnkctl up --config examples/sriov-external/cluster.yaml
+
+apiVersion: awsbnkctl/v1
+kind: Cluster
+
+metadata:
+  name: bnk-sriov
+  region: ap-southeast-2
+  labels:
+    purpose: bnk-sriov-external
+
+# sriov-external: single external interface via SR-IOV/vfio-pci DPDK, CNI backend.
+pattern: sriov-external
+
+network:
+  vpcCidr: 10.0.0.0/16
+
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2b
+
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.2.0/24
+        az: ap-southeast-2b
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.12.0/24
+        az: ap-southeast-2b
+
+  # dataPath: external subnet ONLY for single-interface patterns. The default
+  # Gateway VIP is derived as <external network>.100 (10.0.10.100) and the TMM
+  # external SelfIP as <subnet>.240 (10.0.10.240) unless overridden. Do NOT add
+  # an `internal:` block here — validation rejects it for external-only.
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24      # BNK_EXT — TMM client-side / ingress VLAN
+      az: ap-southeast-2a
+
+  natGateways: 1
+
+# cluster: EKS control plane + managed node group. external-only defaults match
+# the other BNK patterns: instanceType m6i.4xlarge, desired/min 3, max 4,
+# role=bnk on the first node group (3 nodes for the dSSM quorum).
+cluster:
+  kubernetesVersion: "1.30"
+  nodeGroups:
+    - name: default
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
+      diskSize: 50
+
+# bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths
+# with your own files before running `up` (gitignored).
+bnk:
+  farArchive: ./cne_pull_64.json     # REPLACE with your F5 FAR pull credentials JSON
+  jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
+
+# testing.jumphost works for external-only too — it lives in the BNK_EXT subnet,
+# which every BNK pattern creates. Use it to curl the VIP without standing up EC2.
+testing:
+  jumphost:
+    enabled: true
+    instanceType: t3.small
+    mgmtSubnetIndex: 0
+
+tags:
+  env: dev

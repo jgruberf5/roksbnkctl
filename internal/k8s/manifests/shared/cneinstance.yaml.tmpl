@@ -98,22 +98,29 @@ spec:
           value: "{{ .PalCpuSet }}"
         - name: TMM_MAPRES_ADDL_VETHS_ON_DP
           value: "TRUE"
+{{- if not .Sriov }}
+        # host-device binding: TMM drives the dataplane over a kernel generic
+        # socket on the Multus-delivered netdev. This is the SOCK driver and is
+        # MUTUALLY EXCLUSIVE with the vfio/DPDK driver — sriov-external omits it
+        # so TMM selects the DPDK driver against the device-plugin vfio resource.
         - name: TMM_GENERIC_SOCKET_DRIVER
           value: "true"
-        # ROBIN_VFIO_RESOURCE_N binds to the Nth NAD listed in
-        # CNEInstance.spec.networkAttachments (F5 Multi-AZ PDF p.27). Order is
-        # external first → trunk 1.1 = ens8 (BNK_EXT); for dual-interface the
-        # internal NAD adds trunk 1.2 = ens7 (BNK_INT). Single-interface patterns
-        # (external-only) list only the external resource.
-        # PCIDEVICE_INTEL_COM_<UPPERCASE_IFNAME> provides the PCI BDF for each ifname.
+{{- end }}
+        # ROBIN_VFIO_RESOURCE_N names which device-plugin resourceName backs the
+        # Nth dataplane interface. The suffix matches the sriov-dp resourceName,
+        # so the plugin's injected PCIDEVICE BDF env var is what TMM reads.
+        # host-device hardcodes the PCIDEVICE entries below; sriov lets the
+        # device plugin inject them (don't set the same var twice).
         - name: ROBIN_VFIO_RESOURCE_1
           value: "{{ .ExternalIFName }}"
 {{- if .HasInternal }}
         - name: ROBIN_VFIO_RESOURCE_2
           value: "{{ .InternalIFName }}"
 {{- end }}
+{{- if not .Sriov }}
         - name: PCIDEVICE_INTEL_COM_{{ .ExternalIFUpper }}
           value: "{{ .ExternalPCI }}"
+{{- end }}
 {{- if .HasInternal }}
         - name: PCIDEVICE_INTEL_COM_{{ .InternalIFUpper }}
           value: "{{ .InternalPCI }}"

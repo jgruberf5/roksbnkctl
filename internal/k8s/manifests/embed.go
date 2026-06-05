@@ -8,11 +8,12 @@
 //	multus/         — Multus CNI v4.2.4 daemonset YAML (upstream verbatim, slice 7+)
 //	shared/         — BNK cert chain template (applied to every cluster/pattern)
 //	host-device/    — variant manifests for host-device pattern (slice 6+ content)
+//	sriov-external/ — variant manifests for sriov-external pattern (vfio/DPDK dataplane)
 package manifests
 
 import "embed"
 
 // FS is the embedded manifest filesystem.
 //
-//go:embed all:cert-manager all:multus all:shared all:host-device
+//go:embed all:cert-manager all:multus all:shared all:host-device all:sriov-external
 var FS embed.FS

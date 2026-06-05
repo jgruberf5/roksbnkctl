@@ -613,7 +613,15 @@
     "txrx",
     "noiommu",
     "devbind",
-    "enav"
+    "enav",
+    "passthru",
+    "physfn",
+    "hugetlb",
+    "iova",
+    "netdev",
+    "nombuf",
+    "rxonly",
+    "txonly"
   ],
   "ignorePaths": [
     "go.sum",
