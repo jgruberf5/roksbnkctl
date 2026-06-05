@@ -1442,7 +1442,14 @@ resource "helm_release" "flo" {
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
 
-  wait    = true
+  # Match the legacy `helm upgrade --install ... --wait=false`: deploy the FLO
+  # operator chart WITHOUT blocking on helm-level pod readiness. Real
+  # readiness is gated downstream by the CNEInstance / License CR `wait_for`
+  # status conditions (the operator must be running to reconcile those), which
+  # is the meaningful signal. The operator Deployment's own helm readiness
+  # races with the cert-manager-issued webhook certs applied later, so a
+  # `wait = true` here just times out ("context deadline exceeded").
+  wait    = false
   timeout = 300
 
   values = [yamlencode(local.flo_helm_values)]
@@ -1470,7 +1477,8 @@ resource "helm_release" "cis" {
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
 
-  wait    = true
+  # Legacy parity: `--wait=false`. CIS readiness is not helm-gated here either.
+  wait    = false
   timeout = 300
 
   values = [yamlencode(local.cis_helm_values)]
