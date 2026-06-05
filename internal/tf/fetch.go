@@ -108,6 +108,21 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 		if rel == "" {
 			return nil
 		}
+		// Defensive: never materialise a `.terraform/` provider/module
+		// cache from the embed. The embed directive already excludes it
+		// (plain `//go:embed terraform` skips dotfiles), but if it ever
+		// creeps back in (e.g. a switch to `all:`), extracting those
+		// plugin binaries — written 0644 below — would ship
+		// non-executable providers and break `terraform plan` with
+		// "fork/exec ... permission denied". Let `terraform init` build a
+		// clean, executable .terraform instead.
+		if rel == ".terraform" || strings.HasPrefix(rel, ".terraform/") ||
+			strings.Contains(rel, "/.terraform/") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		target := filepath.Join(cleanDest, rel)
 		if !strings.HasPrefix(target, cleanDest+string(os.PathSeparator)) && target != cleanDest {
 			return fmt.Errorf("embed entry escapes destination: %s", path)

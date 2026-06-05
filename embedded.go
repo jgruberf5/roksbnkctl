@@ -17,9 +17,19 @@ import "embed"
 // the workspace's tf_source is unset / type=embedded, and extracted
 // into the workspace state dir for terraform-exec to operate on.
 //
-// `all:` prefix includes dotfiles too — keeps any future
-// .terraform.lock.hcl in the bundle so provider versions stay pinned
-// to what we tested.
+// NOTE: deliberately NOT `all:terraform`. The `all:` prefix pulls in
+// dotfiles — including the gitignored `.terraform/` provider/module cache
+// (~400MB of plugin binaries) that a local `terraform init`/`validate`
+// leaves in ./terraform during development. Embedding that bloated the
+// binary to ~670MB AND, once extracted (extractEmbeddedTF writes 0644),
+// shipped non-executable provider binaries that broke `terraform plan`
+// with "fork/exec ... permission denied". Plain `terraform` embeds the
+// committed HCL source and skips every dotfile, so `.terraform/` is never
+// bundled regardless of what a dev machine has on disk; terraform init
+// resolves + pins providers from the version constraints in the .tf files
+// at deploy time. (The .terraform.lock.hcl files are not committed, so
+// `all:` only ever embedded them opportunistically from a dev machine —
+// nothing reproducible is lost here.)
 //
-//go:embed all:terraform
+//go:embed terraform
 var EmbeddedTerraform embed.FS
