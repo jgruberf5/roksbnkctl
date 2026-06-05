@@ -20,20 +20,29 @@ import (
 // authoritative for downstream commands that need to reference the
 // cluster — but explicit tfvars values always win over these.
 type ClusterOutputs struct {
-	ClusterName      string    `json:"cluster_name"`
-	ClusterID        string    `json:"cluster_id"`
-	Region           string    `json:"region"`
-	ResourceGroupID  string    `json:"resource_group_id"`
-	VPCID            string    `json:"vpc_id"`
-	VPCName          string    `json:"vpc_name,omitempty"`
-	SubnetIDs        []string  `json:"subnet_ids"`
-	TransitGatewayID string    `json:"transit_gateway_id,omitempty"`
-	RegistryCOSCRN   string    `json:"registry_cos_crn,omitempty"`
-	RegistryCOSName  string    `json:"registry_cos_name,omitempty"`
-	MasterURL        string    `json:"master_url,omitempty"`
-	OpenShiftVersion string    `json:"openshift_version,omitempty"`
-	Source           string    `json:"source"` // "cluster-up" or "cluster-register"
-	RecordedAt       time.Time `json:"recorded_at"`
+	ClusterName      string   `json:"cluster_name"`
+	ClusterID        string   `json:"cluster_id"`
+	Region           string   `json:"region"`
+	ResourceGroupID  string   `json:"resource_group_id"`
+	VPCID            string   `json:"vpc_id"`
+	VPCName          string   `json:"vpc_name,omitempty"`
+	SubnetIDs        []string `json:"subnet_ids"`
+	TransitGatewayID string   `json:"transit_gateway_id,omitempty"`
+	// TransitGatewayName is the cluster's transit gateway NAME (not id).
+	// Sprint 28: the Testing phase's `module.testing` looks the gateway up
+	// by name (data.ibm_tg_gateway.transit_gateway, name = var
+	// testing_transit_gateway_name), so the standalone testing-phase run
+	// needs the name in the handoff. Populated from the cluster phase's
+	// roks_transit_gateway_name root output; may be empty on a
+	// `cluster register` (the testing phase then falls back to the
+	// config.yaml-rendered testing_transit_gateway_name).
+	TransitGatewayName string    `json:"transit_gateway_name,omitempty"`
+	RegistryCOSCRN     string    `json:"registry_cos_crn,omitempty"`
+	RegistryCOSName    string    `json:"registry_cos_name,omitempty"`
+	MasterURL          string    `json:"master_url,omitempty"`
+	OpenShiftVersion   string    `json:"openshift_version,omitempty"`
+	Source             string    `json:"source"` // "cluster-up" or "cluster-register"
+	RecordedAt         time.Time `json:"recorded_at"`
 }
 
 // ErrClusterOutputsMissing — workspace has no cluster-outputs.json yet.

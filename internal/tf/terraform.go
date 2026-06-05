@@ -296,6 +296,9 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	if filepath.Base(w.stateDir) == "state-cluster" {
 		return "cluster"
 	}
+	if filepath.Base(w.stateDir) == "state-testing" {
+		return "testing"
+	}
 	if shape, err := config.DetectShape(w.name); err == nil && shape == config.ShapeLegacySingle {
 		return "legacy-single"
 	}
@@ -318,6 +321,46 @@ func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error 
 		opts = append(opts, tfexec.VarFile(p))
 	}
 	return w.tf.Destroy(ctx, opts...)
+}
+
+// StateMvTo moves resource address `src` out of this workspace's state
+// file and into the local state file at `destStatePath` (Sprint 28
+// jumphost migration: evict module.testing.* from state/ into
+// state-testing/ with no cloud churn). Uses terraform's `state mv`
+// -state/-state-out CLI flags so both source and destination are operated
+// on as local files directly — the destination need not be an initialized
+// backend. The source address and destination address are identical (a
+// pure cross-state-file move, not a rename).
+//
+// Shells the terraform binary directly (mirroring RunReadOnly's exec
+// pattern) rather than terraform-exec's typed StateMv: the -state/-state-out
+// options in terraform-exec are deprecated for the everyday local-backend
+// case, but the cross-state-file move is exactly the legacy use the CLI
+// flags still serve, and shelling keeps the typed-API deprecation out of
+// the build.
+func (w *Workspace) StateMvTo(ctx context.Context, src, destStatePath string) error {
+	if w == nil {
+		return errors.New("terraform workspace not opened")
+	}
+	tfBin, err := exec.LookPath("terraform")
+	if err != nil {
+		return fmt.Errorf("terraform not found on PATH — install terraform >= 1.5 (https://developer.hashicorp.com/terraform/install)")
+	}
+	argv := []string{
+		"state", "mv",
+		"-state=" + w.StatePath(),
+		"-state-out=" + destStatePath,
+		src, src,
+	}
+	cmd := exec.CommandContext(ctx, tfBin, argv...)
+	cmd.Dir = w.sourceDir
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("terraform state mv %s: %w", src, err)
+	}
+	return nil
 }
 
 // Output reads terraform outputs (raw values + sensitivity flags).
