@@ -31,7 +31,7 @@ var clusterCmd = &cobra.Command{
 sits underneath your BNK trials.
 
 Commands:
-  roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
+  roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
   roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
   roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
   roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json
@@ -75,15 +75,15 @@ var clusterShowCmd = &cobra.Command{
 var clusterUpCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Provision the ROKS cluster (and cluster-shared services) only",
-	Long: `Runs terraform apply with deploy_bnk=false forced — creates the
-ROKS cluster, transit gateway, registry COS, cert-manager, and the test
-jumphost, but skips the BNK trial modules (flo, cne_instance, license).
-On success, writes the cluster's identity to
+	Long: `Creates the durable cluster-shared infrastructure only — the ROKS
+cluster, transit gateway, and registry COS. cert-manager and the BNK trial
+modules (flo, cne_instance, license) deploy in the BNK phase; the jumphosts
+deploy in the testing phase. On success, writes the cluster's identity to
 ~/.roksbnkctl/<workspace>/cluster-outputs.json so subsequent ` + "`roksbnkctl up`" + `
-runs can deploy BNK trials onto this cluster.
+runs can deploy the BNK and testing phases onto this cluster.
 
 Uses a separate state directory (~/.roksbnkctl/<workspace>/state-cluster/)
-so it doesn't tangle with BNK-trial state.`,
+so it doesn't tangle with BNK or testing state.`,
 	Args: cobra.NoArgs,
 	RunE: runClusterUp,
 }
