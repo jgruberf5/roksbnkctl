@@ -145,6 +145,39 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 	return dest, nil
 }
 
+// EnsureProvidersExecutable heals a stale <sourceDir>/.terraform/providers
+// tree whose provider plugin binaries lack the execute bit. That is the
+// artefact of an earlier roksbnkctl build which embedded (via `all:`) and
+// extracted the provider cache 0644: terraform "reuses" those
+// non-executable binaries on the next init and then fails the plan with
+//
+//	failed to instantiate provider ...: fork/exec
+//	.terraform/providers/.../terraform-provider-X: permission denied
+//
+// chmod +x is a no-op for the 0755 binaries terraform installs itself, so
+// this is safe to run on every Open. Best-effort: a missing dir or a chmod
+// error is non-fatal — terraform surfaces its own clearer error if a
+// provider genuinely can't run.
+func EnsureProvidersExecutable(sourceDir string) {
+	provDir := filepath.Join(sourceDir, ".terraform", "providers")
+	_ = filepath.WalkDir(provDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // tree may not exist yet — nothing to heal
+		}
+		if d.IsDir() || !strings.HasPrefix(d.Name(), "terraform-provider-") {
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+		if info.Mode()&0o111 == 0 { // no execute bits at all → heal
+			_ = os.Chmod(path, info.Mode()|0o111)
+		}
+		return nil
+	})
+}
+
 func downloadGitHubTarball(ctx context.Context, repo, ref, baseDir string) (string, error) {
 	leaf := repo
 	if i := strings.LastIndex(repo, "/"); i >= 0 {
