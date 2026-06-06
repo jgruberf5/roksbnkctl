@@ -367,6 +367,80 @@ resource "null_resource" "delete_gatewayapi_admission_policy" {
   }
 }
 
+# ── Cloud network mapping ConfigMap + external/internal F5SPKVlan CRs ──────────
+# (BNK 2.3 install-guide "Configuration"). The CNE controller reads
+# CLOUD_NETWORK_CONFIGMAP=cloud-network-mapping for the zone→CIDR map that
+# programs TMM's data-plane networking, so the ConfigMap must exist BEFORE the
+# CNEInstance reconciles (cneinstance depends_on it below) — otherwise TMM's
+# RoutingDone readiness gate never flips. The F5SPKVlan CRs program TMM's
+# external/internal self-IPs and are applied AFTER the CNEInstance is Available
+# (their CRD ships with the BNK manifest the operator installs). Zone NAMES are
+# derived from the deployment region; CIDRs/self-IPs come from variables.
+locals {
+  cnm_zone_letters = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  cnm_zone_names   = [for i in range(length(var.cneinstance_network_zones)) : "${var.cneinstance_cloud_region}-${i + 1}"]
+
+  cloud_network_mapping_manifest = {
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = "cloud-network-mapping"
+      namespace = var.flo_namespace
+      labels    = { app = "f5-cne-controller", component = "network-config" }
+    }
+    data = {
+      "config.yaml" = yamlencode({
+        availability_zones = [
+          for i, z in var.cneinstance_network_zones : {
+            name = local.cnm_zone_names[i]
+            subnets = [
+              { cidr = z.ext_vlan_cidr, subnet_id = "ext-vlan-${local.cnm_zone_letters[i]}" },
+              { cidr = z.int_vlan_cidr, subnet_id = "int-vlan-${local.cnm_zone_letters[i]}" },
+              { cidr = z.int_snat_cidr, subnet_id = "int-snat-${local.cnm_zone_letters[i]}" },
+              { cidr = z.int_vip_cidr, subnet_id = "int-vip-${local.cnm_zone_letters[i]}" },
+            ]
+          }
+        ]
+      })
+    }
+  }
+
+  external_vlan_manifest = {
+    apiVersion = "k8s.f5net.com/v1"
+    kind       = "F5SPKVlan"
+    metadata   = { name = "external-vlan", namespace = var.flo_namespace }
+    spec = {
+      name         = "external-vlan"
+      interfaces   = [var.cneinstance_vlan_external_interface]
+      selfip_v4s   = [for z in var.cneinstance_network_zones : z.external_selfip]
+      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      auto_lasthop = "AUTO_LASTHOP_ENABLED"
+    }
+  }
+
+  internal_vlan_manifest = {
+    apiVersion = "k8s.f5net.com/v1"
+    kind       = "F5SPKVlan"
+    metadata   = { name = "internal-vlan", namespace = var.flo_namespace }
+    spec = {
+      name         = "internal-vlan"
+      interfaces   = [var.cneinstance_vlan_internal_interface]
+      selfip_v4s   = [for z in var.cneinstance_network_zones : z.internal_selfip]
+      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      auto_lasthop = "AUTO_LASTHOP_ENABLED"
+      internal     = true
+    }
+  }
+}
+
+resource "kubectl_manifest" "cloud_network_mapping" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.cloud_network_mapping_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+}
+
 resource "kubectl_manifest" "cneinstance" {
   count             = local.use_kubectl ? 1 : 0
   yaml_body         = yamlencode(local.cneinstance_manifest)
@@ -384,7 +458,26 @@ resource "kubectl_manifest" "cneinstance" {
   depends_on = [
     var.flo_deployment_dependency,
     null_resource.delete_gatewayapi_admission_policy,
+    kubectl_manifest.cloud_network_mapping,
   ]
+}
+
+resource "kubectl_manifest" "external_vlan" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.external_vlan_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  depends_on        = [kubectl_manifest.cneinstance]
+}
+
+resource "kubectl_manifest" "internal_vlan" {
+  count             = local.use_kubectl ? 1 : 0
+  yaml_body         = yamlencode(local.internal_vlan_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  depends_on        = [kubectl_manifest.cneinstance]
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {

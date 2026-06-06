@@ -139,6 +139,51 @@ func TestRenderTFVars_BNKFields(t *testing.T) {
 	}
 }
 
+// TestRenderTFVars_NetworkZones: a bnk.network.zones block renders the
+// cneinstance_network_zones HCL list-of-objects with matching field names.
+func TestRenderTFVars_NetworkZones(t *testing.T) {
+	ws := &config.Workspace{
+		IBMCloud: config.IBMCloudCfg{Region: "us-south", ResourceGroup: "default"},
+		BNK: config.BNKCfg{
+			Network: &config.BNKNetworkCfg{
+				Zones: []config.BNKZoneCfg{
+					{ExtVLANCIDR: "10.155.15.0/24", IntVLANCIDR: "10.254.99.0/24", IntSNATCIDR: "10.10.11.0/24", IntVIPCIDR: "10.135.15.0/24", ExternalSelfIP: "10.155.15.101", InternalSelfIP: "10.254.99.101"},
+					{ExtVLANCIDR: "10.156.16.0/24", IntVLANCIDR: "10.254.100.0/24", IntSNATCIDR: "10.10.21.0/24", IntVIPCIDR: "10.136.16.0/24", ExternalSelfIP: "10.156.16.101", InternalSelfIP: "10.254.100.101"},
+				},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	out := buf.String()
+	for _, w := range []string{
+		"cneinstance_network_zones = [",
+		`ext_vlan_cidr   = "10.155.15.0/24"`,
+		`int_vlan_cidr   = "10.254.100.0/24"`,
+		`external_selfip = "10.156.16.101"`,
+		`internal_selfip = "10.254.99.101"`,
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing line: %s\noutput:\n%s", w, out)
+		}
+	}
+}
+
+// TestRenderTFVars_NetworkZones_OmittedWhenNil: no bnk.network → nothing
+// emitted, so the terraform module's install-guide defaults apply.
+func TestRenderTFVars_NetworkZones_OmittedWhenNil(t *testing.T) {
+	ws := &config.Workspace{IBMCloud: config.IBMCloudCfg{Region: "us-south"}}
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	if strings.Contains(buf.String(), "cneinstance_network_zones") {
+		t.Errorf("network zones emitted when config has none — should defer to terraform defaults")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Sprint 26 — full prefix-driven render (validator Issue 1, item 2).
 //

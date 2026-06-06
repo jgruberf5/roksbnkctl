@@ -153,6 +153,7 @@ module "cne_instance" {
   cneinstance_deployment_size      = var.cneinstance_deployment_size
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = local.cneinstance_network_attachments
+  cneinstance_network_zones        = var.cneinstance_network_zones
   create_roks_cluster              = var.create_roks_cluster
   roks_cluster_dependency_id       = module.roks_cluster.cluster_ready_id
   flo_dependency_id                = module.flo.flo_ready_id

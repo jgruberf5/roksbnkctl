@@ -175,3 +175,63 @@ variable "kube_token" {
   default     = ""
 }
 
+# ── Cloud network mapping + VLAN self-IPs (BNK 2.3 install-guide "Configuration") ──
+# Zone NAMES are derived from cneinstance_cloud_region (<region>-1, -2, …) and the
+# list order; only the subnet CIDRs + TMM self-IPs are configurable here. Defaults
+# are the install-guide values, so a default deploy is fully wired with no input.
+variable "cneinstance_network_zones" {
+  description = "Per-zone subnet CIDRs + TMM self-IPs for the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs. List order = zone 1..N (zone name = <cneinstance_cloud_region>-<index>)."
+  type = list(object({
+    ext_vlan_cidr   = string
+    int_vlan_cidr   = string
+    int_snat_cidr   = string
+    int_vip_cidr    = string
+    external_selfip = string
+    internal_selfip = string
+  }))
+  default = [
+    {
+      ext_vlan_cidr   = "10.155.15.0/24"
+      int_vlan_cidr   = "10.254.99.0/24"
+      int_snat_cidr   = "10.10.11.0/24"
+      int_vip_cidr    = "10.135.15.0/24"
+      external_selfip = "10.155.15.101"
+      internal_selfip = "10.254.99.101"
+    },
+    {
+      ext_vlan_cidr   = "10.156.16.0/24"
+      int_vlan_cidr   = "10.254.100.0/24"
+      int_snat_cidr   = "10.10.21.0/24"
+      int_vip_cidr    = "10.136.16.0/24"
+      external_selfip = "10.156.16.101"
+      internal_selfip = "10.254.100.101"
+    },
+    {
+      ext_vlan_cidr   = "10.157.17.0/24"
+      int_vlan_cidr   = "10.254.101.0/24"
+      int_snat_cidr   = "10.10.31.0/24"
+      int_vip_cidr    = "10.137.17.0/24"
+      external_selfip = "10.157.17.101"
+      internal_selfip = "10.254.101.101"
+    },
+  ]
+}
+
+variable "cneinstance_vlan_external_interface" {
+  description = "TMM interface id for the external F5SPKVlan (spec.interfaces)"
+  type        = string
+  default     = "1.1"
+}
+
+variable "cneinstance_vlan_internal_interface" {
+  description = "TMM interface id for the internal F5SPKVlan (spec.interfaces)"
+  type        = string
+  default     = "1.2"
+}
+
+variable "cneinstance_vlan_prefixlen" {
+  description = "selfip prefix length (spec.prefixlen_v4) for the F5SPKVlan CRs"
+  type        = number
+  default     = 24
+}
+

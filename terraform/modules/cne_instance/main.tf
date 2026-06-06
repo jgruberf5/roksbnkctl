@@ -68,4 +68,6 @@ module "cneinstance" {
   cneinstance_cloud_region         = var.ibmcloud_cluster_region
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = var.cneinstance_network_attachments
+  # null when unset → the inner module's install-guide zone defaults apply.
+  cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
 }
