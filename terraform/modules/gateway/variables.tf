@@ -72,6 +72,9 @@ variable "cneinstance_network_zones" {
     external_selfip = string
     internal_selfip = string
   }))
+  # nullable=false → a null from the root (passed when the workspace sets no
+  # zones) falls back to this install-guide default instead of erroring.
+  nullable = false
   default = [
     {
       ext_vlan_cidr   = "10.155.15.0/24"
