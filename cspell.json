@@ -235,7 +235,11 @@
     "errgroup",
     "initialise",
     "internalising",
-    "jjsg"
+    "jjsg",
+    "Snat",
+    "VXLAN",
+    "automap",
+    "snatpool"
   ],
   "ignorePaths": [
     "book/book/**",

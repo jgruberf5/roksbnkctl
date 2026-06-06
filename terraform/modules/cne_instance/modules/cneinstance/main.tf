@@ -32,6 +32,20 @@ locals {
       {
         namespace       = var.flo_namespace
         service_account = "f5-afm"
+      },
+      # Install-guide f5-bnk SCC bindings that were missing: the CIS/BIG-IP
+      # controller SA, the FLO operator SA, and the namespace default SA.
+      {
+        namespace       = var.flo_namespace
+        service_account = "f5-bigip-ctlr-serviceaccount"
+      },
+      {
+        namespace       = var.flo_namespace
+        service_account = "flo-f5-lifecycle-operator"
+      },
+      {
+        namespace       = var.flo_namespace
+        service_account = "default"
       }
     ] : [],
     # f5-utils namespace service accounts
@@ -168,6 +182,19 @@ locals {
           {
             name  = "GSLB_DATACENTER_NAME"
             value = var.cneinstance_gslb_datacenter_name
+          },
+          # BNK 2.3 install-guide env names, emitted ALONGSIDE VPC_NAME /
+          # IBM_TRUSTED_PROFILE_ID above for cross-version compatibility: the
+          # 2.3 CNE controller reads CLOUD_VPC / CLOUD_TRUSTED_PROFILE for the
+          # VPC route programming. Same values; harmless to whichever version
+          # ignores them.
+          {
+            name  = "CLOUD_VPC"
+            value = var.cneinstance_vpc_name
+          },
+          {
+            name  = "CLOUD_TRUSTED_PROFILE"
+            value = var.cneinstance_ibm_trusted_profile_id
           }
         ]
       }
@@ -194,6 +221,13 @@ locals {
           {
             name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
             value = "TRUE"
+          },
+          # Pod CIDR TMM routes to (install-guide value = ROKS default pod
+          # subnet). Was missing — without it TMM can't route to application
+          # pods.
+          {
+            name  = "TMM_K8S_ROUTES"
+            value = var.cneinstance_tmm_k8s_routes
           }
         ]
       }
