@@ -277,6 +277,32 @@ in `state-testing/` instead. Three cases:
 `roksbnkctl` nudges you when it detects jumphosts still living in the BNK
 state with an empty `state-testing/` — it won't silently rewrite your state.
 
+## The optional Gateway phase (`gateway up` / `down`)
+
+The BNK phase brings up a licensed, running control plane and now also creates
+the `cloud-network-mapping` ConfigMap and the external/internal VLANs that TMM
+needs to program its data plane. The **rest** of the install guide's
+"Configuration" section — the Gateway API objects, egress SnatPool/Egress, the
+per-zone static routes, and the cluster security-group VXLAN rule — is a
+**separate, optional phase** with its own state (`state-gateway/`):
+
+```bash
+roksbnkctl up                  # Cluster → BNK ∥ Testing  (Gateway NOT included)
+# … verify BNK is healthy: TMM pods Ready, CNEInstance Available …
+roksbnkctl gateway up          # apply the data-plane config
+roksbnkctl gateway down        # remove it, leaving cluster/BNK/testing intact
+```
+
+It is **never** run by the composite `up`/`down` — the Gateway config needs a
+healthy BNK (its `F5SPK*` CRDs ship with the BNK manifest, and TMM must be up),
+so it is strictly opt-in. It reuses the existing cluster via
+`cluster-outputs.json` (like the Testing phase), forces every other phase's
+creation off in its override, and manages only its own resources. Defaults all
+come from the BNK 2.3 install guide; override the HTTPRoute backend, client
+subnets, egress mode (`snatpool`/`automap`/`both`) and VXLAN port via the
+`config.yaml` `gateway` block. `cluster down` refuses while the Gateway phase
+has resources, so tear it down first (`gateway down`).
+
 ## Cross-references
 
 - [Chapter 8 — The cluster phase](./08-cluster-phase.md) — the Cluster phase

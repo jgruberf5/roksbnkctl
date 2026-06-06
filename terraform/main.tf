@@ -217,3 +217,33 @@ module "testing" {
   roks_cluster_dependency_id           = module.roks_cluster.cluster_ready_id
   create_roks_cluster                  = var.create_roks_cluster
 }
+
+
+# ============================================================
+# gateway — data-plane ingress/egress configuration (optional phase)
+# ============================================================
+# Gated entirely by deploy_gateway (off by default). Runs only via the
+# standalone `roksbnkctl gateway up/down` against an already-healthy BNK.
+
+module "gateway" {
+  source = "./modules/gateway"
+
+  ibmcloud_api_key           = var.ibmcloud_api_key
+  ibmcloud_cluster_region    = var.ibmcloud_cluster_region
+  ibmcloud_resource_group    = var.ibmcloud_resource_group
+  roks_cluster_name_or_id    = module.roks_cluster.roks_cluster_name
+  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
+  create_roks_cluster        = var.create_roks_cluster
+  deploy_gateway             = var.deploy_gateway
+  flo_namespace              = local.flo_namespace
+  cneinstance_network_zones  = var.cneinstance_network_zones
+  kubeconfig_dir             = "${var.kubeconfig_dir}/gateway"
+
+  app_namespace                = var.gateway_app_namespace
+  gateway_backend_service      = var.gateway_backend_service
+  gateway_backend_port         = var.gateway_backend_port
+  gateway_egress_mode          = var.gateway_egress_mode
+  gateway_client_subnet_local  = var.gateway_client_subnet_local
+  gateway_client_subnet_remote = var.gateway_client_subnet_remote
+  gateway_vxlan_port           = var.gateway_vxlan_port
+}

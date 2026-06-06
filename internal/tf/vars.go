@@ -227,7 +227,37 @@ func renderFullBody(w io.Writer, ws *config.Workspace) error {
 	}
 
 	renderBNKFields(w, ws)
+	renderGatewayFields(w, ws)
 	return nil
+}
+
+// renderGatewayFields emits gateway_* overrides for the Gateway phase. Each is
+// emitted only when config.yaml sets it; unset → the terraform gateway module's
+// install-guide defaults apply. Harmless in the other phases' tfvars (their
+// override forces deploy_gateway=false, so the gateway module is count=0).
+func renderGatewayFields(w io.Writer, ws *config.Workspace) {
+	g := ws.Gateway
+	if g.AppNamespace != "" {
+		fmt.Fprintf(w, "gateway_app_namespace = %q\n", g.AppNamespace)
+	}
+	if g.BackendService != "" {
+		fmt.Fprintf(w, "gateway_backend_service = %q\n", g.BackendService)
+	}
+	if g.BackendPort != 0 {
+		fmt.Fprintf(w, "gateway_backend_port = %d\n", g.BackendPort)
+	}
+	if g.EgressMode != "" {
+		fmt.Fprintf(w, "gateway_egress_mode = %q\n", g.EgressMode)
+	}
+	if g.ClientSubnetLocal != "" {
+		fmt.Fprintf(w, "gateway_client_subnet_local = %q\n", g.ClientSubnetLocal)
+	}
+	if g.ClientSubnetRemote != "" {
+		fmt.Fprintf(w, "gateway_client_subnet_remote = %q\n", g.ClientSubnetRemote)
+	}
+	if g.VXLANPort != 0 {
+		fmt.Fprintf(w, "gateway_vxlan_port = %d\n", g.VXLANPort)
+	}
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.

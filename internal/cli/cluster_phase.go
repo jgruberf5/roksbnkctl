@@ -373,10 +373,10 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 
 	// Presence gating (Sprint 28 §3c): `cluster down` operates strictly on
-	// the cluster phase. Hard-refuse while the BNK phase OR the Testing
-	// phase still has resources — both reference the cluster VPC/TGW, so
-	// destroying the cluster underneath them would orphan them. The guard
-	// is a correctness check, NOT a prompt, so --auto does not bypass it.
+	// the cluster phase. Hard-refuse while the BNK, Testing, OR Gateway phase
+	// still has resources — all reference the cluster VPC/TGW, so destroying
+	// the cluster underneath them would orphan them. The guard is a
+	// correctness check, NOT a prompt, so --auto does not bypass it.
 	cctx0, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -388,9 +388,13 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	if pres.Legacy {
 		return errors.New("this workspace is legacy single-state; cluster and BNK share one state. Use `roksbnkctl down` to tear down both, or migrate the state first")
 	}
-	if pres.BNK || pres.Testing {
+	if pres.BNK || pres.Testing || pres.Gateway {
 		var present []string
 		var verbs []string
+		if pres.Gateway {
+			present = append(present, "Gateway")
+			verbs = append(verbs, "`roksbnkctl gateway down`")
+		}
 		if pres.BNK {
 			present = append(present, "BNK")
 			verbs = append(verbs, "`roksbnkctl bnk down`")

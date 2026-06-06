@@ -468,6 +468,69 @@ Run a single command with cluster context loaded
 roksbnkctl exec [command...]
 ```
 
+## `roksbnkctl gateway`
+
+Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup
+
+Manage the BNK data-plane configuration as an optional, independent phase
+on top of a healthy BNK deployment: the Gateway API objects (GatewayClass,
+F5BnkGateway, Gateway, HTTPRoute), the egress SnatPool + Egress CRs, the
+per-zone static routes, and the cluster security-group VXLAN rule. Runs in its
+own state (state-gateway/), separate from cluster/BNK/testing.
+
+Commands:
+  roksbnkctl gateway up     Apply the data-plane config (needs a healthy BNK)
+  roksbnkctl gateway down   Remove the data-plane config, leaving cluster/BNK/testing intact
+
+Run this only after `roksbnkctl up` has brought up the cluster + BNK and
+the BNK is healthy (TMM pods Ready). The composite `up`/`down` never runs
+this phase — it is opt-in.
+
+### `roksbnkctl gateway down`
+
+Remove the BNK data-plane config, leaving cluster/BNK/testing
+
+```
+roksbnkctl gateway down [flags]
+```
+
+Destroys only the Gateway-phase resources (state-gateway/), leaving the
+cluster, BNK and testing phases intact.
+
+Refuses when there's no gateway state to destroy.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl gateway`](#roksbnkctl-gateway)
+
+### `roksbnkctl gateway up`
+
+Apply the BNK data-plane config (BNK must be healthy)
+
+```
+roksbnkctl gateway up [flags]
+```
+
+Applies the Gateway API + SnatPool + Egress + static-route CRs and the
+VXLAN security-group rule against the existing cluster + BNK (read from
+cluster-outputs.json). Runs in its own state (state-gateway/).
+
+Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl gateway`](#roksbnkctl-gateway)
+
 ## `roksbnkctl get`
 
 Get one or more resources (pods, nodes, services, CRDs, …)

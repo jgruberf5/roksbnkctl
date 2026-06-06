@@ -167,13 +167,14 @@ type Presence struct {
 	Cluster bool // state-cluster/ has managed resources (the ROKS cluster)
 	BNK     bool // state/ has managed BNK resources (and is NOT legacy-monolith)
 	Testing bool // state-testing/ has managed resources (the jumphosts)
+	Gateway bool // state-gateway/ has managed resources (the data-plane config)
 	Legacy  bool // state/ carries cluster modules (v1.0.x single-state)
 }
 
-// Any reports whether at least one of the three phases (or the legacy
-// monolith) has resources — i.e. the workspace is non-empty.
+// Any reports whether at least one phase (or the legacy monolith) has
+// resources — i.e. the workspace is non-empty.
 func (p Presence) Any() bool {
-	return p.Cluster || p.BNK || p.Testing || p.Legacy
+	return p.Cluster || p.BNK || p.Testing || p.Gateway || p.Legacy
 }
 
 // DetectPresence inspects on-disk state for `workspace` and reports the
@@ -238,6 +239,17 @@ func DetectPresence(workspace string) (Presence, error) {
 		return p, err
 	}
 	p.Testing = testingHas
+
+	// Gateway — any managed resource in state-gateway/.
+	gatewayDir, err := WorkspaceGatewayStateDir(workspace)
+	if err != nil {
+		return p, err
+	}
+	gatewayHas, err := tfstateHasResources(filepath.Join(gatewayDir, "terraform.tfstate"))
+	if err != nil {
+		return p, err
+	}
+	p.Gateway = gatewayHas
 
 	return p, nil
 }

@@ -174,6 +174,8 @@ func phaseStateDir(workspace, phase string) (string, error) {
 		return config.WorkspaceStateDir(workspace)
 	case "testing":
 		return config.WorkspaceTestingStateDir(workspace)
+	case "gateway":
+		return config.WorkspaceGatewayStateDir(workspace)
 	default:
 		// Conservative fallback: trial dir (matches the writer's default).
 		return config.WorkspaceStateDir(workspace)

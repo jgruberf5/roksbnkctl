@@ -164,6 +164,12 @@ func appliedTFVarsPath(workspace, phase string) (string, error) {
 			return "", err
 		}
 		return filepath.Join(dir, "terraform.applied.tfvars"), nil
+	case "gateway":
+		dir, err := WorkspaceGatewayStateDir(workspace)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, "terraform.applied.tfvars"), nil
 	default:
 		// Fallback: treat unknown phases as trial — keeps the snapshot
 		// from being lost on unexpected call paths. Matches the defensive
