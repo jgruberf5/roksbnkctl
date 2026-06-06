@@ -235,3 +235,9 @@ variable "cneinstance_vlan_prefixlen" {
   default     = 24
 }
 
+variable "cneinstance_tmm_k8s_routes" {
+  description = "Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet."
+  type        = string
+  default     = "172.17.0.0/18"
+}
+
