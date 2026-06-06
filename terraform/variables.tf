@@ -469,3 +469,56 @@ variable "scratch_dir" {
   type        = string
   default     = "/work/.bnk/scratch"
 }
+
+
+# ============================================================
+# gateway — data-plane ingress/egress config (optional phase)
+# ============================================================
+
+variable "deploy_gateway" {
+  description = "Master toggle for the Gateway phase. Off in every other phase's override; on only for `gateway up`."
+  type        = bool
+  default     = false
+}
+
+variable "gateway_app_namespace" {
+  description = "Application namespace the Gateway + HTTPRoute serve (created by the gateway module)"
+  type        = string
+  default     = "f5-app"
+}
+
+variable "gateway_backend_service" {
+  description = "HTTPRoute backend Service name in the app namespace"
+  type        = string
+  default     = "nginx-service"
+}
+
+variable "gateway_backend_port" {
+  description = "HTTPRoute backend Service port"
+  type        = number
+  default     = 80
+}
+
+variable "gateway_egress_mode" {
+  description = "Egress SNAT strategy: snatpool (default), automap, or both"
+  type        = string
+  default     = "snatpool"
+}
+
+variable "gateway_client_subnet_local" {
+  description = "Local-VSI client subnet/host the static routes reach"
+  type        = string
+  default     = "10.244.64.12"
+}
+
+variable "gateway_client_subnet_remote" {
+  description = "Remote-VSI client subnet/host the static routes reach"
+  type        = string
+  default     = "10.245.64.5"
+}
+
+variable "gateway_vxlan_port" {
+  description = "Egress VXLAN UDP port (also opened on the cluster security group)"
+  type        = number
+  default     = 6789
+}

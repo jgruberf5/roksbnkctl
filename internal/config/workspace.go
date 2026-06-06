@@ -20,6 +20,7 @@ type Workspace struct {
 	IBMCloud IBMCloudCfg          `yaml:"ibmcloud"`
 	Cluster  ClusterCfg           `yaml:"cluster"`
 	BNK      BNKCfg               `yaml:"bnk,omitempty"`
+	Gateway  GatewayCfg           `yaml:"gateway,omitempty"`
 	Test     TestCfg              `yaml:"test,omitempty"`
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
@@ -151,6 +152,21 @@ type BNKCfg struct {
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 type BNKNetworkCfg struct {
 	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
+}
+
+// GatewayCfg carries optional overrides for the Gateway phase (the BNK
+// data-plane config). Every field is optional — unset values fall back to the
+// terraform gateway module's BNK install-guide defaults. Rendered as gateway_*
+// tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a
+// toggle here.
+type GatewayCfg struct {
+	AppNamespace       string `yaml:"app_namespace,omitempty"`
+	BackendService     string `yaml:"backend_service,omitempty"`
+	BackendPort        int    `yaml:"backend_port,omitempty"`
+	EgressMode         string `yaml:"egress_mode,omitempty"` // snatpool | automap | both
+	ClientSubnetLocal  string `yaml:"client_subnet_local,omitempty"`
+	ClientSubnetRemote string `yaml:"client_subnet_remote,omitempty"`
+	VXLANPort          int    `yaml:"vxlan_port,omitempty"`
 }
 
 // BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field

@@ -15,6 +15,7 @@ const (
 	stateSubdir         = "state"
 	clusterStateSubdir  = "state-cluster"
 	testingStateSubdir  = "state-testing"
+	gatewayStateSubdir  = "state-gateway"
 	clusterOutputsFile  = "cluster-outputs.json"
 
 	// ROKSBNKCTLHomeEnv overrides the default ~/.roksbnkctl base. Used by tests
@@ -112,6 +113,20 @@ func WorkspaceTestingStateDir(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, testingStateSubdir), nil
+}
+
+// WorkspaceGatewayStateDir: ~/.roksbnkctl/<name>/state-gateway/ — separate TF
+// state tree for the optional `roksbnkctl gateway up/down` phase (the BNK
+// data-plane ingress/egress config: Gateway API + SnatPool + Egress + static
+// routes + the VXLAN security-group rule). Decoupled from the cluster (state-
+// cluster/), BNK (state/) and testing (state-testing/) phases so the gateway
+// config can be (re)applied or torn down without disturbing them.
+func WorkspaceGatewayStateDir(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, gatewayStateSubdir), nil
 }
 
 // WorkspaceClusterOutputsPath: ~/.roksbnkctl/<name>/cluster-outputs.json —

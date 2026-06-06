@@ -478,3 +478,43 @@ func TestWriteBnkPhaseOverride_Sprint28ByteUnchanged(t *testing.T) {
 		t.Fatalf("bnk-phase override forced block drifted under the Sprint 28 split (must be byte-unchanged).\n--- want ---\n%s\n--- got ---\n%s", wantBlock, got)
 	}
 }
+
+// TestWriteGatewayPhaseOverride_ForcedBlock asserts the gateway-phase override
+// forces every OTHER phase's creation off and deploy_gateway on, reusing the
+// cluster VPC from cluster-outputs.json.
+func TestWriteGatewayPhaseOverride_ForcedBlock(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterID: "crt-cluster-id",
+		VPCID:     "r038-ef6305af-vpc",
+		Source:    "cluster-up",
+	}
+	p, err := writeGatewayPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeGatewayPhaseOverrideAt: %v", err)
+	}
+	if filepath.Base(p) != gatewayPhaseOverrideFile {
+		t.Fatalf("override path %q must end in %q", p, gatewayPhaseOverrideFile)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"create_roks_cluster = false\n",
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n",
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n",
+		"cluster_vpc_id = \"r038-ef6305af-vpc\"\n",
+		"deploy_bnk = false\n",
+		"deploy_cert_manager = false\n",
+		"testing_create_tgw_jumphost = false\n",
+		"testing_create_cluster_jumphosts = false\n",
+		"testing_create_client_vpc = false\n",
+		"deploy_gateway = true\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("gateway override missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}
