@@ -5,12 +5,16 @@ provider "ibm" {
   region           = var.ibmcloud_cluster_region
 }
 
-# The Gateway phase always runs against an EXISTING cluster (it deploys AFTER
-# BNK), so create_roks_cluster is false and cluster_config resolves the live
-# credentials. The count-gate + localhost fallback mirror the cne_instance
-# module so an accidental create-time plan still configures cleanly.
+# Gated on deploy_gateway so the gateway module is a TRUE no-op in the other
+# phases (cluster/BNK/testing all carry this module in the shared root config,
+# but only the gateway phase sets deploy_gateway=true). Without this gate it
+# would read the cluster config — and download a kubeconfig — in every reuse
+# phase. The Gateway phase always runs against an existing cluster, so when
+# enabled create_roks_cluster is false and cluster_config resolves the live
+# credentials; the localhost fallback below keeps the eager kubectl provider
+# happy when count=0.
 data "ibm_container_cluster_config" "cluster_config" {
-  count           = var.create_roks_cluster ? 0 : 1
+  count           = var.deploy_gateway && !var.create_roks_cluster ? 1 : 0
   cluster_name_id = var.roks_cluster_name_or_id
   config_dir      = var.kubeconfig_dir
 }
