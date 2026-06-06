@@ -47,7 +47,7 @@ Failure mode: `not on PATH`. Fix: install Terraform from [terraform.io](https://
 
 ### `helm` — required
 
-The second **hard-required** binary (doctor flags it required), added in v1.0.2. In the legacy BNK path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. Without `helm` on `PATH`, that path fails partway through the cluster lifecycle with:
+The second **hard-required** binary (doctor flags it required), added in v1.0.2. It is required in **both** BNK modes. In the legacy path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. In the **default** terraform-native path the charts install via the `helm_release` provider (no shell-out), **but** FAR chart-version discovery (the `data.external.versions` lookup) still runs `helm registry login` + `helm pull` to read the FLO/CIS versions — so `helm` is needed there too. Without `helm` on `PATH`, the apply fails partway through the cluster lifecycle with:
 
 ```
 Error: local-exec provisioner error
