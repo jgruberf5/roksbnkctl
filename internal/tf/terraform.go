@@ -78,7 +78,7 @@ func Open(
 	// "Path: ..., to download the config doesn't exist". Doing this
 	// here keeps it idempotent across plan/apply/destroy.
 	kcDir := filepath.Join(stateDir, "kubeconfig")
-	for _, sub := range []string{"cert_manager", "cne_instance", "flo", "license"} {
+	for _, sub := range []string{"cert_manager", "cne_instance", "flo", "license", "gateway"} {
 		if err := os.MkdirAll(filepath.Join(kcDir, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("creating %s: %w", filepath.Join(kcDir, sub), err)
 		}
