@@ -249,4 +249,28 @@ func renderBNKFields(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.CRMode != "" {
 		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
 	}
+	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
+	// Emitted only when config.yaml supplies them; absent → the terraform
+	// module's install-guide defaults apply (existing configs unchanged).
+	if ws.BNK.Network != nil && len(ws.BNK.Network.Zones) > 0 {
+		renderNetworkZones(w, ws.BNK.Network.Zones)
+	}
+}
+
+// renderNetworkZones emits the cneinstance_network_zones HCL list-of-objects
+// from the bnk.network.zones config block. Field names match the terraform
+// object type exactly so the render is a drop-in override.
+func renderNetworkZones(w io.Writer, zones []config.BNKZoneCfg) {
+	fmt.Fprintln(w, "cneinstance_network_zones = [")
+	for _, z := range zones {
+		fmt.Fprintln(w, "  {")
+		fmt.Fprintf(w, "    ext_vlan_cidr   = %q\n", z.ExtVLANCIDR)
+		fmt.Fprintf(w, "    int_vlan_cidr   = %q\n", z.IntVLANCIDR)
+		fmt.Fprintf(w, "    int_snat_cidr   = %q\n", z.IntSNATCIDR)
+		fmt.Fprintf(w, "    int_vip_cidr    = %q\n", z.IntVIPCIDR)
+		fmt.Fprintf(w, "    external_selfip = %q\n", z.ExternalSelfIP)
+		fmt.Fprintf(w, "    internal_selfip = %q\n", z.InternalSelfIP)
+		fmt.Fprintln(w, "  },")
+	}
+	fmt.Fprintln(w, "]")
 }

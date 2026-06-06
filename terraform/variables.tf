@@ -329,6 +329,23 @@ variable "cneinstance_gslb_datacenter_name" {
   default     = ""
 }
 
+# Per-zone subnet CIDRs + TMM self-IPs for the cloud-network-mapping ConfigMap +
+# external/internal F5SPKVlan CRs (BNK install-guide "Configuration"). Empty
+# (default) → the cne_instance module's install-guide defaults apply. roksbnkctl
+# renders this from the optional config.yaml bnk.network.zones block.
+variable "cneinstance_network_zones" {
+  description = "Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)"
+  type = list(object({
+    ext_vlan_cidr   = string
+    int_vlan_cidr   = string
+    int_snat_cidr   = string
+    int_vip_cidr    = string
+    external_selfip = string
+    internal_selfip = string
+  }))
+  default = []
+}
+
 
 # ============================================================
 # license

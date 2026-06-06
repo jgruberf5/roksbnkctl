@@ -139,6 +139,29 @@ type BNKCfg struct {
 	// the flag for the validator's benchmark. The `--legacy-bnk` flag sets
 	// "legacy_curl" at runtime, overriding this config value.
 	CRMode string `yaml:"cr_mode,omitempty"`
+
+	// Network holds the optional per-zone subnet CIDRs + TMM self-IPs for the
+	// cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs
+	// (BNK install-guide "Configuration"). nil → the terraform module's
+	// install-guide defaults apply. Zone NAMES are derived from the region, so
+	// only the CIDRs/self-IPs live here. Rendered as cneinstance_network_zones.
+	Network *BNKNetworkCfg `yaml:"network,omitempty"`
+}
+
+// BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
+type BNKNetworkCfg struct {
+	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
+}
+
+// BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field
+// order/names match the terraform cneinstance_network_zones object.
+type BNKZoneCfg struct {
+	ExtVLANCIDR    string `yaml:"ext_vlan_cidr"`
+	IntVLANCIDR    string `yaml:"int_vlan_cidr"`
+	IntSNATCIDR    string `yaml:"int_snat_cidr"`
+	IntVIPCIDR     string `yaml:"int_vip_cidr"`
+	ExternalSelfIP string `yaml:"external_selfip"`
+	InternalSelfIP string `yaml:"internal_selfip"`
 }
 
 type TestCfg struct {

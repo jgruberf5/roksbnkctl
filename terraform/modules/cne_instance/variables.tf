@@ -107,6 +107,22 @@ variable "cneinstance_network_attachments" {
   default     = ["ens3-ipvlan-l2", "macvlan-conf"]
 }
 
+# Per-zone subnet CIDRs + TMM self-IPs for the cloud-network-mapping ConfigMap +
+# F5SPKVlan CRs. Empty (default) → the inner cneinstance module's install-guide
+# defaults apply (the parent passes null below so that default is used).
+variable "cneinstance_network_zones" {
+  description = "Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)"
+  type = list(object({
+    ext_vlan_cidr   = string
+    int_vlan_cidr   = string
+    int_snat_cidr   = string
+    int_vip_cidr    = string
+    external_selfip = string
+    internal_selfip = string
+  }))
+  default = []
+}
+
 variable "create_roks_cluster" {
   description = "When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch"
   type        = bool
