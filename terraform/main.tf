@@ -236,8 +236,9 @@ module "gateway" {
   create_roks_cluster        = var.create_roks_cluster
   deploy_gateway             = var.deploy_gateway
   flo_namespace              = local.flo_namespace
-  cneinstance_network_zones  = var.cneinstance_network_zones
-  kubeconfig_dir             = "${var.kubeconfig_dir}/gateway"
+  # null when unset → the gateway module's install-guide zone defaults apply.
+  cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
+  kubeconfig_dir            = "${var.kubeconfig_dir}/gateway"
 
   app_namespace                = var.gateway_app_namespace
   gateway_backend_service      = var.gateway_backend_service
