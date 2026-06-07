@@ -60,22 +60,15 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 **Root cause**: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster's ID.
 
-**Fix**: run `roksbnkctl ibmcloud is load-balancers | grep <cluster-name>` (and similar for `vpc-endpoint-gateways`, `security-groups`) and `ibmcloud is load-balancer-delete` each orphan by ID. A future `roksbnkctl cluster destroy --sweep-orphans` will automate this — for now, manual.
+**Fix**: run [`roksbnkctl cleanup`](./11-tearing-down.md#roksbnkctl-cleanup--recovering-from-a-failed-down). It sweeps the account for every resource named after the workspace prefix (`<prefix>-*`) — VPC instances/subnets/security-groups/floating-IPs/public-gateways/VPCs, the Transit Gateway, registry COS, the cluster, and the BNK trusted profile — and deletes them in dependency order. Preview first with `roksbnkctl cleanup --dry-run`; add `--all-regions` if resources landed in a region not recorded in `config.yaml`. (For one-off resource types not covered by the prefix sweep, `roksbnkctl ibmcloud is load-balancers | grep <cluster-name>` + `ibmcloud is load-balancer-delete <id>` still works as a manual fallback.)
 
 ## Workspaces
 
-### Symptom: `roksbnkctl ws delete <name>` succeeds but subsequent commands still use the deleted workspace
+### Symptom: after `roksbnkctl ws delete <name>`, which workspace is current?
 
-**Root cause**: workspace context is set by the `--workspace`/`-w` flag (or the persistent value the active shell remembers from the last `roksbnkctl ws use`); deleting the workspace directory doesn't reset that context, so subsequent commands try to operate on a non-existent workspace dir.
+**Behaviour (since `v1.9.0`)**: you can delete the current workspace directly — `ws delete` moves the `current_workspace` pointer to another existing workspace (alphabetically first), or clears it when you delete the last one. There's no "switch first" requirement and no phantom `default` fallback.
 
-**Fix**: switch to another workspace **before** deleting the current one:
-
-```bash
-roksbnkctl ws use default
-roksbnkctl ws delete my-old-workspace
-```
-
-The parking-lot pattern is the recommended flow: keep a `default` workspace as the always-safe destination after deletes. Documented in [Chapter 6 — Workspaces](./06-workspaces.md).
+**If a command then reports `no workspace selected`**: you deleted the last workspace, so nothing is current. Create one with `roksbnkctl init`, or point at an existing one with `roksbnkctl ws use <name>`. (If the message is instead `workspace "<name>" is not initialised`, the `current_workspace` pointer references a directory that was removed by hand — `ws use <other>` repoints it.) Documented in [Chapter 6 — Workspaces](./06-workspaces.md#the-current-workspace-pointer).
 
 ### Symptom: `workspace "<name>" has terraform-managed resources; pass --force to delete anyway`
 
