@@ -375,15 +375,16 @@ resource "time_sleep" "wait_for_scc_policies" {
 # The OpenShift ingress operator installs a ValidatingAdmissionPolicyBinding
 # (openshift-ingress-operator-gatewayapi-crd-admission) that blocks
 # third-party Gateway API CRD creation. The FLO operator reconciles the
-# CNEInstance by creating the Gateway API CRDs (e.g.
-# backendtlspolicies.gateway.networking.k8s.io) at the version BNK requires,
-# so that binding must be gone first. The cluster phase deletes it once at
-# cluster-creation, but the ingress operator reconciles it back within minutes
-# — long before the now-decoupled BNK phase runs — so delete it again HERE,
-# immediately before the CNEInstance triggers CRD creation. Runs on every apply
-# (timestamp trigger) so a reconciled-back binding is re-removed on retries;
-# idempotent and best-effort (|| true). Mirrors the cluster module's
-# delete_gatewayapi_admission_policy, which only fires when create_cluster=true.
+# CNEInstance by running a crd-installer Job that creates the Gateway API CRDs
+# (e.g. backendtlspolicies.gateway.networking.k8s.io) at the version BNK
+# requires, so that binding must be gone WHEN the crd-installer runs — which is
+# ~1-3 minutes INTO the CNEInstance reconcile, not up-front. The ingress
+# operator reconciles the binding (and its policy) back within ~1 minute, so a
+# single up-front delete loses the race. Launch a DETACHED loop that keeps the
+# binding + policy deleted every 5s for ~5 minutes, covering the crd-installer
+# window. The loop survives the local-exec (nohup) and stays alive because
+# terraform is still applying — blocked on the CNEInstance wait_for below —
+# during this window. Runs on every apply (timestamp trigger); best-effort.
 resource "null_resource" "delete_gatewayapi_admission_policy" {
   count = local.use_kubectl ? 1 : 0
 
@@ -392,11 +393,19 @@ resource "null_resource" "delete_gatewayapi_admission_policy" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      curl -sk -X DELETE \
-        -H "Authorization: Bearer ${var.kube_token}" \
-        "${var.kube_host}/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" \
-        -o /dev/null -w "%%{http_code}" || true
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      nohup bash -c '
+        token="${var.kube_token}"
+        host="${var.kube_host}"
+        base="$host/apis/admissionregistration.k8s.io/v1"
+        for i in $(seq 1 60); do
+          curl -sk -X DELETE -H "Authorization: Bearer $token" "$base/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" -o /dev/null 2>/dev/null || true
+          curl -sk -X DELETE -H "Authorization: Bearer $token" "$base/validatingadmissionpolicies/openshift-ingress-operator-gatewayapi-crd-admission" -o /dev/null 2>/dev/null || true
+          sleep 5
+        done
+      ' >/dev/null 2>&1 &
+      echo "gateway-api admission-policy delete-loop launched (~5m, covers the crd-installer window)"
     EOT
   }
 }
@@ -482,11 +491,28 @@ resource "kubectl_manifest" "cneinstance" {
   field_manager     = "roksbnkctl"
   force_conflicts   = true
 
+  # Gate on CNEControllerAvailable, NOT the terminal Available. Available also
+  # requires F5TmmAvailable, and TMM can't reach ConfigurationDone until it is
+  # LICENSED — but the License CR applies AFTER this resource (it depends on
+  # cneinstance_ready_id = this resource's id, set only once wait_for clears).
+  # Waiting on Available here is therefore a deadlock:
+  #   License ← cneinstance.id ← Available ← F5TmmAvailable ← ConfigurationDone ← License.
+  # CNEControllerAvailable flips as soon as the CNE controller is up (before TMM
+  # needs its license), so the apply proceeds to the License, which licenses
+  # TMM, which then reaches Available on its own. The License's own wait_for
+  # ("Verification Complete") is the meaningful licensing gate downstream.
   wait_for {
     condition {
-      type   = "Available"
+      type   = "CNEControllerAvailable"
       status = "True"
     }
+  }
+
+  # Generous create timeout: the controller bring-up runs the crd-installer
+  # (Gateway API CRDs) which the admission-policy delete-loop has to shepherd
+  # through, so first-time reconciles can take well past the provider default.
+  timeouts {
+    create = "30m"
   }
 
   depends_on = [

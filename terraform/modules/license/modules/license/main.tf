@@ -189,5 +189,11 @@ resource "kubectl_manifest" "bnk_license" {
     }
   }
 
+  # The controller must license TMM and verify the subscription JWT; allow well
+  # past the provider default so a cold first-time verification doesn't trip.
+  timeouts {
+    create = "15m"
+  }
+
   depends_on = [var.cneinstance_dependency]
 }
