@@ -1280,6 +1280,12 @@ func looksTransient(err error) bool {
 		"TLS handshake timeout",
 		"failed to dial",
 		"to download the config doesn't exist",
+		// The F5 validating webhook (f5validate.f5net.com / f5-validation-svc)
+		// comes up as part of the CNEInstance reconcile; an F5SPKVlan (or other
+		// F5 CR) applied before its pod is serving TLS fails with one of these.
+		// It's a readiness race — a retry after the wait succeeds.
+		"failed calling webhook",
+		"server gave HTTP response to HTTPS client",
 	} {
 		if strings.Contains(s, pat) {
 			return true
