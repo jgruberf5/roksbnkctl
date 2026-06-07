@@ -52,6 +52,36 @@ func promptInt(label string, def int) int {
 	return n
 }
 
+// promptSelect prints a numbered menu and returns the chosen 0-based index.
+// Empty input or a non-TTY stdin returns def (the default option). def is
+// clamped into range. Mirrors promptInt's "bad input → re-ask, never abort"
+// behaviour for a fat-finger.
+func promptSelect(label string, options []string, def int) int {
+	if def < 0 || def >= len(options) {
+		def = 0
+	}
+	if !isTTY() || len(options) == 0 {
+		return def
+	}
+	fmt.Fprintf(os.Stderr, "  %s:\n", label)
+	for i, o := range options {
+		marker := " "
+		if i == def {
+			marker = "*"
+		}
+		fmt.Fprintf(os.Stderr, "    %s %2d) %s\n", marker, i+1, o)
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		s := promptString(fmt.Sprintf("Choice [1-%d]", len(options)), strconv.Itoa(def+1))
+		n, err := strconv.Atoi(s)
+		if err == nil && n >= 1 && n <= len(options) {
+			return n - 1
+		}
+		fmt.Fprintf(os.Stderr, "  (enter a number 1-%d)\n", len(options))
+	}
+	return def
+}
+
 // promptYesNo accepts y/n (any case, prefix match). Empty returns def.
 // Non-TTY returns def. Default is shown with capitalisation: [Y/n] or [y/N].
 func promptYesNo(label string, def bool) bool {

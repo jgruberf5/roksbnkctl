@@ -118,6 +118,10 @@ type ResourcesCfg struct {
 	TGWJumphost      ResourceToggle `yaml:"tgw_jumphost"`
 	ClusterJumphosts ResourceToggle `yaml:"cluster_jumphosts"`
 	ClientVPC        ResourceToggle `yaml:"client_vpc"`
+	// ClientRegion is the region the testing client (TGW jumphost + client VPC)
+	// is installed in. Empty → the terraform default (testing_client_vpc_region).
+	// Lets the test client live in a different region from the cluster.
+	ClientRegion string `yaml:"client_region,omitempty"`
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the

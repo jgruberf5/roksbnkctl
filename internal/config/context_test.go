@@ -10,18 +10,59 @@ import (
 // All tests redirect $ROKSBNKCTL_HOME via t.Setenv so they never touch the
 // real ~/.roksbnkctl. t.TempDir auto-cleans on failure.
 
-func TestNew_DefaultWorkspace_NoState(t *testing.T) {
+// With no -w flag and no current-workspace pointer, New resolves to an EMPTY
+// workspace name — there is no phantom "default" fallback. Commands that need a
+// workspace surface ErrNoWorkspaceSelected via WorkspaceNotReady.
+func TestNew_NoSelectionResolvesEmpty(t *testing.T) {
 	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
 
 	ctx, err := New("")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if ctx.WorkspaceName != DefaultWorkspace {
-		t.Errorf("WorkspaceName = %q, want %q", ctx.WorkspaceName, DefaultWorkspace)
+	if ctx.WorkspaceName != "" {
+		t.Errorf("WorkspaceName = %q, want empty (no default fallback)", ctx.WorkspaceName)
 	}
 	if ctx.Workspace != nil {
 		t.Errorf("Workspace = %+v, want nil for fresh state", ctx.Workspace)
+	}
+}
+
+// ClearCurrent unsets the pointer; afterwards New("") resolves empty (no
+// phantom "default").
+func TestClearCurrent(t *testing.T) {
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	if err := SaveWorkspace("a", &Workspace{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetCurrent("a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClearCurrent(); err != nil {
+		t.Fatalf("ClearCurrent: %v", err)
+	}
+	g, _ := LoadGlobal()
+	if g.CurrentWorkspace != "" {
+		t.Errorf("current = %q after ClearCurrent, want empty", g.CurrentWorkspace)
+	}
+	ctx, err := New("")
+	if err != nil {
+		t.Fatalf("New after clear: %v", err)
+	}
+	if ctx.WorkspaceName != "" {
+		t.Errorf("New(\"\") after clear = %q, want empty (no default)", ctx.WorkspaceName)
+	}
+}
+
+// WorkspaceNotReady distinguishes "nothing selected" from "named but
+// uninitialised".
+func TestWorkspaceNotReady(t *testing.T) {
+	if err := WorkspaceNotReady(""); err != ErrNoWorkspaceSelected {
+		t.Errorf("WorkspaceNotReady(\"\") = %v, want ErrNoWorkspaceSelected", err)
+	}
+	err := WorkspaceNotReady("demo")
+	if err == nil || !strings.Contains(err.Error(), "demo") || !strings.Contains(err.Error(), "not initialised") {
+		t.Errorf("WorkspaceNotReady(\"demo\") = %v, want a 'demo ... not initialised' error", err)
 	}
 }
 

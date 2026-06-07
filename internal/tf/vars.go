@@ -219,6 +219,10 @@ func renderFullBody(w io.Writer, ws *config.Workspace) error {
 	} else if res.ClientVPC.Existing != "" {
 		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", res.ClientVPC.Existing)
 	}
+	// Testing client region (chosen at init); empty → terraform default.
+	if res.ClientRegion != "" {
+		fmt.Fprintf(w, "testing_client_vpc_region = %q\n", res.ClientRegion)
+	}
 
 	// Per-zone cluster jumphosts (the module appends -<zone> to the prefix).
 	fmt.Fprintf(w, "testing_create_cluster_jumphosts = %v\n", res.ClusterJumphosts.Create)

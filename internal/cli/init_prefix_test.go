@@ -36,6 +36,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -124,11 +125,15 @@ func TestRunPrefixInterview_NonTTY_DefaultAccept(t *testing.T) {
 	const wsName = "demo-accept"
 	cctx := newInitContext(t, wsName, "")
 
-	// Defaults mirror runInit's: create=true, ocp "4.18", workers 1.
-	cluster, prefix, resources, err := runPrefixInterview(cctx, true, "4.18", 1)
+	// Defaults mirror runInit's: create=true, region "us-south", ocp "4.18",
+	// workers 1. Under `go test` stdin is non-TTY, so the create branch never
+	// dials the API (pickRegion returns the default without touching ic) — a
+	// nil client is safe.
+	choices, err := runAccountInterview(context.Background(), nil, cctx, "us-south", "4.18", 1, true)
 	if err != nil {
-		t.Fatalf("runPrefixInterview default-accept: %v", err)
+		t.Fatalf("runAccountInterview default-accept: %v", err)
 	}
+	cluster, prefix, resources := choices.Cluster, choices.Prefix, choices.Resources
 
 	// Prefix derived from the workspace name.
 	wantPrefix := naming.SanitizeToPrefix(wsName)

@@ -204,7 +204,7 @@ func runTerraformPassthrough(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 
 	stateDir, phaseLabel, err := terraformReadOnlyStateDir(cctx.WorkspaceName, phase)

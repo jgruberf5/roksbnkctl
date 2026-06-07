@@ -272,7 +272,7 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 		return nil, nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return nil, nil, nil, config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	resolver := &cred.Resolver{
 		Workspace: cctx.WorkspaceName,
