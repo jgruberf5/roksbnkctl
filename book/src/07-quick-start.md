@@ -74,31 +74,65 @@ Initialises a workspace under `~/.roksbnkctl/default/` (or under `<name>/` if yo
 roksbnkctl init
 ```
 
-Sample interactive session:
+`init` **interviews your account**: after it verifies the API key it asks whether to create a new cluster, then lists the regions (or the existing clusters) your credentials can reach — you pick from a menu instead of typing free-text.
+
+Sample interactive session (creating a new cluster):
 
 ```
 roksbnkctl init
-→ Verifying IBMCLOUD_API_KEY against IBM IAM ... ok (account: 1a2b3c..., user: you@example.com)
-? Workspace name (default):
-? Region (us-south):
-? Resource group (Default):
-→ Resolving resource group "Default" ... ok (id: ...)
-? Cluster name (bnk-quickstart):
-? OpenShift version (4.14_openshift):
-? Worker zone (us-south-1):
-? Worker count (2):
-? Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
-→ Saved to keychain (service: roksbnkctl, account: default/ibmcloud_api_key)
+  Workspace name [default]:
+→ Verifying IBM Cloud credentials ... ✓ you@example.com (account 1a2b3c...)
+  Create a new ROKS cluster? [Y/n]: y
+  Region for the new cluster:
+       1) au-syd
+       2) br-sao
+     * 3) ca-tor
+       ...
+      10) us-south
+  Choice [1-14] [3]: 10
+  Workspace prefix [bnk-quickstart]:
+  Workers per zone (min 1; cluster spans all 3 AZs) [1]: 2
+  OpenShift version [4.18]:
+  Create registry COS instance? [Y/n]: y
+  Resource group [default]:
+→ ✓ Resource group "default" (id ...)
+  Create Transit Gateway? [Y/n]: y
+  Install cert-manager? [Y/n]: y
+  Deploy BIG-IP Next (BNK)? [Y/n]: y
+  Add a testing client? [y/N]: y
+  Region to install the test client in:
+      ...
+  Choice [1-14] [10]: 3
+  Create a new client VPC for it? [Y/n]: y
+  Create per-zone cluster jumphosts? [y/N]: n
+  Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
+✓ Current workspace: default
 ✓ Wrote ~/.roksbnkctl/default/config.yaml
 ```
 
 What just happened:
 
-- A workspace called `default` now exists at `~/.roksbnkctl/default/`.
-- `config.yaml` records the region, resource group, cluster name, OpenShift version, worker pool sizing, and BNK component defaults.
-- The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service `roksbnkctl`. Subsequent runs resolve it from there without prompting.
+- A workspace called `default` now exists at `~/.roksbnkctl/default/` and is **current** — the next bare command runs against it (no separate `ws use` needed).
+- You picked the region from the account's **available regions**; the cluster spans **all three availability zones** with `workers-per-zone × 3` workers. One per zone (3 total) is the minimum — a ROKS cluster is always multi-AZ, so `init` floors the count there.
+- The optional **testing client** (TGW jumphost + client VPC) can live in a **different region** from the cluster — you're prompted for its region separately.
+- `config.yaml` records the region, resource group, prefix, worker sizing, the per-resource `resources:` toggles, and BNK component defaults. The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service `roksbnkctl`; subsequent runs resolve it from there without prompting.
 
 You can re-run `roksbnkctl init` to update workspace settings; existing values become the prompt defaults.
+
+### Reusing an existing cluster
+
+Answer **n** to *Create a new ROKS cluster?* and `init` lists the account's running OpenShift clusters to pick one:
+
+```
+  Create a new ROKS cluster? [Y/n]: n
+→ Listing running OpenShift clusters...
+  Choose an existing cluster:
+     * 1) bnk-demo        (us-south, 4.18.x_openshift)
+       2) roks-prod-ca    (ca-tor, 4.19.x_openshift)
+  Choice [1-2] [1]: 1
+```
+
+The chosen cluster's region and name are recorded, and `init` populates `cluster-outputs.json` — the same identity file [`cluster register`](./09-registering-existing-cluster.md) writes — so a subsequent `roksbnkctl up` deploys BNK straight onto it, with no `cluster up` and no separate `register` step.
 
 ## Step 3 — `roksbnkctl up --auto`
 

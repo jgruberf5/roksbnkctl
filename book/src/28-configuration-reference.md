@@ -91,6 +91,7 @@ resources:
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
+  client_region:     ca-tor               # since v1.9.0; testing-client region
 ```
 
 *(since `v1.8.0`)* Per-resource create/adopt toggles, written by the `init` interview. Each key is a `{create, existing}` pair: `create: true` provisions a new prefix-named resource; `create: false` declines it and (when a still-enabled resource depends on it) `existing:` names the pre-existing resource to consume instead.
@@ -105,7 +106,9 @@ resources:
 | `cluster_jumphosts` | `false` | — | `testing_create_cluster_jumphosts`, `testing_cluster_jumphost_name_prefix` |
 | `client_vpc` | `false` (created on demand for the TGW jumphost) | `existing` → `testing_client_vpc_name` when not creating one | `testing_create_client_vpc`, `testing_client_vpc_name` |
 
-Each entry:
+`client_region` *(since `v1.9.0`)* is the odd one out — a plain **string**, not a `{create, existing}` toggle. It's the IBM Cloud region the testing client (TGW jumphost + client VPC) is installed in, letting the test client live in a **different region from the cluster**. The `init` interview sets it when you answer the *"Add a testing client?"* / region prompt; omitted, it renders nothing and the terraform default (`testing_client_vpc_region`) applies. It also seeds the regions [`roksbnkctl cleanup`](./11-tearing-down.md#which-regions-it-scans) scans. Renders into `testing_client_vpc_region`.
+
+Each `{create, existing}` entry:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|

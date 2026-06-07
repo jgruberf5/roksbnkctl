@@ -154,6 +154,7 @@ resources:
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: shared-client-vpc }
+  client_region:     ca-tor               # since v1.9.0; testing-client region (plain string)
 ```
 
 *(since `v1.8.0`)* The `init` interview's create/adopt answers, one `{create, existing}` pair per resource. `create: true` provisions a new, prefix-named resource; `create: false` declines it, and when a still-enabled resource depends on the declined one, `existing:` names the pre-existing resource to consume instead.
@@ -167,6 +168,8 @@ resources:
 | `tgw_jumphost` | `true` | `testing_create_tgw_jumphost` (+ `testing_tgw_jumphost_name`) | — |
 | `cluster_jumphosts` | `false` | `testing_create_cluster_jumphosts` (+ `testing_cluster_jumphost_name_prefix`) | — |
 | `client_vpc` | `false` | `testing_create_client_vpc` (+ `testing_client_vpc_name`) | TGW jumphost enabled but you decline creating a new client VPC for it |
+
+One extra key, `client_region` *(since `v1.9.0`)*, is a plain **string** rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when `init` asks where to install the test client. It renders into `testing_client_vpc_region` (omitted → the terraform default applies) and seeds the regions `roksbnkctl cleanup` scans.
 
 The block is **optional and additive** — omit it (any pre-`v1.8.0` config) and the legacy sparse render applies; a fresh `init` writes it in full. The deep reference, including which terraform `create_*`/`*_name` variables each toggle renders, is [Chapter 28 §"`resources:` block"](./28-configuration-reference.md#resources-block).
 

@@ -116,6 +116,35 @@ Use `roksbnkctl up` on those workspaces.
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
 
+## `roksbnkctl cleanup`
+
+Delete orphaned IBM Cloud resources left by a failed `down`
+
+```
+roksbnkctl cleanup [flags]
+```
+
+cleanup sweeps the current workspace's IBM Cloud account for resources named
+after the workspace prefix (`<prefix>`-*) and deletes them in dependency order.
+
+Use it to recover from a 'down' that errored partway and stranded resources
+(jumphosts, security groups, floating IPs, subnets, VPCs, the Transit Gateway,
+the registry COS instance, the ROKS cluster, and the BNK trusted profile).
+
+This is a DESTRUCTIVE, best-effort sweep keyed purely on the `<prefix>`- name
+convention. It always lists what it found and asks before deleting (unless
+--auto); --dry-run lists without deleting. Re-run if some deletes fail (e.g. a
+VPC waiting on an async cluster delete).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--all-regions` | `bool` | `false` | sweep every IBM Cloud region (slower; catches resources in regions not recorded in config) |
+| `--auto` / `-y` | `bool` | `false` | skip the confirmation prompt |
+| `--dry-run` | `bool` | `false` | list orphaned resources without deleting |
+| `--region` | `stringSlice` | `[]` | additional region(s) to sweep (repeatable); defaults to the cluster + client regions |
+
 ## `roksbnkctl cluster`
 
 ROKS cluster lifecycle (separate from BNK trials)

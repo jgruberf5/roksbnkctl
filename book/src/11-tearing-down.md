@@ -136,6 +136,53 @@ roksbnkctl ws delete <name> --force
 
 If you `roksbnkctl up` against a registered cluster (one you didn't `cluster up` yourself), step 2 doesn't apply — the cluster wasn't yours to destroy. Just `bnk down` the trial and stop there, then optionally unregister by deleting `cluster-outputs.json`.
 
+## `roksbnkctl cleanup` — recovering from a failed `down`
+
+`terraform destroy` is not always clean. A transient IBM Cloud API error, a resource stuck behind a finaliser, or a `down` you `Ctrl-C`'d partway can leave **orphaned cloud resources** that Terraform no longer tracks — and a re-run of `down` may not finish the job. The classic symptom is a follow-up `up` that fails with `… name is not unique` because a half-deleted security group or VPC is still there.
+
+`roksbnkctl cleanup` is the recovery tool. It sweeps your IBM Cloud account for every resource named after the workspace prefix (`<prefix>-*`) and deletes them in dependency order — regardless of what Terraform state says.
+
+```bash
+roksbnkctl cleanup            # scan, list, confirm, delete
+roksbnkctl cleanup --dry-run  # scan + list only, delete nothing
+roksbnkctl cleanup --auto     # skip the confirmation prompt
+```
+
+### What it deletes
+
+Everything whose name is the workspace prefix or a `<prefix>-` child, across:
+
+- **VPC (per region):** virtual server instances (jumphosts), floating IPs, public gateways, subnets, security groups, SSH keys, and VPCs.
+- **Transit Gateway** (and its connections).
+- The **registry COS** instance.
+- The **ROKS cluster** itself.
+- The **BNK trusted profile** (named after the cluster ID — found via `cluster-outputs.json`, so it's still identifiable after the cluster is gone).
+
+Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is **best-effort**: a failure on one resource is reported and the sweep continues. Re-run `cleanup` for anything blocked on an async delete (e.g. a VPC that can't go until its cluster finishes terminating).
+
+### Which regions it scans
+
+By default `cleanup` scans the workspace's cluster region plus the testing-client region (from `config.yaml`'s [`resources.client_region`](./28-configuration-reference.md#resources-block) and `cluster-outputs.json`). If resources landed in a region not recorded in config — common on older workspaces — add it explicitly or sweep everything:
+
+```bash
+roksbnkctl cleanup --region ca-tor   # add a specific region to the scan
+roksbnkctl cleanup --all-regions     # sweep every IBM Cloud region (slower)
+```
+
+### Caveats
+
+- **It matches purely on the `<prefix>-` name convention.** If unrelated resources happen to share the workspace prefix, they match too — always review the `--dry-run` (or the pre-delete confirmation) list first.
+- **It needs a prefix.** Workspaces created before prefix-based naming (`v1.8.0`) have nothing to match; `cleanup` reports there's nothing to sweep.
+- It does **not** touch Terraform state or `config.yaml`. After a successful sweep the state files still reference the now-gone resources; run `roksbnkctl ws delete <name> --force` to drop the workspace, or re-`up` to rebuild.
+
+A typical recovery — a `down` errored, and `up` now refuses with "not unique":
+
+```bash
+roksbnkctl cleanup --dry-run   # confirm what's stranded
+roksbnkctl cleanup --auto      # sweep it
+roksbnkctl up --auto           # rebuild clean
+```
+
 ## Refusal messages catalogue
 
 The phase-scoped destroy verbs refuse loudly when the shape doesn't allow what you've asked for. Every refusal names the verb that would actually work. If you hit one in the wild, grep your terminal output for the message text and you should land here:
@@ -235,14 +282,11 @@ A successful `down` leaves the workspace directory in place. You usually want to
 roksbnkctl ws delete <name> --force
 ```
 
-Two safety rails on `ws delete`:
+One safety rail on `ws delete`: it **refuses if Terraform state still lists resources** (unless `--force`) — which catches the case where you forgot to run `down` first. You **can** delete the current workspace directly; the pointer moves to another existing workspace (or clears when none remain), so no "switch first" dance is needed (see [Chapter 6](./06-workspaces.md#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired)).
 
-- **Refuses to delete the current workspace.** Use the [parking-lot pattern](./06-workspaces.md#the-parking-lot-pattern) if you need to drop your current workspace.
-- **Refuses if Terraform state still lists resources** (unless `--force`). Catches the case where you forgot to run `down` first.
+The `--force` flag overrides the state check — but if you `ws delete --force` a workspace that still has provisioned cloud resources, you'll have stranded them. Recover with [`roksbnkctl cleanup`](#roksbnkctl-cleanup--recovering-from-a-failed-down): run it **before** deleting the workspace (it reads the prefix from `config.yaml`), or recreate the workspace's `config.yaml` with the same prefix and run it after.
 
-The `--force` flag overrides both checks — but if you `ws delete --force` a workspace that still has provisioned cloud resources, you'll have leaked them. There's no auto-recovery; you'd need to find them via the IBM Cloud console and delete them by hand.
-
-The full clean-as-you-go pattern from `scripts/e2e-test.sh` (Phase D destroys; Phase H parks and deletes):
+The full clean-as-you-go teardown (`scripts/e2e-test.sh` Phase D destroys; Phase H deletes):
 
 ```bash
 # 1. Destroy the trial
@@ -251,18 +295,9 @@ roksbnkctl down --auto
 # 2. Destroy the cluster phase
 roksbnkctl cluster down --auto
 
-# 3. Park the current-workspace pointer somewhere harmless
-roksbnkctl ws new e2e-cleanup
-roksbnkctl ws use e2e-cleanup
-
-# 4. Now the original workspace is no longer current — safe to delete
+# 3. Delete the workspace — even if it's the current one (the pointer auto-switches)
 roksbnkctl ws delete default --force
-
-# 5. (Optional) clean up the parking lot too
-roksbnkctl ws delete e2e-cleanup --force
 ```
-
-Step 3-5 is the parking-lot pattern from [Chapter 6](./06-workspaces.md). It's specifically necessary when the workspace you want to delete is currently the active one — `ws delete` refuses to remove the current workspace because that would leave a dangling `current_workspace` pointer.
 
 ## Cost note: an undestroyed cluster keeps billing
 
@@ -341,7 +376,7 @@ The full register → up → test → down loop above is what Phase E + Phase H 
 
 ## Cross-references
 
-- [Chapter 6 — Workspaces](./06-workspaces.md) — `ws delete` mechanics and the parking-lot pattern.
+- [Chapter 6 — Workspaces](./06-workspaces.md) — `ws delete` mechanics and how the current-workspace pointer auto-switches on delete.
 - [Chapter 8 — The cluster phase](./08-cluster-phase.md) — what `cluster up` provisions and `cluster down` removes.
 - [Chapter 9 — Registering an existing cluster](./09-registering-existing-cluster.md) — the `cluster register` mechanics the walkthrough builds on.
 - [Chapter 10 — Deploying BNK trials](./10-deploying-bnk-trials.md) — what `up` provisions and `down` removes.
