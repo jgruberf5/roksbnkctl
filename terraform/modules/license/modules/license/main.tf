@@ -182,10 +182,17 @@ resource "kubectl_manifest" "bnk_license" {
   field_manager     = "roksbnkctl"
   force_conflicts   = true
 
+  # Wait on the LicenseActive CONDITION, not status.state == "Verification
+  # Complete". In BNK 2.3 (controller 14.59.x) a successfully verified license
+  # settles to status.state = "Active" (with stateDescription "License
+  # verification complete") and condition LicenseActive=True — the literal
+  # "Verification Complete" is never a terminal state value, so a field match on
+  # it hangs until the timeout even though the license is live. The condition is
+  # version-independent and is the real "TMM is licensed" gate.
   wait_for {
-    field {
-      key   = "status.state"
-      value = "Verification Complete"
+    condition {
+      type   = "LicenseActive"
+      status = "True"
     }
   }
 
