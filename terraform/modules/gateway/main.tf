@@ -253,8 +253,9 @@ resource "ibm_is_security_group_rule" "vxlan_ingress" {
   direction = "inbound"
   remote    = "0.0.0.0/0"
 
-  udp {
-    port_min = var.gateway_vxlan_port
-    port_max = var.gateway_vxlan_port
-  }
+  # Top-level protocol/port_min/port_max — the nested `udp {}` block form is
+  # deprecated in the IBM provider.
+  protocol = "udp"
+  port_min = var.gateway_vxlan_port
+  port_max = var.gateway_vxlan_port
 }
