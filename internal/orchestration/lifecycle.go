@@ -477,6 +477,14 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if !pres.Any() {
 		return errors.New("nothing to destroy in this workspace")
 	}
+	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
+	// live in the BNK namespace, so the BNK leg of this composite destroy would
+	// hang on their finalizers. The composite `down` covers Cluster/BNK/Testing;
+	// the Gateway phase is separate and optional — tear it down explicitly,
+	// first. Mirrors the `bnk down` and `cluster down` guards.
+	if pres.Gateway {
+		return errors.New("the Gateway phase has resources — its CRs live in the BNK namespace and would block the BNK teardown. Run `roksbnkctl gateway down` first, then `roksbnkctl down`")
+	}
 
 	// Compose the confirmation copy from the present phases.
 	var phases []string
