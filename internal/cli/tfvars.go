@@ -49,7 +49,7 @@ func runTFVars(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 
 	stateDir, err := config.WorkspaceStateDir(cctx.WorkspaceName)

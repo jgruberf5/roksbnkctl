@@ -143,22 +143,27 @@ func runWSNew(_ *cobra.Command, args []string) error {
 	if err := config.SaveWorkspace(name, &config.Workspace{}); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "✓ Created workspace %q (run `roksbnkctl init -w %s` to configure)\n", name, name)
+	// Creating a workspace selects it — the user's environment follows the new
+	// workspace without a separate `ws use`.
+	if err := config.SetCurrent(name); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "✓ Created workspace %q and made it current (run `roksbnkctl init -w %s` to configure)\n", name, name)
 	return nil
 }
 
-// runWSDelete removes a workspace's directory and its keychain entry.
-// Refuses to delete the current workspace (leaves the pointer dangling)
-// and refuses if Terraform state lists resources unless --force is set.
+// runWSDelete removes a workspace's directory and its keychain entry. The
+// current workspace may be deleted directly (no "switch first" friction): if
+// it was current, the pointer moves to another existing workspace, or is
+// cleared when none remain (there is no fallback "default"). Refuses if
+// Terraform state lists resources unless --force is set.
 func runWSDelete(_ *cobra.Command, args []string) error {
 	name := args[0]
 	g, err := config.LoadGlobal()
 	if err != nil {
 		return err
 	}
-	if g.CurrentWorkspace == name {
-		return fmt.Errorf("cannot delete current workspace %q; switch first: `roksbnkctl ws use <other>`", name)
-	}
+	wasCurrent := g.CurrentWorkspace == name
 
 	if !flagWSForce {
 		if !promptYesNo(fmt.Sprintf("Delete workspace %q?", name), false) {
@@ -176,5 +181,26 @@ func runWSDelete(_ *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ Deleted workspace %q\n", name)
+
+	// Deleting the current workspace moves the pointer to another existing one
+	// (alphabetically first) so the environment keeps working; if none remain
+	// the pointer is cleared rather than falling back to a phantom "default".
+	if wasCurrent {
+		names, err := config.ListWorkspaces()
+		if err != nil {
+			return err
+		}
+		if len(names) > 0 {
+			if err := config.SetCurrent(names[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "✓ Current workspace is now %q\n", names[0])
+		} else {
+			if err := config.ClearCurrent(); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "✓ No workspaces remain; current workspace cleared")
+		}
+	}
 	return nil
 }

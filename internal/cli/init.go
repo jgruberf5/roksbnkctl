@@ -99,6 +99,20 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// No -w and no current pointer (first run, or every workspace was deleted).
+	// config.New no longer falls back to a phantom "default", so ask for a name
+	// here — non-interactive runs take the bootstrap "default".
+	if cctx.WorkspaceName == "" {
+		name := promptString("Workspace name", config.DefaultWorkspace)
+		if err := config.ValidateName(name); err != nil {
+			return err
+		}
+		cctx, err = config.New(name)
+		if err != nil {
+			return err
+		}
+	}
+
 	// --upgrade-tf is the cheap path: re-resolve TF source on existing config.
 	if flagUpgradeTF {
 		if cctx.Workspace == nil {
@@ -150,11 +164,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("resolving API key: %w", err)
 	}
 
+	// Bootstrap region only to construct the client for credential verification
+	// + the region/cluster listings (Verify, ListRegions, ListClusters,
+	// ResolveResourceGroup are global or use a fixed host). The FINAL region is
+	// chosen in the interview below — a menu when creating a cluster, the
+	// chosen cluster's own region when reusing one.
 	region := dRegion
 	if seeds.HasRegion {
 		region = seeds.Region
-	} else {
-		region = promptString("Region", dRegion)
 	}
 
 	// Network ops below — bound to a timeout.
@@ -172,10 +189,40 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ %s\n\n", id)
 
-	rgName := dRG
-	if seeds.HasResourceGroup {
-		rgName = seeds.ResourceGroup
+	// Two flows:
+	//   - --var-file: non-interactive seed path (cluster from the file, every
+	//     resource defaulted to "create"); region from the seed/default.
+	//   - interactive: the account-aware interview — create-vs-reuse, region +
+	//     existing-cluster menus pulled from the credentials, resource toggles,
+	//     and the optional testing client (with its own region).
+	var (
+		cluster   config.ClusterCfg
+		prefix    string
+		resources *config.ResourcesCfg
+		rgName    string
+	)
+	if varFilePath != "" {
+		cluster, prefix, resources, err = seedVarFileInterview(seeds, dCreate, dCluster, dOCP, dWorkers, cctx.WorkspaceName)
+		if err != nil {
+			return err
+		}
+		if seeds.HasResourceGroup {
+			rgName = seeds.ResourceGroup
+		}
 	} else {
+		choices, ierr := runAccountInterview(ctx, ic, cctx, region, dOCP, dWorkers, dCreate)
+		if ierr != nil {
+			return ierr
+		}
+		region = choices.Region
+		cluster = choices.Cluster
+		prefix = choices.Prefix
+		resources = choices.Resources
+	}
+
+	// Resource group (global; region-independent). Interactive: prompt after
+	// the cluster/region choice; --var-file: the seeded group, else prompt.
+	if rgName == "" {
 		rgName = promptString("Resource group", dRG)
 	}
 	rgID, err := ic.ResolveResourceGroup(ctx, rgName)
@@ -183,34 +230,6 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("verifying resource group: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Resource group %q (id %s)\n\n", rgName, rgID)
-
-	// Sprint 26 — prefix + per-resource create toggles. Two flows:
-	//
-	//   - --var-file: derive the prefix non-interactively (from the file's
-	//     openshift_cluster_name, else the sanitized workspace name) and
-	//     default every resource to "create", so the generated base is
-	//     collision-safe and the operator's file still overrides it via
-	//     terraform.tfvars.user layering. The cluster block keeps the
-	//     Sprint 19 seed-driven behaviour.
-	//   - interactive: run the prefix loop (validate + re-prompt), the
-	//     per-resource create toggles, and the existing-resource discovery
-	//     prompts for declined-but-depended-on resources.
-	var (
-		cluster   config.ClusterCfg
-		prefix    string
-		resources *config.ResourcesCfg
-	)
-	if varFilePath != "" {
-		cluster, prefix, resources, err = seedVarFileInterview(seeds, dCreate, dCluster, dOCP, dWorkers, cctx.WorkspaceName)
-		if err != nil {
-			return err
-		}
-	} else {
-		cluster, prefix, resources, err = runPrefixInterview(cctx, dCreate, dOCP, dWorkers)
-		if err != nil {
-			return err
-		}
-	}
 
 	tfCfg, err := promptTFSource(ctx, cctx)
 	if err != nil {
@@ -279,14 +298,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Set current_workspace pointer if nothing was set globally yet.
-	// Don't clobber an existing pointer — the user may have set it on purpose.
-	if cctx.Global.CurrentWorkspace == "" {
-		if err := config.SetCurrent(cctx.WorkspaceName); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not set current workspace: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "✓ Current workspace: %s\n", cctx.WorkspaceName)
-		}
+	// Initialising a workspace selects it — the user's environment follows the
+	// freshly-configured workspace without a separate `ws use`.
+	if err := config.SetCurrent(cctx.WorkspaceName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not set current workspace: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ Current workspace: %s\n", cctx.WorkspaceName)
 	}
 
 	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
@@ -358,76 +375,175 @@ func seedVarFileInterview(seeds varFileSeeds, dCreate bool, dCluster, dOCP strin
 	return cluster, prefix, allCreateResources(), nil
 }
 
-// runPrefixInterview runs the interactive Sprint 26 interview body: the
-// prefix loop, the cluster create toggle, and the per-resource create
-// toggles + existing-resource discovery prompts. It returns the resolved
-// cluster cfg, the validated prefix, and the populated resources block.
+// accountInterview is the result of the interactive, account-aware init
+// interview: the chosen region, the cluster (created or reused), the validated
+// prefix, and the populated resources block (which carries the testing
+// client's region when one was added).
+type accountInterview struct {
+	Region    string
+	Cluster   config.ClusterCfg
+	Prefix    string
+	Resources *config.ResourcesCfg
+}
+
+// runAccountInterview drives the post-credential interview. It first asks
+// whether to create a new ROKS cluster:
 //
-// The cluster NAME is derived from the prefix when creating (so it is not
-// prompted); when not creating, the operator supplies the existing cluster
-// id/name.
-func runPrefixInterview(cctx *config.Context, dCreate bool, dOCP string, dWorkers int) (config.ClusterCfg, string, *config.ResourcesCfg, error) {
-	prefix, err := promptPrefix(cctx)
-	if err != nil {
-		return config.ClusterCfg{}, "", nil, err
-	}
-
+//   - create: pick a region from the account's available regions, choose a
+//     prefix, OpenShift version, and workers-per-zone (floored at 1 — a ROKS
+//     cluster spans all 3 AZs, so the minimum is 3 workers total).
+//   - reuse: pick from the account's running OpenShift clusters; the region and
+//     name come from the chosen cluster, and cluster-outputs.json is populated
+//     so the BNK/Testing phases reuse it.
+//
+// Then the resource toggles, and an optional testing client whose region is
+// chosen from the same region list. ic is used only for the (TTY-only) region
+// and cluster menus, so a non-interactive run never dials the network here.
+func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Context, dRegion, dOCP string, dWorkers int, dCreate bool) (*accountInterview, error) {
 	res := &config.ResourcesCfg{}
+	out := &accountInterview{Resources: res, Region: dRegion}
 
-	// Cluster — created cluster's name is the prefix; declined → existing
-	// cluster id/name.
-	create := promptYesNo("Create new ROKS cluster?", dCreate)
-	cluster := config.ClusterCfg{Create: create}
-	if create {
-		cluster.Name = naming.Derive(prefix).ClusterName
-		cluster.OpenShiftVersion = promptString("OpenShift version", dOCP)
-		cluster.WorkersPerZone = promptInt("Workers per zone", dWorkers)
-		// Registry COS is only meaningful when the cluster is created.
+	if promptYesNo("Create a new ROKS cluster?", dCreate) {
+		out.Region = pickRegion(ctx, ic, "Region for the new cluster", dRegion)
+
+		prefix, err := promptPrefix(cctx)
+		if err != nil {
+			return nil, err
+		}
+		out.Prefix = prefix
+
+		// A ROKS cluster spans all three AZs, so the minimum is one worker per
+		// zone (3 total). Clamp anything lower.
+		workers := promptInt("Workers per zone (min 1; cluster spans all 3 AZs)", dWorkers)
+		if workers < 1 {
+			fmt.Fprintln(os.Stderr, "  (minimum is 1 worker per zone — a ROKS cluster spans 3 AZs, so 3 workers total)")
+			workers = 1
+		}
+		out.Cluster = config.ClusterCfg{
+			Create:           true,
+			Name:             naming.Derive(prefix).ClusterName,
+			OpenShiftVersion: promptString("OpenShift version", dOCP),
+			WorkersPerZone:   workers,
+		}
 		res.RegistryCOS.Create = promptYesNo("Create registry COS instance?", true)
 		if !res.RegistryCOS.Create {
 			res.RegistryCOS.Existing = promptString("Existing COS instance name", "")
 		}
 	} else {
-		cluster.Name = promptString("Existing cluster name or ID", "")
-		if cluster.Name == "" {
-			return config.ClusterCfg{}, "", nil, errors.New("existing cluster name is required when not creating")
+		fmt.Fprintln(os.Stderr, "\n→ Listing running OpenShift clusters...")
+		clusters, err := ic.ListClusters(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing clusters: %w", err)
 		}
-		// No cluster create ⇒ no registry COS to manage here.
+		if len(clusters) == 0 {
+			return nil, errors.New("no running OpenShift (ROKS) clusters found in this account — create one instead, or check that your API key has access")
+		}
+		labels := make([]string, len(clusters))
+		for i, cl := range clusters {
+			labels[i] = fmt.Sprintf("%s  (%s, %s)", cl.Name, cl.Region, cl.MasterKubeVersion)
+		}
+		chosen := clusters[promptSelect("Choose an existing cluster", labels, 0)]
+		out.Region = chosen.Region
+		out.Cluster = config.ClusterCfg{Create: false, Name: chosen.Name}
+
+		prefix, err := prefixLoop(naming.SanitizeToPrefix(chosen.Name))
+		if err != nil {
+			return nil, err
+		}
+		out.Prefix = prefix
 		res.RegistryCOS.Create = false
+
+		// Record the cluster so BNK/Testing reuse it (mirrors `cluster register`).
+		if err := registerReusedCluster(ctx, ic, cctx.WorkspaceName, chosen.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not record cluster details (%v)\n  run `roksbnkctl cluster register %s` before `roksbnkctl up`\n", err, chosen.Name)
+		}
 	}
 
 	// Transit gateway. When declined, an enabled TGW jumphost needs the
-	// existing gateway's name to connect its client VPC — prompt for it
-	// after we know the jumphost decision below, but capture the create
-	// toggle now.
+	// existing gateway's name — captured below once the jumphost is decided.
 	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
 
 	// In-cluster services.
 	res.CertManager.Create = promptYesNo("Install cert-manager?", true)
 	res.BNK.Create = promptYesNo("Deploy BIG-IP Next (BNK)?", true)
 
-	// TGW test jumphost (+ its client VPC).
-	res.TGWJumphost.Create = promptYesNo("Create TGW test jumphost?", true)
-	if res.TGWJumphost.Create {
-		res.ClientVPC.Create = promptYesNo("Create a new client VPC for it?", false)
+	// Optional testing client (TGW jumphost + client VPC), in a region of its
+	// own — prompted again from the account's region list.
+	if promptYesNo("Add a testing client?", false) {
+		res.TGWJumphost.Create = true
+		res.ClientRegion = pickRegion(ctx, ic, "Region to install the test client in", out.Region)
+		res.ClientVPC.Create = promptYesNo("Create a new client VPC for it?", true)
 		if !res.ClientVPC.Create {
 			res.ClientVPC.Existing = promptString("Existing client VPC name", "")
 		}
-		// The TGW jumphost connects through the transit gateway; if the
-		// gateway is not being created, we need its existing name.
 		if !res.TransitGateway.Create {
 			res.TransitGateway.Existing = promptString("Existing Transit Gateway name", "")
 		}
 	} else {
-		// No TGW jumphost ⇒ no client VPC, and no dependent forcing the
-		// existing-TGW-name prompt.
+		res.TGWJumphost.Create = false
 		res.ClientVPC.Create = false
 	}
 
 	// Per-zone cluster jumphosts (default off).
 	res.ClusterJumphosts.Create = promptYesNo("Create per-zone cluster jumphosts?", false)
 
-	return cluster, prefix, res, nil
+	return out, nil
+}
+
+// pickRegion shows the account's available regions as a menu and returns the
+// chosen name, defaulting to def. TTY-only: a non-interactive run returns def
+// without dialing the API (keeps init scriptable). On a list error it falls
+// back to the built-in region list so init never hard-fails offline.
+func pickRegion(ctx context.Context, ic *ibm.Client, label, def string) string {
+	if !isTTY() {
+		return def
+	}
+	regions, err := ic.ListRegions(ctx)
+	if err != nil || len(regions) == 0 {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  (could not list regions: %v; using the built-in list)\n", err)
+		}
+		regions = ibm.CuratedRegions()
+	}
+	labels := make([]string, len(regions))
+	defIdx := 0
+	for i, r := range regions {
+		labels[i] = r.Name
+		if r.Name == def {
+			defIdx = i
+		}
+	}
+	return regions[promptSelect(label, labels, defIdx)].Name
+}
+
+// registerReusedCluster populates cluster-outputs.json for a reused cluster so
+// the BNK/Testing phases find it (mirrors `roksbnkctl cluster register`). The
+// registry COS is recorded best-effort — a hand-built cluster may not have the
+// roksbnkctl-convention `<cluster>-cos` instance.
+func registerReusedCluster(ctx context.Context, ic *ibm.Client, workspace, clusterArg string) error {
+	info, err := ic.GetCluster(ctx, clusterArg)
+	if err != nil {
+		return err
+	}
+	vpc := info.VPCID()
+	if vpc == "" {
+		return fmt.Errorf("cluster %q has no VPC (vpc-gen2 only)", info.Name)
+	}
+	out := &config.ClusterOutputs{
+		ClusterName:      info.Name,
+		ClusterID:        info.ID,
+		Region:           info.Region,
+		ResourceGroupID:  info.ResourceGroupID,
+		VPCID:            vpc,
+		MasterURL:        info.MasterURL,
+		OpenShiftVersion: info.MasterKubeVersion,
+		Source:           "cluster-register",
+	}
+	if cos, err := ic.GetCOSInstanceByName(ctx, info.Name+"-cos"); err == nil {
+		out.RegistryCOSCRN = cos.CRN
+		out.RegistryCOSName = cos.Name
+	}
+	return config.WriteClusterOutputs(workspace, out)
 }
 
 // promptPrefix runs the prefix loop: default = the existing workspace's
@@ -441,7 +557,14 @@ func promptPrefix(cctx *config.Context) (string, error) {
 	if cctx.Workspace != nil && cctx.Workspace.Prefix != "" {
 		def = cctx.Workspace.Prefix
 	}
+	return prefixLoop(def)
+}
 
+// prefixLoop prompts for a workspace prefix with the given default, validating
+// via naming.ValidatePrefix and re-prompting on failure. Non-TTY validates the
+// default and hard-errors if invalid. Shared by promptPrefix (create path) and
+// the reuse path (default = sanitized existing-cluster name).
+func prefixLoop(def string) (string, error) {
 	label := fmt.Sprintf("Workspace prefix (≤ %d chars)", naming.MaxPrefixLen())
 
 	if !isTTY() {

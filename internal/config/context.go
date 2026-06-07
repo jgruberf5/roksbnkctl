@@ -18,15 +18,34 @@ type Context struct {
 	Workspace     *Workspace // nil if the workspace hasn't been initialised yet
 }
 
+// ErrNoWorkspaceSelected is returned (via WorkspaceNotReady) when a command
+// needs a workspace but none was resolved: no -w flag and no current-workspace
+// pointer. There is intentionally NO "default" fallback — once the user has
+// deleted every workspace, commands must say so rather than silently operate
+// on a phantom "default".
+var ErrNoWorkspaceSelected = errors.New("no workspace selected; create one with `roksbnkctl init` or pick one with `roksbnkctl ws use <name>`")
+
+// WorkspaceNotReady is the standard error for "this command needs a loaded
+// workspace and there isn't one". An empty name (nothing selected) yields
+// ErrNoWorkspaceSelected; a named-but-uninitialised workspace yields the
+// run-init hint. Commands use it for their `cctx.Workspace == nil` guard.
+func WorkspaceNotReady(name string) error {
+	if name == "" {
+		return ErrNoWorkspaceSelected
+	}
+	return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", name)
+}
+
 // New resolves the workspace name from (in priority order):
 //
 //  1. workspaceFlag (the -w/--workspace value, may be "")
 //  2. Global.CurrentWorkspace
-//  3. DefaultWorkspace ("default")
 //
-// It then loads the workspace config if it exists. Missing workspace is
-// not propagated as an error — the caller decides whether that's OK
-// (`roksbnkctl init` is fine with it; everything else should error).
+// There is no "default" fallback: when neither is set, WorkspaceName is left
+// empty and Workspace is nil. It then loads the workspace config if a name
+// resolved. Missing/absent workspace is not propagated as an error — the
+// caller decides whether that's OK (`roksbnkctl init` is fine with it;
+// everything else uses WorkspaceNotReady).
 func New(workspaceFlag string) (*Context, error) {
 	g, err := LoadGlobal()
 	if err != nil {
@@ -37,14 +56,16 @@ func New(workspaceFlag string) (*Context, error) {
 	if name == "" {
 		name = g.CurrentWorkspace
 	}
+
+	ctx := &Context{WorkspaceName: name, Global: g}
 	if name == "" {
-		name = DefaultWorkspace
+		// Nothing selected — no phantom "default". Callers that require a
+		// workspace surface ErrNoWorkspaceSelected via WorkspaceNotReady.
+		return ctx, nil
 	}
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
-
-	ctx := &Context{WorkspaceName: name, Global: g}
 
 	ws, err := LoadWorkspace(name)
 	switch {
@@ -74,5 +95,17 @@ func SetCurrent(name string) error {
 		return err
 	}
 	g.CurrentWorkspace = name
+	return SaveGlobal(g)
+}
+
+// ClearCurrent removes the current-workspace pointer. Used when the last
+// workspace is deleted — there is intentionally no fallback "default", so the
+// pointer is simply unset and the next command reports ErrNoWorkspaceSelected.
+func ClearCurrent() error {
+	g, err := LoadGlobal()
+	if err != nil {
+		return err
+	}
+	g.CurrentWorkspace = ""
 	return SaveGlobal(g)
 }

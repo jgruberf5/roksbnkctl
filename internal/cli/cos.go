@@ -450,7 +450,7 @@ func openIBMClient() (*config.Context, *ibm.Client, error) {
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return nil, nil, config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	resolver := &cred.Resolver{
 		Workspace: cctx.WorkspaceName,

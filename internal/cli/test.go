@@ -520,7 +520,7 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 
 	// Resolve the iperf3 client backend. Sprint 4 default is "k8s" per
@@ -796,7 +796,7 @@ func loadHosts() (*config.Context, []string, error) {
 		return nil, nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return nil, nil, config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	hosts := test.HostsFromConfig(cctx.Workspace)
 	if len(hosts) == 0 {

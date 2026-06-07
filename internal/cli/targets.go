@@ -160,7 +160,7 @@ func requireWorkspace() (*config.Context, error) {
 		return nil, err
 	}
 	if cctx.Workspace == nil {
-		return nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return nil, config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	return cctx, nil
 }

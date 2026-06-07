@@ -82,7 +82,7 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 
 	t, err := remote.LoadTarget(cctx.WorkspaceName, target)
@@ -183,7 +183,7 @@ func dispatchRemoteShell(ctx context.Context, target string) error {
 		return err
 	}
 	if cctx.Workspace == nil {
-		return fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	t, err := remote.LoadTarget(cctx.WorkspaceName, target)
 	if err != nil {
