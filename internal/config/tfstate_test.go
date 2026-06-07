@@ -181,7 +181,8 @@ func TestTrialStateHasClusterModules_ExactMatch(t *testing.T) {
 			{
 				"mode": "managed",
 				"type": "ibm_container_vpc_cluster",
-				"module": "module.cert_manager"
+				"module": "module.cert_manager",
+				"instances": [{"attributes": {"id": "x"}}]
 			}
 		]
 	}`
@@ -194,6 +195,37 @@ func TestTrialStateHasClusterModules_ExactMatch(t *testing.T) {
 	}
 	if !has {
 		t.Error("expected exact-match cluster module to be detected")
+	}
+}
+
+// TestTrialStateHasClusterModules_ZeroInstanceHusk pins the fix: a MANAGED
+// ibm_container_vpc_cluster block under a cluster-phase prefix but with ZERO
+// instances is a count=0 husk (the BNK phase sets create_roks_cluster=false),
+// NOT a real cluster. It must NOT be detected — counting it falsely poisoned
+// every BNK/testing phase as "Legacy single-state".
+func TestTrialStateHasClusterModules_ZeroInstanceHusk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "terraform.tfstate")
+	const body = `{
+		"resources": [
+			{
+				"mode": "managed",
+				"type": "ibm_container_vpc_cluster",
+				"name": "openshift_cluster",
+				"module": "module.roks_cluster.module.cluster",
+				"instances": []
+			}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	has, err := trialStateHasClusterModules(path)
+	if err != nil {
+		t.Fatalf("trialStateHasClusterModules: %v", err)
+	}
+	if has {
+		t.Error("a 0-instance cluster husk must NOT be detected as a managed cluster")
 	}
 }
 
@@ -210,7 +242,8 @@ func TestTrialStateHasClusterModules_NestedPrefix(t *testing.T) {
 			{
 				"mode": "managed",
 				"type": "ibm_container_vpc_cluster",
-				"module": "module.roks_cluster.module.cluster"
+				"module": "module.roks_cluster.module.cluster",
+				"instances": [{"attributes": {"id": "x"}}]
 			}
 		]
 	}`

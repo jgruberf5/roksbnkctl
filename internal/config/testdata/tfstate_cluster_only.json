@@ -16,7 +16,15 @@
       "type": "ibm_container_vpc_cluster",
       "name": "roks",
       "provider": "provider[\"registry.terraform.io/IBM-Cloud/ibm\"].this",
-      "instances": []
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "fake-cluster-id-for-tests",
+            "name": "test-cluster"
+          }
+        }
+      ]
     },
     {
       "module": "module.roks_cluster.module.cluster",

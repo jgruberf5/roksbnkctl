@@ -392,16 +392,24 @@ func trialStateHasClusterModules(path string) (bool, error) {
 	}
 	var s struct {
 		Resources []struct {
-			Mode   string `json:"mode"`
-			Module string `json:"module"`
-			Type   string `json:"type"`
+			Mode      string            `json:"mode"`
+			Module    string            `json:"module"`
+			Type      string            `json:"type"`
+			Instances []json.RawMessage `json:"instances"`
 		} `json:"resources"`
 	}
 	if err := json.Unmarshal(b, &s); err != nil {
 		return false, err
 	}
 	for _, r := range s.Resources {
-		if r.Mode != "managed" || r.Type != "ibm_container_vpc_cluster" {
+		// Require ≥1 INSTANCE, not just the resource block. In a BNK-phase
+		// state the cluster module is count=0 (create_roks_cluster=false), so
+		// terraform records a managed ibm_container_vpc_cluster block with
+		// ZERO instances — a husk, NOT a real cluster. Counting the husk as
+		// "Legacy single-state" falsely poisoned every BNK/testing phase
+		// (refusing the phase verbs and routing `up` into the monolith path,
+		// which cross-contaminated the per-phase states).
+		if r.Mode != "managed" || r.Type != "ibm_container_vpc_cluster" || len(r.Instances) == 0 {
 			continue
 		}
 		for _, prefix := range clusterPhaseModules {
