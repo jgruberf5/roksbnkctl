@@ -316,13 +316,17 @@ func (w *Workspace) Apply(ctx context.Context, extraVarFiles ...string) error {
 }
 
 // phaseLabel classifies which workspace phase this Apply represents,
-// for the PRD 07 snapshot header + state-dir routing. Three labels:
+// for the PRD 07 snapshot header + state-dir routing. The label decides
+// which per-phase state dir terraform.applied.tfvars is written to
+// (appliedTFVarsPath), so it MUST match the stateDir the apply ran
+// against — otherwise one phase's snapshot clobbers another's:
 //
-//   - "cluster"       — Workspace's stateDir is the per-workspace
-//     state-cluster/ tree (i.e., `cluster up` flow).
-//   - "legacy-single" — Workspace's stateDir is state/ AND DetectShape
-//     reports the workspace is a v1.0.x single-state shape. Recorded so
-//     the reader doesn't mistake a legacy snapshot for trial-only.
+//   - "cluster"       — stateDir is state-cluster/ (`cluster up` flow).
+//   - "testing"       — stateDir is state-testing/ (`testing up` flow).
+//   - "gateway"       — stateDir is state-gateway/ (`gateway up` flow).
+//   - "legacy-single" — stateDir is state/ AND DetectShape reports the
+//     workspace is a v1.0.x single-state shape. Recorded so the reader
+//     doesn't mistake a legacy snapshot for trial-only.
 //   - "trial"         — anything else (the modern `bnk up` flow and the
 //     defensive fallback for unclassifiable shapes).
 //
@@ -336,6 +340,9 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	}
 	if filepath.Base(w.stateDir) == "state-testing" {
 		return "testing"
+	}
+	if filepath.Base(w.stateDir) == "state-gateway" {
+		return "gateway"
 	}
 	if shape, err := config.DetectShape(w.name); err == nil && shape == config.ShapeLegacySingle {
 		return "legacy-single"

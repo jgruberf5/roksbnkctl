@@ -552,23 +552,33 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 			return errors.New("aborted")
 		}
 	}
-	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
+	// Re-assert the BNK-phase override (create_roks_cluster=false + the reused
+	// cluster identity), layered LAST so it wins — exactly as `bnk up` and the
+	// testing/gateway downs do. Without it, destroy renders
+	// create_roks_cluster=true from config.yaml, the cert-manager / CNE /
+	// license kubernetes+helm+kubectl providers resolve an empty host, and
+	// terraform dials http://localhost. A replayed applied-tfvars snapshot is
+	// NOT enough: it carries create_roks_cluster twice (true from config.yaml,
+	// false from the override), and a stale or cross-phase-contaminated
+	// snapshot can leave the `true` winning — a clean override file as the
+	// final var-file is the deterministic fix. On a legacy single-state
+	// workspace (no cluster-outputs.json) this is a no-op, so the behaviour is
+	// unchanged there. Symmetric with RunTestingDown / RunGatewayDown.
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, w)
+	if err != nil {
 		return err
 	}
-	// Auto-layer the trial phase's applied-tfvars replay (validator
-	// Issue 3, round-3) as the lowest-precedence var-file so bare
-	// `down -w <ws>` (no --var-file) destroys cleanly. Pre-fix this
-	// errored on required no-default vars the auto-rendered tfvars
-	// doesn't carry. Returns nil when no snapshot exists → byte-
-	// identical to prior behaviour.
+	// Auto-layer the trial phase's applied-tfvars replay as a low-precedence
+	// var-file so bare `down -w <ws>` (no --var-file) destroys cleanly.
+	// Returns nil when no snapshot exists.
 	appliedVF := LayerAppliedTFVars(in.Workspace, "trial")
-	// Option (b): no snapshot, no --var-file, AND no
-	// init --var-file-seeded terraform.tfvars.user → actionable error
-	// before terraform sees a stack of bare missing-required-var lines.
+	// No snapshot, no --var-file, AND no init --var-file-seeded
+	// terraform.tfvars.user → actionable error before terraform sees a stack
+	// of bare missing-required-var lines.
 	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "down"); err != nil {
 		return err
 	}
-	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
+	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy")
 	return tfws.Destroy(ctx, varFiles...)
 }
