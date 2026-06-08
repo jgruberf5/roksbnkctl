@@ -114,10 +114,27 @@ func resolveVarFiles(vfs []string) ([]string, error) {
 // prompt, the --on rejection, the cluster-phase composites, the
 // terraform-output decoders) are injected as function fields so
 // internal/orchestration never imports internal/cli.
+// resolvedWorkspaceName returns the workspace name the -w flag resolves to: the
+// flag value if given, else the current-workspace pointer. The orchestration
+// uses LifecycleInputs.Workspace directly as the workspace IDENTIFIER — the
+// cluster-outputs.json lookup that drives the create_roks_cluster=false reuse
+// override, plus the applied-tfvars snapshot paths. Passing the RAW (possibly
+// empty) -w flag meant a no-`-w` run looked up cluster-outputs.json under the
+// empty workspace, found nothing, skipped the override, and the BNK/Testing
+// legs tried to re-create the cluster VPC/transit-gateway ("Provided Name … is
+// not unique"). Empty when nothing is selected — the orchestration then
+// surfaces ErrNoWorkspaceSelected. Falls back to the raw flag on a config error.
+func resolvedWorkspaceName() string {
+	if cctx, err := config.New(flagWorkspace); err == nil {
+		return cctx.WorkspaceName
+	}
+	return flagWorkspace
+}
+
 func lifecycleInputs() *orchestration.LifecycleInputs {
 	var in *orchestration.LifecycleInputs
 	in = &orchestration.LifecycleInputs{
-		Workspace:    flagWorkspace,
+		Workspace:    resolvedWorkspaceName(),
 		Backend:      flagBackend,
 		Auto:         flagAuto,
 		NoKubeconfig: flagNoKubeconfig,
