@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -251,6 +251,7 @@ single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
@@ -276,18 +277,46 @@ Use <code>roksbnkctl up</code> on those workspaces.</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip confirmation prompts (cluster-bootstrap + apply)</td></tr>
+<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h2 id="roksbnkctl-cleanup"><a class="header" href="#roksbnkctl-cleanup"><code>roksbnkctl cleanup</code></a></h2>
+<p>Delete orphaned IBM Cloud resources left by a failed <code>down</code></p>
+<pre><code>roksbnkctl cleanup [flags]
+</code></pre>
+<p>cleanup sweeps the current workspace’s IBM Cloud account for resources named
+after the workspace prefix (<code>&lt;prefix&gt;</code>-*) and deletes them in dependency order.</p>
+<p>Use it to recover from a ‘down’ that errored partway and stranded resources
+(jumphosts, security groups, floating IPs, subnets, VPCs, the Transit Gateway,
+the registry COS instance, the ROKS cluster, and the BNK trusted profile).</p>
+<p>This is a DESTRUCTIVE, best-effort sweep keyed purely on the <code>&lt;prefix&gt;</code>- name
+convention. It always lists what it found and asks before deleting (unless
+–auto); –dry-run lists without deleting. Re-run if some deletes fail (e.g. a
+VPC waiting on an async cluster delete).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--all-regions</code></td><td><code>bool</code></td><td><code>false</code></td><td>sweep every IBM Cloud region (slower; catches resources in regions not recorded in config)</td></tr>
+<tr><td><code>--auto</code> / <code>-y</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+<tr><td><code>--dry-run</code></td><td><code>bool</code></td><td><code>false</code></td><td>list orphaned resources without deleting</td></tr>
+<tr><td><code>--region</code></td><td><code>stringSlice</code></td><td><code>[]</code></td><td>additional region(s) to sweep (repeatable); defaults to the cluster + client regions</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-cluster"><a class="header" href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></h2>
 <p>ROKS cluster lifecycle (separate from BNK trials)</p>
 <p>Manage the ROKS cluster as a durable, reusable resource that
 sits underneath your BNK trials.</p>
 <p>Commands:
-roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
+roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
 roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
 roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
 roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json</p>
@@ -348,14 +377,14 @@ value).</p>
 <p>Provision the ROKS cluster (and cluster-shared services) only</p>
 <pre><code>roksbnkctl cluster up [flags]
 </code></pre>
-<p>Runs terraform apply with deploy_bnk=false forced — creates the
-ROKS cluster, transit gateway, registry COS, cert-manager, and the test
-jumphost, but skips the BNK trial modules (flo, cne_instance, license).
-On success, writes the cluster’s identity to
+<p>Creates the durable cluster-shared infrastructure only — the ROKS
+cluster, transit gateway, and registry COS. cert-manager and the BNK trial
+modules (flo, cne_instance, license) deploy in the BNK phase; the jumphosts
+deploy in the testing phase. On success, writes the cluster’s identity to
 ~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json so subsequent <code>roksbnkctl up</code>
-runs can deploy BNK trials onto this cluster.</p>
+runs can deploy the BNK and testing phases onto this cluster.</p>
 <p>Uses a separate state directory (~/.roksbnkctl/<code>&lt;workspace&gt;</code>/state-cluster/)
-so it doesn’t tangle with BNK-trial state.</p>
+so it doesn’t tangle with BNK or testing state.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -577,6 +606,60 @@ Pass –backend k8s | ssh:<code>&lt;target&gt;</code> for per-backend prereq che
 <p>Run a single command with cluster context loaded</p>
 <pre><code>roksbnkctl exec [command...]
 </code></pre>
+<h2 id="roksbnkctl-gateway"><a class="header" href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></h2>
+<p>Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup</p>
+<p>Manage the BNK data-plane configuration as an optional, independent phase
+on top of a healthy BNK deployment: the Gateway API objects (GatewayClass,
+F5BnkGateway, Gateway, HTTPRoute), the egress SnatPool + Egress CRs, the
+per-zone static routes, and the cluster security-group VXLAN rule. Runs in its
+own state (state-gateway/), separate from cluster/BNK/testing.</p>
+<p>Commands:
+roksbnkctl gateway up     Apply the data-plane config (needs a healthy BNK)
+roksbnkctl gateway down   Remove the data-plane config, leaving cluster/BNK/testing intact</p>
+<p>Run this only after <code>roksbnkctl up</code> has brought up the cluster + BNK and
+the BNK is healthy (TMM pods Ready). The composite <code>up</code>/<code>down</code> never runs
+this phase — it is opt-in.</p>
+<h3 id="roksbnkctl-gateway-down"><a class="header" href="#roksbnkctl-gateway-down"><code>roksbnkctl gateway down</code></a></h3>
+<p>Remove the BNK data-plane config, leaving cluster/BNK/testing</p>
+<pre><code>roksbnkctl gateway down [flags]
+</code></pre>
+<p>Destroys only the Gateway-phase resources (state-gateway/), leaving the
+cluster, BNK and testing phases intact.</p>
+<p>Refuses when there’s no gateway state to destroy.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
+<h3 id="roksbnkctl-gateway-up"><a class="header" href="#roksbnkctl-gateway-up"><code>roksbnkctl gateway up</code></a></h3>
+<p>Apply the BNK data-plane config (BNK must be healthy)</p>
+<pre><code>roksbnkctl gateway up [flags]
+</code></pre>
+<p>Applies the Gateway API + SnatPool + Egress + static-route CRs and the
+VXLAN security-group rule against the existing cluster + BNK (read from
+cluster-outputs.json). Runs in its own state (state-gateway/).</p>
+<p>Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
 <h2 id="roksbnkctl-get"><a class="header" href="#roksbnkctl-get"><code>roksbnkctl get</code></a></h2>
 <p>Get one or more resources (pods, nodes, services, CRDs, …)</p>
 <pre><code>roksbnkctl get &lt;resource&gt; [name] [-n &lt;ns&gt; | -A] [-l &lt;selector&gt;] [-o &lt;fmt&gt;] [flags]
@@ -1166,6 +1249,60 @@ probe (GSLB-aware)”.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h3 id="roksbnkctl-test-hosts"><a class="header" href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></h3>
+<p>Manage test.connectivity.extra_hosts in the workspace config</p>
+<p>Test hosts are URLs probed by <code>roksbnkctl test connectivity</code> and
+(in workspace-driven mode) <code>roksbnkctl test dns</code>. They are stored under
+<code>test.connectivity.extra_hosts</code> in the workspace’s config.yaml.</p>
+<p>This command group is the first-class CLI for managing that slice —
+without it, the only path is hand-editing
+~/.roksbnkctl/<code>&lt;workspace&gt;</code>/config.yaml. Mirrors <code>roksbnkctl targets</code>’
+ergonomics: idempotent add/remove, <code>-o json</code> on list.</p>
+<p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h4 id="roksbnkctl-test-hosts-add"><a class="header" href="#roksbnkctl-test-hosts-add"><code>roksbnkctl test hosts add</code></a></h4>
+<p>Append URLs to test.connectivity.extra_hosts (idempotent)</p>
+<pre><code>roksbnkctl test hosts add &lt;url&gt; [&lt;url&gt; ...]
+</code></pre>
+<p>Appends each <code>&lt;url&gt;</code> to test.connectivity.extra_hosts. Idempotent —
+adding an already-present URL is a no-op (logs to stderr; exit 0).</p>
+<p>Each <code>&lt;url&gt;</code> is validated via the std-lib url.Parse; non-URLs are
+rejected with an actionable error naming the offending arg. Insertion
+order is preserved.</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-clear"><a class="header" href="#roksbnkctl-test-hosts-clear"><code>roksbnkctl test hosts clear</code></a></h4>
+<p>Remove ALL entries from test.connectivity.extra_hosts</p>
+<pre><code>roksbnkctl test hosts clear [flags]
+</code></pre>
+<p>Clears test.connectivity.extra_hosts. Confirmation prompt defaults to
+No; pass <code>--auto</code> to skip the prompt (matches the
+<code>roksbnkctl down</code> / <code>cluster down</code> confirmation pattern).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-list"><a class="header" href="#roksbnkctl-test-hosts-list"><code>roksbnkctl test hosts list</code></a></h4>
+<p>List configured test hosts (one per line; -o json for array)</p>
+<p>Prints the workspace’s test.connectivity.extra_hosts one per line on
+stdout. Empty list emits zero bytes + exit 0 (NOT an error;
+distinguishes “nothing configured” from “command failed” by exit code).</p>
+<p>With <code>-o json</code>, emits the slice as a JSON array (<code>[]</code> when empty).</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-remove"><a class="header" href="#roksbnkctl-test-hosts-remove"><code>roksbnkctl test hosts remove</code></a></h4>
+<p>Remove URLs from test.connectivity.extra_hosts (idempotent)</p>
+<pre><code>roksbnkctl test hosts remove &lt;url&gt; [&lt;url&gt; ...]
+</code></pre>
+<p>Removes each <code>&lt;url&gt;</code> from test.connectivity.extra_hosts. Idempotent —
+removing an absent URL is a no-op (logs to stderr; exit 0). Preserves
+the order of remaining entries.</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
 <h3 id="roksbnkctl-test-list"><a class="header" href="#roksbnkctl-test-list"><code>roksbnkctl test list</code></a></h3>
 <p>List available test suites</p>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
@@ -1192,6 +1329,73 @@ fixture lifecycle is wired.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h2 id="roksbnkctl-testing"><a class="header" href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></h2>
+<p>Testing-phase (jumphost) lifecycle — provisions the test rig</p>
+<p>Manage the testing jumphost infrastructure (TGW jumphost, per-AZ
+cluster jumphosts, client VPC) as an independent phase that sits beside the
+BNK phase on top of a shared cluster. Pure IBM VPC — no Kubernetes.</p>
+<p>Commands:
+roksbnkctl testing up       Provision the jumphosts (needs a cluster: VPC + transit gateway)
+roksbnkctl testing down     Destroy the jumphosts, leaving the cluster and BNK intact
+roksbnkctl testing migrate  Move pre-Sprint-28 jumphosts out of the BNK state into state-testing/</p>
+<p>This is the provisioning phase. To RUN connectivity/DNS/throughput probes
+against a deployed environment, use <code>roksbnkctl test</code> (and
+<code>roksbnkctl test hosts</code> to manage the probe target list) — those
+provision nothing.</p>
+<h3 id="roksbnkctl-testing-down"><a class="header" href="#roksbnkctl-testing-down"><code>roksbnkctl testing down</code></a></h3>
+<p>Destroy the testing jumphosts, leaving the cluster and BNK</p>
+<pre><code>roksbnkctl testing down [flags]
+</code></pre>
+<p>Destroys only the testing jumphost resources (state-testing/), leaving
+the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
+each phase tears down independently.</p>
+<p>Refuses when there’s no testing state to destroy, and on legacy
+single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
+<h3 id="roksbnkctl-testing-migrate"><a class="header" href="#roksbnkctl-testing-migrate"><code>roksbnkctl testing migrate</code></a></h3>
+<p>Move pre-Sprint-28 jumphosts from the BNK state into state-testing/</p>
+<p>One-shot migration for workspaces provisioned before the Sprint 28
+three-phase split, where the jumphosts (module.testing.*) still live in the
+BNK state (state/). Moves them into state-testing/ with no cloud churn
+(terraform state mv) so the live jumphosts are preserved.</p>
+<p>After migrating, re-run <code>roksbnkctl bnk up</code> to reconcile the
+now-jumphost-free BNK state, and <code>roksbnkctl testing up</code> to adopt the
+moved jumphosts (plan shows a no-op).</p>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
+<h3 id="roksbnkctl-testing-up"><a class="header" href="#roksbnkctl-testing-up"><code>roksbnkctl testing up</code></a></h3>
+<p>Provision the testing jumphosts (cluster must exist)</p>
+<pre><code>roksbnkctl testing up [flags]
+</code></pre>
+<p>Provisions the testing jumphosts against the existing cluster’s VPC +
+transit gateway (read from cluster-outputs.json). Runs in its own state
+(state-testing/), independent of the BNK phase — <code>bnk down</code> leaves
+the jumphosts and <code>testing down</code> leaves BNK.</p>
+<p>Refuses on legacy single-state workspaces (use <code>roksbnkctl up</code>).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
 <h2 id="roksbnkctl-tfvars"><a class="header" href="#roksbnkctl-tfvars"><code>roksbnkctl tfvars</code></a></h2>
 <p>Emit the upstream TF’s terraform.tfvars.example for editing</p>
 <pre><code>roksbnkctl tfvars [flags]

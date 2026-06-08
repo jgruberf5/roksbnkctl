@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -238,28 +238,56 @@ Did you mean '--workspace s'?
 </blockquote>
 <pre><code class="language-bash">roksbnkctl init
 </code></pre>
-<p>Sample interactive session:</p>
+<p><code>init</code> <strong>interviews your account</strong>: after it verifies the API key it asks whether to create a new cluster, then lists the regions (or the existing clusters) your credentials can reach — you pick from a menu instead of typing free-text.</p>
+<p>Sample interactive session (creating a new cluster):</p>
 <pre><code>roksbnkctl init
-→ Verifying IBMCLOUD_API_KEY against IBM IAM ... ok (account: 1a2b3c..., user: you@example.com)
-? Workspace name (default):
-? Region (us-south):
-? Resource group (Default):
-→ Resolving resource group "Default" ... ok (id: ...)
-? Cluster name (bnk-quickstart):
-? OpenShift version (4.14_openshift):
-? Worker zone (us-south-1):
-? Worker count (2):
-? Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
-→ Saved to keychain (service: roksbnkctl, account: default/ibmcloud_api_key)
+  Workspace name [default]:
+→ Verifying IBM Cloud credentials ... ✓ you@example.com (account 1a2b3c...)
+  Create a new ROKS cluster? [Y/n]: y
+  Region for the new cluster:
+       1) au-syd
+       2) br-sao
+     * 3) ca-tor
+       ...
+      10) us-south
+  Choice [1-14] [3]: 10
+  Workspace prefix [bnk-quickstart]:
+  Workers per zone (min 1; cluster spans all 3 AZs) [1]: 2
+  OpenShift version [4.18]:
+  Create registry COS instance? [Y/n]: y
+  Resource group [default]:
+→ ✓ Resource group "default" (id ...)
+  Create Transit Gateway? [Y/n]: y
+  Install cert-manager? [Y/n]: y
+  Deploy BIG-IP Next (BNK)? [Y/n]: y
+  Add a testing client? [y/N]: y
+  Region to install the test client in:
+      ...
+  Choice [1-14] [10]: 3
+  Create a new client VPC for it? [Y/n]: y
+  Create per-zone cluster jumphosts? [y/N]: n
+  Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
+✓ Current workspace: default
 ✓ Wrote ~/.roksbnkctl/default/config.yaml
 </code></pre>
 <p>What just happened:</p>
 <ul>
-<li>A workspace called <code>default</code> now exists at <code>~/.roksbnkctl/default/</code>.</li>
-<li><code>config.yaml</code> records the region, resource group, cluster name, OpenShift version, worker pool sizing, and BNK component defaults.</li>
-<li>The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service <code>roksbnkctl</code>. Subsequent runs resolve it from there without prompting.</li>
+<li>A workspace called <code>default</code> now exists at <code>~/.roksbnkctl/default/</code> and is <strong>current</strong> — the next bare command runs against it (no separate <code>ws use</code> needed).</li>
+<li>You picked the region from the account’s <strong>available regions</strong>; the cluster spans <strong>all three availability zones</strong> with <code>workers-per-zone × 3</code> workers. One per zone (3 total) is the minimum — a ROKS cluster is always multi-AZ, so <code>init</code> floors the count there.</li>
+<li>The optional <strong>testing client</strong> (TGW jumphost + client VPC) can live in a <strong>different region</strong> from the cluster — you’re prompted for its region separately.</li>
+<li><code>config.yaml</code> records the region, resource group, prefix, worker sizing, the per-resource <code>resources:</code> toggles, and BNK component defaults. The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service <code>roksbnkctl</code>; subsequent runs resolve it from there without prompting.</li>
 </ul>
 <p>You can re-run <code>roksbnkctl init</code> to update workspace settings; existing values become the prompt defaults.</p>
+<h3 id="reusing-an-existing-cluster"><a class="header" href="#reusing-an-existing-cluster">Reusing an existing cluster</a></h3>
+<p>Answer <strong>n</strong> to <em>Create a new ROKS cluster?</em> and <code>init</code> lists the account’s running OpenShift clusters to pick one:</p>
+<pre><code>  Create a new ROKS cluster? [Y/n]: n
+→ Listing running OpenShift clusters...
+  Choose an existing cluster:
+     * 1) bnk-demo        (us-south, 4.18.x_openshift)
+       2) roks-prod-ca    (ca-tor, 4.19.x_openshift)
+  Choice [1-2] [1]: 1
+</code></pre>
+<p>The chosen cluster’s region and name are recorded, and <code>init</code> populates <code>cluster-outputs.json</code> — the same identity file <a href="./09-registering-existing-cluster.html"><code>cluster register</code></a> writes — so a subsequent <code>roksbnkctl up</code> deploys BNK straight onto it, with no <code>cluster up</code> and no separate <code>register</code> step.</p>
 <h2 id="step-3--roksbnkctl-up---auto"><a class="header" href="#step-3--roksbnkctl-up---auto">Step 3 — <code>roksbnkctl up --auto</code></a></h2>
 <p>The deployment. Runs <code>terraform plan</code>, runs <code>terraform apply</code>, fetches the admin kubeconfig from IBM Cloud, writes it to <code>~/.kube/config</code> at mode 0600. The <code>--auto</code> flag skips the plan-and-confirm gate; without it <code>up</code> shows the plan and asks “apply? [y/N]” before continuing.</p>
 <pre><code class="language-bash">roksbnkctl up --auto

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,17 +190,20 @@
 <tr><th>Component</th><th>What it is</th><th>Module in the bundled HCL</th></tr>
 </thead>
 <tbody>
-<tr><td><strong><code>flo</code></strong></td><td>F5 Lifecycle Operator — the controller that watches CNE Instance CRs and reconciles them into running BIG-IP Next pods</td><td><code>module.flo</code> (Helm release)</td></tr>
-<tr><td><strong><code>cne_instance</code></strong></td><td>The CR that declares “I want a BIG-IP Next data plane here” — drives <code>flo</code> to provision the TMM pods</td><td><code>module.cne_instance</code> (Kubernetes manifest)</td></tr>
-<tr><td><strong><code>license</code></strong></td><td>JWT licenses + activation tokens that gate BNK’s runtime — sourced from the registry COS</td><td><code>module.license</code> (Helm release + null_resources)</td></tr>
-<tr><td><strong><code>cluster-side bits</code></strong></td><td>ServiceAccounts, RoleBindings, SCC bindings, Secrets that flo / cne_instance / license need at runtime</td><td>scattered across the modules above</td></tr>
+<tr><td><strong><code>flo</code></strong></td><td>F5 Lifecycle Operator — the controller that watches CNE Instance CRs and reconciles them into running BIG-IP Next pods</td><td><code>module.flo</code> (<code>helm_release</code>)</td></tr>
+<tr><td><strong><code>cne_instance</code></strong></td><td>The CR that declares “I want a BIG-IP Next data plane here” — drives <code>flo</code> to provision the TMM pods</td><td><code>module.cne_instance</code> (<code>kubectl_manifest</code> + <code>wait_for</code>)</td></tr>
+<tr><td><strong><code>license</code></strong></td><td>The License CR (JWT + operation mode) that gates BNK’s runtime — sourced from the registry COS</td><td><code>module.license</code> (<code>kubectl_manifest</code> + <code>wait_for</code>)</td></tr>
+<tr><td><strong><code>cluster-side bits</code></strong></td><td>Namespaces, Secrets, ServiceAccounts, RoleBindings, SCC bindings, NADs, the cert-manager issuer chain</td><td><code>kubernetes_namespace</code>/<code>kubernetes_secret</code> + <code>kubectl_manifest</code>, across the modules above</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>up</code> does <strong>not</strong> own the cluster, cert-manager, the registry COS, or the jumphost — those are cluster-phase resources. See <a href="./08-cluster-phase.html">Chapter 8</a> for the split.</p>
+<p><code>up</code> does <strong>not</strong> own the cluster, cert-manager’s <em>chart</em>, the registry COS, or the jumphost — those are cluster-phase resources. See <a href="./08-cluster-phase.html">Chapter 8</a> for the split.</p>
+<blockquote>
+<p><strong>New in this release — the BNK phase is now terraform-native.</strong> The trial layer used to mutate the cluster through <code>null_resource</code> + <code>local-exec</code> shell: raw <code>curl</code> server-side-apply for every custom resource, <code>helm upgrade --install</code> shelled out for the charts, and fixed <code>time_sleep</code> blocks (≈210 seconds of guesswork) standing in for readiness. That is gone. Chart installs are now <code>helm_release</code> (<code>wait = true</code>); the custom resources are <code>kubectl_manifest</code> (from the <code>alekc/kubectl</code> provider) with <code>wait_for</code> blocks that watch the resource’s real <code>.status</code>; namespaces and Secrets are the <code>kubernetes</code> provider. The CRs are now <strong>real Terraform state</strong> — <code>plan</code> diffs them, <code>destroy</code> deletes them (finalizer-aware), and drift is detected. See <a href="#the-terraform-native-deployment-model">§“The terraform-native deployment model”</a> below, and the concept note <a href="#why-we-retired-the-bnk-null_resourcecurlsleep">§“Why we retired the BNK <code>null_resource</code>/<code>curl</code>/<code>sleep</code>”</a>.</p>
+</blockquote>
 <h2 id="the-77-resource-shape"><a class="header" href="#the-77-resource-shape">The 77-resource shape</a></h2>
 <p>A clean <code>roksbnkctl up</code> against a fresh cluster lands roughly <strong>77 resources</strong> when the cluster phase is bundled in (i.e. <code>cluster up</code> and <code>up</code> were one combined run). Against a pre-existing cluster (<code>cluster up</code> then <code>up</code>), the trial-only count is smaller — roughly the difference, ~41 resources.</p>
-<p>The number isn’t load-bearing; it shifts a few resources up or down between upstream HCL releases as the chart adds/removes null_resources and Secrets. Treat “77” as a sanity-check tag, not a contract.</p>
+<p>The number isn’t load-bearing; it shifts a few resources up or down between upstream chart releases as the charts add/remove Secrets and <code>kubectl_manifest</code> CRs. Treat “77” as a sanity-check tag, not a contract.</p>
 <p>A representative breakdown:</p>
 <pre><code>Cluster phase (~36 resources, owned by `cluster up`)
   ROKS cluster + worker pools          ~5
@@ -211,35 +214,39 @@
   TGW jumphost VSI + cloud-init         ~16
 
 Trial phase (~41 resources, owned by `roksbnkctl up`)
-  flo Helm release                       ~5
-  cne_instance manifest + finalisers     ~4
-  license Helm release                  ~10
-  Cluster-side SAs / RoleBindings / SCC ~10
-  null_resources for token bootstrap    ~12
+  flo + cis helm_release                 ~4
+  cne_instance kubectl_manifest          ~1
+  license kubectl_manifest               ~1
+  namespaces + secrets (kubernetes)      ~5
+  cert issuer chain (kubectl_manifest)   ~3
+  NADs (kubectl_manifest)                ~2
+  SCC / node-labeler kubectl_manifest   ~20
+  IBM IAM trusted profile + COS reads   ~5
 </code></pre>
-<p>The null_resources at the bottom of the list are interesting — they’re the ones that re-run on every apply (more on that below).</p>
+<p>The <code>kubectl_manifest</code> resources are now ordinary Terraform state: a re-run <code>plan</code> shows them as no-ops unless their spec changed. The old <code>null_resource</code> token-bootstrap block that churned on every apply is gone — see <a href="#re-running-up-is-now-a-real-no-op">§“Re-running <code>up</code> is now a real no-op”</a>.</p>
 <h2 id="apply-timing"><a class="header" href="#apply-timing">Apply timing</a></h2>
 <p>A clean <code>up</code> against a fresh cluster takes ~50 minutes:</p>
 <ul>
 <li>ROKS cluster provisioning: 30-40 min (the bulk of the wait)</li>
-<li>cert-manager + flo Helm install: ~5 min</li>
-<li>cne_instance reconcile: 1-2 min</li>
-<li>license bootstrap (token generation + activation): 2-3 min</li>
-<li>Cluster-side bits + finalisers: 2-3 min</li>
+<li>cert-manager + flo <code>helm_release</code> (<code>wait = true</code>): ~5 min</li>
+<li>cne_instance reconcile: 1-2 min (gated on the CNEInstance’s real <code>Available</code> condition, not a sleep)</li>
+<li>license verification: 1-2 min (gated on the License CR’s real <code>status.state</code>, not a sleep)</li>
+<li>Cluster-side bits: applied concurrently with the above</li>
 </ul>
-<p>Against a pre-existing cluster (already-up’d or registered), the trial-only run is <strong>5-10 minutes</strong>. Most of that is Helm waiting for <code>flo</code> to stabilise and the license module’s null_resources running.</p>
-<h2 id="the-token-rotation-observation"><a class="header" href="#the-token-rotation-observation">The token-rotation observation</a></h2>
-<p>If you re-run <code>roksbnkctl up</code> against an already-deployed BNK trial, you’ll see ~41 resources <code>re-create</code> or <code>update in-place</code> even though “nothing changed”. This is expected.</p>
-<p>The <code>license</code> module rotates <strong>admin certificate tokens</strong> between runs — the JWT used to authenticate against the BNK control plane is short-lived and re-minted on each apply. A token rotation cascades into ~12 null_resources that exist solely to inject the new token into Helm-managed Secrets:</p>
-<pre><code>module.license.null_resource.cncf_admin_cert_token: Refreshing state... [id=8746234876]
-module.license.null_resource.cncf_admin_cert_token: Destroying... [id=8746234876]
-module.license.null_resource.cncf_admin_cert_token: Destruction complete after 0s
-module.license.null_resource.cncf_admin_cert_token: Creating...
-module.license.null_resource.cncf_admin_cert_token: Creation complete after 12s [id=9183746183]
-</code></pre>
-<p>That’s why the count of “destroyed + created” can hit ~41 even when no infrastructure-meaningful changes have been made.</p>
-<p>The rotation is harmless — running pods aren’t restarted, traffic isn’t interrupted. The new token replaces the old in the relevant Secret; flo notices and updates its in-memory cache. From the BNK trial’s runtime perspective, the second <code>up</code> is a no-op.</p>
-<p>If you want to skip the rotation cycle and just check “would this plan change anything significant?”, use <code>roksbnkctl plan</code> rather than <code>up</code> — it shows the plan without applying.</p>
+<p>Against a pre-existing cluster (already-up’d or registered), the trial-only run is <strong>5-10 minutes</strong>. Most of that is <code>helm_release</code> waiting for <code>flo</code> to stabilise and the two CR <code>wait_for</code> blocks resolving.</p>
+<blockquote>
+<p><strong>The ≈210 seconds of fixed <code>time_sleep</code> is gone.</strong> The legacy path padded the apply with six fixed sleeps (cert-manager-ready, two SCC-propagation waits, a CNEInstance-CRD wait, a License-CRD wait, and a 60-second flo-pods wait) plus in-script polling loops — ≈210s of unconditional waiting whether or not the cluster was actually ready. The terraform-native path replaces all of it with <code>helm_release wait = true</code> and <code>kubectl_manifest</code> <code>wait_for</code>, which return the <em>instant</em> readiness is observed and no sooner. On a warm cluster that is the single largest contributor to the faster re-deploy loop. <strong>The exact kubectl-vs-legacy wall-clock delta is pending the gated-live benchmark</strong> (<code>scripts/e2e-bnk-native.sh</code>, run by the integrator against a real cluster); until that lands, treat the speedup as <strong>qualitative</strong> — the ≈210s of fixed sleep deleted plus real-readiness gating rather than a pinned “N× faster”. <!-- INTEGRATOR: fill the measured kubectl-vs-legacy seconds + delta from the e2e-bnk-native.sh run here. --></p>
+</blockquote>
+<h2 id="re-running-up-is-now-a-real-no-op"><a class="header" href="#re-running-up-is-now-a-real-no-op">Re-running <code>up</code> is now a real no-op</a></h2>
+<p>If you re-run <code>roksbnkctl up</code> against an already-deployed BNK trial with no config change, the plan reports <strong><code>0 to add, 0 to change, 0 to destroy</code></strong> and <code>up</code> skips apply.</p>
+<p>This is a behaviour change from the legacy <code>null_resource</code>/<code>curl</code> path. Under the old design, every apply churned ~12 <code>null_resource</code>s — they had no real Terraform identity, so Terraform could not tell “already applied” from “not yet applied” and re-ran their <code>local-exec</code> shell on each pass. A re-run looked like <code>~41 destroyed + created</code> even when nothing had changed.</p>
+<p>The terraform-native path makes each cluster object a real resource:</p>
+<ul>
+<li>A <code>helm_release</code> knows the installed chart version, so an unchanged version is a no-op.</li>
+<li>A <code>kubectl_manifest</code> carries the rendered manifest as state, so an unchanged spec is a no-op (and a <em>changed</em> spec shows a precise <code>~ update in-place</code> diff of exactly the changed fields).</li>
+<li>A <code>kubernetes_secret</code> is keyed by its data, so an unchanged Secret is a no-op.</li>
+</ul>
+<p>So the second <code>up</code> against an unchanged trial genuinely changes nothing. To bump a BNK version or tweak a CNEInstance parameter, edit <code>config.yaml</code> (or a <code>--var-file</code>) and re-run: <code>terraform plan</code> diffs <strong>only</strong> the changed CNEInstance spec and helm versions — Terraform is the delta engine. This is the fast re-deploy loop the sprint targets, and it is <em>less</em> moving machinery than the old token-rotation cascade, not more. Use <code>roksbnkctl plan</code> to preview the diff without applying.</p>
 <h2 id="reading-the-terraform-plan-output"><a class="header" href="#reading-the-terraform-plan-output">Reading the Terraform plan output</a></h2>
 <p><code>roksbnkctl up</code> runs <code>terraform plan</code> first and prints its output. The plan summary at the end is the most useful part:</p>
 <pre><code>Plan: 77 to add, 0 to change, 0 to destroy.
@@ -251,7 +258,7 @@ module.license.null_resource.cncf_admin_cert_token: Creation complete after 12s 
 <ul>
 <li><strong><code>+ create</code></strong> — a new resource. Lines are green in a TTY.</li>
 <li><strong><code>&lt;= read</code></strong> — a data source the plan read but did not change. Common for <code>data "ibm_resource_group"</code> and similar lookups; effectively informational.</li>
-<li><strong><code># destroy</code></strong> — an in-progress destroy of an existing resource. Followed by a <code>+ create</code> if it’s being replaced (the null_resource rotation case).</li>
+<li><strong><code># destroy</code></strong> — an in-progress destroy of an existing resource. Followed by a <code>+ create</code> if it’s being replaced (e.g. a <code>kubectl_manifest</code> whose spec changed in a way that forces replacement).</li>
 <li><strong><code>~ update in-place</code></strong> — a resource whose attributes are being mutated without re-creation.</li>
 </ul>
 <p>The <code>&lt;=</code> data sources are the ones that look like:</p>
@@ -300,7 +307,7 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 </ol>
 <p>Later wins on conflict — same as Terraform’s own ordering. If you find yourself passing the same <code>--var-file</code> on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>, <code>init --var-file</code> is the persistence path that lets you drop the flag from subsequent calls.</p>
 <h2 id="apply-retries-on-transient-errors"><a class="header" href="#apply-retries-on-transient-errors">Apply retries on transient errors</a></h2>
-<p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>cne_instance</code>, <code>license</code>, and <code>cert-manager</code> modules all curl the master directly; on a fresh cluster, they sometimes race propagation and fail with <code>exit status 7</code> (curl couldn’t connect) or <code>Connection refused</code>.</p>
+<p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>helm</code>, <code>kubernetes</code>, and <code>alekc/kubectl</code> providers all talk to the master directly; on a fresh cluster, they sometimes race propagation and fail with a connection error (<code>Connection refused</code>, <code>i/o timeout</code>, <code>TLS handshake timeout</code>).</p>
 <p><code>roksbnkctl up</code> has built-in retry: up to 3 apply attempts, with a 60-second sleep between attempts, on any of these heuristic patterns:</p>
 <ul>
 <li><code>exit status 7</code> (curl couldn’t connect)</li>
@@ -316,7 +323,7 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <p>If your apply hits one of these, you’ll see:</p>
 <pre><code>→ apply attempt 1 hit a transient-looking failure; waiting 60s and retrying...
 </code></pre>
-<p>Terraform’s idempotence means already-created resources are skipped on the retry; only the failed null_resources / data sources re-execute. After 3 attempts, <code>up</code> gives up:</p>
+<p>Terraform’s idempotence means already-created resources are skipped on the retry; only the failed resources / data sources re-execute. After 3 attempts, <code>up</code> gives up:</p>
 <pre><code>✗ apply still failing after 3 attempts — giving up
 </code></pre>
 <p>At that point, fix the underlying cause (usually wait longer or re-run manually) and try again. The retry is for transient races, not persistent failures.</p>
@@ -365,8 +372,8 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <p>Sample output against a split workspace:</p>
 <pre><code>$ roksbnkctl bnk down --auto
 → terraform destroy (trial phase)
-  module.license.helm_release.license: Destroying...
-  module.cne_instance.kubernetes_manifest.cne: Destroying...
+  module.license.kubectl_manifest.license: Destroying...
+  module.cne_instance.kubectl_manifest.cneinstance: Destroying...
   module.flo.helm_release.flo: Destroying...
   ...
   Destroy complete! Resources: 41 destroyed.
@@ -435,6 +442,78 @@ roksbnkctl bnk up --auto
 roksbnkctl cluster down --auto
 # (or `roksbnkctl down` from any starting state — see the dispatch matrix above)
 </code></pre>
+<h2 id="the-terraform-native-deployment-model"><a class="header" href="#the-terraform-native-deployment-model">The terraform-native deployment model</a></h2>
+<p>The BNK phase has three layers, each owned by a purpose-built Terraform provider. Nothing shells out to <code>curl</code>, <code>kubectl</code>, or <code>helm</code> any more; nothing sleeps a fixed interval.</p>
+<h3 id="1-the-install-layer--helm_release"><a class="header" href="#1-the-install-layer--helm_release">1. The install layer — <code>helm_release</code></a></h3>
+<p>cert-manager, FLO, and CIS install as <code>helm_release</code> resources with <code>wait = true</code>. <code>helm_release</code> runs Helm in-process (via the <code>hashicorp/helm</code> provider), tracks the installed chart/version in Terraform state, and — with <code>wait = true</code> — blocks until the release’s workloads report ready. FAR version discovery stays Terraform-side: the manifest chart is still pulled to read the FLO and CIS chart versions, which feed the <code>helm_release.version</code> argument.</p>
+<p>The chart installs have <strong>prerequisites</strong> that must exist first, or <code>helm_release wait = true</code> would hang on <code>ImagePullBackOff</code>:</p>
+<ul>
+<li><strong>Namespaces</strong> (<code>f5-bnk</code>, <code>f5-utils</code>) — <code>kubernetes_namespace</code>.</li>
+<li><strong>Secrets</strong> — the FAR image-pull secret <code>far-secret</code> (in both namespaces) and the CIS <code>f5-bigip-ctlr-login</code> login secret — <code>kubernetes_secret</code>. These carry the registry credentials the charts pull with, so they are ordered <em>before</em> the charts via <code>depends_on</code>.</li>
+</ul>
+<h3 id="2-the-cr-layer--kubectl_manifest--wait_for"><a class="header" href="#2-the-cr-layer--kubectl_manifest--wait_for">2. The CR layer — <code>kubectl_manifest</code> + <code>wait_for</code></a></h3>
+<p>Every custom resource — the cert-manager issuer chain (<code>ClusterIssuer</code>, the CA <code>Certificate</code>, the CA <code>ClusterIssuer</code>), the two <code>NetworkAttachmentDefinition</code>s, the OpenShift SCC <code>ClusterRoleBinding</code>s, the node-labeler <code>Job</code>, the <strong>CNEInstance</strong>, and the <strong>License</strong> — is a <code>kubectl_manifest</code> resource from the <code>alekc/kubectl</code> provider. The manifest body is the same spec the legacy path applied; only the apply mechanism changed.</p>
+<p>Two CRs gate on <strong>real readiness</strong> via a <code>wait_for</code> block that watches the live object’s <code>.status</code>:</p>
+<pre><code class="language-hcl"># CNEInstance — wait for FLO to report the instance up
+resource "kubectl_manifest" "cneinstance" {
+  yaml_body         = yamlencode(local.cneinstance_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  wait_for {
+    condition {
+      type   = "Available"
+      status = "True"
+    }
+  }
+  depends_on = [helm_release.flo]   # the FLO chart installs the CRD
+}
+
+# License — wait for the CPCL state machine to reach the licensed state
+resource "kubectl_manifest" "license" {
+  yaml_body         = yamlencode(local.license_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  wait_for {
+    field {
+      key   = "status.state"
+      value = "Verification Complete"
+    }
+  }
+  depends_on = [helm_release.flo, kubectl_manifest.cneinstance]
+}
+</code></pre>
+<p><code>wait_for</code> polls the live object and returns the instant the matched condition/field becomes true. The CNEInstance signal is its <code>Available</code> condition (<code>status.conditions[type=Available].status == True</code>); the License signal is its <code>status.state</code> reaching the licensed value. (The <code>"Verification Complete"</code> literal comes from the architect spike’s CWC-REST evidence and the FAR-shipped License CRD; it is <strong>confirmed against a live licensed cluster by the integrator’s <code>e2e-bnk-native.sh</code> run</strong> before merge — if the live value differs, staff pins the real one or switches to the <code>status.conditions[]</code> fallback matcher, which is equally expressible.) Resources with no meaningful readiness status — NADs, SCC bindings, issuers — carry no <code>wait_for</code> and simply apply.</p>
+<h3 id="3-namespaces--secrets--the-kubernetes-provider"><a class="header" href="#3-namespaces--secrets--the-kubernetes-provider">3. Namespaces + Secrets — the <code>kubernetes</code> provider</a></h3>
+<p>Covered above as the chart prerequisites. They use the <code>hashicorp/kubernetes</code> provider rather than <code>kubectl_manifest</code> because they have typed, first-class resource schemas (<code>kubernetes_namespace</code>, <code>kubernetes_secret</code>) and no plan-time-CRD concern.</p>
+<h3 id="provider-wiring-and-ordering"><a class="header" href="#provider-wiring-and-ordering">Provider wiring and ordering</a></h3>
+<p>All three providers are fed from the <strong>same</strong> <code>data "ibm_container_cluster_config"</code> the modules already use — <code>host</code>, <code>token</code>, and the decoded <code>cluster_ca_certificate</code>. The <code>create_roks_cluster ? 0 : 1</code> guard that keeps the provider config valid when the cluster doesn’t exist yet at plan time is unchanged.</p>
+<p>The only <strong>genuinely serial</strong> spine is <code>cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License</code>. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the ~16 CNEInstance SCC bindings — has had its conservative <code>depends_on</code> edges dropped so Terraform’s default parallelism applies them concurrently with the install spine. That parallelism, plus the deletion of the fixed sleeps, is where the speed comes from.</p>
+<h3 id="the-install-mode-flag-bnk_cr_mode"><a class="header" href="#the-install-mode-flag-bnk_cr_mode">The install-mode flag (<code>bnk_cr_mode</code>)</a></h3>
+<p>During the transition, both paths ship side by side, gated by one Terraform variable:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>bnk_cr_mode</code></th><th>What runs</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kubectl</code> (default)</td><td>the terraform-native path: <code>helm_release</code> + <code>kubernetes_*</code> + <code>kubectl_manifest</code> + <code>wait_for</code></td></tr>
+<tr><td><code>legacy_curl</code></td><td>the old <code>null_resource</code> + <code>curl</code> + <code>time_sleep</code> path, byte-for-byte unchanged</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two paths share the same spec locals (<code>local.cneinstance_manifest</code>, the helm values), so they apply the <em>same</em> manifests by different mechanisms — which is exactly what lets the validator benchmark them apples-to-apples (the kubectl path must be materially faster). The roksbnkctl CLI exposes this as a <strong><code>--legacy-bnk</code></strong> flag on both <code>bnk up</code> and <code>bnk down</code> (default off → <code>kubectl</code>); it sets <code>bnk_cr_mode = "legacy_curl"</code> for that run. You can also pin it persistently in workspace config via <code>bnk.cr_mode</code> (see the <a href="./28-configuration-reference.html#bnk-block">configuration reference</a>). Use the <strong>same</strong> mode at <code>bnk down</code> that you used at <code>bnk up</code> so the destroy targets the resources that were actually created. The legacy path is the benchmark baseline / transition fallback only; new deployments use the default. The flag is in the <a href="./27-command-reference.html">command reference</a>.</p>
+<h2 id="why-we-retired-the-bnk-null_resourcecurlsleep"><a class="header" href="#why-we-retired-the-bnk-null_resourcecurlsleep">Why we retired the BNK <code>null_resource</code>/<code>curl</code>/<code>sleep</code></a></h2>
+<p>A concept note on the design change, for readers who want the <em>why</em> rather than the <em>how</em>.</p>
+<p><strong>The old shape.</strong> The BNK phase used to mutate the cluster through Terraform <code>null_resource</code> + <code>local-exec</code> provisioners: raw <code>curl</code> server-side-apply (<code>PATCH ...?fieldManager=terraform&amp;force=true</code>) for every custom resource, a shelled-out <code>helm upgrade --install</code> for each chart, and fixed <code>time_sleep</code> blocks standing in for readiness. It worked, but it had four structural problems.</p>
+<p><strong>1. The CRs were not real Terraform state.</strong> A <code>null_resource</code> running <code>curl</code> has no Kubernetes identity. Terraform could not diff it, could not detect drift, and could not reliably destroy it — teardown was a best-effort <code>curl -X DELETE ... || true</code>. Worse, a <code>null_resource</code> re-runs its <code>local-exec</code> whenever its triggers change (and the license token churned every apply), so a “no-op” re-apply destroyed-and-recreated dozens of resources. With <code>kubectl_manifest</code>, the CR <strong>is</strong> a Terraform resource: <code>plan</code> diffs the exact changed fields, <code>destroy</code> deletes it finalizer-aware, drift is detected, and an unchanged re-apply is a true no-op.</p>
+<p><strong>2. Fixed sleeps instead of real readiness.</strong> The legacy path padded itself with ≈210 seconds of <code>time_sleep</code> — wait 30s for the CRD, 30s for SCC propagation, 60s for pods — plus in-script <code>for i in $(seq 1 30); do ... sleep 10; done</code> polling loops. These are <em>eventual-consistency hedges</em>: the cluster reaches readiness at some unknown moment, and a fixed sleep either wastes time (usually) or is too short (occasionally, causing flakes). <code>helm_release wait = true</code> and <code>kubectl_manifest</code> <code>wait_for</code> replace the guess with a watch — they return the instant the real <code>.status</code> reports ready, and not before. The CNEInstance’s <code>Available</code> condition and the License’s <code>status.state</code> are the actual readiness signals the operators publish; gating on them is both faster on the happy path and more reliable on a slow one.</p>
+<p><strong>3. The plan-time-CRD problem — why <code>alekc/kubectl</code> specifically.</strong> Applying a CR whose CRD is installed <em>in the same apply</em> (the FLO chart installs the CNEInstance and License CRDs, then we apply those CRs) is the classic Terraform trap. HashiCorp’s own <code>kubernetes_manifest</code> does a typed-schema lookup of the kind at <strong>plan</strong> time and fails with <code>cannot select exact GVK ... no matches for kind</code> because the CRD doesn’t exist yet. That is exactly why the legacy modules used raw <code>curl</code> (“no kubernetes provider required at plan time”). The <code>alekc/kubectl</code> provider’s <code>kubectl_manifest</code> carries the manifest as an opaque YAML string and resolves the GVK at <strong>apply</strong> time — so it applies a CR whose CRD is created in the same run, no plan-time schema lookup. It gives us real state + drift + finalizer-aware delete + <code>wait_for</code>, <em>without</em> the plan-time-CRD failure and <em>without</em> us building a custom provider or a Go reconciler. Ordering (CRD before CR) is still expressed with <code>depends_on</code> on the chart’s <code>helm_release</code> — <code>wait_for</code> removes the sleep, not the ordering.</p>
+<p><strong>4. The speed win.</strong> Three things compound: the ≈210s of fixed sleep is deleted; <code>wait_for</code>/<code>helm wait</code> return as soon as readiness is observed rather than after a worst-case pad; and dropping the over-conservative <code>depends_on</code> edges lets Terraform apply the independents (NADs, Secrets, SCC bindings, node-labeler) concurrently. For the tight deploy-test-iterate loop the sprint targets, that turns each re-deploy from “apply, then wait out the sleeps” into “apply, gated only on actual readiness”. And because the CRs are now real state, bumping a BNK version is a <code>plan</code> that diffs <em>only</em> the changed CNEInstance spec and chart versions — Terraform is the delta engine, so this is less code than a hand-rolled reconciler, not more.</p>
+<p><strong>What stays in Terraform.</strong> The IBM IAM trusted-profile resources (for the CNE controller service account) and the COS reads (the FAR auth archive and the license JWT, fetched via the IBM IAM token + the COS S3 REST API) are <strong>unchanged</strong> — they are IBM-Cloud-native Terraform resources/data sources, not Kubernetes mutations, and they stay exactly as they were.</p>
+<p><strong>The one new dependency — and the air-gap caveat.</strong> <code>alekc/kubectl</code> is a third-party provider on the public Terraform registry (<code>registry.terraform.io/providers/alekc/kubectl</code>). On connected runs it downloads at <code>terraform init</code> like any provider — the net dependency simply shifts from “<code>curl</code>/<code>base64</code> shell tools on the runner” to “a registry plugin at init”. For <strong>air-gapped / offline</strong> ROKS installs it must be pre-staged: build a <code>terraform providers mirror</code> bundle on a connected machine and point the offline runner at it via a <code>provider_installation { filesystem_mirror { ... } }</code> block in the Terraform CLI config (or an internal <code>network_mirror</code>). The provider is pinned (<code>&gt;= 2.4.0</code>) and recorded in <code>.terraform.lock.hcl</code>, so mirrored installs are reproducible. This is the single new supply-chain dependency the change introduces.</p>
+<blockquote>
+<p><strong>Note — transcripts, resource counts, and timings are illustrative (pending the live verify).</strong> The sample <code>terraform plan</code> / <code>apply</code> / <code>bnk up</code> / <code>bnk down</code> output, the <code>~41</code>/<code>~77</code>-resource breakdowns, and every timing figure in this chapter are <em>representative</em> of the terraform-native path, not captured from a live run. They could not be re-captured here because the gated-live path is cluster-mutating and no cluster was available; the byte-for-byte transcripts and the measured kubectl-vs-legacy benchmark numbers are filled in by the integrator from the <code>scripts/e2e-bnk-native.sh</code> run. The command <strong>surface</strong> (the <code>--legacy-bnk</code> flag, <code>bnk_cr_mode</code>, the resource <em>shapes</em> — <code>helm_release</code> / <code>kubernetes_*_v1</code> / <code>kubectl_manifest</code> + <code>wait_for</code>) is reconciled against the built binary and the landed terraform and is accurate; treat the specific numbers and console lines as orientation, not contract. <!-- INTEGRATOR: replace this note's transcripts + numbers with the e2e-bnk-native.sh captures once the live verify is GREEN. --></p>
+</blockquote>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./07-quick-start.html">Chapter 7 — Quick start</a> — happy-path walkthrough end-to-end.</li>

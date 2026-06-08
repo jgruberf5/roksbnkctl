@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -210,6 +210,7 @@
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped.</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: <code>"kubectl"</code> (terraform-native — <code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>) or <code>"legacy_curl"</code> (the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline). <code>roksbnkctl</code> renders this from <code>bnk.cr_mode</code> / the <code>--legacy-bnk</code> flag. Validated to one of the two values.</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository URL for Docker and Helm images</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>

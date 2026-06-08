@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -326,6 +326,7 @@ cos:             # optional COS supply-chain config
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: shared-client-vpc }
+  client_region:     ca-tor               # since v1.9.0; testing-client region (plain string)
 </code></pre>
 <p><em>(since <code>v1.8.0</code>)</em> The <code>init</code> interview’s create/adopt answers, one <code>{create, existing}</code> pair per resource. <code>create: true</code> provisions a new, prefix-named resource; <code>create: false</code> declines it, and when a still-enabled resource depends on the declined one, <code>existing:</code> names the pre-existing resource to consume instead.</p>
 <div class="table-wrapper">
@@ -344,6 +345,7 @@ cos:             # optional COS supply-chain config
 </tbody>
 </table>
 </div>
+<p>One extra key, <code>client_region</code> <em>(since <code>v1.9.0</code>)</em>, is a plain <strong>string</strong> rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when <code>init</code> asks where to install the test client. It renders into <code>testing_client_vpc_region</code> (omitted → the terraform default applies) and seeds the regions <code>roksbnkctl cleanup</code> scans.</p>
 <p>The block is <strong>optional and additive</strong> — omit it (any pre-<code>v1.8.0</code> config) and the legacy sparse render applies; a fresh <code>init</code> writes it in full. The deep reference, including which terraform <code>create_*</code>/<code>*_name</code> variables each toggle renders, is <a href="./28-configuration-reference.html#resources-block">Chapter 28 §“<code>resources:</code> block”</a>.</p>
 <h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
 <pre><code class="language-yaml">bnk:

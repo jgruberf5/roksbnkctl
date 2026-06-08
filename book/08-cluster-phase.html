@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,6 +178,15 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-cluster-phase-cluster-updown"><a class="header" href="#the-cluster-phase-cluster-updown">The cluster phase (cluster up/down)</a></h1>
+<blockquote>
+<p><strong>As of the three-phase split, a workspace is Cluster / BNK / Testing — not
+two phases.</strong> This chapter covers the Cluster phase specifically; the BNK
+trial and the testing jumphosts are now separate sibling phases that deploy
+in parallel on top. The “trial phase” language below predates the split and
+now means the <strong>BNK phase</strong> (the jumphosts moved to their own Testing
+phase). See <a href="./08a-three-phase-lifecycle.html">Chapter 8a — The three-phase lifecycle</a>
+for the current model, parallel <code>up</code>, and <code>roksbnkctl testing up/down</code>.</p>
+</blockquote>
 <p>A <code>roksbnkctl</code> workspace is <strong>two phases on top of each other</strong>: a durable <strong>cluster phase</strong> (the ROKS cluster + cluster-shared services that take 30+ minutes to provision) and a short-lived <strong>trial phase</strong> (the BNK trial that iterates on top in 5-10 minutes). The cluster phase is exposed as its own command pair, <code>roksbnkctl cluster up</code> / <code>roksbnkctl cluster down</code>, so the cluster survives across many BNK trial cycles.</p>
 <blockquote>
 <p><strong>As of v1.1.0, this two-phase shape is the default for every new workspace.</strong> A fresh <code>roksbnkctl up</code> provisions the cluster phase first, then the trial phase, against separate state directories. Tearing down only the trial — the common iteration case — uses <a href="./10-deploying-bnk-trials.html#the-bnk-up--bnk-down-command-group"><code>roksbnkctl bnk down</code></a> and leaves the cluster intact. The unscoped <code>up</code> / <code>down</code> verbs are now shape-aware composites that delegate to the right phase commands underneath.</p>
@@ -400,7 +409,7 @@ this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="09-registering-existing-cluster.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="08a-three-phase-lifecycle.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -414,7 +423,7 @@ this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="09-registering-existing-cluster.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="08a-three-phase-lifecycle.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

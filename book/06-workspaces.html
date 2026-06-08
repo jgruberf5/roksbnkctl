@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,7 +179,10 @@
                     <main>
                         <h1 id="workspaces"><a class="header" href="#workspaces">Workspaces</a></h1>
 <p>A <strong>workspace</strong> is a per-environment bundle of config + state. The shape is modelled on <code>kubectl</code> contexts: you can have many of them, exactly one is “current” at a time, and a <code>-w</code> flag lets you address a specific one for a single command without flipping the pointer.</p>
-<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and the “parking-lot” pattern the end-to-end test uses to delete the workspace it’s currently inside.</p>
+<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and how creating or deleting a workspace moves the “current” pointer for you (so the old parking-lot dance is no longer needed).</p>
+<blockquote>
+<p><strong>Since <code>v1.9.0</code>, workspace selection follows you automatically.</strong> Creating a workspace (<code>init</code> or <code>ws new</code>) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no longer a phantom <code>default</code> fallback — with nothing selected, commands say so instead of guessing.</p>
+</blockquote>
 <h2 id="the-on-disk-layout"><a class="header" href="#the-on-disk-layout">The on-disk layout</a></h2>
 <p>Every workspace lives under <code>~/.roksbnkctl/&lt;name&gt;/</code>:</p>
 <pre><code>~/.roksbnkctl/
@@ -277,7 +280,8 @@ deploy_bnk = false
 <p>The header records the binary version and apply timestamp so the reader can correlate the snapshot to a specific <code>roksbnkctl</code> invocation. Alphabetic ordering within each section means re-running <code>apply</code> with identical inputs produces a byte-identical file (idempotency — handy for diffing snapshots across applies).</p>
 <h2 id="the-everyday-workspace-routine"><a class="header" href="#the-everyday-workspace-routine">The everyday workspace routine</a></h2>
 <p>The minimum daily routine:</p>
-<pre><code class="language-bash"># Initialise (creates ~/.roksbnkctl/&lt;name&gt;/config.yaml; defaults to "default")
+<pre><code class="language-bash"># Initialise (creates ~/.roksbnkctl/&lt;name&gt;/config.yaml and makes it current).
+# With no -w and no current workspace, init asks for a name (defaults to "default").
 roksbnkctl init
 
 # Switch which workspace is "current"
@@ -286,7 +290,7 @@ roksbnkctl ws use prod
 # See all workspaces and which one is current
 roksbnkctl ws list
 </code></pre>
-<p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control.</p>
+<p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively — and selects it. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control. The <code>init</code> interview itself (which now lists your account’s regions and existing clusters) is covered in <a href="./07-quick-start.html#step-2--roksbnkctl-init">Chapter 7 — Quick start</a>.</p>
 <h2 id="skip-the-interview-init---var-file"><a class="header" href="#skip-the-interview-init---var-file">Skip the interview: <code>init --var-file</code></a></h2>
 <p>If you already have a <code>terraform.tfvars</code> in hand — from a prior run, a colleague’s hand-off, or <code>cp terraform.tfvars.example terraform.tfvars &amp;&amp; $EDITOR terraform.tfvars</code> — you don’t need to retype its values into the interactive prompts. Pass the file to <code>init</code> and the interview is short-circuited for every field the file already answers:</p>
 <pre><code class="language-bash">roksbnkctl init -w myws --var-file ./terraform.tfvars
@@ -321,9 +325,9 @@ roksbnkctl ws ...              # alias
 <h3 id="ws-new-name--empty-skeleton"><a class="header" href="#ws-new-name--empty-skeleton"><code>ws new &lt;name&gt;</code> — empty skeleton</a></h3>
 <p>Creates <code>~/.roksbnkctl/&lt;name&gt;/</code> with no <code>config.yaml</code>. Useful when you want the directory to exist (so <code>ws use</code> works) before you run <code>init</code>.</p>
 <pre><code class="language-bash">roksbnkctl ws new staging
-# ✓ Created workspace "staging" (run `roksbnkctl init -w staging` to configure)
+# ✓ Created workspace "staging" and made it current (run `roksbnkctl init -w staging` to configure)
 </code></pre>
-<p>Most users skip this and use <code>roksbnkctl init -w staging</code> directly, which does both steps in one go.</p>
+<p>Creating the skeleton <strong>selects it</strong> (sets <code>current_workspace</code>), so the next bare command runs against it. Most users skip <code>ws new</code> and use <code>roksbnkctl init -w staging</code> directly, which creates, configures, <strong>and</strong> selects in one go.</p>
 <h3 id="ws-use-name--switch-current"><a class="header" href="#ws-use-name--switch-current"><code>ws use &lt;name&gt;</code> — switch current</a></h3>
 <p>Sets the <code>current_workspace</code> pointer in <code>~/.roksbnkctl/config.yaml</code>:</p>
 <pre><code class="language-bash">roksbnkctl ws use prod
@@ -347,30 +351,38 @@ staging            us-south  bnk-staging      local:./terraform
 </code></pre>
 <p>The <code>*</code> marker on <code>CURRENT</code> highlights the active workspace. Other columns reflect each workspace’s <code>config.yaml</code>. Rows where <code>config.yaml</code> is missing or unparseable still show the name, with the other columns blank — the list never errors out because of one corrupt workspace.</p>
 <h3 id="ws-delete-name---force"><a class="header" href="#ws-delete-name---force"><code>ws delete &lt;name&gt; [--force]</code></a></h3>
-<p>Removes the workspace directory and the OS-keychain entry for its API key. Two safety rails:</p>
-<ol>
-<li><strong>Refuses to delete the current workspace.</strong> You’d be left with a dangling <code>current_workspace</code> pointer, so <code>delete</code> errors out with: <code>cannot delete current workspace "foo"; switch first: roksbnkctl ws use &lt;other&gt;</code>.</li>
-<li><strong>Refuses if Terraform state lists provisioned resources</strong> (unless <code>--force</code>). Catches the foot-gun where you forget to run <code>roksbnkctl down</code> first.</li>
-</ol>
+<p>Removes the workspace directory and the OS-keychain entry for its API key.</p>
+<p><strong>You can delete the current workspace directly</strong> — there’s no “switch first” dance. If the workspace you delete was current, the pointer moves to another existing workspace (the alphabetically-first remaining one); if it was the last workspace, the pointer is cleared (there’s no fallback <code>default</code> — see <a href="#the-current-workspace-pointer">§“The current-workspace pointer”</a>).</p>
+<p>One safety rail remains: <strong><code>delete</code> refuses if Terraform state lists provisioned resources</strong> (unless <code>--force</code>). That catches the foot-gun where you forget to run <code>roksbnkctl down</code> first.</p>
 <pre><code class="language-bash">roksbnkctl ws delete staging
 # Delete workspace "staging"? [y/N]: y
 # ✓ Deleted workspace "staging"
+# ✓ Current workspace is now "default"          # only printed when "staging" was current
 
 # Refused — state still has resources
 roksbnkctl ws delete prod
-# Error: terraform state lists 77 resources; run `roksbnkctl down` first or pass --force
+# Error: workspace "prod" has terraform-managed resources; pass --force to delete anyway
 
 # I really mean it
 roksbnkctl ws delete prod --force
 # ✓ Deleted workspace "prod"
 </code></pre>
 <p><code>--force</code> skips both the prompt and the state-non-empty check. Use it sparingly — there’s no “undo” for <code>rm -rf ~/.roksbnkctl/&lt;name&gt;/</code>.</p>
+<blockquote>
+<p><strong>If a <code>down</code> errored partway</strong> and left cloud resources stranded, the state guard will (correctly) block <code>ws delete</code>. Sweep the orphans with <a href="./11-tearing-down.html#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a> first, then delete.</p>
+</blockquote>
 <h2 id="the-current-workspace-pointer"><a class="header" href="#the-current-workspace-pointer">The current-workspace pointer</a></h2>
 <p>The pointer lives at <code>~/.roksbnkctl/config.yaml</code>:</p>
 <pre><code class="language-yaml">current_workspace: prod
 </code></pre>
-<p>Every command that doesn’t pass <code>-w</code> reads this pointer. <code>roksbnkctl init</code> writes it on first run (so the very first <code>init</code> makes <code>default</code> current automatically). <code>ws use</code> rewrites it. Nothing else touches it.</p>
-<p>If the pointer references a workspace that doesn’t exist (e.g. someone <code>rm -rf</code>’d the directory by hand), <code>roksbnkctl</code> errors out with a clear message: <code>workspace "prod" referenced by current_workspace does not exist; run roksbnkctl ws use &lt;other&gt;</code>.</p>
+<p>Every command that doesn’t pass <code>-w</code> reads this pointer. The workspace verbs keep it in step with reality, so you rarely set it by hand:</p>
+<ul>
+<li><strong><code>init</code></strong> and <strong><code>ws new</code></strong> select the workspace they create — afterwards it’s current.</li>
+<li><strong><code>ws use</code></strong> rewrites it.</li>
+<li><strong><code>ws delete</code></strong> moves it off a deleted current workspace (to another existing one), or clears it when the last workspace is removed.</li>
+</ul>
+<p><strong>There is no fallback <code>default</code>.</strong> When the pointer is empty — you’ve deleted every workspace, or never created one — a command run without <code>-w</code> reports <code>no workspace selected; create one with roksbnkctl init or pick one with roksbnkctl ws use &lt;name&gt;</code> rather than silently operating on a phantom <code>default</code>. (<code>roksbnkctl init</code> with no <code>-w</code> and no current pointer asks for a workspace name, defaulting to <code>default</code> on the first run — so the bootstrap experience is unchanged.)</p>
+<p>If the pointer references a workspace whose directory is gone (e.g. someone <code>rm -rf</code>’d it by hand), commands report <code>workspace "prod" is not initialised; run roksbnkctl init first</code> — repoint with <code>ws use &lt;other&gt;</code> or recreate with <code>init</code>.</p>
 <h2 id="-w----workspace-for-one-off-overrides"><a class="header" href="#-w----workspace-for-one-off-overrides"><code>-w</code> / <code>--workspace</code> for one-off overrides</a></h2>
 <p>Every command accepts <code>-w &lt;name&gt;</code> to override the current pointer for a single invocation:</p>
 <pre><code class="language-bash"># Doctor against "prod" without flipping the global pointer
@@ -389,29 +401,20 @@ roksbnkctl -w default k get pods -A
 <li>You’re testing a fresh workspace before promoting it to current.</li>
 </ul>
 <p>The flag only affects the running command — the pointer in <code>~/.roksbnkctl/config.yaml</code> is unchanged. After the command exits, the next bare <code>roksbnkctl</code> reads the original pointer.</p>
-<h2 id="the-parking-lot-pattern"><a class="header" href="#the-parking-lot-pattern">The parking-lot pattern</a></h2>
-<p>A subtle gotcha: <code>ws delete</code> refuses to remove the current workspace, but the end-to-end test suite needs to clean itself up after running against the <code>default</code> workspace.</p>
-<p>The fix is the <strong>parking-lot pattern</strong>: have a throwaway workspace that exists only to be the “current” pointer while you delete other workspaces.</p>
-<pre><code class="language-bash"># End-to-end test cleanup (e2e-test.sh: Phase D destroys; Phase H runs the parking-lot dance below)
-
-# Run the destroy against "default" (still current at this point)
+<h2 id="deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired"><a class="header" href="#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired">Deleting the workspace you’re in (the parking-lot dance is retired)</a></h2>
+<p>Earlier versions refused to delete the current workspace, so the end-to-end test used a <strong>parking-lot pattern</strong> — a throwaway workspace that existed only to hold the <code>current_workspace</code> pointer while you deleted the real one. That’s no longer necessary: <code>ws delete</code> removes the current workspace directly and moves the pointer to another existing workspace (or clears it when none remain).</p>
+<pre><code class="language-bash"># End-to-end test cleanup — just destroy and delete, in any order
 roksbnkctl down --auto
-
-# Park the pointer somewhere harmless
-roksbnkctl ws new e2e-cleanup
-roksbnkctl ws use e2e-cleanup
-
-# Now we can drop the original workspace — it's no longer current
 roksbnkctl ws delete default --force
+# ✓ Deleted workspace "default"
+# ✓ Current workspace is now "e2e-cleanup"      # whatever remained, alphabetically first
 
-# Optional: remove the parking lot too, by parking somewhere else first
-roksbnkctl ws new tmp-park
-roksbnkctl ws use tmp-park
+# Delete everything — the last delete clears the pointer
 roksbnkctl ws delete e2e-cleanup --force
-roksbnkctl ws delete tmp-park --force   # leaves no current pointer
+# ✓ Deleted workspace "e2e-cleanup"
+# ✓ No workspaces remain; current workspace cleared
 </code></pre>
-<p>The pattern works because <code>current_workspace</code> only matters for commands that read workspace config. Once the pointer points elsewhere, the original workspace is just a directory and <code>delete</code> is happy to remove it.</p>
-<p>If you want to delete <em>every</em> workspace including the parking lot, the last <code>delete</code> will leave you with an empty <code>current_workspace</code>. The next <code>roksbnkctl init</code> will populate it again with <code>default</code>.</p>
+<p>With no workspaces left, the pointer is empty and the next bare command reports <code>no workspace selected</code> (no phantom <code>default</code>); <code>roksbnkctl init</code> starts fresh.</p>
 <h2 id="using-a-workspaces-environment-in-your-shell"><a class="header" href="#using-a-workspaces-environment-in-your-shell">Using a workspace’s environment in your shell</a></h2>
 <p><code>roksbnkctl shell</code> drops you into a subshell with <code>KUBECONFIG</code>, <code>IBMCLOUD_API_KEY</code>, <code>IC_API_KEY</code>, and <code>IBMCLOUD_REGION</code> pre-loaded from the current workspace:</p>
 <pre><code class="language-bash">roksbnkctl shell
@@ -435,9 +438,9 @@ exit
 <tbody>
 <tr><td>Different IBM Cloud accounts</td><td><code>default</code> for personal, <code>acct-foo</code> for an account-specific key</td></tr>
 <tr><td>Different regions</td><td><code>us-south</code>, <code>eu-de</code> workspaces with distinct <code>cluster.name</code> values</td></tr>
-<tr><td>Throwaway short-lived clusters</td><td><code>bnk-trial-N</code> workspaces; delete with <code>--force</code> after <code>down</code></td></tr>
+<tr><td>Throwaway short-lived clusters</td><td><code>bnk-trial-N</code> workspaces; delete with <code>--force</code> after <code>down</code> (delete the current one directly — it auto-switches)</td></tr>
 <tr><td>CI vs local dev</td><td><code>dev</code> and <code>ci</code> workspaces; <code>ci</code> uses <code>IBMCLOUD_API_KEY</code> from env, <code>dev</code> uses keychain</td></tr>
-<tr><td>Parking-lot cleanup</td><td><code>e2e-cleanup</code> workspace per “the parking-lot pattern” above</td></tr>
+<tr><td>Recover a half-torn-down env</td><td><a href="./11-tearing-down.html#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a> sweeps stranded <code>&lt;prefix&gt;-*</code> cloud resources, then <code>ws delete</code></td></tr>
 </tbody>
 </table>
 </div>

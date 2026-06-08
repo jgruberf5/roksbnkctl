@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-07406b41.js";
+            window.path_to_searchindex_js = "searchindex-72b535b1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fadf8ffb.js"></script>
+        <script src="toc-6925ce2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -428,15 +428,15 @@ roksbnkctl down        # tear it all back down when you're done evaluating
 <li><strong>Git</strong> to clone the repository (only if building from source — not needed if you grab a pre-built binary).</li>
 <li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>.</li>
-<li><strong>Helm 3 on PATH</strong> at runtime — required during <code>roksbnkctl up</code>. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>; without <code>helm</code> the apply errors out with <code>exit status 127 — helm: not found</code>.</li>
+<li><strong>Helm 3 on PATH</strong> at runtime — <code>doctor</code> flags it as required during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, so without <code>helm</code> that path errors out with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead (in-process via the <code>hashicorp/helm</code> provider — see <a href="#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>). <strong>The default path still shells <code>helm</code> once, though</strong> — for FAR chart-version discovery (the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions), so <code>helm</code> is genuinely required in <em>both</em> modes, not only the legacy one. Keep <code>helm</code> installed to stay <code>doctor</code>-green.</li>
 </ul>
 <p>The remaining tools (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>, <code>docker</code>) are optional and only needed for the corresponding passthrough or backend.</p>
 <p>You do not need Docker installed to <em>use</em> <code>roksbnkctl</code> with the default <code>local</code> backend. Docker is required only if you opt in to <code>--backend docker</code> for <code>terraform</code> / <code>ibmcloud</code>. The k8s and ssh backends are alternatives that need neither host Docker nor host Go.</p>
 <h2 id="installing-prerequisites"><a class="header" href="#installing-prerequisites">Installing prerequisites</a></h2>
-<p>Install paths per platform. <code>terraform</code> and <code>helm</code> are strictly required for v1.0 (<code>helm</code> is invoked by terraform’s <code>local-exec</code> provisioners during <code>roksbnkctl up</code>); the rest are optional, install only what you need.</p>
+<p>Install paths per platform. <code>terraform</code> and <code>helm</code> are flagged required by <code>doctor</code> (<code>helm</code> is invoked by terraform’s <code>local-exec</code> provisioners in the legacy <code>--legacy-bnk</code> BNK path; the default terraform-native path installs charts via the <code>helm_release</code> provider — keep <code>helm</code> installed to stay green and to keep the legacy path available); the rest are optional, install only what you need.</p>
 <h3 id="macos--homebrew"><a class="header" href="#macos--homebrew">macOS — Homebrew</a></h3>
 <pre><code class="language-bash">brew install terraform               # required
-brew install helm                    # required — terraform `local-exec` provisioner shells out to `helm`
+brew install helm                    # flagged required by doctor — the legacy --legacy-bnk path's `local-exec` provisioner shells out to `helm` (the default path uses the helm_release provider)
 brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
 brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough (`roksbnkctl k *` is internalised)
 brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:&lt;t&gt;` throughput tests
@@ -459,7 +459,7 @@ https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
   | sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update &amp;&amp; sudo apt-get install -y terraform
 
-# helm 3 — required (terraform's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`)
+# helm 3 — flagged required by doctor (the legacy --legacy-bnk path's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`; the default path uses the helm_release provider in-process)
 curl https://baltocdn.com/helm/signing.asc \
   | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] \
@@ -633,7 +633,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>The v1.0 cluster lifecycle needs two binaries on <code>PATH</code>:</p>
 <ul>
 <li><strong><code>terraform</code> (&gt;= 1.5)</strong> — hard-required for any cluster lifecycle command (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>).</li>
-<li><strong><code>helm</code> (3.x)</strong> — hard-required during <code>roksbnkctl up</code>. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>. Without it, the apply fails with <code>exit status 127 — helm: not found</code>. (A v1.x effort to refactor those modules onto the <code>helm_release</code> terraform resource would eliminate the host requirement; tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.)</li>
+<li><strong><code>helm</code> (3.x)</strong> — flagged required by <code>doctor</code> during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, and without it that path fails with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead — the <code>hashicorp/helm</code> provider speaks the Helm 3 protocol via an embedded Go runtime, so no host <code>helm</code> is shelled out (the refactor onto <code>helm_release</code> that this once deferred has landed for the BNK phase; see <a href="#the-terraform-native-deployment-model">Chapter 10</a>). Keeping <code>helm</code> installed keeps <code>doctor</code> green and the legacy path available.</li>
 </ul>
 <p>Optional binaries — only needed for the corresponding passthrough or fallback path:</p>
 <ul>
@@ -687,7 +687,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>Pass condition: a binary on <code>PATH</code>, version <code>1.5</code> or newer.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install Terraform from <a href="https://www.terraform.io/downloads">terraform.io</a>, or your distro’s package manager, then re-run <code>doctor</code>.</p>
 <h3 id="helm--required"><a class="header" href="#helm--required"><code>helm</code> — required</a></h3>
-<p>The second <strong>hard-required</strong> binary, added in v1.0.2. The bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code> from inside terraform’s apply phase. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
+<p>The second <strong>hard-required</strong> binary (doctor flags it required), added in v1.0.2. It is required in <strong>both</strong> BNK modes. In the legacy path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code> from inside terraform’s apply phase. In the <strong>default</strong> terraform-native path the charts install via the <code>helm_release</code> provider (no shell-out), <strong>but</strong> FAR chart-version discovery (the <code>data.external.versions</code> lookup) still runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS versions — so <code>helm</code> is needed there too. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
 <pre><code>Error: local-exec provisioner error
 Error running command 'helm upgrade --install cert-manager ...':
 exit status 127. Output: /bin/sh: 1: helm: not found
@@ -705,7 +705,7 @@ brew install helm
 # Windows:
 choco install kubernetes-helm
 </code></pre>
-<p>A v1.x effort to refactor the <code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code> modules onto the <code>helm_release</code> terraform resource type (which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime) would eliminate this host requirement. Tracked in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
+<p>The default BNK path now installs the <code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code> charts via the <code>helm_release</code> terraform resource (which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime — no host <code>helm</code> is shelled out); only the legacy <code>--legacy-bnk</code> path still shells out to host <code>helm</code>. Doctor continues to flag <code>helm</code> required (so the legacy path and any older workspace stay supported); a future release that drops the legacy path can relax this check. See <a href="#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>.</p>
 <h3 id="iperf3--informational"><a class="header" href="#iperf3--informational"><code>iperf3</code> — informational</a></h3>
 <p>Used only by <code>roksbnkctl test throughput</code> in its host-iperf3 modes. After Sprint 4 lands the k8s execution backend (PRD 03), <code>iperf3</code> moves entirely in-cluster and this row goes away for the everyday user.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.</p>
@@ -815,7 +815,10 @@ fi
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="workspaces"><a class="header" href="#workspaces">Workspaces</a></h1>
 <p>A <strong>workspace</strong> is a per-environment bundle of config + state. The shape is modelled on <code>kubectl</code> contexts: you can have many of them, exactly one is “current” at a time, and a <code>-w</code> flag lets you address a specific one for a single command without flipping the pointer.</p>
-<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and the “parking-lot” pattern the end-to-end test uses to delete the workspace it’s currently inside.</p>
+<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and how creating or deleting a workspace moves the “current” pointer for you (so the old parking-lot dance is no longer needed).</p>
+<blockquote>
+<p><strong>Since <code>v1.9.0</code>, workspace selection follows you automatically.</strong> Creating a workspace (<code>init</code> or <code>ws new</code>) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no longer a phantom <code>default</code> fallback — with nothing selected, commands say so instead of guessing.</p>
+</blockquote>
 <h2 id="the-on-disk-layout"><a class="header" href="#the-on-disk-layout">The on-disk layout</a></h2>
 <p>Every workspace lives under <code>~/.roksbnkctl/&lt;name&gt;/</code>:</p>
 <pre><code>~/.roksbnkctl/
@@ -913,7 +916,8 @@ deploy_bnk = false
 <p>The header records the binary version and apply timestamp so the reader can correlate the snapshot to a specific <code>roksbnkctl</code> invocation. Alphabetic ordering within each section means re-running <code>apply</code> with identical inputs produces a byte-identical file (idempotency — handy for diffing snapshots across applies).</p>
 <h2 id="the-everyday-workspace-routine"><a class="header" href="#the-everyday-workspace-routine">The everyday workspace routine</a></h2>
 <p>The minimum daily routine:</p>
-<pre><code class="language-bash"># Initialise (creates ~/.roksbnkctl/&lt;name&gt;/config.yaml; defaults to "default")
+<pre><code class="language-bash"># Initialise (creates ~/.roksbnkctl/&lt;name&gt;/config.yaml and makes it current).
+# With no -w and no current workspace, init asks for a name (defaults to "default").
 roksbnkctl init
 
 # Switch which workspace is "current"
@@ -922,7 +926,7 @@ roksbnkctl ws use prod
 # See all workspaces and which one is current
 roksbnkctl ws list
 </code></pre>
-<p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control.</p>
+<p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively — and selects it. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control. The <code>init</code> interview itself (which now lists your account’s regions and existing clusters) is covered in <a href="#step-2--roksbnkctl-init">Chapter 7 — Quick start</a>.</p>
 <h2 id="skip-the-interview-init---var-file"><a class="header" href="#skip-the-interview-init---var-file">Skip the interview: <code>init --var-file</code></a></h2>
 <p>If you already have a <code>terraform.tfvars</code> in hand — from a prior run, a colleague’s hand-off, or <code>cp terraform.tfvars.example terraform.tfvars &amp;&amp; $EDITOR terraform.tfvars</code> — you don’t need to retype its values into the interactive prompts. Pass the file to <code>init</code> and the interview is short-circuited for every field the file already answers:</p>
 <pre><code class="language-bash">roksbnkctl init -w myws --var-file ./terraform.tfvars
@@ -957,9 +961,9 @@ roksbnkctl ws ...              # alias
 <h3 id="ws-new-name--empty-skeleton"><a class="header" href="#ws-new-name--empty-skeleton"><code>ws new &lt;name&gt;</code> — empty skeleton</a></h3>
 <p>Creates <code>~/.roksbnkctl/&lt;name&gt;/</code> with no <code>config.yaml</code>. Useful when you want the directory to exist (so <code>ws use</code> works) before you run <code>init</code>.</p>
 <pre><code class="language-bash">roksbnkctl ws new staging
-# ✓ Created workspace "staging" (run `roksbnkctl init -w staging` to configure)
+# ✓ Created workspace "staging" and made it current (run `roksbnkctl init -w staging` to configure)
 </code></pre>
-<p>Most users skip this and use <code>roksbnkctl init -w staging</code> directly, which does both steps in one go.</p>
+<p>Creating the skeleton <strong>selects it</strong> (sets <code>current_workspace</code>), so the next bare command runs against it. Most users skip <code>ws new</code> and use <code>roksbnkctl init -w staging</code> directly, which creates, configures, <strong>and</strong> selects in one go.</p>
 <h3 id="ws-use-name--switch-current"><a class="header" href="#ws-use-name--switch-current"><code>ws use &lt;name&gt;</code> — switch current</a></h3>
 <p>Sets the <code>current_workspace</code> pointer in <code>~/.roksbnkctl/config.yaml</code>:</p>
 <pre><code class="language-bash">roksbnkctl ws use prod
@@ -983,30 +987,38 @@ staging            us-south  bnk-staging      local:./terraform
 </code></pre>
 <p>The <code>*</code> marker on <code>CURRENT</code> highlights the active workspace. Other columns reflect each workspace’s <code>config.yaml</code>. Rows where <code>config.yaml</code> is missing or unparseable still show the name, with the other columns blank — the list never errors out because of one corrupt workspace.</p>
 <h3 id="ws-delete-name---force"><a class="header" href="#ws-delete-name---force"><code>ws delete &lt;name&gt; [--force]</code></a></h3>
-<p>Removes the workspace directory and the OS-keychain entry for its API key. Two safety rails:</p>
-<ol>
-<li><strong>Refuses to delete the current workspace.</strong> You’d be left with a dangling <code>current_workspace</code> pointer, so <code>delete</code> errors out with: <code>cannot delete current workspace "foo"; switch first: roksbnkctl ws use &lt;other&gt;</code>.</li>
-<li><strong>Refuses if Terraform state lists provisioned resources</strong> (unless <code>--force</code>). Catches the foot-gun where you forget to run <code>roksbnkctl down</code> first.</li>
-</ol>
+<p>Removes the workspace directory and the OS-keychain entry for its API key.</p>
+<p><strong>You can delete the current workspace directly</strong> — there’s no “switch first” dance. If the workspace you delete was current, the pointer moves to another existing workspace (the alphabetically-first remaining one); if it was the last workspace, the pointer is cleared (there’s no fallback <code>default</code> — see <a href="#the-current-workspace-pointer">§“The current-workspace pointer”</a>).</p>
+<p>One safety rail remains: <strong><code>delete</code> refuses if Terraform state lists provisioned resources</strong> (unless <code>--force</code>). That catches the foot-gun where you forget to run <code>roksbnkctl down</code> first.</p>
 <pre><code class="language-bash">roksbnkctl ws delete staging
 # Delete workspace "staging"? [y/N]: y
 # ✓ Deleted workspace "staging"
+# ✓ Current workspace is now "default"          # only printed when "staging" was current
 
 # Refused — state still has resources
 roksbnkctl ws delete prod
-# Error: terraform state lists 77 resources; run `roksbnkctl down` first or pass --force
+# Error: workspace "prod" has terraform-managed resources; pass --force to delete anyway
 
 # I really mean it
 roksbnkctl ws delete prod --force
 # ✓ Deleted workspace "prod"
 </code></pre>
 <p><code>--force</code> skips both the prompt and the state-non-empty check. Use it sparingly — there’s no “undo” for <code>rm -rf ~/.roksbnkctl/&lt;name&gt;/</code>.</p>
+<blockquote>
+<p><strong>If a <code>down</code> errored partway</strong> and left cloud resources stranded, the state guard will (correctly) block <code>ws delete</code>. Sweep the orphans with <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a> first, then delete.</p>
+</blockquote>
 <h2 id="the-current-workspace-pointer"><a class="header" href="#the-current-workspace-pointer">The current-workspace pointer</a></h2>
 <p>The pointer lives at <code>~/.roksbnkctl/config.yaml</code>:</p>
 <pre><code class="language-yaml">current_workspace: prod
 </code></pre>
-<p>Every command that doesn’t pass <code>-w</code> reads this pointer. <code>roksbnkctl init</code> writes it on first run (so the very first <code>init</code> makes <code>default</code> current automatically). <code>ws use</code> rewrites it. Nothing else touches it.</p>
-<p>If the pointer references a workspace that doesn’t exist (e.g. someone <code>rm -rf</code>’d the directory by hand), <code>roksbnkctl</code> errors out with a clear message: <code>workspace "prod" referenced by current_workspace does not exist; run roksbnkctl ws use &lt;other&gt;</code>.</p>
+<p>Every command that doesn’t pass <code>-w</code> reads this pointer. The workspace verbs keep it in step with reality, so you rarely set it by hand:</p>
+<ul>
+<li><strong><code>init</code></strong> and <strong><code>ws new</code></strong> select the workspace they create — afterwards it’s current.</li>
+<li><strong><code>ws use</code></strong> rewrites it.</li>
+<li><strong><code>ws delete</code></strong> moves it off a deleted current workspace (to another existing one), or clears it when the last workspace is removed.</li>
+</ul>
+<p><strong>There is no fallback <code>default</code>.</strong> When the pointer is empty — you’ve deleted every workspace, or never created one — a command run without <code>-w</code> reports <code>no workspace selected; create one with roksbnkctl init or pick one with roksbnkctl ws use &lt;name&gt;</code> rather than silently operating on a phantom <code>default</code>. (<code>roksbnkctl init</code> with no <code>-w</code> and no current pointer asks for a workspace name, defaulting to <code>default</code> on the first run — so the bootstrap experience is unchanged.)</p>
+<p>If the pointer references a workspace whose directory is gone (e.g. someone <code>rm -rf</code>’d it by hand), commands report <code>workspace "prod" is not initialised; run roksbnkctl init first</code> — repoint with <code>ws use &lt;other&gt;</code> or recreate with <code>init</code>.</p>
 <h2 id="-w----workspace-for-one-off-overrides"><a class="header" href="#-w----workspace-for-one-off-overrides"><code>-w</code> / <code>--workspace</code> for one-off overrides</a></h2>
 <p>Every command accepts <code>-w &lt;name&gt;</code> to override the current pointer for a single invocation:</p>
 <pre><code class="language-bash"># Doctor against "prod" without flipping the global pointer
@@ -1025,29 +1037,20 @@ roksbnkctl -w default k get pods -A
 <li>You’re testing a fresh workspace before promoting it to current.</li>
 </ul>
 <p>The flag only affects the running command — the pointer in <code>~/.roksbnkctl/config.yaml</code> is unchanged. After the command exits, the next bare <code>roksbnkctl</code> reads the original pointer.</p>
-<h2 id="the-parking-lot-pattern"><a class="header" href="#the-parking-lot-pattern">The parking-lot pattern</a></h2>
-<p>A subtle gotcha: <code>ws delete</code> refuses to remove the current workspace, but the end-to-end test suite needs to clean itself up after running against the <code>default</code> workspace.</p>
-<p>The fix is the <strong>parking-lot pattern</strong>: have a throwaway workspace that exists only to be the “current” pointer while you delete other workspaces.</p>
-<pre><code class="language-bash"># End-to-end test cleanup (e2e-test.sh: Phase D destroys; Phase H runs the parking-lot dance below)
-
-# Run the destroy against "default" (still current at this point)
+<h2 id="deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired"><a class="header" href="#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired">Deleting the workspace you’re in (the parking-lot dance is retired)</a></h2>
+<p>Earlier versions refused to delete the current workspace, so the end-to-end test used a <strong>parking-lot pattern</strong> — a throwaway workspace that existed only to hold the <code>current_workspace</code> pointer while you deleted the real one. That’s no longer necessary: <code>ws delete</code> removes the current workspace directly and moves the pointer to another existing workspace (or clears it when none remain).</p>
+<pre><code class="language-bash"># End-to-end test cleanup — just destroy and delete, in any order
 roksbnkctl down --auto
-
-# Park the pointer somewhere harmless
-roksbnkctl ws new e2e-cleanup
-roksbnkctl ws use e2e-cleanup
-
-# Now we can drop the original workspace — it's no longer current
 roksbnkctl ws delete default --force
+# ✓ Deleted workspace "default"
+# ✓ Current workspace is now "e2e-cleanup"      # whatever remained, alphabetically first
 
-# Optional: remove the parking lot too, by parking somewhere else first
-roksbnkctl ws new tmp-park
-roksbnkctl ws use tmp-park
+# Delete everything — the last delete clears the pointer
 roksbnkctl ws delete e2e-cleanup --force
-roksbnkctl ws delete tmp-park --force   # leaves no current pointer
+# ✓ Deleted workspace "e2e-cleanup"
+# ✓ No workspaces remain; current workspace cleared
 </code></pre>
-<p>The pattern works because <code>current_workspace</code> only matters for commands that read workspace config. Once the pointer points elsewhere, the original workspace is just a directory and <code>delete</code> is happy to remove it.</p>
-<p>If you want to delete <em>every</em> workspace including the parking lot, the last <code>delete</code> will leave you with an empty <code>current_workspace</code>. The next <code>roksbnkctl init</code> will populate it again with <code>default</code>.</p>
+<p>With no workspaces left, the pointer is empty and the next bare command reports <code>no workspace selected</code> (no phantom <code>default</code>); <code>roksbnkctl init</code> starts fresh.</p>
 <h2 id="using-a-workspaces-environment-in-your-shell"><a class="header" href="#using-a-workspaces-environment-in-your-shell">Using a workspace’s environment in your shell</a></h2>
 <p><code>roksbnkctl shell</code> drops you into a subshell with <code>KUBECONFIG</code>, <code>IBMCLOUD_API_KEY</code>, <code>IC_API_KEY</code>, and <code>IBMCLOUD_REGION</code> pre-loaded from the current workspace:</p>
 <pre><code class="language-bash">roksbnkctl shell
@@ -1071,9 +1074,9 @@ exit
 <tbody>
 <tr><td>Different IBM Cloud accounts</td><td><code>default</code> for personal, <code>acct-foo</code> for an account-specific key</td></tr>
 <tr><td>Different regions</td><td><code>us-south</code>, <code>eu-de</code> workspaces with distinct <code>cluster.name</code> values</td></tr>
-<tr><td>Throwaway short-lived clusters</td><td><code>bnk-trial-N</code> workspaces; delete with <code>--force</code> after <code>down</code></td></tr>
+<tr><td>Throwaway short-lived clusters</td><td><code>bnk-trial-N</code> workspaces; delete with <code>--force</code> after <code>down</code> (delete the current one directly — it auto-switches)</td></tr>
 <tr><td>CI vs local dev</td><td><code>dev</code> and <code>ci</code> workspaces; <code>ci</code> uses <code>IBMCLOUD_API_KEY</code> from env, <code>dev</code> uses keychain</td></tr>
-<tr><td>Parking-lot cleanup</td><td><code>e2e-cleanup</code> workspace per “the parking-lot pattern” above</td></tr>
+<tr><td>Recover a half-torn-down env</td><td><a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a> sweeps stranded <code>&lt;prefix&gt;-*</code> cloud resources, then <code>ws delete</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -1142,28 +1145,56 @@ Did you mean '--workspace s'?
 </blockquote>
 <pre><code class="language-bash">roksbnkctl init
 </code></pre>
-<p>Sample interactive session:</p>
+<p><code>init</code> <strong>interviews your account</strong>: after it verifies the API key it asks whether to create a new cluster, then lists the regions (or the existing clusters) your credentials can reach — you pick from a menu instead of typing free-text.</p>
+<p>Sample interactive session (creating a new cluster):</p>
 <pre><code>roksbnkctl init
-→ Verifying IBMCLOUD_API_KEY against IBM IAM ... ok (account: 1a2b3c..., user: you@example.com)
-? Workspace name (default):
-? Region (us-south):
-? Resource group (Default):
-→ Resolving resource group "Default" ... ok (id: ...)
-? Cluster name (bnk-quickstart):
-? OpenShift version (4.14_openshift):
-? Worker zone (us-south-1):
-? Worker count (2):
-? Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
-→ Saved to keychain (service: roksbnkctl, account: default/ibmcloud_api_key)
+  Workspace name [default]:
+→ Verifying IBM Cloud credentials ... ✓ you@example.com (account 1a2b3c...)
+  Create a new ROKS cluster? [Y/n]: y
+  Region for the new cluster:
+       1) au-syd
+       2) br-sao
+     * 3) ca-tor
+       ...
+      10) us-south
+  Choice [1-14] [3]: 10
+  Workspace prefix [bnk-quickstart]:
+  Workers per zone (min 1; cluster spans all 3 AZs) [1]: 2
+  OpenShift version [4.18]:
+  Create registry COS instance? [Y/n]: y
+  Resource group [default]:
+→ ✓ Resource group "default" (id ...)
+  Create Transit Gateway? [Y/n]: y
+  Install cert-manager? [Y/n]: y
+  Deploy BIG-IP Next (BNK)? [Y/n]: y
+  Add a testing client? [y/N]: y
+  Region to install the test client in:
+      ...
+  Choice [1-14] [10]: 3
+  Create a new client VPC for it? [Y/n]: y
+  Create per-zone cluster jumphosts? [y/N]: n
+  Save IBMCLOUD_API_KEY to OS keychain for this workspace? (y/N): y
+✓ Current workspace: default
 ✓ Wrote ~/.roksbnkctl/default/config.yaml
 </code></pre>
 <p>What just happened:</p>
 <ul>
-<li>A workspace called <code>default</code> now exists at <code>~/.roksbnkctl/default/</code>.</li>
-<li><code>config.yaml</code> records the region, resource group, cluster name, OpenShift version, worker pool sizing, and BNK component defaults.</li>
-<li>The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service <code>roksbnkctl</code>. Subsequent runs resolve it from there without prompting.</li>
+<li>A workspace called <code>default</code> now exists at <code>~/.roksbnkctl/default/</code> and is <strong>current</strong> — the next bare command runs against it (no separate <code>ws use</code> needed).</li>
+<li>You picked the region from the account’s <strong>available regions</strong>; the cluster spans <strong>all three availability zones</strong> with <code>workers-per-zone × 3</code> workers. One per zone (3 total) is the minimum — a ROKS cluster is always multi-AZ, so <code>init</code> floors the count there.</li>
+<li>The optional <strong>testing client</strong> (TGW jumphost + client VPC) can live in a <strong>different region</strong> from the cluster — you’re prompted for its region separately.</li>
+<li><code>config.yaml</code> records the region, resource group, prefix, worker sizing, the per-resource <code>resources:</code> toggles, and BNK component defaults. The API key is saved to your OS keychain (macOS Keychain, libsecret on Linux, or Windows Credential Manager) under service <code>roksbnkctl</code>; subsequent runs resolve it from there without prompting.</li>
 </ul>
 <p>You can re-run <code>roksbnkctl init</code> to update workspace settings; existing values become the prompt defaults.</p>
+<h3 id="reusing-an-existing-cluster"><a class="header" href="#reusing-an-existing-cluster">Reusing an existing cluster</a></h3>
+<p>Answer <strong>n</strong> to <em>Create a new ROKS cluster?</em> and <code>init</code> lists the account’s running OpenShift clusters to pick one:</p>
+<pre><code>  Create a new ROKS cluster? [Y/n]: n
+→ Listing running OpenShift clusters...
+  Choose an existing cluster:
+     * 1) bnk-demo        (us-south, 4.18.x_openshift)
+       2) roks-prod-ca    (ca-tor, 4.19.x_openshift)
+  Choice [1-2] [1]: 1
+</code></pre>
+<p>The chosen cluster’s region and name are recorded, and <code>init</code> populates <code>cluster-outputs.json</code> — the same identity file <a href="#registering-an-existing-cluster"><code>cluster register</code></a> writes — so a subsequent <code>roksbnkctl up</code> deploys BNK straight onto it, with no <code>cluster up</code> and no separate <code>register</code> step.</p>
 <h2 id="step-3--roksbnkctl-up---auto"><a class="header" href="#step-3--roksbnkctl-up---auto">Step 3 — <code>roksbnkctl up --auto</code></a></h2>
 <p>The deployment. Runs <code>terraform plan</code>, runs <code>terraform apply</code>, fetches the admin kubeconfig from IBM Cloud, writes it to <code>~/.kube/config</code> at mode 0600. The <code>--auto</code> flag skips the plan-and-confirm gate; without it <code>up</code> shows the plan and asks “apply? [y/N]” before continuing.</p>
 <pre><code class="language-bash">roksbnkctl up --auto
@@ -1296,6 +1327,15 @@ roksbnkctl ibmcloud --on jumphost ks cluster ls
 <p>The same flow runs against multiple workspaces, multiple regions, and multiple resource groups — see <a href="#workspaces">Chapter 6</a> for the multi-environment patterns. From here, <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a> covers the <code>--on</code> flag, <a href="#day-2-ops-status-logs-k-getapplyexec">Chapter 24</a> covers day-2 operations, and <a href="#troubleshooting">Chapter 26</a> covers what to do when one of the above steps doesn’t go right.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-cluster-phase-cluster-updown"><a class="header" href="#the-cluster-phase-cluster-updown">The cluster phase (cluster up/down)</a></h1>
+<blockquote>
+<p><strong>As of the three-phase split, a workspace is Cluster / BNK / Testing — not
+two phases.</strong> This chapter covers the Cluster phase specifically; the BNK
+trial and the testing jumphosts are now separate sibling phases that deploy
+in parallel on top. The “trial phase” language below predates the split and
+now means the <strong>BNK phase</strong> (the jumphosts moved to their own Testing
+phase). See <a href="#the-three-phase-lifecycle-cluster--bnk--testing">Chapter 8a — The three-phase lifecycle</a>
+for the current model, parallel <code>up</code>, and <code>roksbnkctl testing up/down</code>.</p>
+</blockquote>
 <p>A <code>roksbnkctl</code> workspace is <strong>two phases on top of each other</strong>: a durable <strong>cluster phase</strong> (the ROKS cluster + cluster-shared services that take 30+ minutes to provision) and a short-lived <strong>trial phase</strong> (the BNK trial that iterates on top in 5-10 minutes). The cluster phase is exposed as its own command pair, <code>roksbnkctl cluster up</code> / <code>roksbnkctl cluster down</code>, so the cluster survives across many BNK trial cycles.</p>
 <blockquote>
 <p><strong>As of v1.1.0, this two-phase shape is the default for every new workspace.</strong> A fresh <code>roksbnkctl up</code> provisions the cluster phase first, then the trial phase, against separate state directories. Tearing down only the trial — the common iteration case — uses <a href="#the-bnk-up--bnk-down-command-group"><code>roksbnkctl bnk down</code></a> and leaves the cluster intact. The unscoped <code>up</code> / <code>down</code> verbs are now shape-aware composites that delegate to the right phase commands underneath.</p>
@@ -1510,9 +1550,285 @@ this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
 <li><a href="#day-2-ops-status-logs-k-getapplyexec">Chapter 24 — Day-2 ops</a> — <code>roksbnkctl k get</code> / <code>apply</code> / <code>logs</code> for working against the cluster after either phase.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-three-phase-lifecycle-cluster--bnk--testing"><a class="header" href="#the-three-phase-lifecycle-cluster--bnk--testing">The three-phase lifecycle (Cluster / BNK / Testing)</a></h1>
+<blockquote>
+<p><strong>Transcripts in this chapter are illustrative.</strong> They show the <em>shape</em>
+of the output, not byte-exact captures. Resource counts and timings vary
+with upstream chart releases and IBM Cloud region behaviour.</p>
+</blockquote>
+<p>As of this release, a <code>roksbnkctl</code> workspace is <strong>three independent phases</strong>
+rather than two. The durable <strong>Cluster</strong> phase (the ROKS cluster + cluster
+VPC + transit gateway + registry COS) sits underneath two independent
+sibling phases that deploy on top of it: the <strong>BNK</strong> phase (cert-manager +
+F5 Lifecycle Operator + CNE Instance + License — everything that talks to
+the Kubernetes API) and the <strong>Testing</strong> phase (the jumphost rig — pure IBM
+VPC, no Kubernetes).</p>
+<pre><code>           ┌──────────── 1. CLUSTER ────────────┐  (create OR reuse)
+           │  ROKS cluster + cluster VPC + TGW   │  → cluster-outputs.json
+           │  + registry COS                     │
+           └──────────────────┬──────────────────┘
+                     ┌─────────┴─────────┐
+                     ▼                   ▼
+           ┌──────────────────┐   ┌──────────────────┐
+           │ 2. BNK  (k8s)    │   │ 3. TESTING (VPC) │
+           │ cert-manager,    │   │ jumphosts (pure  │
+           │ flo, cne, license│   │ IBM VPC, no k8s) │
+           │ needs: cluster   │   │ needs: cluster   │
+           │   (k8s API)      │   │   VPC + TGW only  │
+           └──────────────────┘   └──────────────────┘
+                └── parallel; independent up/down ──┘
+</code></pre>
+<p><strong>Why three?</strong> BNK depends fully on the cluster (its resources live <em>in</em> the
+cluster and need the Kubernetes API). Testing depends on the cluster only
+for the <strong>network</strong> — the cluster VPC it attaches a jumphost to, and the
+transit gateway it bridges across regions. The two workloads are otherwise
+unrelated. Splitting them means:</p>
+<ul>
+<li>You can tear down the BNK trial and <strong>keep the jumphosts</strong> for the next
+iteration (<code>roksbnkctl bnk down</code> leaves Testing alone) — and the inverse
+(<code>roksbnkctl testing down</code> leaves BNK alone).</li>
+<li>The two unrelated workloads <strong>deploy in parallel</strong> after the cluster is
+ready, shaving wall-clock off a fresh <code>up</code>.</li>
+</ul>
+<blockquote>
+<p><strong><code>testing</code> is not <code>test</code>.</strong> This is the one naming collision worth
+internalising up front:</p>
+<ul>
+<li><strong><code>roksbnkctl testing up/down</code></strong> — a <strong>provisioning phase</strong>. It creates
+and destroys the jumphost <em>infrastructure</em> (the TGW jumphost, the per-AZ
+cluster jumphosts, the optional client VPC). Parallel to <code>cluster</code> and
+<code>bnk</code>. Writes <code>state-testing/</code>.</li>
+<li><strong><code>roksbnkctl test</code></strong> — <strong>runs validation probes</strong> (connectivity, DNS,
+throughput) against an already-deployed environment. Provisions nothing.
+See <a href="#connectivity-testing">Chapter 20</a>.</li>
+<li><strong><code>roksbnkctl test hosts</code></strong> — manages the <strong>list of hosts</strong> the <code>test</code>
+probes target. Still no provisioning.</li>
+</ul>
+<p>Mnemonic: <em><code>testing</code> builds the rig; <code>test</code> runs the checks.</em></p>
+</blockquote>
+<h2 id="the-three-state-directories"><a class="header" href="#the-three-state-directories">The three state directories</a></h2>
+<p>Each phase owns its own Terraform state directory so the phases never tangle:</p>
+<pre><code>~/.roksbnkctl/&lt;workspace&gt;/
+  state-cluster/      # Cluster phase — `cluster up/down`
+    terraform.tfstate
+    cluster-phase-override.tfvars
+  state/              # BNK phase — `bnk up/down` (and `up`/`down`/`plan`/`apply`)
+    terraform.tfstate
+    bnk-phase-override.tfvars
+  state-testing/      # Testing phase — `testing up/down`
+    terraform.tfstate
+    testing-phase-override.tfvars
+  cluster-outputs.json   # the cluster's identity — the handoff to BNK + Testing
+</code></pre>
+<p>The BNK phase keeps the original <code>state/</code> directory it has always used
+(this is deliberate — see <a href="#migration-from-the-two-phase-layout">§“Migration”</a>
+below); the jumphosts now live in the new <code>state-testing/</code>. Naming is
+slightly asymmetric (<code>state/</code> for BNK vs the explicit <code>state-cluster/</code> /
+<code>state-testing/</code>) for exactly one reason: keeping <code>state/</code> as BNK means
+existing workspaces don’t have to migrate their BNK resources, only evict
+the jumphosts.</p>
+<h2 id="cluster-outputsjson--the-handoff-both-siblings-read"><a class="header" href="#cluster-outputsjson--the-handoff-both-siblings-read"><code>cluster-outputs.json</code> — the handoff both siblings read</a></h2>
+<p>The Cluster phase writes <code>cluster-outputs.json</code> on success (or
+<code>cluster register</code> writes it for a pre-existing cluster). Both BNK and
+Testing read it to learn the cluster’s identity without re-specifying it:</p>
+<ul>
+<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster) and
+the VPC id.</li>
+<li><strong>Testing</strong> reads the cluster VPC id (the jumphost attaches to it), the
+cluster id/name, and the <strong>transit gateway name</strong> (the Testing module
+looks the gateway up by name to bridge the client VPC to the cluster).</li>
+</ul>
+<p>The transit-gateway <em>name</em> is recorded alongside the id specifically so the
+Testing phase can run standalone against a registered cluster.</p>
+<h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
+<p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
+siblings depend on it), then launches <strong>BNK and Testing concurrently</strong>:</p>
+<pre><code class="language-bash">roksbnkctl up --auto
+</code></pre>
+<pre><code>→ Cluster phase (serial; both BNK and Testing depend on it)
+  module.roks_cluster.ibm_container_vpc_cluster.cluster: Creating...
+  ...
+  Apply complete! Resources: 36 added.
+✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
+
+→ BNK || Testing (parallel)
+  [bnk]     → terraform apply
+  [testing] → terraform apply
+  [testing] module.testing.ibm_is_instance.tgw_jumphost: Creating...
+  [bnk]     module.cert_manager.helm_release.cert_manager: Creating...
+  [testing] module.testing.tls_private_key.jumphost_shared_key: Creation complete
+  [bnk]     module.flo.helm_release.flo: Creating...
+  [testing] Apply complete! Resources: 9 added.
+  [bnk]     Apply complete! Resources: 32 added.
+✓ Auto-registered target jumphost (169.45.91.177)
+</code></pre>
+<p>The two parallel phases’ output is <strong>line-prefixed</strong> (<code>[bnk]</code> / <code>[testing]</code>)
+so you can follow each independently. The Cluster phase, being serial, prints
+unprefixed.</p>
+<p>Without <code>--auto</code>, <code>up</code> <strong>plans both phases first</strong> (sequentially, so each diff
+is cleanly attributed), then asks a <strong>separate confirmation for each</strong> —
+<code>Apply BNK plan? [y/N]</code> and <code>Apply Testing plan? [y/N]</code>. Two concurrent
+applies can’t each own an interactive prompt on one terminal, so the approval
+is taken up front; the approved phases then apply <strong>in parallel</strong>. Approving
+only one (e.g. <code>y</code> to BNK, <code>N</code> to Testing) brings up just that phase — handy
+when you want to redeploy the BNK trial without touching the jumphosts. A
+phase whose plan shows no changes is skipped without prompting.</p>
+<p>Why Cluster-completes-first rather than starting Testing the moment the
+cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
+Testing is a handful of VSIs (minutes). Starting Testing against a half-built
+cluster invites data-source races for a few minutes’ savings. Cluster-first
+is simpler and correct.</p>
+<h2 id="per-phase-up--down"><a class="header" href="#per-phase-up--down">Per-phase <code>up</code> / <code>down</code></a></h2>
+<p>Each phase has its own command pair, all sharing the same flag model
+(<code>--auto</code>, <code>--var-file</code>, …):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Phase</th><th>Up</th><th>Down</th><th>State</th></tr>
+</thead>
+<tbody>
+<tr><td>Cluster</td><td><code>roksbnkctl cluster up</code></td><td><code>roksbnkctl cluster down</code></td><td><code>state-cluster/</code></td></tr>
+<tr><td>BNK</td><td><code>roksbnkctl bnk up</code></td><td><code>roksbnkctl bnk down</code></td><td><code>state/</code></td></tr>
+<tr><td>Testing</td><td><code>roksbnkctl testing up</code></td><td><code>roksbnkctl testing down</code></td><td><code>state-testing/</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>bnk up</code> and <code>testing up</code> each bootstrap the Cluster phase first if the
+workspace has no cluster yet (with a confirmation prompt — the cluster take
+~30 min). Against an existing cluster they go straight to their own apply.</p>
+<h3 id="bnk-down-leaves-the-jumphosts-and-the-inverse"><a class="header" href="#bnk-down-leaves-the-jumphosts-and-the-inverse"><code>bnk down</code> leaves the jumphosts (and the inverse)</a></h3>
+<p>The headline capability of the split: the two siblings tear down
+independently.</p>
+<pre><code class="language-bash"># Iterate on BNK while keeping the jumphost rig warm:
+roksbnkctl bnk down      # destroys cert-manager/flo/cne/license; Testing untouched
+roksbnkctl bnk up        # redeploy BNK against the same cluster + same jumphosts
+</code></pre>
+<pre><code>✓ BNK phase destroyed. Cluster phase state-cluster/ and Testing phase
+  state-testing/ are intact. Run `roksbnkctl bnk up` to redeploy.
+</code></pre>
+<p>And the inverse — destroy the jumphost rig but keep BNK running:</p>
+<pre><code class="language-bash">roksbnkctl testing down   # destroys the jumphosts; cluster + BNK untouched
+</code></pre>
+<p>Because each phase owns a separate state directory, <code>bnk down</code> physically
+cannot touch <code>state-testing/</code>, and <code>testing down</code> cannot touch <code>state/</code>.</p>
+<h2 id="reuse-an-existing-cluster"><a class="header" href="#reuse-an-existing-cluster">Reuse an existing cluster</a></h2>
+<p>If you already have a ROKS cluster (yours or a teammate’s), skip the Cluster
+phase entirely — <a href="#registering-an-existing-cluster">register it</a>, then
+deploy BNK and Testing on top:</p>
+<pre><code class="language-bash">roksbnkctl cluster register existing-bnk-cluster
+roksbnkctl up --auto        # Cluster phase skipped; BNK || Testing deploy on the registered cluster
+# or per-phase:
+roksbnkctl bnk up --auto
+roksbnkctl testing up --auto
+</code></pre>
+<p><code>cluster down</code> is a no-op there — the cluster wasn’t yours to destroy.</p>
+<h2 id="teardown-ordering-and-the-cluster-down-guard"><a class="header" href="#teardown-ordering-and-the-cluster-down-guard">Teardown ordering and the <code>cluster down</code> guard</a></h2>
+<p>Destroy in <strong>reverse of create</strong>: the siblings first (in parallel, they’re
+independent), then the cluster.</p>
+<pre><code class="language-bash">roksbnkctl down --auto
+</code></pre>
+<pre><code>This will destroy the BNK, Testing, AND Cluster phases for workspace "default".
+Continue? [y/N]: y
+
+→ BNK || Testing (parallel destroy)
+  [bnk]     Destroy complete! Resources: 32 destroyed.
+  [testing] Destroy complete! Resources: 9 destroyed.
+→ Cluster phase (destroy)
+  Destroy complete! Resources: 36 destroyed.
+</code></pre>
+<p>The bare <code>down</code> takes <strong>one</strong> composite confirmation naming every present
+phase, then runs the parallel sibling-destroy followed by the cluster
+destroy — you can’t accidentally confirm one phase and miss another.</p>
+<p><code>roksbnkctl cluster down</code> <strong>refuses</strong> while BNK or Testing state still has
+resources — they reference the cluster VPC/TGW, so destroying the cluster
+out from under them would orphan resources:</p>
+<pre><code>$ roksbnkctl cluster down
+BNK and Testing state exist in this workspace; run `roksbnkctl bnk down` and
+`roksbnkctl testing down` first (or `roksbnkctl down` to tear down all phases)
+</code></pre>
+<p>This is a correctness guard, not a prompt — <code>--auto</code> does not bypass it.
+<code>cluster-outputs.json</code> is deleted only on <code>cluster down</code> (it’s the cluster’s
+identity); <code>bnk down</code> and <code>testing down</code> leave it in place.</p>
+<h2 id="migration-from-the-two-phase-layout"><a class="header" href="#migration-from-the-two-phase-layout">Migration from the two-phase layout</a></h2>
+<p>Workspaces created before the three-phase split have their jumphosts living
+in the <strong>BNK state</strong> (<code>state/</code>, alongside the BNK modules — that’s how the
+old two-phase “trial” worked). The three-phase split needs those jumphosts
+in <code>state-testing/</code> instead. Three cases:</p>
+<ol>
+<li>
+<p><strong>Fresh / empty workspaces</strong> — nothing to migrate. The first <code>up</code> lays
+out all three state directories cleanly.</p>
+</li>
+<li>
+<p><strong>Legacy single-state (v1.0.x) workspaces</strong> — <strong>left alone</strong>. The cluster</p>
+<ul>
+<li>BNK + jumphosts stay in one <code>state/</code>; <code>up</code> / <code>down</code> keep operating
+monolithically; the phase verbs (<code>cluster</code>, <code>bnk</code>, <strong>and the new
+<code>testing</code></strong>) all refuse and point you back at the unscoped <code>up</code>/<code>down</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Two-phase split workspaces (the common case)</strong> — the jumphosts need to
+move out of <code>state/</code> into <code>state-testing/</code> <strong>without destroying the live
+jumphosts</strong>. The recommended path preserves them:</p>
+<pre><code class="language-bash">roksbnkctl testing migrate    # terraform state mv: jumphosts → state-testing/
+</code></pre>
+<p>This <code>terraform state mv</code>s every <code>module.testing.*</code> resource (including
+the shared SSH key) from <code>state/</code> into a fresh <code>state-testing/</code>, with
+<strong>no cloud churn</strong> — the jumphosts keep their IPs and your <code>known_hosts</code>
+stays valid. A subsequent <code>bnk up</code> reconciles the now-jumphost-free BNK
+state (it plans no jumphost create), and <code>testing up</code> adopts the moved
+resources (in-place, not create).</p>
+<p>If a workspace is in an awkward partial-apply state, the bulletproof
+fallback is a full <code>roksbnkctl down</code> then <code>roksbnkctl up</code>, which
+re-creates everything in the three-state layout. This <em>does</em> churn the
+jumphosts (new IPs, <code>known_hosts</code> reset), so the <code>state mv</code> path is
+preferred whenever it’s available.</p>
+</li>
+</ol>
+<p><code>roksbnkctl</code> nudges you when it detects jumphosts still living in the BNK
+state with an empty <code>state-testing/</code> — it won’t silently rewrite your state.</p>
+<h2 id="the-optional-gateway-phase-gateway-up--down"><a class="header" href="#the-optional-gateway-phase-gateway-up--down">The optional Gateway phase (<code>gateway up</code> / <code>down</code>)</a></h2>
+<p>The BNK phase brings up a licensed, running control plane and now also creates
+the <code>cloud-network-mapping</code> ConfigMap and the external/internal VLANs that TMM
+needs to program its data plane. The <strong>rest</strong> of the install guide’s
+“Configuration” section — the Gateway API objects, egress SnatPool/Egress, the
+per-zone static routes, and the cluster security-group VXLAN rule — is a
+<strong>separate, optional phase</strong> with its own state (<code>state-gateway/</code>):</p>
+<pre><code class="language-bash">roksbnkctl up                  # Cluster → BNK ∥ Testing  (Gateway NOT included)
+# … verify BNK is healthy: TMM pods Ready, CNEInstance Available …
+roksbnkctl gateway up          # apply the data-plane config
+roksbnkctl gateway down        # remove it, leaving cluster/BNK/testing intact
+</code></pre>
+<p>It is <strong>never</strong> run by the composite <code>up</code>/<code>down</code> — the Gateway config needs a
+healthy BNK (its <code>F5SPK*</code> CRDs ship with the BNK manifest, and TMM must be up),
+so it is strictly opt-in. It reuses the existing cluster via
+<code>cluster-outputs.json</code> (like the Testing phase), forces every other phase’s
+creation off in its override, and manages only its own resources. Defaults all
+come from the BNK 2.3 install guide; override the HTTPRoute backend, client
+subnets, egress mode (<code>snatpool</code>/<code>automap</code>/<code>both</code>) and VXLAN port via the
+<code>config.yaml</code> <code>gateway</code> block. <code>cluster down</code> refuses while the Gateway phase
+has resources, so tear it down first (<code>gateway down</code>).</p>
+<h2 id="cross-references-2"><a class="header" href="#cross-references-2">Cross-references</a></h2>
+<ul>
+<li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — the Cluster phase
+in depth.</li>
+<li><a href="#registering-an-existing-cluster">Chapter 9 — Registering an existing cluster</a>
+— the reuse-existing-cluster path.</li>
+<li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — the BNK
+phase (<code>bnk up/down</code>) in depth.</li>
+<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — the full destroy decision
+tree and refusal catalogue.</li>
+<li><a href="#connectivity-testing">Chapter 20 — Connectivity testing</a> — what
+<code>roksbnkctl test</code> (not <code>testing</code>!) actually runs.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="registering-an-existing-cluster"><a class="header" href="#registering-an-existing-cluster">Registering an existing cluster</a></h1>
 <p><code>roksbnkctl cluster register &lt;name&gt;</code> wires <code>roksbnkctl</code> up to a ROKS cluster that already exists in your IBM Cloud account — one you didn’t provision via <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a>. After a successful register, the workspace behaves exactly as if you’d done <code>cluster up</code>: <code>roksbnkctl up</code> deploys BNK trials onto the registered cluster, <code>roksbnkctl down</code> tears those trials down, <code>roksbnkctl status</code> reports the cluster’s identity, and so on.</p>
 <p>This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the <code>cluster-outputs.json</code> write, and a worked example.</p>
+<blockquote>
+<p><strong><code>roksbnkctl init</code> can register for you.</strong> Since <code>v1.9.0</code>, answering <strong>no</strong> to <em>Create a new ROKS cluster?</em> in the <a href="#reusing-an-existing-cluster"><code>init</code> interview</a> lists the account’s running OpenShift clusters and registers the one you pick — it performs the same <code>cluster-outputs.json</code> write described here, inline. Use <code>cluster register &lt;name&gt;</code> directly when you want to (re)register without re-running the full interview, or when scripting.</p>
+</blockquote>
 <h2 id="when-to-use-this"><a class="header" href="#when-to-use-this">When to use this</a></h2>
 <p><code>cluster register</code> is the answer when <strong>all</strong> of these are true:</p>
 <ul>
@@ -1679,7 +1995,7 @@ roksbnkctl -w canada down --auto
 </code></pre>
 <p>The workspace’s <code>config.yaml</code> and <code>state/</code> survive; only the cluster identity record is removed. The next <code>roksbnkctl up</code> will fail with <code>workspace has no cluster-outputs.json</code> until you either re-register or run <code>cluster up</code>.</p>
 <p>There’s deliberately <strong>no</strong> <code>roksbnkctl cluster unregister</code> command. Deleting the JSON is a single-file operation that doesn’t deserve its own subcommand, and the absence of one nudges users toward “destroy the trial first, then deal with the cluster identity” rather than “unregister without thinking about the consequences”.</p>
-<h2 id="cross-references-2"><a class="header" href="#cross-references-2">Cross-references</a></h2>
+<h2 id="cross-references-3"><a class="header" href="#cross-references-3">Cross-references</a></h2>
 <ul>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — the alternative when you want <code>roksbnkctl</code> to provision the cluster.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — what <code>roksbnkctl up</code> does on top of a registered (or <code>cluster up</code>’d) cluster.</li>
@@ -1699,17 +2015,20 @@ roksbnkctl -w canada down --auto
 <tr><th>Component</th><th>What it is</th><th>Module in the bundled HCL</th></tr>
 </thead>
 <tbody>
-<tr><td><strong><code>flo</code></strong></td><td>F5 Lifecycle Operator — the controller that watches CNE Instance CRs and reconciles them into running BIG-IP Next pods</td><td><code>module.flo</code> (Helm release)</td></tr>
-<tr><td><strong><code>cne_instance</code></strong></td><td>The CR that declares “I want a BIG-IP Next data plane here” — drives <code>flo</code> to provision the TMM pods</td><td><code>module.cne_instance</code> (Kubernetes manifest)</td></tr>
-<tr><td><strong><code>license</code></strong></td><td>JWT licenses + activation tokens that gate BNK’s runtime — sourced from the registry COS</td><td><code>module.license</code> (Helm release + null_resources)</td></tr>
-<tr><td><strong><code>cluster-side bits</code></strong></td><td>ServiceAccounts, RoleBindings, SCC bindings, Secrets that flo / cne_instance / license need at runtime</td><td>scattered across the modules above</td></tr>
+<tr><td><strong><code>flo</code></strong></td><td>F5 Lifecycle Operator — the controller that watches CNE Instance CRs and reconciles them into running BIG-IP Next pods</td><td><code>module.flo</code> (<code>helm_release</code>)</td></tr>
+<tr><td><strong><code>cne_instance</code></strong></td><td>The CR that declares “I want a BIG-IP Next data plane here” — drives <code>flo</code> to provision the TMM pods</td><td><code>module.cne_instance</code> (<code>kubectl_manifest</code> + <code>wait_for</code>)</td></tr>
+<tr><td><strong><code>license</code></strong></td><td>The License CR (JWT + operation mode) that gates BNK’s runtime — sourced from the registry COS</td><td><code>module.license</code> (<code>kubectl_manifest</code> + <code>wait_for</code>)</td></tr>
+<tr><td><strong><code>cluster-side bits</code></strong></td><td>Namespaces, Secrets, ServiceAccounts, RoleBindings, SCC bindings, NADs, the cert-manager issuer chain</td><td><code>kubernetes_namespace</code>/<code>kubernetes_secret</code> + <code>kubectl_manifest</code>, across the modules above</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>up</code> does <strong>not</strong> own the cluster, cert-manager, the registry COS, or the jumphost — those are cluster-phase resources. See <a href="#the-cluster-phase-cluster-updown">Chapter 8</a> for the split.</p>
+<p><code>up</code> does <strong>not</strong> own the cluster, cert-manager’s <em>chart</em>, the registry COS, or the jumphost — those are cluster-phase resources. See <a href="#the-cluster-phase-cluster-updown">Chapter 8</a> for the split.</p>
+<blockquote>
+<p><strong>New in this release — the BNK phase is now terraform-native.</strong> The trial layer used to mutate the cluster through <code>null_resource</code> + <code>local-exec</code> shell: raw <code>curl</code> server-side-apply for every custom resource, <code>helm upgrade --install</code> shelled out for the charts, and fixed <code>time_sleep</code> blocks (≈210 seconds of guesswork) standing in for readiness. That is gone. Chart installs are now <code>helm_release</code> (<code>wait = true</code>); the custom resources are <code>kubectl_manifest</code> (from the <code>alekc/kubectl</code> provider) with <code>wait_for</code> blocks that watch the resource’s real <code>.status</code>; namespaces and Secrets are the <code>kubernetes</code> provider. The CRs are now <strong>real Terraform state</strong> — <code>plan</code> diffs them, <code>destroy</code> deletes them (finalizer-aware), and drift is detected. See <a href="#the-terraform-native-deployment-model">§“The terraform-native deployment model”</a> below, and the concept note <a href="#why-we-retired-the-bnk-null_resourcecurlsleep">§“Why we retired the BNK <code>null_resource</code>/<code>curl</code>/<code>sleep</code>”</a>.</p>
+</blockquote>
 <h2 id="the-77-resource-shape"><a class="header" href="#the-77-resource-shape">The 77-resource shape</a></h2>
 <p>A clean <code>roksbnkctl up</code> against a fresh cluster lands roughly <strong>77 resources</strong> when the cluster phase is bundled in (i.e. <code>cluster up</code> and <code>up</code> were one combined run). Against a pre-existing cluster (<code>cluster up</code> then <code>up</code>), the trial-only count is smaller — roughly the difference, ~41 resources.</p>
-<p>The number isn’t load-bearing; it shifts a few resources up or down between upstream HCL releases as the chart adds/removes null_resources and Secrets. Treat “77” as a sanity-check tag, not a contract.</p>
+<p>The number isn’t load-bearing; it shifts a few resources up or down between upstream chart releases as the charts add/remove Secrets and <code>kubectl_manifest</code> CRs. Treat “77” as a sanity-check tag, not a contract.</p>
 <p>A representative breakdown:</p>
 <pre><code>Cluster phase (~36 resources, owned by `cluster up`)
   ROKS cluster + worker pools          ~5
@@ -1720,35 +2039,39 @@ roksbnkctl -w canada down --auto
   TGW jumphost VSI + cloud-init         ~16
 
 Trial phase (~41 resources, owned by `roksbnkctl up`)
-  flo Helm release                       ~5
-  cne_instance manifest + finalisers     ~4
-  license Helm release                  ~10
-  Cluster-side SAs / RoleBindings / SCC ~10
-  null_resources for token bootstrap    ~12
+  flo + cis helm_release                 ~4
+  cne_instance kubectl_manifest          ~1
+  license kubectl_manifest               ~1
+  namespaces + secrets (kubernetes)      ~5
+  cert issuer chain (kubectl_manifest)   ~3
+  NADs (kubectl_manifest)                ~2
+  SCC / node-labeler kubectl_manifest   ~20
+  IBM IAM trusted profile + COS reads   ~5
 </code></pre>
-<p>The null_resources at the bottom of the list are interesting — they’re the ones that re-run on every apply (more on that below).</p>
+<p>The <code>kubectl_manifest</code> resources are now ordinary Terraform state: a re-run <code>plan</code> shows them as no-ops unless their spec changed. The old <code>null_resource</code> token-bootstrap block that churned on every apply is gone — see <a href="#re-running-up-is-now-a-real-no-op">§“Re-running <code>up</code> is now a real no-op”</a>.</p>
 <h2 id="apply-timing"><a class="header" href="#apply-timing">Apply timing</a></h2>
 <p>A clean <code>up</code> against a fresh cluster takes ~50 minutes:</p>
 <ul>
 <li>ROKS cluster provisioning: 30-40 min (the bulk of the wait)</li>
-<li>cert-manager + flo Helm install: ~5 min</li>
-<li>cne_instance reconcile: 1-2 min</li>
-<li>license bootstrap (token generation + activation): 2-3 min</li>
-<li>Cluster-side bits + finalisers: 2-3 min</li>
+<li>cert-manager + flo <code>helm_release</code> (<code>wait = true</code>): ~5 min</li>
+<li>cne_instance reconcile: 1-2 min (gated on the CNEInstance’s real <code>Available</code> condition, not a sleep)</li>
+<li>license verification: 1-2 min (gated on the License CR’s real <code>status.state</code>, not a sleep)</li>
+<li>Cluster-side bits: applied concurrently with the above</li>
 </ul>
-<p>Against a pre-existing cluster (already-up’d or registered), the trial-only run is <strong>5-10 minutes</strong>. Most of that is Helm waiting for <code>flo</code> to stabilise and the license module’s null_resources running.</p>
-<h2 id="the-token-rotation-observation"><a class="header" href="#the-token-rotation-observation">The token-rotation observation</a></h2>
-<p>If you re-run <code>roksbnkctl up</code> against an already-deployed BNK trial, you’ll see ~41 resources <code>re-create</code> or <code>update in-place</code> even though “nothing changed”. This is expected.</p>
-<p>The <code>license</code> module rotates <strong>admin certificate tokens</strong> between runs — the JWT used to authenticate against the BNK control plane is short-lived and re-minted on each apply. A token rotation cascades into ~12 null_resources that exist solely to inject the new token into Helm-managed Secrets:</p>
-<pre><code>module.license.null_resource.cncf_admin_cert_token: Refreshing state... [id=8746234876]
-module.license.null_resource.cncf_admin_cert_token: Destroying... [id=8746234876]
-module.license.null_resource.cncf_admin_cert_token: Destruction complete after 0s
-module.license.null_resource.cncf_admin_cert_token: Creating...
-module.license.null_resource.cncf_admin_cert_token: Creation complete after 12s [id=9183746183]
-</code></pre>
-<p>That’s why the count of “destroyed + created” can hit ~41 even when no infrastructure-meaningful changes have been made.</p>
-<p>The rotation is harmless — running pods aren’t restarted, traffic isn’t interrupted. The new token replaces the old in the relevant Secret; flo notices and updates its in-memory cache. From the BNK trial’s runtime perspective, the second <code>up</code> is a no-op.</p>
-<p>If you want to skip the rotation cycle and just check “would this plan change anything significant?”, use <code>roksbnkctl plan</code> rather than <code>up</code> — it shows the plan without applying.</p>
+<p>Against a pre-existing cluster (already-up’d or registered), the trial-only run is <strong>5-10 minutes</strong>. Most of that is <code>helm_release</code> waiting for <code>flo</code> to stabilise and the two CR <code>wait_for</code> blocks resolving.</p>
+<blockquote>
+<p><strong>The ≈210 seconds of fixed <code>time_sleep</code> is gone.</strong> The legacy path padded the apply with six fixed sleeps (cert-manager-ready, two SCC-propagation waits, a CNEInstance-CRD wait, a License-CRD wait, and a 60-second flo-pods wait) plus in-script polling loops — ≈210s of unconditional waiting whether or not the cluster was actually ready. The terraform-native path replaces all of it with <code>helm_release wait = true</code> and <code>kubectl_manifest</code> <code>wait_for</code>, which return the <em>instant</em> readiness is observed and no sooner. On a warm cluster that is the single largest contributor to the faster re-deploy loop. <strong>The exact kubectl-vs-legacy wall-clock delta is pending the gated-live benchmark</strong> (<code>scripts/e2e-bnk-native.sh</code>, run by the integrator against a real cluster); until that lands, treat the speedup as <strong>qualitative</strong> — the ≈210s of fixed sleep deleted plus real-readiness gating rather than a pinned “N× faster”. <!-- INTEGRATOR: fill the measured kubectl-vs-legacy seconds + delta from the e2e-bnk-native.sh run here. --></p>
+</blockquote>
+<h2 id="re-running-up-is-now-a-real-no-op"><a class="header" href="#re-running-up-is-now-a-real-no-op">Re-running <code>up</code> is now a real no-op</a></h2>
+<p>If you re-run <code>roksbnkctl up</code> against an already-deployed BNK trial with no config change, the plan reports <strong><code>0 to add, 0 to change, 0 to destroy</code></strong> and <code>up</code> skips apply.</p>
+<p>This is a behaviour change from the legacy <code>null_resource</code>/<code>curl</code> path. Under the old design, every apply churned ~12 <code>null_resource</code>s — they had no real Terraform identity, so Terraform could not tell “already applied” from “not yet applied” and re-ran their <code>local-exec</code> shell on each pass. A re-run looked like <code>~41 destroyed + created</code> even when nothing had changed.</p>
+<p>The terraform-native path makes each cluster object a real resource:</p>
+<ul>
+<li>A <code>helm_release</code> knows the installed chart version, so an unchanged version is a no-op.</li>
+<li>A <code>kubectl_manifest</code> carries the rendered manifest as state, so an unchanged spec is a no-op (and a <em>changed</em> spec shows a precise <code>~ update in-place</code> diff of exactly the changed fields).</li>
+<li>A <code>kubernetes_secret</code> is keyed by its data, so an unchanged Secret is a no-op.</li>
+</ul>
+<p>So the second <code>up</code> against an unchanged trial genuinely changes nothing. To bump a BNK version or tweak a CNEInstance parameter, edit <code>config.yaml</code> (or a <code>--var-file</code>) and re-run: <code>terraform plan</code> diffs <strong>only</strong> the changed CNEInstance spec and helm versions — Terraform is the delta engine. This is the fast re-deploy loop the sprint targets, and it is <em>less</em> moving machinery than the old token-rotation cascade, not more. Use <code>roksbnkctl plan</code> to preview the diff without applying.</p>
 <h2 id="reading-the-terraform-plan-output"><a class="header" href="#reading-the-terraform-plan-output">Reading the Terraform plan output</a></h2>
 <p><code>roksbnkctl up</code> runs <code>terraform plan</code> first and prints its output. The plan summary at the end is the most useful part:</p>
 <pre><code>Plan: 77 to add, 0 to change, 0 to destroy.
@@ -1760,7 +2083,7 @@ module.license.null_resource.cncf_admin_cert_token: Creation complete after 12s 
 <ul>
 <li><strong><code>+ create</code></strong> — a new resource. Lines are green in a TTY.</li>
 <li><strong><code>&lt;= read</code></strong> — a data source the plan read but did not change. Common for <code>data "ibm_resource_group"</code> and similar lookups; effectively informational.</li>
-<li><strong><code># destroy</code></strong> — an in-progress destroy of an existing resource. Followed by a <code>+ create</code> if it’s being replaced (the null_resource rotation case).</li>
+<li><strong><code># destroy</code></strong> — an in-progress destroy of an existing resource. Followed by a <code>+ create</code> if it’s being replaced (e.g. a <code>kubectl_manifest</code> whose spec changed in a way that forces replacement).</li>
 <li><strong><code>~ update in-place</code></strong> — a resource whose attributes are being mutated without re-creation.</li>
 </ul>
 <p>The <code>&lt;=</code> data sources are the ones that look like:</p>
@@ -1809,7 +2132,7 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 </ol>
 <p>Later wins on conflict — same as Terraform’s own ordering. If you find yourself passing the same <code>--var-file</code> on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>, <code>init --var-file</code> is the persistence path that lets you drop the flag from subsequent calls.</p>
 <h2 id="apply-retries-on-transient-errors"><a class="header" href="#apply-retries-on-transient-errors">Apply retries on transient errors</a></h2>
-<p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>cne_instance</code>, <code>license</code>, and <code>cert-manager</code> modules all curl the master directly; on a fresh cluster, they sometimes race propagation and fail with <code>exit status 7</code> (curl couldn’t connect) or <code>Connection refused</code>.</p>
+<p>ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches <code>Ready</code>. The <code>helm</code>, <code>kubernetes</code>, and <code>alekc/kubectl</code> providers all talk to the master directly; on a fresh cluster, they sometimes race propagation and fail with a connection error (<code>Connection refused</code>, <code>i/o timeout</code>, <code>TLS handshake timeout</code>).</p>
 <p><code>roksbnkctl up</code> has built-in retry: up to 3 apply attempts, with a 60-second sleep between attempts, on any of these heuristic patterns:</p>
 <ul>
 <li><code>exit status 7</code> (curl couldn’t connect)</li>
@@ -1825,7 +2148,7 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 <p>If your apply hits one of these, you’ll see:</p>
 <pre><code>→ apply attempt 1 hit a transient-looking failure; waiting 60s and retrying...
 </code></pre>
-<p>Terraform’s idempotence means already-created resources are skipped on the retry; only the failed null_resources / data sources re-execute. After 3 attempts, <code>up</code> gives up:</p>
+<p>Terraform’s idempotence means already-created resources are skipped on the retry; only the failed resources / data sources re-execute. After 3 attempts, <code>up</code> gives up:</p>
 <pre><code>✗ apply still failing after 3 attempts — giving up
 </code></pre>
 <p>At that point, fix the underlying cause (usually wait longer or re-run manually) and try again. The retry is for transient races, not persistent failures.</p>
@@ -1874,8 +2197,8 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <p>Sample output against a split workspace:</p>
 <pre><code>$ roksbnkctl bnk down --auto
 → terraform destroy (trial phase)
-  module.license.helm_release.license: Destroying...
-  module.cne_instance.kubernetes_manifest.cne: Destroying...
+  module.license.kubectl_manifest.license: Destroying...
+  module.cne_instance.kubectl_manifest.cneinstance: Destroying...
   module.flo.helm_release.flo: Destroying...
   ...
   Destroy complete! Resources: 41 destroyed.
@@ -1944,7 +2267,79 @@ roksbnkctl bnk up --auto
 roksbnkctl cluster down --auto
 # (or `roksbnkctl down` from any starting state — see the dispatch matrix above)
 </code></pre>
-<h2 id="cross-references-3"><a class="header" href="#cross-references-3">Cross-references</a></h2>
+<h2 id="the-terraform-native-deployment-model"><a class="header" href="#the-terraform-native-deployment-model">The terraform-native deployment model</a></h2>
+<p>The BNK phase has three layers, each owned by a purpose-built Terraform provider. Nothing shells out to <code>curl</code>, <code>kubectl</code>, or <code>helm</code> any more; nothing sleeps a fixed interval.</p>
+<h3 id="1-the-install-layer--helm_release"><a class="header" href="#1-the-install-layer--helm_release">1. The install layer — <code>helm_release</code></a></h3>
+<p>cert-manager, FLO, and CIS install as <code>helm_release</code> resources with <code>wait = true</code>. <code>helm_release</code> runs Helm in-process (via the <code>hashicorp/helm</code> provider), tracks the installed chart/version in Terraform state, and — with <code>wait = true</code> — blocks until the release’s workloads report ready. FAR version discovery stays Terraform-side: the manifest chart is still pulled to read the FLO and CIS chart versions, which feed the <code>helm_release.version</code> argument.</p>
+<p>The chart installs have <strong>prerequisites</strong> that must exist first, or <code>helm_release wait = true</code> would hang on <code>ImagePullBackOff</code>:</p>
+<ul>
+<li><strong>Namespaces</strong> (<code>f5-bnk</code>, <code>f5-utils</code>) — <code>kubernetes_namespace</code>.</li>
+<li><strong>Secrets</strong> — the FAR image-pull secret <code>far-secret</code> (in both namespaces) and the CIS <code>f5-bigip-ctlr-login</code> login secret — <code>kubernetes_secret</code>. These carry the registry credentials the charts pull with, so they are ordered <em>before</em> the charts via <code>depends_on</code>.</li>
+</ul>
+<h3 id="2-the-cr-layer--kubectl_manifest--wait_for"><a class="header" href="#2-the-cr-layer--kubectl_manifest--wait_for">2. The CR layer — <code>kubectl_manifest</code> + <code>wait_for</code></a></h3>
+<p>Every custom resource — the cert-manager issuer chain (<code>ClusterIssuer</code>, the CA <code>Certificate</code>, the CA <code>ClusterIssuer</code>), the two <code>NetworkAttachmentDefinition</code>s, the OpenShift SCC <code>ClusterRoleBinding</code>s, the node-labeler <code>Job</code>, the <strong>CNEInstance</strong>, and the <strong>License</strong> — is a <code>kubectl_manifest</code> resource from the <code>alekc/kubectl</code> provider. The manifest body is the same spec the legacy path applied; only the apply mechanism changed.</p>
+<p>Two CRs gate on <strong>real readiness</strong> via a <code>wait_for</code> block that watches the live object’s <code>.status</code>:</p>
+<pre><code class="language-hcl"># CNEInstance — wait for FLO to report the instance up
+resource "kubectl_manifest" "cneinstance" {
+  yaml_body         = yamlencode(local.cneinstance_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  wait_for {
+    condition {
+      type   = "Available"
+      status = "True"
+    }
+  }
+  depends_on = [helm_release.flo]   # the FLO chart installs the CRD
+}
+
+# License — wait for the CPCL state machine to reach the licensed state
+resource "kubectl_manifest" "license" {
+  yaml_body         = yamlencode(local.license_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  wait_for {
+    field {
+      key   = "status.state"
+      value = "Verification Complete"
+    }
+  }
+  depends_on = [helm_release.flo, kubectl_manifest.cneinstance]
+}
+</code></pre>
+<p><code>wait_for</code> polls the live object and returns the instant the matched condition/field becomes true. The CNEInstance signal is its <code>Available</code> condition (<code>status.conditions[type=Available].status == True</code>); the License signal is its <code>status.state</code> reaching the licensed value. (The <code>"Verification Complete"</code> literal comes from the architect spike’s CWC-REST evidence and the FAR-shipped License CRD; it is <strong>confirmed against a live licensed cluster by the integrator’s <code>e2e-bnk-native.sh</code> run</strong> before merge — if the live value differs, staff pins the real one or switches to the <code>status.conditions[]</code> fallback matcher, which is equally expressible.) Resources with no meaningful readiness status — NADs, SCC bindings, issuers — carry no <code>wait_for</code> and simply apply.</p>
+<h3 id="3-namespaces--secrets--the-kubernetes-provider"><a class="header" href="#3-namespaces--secrets--the-kubernetes-provider">3. Namespaces + Secrets — the <code>kubernetes</code> provider</a></h3>
+<p>Covered above as the chart prerequisites. They use the <code>hashicorp/kubernetes</code> provider rather than <code>kubectl_manifest</code> because they have typed, first-class resource schemas (<code>kubernetes_namespace</code>, <code>kubernetes_secret</code>) and no plan-time-CRD concern.</p>
+<h3 id="provider-wiring-and-ordering"><a class="header" href="#provider-wiring-and-ordering">Provider wiring and ordering</a></h3>
+<p>All three providers are fed from the <strong>same</strong> <code>data "ibm_container_cluster_config"</code> the modules already use — <code>host</code>, <code>token</code>, and the decoded <code>cluster_ca_certificate</code>. The <code>create_roks_cluster ? 0 : 1</code> guard that keeps the provider config valid when the cluster doesn’t exist yet at plan time is unchanged.</p>
+<p>The only <strong>genuinely serial</strong> spine is <code>cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License</code>. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the ~16 CNEInstance SCC bindings — has had its conservative <code>depends_on</code> edges dropped so Terraform’s default parallelism applies them concurrently with the install spine. That parallelism, plus the deletion of the fixed sleeps, is where the speed comes from.</p>
+<h3 id="the-install-mode-flag-bnk_cr_mode"><a class="header" href="#the-install-mode-flag-bnk_cr_mode">The install-mode flag (<code>bnk_cr_mode</code>)</a></h3>
+<p>During the transition, both paths ship side by side, gated by one Terraform variable:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>bnk_cr_mode</code></th><th>What runs</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kubectl</code> (default)</td><td>the terraform-native path: <code>helm_release</code> + <code>kubernetes_*</code> + <code>kubectl_manifest</code> + <code>wait_for</code></td></tr>
+<tr><td><code>legacy_curl</code></td><td>the old <code>null_resource</code> + <code>curl</code> + <code>time_sleep</code> path, byte-for-byte unchanged</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two paths share the same spec locals (<code>local.cneinstance_manifest</code>, the helm values), so they apply the <em>same</em> manifests by different mechanisms — which is exactly what lets the validator benchmark them apples-to-apples (the kubectl path must be materially faster). The roksbnkctl CLI exposes this as a <strong><code>--legacy-bnk</code></strong> flag on both <code>bnk up</code> and <code>bnk down</code> (default off → <code>kubectl</code>); it sets <code>bnk_cr_mode = "legacy_curl"</code> for that run. You can also pin it persistently in workspace config via <code>bnk.cr_mode</code> (see the <a href="#bnk-block">configuration reference</a>). Use the <strong>same</strong> mode at <code>bnk down</code> that you used at <code>bnk up</code> so the destroy targets the resources that were actually created. The legacy path is the benchmark baseline / transition fallback only; new deployments use the default. The flag is in the <a href="#command-reference">command reference</a>.</p>
+<h2 id="why-we-retired-the-bnk-null_resourcecurlsleep"><a class="header" href="#why-we-retired-the-bnk-null_resourcecurlsleep">Why we retired the BNK <code>null_resource</code>/<code>curl</code>/<code>sleep</code></a></h2>
+<p>A concept note on the design change, for readers who want the <em>why</em> rather than the <em>how</em>.</p>
+<p><strong>The old shape.</strong> The BNK phase used to mutate the cluster through Terraform <code>null_resource</code> + <code>local-exec</code> provisioners: raw <code>curl</code> server-side-apply (<code>PATCH ...?fieldManager=terraform&amp;force=true</code>) for every custom resource, a shelled-out <code>helm upgrade --install</code> for each chart, and fixed <code>time_sleep</code> blocks standing in for readiness. It worked, but it had four structural problems.</p>
+<p><strong>1. The CRs were not real Terraform state.</strong> A <code>null_resource</code> running <code>curl</code> has no Kubernetes identity. Terraform could not diff it, could not detect drift, and could not reliably destroy it — teardown was a best-effort <code>curl -X DELETE ... || true</code>. Worse, a <code>null_resource</code> re-runs its <code>local-exec</code> whenever its triggers change (and the license token churned every apply), so a “no-op” re-apply destroyed-and-recreated dozens of resources. With <code>kubectl_manifest</code>, the CR <strong>is</strong> a Terraform resource: <code>plan</code> diffs the exact changed fields, <code>destroy</code> deletes it finalizer-aware, drift is detected, and an unchanged re-apply is a true no-op.</p>
+<p><strong>2. Fixed sleeps instead of real readiness.</strong> The legacy path padded itself with ≈210 seconds of <code>time_sleep</code> — wait 30s for the CRD, 30s for SCC propagation, 60s for pods — plus in-script <code>for i in $(seq 1 30); do ... sleep 10; done</code> polling loops. These are <em>eventual-consistency hedges</em>: the cluster reaches readiness at some unknown moment, and a fixed sleep either wastes time (usually) or is too short (occasionally, causing flakes). <code>helm_release wait = true</code> and <code>kubectl_manifest</code> <code>wait_for</code> replace the guess with a watch — they return the instant the real <code>.status</code> reports ready, and not before. The CNEInstance’s <code>Available</code> condition and the License’s <code>status.state</code> are the actual readiness signals the operators publish; gating on them is both faster on the happy path and more reliable on a slow one.</p>
+<p><strong>3. The plan-time-CRD problem — why <code>alekc/kubectl</code> specifically.</strong> Applying a CR whose CRD is installed <em>in the same apply</em> (the FLO chart installs the CNEInstance and License CRDs, then we apply those CRs) is the classic Terraform trap. HashiCorp’s own <code>kubernetes_manifest</code> does a typed-schema lookup of the kind at <strong>plan</strong> time and fails with <code>cannot select exact GVK ... no matches for kind</code> because the CRD doesn’t exist yet. That is exactly why the legacy modules used raw <code>curl</code> (“no kubernetes provider required at plan time”). The <code>alekc/kubectl</code> provider’s <code>kubectl_manifest</code> carries the manifest as an opaque YAML string and resolves the GVK at <strong>apply</strong> time — so it applies a CR whose CRD is created in the same run, no plan-time schema lookup. It gives us real state + drift + finalizer-aware delete + <code>wait_for</code>, <em>without</em> the plan-time-CRD failure and <em>without</em> us building a custom provider or a Go reconciler. Ordering (CRD before CR) is still expressed with <code>depends_on</code> on the chart’s <code>helm_release</code> — <code>wait_for</code> removes the sleep, not the ordering.</p>
+<p><strong>4. The speed win.</strong> Three things compound: the ≈210s of fixed sleep is deleted; <code>wait_for</code>/<code>helm wait</code> return as soon as readiness is observed rather than after a worst-case pad; and dropping the over-conservative <code>depends_on</code> edges lets Terraform apply the independents (NADs, Secrets, SCC bindings, node-labeler) concurrently. For the tight deploy-test-iterate loop the sprint targets, that turns each re-deploy from “apply, then wait out the sleeps” into “apply, gated only on actual readiness”. And because the CRs are now real state, bumping a BNK version is a <code>plan</code> that diffs <em>only</em> the changed CNEInstance spec and chart versions — Terraform is the delta engine, so this is less code than a hand-rolled reconciler, not more.</p>
+<p><strong>What stays in Terraform.</strong> The IBM IAM trusted-profile resources (for the CNE controller service account) and the COS reads (the FAR auth archive and the license JWT, fetched via the IBM IAM token + the COS S3 REST API) are <strong>unchanged</strong> — they are IBM-Cloud-native Terraform resources/data sources, not Kubernetes mutations, and they stay exactly as they were.</p>
+<p><strong>The one new dependency — and the air-gap caveat.</strong> <code>alekc/kubectl</code> is a third-party provider on the public Terraform registry (<code>registry.terraform.io/providers/alekc/kubectl</code>). On connected runs it downloads at <code>terraform init</code> like any provider — the net dependency simply shifts from “<code>curl</code>/<code>base64</code> shell tools on the runner” to “a registry plugin at init”. For <strong>air-gapped / offline</strong> ROKS installs it must be pre-staged: build a <code>terraform providers mirror</code> bundle on a connected machine and point the offline runner at it via a <code>provider_installation { filesystem_mirror { ... } }</code> block in the Terraform CLI config (or an internal <code>network_mirror</code>). The provider is pinned (<code>&gt;= 2.4.0</code>) and recorded in <code>.terraform.lock.hcl</code>, so mirrored installs are reproducible. This is the single new supply-chain dependency the change introduces.</p>
+<blockquote>
+<p><strong>Note — transcripts, resource counts, and timings are illustrative (pending the live verify).</strong> The sample <code>terraform plan</code> / <code>apply</code> / <code>bnk up</code> / <code>bnk down</code> output, the <code>~41</code>/<code>~77</code>-resource breakdowns, and every timing figure in this chapter are <em>representative</em> of the terraform-native path, not captured from a live run. They could not be re-captured here because the gated-live path is cluster-mutating and no cluster was available; the byte-for-byte transcripts and the measured kubectl-vs-legacy benchmark numbers are filled in by the integrator from the <code>scripts/e2e-bnk-native.sh</code> run. The command <strong>surface</strong> (the <code>--legacy-bnk</code> flag, <code>bnk_cr_mode</code>, the resource <em>shapes</em> — <code>helm_release</code> / <code>kubernetes_*_v1</code> / <code>kubectl_manifest</code> + <code>wait_for</code>) is reconciled against the built binary and the landed terraform and is accurate; treat the specific numbers and console lines as orientation, not contract. <!-- INTEGRATOR: replace this note's transcripts + numbers with the e2e-bnk-native.sh captures once the live verify is GREEN. --></p>
+</blockquote>
+<h2 id="cross-references-4"><a class="header" href="#cross-references-4">Cross-references</a></h2>
 <ul>
 <li><a href="#quick-start-from-api-key-to-deployed-bnk">Chapter 7 — Quick start</a> — happy-path walkthrough end-to-end.</li>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — what <code>cluster up</code> provisions, the two state directories, and how to identify a legacy single-state workspace.</li>
@@ -1955,6 +2350,16 @@ roksbnkctl cluster down --auto
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h1>
+<blockquote>
+<p><strong>Three-phase note.</strong> With the Cluster / BNK / Testing split there is now a
+fourth destroy verb, <code>roksbnkctl testing down</code> (destroys the jumphost rig,
+leaving the cluster and BNK intact), and the bare <code>roksbnkctl down</code> tears
+down <strong>BNK || Testing in parallel, then the cluster</strong>. <code>cluster down</code> refuses
+while <strong>either</strong> BNK or Testing state exists. The decision tree below is
+written for the earlier two-phase shape; see
+<a href="#teardown-ordering-and-the-cluster-down-guard">Chapter 8a §“Teardown ordering and the <code>cluster down</code> guard”</a>
+for the three-phase ordering and guard.</p>
+</blockquote>
 <p><code>roksbnkctl down</code>, <code>roksbnkctl bnk down</code>, and <code>roksbnkctl cluster down</code> are the three destroy verbs — the inverses of <a href="#deploying-bnk-trials-on-top"><code>up</code></a>, <a href="#the-bnk-up--bnk-down-command-group"><code>bnk up</code></a>, and <a href="#the-cluster-phase-cluster-updown"><code>cluster up</code></a> respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you’ll hit if you ask for the wrong one, what survives a destroy, the <code>--auto</code> flag for non-interactive runs, and the workspace-cleanup story.</p>
 <h2 id="the-phase-aware-decision-tree"><a class="header" href="#the-phase-aware-decision-tree">The phase-aware decision tree</a></h2>
 <p>Which verb do you want? The shape of your workspace and your intent both matter. Start here:</p>
@@ -1995,7 +2400,7 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 </div>
 <p>This is the safe default — <code>down</code> always does the right thing regardless of shape, and it’s the only verb you can run on a legacy single-state workspace.</p>
 <h3 id="roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><a class="header" href="#roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><code>roksbnkctl bnk down</code> — destroy the BNK trial only</a></h3>
-<p>New in v1.1.0. Tears down everything the trial phase created — the <code>flo</code> Helm release, <code>cne_instance</code>, the license module, cluster-side ServiceAccounts / RoleBindings / SCC bindings, and the null_resources that bootstrap admin tokens — and leaves the cluster running.</p>
+<p>New in v1.1.0. Tears down everything the trial phase created — the <code>flo</code> / <code>cis</code> Helm releases, the <code>cne_instance</code> and <code>license</code> custom resources, and the cluster-side namespaces / Secrets / ServiceAccounts / RoleBindings / SCC bindings — and leaves the cluster running. In the default terraform-native path these are all real terraform resources (<code>helm_release</code>, <code>kubernetes_*</code>, and <code>alekc/kubectl</code> <code>kubectl_manifest</code>), so <code>bnk down</code> is an ordinary <code>terraform destroy</code> that deletes the CRs finalizer-aware — no destroy-time <code>curl</code>. (On a <code>--legacy-bnk</code> trial the same destroy removes the legacy <code>null_resource</code>-applied objects instead.)</p>
 <pre><code class="language-bash">roksbnkctl bnk down
 </code></pre>
 <p>What survives:</p>
@@ -2048,6 +2453,39 @@ roksbnkctl down --auto
 roksbnkctl ws delete &lt;name&gt; --force
 </code></pre>
 <p>If you <code>roksbnkctl up</code> against a registered cluster (one you didn’t <code>cluster up</code> yourself), step 2 doesn’t apply — the cluster wasn’t yours to destroy. Just <code>bnk down</code> the trial and stop there, then optionally unregister by deleting <code>cluster-outputs.json</code>.</p>
+<h2 id="roksbnkctl-cleanup--recovering-from-a-failed-down"><a class="header" href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code> — recovering from a failed <code>down</code></a></h2>
+<p><code>terraform destroy</code> is not always clean. A transient IBM Cloud API error, a resource stuck behind a finaliser, or a <code>down</code> you <code>Ctrl-C</code>’d partway can leave <strong>orphaned cloud resources</strong> that Terraform no longer tracks — and a re-run of <code>down</code> may not finish the job. The classic symptom is a follow-up <code>up</code> that fails with <code>… name is not unique</code> because a half-deleted security group or VPC is still there.</p>
+<p><code>roksbnkctl cleanup</code> is the recovery tool. It sweeps your IBM Cloud account for every resource named after the workspace prefix (<code>&lt;prefix&gt;-*</code>) and deletes them in dependency order — regardless of what Terraform state says.</p>
+<pre><code class="language-bash">roksbnkctl cleanup            # scan, list, confirm, delete
+roksbnkctl cleanup --dry-run  # scan + list only, delete nothing
+roksbnkctl cleanup --auto     # skip the confirmation prompt
+</code></pre>
+<h3 id="what-it-deletes"><a class="header" href="#what-it-deletes">What it deletes</a></h3>
+<p>Everything whose name is the workspace prefix or a <code>&lt;prefix&gt;-</code> child, across:</p>
+<ul>
+<li><strong>VPC (per region):</strong> virtual server instances (jumphosts), floating IPs, public gateways, subnets, security groups, SSH keys, and VPCs.</li>
+<li><strong>Transit Gateway</strong> (and its connections).</li>
+<li>The <strong>registry COS</strong> instance.</li>
+<li>The <strong>ROKS cluster</strong> itself.</li>
+<li>The <strong>BNK trusted profile</strong> (named after the cluster ID — found via <code>cluster-outputs.json</code>, so it’s still identifiable after the cluster is gone).</li>
+</ul>
+<p>Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is <strong>best-effort</strong>: a failure on one resource is reported and the sweep continues. Re-run <code>cleanup</code> for anything blocked on an async delete (e.g. a VPC that can’t go until its cluster finishes terminating).</p>
+<h3 id="which-regions-it-scans"><a class="header" href="#which-regions-it-scans">Which regions it scans</a></h3>
+<p>By default <code>cleanup</code> scans the workspace’s cluster region plus the testing-client region (from <code>config.yaml</code>’s <a href="#resources-block"><code>resources.client_region</code></a> and <code>cluster-outputs.json</code>). If resources landed in a region not recorded in config — common on older workspaces — add it explicitly or sweep everything:</p>
+<pre><code class="language-bash">roksbnkctl cleanup --region ca-tor   # add a specific region to the scan
+roksbnkctl cleanup --all-regions     # sweep every IBM Cloud region (slower)
+</code></pre>
+<h3 id="caveats"><a class="header" href="#caveats">Caveats</a></h3>
+<ul>
+<li><strong>It matches purely on the <code>&lt;prefix&gt;-</code> name convention.</strong> If unrelated resources happen to share the workspace prefix, they match too — always review the <code>--dry-run</code> (or the pre-delete confirmation) list first.</li>
+<li><strong>It needs a prefix.</strong> Workspaces created before prefix-based naming (<code>v1.8.0</code>) have nothing to match; <code>cleanup</code> reports there’s nothing to sweep.</li>
+<li>It does <strong>not</strong> touch Terraform state or <code>config.yaml</code>. After a successful sweep the state files still reference the now-gone resources; run <code>roksbnkctl ws delete &lt;name&gt; --force</code> to drop the workspace, or re-<code>up</code> to rebuild.</li>
+</ul>
+<p>A typical recovery — a <code>down</code> errored, and <code>up</code> now refuses with “not unique”:</p>
+<pre><code class="language-bash">roksbnkctl cleanup --dry-run   # confirm what's stranded
+roksbnkctl cleanup --auto      # sweep it
+roksbnkctl up --auto           # rebuild clean
+</code></pre>
 <h2 id="refusal-messages-catalogue"><a class="header" href="#refusal-messages-catalogue">Refusal messages catalogue</a></h2>
 <p>The phase-scoped destroy verbs refuse loudly when the shape doesn’t allow what you’ve asked for. Every refusal names the verb that would actually work. If you hit one in the wild, grep your terminal output for the message text and you should land here:</p>
 <div class="table-wrapper">
@@ -2127,30 +2565,18 @@ roksbnkctl down --auto
 <p>A successful <code>down</code> leaves the workspace directory in place. You usually want to clean that up too:</p>
 <pre><code class="language-bash">roksbnkctl ws delete &lt;name&gt; --force
 </code></pre>
-<p>Two safety rails on <code>ws delete</code>:</p>
-<ul>
-<li><strong>Refuses to delete the current workspace.</strong> Use the <a href="#the-parking-lot-pattern">parking-lot pattern</a> if you need to drop your current workspace.</li>
-<li><strong>Refuses if Terraform state still lists resources</strong> (unless <code>--force</code>). Catches the case where you forgot to run <code>down</code> first.</li>
-</ul>
-<p>The <code>--force</code> flag overrides both checks — but if you <code>ws delete --force</code> a workspace that still has provisioned cloud resources, you’ll have leaked them. There’s no auto-recovery; you’d need to find them via the IBM Cloud console and delete them by hand.</p>
-<p>The full clean-as-you-go pattern from <code>scripts/e2e-test.sh</code> (Phase D destroys; Phase H parks and deletes):</p>
+<p>One safety rail on <code>ws delete</code>: it <strong>refuses if Terraform state still lists resources</strong> (unless <code>--force</code>) — which catches the case where you forgot to run <code>down</code> first. You <strong>can</strong> delete the current workspace directly; the pointer moves to another existing workspace (or clears when none remain), so no “switch first” dance is needed (see <a href="#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired">Chapter 6</a>).</p>
+<p>The <code>--force</code> flag overrides the state check — but if you <code>ws delete --force</code> a workspace that still has provisioned cloud resources, you’ll have stranded them. Recover with <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a>: run it <strong>before</strong> deleting the workspace (it reads the prefix from <code>config.yaml</code>), or recreate the workspace’s <code>config.yaml</code> with the same prefix and run it after.</p>
+<p>The full clean-as-you-go teardown (<code>scripts/e2e-test.sh</code> Phase D destroys; Phase H deletes):</p>
 <pre><code class="language-bash"># 1. Destroy the trial
 roksbnkctl down --auto
 
 # 2. Destroy the cluster phase
 roksbnkctl cluster down --auto
 
-# 3. Park the current-workspace pointer somewhere harmless
-roksbnkctl ws new e2e-cleanup
-roksbnkctl ws use e2e-cleanup
-
-# 4. Now the original workspace is no longer current — safe to delete
+# 3. Delete the workspace — even if it's the current one (the pointer auto-switches)
 roksbnkctl ws delete default --force
-
-# 5. (Optional) clean up the parking lot too
-roksbnkctl ws delete e2e-cleanup --force
 </code></pre>
-<p>Step 3-5 is the parking-lot pattern from <a href="#workspaces">Chapter 6</a>. It’s specifically necessary when the workspace you want to delete is currently the active one — <code>ws delete</code> refuses to remove the current workspace because that would leave a dangling <code>current_workspace</code> pointer.</p>
 <h2 id="cost-note-an-undestroyed-cluster-keeps-billing"><a class="header" href="#cost-note-an-undestroyed-cluster-keeps-billing">Cost note: an undestroyed cluster keeps billing</a></h2>
 <p>ROKS clusters bill at roughly <strong>$0.30/hour</strong> per cluster + worker pool — call it $7/day for a 2-worker cluster, plus a few cents/day for the VPC / load balancers / COS / jumphost. A forgotten cluster can rack up real cost over a weekend.</p>
 <p>To verify what’s still running in your account:</p>
@@ -2211,9 +2637,9 @@ roksbnkctl down --auto -w preexisting
 <p>The destroy count <code>N</code> is the BNK overlay + jumphost only — typically 30-40 resources, <strong>not</strong> the from-scratch ~77 count. <code>cluster register</code> is a discovery-only path: terraform state holds the overlay modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>, <code>license</code>) and the <code>testing</code> jumphost, but <strong>not</strong> the <code>roks_cluster</code> module, because the cluster pre-existed roksbnkctl. <code>down</code> destroys only what terraform knows about, so the registered cluster survives untouched.</p>
 <p>If you also want to release the underlying cluster, you have to tear it down through whatever provisioned it originally (the IBM Cloud console, or the separate terraform tree your teammate used). <code>roksbnkctl cluster down</code> only works against clusters <code>roksbnkctl cluster up</code> created in the first place — see <a href="#the-cluster-phase-cluster-updown">Chapter 8</a> for the cluster-phase boundary.</p>
 <p>The full register → up → test → down loop above is what Phase E + Phase H of the e2e plan exercise; see <a href="#the-e2e-test-plan">Chapter 23</a> for the CI version.</p>
-<h2 id="cross-references-4"><a class="header" href="#cross-references-4">Cross-references</a></h2>
+<h2 id="cross-references-5"><a class="header" href="#cross-references-5">Cross-references</a></h2>
 <ul>
-<li><a href="#workspaces">Chapter 6 — Workspaces</a> — <code>ws delete</code> mechanics and the parking-lot pattern.</li>
+<li><a href="#workspaces">Chapter 6 — Workspaces</a> — <code>ws delete</code> mechanics and how the current-workspace pointer auto-switches on delete.</li>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — what <code>cluster up</code> provisions and <code>cluster down</code> removes.</li>
 <li><a href="#registering-an-existing-cluster">Chapter 9 — Registering an existing cluster</a> — the <code>cluster register</code> mechanics the walkthrough builds on.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — what <code>up</code> provisions and <code>down</code> removes.</li>
@@ -2369,6 +2795,7 @@ cos:             # optional COS supply-chain config
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: shared-client-vpc }
+  client_region:     ca-tor               # since v1.9.0; testing-client region (plain string)
 </code></pre>
 <p><em>(since <code>v1.8.0</code>)</em> The <code>init</code> interview’s create/adopt answers, one <code>{create, existing}</code> pair per resource. <code>create: true</code> provisions a new, prefix-named resource; <code>create: false</code> declines it, and when a still-enabled resource depends on the declined one, <code>existing:</code> names the pre-existing resource to consume instead.</p>
 <div class="table-wrapper">
@@ -2387,6 +2814,7 @@ cos:             # optional COS supply-chain config
 </tbody>
 </table>
 </div>
+<p>One extra key, <code>client_region</code> <em>(since <code>v1.9.0</code>)</em>, is a plain <strong>string</strong> rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when <code>init</code> asks where to install the test client. It renders into <code>testing_client_vpc_region</code> (omitted → the terraform default applies) and seeds the regions <code>roksbnkctl cleanup</code> scans.</p>
 <p>The block is <strong>optional and additive</strong> — omit it (any pre-<code>v1.8.0</code> config) and the legacy sparse render applies; a fresh <code>init</code> writes it in full. The deep reference, including which terraform <code>create_*</code>/<code>*_name</code> variables each toggle renders, is <a href="#resources-block">Chapter 28 §“<code>resources:</code> block”</a>.</p>
 <h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
 <pre><code class="language-yaml">bnk:
@@ -2664,7 +3092,7 @@ $ roksbnkctl doctor -w dev
 ✓ workspace dev healthy
 </code></pre>
 <p>From here, <code>roksbnkctl up --auto -w dev</code> is the next step (see <a href="#quick-start-from-api-key-to-deployed-bnk">Chapter 7 — Quick start</a>). You can layer on <code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code> blocks by hand-editing <code>config.yaml</code> whenever you need them — <code>init</code> only writes the minimum to keep first-run friction low.</p>
-<h2 id="cross-references-5"><a class="header" href="#cross-references-5">Cross-references</a></h2>
+<h2 id="cross-references-6"><a class="header" href="#cross-references-6">Cross-references</a></h2>
 <ul>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — the layering between <code>config.yaml</code> and <code>terraform.tfvars</code>.</li>
 <li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — the <code>api_key_*</code> fields and how they’re resolved.</li>
@@ -2876,7 +3304,7 @@ $ roksbnkctl apply
 </table>
 </div>
 <p>The schema in <code>config.yaml</code> covers about a third of the upstream HCL variables — the ones that nearly every workspace needs to set. The other two-thirds (jumphost details, every BNK module’s full surface, the testing module’s full surface) are reachable through the lower layers.</p>
-<h2 id="cross-references-6"><a class="header" href="#cross-references-6">Cross-references</a></h2>
+<h2 id="cross-references-7"><a class="header" href="#cross-references-7">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — what <code>config.yaml</code> covers vs what falls through to tfvars.</li>
 <li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — why <code>ibmcloud_api_key</code> doesn’t go in tfvars.</li>
@@ -3131,7 +3559,7 @@ Save the key for future runs? [Y/n]: y
 </ul>
 <p>The implementation is <code>internal/exec/redact.go</code> — a wrapping <code>io.Writer</code> with byte-comparison redaction and cross-write prefix buffering (so a secret split across two <code>Write</code> calls still gets masked). The matcher uses the resolved API key value verbatim (a known string at run-time) rather than a generic “looks like an IBM API key” pattern, to avoid false positives on legitimate output.</p>
 <p>PRD 04’s acceptance criteria require that the API key never appears in <code>docker inspect</code>, <code>ps -ef</code>, <code>kubectl get pods/events -o yaml</code>, or <code>kubectl describe pod</code>. The redactor is the defence-in-depth layer; the per-backend cred-propagation rules are the primary control.</p>
-<h2 id="cross-references-7"><a class="header" href="#cross-references-7">Cross-references</a></h2>
+<h2 id="cross-references-8"><a class="header" href="#cross-references-8">Cross-references</a></h2>
 <ul>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 — credential propagation across execution backends</a> — the full design.</li>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>ibmcloud:</code> block schema.</li>
@@ -3436,7 +3864,7 @@ roksbnkctl tf output -json jumphost_shared_key | head -c 50
 </div>
 <p>The <code>targets:</code> schema and the <code>roksbnkctl targets</code> commands are the same surface for both — the backend just uses each target in a heavier-weight way. Anything you set up for <code>--on</code> keeps working under <code>--backend ssh:&lt;target&gt;</code>.</p>
 <p>The split between the lightweight <code>--on</code> path and the full <code>ssh</code> backend is deliberate: <code>--on</code> stays simple — one SSH session, one command, no remote state. The backend handles the heavier lifting (file materialisation, package installation, multi-step orchestration).</p>
-<h2 id="cross-references-8"><a class="header" href="#cross-references-8">Cross-references</a></h2>
+<h2 id="cross-references-9"><a class="header" href="#cross-references-9">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — where <code>targets:</code> fits in the overall schema.</li>
 <li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — the SSH-key sources from a credential-discipline perspective.</li>
@@ -4176,7 +4604,7 @@ type Credentials struct {
 </code></pre>
 <p>All four implementations satisfy this interface. Call sites in <code>cli/cluster.go</code>, <code>cli/test.go</code>, etc., get a <code>Backend</code> from the registry and call <code>Run(...)</code> — no branching on backend type. The uniformity is what makes the system extensible without rewriting callers each time a backend lands.</p>
 <p>The <code>Credentials</code> struct is the bridge between the resolver chain (env → keychain → config-b64 → prompt) covered in <a href="#credentials-and-the-resolver-chain">Chapter 14</a> and the per-backend propagation rules in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04</a>. Each backend translates the struct into the mechanism appropriate to where it runs: env vars for <code>local</code>, <code>--env KEY</code> (no <code>=value</code>) for <code>docker</code>, secretKeyRef for <code>k8s</code>, <code>SetEnv</code> or wrapper script for <code>ssh</code>.</p>
-<h2 id="cross-references-9"><a class="header" href="#cross-references-9">Cross-references</a></h2>
+<h2 id="cross-references-10"><a class="header" href="#cross-references-10">Cross-references</a></h2>
 <ul>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md">PRD 03 — pluggable execution backends</a> — the design rationale and full per-backend spec.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 — credential propagation</a> — the cred-passing rules every backend implements.</li>
@@ -4456,7 +4884,7 @@ YAML
 </code></pre>
 <p>The point of this walkthrough: with no tools installed locally beyond <code>roksbnkctl</code> itself, you’ve reached the IBM Cloud control plane from the customer’s bastion (compliance-correct egress), exercised the cluster fabric for throughput, and persisted the routing per workspace. The same laptop with the same <code>roksbnkctl</code> binary handles a different customer’s POC by pointing at a different workspace; nothing on the laptop is workspace-specific.</p>
 <p><a href="#the-in-cluster-ops-pod">Chapter 19</a> covers the ops-pod lifecycle in detail; <a href="#throughput-testing">Chapter 22</a> covers the north-south vs east-west modes.</p>
-<h2 id="cross-references-10"><a class="header" href="#cross-references-10">Cross-references</a></h2>
+<h2 id="cross-references-11"><a class="header" href="#cross-references-11">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the <code>exec:</code> block schema.</li>
 <li><a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials and the resolver chain</a> — how creds reach each backend.</li>
@@ -4875,7 +5303,7 @@ applying secret roksbnkctl-ops/roksbnkctl-ibm-creds       ... ERROR: Get "https:
 </code></pre>
 <p>If the SA/Secret/RBAC/Pod chain is healthy, this prints a fresh OAuth token. If it errors, the error message names which link in the chain broke (pod not found, Secret missing, exec denied, ibmcloud CLI exit non-zero).</p>
 <p><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> covers the broader “ops pod is unhappy” failure modes alongside other end-user troubleshooting.</p>
-<h2 id="cross-references-11"><a class="header" href="#cross-references-11">Cross-references</a></h2>
+<h2 id="cross-references-12"><a class="header" href="#cross-references-12">Cross-references</a></h2>
 <ul>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#k8s-internalexeck8sgo">PRD 03 — pluggable execution backends, §“K8s”</a> — the ops-pod design rationale.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#in-cluster-pod-k8s-backend">PRD 04 — credential propagation, §“In-cluster pod”</a> — Secret-based propagation rules.</li>
@@ -5099,7 +5527,7 @@ connectivity PASS (3/3 passed)
 </table>
 </div>
 <p>The connectivity suite is intentionally a thin probe. When the answer to “is it broken” is “yes” and you need to know why, the suite has done its job — it’s flagged the URL — and the next step is one of the tools above.</p>
-<h2 id="cross-references-12"><a class="header" href="#cross-references-12">Cross-references</a></h2>
+<h2 id="cross-references-13"><a class="header" href="#cross-references-13">Cross-references</a></h2>
 <ul>
 <li><a href="#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
 <li><a href="#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a> — the <code>roksbnkctl targets</code> ergonomic precedent that <code>roksbnkctl test hosts</code> mirrors.</li>
@@ -5556,7 +5984,7 @@ $ roksbnkctl test dns \
 <li><strong>Probe says NOT diverged but customer says it IS</strong> — likely the customer is querying through a CDN-fronted resolver that anycasts the request. Re-probe with <code>--server &lt;gslb-vip-directly&gt;</code> to skip the resolver chain.</li>
 <li><strong>All vantages return SERVFAIL</strong> — the GSLB-VIP isn’t reachable from any of them. Check connectivity (<a href="#connectivity-testing">Chapter 20</a>) before re-running.</li>
 </ul>
-<h2 id="cross-references-13"><a class="header" href="#cross-references-13">Cross-references</a></h2>
+<h2 id="cross-references-14"><a class="header" href="#cross-references-14">Cross-references</a></h2>
 <ul>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a> — design rationale, the full schema spec, the rejected-by-design list.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md#phase-l-dns--dns-probe-gslb-aware-across-backends">PRD 05 §“Phase L-DNS”</a> — the end-to-end test sequence that validates each row of this chapter against a live cluster.</li>
@@ -5759,7 +6187,7 @@ test:
 kubectl delete -n roksbnkctl-test pod/roksbnkctl-iperf3 svc/roksbnkctl-iperf3
 </code></pre>
 <p>The fixture is in the <code>roksbnkctl-test</code> namespace (same namespace the k8s backend uses for one-shot Jobs). It’s a bare Pod plus a Service; nothing else lingers when you delete the two resources.</p>
-<h2 id="cross-references-14"><a class="header" href="#cross-references-14">Cross-references</a></h2>
+<h2 id="cross-references-15"><a class="header" href="#cross-references-15">Cross-references</a></h2>
 <ul>
 <li><a href="#k8s-backend">Chapter 17 §“K8s backend”</a> — server-side mechanics (manifest, SCC, log streaming, exit-code extraction).</li>
 <li><a href="#iperf3-server-side">Chapter 17 §“iperf3 server side”</a> — the asymmetric server-pod-plus-client-Job shape.</li>
@@ -5978,7 +6406,7 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 PHASE_FROM=L ./scripts/e2e-test-backends.sh
 </code></pre>
 <p>If the same phase flakes on consecutive <code>PHASE_FROM=</code> runs, it’s a real bug — open an issue with the per-phase log attached.</p>
-<h2 id="cross-references-15"><a class="header" href="#cross-references-15">Cross-references</a></h2>
+<h2 id="cross-references-16"><a class="header" href="#cross-references-16">Cross-references</a></h2>
 <ul>
 <li><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> — symptom → root cause → fix entries for the failure modes phase D through phase N can surface.</li>
 <li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — the four-backend matrix that phases I, K, L exercise.</li>
@@ -6308,7 +6736,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </table>
 </div>
 <p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
-<h2 id="cross-references-16"><a class="header" href="#cross-references-16">Cross-references</a></h2>
+<h2 id="cross-references-17"><a class="header" href="#cross-references-17">Cross-references</a></h2>
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
@@ -6538,7 +6966,7 @@ roksbnkctl logs flo
 # Expected: no "failed to pull FAR image: unauthorized" lines
 </code></pre>
 <p>The third step is the verification gate. If FLO’s logs still show auth failures after the pod restart, the new auth key was rejected by <code>repo.f5.com</code> — re-issue the key on the F5 side, not in the bucket.</p>
-<h2 id="cross-references-17"><a class="header" href="#cross-references-17">Cross-references</a></h2>
+<h2 id="cross-references-18"><a class="header" href="#cross-references-18">Cross-references</a></h2>
 <ul>
 <li><a href="#cos--cos-supply-chain-optional">Chapter 12 §“<code>cos:</code> — COS supply-chain (optional)”</a> — the workspace-config block this chapter operationalises.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — <code>f5_cne_far_auth_file</code>, <code>f5_cne_subscription_jwt_file</code>, <code>ibmcloud_cos_instance_name</code>, <code>ibmcloud_resources_cos_bucket</code> are the HCL handles.</li>
@@ -6578,15 +7006,11 @@ roksbnkctl logs flo
 <p><strong>Fix</strong>: <code>roksbnkctl</code> writes a workspace-scoped override (<code>kubeconfig_dir = ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code>) and creates the dir at apply time. If you’re hand-rolling terraform without <code>roksbnkctl up</code>, <code>mkdir -p ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code> first.</p>
 <h3 id="symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes"><a class="header" href="#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes">Symptom: <code>terraform destroy</code> leaves orphan IBM Cloud resources (LBs, security groups, VPEs)</a></h3>
 <p><strong>Root cause</strong>: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster’s ID.</p>
-<p><strong>Fix</strong>: run <code>roksbnkctl ibmcloud is load-balancers | grep &lt;cluster-name&gt;</code> (and similar for <code>vpc-endpoint-gateways</code>, <code>security-groups</code>) and <code>ibmcloud is load-balancer-delete</code> each orphan by ID. A future <code>roksbnkctl cluster destroy --sweep-orphans</code> will automate this — for now, manual.</p>
+<p><strong>Fix</strong>: run <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a>. It sweeps the account for every resource named after the workspace prefix (<code>&lt;prefix&gt;-*</code>) — VPC instances/subnets/security-groups/floating-IPs/public-gateways/VPCs, the Transit Gateway, registry COS, the cluster, and the BNK trusted profile — and deletes them in dependency order. Preview first with <code>roksbnkctl cleanup --dry-run</code>; add <code>--all-regions</code> if resources landed in a region not recorded in <code>config.yaml</code>. (For one-off resource types not covered by the prefix sweep, <code>roksbnkctl ibmcloud is load-balancers | grep &lt;cluster-name&gt;</code> + <code>ibmcloud is load-balancer-delete &lt;id&gt;</code> still works as a manual fallback.)</p>
 <h2 id="workspaces-1"><a class="header" href="#workspaces-1">Workspaces</a></h2>
-<h3 id="symptom-roksbnkctl-ws-delete-name-succeeds-but-subsequent-commands-still-use-the-deleted-workspace"><a class="header" href="#symptom-roksbnkctl-ws-delete-name-succeeds-but-subsequent-commands-still-use-the-deleted-workspace">Symptom: <code>roksbnkctl ws delete &lt;name&gt;</code> succeeds but subsequent commands still use the deleted workspace</a></h3>
-<p><strong>Root cause</strong>: workspace context is set by the <code>--workspace</code>/<code>-w</code> flag (or the persistent value the active shell remembers from the last <code>roksbnkctl ws use</code>); deleting the workspace directory doesn’t reset that context, so subsequent commands try to operate on a non-existent workspace dir.</p>
-<p><strong>Fix</strong>: switch to another workspace <strong>before</strong> deleting the current one:</p>
-<pre><code class="language-bash">roksbnkctl ws use default
-roksbnkctl ws delete my-old-workspace
-</code></pre>
-<p>The parking-lot pattern is the recommended flow: keep a <code>default</code> workspace as the always-safe destination after deletes. Documented in <a href="#workspaces">Chapter 6 — Workspaces</a>.</p>
+<h3 id="symptom-after-roksbnkctl-ws-delete-name-which-workspace-is-current"><a class="header" href="#symptom-after-roksbnkctl-ws-delete-name-which-workspace-is-current">Symptom: after <code>roksbnkctl ws delete &lt;name&gt;</code>, which workspace is current?</a></h3>
+<p><strong>Behaviour (since <code>v1.9.0</code>)</strong>: you can delete the current workspace directly — <code>ws delete</code> moves the <code>current_workspace</code> pointer to another existing workspace (alphabetically first), or clears it when you delete the last one. There’s no “switch first” requirement and no phantom <code>default</code> fallback.</p>
+<p><strong>If a command then reports <code>no workspace selected</code></strong>: you deleted the last workspace, so nothing is current. Create one with <code>roksbnkctl init</code>, or point at an existing one with <code>roksbnkctl ws use &lt;name&gt;</code>. (If the message is instead <code>workspace "&lt;name&gt;" is not initialised</code>, the <code>current_workspace</code> pointer references a directory that was removed by hand — <code>ws use &lt;other&gt;</code> repoints it.) Documented in <a href="#the-current-workspace-pointer">Chapter 6 — Workspaces</a>.</p>
 <h3 id="symptom-workspace-name-has-terraform-managed-resources-pass---force-to-delete-anyway"><a class="header" href="#symptom-workspace-name-has-terraform-managed-resources-pass---force-to-delete-anyway">Symptom: <code>workspace "&lt;name&gt;" has terraform-managed resources; pass --force to delete anyway</code></a></h3>
 <p><strong>Root cause</strong>: the workspace’s <code>terraform.tfstate</code> is non-empty — live infrastructure exists. <code>roksbnkctl ws delete</code> refuses to orphan the resources by removing the state file out from under them.</p>
 <p><strong>Fix</strong>: run <code>roksbnkctl down -w &lt;name&gt; --auto</code> first to destroy the resources, then <code>roksbnkctl ws delete &lt;name&gt;</code> (no <code>--force</code> needed once state is empty). If you genuinely want to abandon the infra and clean up by hand later, <code>roksbnkctl ws delete --force</code> skips the check.</p>
@@ -6799,6 +7223,7 @@ single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
@@ -6824,18 +7249,46 @@ Use <code>roksbnkctl up</code> on those workspaces.</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip confirmation prompts (cluster-bootstrap + apply)</td></tr>
+<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h2 id="roksbnkctl-cleanup"><a class="header" href="#roksbnkctl-cleanup"><code>roksbnkctl cleanup</code></a></h2>
+<p>Delete orphaned IBM Cloud resources left by a failed <code>down</code></p>
+<pre><code>roksbnkctl cleanup [flags]
+</code></pre>
+<p>cleanup sweeps the current workspace’s IBM Cloud account for resources named
+after the workspace prefix (<code>&lt;prefix&gt;</code>-*) and deletes them in dependency order.</p>
+<p>Use it to recover from a ‘down’ that errored partway and stranded resources
+(jumphosts, security groups, floating IPs, subnets, VPCs, the Transit Gateway,
+the registry COS instance, the ROKS cluster, and the BNK trusted profile).</p>
+<p>This is a DESTRUCTIVE, best-effort sweep keyed purely on the <code>&lt;prefix&gt;</code>- name
+convention. It always lists what it found and asks before deleting (unless
+–auto); –dry-run lists without deleting. Re-run if some deletes fail (e.g. a
+VPC waiting on an async cluster delete).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--all-regions</code></td><td><code>bool</code></td><td><code>false</code></td><td>sweep every IBM Cloud region (slower; catches resources in regions not recorded in config)</td></tr>
+<tr><td><code>--auto</code> / <code>-y</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+<tr><td><code>--dry-run</code></td><td><code>bool</code></td><td><code>false</code></td><td>list orphaned resources without deleting</td></tr>
+<tr><td><code>--region</code></td><td><code>stringSlice</code></td><td><code>[]</code></td><td>additional region(s) to sweep (repeatable); defaults to the cluster + client regions</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-cluster"><a class="header" href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></h2>
 <p>ROKS cluster lifecycle (separate from BNK trials)</p>
 <p>Manage the ROKS cluster as a durable, reusable resource that
 sits underneath your BNK trials.</p>
 <p>Commands:
-roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS, cert-manager, jumphost)
+roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
 roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
 roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
 roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json</p>
@@ -6896,14 +7349,14 @@ value).</p>
 <p>Provision the ROKS cluster (and cluster-shared services) only</p>
 <pre><code>roksbnkctl cluster up [flags]
 </code></pre>
-<p>Runs terraform apply with deploy_bnk=false forced — creates the
-ROKS cluster, transit gateway, registry COS, cert-manager, and the test
-jumphost, but skips the BNK trial modules (flo, cne_instance, license).
-On success, writes the cluster’s identity to
+<p>Creates the durable cluster-shared infrastructure only — the ROKS
+cluster, transit gateway, and registry COS. cert-manager and the BNK trial
+modules (flo, cne_instance, license) deploy in the BNK phase; the jumphosts
+deploy in the testing phase. On success, writes the cluster’s identity to
 ~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json so subsequent <code>roksbnkctl up</code>
-runs can deploy BNK trials onto this cluster.</p>
+runs can deploy the BNK and testing phases onto this cluster.</p>
 <p>Uses a separate state directory (~/.roksbnkctl/<code>&lt;workspace&gt;</code>/state-cluster/)
-so it doesn’t tangle with BNK-trial state.</p>
+so it doesn’t tangle with BNK or testing state.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -7125,6 +7578,60 @@ Pass –backend k8s | ssh:<code>&lt;target&gt;</code> for per-backend prereq che
 <p>Run a single command with cluster context loaded</p>
 <pre><code>roksbnkctl exec [command...]
 </code></pre>
+<h2 id="roksbnkctl-gateway"><a class="header" href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></h2>
+<p>Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup</p>
+<p>Manage the BNK data-plane configuration as an optional, independent phase
+on top of a healthy BNK deployment: the Gateway API objects (GatewayClass,
+F5BnkGateway, Gateway, HTTPRoute), the egress SnatPool + Egress CRs, the
+per-zone static routes, and the cluster security-group VXLAN rule. Runs in its
+own state (state-gateway/), separate from cluster/BNK/testing.</p>
+<p>Commands:
+roksbnkctl gateway up     Apply the data-plane config (needs a healthy BNK)
+roksbnkctl gateway down   Remove the data-plane config, leaving cluster/BNK/testing intact</p>
+<p>Run this only after <code>roksbnkctl up</code> has brought up the cluster + BNK and
+the BNK is healthy (TMM pods Ready). The composite <code>up</code>/<code>down</code> never runs
+this phase — it is opt-in.</p>
+<h3 id="roksbnkctl-gateway-down"><a class="header" href="#roksbnkctl-gateway-down"><code>roksbnkctl gateway down</code></a></h3>
+<p>Remove the BNK data-plane config, leaving cluster/BNK/testing</p>
+<pre><code>roksbnkctl gateway down [flags]
+</code></pre>
+<p>Destroys only the Gateway-phase resources (state-gateway/), leaving the
+cluster, BNK and testing phases intact.</p>
+<p>Refuses when there’s no gateway state to destroy.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
+<h3 id="roksbnkctl-gateway-up"><a class="header" href="#roksbnkctl-gateway-up"><code>roksbnkctl gateway up</code></a></h3>
+<p>Apply the BNK data-plane config (BNK must be healthy)</p>
+<pre><code>roksbnkctl gateway up [flags]
+</code></pre>
+<p>Applies the Gateway API + SnatPool + Egress + static-route CRs and the
+VXLAN security-group rule against the existing cluster + BNK (read from
+cluster-outputs.json). Runs in its own state (state-gateway/).</p>
+<p>Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
 <h2 id="roksbnkctl-get"><a class="header" href="#roksbnkctl-get"><code>roksbnkctl get</code></a></h2>
 <p>Get one or more resources (pods, nodes, services, CRDs, …)</p>
 <pre><code>roksbnkctl get &lt;resource&gt; [name] [-n &lt;ns&gt; | -A] [-l &lt;selector&gt;] [-o &lt;fmt&gt;] [flags]
@@ -7714,6 +8221,60 @@ probe (GSLB-aware)”.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h3 id="roksbnkctl-test-hosts"><a class="header" href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></h3>
+<p>Manage test.connectivity.extra_hosts in the workspace config</p>
+<p>Test hosts are URLs probed by <code>roksbnkctl test connectivity</code> and
+(in workspace-driven mode) <code>roksbnkctl test dns</code>. They are stored under
+<code>test.connectivity.extra_hosts</code> in the workspace’s config.yaml.</p>
+<p>This command group is the first-class CLI for managing that slice —
+without it, the only path is hand-editing
+~/.roksbnkctl/<code>&lt;workspace&gt;</code>/config.yaml. Mirrors <code>roksbnkctl targets</code>’
+ergonomics: idempotent add/remove, <code>-o json</code> on list.</p>
+<p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h4 id="roksbnkctl-test-hosts-add"><a class="header" href="#roksbnkctl-test-hosts-add"><code>roksbnkctl test hosts add</code></a></h4>
+<p>Append URLs to test.connectivity.extra_hosts (idempotent)</p>
+<pre><code>roksbnkctl test hosts add &lt;url&gt; [&lt;url&gt; ...]
+</code></pre>
+<p>Appends each <code>&lt;url&gt;</code> to test.connectivity.extra_hosts. Idempotent —
+adding an already-present URL is a no-op (logs to stderr; exit 0).</p>
+<p>Each <code>&lt;url&gt;</code> is validated via the std-lib url.Parse; non-URLs are
+rejected with an actionable error naming the offending arg. Insertion
+order is preserved.</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-clear"><a class="header" href="#roksbnkctl-test-hosts-clear"><code>roksbnkctl test hosts clear</code></a></h4>
+<p>Remove ALL entries from test.connectivity.extra_hosts</p>
+<pre><code>roksbnkctl test hosts clear [flags]
+</code></pre>
+<p>Clears test.connectivity.extra_hosts. Confirmation prompt defaults to
+No; pass <code>--auto</code> to skip the prompt (matches the
+<code>roksbnkctl down</code> / <code>cluster down</code> confirmation pattern).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-list"><a class="header" href="#roksbnkctl-test-hosts-list"><code>roksbnkctl test hosts list</code></a></h4>
+<p>List configured test hosts (one per line; -o json for array)</p>
+<p>Prints the workspace’s test.connectivity.extra_hosts one per line on
+stdout. Empty list emits zero bytes + exit 0 (NOT an error;
+distinguishes “nothing configured” from “command failed” by exit code).</p>
+<p>With <code>-o json</code>, emits the slice as a JSON array (<code>[]</code> when empty).</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
+<h4 id="roksbnkctl-test-hosts-remove"><a class="header" href="#roksbnkctl-test-hosts-remove"><code>roksbnkctl test hosts remove</code></a></h4>
+<p>Remove URLs from test.connectivity.extra_hosts (idempotent)</p>
+<pre><code>roksbnkctl test hosts remove &lt;url&gt; [&lt;url&gt; ...]
+</code></pre>
+<p>Removes each <code>&lt;url&gt;</code> from test.connectivity.extra_hosts. Idempotent —
+removing an absent URL is a no-op (logs to stderr; exit 0). Preserves
+the order of remaining entries.</p>
+<p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
 <h3 id="roksbnkctl-test-list"><a class="header" href="#roksbnkctl-test-list"><code>roksbnkctl test list</code></a></h3>
 <p>List available test suites</p>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
@@ -7740,6 +8301,73 @@ fixture lifecycle is wired.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h2 id="roksbnkctl-testing"><a class="header" href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></h2>
+<p>Testing-phase (jumphost) lifecycle — provisions the test rig</p>
+<p>Manage the testing jumphost infrastructure (TGW jumphost, per-AZ
+cluster jumphosts, client VPC) as an independent phase that sits beside the
+BNK phase on top of a shared cluster. Pure IBM VPC — no Kubernetes.</p>
+<p>Commands:
+roksbnkctl testing up       Provision the jumphosts (needs a cluster: VPC + transit gateway)
+roksbnkctl testing down     Destroy the jumphosts, leaving the cluster and BNK intact
+roksbnkctl testing migrate  Move pre-Sprint-28 jumphosts out of the BNK state into state-testing/</p>
+<p>This is the provisioning phase. To RUN connectivity/DNS/throughput probes
+against a deployed environment, use <code>roksbnkctl test</code> (and
+<code>roksbnkctl test hosts</code> to manage the probe target list) — those
+provision nothing.</p>
+<h3 id="roksbnkctl-testing-down"><a class="header" href="#roksbnkctl-testing-down"><code>roksbnkctl testing down</code></a></h3>
+<p>Destroy the testing jumphosts, leaving the cluster and BNK</p>
+<pre><code>roksbnkctl testing down [flags]
+</code></pre>
+<p>Destroys only the testing jumphost resources (state-testing/), leaving
+the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
+each phase tears down independently.</p>
+<p>Refuses when there’s no testing state to destroy, and on legacy
+single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
+<h3 id="roksbnkctl-testing-migrate"><a class="header" href="#roksbnkctl-testing-migrate"><code>roksbnkctl testing migrate</code></a></h3>
+<p>Move pre-Sprint-28 jumphosts from the BNK state into state-testing/</p>
+<p>One-shot migration for workspaces provisioned before the Sprint 28
+three-phase split, where the jumphosts (module.testing.*) still live in the
+BNK state (state/). Moves them into state-testing/ with no cloud churn
+(terraform state mv) so the live jumphosts are preserved.</p>
+<p>After migrating, re-run <code>roksbnkctl bnk up</code> to reconcile the
+now-jumphost-free BNK state, and <code>roksbnkctl testing up</code> to adopt the
+moved jumphosts (plan shows a no-op).</p>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
+<h3 id="roksbnkctl-testing-up"><a class="header" href="#roksbnkctl-testing-up"><code>roksbnkctl testing up</code></a></h3>
+<p>Provision the testing jumphosts (cluster must exist)</p>
+<pre><code>roksbnkctl testing up [flags]
+</code></pre>
+<p>Provisions the testing jumphosts against the existing cluster’s VPC +
+transit gateway (read from cluster-outputs.json). Runs in its own state
+(state-testing/), independent of the BNK phase — <code>bnk down</code> leaves
+the jumphosts and <code>testing down</code> leaves BNK.</p>
+<p>Refuses on legacy single-state workspaces (use <code>roksbnkctl up</code>).</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
 <h2 id="roksbnkctl-tfvars"><a class="header" href="#roksbnkctl-tfvars"><code>roksbnkctl tfvars</code></a></h2>
 <p>Emit the upstream TF’s terraform.tfvars.example for editing</p>
 <pre><code>roksbnkctl tfvars [flags]
@@ -7925,6 +8553,7 @@ exec:            # optional; per-tool default-backend map
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
+  client_region:     ca-tor               # since v1.9.0; testing-client region
 </code></pre>
 <p><em>(since <code>v1.8.0</code>)</em> Per-resource create/adopt toggles, written by the <code>init</code> interview. Each key is a <code>{create, existing}</code> pair: <code>create: true</code> provisions a new prefix-named resource; <code>create: false</code> declines it and (when a still-enabled resource depends on it) <code>existing:</code> names the pre-existing resource to consume instead.</p>
 <div class="table-wrapper">
@@ -7943,7 +8572,8 @@ exec:            # optional; per-tool default-backend map
 </tbody>
 </table>
 </div>
-<p>Each entry:</p>
+<p><code>client_region</code> <em>(since <code>v1.9.0</code>)</em> is the odd one out — a plain <strong>string</strong>, not a <code>{create, existing}</code> toggle. It’s the IBM Cloud region the testing client (TGW jumphost + client VPC) is installed in, letting the test client live in a <strong>different region from the cluster</strong>. The <code>init</code> interview sets it when you answer the <em>“Add a testing client?”</em> / region prompt; omitted, it renders nothing and the terraform default (<code>testing_client_vpc_region</code>) applies. It also seeds the regions <a href="#which-regions-it-scans"><code>roksbnkctl cleanup</code></a> scans. Renders into <code>testing_client_vpc_region</code>.</p>
+<p>Each <code>{create, existing}</code> entry:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -7971,10 +8601,11 @@ exec:            # optional; per-tool default-backend map
 <tr><td><code>cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code></td><td>Sizing for the deployed CNE Instance. Renders into the upstream HCL <code>cneinstance_deployment_size</code> variable.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>URL of a Docker-compatible image registry</td><td>The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
+<tr><td><code>cr_mode</code></td><td>string</td><td>(empty ⇒ <code>kubectl</code>)</td><td><code>kubectl</code> | <code>legacy_curl</code></td><td><em>(since Sprint 27)</em> Selects the BNK custom-resource install mechanism, rendered as the <code>bnk_cr_mode</code> tfvar. Empty/omitted or <code>kubectl</code> ⇒ the terraform-native path (<code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>); <code>legacy_curl</code> ⇒ the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline. The <code>--legacy-bnk</code> flag on <code>bnk up</code>/<code>bnk down</code> overrides this to <code>legacy_curl</code> for a single run. See <a href="#the-install-mode-flag-bnk_cr_mode">Chapter 10 §“The install-mode flag”</a>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>All three fields are optional; omitting renders the HCL’s own defaults. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the upstream defaults.</p>
+<p>All four fields are optional; omitting renders the HCL’s own defaults. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the upstream defaults.</p>
 <h2 id="test-block"><a class="header" href="#test-block"><code>test:</code> block</a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -8217,7 +8848,7 @@ exec:            # optional; per-tool default-backend map
 <p><code>roksbnkctl up --var-file &lt;file&gt;</code> layers user-supplied tfvars <strong>after</strong> the auto-rendered tfvars derived from <code>config.yaml</code>. Later wins, terraform-style. Multiple <code>--var-file</code> flags are accepted and stack in command-line order.</p>
 <p>The auto-render path: <code>config.yaml</code> → typed <code>Workspace</code> struct → key/value tfvars → <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code>. The user’s <code>--var-file</code> is appended to the terraform invocation as an additional <code>-var-file=&lt;path&gt;</code> argument. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the layering rules.</p>
 <p>A workspace-persistent override file is <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> — when present, it’s auto-layered after the rendered tfvars and before any explicit <code>--var-file</code>. Useful for “always pass this <code>bigip_password</code> value when applying this workspace” without putting it in <code>config.yaml</code> (where the plaintext-secret rejection would reject it).</p>
-<h2 id="cross-references-18"><a class="header" href="#cross-references-18">Cross-references</a></h2>
+<h2 id="cross-references-19"><a class="header" href="#cross-references-19">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the teaching counterpart to this lookup.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — how <code>config.yaml</code> fields render into tfvars.</li>
@@ -8258,6 +8889,7 @@ exec:            # optional; per-tool default-backend map
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped.</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: <code>"kubectl"</code> (terraform-native — <code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>) or <code>"legacy_curl"</code> (the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline). <code>roksbnkctl</code> renders this from <code>bnk.cr_mode</code> / the <code>--legacy-bnk</code> flag. Validated to one of the two values.</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository URL for Docker and Helm images</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
@@ -8601,7 +9233,7 @@ The release this book is the launch deliverable for. All E2E phases pass on a cl
 A named slot under <code>~/.roksbnkctl/&lt;name&gt;/</code> containing one <code>config.yaml</code>, one Terraform state directory, and (usually) one kubeconfig. The kubectl-style multi-environment isolation primitive. See <a href="#workspaces">Chapter 6</a>.</p>
 <p><strong><code>ws</code> / <code>workspace</code></strong>
 The CLI subtree managing workspaces. <code>roksbnkctl ws new/use/list/delete</code>.</p>
-<h2 id="cross-references-19"><a class="header" href="#cross-references-19">Cross-references</a></h2>
+<h2 id="cross-references-20"><a class="header" href="#cross-references-20">Cross-references</a></h2>
 <ul>
 <li><a href="#what-is-big-ip-next-for-kubernetes-bnk">Chapter 1</a> — BNK context.</li>
 <li><a href="#why-roks-red-hat-openshift-on-ibm-cloud">Chapter 2</a> — ROKS context.</li>
@@ -8765,7 +9397,7 @@ git push origin v1.0.0
 <li>Generate release notes from the CHANGELOG and the commits since the previous tag.</li>
 </ol>
 <p>The release-gate criteria — what has to hold before tagging — are documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md">PLAN.md §“v1.0 (M4)”</a>. The most important: full E2E green for 3 consecutive nights on the release branch.</p>
-<h2 id="cross-references-20"><a class="header" href="#cross-references-20">Cross-references</a></h2>
+<h2 id="cross-references-21"><a class="header" href="#cross-references-21">Cross-references</a></h2>
 <ul>
 <li><a href="#installation">Chapter 4 — Installation</a> — for users who just want the binary, not the source.</li>
 <li><a href="#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a> — how a from-source binary picks tool images.</li>
@@ -8996,7 +9628,7 @@ DRY_RUN=1 ./scripts/e2e-test-backends.sh
 </code></pre>
 <p>The PR should land all eight steps in one commit-set. A reviewer will look for: registered <code>init()</code>, doctor check, cred-audit test, e2e phase, and the two chapter additions. Without the audit + docs, the PR isn’t complete — see the cardinal rule at the top of the <a href="#adding-a-new-execution-backend">Adding a new execution backend</a> section.</p>
 <p>The same pattern applies to a new test suite, a new tool on an existing backend, or a new chapter — the eight-step recipe is the long version; the worked example is the copy-paste short version. Pick the shape that matches your contribution.</p>
-<h2 id="cross-references-21"><a class="header" href="#cross-references-21">Cross-references</a></h2>
+<h2 id="cross-references-22"><a class="header" href="#cross-references-22">Cross-references</a></h2>
 <ul>
 <li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — the four-backend matrix you’re extending.</li>
 <li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — the k8s-backend pattern your new tool might join.</li>
