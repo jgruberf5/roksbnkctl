@@ -4,6 +4,15 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.9.1 — 2026-06-08
+
+A patch fixing two `up`/`down` regressions found running a fresh end-to-end deploy after v1.9.0.
+
+### Fixed
+
+- **`up` / `down` / `bnk` / `testing` / `gateway` without `-w` failed with `Provided Name … is not unique`.** `lifecycleInputs()` / `clusterInputs()` passed the **raw** `-w` flag — empty when omitted — as the workspace identifier. The orchestration uses it to look up `cluster-outputs.json` for the `create_roks_cluster=false` reuse override, so with an empty name the lookup missed, the override was skipped, and the BNK/Testing legs ran the full root config and tried to re-create the cluster VPC + transit gateway the cluster phase had just made. Everything else re-resolved the workspace via `config.New`; only this identifier used the raw flag, and the bug was masked because every test/soak run passed an explicit `-w`. Both input builders now resolve `-w` → the current-workspace pointer (the same thing `config.New` does).
+- **Cold-start readiness races no longer fail the first `up` on a fresh cluster.** The BNK leg applies the F5SPKVlan CRs and the License CR while the FLO validating-webhook pod and the ResourceQuota controller are still coming up. Two races could outlast the apply-retry budget: the webhook (`server gave HTTP response to HTTPS client`) exhausting its retries, and `licenses.k8s.f5net.com … forbidden: status unknown for quota: f5-single-license-quota`, which wasn't recognized as transient at all. Added the quota race to the transient set and widened the apply-retry budget from 3×60s to 5×90s (only transient-shaped failures retry; genuine errors still fail fast).
+
 ## v1.9.0 — 2026-06-07
 
 A large release landing three stacked workstreams: **BNK on native terraform state** (the trial layer is real terraform resources, not `null_resource`/`curl` shell), **the three-phase Cluster / BNK / Testing split** — with parallel `up`, independent teardown, and the optional **Gateway** data-plane phase — and **account-aware `init` + workspace ergonomics + the `cleanup` command**. Validated end-to-end by a 10-cycle deploy/teardown soak on a live ROKS cluster. The subsections below group every change by area.
