@@ -46,8 +46,14 @@ import (
 // terraform-exec surfaces a transient-shaped failure, sleep and retry
 // rather than making the user type `roksbnkctl up` again.
 const (
-	applyMaxAttempts = 3
-	applyRetryWait   = 60 * time.Second
+	// 5×90s (vs the original 3×60s): a cold BNK deploy applies the F5SPKVlan
+	// CRs and the License CR while the FLO validating-webhook pod and the
+	// ResourceQuota controller are still coming up, so the readiness races
+	// ("failed calling webhook", "status unknown for quota") can outlast a
+	// 3-minute budget on a first apply. Only looksTransient failures retry,
+	// so genuine errors still fail fast.
+	applyMaxAttempts = 5
+	applyRetryWait   = 90 * time.Second
 )
 
 // LifecycleInputs is the resolved-invocation context the cobra adapter
@@ -1286,6 +1292,11 @@ func looksTransient(err error) bool {
 		// It's a readiness race — a retry after the wait succeeds.
 		"failed calling webhook",
 		"server gave HTTP response to HTTPS client",
+		// On a cold BNK deploy the ResourceQuota controller (f5-single-license-quota)
+		// hasn't computed the quota's status before the License CR is applied, so the
+		// admission check rejects it with "status unknown for quota". It resolves the
+		// instant the quota controller observes the namespace — a retry succeeds.
+		"status unknown for quota",
 	} {
 		if strings.Contains(s, pat) {
 			return true
