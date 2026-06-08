@@ -176,7 +176,7 @@ func clusterFromTFOutput(ctx context.Context, cctx *config.Context) string {
 // flagWorkspace global exactly as before the move.
 func clusterInputs() *orchestration.ClusterInputs {
 	return &orchestration.ClusterInputs{
-		Workspace:          flagWorkspace,
+		Workspace:          resolvedWorkspaceName(),
 		On:                 flagOn,
 		Backend:            flagBackend,
 		Bootstrap:          flagBootstrap,
