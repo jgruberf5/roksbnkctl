@@ -50,6 +50,12 @@ CLAUDE.md
 # Live-cluster captures contain AWS resource IDs + private IPs.
 docs/audits/
 
+# --- Internal engineering notes (not for public repo) ---
+# Design specs (internal "why we built it" narratives) and feasibility spikes
+# (the latter capture live AWS resource IDs + private IPs). Local-only.
+docs/design/
+docs/spikes/
+
 # --- Demo material (gitignored presentation packet + diagrams) ---
 docs/demo/
 

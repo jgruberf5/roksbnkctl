@@ -861,13 +861,13 @@ func validatePattern(c *Cluster) error {
 			"(expected one of: external-only, dual-interface, sriov-external; or the host-device alias)", c.Pattern)
 	}
 	// sriov-external is EXPERIMENTAL. The SR-IOV/vfio-pci DPDK substrate is proven
-	// live on AL2023 EKS nodes (ENA→vfio-pci No-IOMMU, clean testpmd RX+TX — see
-	// docs/spikes/sriov-ena-vfio/README.md). TMM's own vfio dataplane on the Host
-	// build is still being validated. Warn loudly but allow it through so it can
+	// live on AL2023 EKS nodes (ENA→vfio-pci No-IOMMU, clean testpmd RX+TX). TMM's
+	// own vfio dataplane on the Host build is still being validated. Warn loudly
+	// but allow it through so it can
 	// be exercised end-to-end.
 	if normalizePattern(c.Pattern) == PatternSRIOVExternal {
 		fmt.Fprintln(os.Stderr, "[warn] pattern sriov-external is EXPERIMENTAL: SR-IOV/vfio-pci DPDK dataplane "+
-			"(vfio substrate proven; TMM-on-vfio under validation — docs/spikes/sriov-ena-vfio/README.md)")
+			"(vfio substrate proven; TMM-on-vfio under validation)")
 	}
 
 	// All BNK patterns need the external data-path subnet.

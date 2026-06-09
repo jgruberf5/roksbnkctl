@@ -148,7 +148,7 @@ Phase 00 preflight enforces these minimums and fails fast before any AWS writes.
    ──────────  ORBIT
 ```
 
-Non-TTY runs (CI, piped output, `--no-color`) fall back to the plain per-phase log — byte-for-byte unchanged. See [`docs/design/specs/10-DEMO-EXPERIENCE.md`](docs/design/specs/10-DEMO-EXPERIENCE.md) for the full design.
+Non-TTY runs (CI, piped output, `--no-color`) fall back to the plain per-phase log — byte-for-byte unchanged.
 
 ## Architecture
 
@@ -173,7 +173,6 @@ awsbnkctl/
 └── docs/
     ├── ARCHITECTURE.md               # AWS-SDK phased model + cluster.yaml intent
     ├── FORGE_INTEGRATION.md          # forge handoff design
-    ├── design/specs/                 # subsystem design notes
     └── upstream-issues/              # known issues / workarounds in BNK
 ```
 
@@ -193,7 +192,7 @@ No Terraform, no host `kubectl`, no `aws` CLI. All AWS API calls use the AWS SDK
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). For deeper architectural context, the design notes in [`docs/design/specs/`](docs/design/specs/) trace each subsystem from PRD through implementation.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). For deeper architectural context, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## License
 

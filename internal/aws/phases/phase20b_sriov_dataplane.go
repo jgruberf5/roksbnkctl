@@ -27,7 +27,7 @@ const (
 )
 
 // Phase20bSriovDataplane sets up the SR-IOV/vfio-pci DPDK dataplane for the
-// sriov-external pattern. Proven live (docs/spikes/sriov-ena-vfio/README.md):
+// sriov-external pattern. Proven live:
 //
 //  1. vfio-node-prep DaemonSet binds the external ENA to vfio-pci (No-IOMMU).
 //  2. sriov-network-device-plugin exposes it as the intel.com/ens8 resource.

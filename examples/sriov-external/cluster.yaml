@@ -3,7 +3,7 @@
 # Pattern C: like external-only (ONE external/ingress interface, CNI backend) but
 # TMM drives the data plane via DPDK over the ENA bound to vfio-pci, instead of
 # the kernel socket driver. EXPERIMENTAL — validated end-to-end live (HTTP 200
-# through TMM-on-vfio); see docs/spikes/sriov-ena-vfio/README.md.
+# through TMM-on-vfio).
 #
 # How it differs from external-only (host-device/sock):
 #   - The external ENA is bound to vfio-pci (No-IOMMU) on the node by the
