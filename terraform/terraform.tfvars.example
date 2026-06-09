@@ -139,11 +139,25 @@ ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
 # Set to false to skip FLO (ws3), CNEInstance (ws4), and License (ws5).
 deploy_bnk = true
 
+# BNK install mechanism:
+#   "kubectl"     — terraform-native (helm_release + kubectl_manifest). Default.
+#   "legacy_curl" — the null_resource/curl baseline (benchmark / fallback).
+bnk_cr_mode = "kubectl"
+
 
 # --- FLO (ws3) ---
 
 # FAR repository URL for Docker and Helm images.
 far_repo_url = "repo.f5.com"
+
+# Air-gap registry mirror (PRD 11). When you mirror FAR into an in-cluster
+# registry, split the chart-pull host from the image-pull host (each falls
+# back to far_repo_url when empty), and flip use_registry_mirror to pull via
+# in-cluster RBAC (drops the FAR dockerconfigjson secret). Leave as-is for a
+# direct-from-FAR install.
+# far_chart_repo_url  = ""      # chart-pull host (helm_release + manifest pull)
+# far_image_repo_url  = ""      # image-pull host (image.repository + CNEInstance registry)
+# use_registry_mirror = false   # true → pull from the in-cluster mirror by RBAC
 
 # Version of the f5-bigip-k8s-manifest chart.
 f5_bigip_k8s_manifest_version = "2.3.0-3.2598.3-0.0.170"
@@ -184,6 +198,22 @@ cneinstance_deployment_size = "Small"
 
 # GSLB datacenter name. Leave empty if not using GSLB.
 cneinstance_gslb_datacenter_name = ""
+
+# Per-zone TMM data-plane networking — one object per availability zone.
+# IMPORTANT for a hand-run terraform apply: this programs the
+# cloud-network-mapping ConfigMap and the external/internal F5SPKVlan
+# self-IP CRs. Leave it empty and TMM's RoutingDone readiness gate never
+# flips. (roksbnkctl deploys render this from the config.yaml
+# `bnk.network.zones` block; a raw terraform apply must set it here.)
+# Values come from your cluster's data-plane VLAN subnets / the BNK install
+# guide network table. ext_vlan_cidr is also the source of the gateway
+# static-route next-hop (see the Gateway phase section below).
+# cneinstance_network_zones = [
+#   { ext_vlan_cidr   = "10.10.1.0/24",  int_vlan_cidr   = "10.20.1.0/24",
+#     int_snat_cidr   = "10.30.1.0/24",  int_vip_cidr    = "10.40.1.0/24",
+#     external_selfip = "10.10.1.10",    internal_selfip = "10.20.1.10" },
+#   # …repeat per AZ
+# ]
 
 
 # --- License (ws5) ---
@@ -230,3 +260,64 @@ testing_tgw_jumphost_name = "tf-testing-jumphost-tgw"
 
 # Name prefix for cluster jumphosts. Zone is appended: <prefix>-<zone>.
 testing_cluster_jumphost_name_prefix = "tf-testing-jumphost-cluster"
+
+
+# ============================================================
+# Gateway phase (data-plane ingress/egress config) — optional
+# ============================================================
+#
+# The Gateway phase applies the Gateway API + SnatPool + Egress + static
+# routes + the VXLAN security-group rule on top of a healthy BNK. With
+# roksbnkctl it runs as `roksbnkctl gateway up` (deploy_gateway is forced
+# on for that phase and off for all others — don't set it by hand).
+
+# Application namespace the Gateway + HTTPRoute serve.
+gateway_app_namespace = "f5-app"
+
+# HTTPRoute backend service + port in that namespace.
+gateway_backend_service = "nginx-service"
+gateway_backend_port    = 80
+
+# Egress SNAT strategy: snatpool | automap | both.
+gateway_egress_mode = "snatpool"
+
+# Egress VXLAN UDP port (also opened on the cluster security group).
+gateway_vxlan_port = 6789
+
+# Client subnets the TMM static routes reach (the test-traffic sources).
+# These are the /32 hosts of your client VSIs — "local" = a jumphost in
+# the cluster VPC, "remote" = the TGW jumphost in the client VPC.
+#
+# The module defaults below are placeholders and are almost certainly
+# WRONG for your workspace. Two ways to get real values:
+#
+#   1. Let roksbnkctl fill them. `roksbnkctl gateway up` auto-derives these
+#      from the deployed Testing-phase jumphosts when you leave them unset
+#      (it picks the TGW jumphost for remote and a cluster jumphost for
+#      local, and logs what it chose). Just omit them here.
+#
+#   2. Discover them yourself, after `testing up`:
+#        roksbnkctl --on jumphost        -- hostname -I   # → remote (/32)
+#        roksbnkctl --on jumphost-<zone> -- hostname -I   # → local  (/32)
+#      or the whole subnet CIDR:
+#        roksbnkctl --on jumphost -- ibmcloud is subnet <prefix>-jh-tgw-subnet \
+#          --output json | jq -r .ipv4_cidr_block
+#
+# gateway_client_subnet_local  = "10.244.64.12"
+# gateway_client_subnet_remote = "10.245.64.5"
+
+
+# ============================================================
+# Managed by roksbnkctl — do NOT set by hand
+# ============================================================
+#
+# These are written by roksbnkctl's per-phase overrides (cluster reuse,
+# phase toggles, runner scratch paths). They're listed for reference only;
+# setting them in this file fights the orchestration.
+#
+# deploy_gateway          = false   # forced on only by `gateway up`
+# deploy_cert_manager     = true    # forced off in the BNK reuse phase
+# use_existing_cluster_vpc = false  # forced true in the 2nd phase (cluster reuse)
+# existing_cluster_vpc_id  = ""     # sourced from cluster-outputs.json
+# kubeconfig_dir = "/work/.bnk/scratch/kubeconfig"  # runner-image mount
+# scratch_dir    = "/work/.bnk/scratch"             # runner-image mount
