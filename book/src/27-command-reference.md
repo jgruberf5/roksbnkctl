@@ -1051,6 +1051,149 @@ roksbnkctl plan [flags]
 |---|---|---|---|
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
+## `roksbnkctl registry`
+
+Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)
+
+Manage the air-gap registry mirror: replicate every chart + image a BNK
+install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
+the F5 Artifact Repository (repo.f5.com) into a private target — the cluster's
+own OpenShift internal registry — so an air-gapped cluster installs BNK from
+images it hosts itself.
+
+Commands:
+  roksbnkctl registry bom        Build + print the bill-of-materials
+  roksbnkctl registry list       List artifacts currently in the mirror
+  roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
+  roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+  roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
+  roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
+
+`registry bom` works offline against the FAR manifest; the cluster-touching
+verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
+registry: block in the workspace config.
+
+### `roksbnkctl registry bom`
+
+Build + print the BNK bill-of-materials from the FAR manifest
+
+```
+roksbnkctl registry bom [flags]
+```
+
+Pulls the f5-bigip-k8s-manifest for the configured BNK release, parses it
+into the full artifact set (charts + images), unions the non-F5 dependencies,
+and prints the resulting BOM. Needs no target — it only reads from FAR.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
+| `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--json` | `bool` | `false` | emit the BOM as JSON (overrides --output) |
+| `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
+| `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry diff`
+
+Show BOM vs. mirror drift (what `replicate` would copy)
+
+```
+roksbnkctl registry diff [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
+| `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
+| `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry list`
+
+List artifacts currently recorded in the mirror
+
+Lists the artifacts the last replicate recorded in registry-mirror.json.
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry prune`
+
+Remove mirrored artifacts no longer in the BOM
+
+```
+roksbnkctl registry prune [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
+| `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
+| `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
+| `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry replicate`
+
+Copy the BOM into the mirror (needs a live cluster)
+
+```
+roksbnkctl registry replicate [flags]
+```
+
+Prepares the target registry (enables the route, mints a push token, binds
+pull RBAC), then copies every BOM artifact into it, idempotently. Records the
+result in registry-mirror.json so the BNK install can be redirected to the mirror.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--concurrency` | `int` | `0` | parallel copy workers (default: 4) |
+| `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
+| `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
+| `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
+| `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry verify`
+
+Confirm every BOM artifact is present + digest-matched in the mirror
+
+```
+roksbnkctl registry verify [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
+| `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
+| `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
+| `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
 ## `roksbnkctl self`
 
 Manage the roksbnkctl binary itself
@@ -1346,6 +1489,56 @@ the order of remaining entries.
 ### `roksbnkctl test list`
 
 List available test suites
+
+← back to [`roksbnkctl test`](#roksbnkctl-test)
+
+### `roksbnkctl test matrix`
+
+Run the declarative BNK-on-ROKS performance grid (iperf3 L4 + h2load L7)
+
+```
+roksbnkctl test matrix [flags]
+```
+
+roksbnkctl test matrix runs a declarative performance grid against an
+already-deployed cluster + BNK. It reads a matrix.yaml describing cells
+(endpoint-pair × test-family) and runs each, emitting a report shaped
+like the BNK-on-ROKS perf plan.
+
+Two families:
+  iperf3  — L4 TCP throughput over a TCPRoute VIP, with content-size knobs
+            (length: "128" vs "512K") — the L4 analog of the plan's
+            128 B / 512 KB payload axis.
+  l7      — h2load against an HTTPRoute, http and https (TLS terminate at
+            TMM); cps / tps / throughput modes.
+
+The locality axis (same-zone / different-zone / different-VPC) is implicit
+in which jumphost ("vsi") endpoint a cell names as its client, so the
+per-AZ jumphost targets the Testing phase auto-registers (jumphost,
+jumphost-`<zone>`) are the traffic-source fleet. The Testing phase
+preinstalls both generators (iperf3 + h2load/nghttp2-client) on every
+jumphost, so the ssh runs need no --bootstrap.
+
+This command provisions only ephemeral, runner-owned fixtures (an iperf3
+server, an HTTP file backend, and optional TCPRoute/HTTPRoute/TLS objects
+that attach to the EXISTING Gateway by name) and tears them down after
+(unless --keep). It never touches Terraform or the gateway-phase objects.
+
+  roksbnkctl test matrix --dry-run         expand + print the plan, no cluster calls
+  roksbnkctl test matrix --only 'L7*'      run a subset (glob on cell name)
+  roksbnkctl test matrix -o md             Markdown grid report
+
+Honors -o json|text|md with the roksbnkctl.v1 schema. Exit code is
+non-zero if any cell fails.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | `bool` | `false` | expand the grid and print the plan + fixtures; no cluster calls |
+| `--file` | `string` | — | path to matrix.yaml (default: `<workspace>`/matrix.yaml, then ./matrix.yaml) |
+| `--keep` | `bool` | `false` | leave fixtures running after the run |
+| `--only` | `string` | — | glob on cell name; run only matching cells |
 
 ← back to [`roksbnkctl test`](#roksbnkctl-test)
 

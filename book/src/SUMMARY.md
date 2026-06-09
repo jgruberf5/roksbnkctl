@@ -43,6 +43,7 @@
 - [Connectivity testing](./20-connectivity-testing.md)
 - [DNS testing for GSLB](./21-dns-testing-gslb.md)
 - [Throughput testing](./22-throughput-testing.md)
+- [The performance matrix](./22a-performance-matrix.md)
 - [The E2E test plan](./23-e2e-test-plan.md)
 
 # Part VII — Operations
