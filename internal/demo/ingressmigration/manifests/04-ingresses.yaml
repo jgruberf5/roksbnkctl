@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress
+  namespace: {{.Namespace}}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: web.nginx.migration.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: migration-backend
+            port: {number: 80}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: haproxy-ingress
+  namespace: {{.Namespace}}
+spec:
+  ingressClassName: haproxy
+  rules:
+  - host: web.haproxy.migration.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: migration-backend
+            port: {number: 80}

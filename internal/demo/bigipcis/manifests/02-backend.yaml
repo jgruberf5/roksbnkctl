@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cis-backend
+  namespace: {{.Namespace}}
+  labels: {app: cis-backend}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cis-backend}
+  template:
+    metadata:
+      labels: {app: cis-backend}
+    spec:
+      containers:
+      - name: whoami
+        image: traefik/whoami:v1.10
+        ports:
+        - {containerPort: 80, protocol: TCP}
+        readinessProbe:
+          httpGet: {path: /, port: 80}
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cis-backend
+  namespace: {{.Namespace}}
+spec:
+  selector: {app: cis-backend}
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80

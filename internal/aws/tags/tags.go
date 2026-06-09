@@ -61,6 +61,13 @@ const (
 	CompJumphostEICE     = "jumphost-eice"
 	CompJumphostRole     = "jumphost-iam-role"
 	CompJumphostProfile  = "jumphost-instance-profile"
+
+	// BIG-IP VE component constants (F2-B1).
+	CompBigIPInstance = "bigip-ve-instance"
+	CompBigIPMgmtENI  = "bigip-ve-eni-mgmt"
+	CompBigIPExtENI   = "bigip-ve-eni-ext"
+	CompBigIPIntENI   = "bigip-ve-eni-int"
+	CompBigIPMgmtSG   = "bigip-ve-sg-mgmt"
 )
 
 // Required returns the four mandatory awsbnkctl tags for a resource.

@@ -50,6 +50,10 @@ func runValidate(_ *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  forge: enabled=%t url=%s mcpUrl=%s\n",
 			c.Forge.Enabled, c.Forge.URL, c.Forge.MCPURL)
 	}
+	if c.BigIPVE != nil {
+		fmt.Fprintf(os.Stderr, "  bigipVE: enabled=%t instanceType=%s vip=%s tier=%s\n",
+			c.BigIPVE.Enabled, c.BigIPVE.InstanceType, c.BigIPVE.VIP, c.BigIPVE.LicenseTier)
+	}
 	return nil
 }
 

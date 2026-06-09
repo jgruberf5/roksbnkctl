@@ -1662,3 +1662,319 @@ demo:
 		t.Fatalf("disabled demo block should not fail validation: %v", err)
 	}
 }
+
+// ─── BigIPVESpec tests (F2, Slice A) ─────────────────────────────────────────
+
+// bigipVEFullYAML is a valid dual-interface cluster with jumphost + demo enabled
+// — the minimum required for bigipVE: enabled: true.
+const bigipVEFullYAML = hostDeviceWithJumphostYAML + `
+demo:
+  enabled: true
+bigipVE:
+  enabled: true
+`
+
+// TestBigIPVEEnabled_Helper verifies BigIPVEEnabled() returns the correct bool.
+func TestBigIPVEEnabled_Helper(t *testing.T) {
+	cases := []struct {
+		desc string
+		c    *Cluster
+		want bool
+	}{
+		{"nil BigIPVE", &Cluster{}, false},
+		{"BigIPVE.Enabled=false", &Cluster{BigIPVE: &BigIPVESpec{Enabled: false}}, false},
+		{"BigIPVE.Enabled=true", &Cluster{BigIPVE: &BigIPVESpec{Enabled: true}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := tc.c.BigIPVEEnabled(); got != tc.want {
+				t.Errorf("BigIPVEEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyDefaults_BigIPVE_FillsDefaults verifies that applyDefaults populates
+// all zero fields when BigIPVE is present and Enabled.
+func TestApplyDefaults_BigIPVE_FillsDefaults(t *testing.T) {
+	c := &Cluster{
+		BigIPVE: &BigIPVESpec{Enabled: true},
+	}
+	applyDefaults(c)
+	ve := c.BigIPVE
+	if ve.InstanceType != "c5n.2xlarge" {
+		t.Errorf("InstanceType = %q, want c5n.2xlarge", ve.InstanceType)
+	}
+	if ve.MgmtSubnetIndex != 0 {
+		t.Errorf("MgmtSubnetIndex = %d, want 0", ve.MgmtSubnetIndex)
+	}
+	if ve.VIP != "10.0.10.120" {
+		t.Errorf("VIP = %q, want 10.0.10.120", ve.VIP)
+	}
+	if ve.LicenseTier != "Good" {
+		t.Errorf("LicenseTier = %q, want Good", ve.LicenseTier)
+	}
+	if ve.Version != "" {
+		t.Errorf("Version = %q, want \"\" (newest AMI default)", ve.Version)
+	}
+}
+
+// TestApplyDefaults_BigIPVE_PreservesExplicitValues verifies that applyDefaults
+// does not overwrite fields that the operator set explicitly.
+func TestApplyDefaults_BigIPVE_PreservesExplicitValues(t *testing.T) {
+	c := &Cluster{
+		BigIPVE: &BigIPVESpec{
+			Enabled:      true,
+			InstanceType: "c5n.4xlarge",
+			VIP:          "10.0.10.130",
+			LicenseTier:  "Best",
+			Version:      "17.5.1*",
+		},
+	}
+	applyDefaults(c)
+	ve := c.BigIPVE
+	if ve.InstanceType != "c5n.4xlarge" {
+		t.Errorf("InstanceType = %q, want c5n.4xlarge", ve.InstanceType)
+	}
+	if ve.VIP != "10.0.10.130" {
+		t.Errorf("VIP = %q, want 10.0.10.130", ve.VIP)
+	}
+	if ve.LicenseTier != "Best" {
+		t.Errorf("LicenseTier = %q, want Best", ve.LicenseTier)
+	}
+	if ve.Version != "17.5.1*" {
+		t.Errorf("Version = %q, want 17.5.1*", ve.Version)
+	}
+}
+
+// TestApplyDefaults_BigIPVE_DisabledNoDefaults verifies that applyDefaults does
+// NOT fill defaults when BigIPVE is present but disabled.
+func TestApplyDefaults_BigIPVE_DisabledNoDefaults(t *testing.T) {
+	c := &Cluster{BigIPVE: &BigIPVESpec{Enabled: false}}
+	applyDefaults(c)
+	if c.BigIPVE.InstanceType != "" {
+		t.Errorf("InstanceType = %q on disabled bigipVE, want \"\"", c.BigIPVE.InstanceType)
+	}
+}
+
+// TestValidateBigIPVE_HappyPath exercises the full valid-block path via Load.
+func TestValidateBigIPVE_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", bigipVEFullYAML)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load with valid bigipVE block: %v", err)
+	}
+	if c.BigIPVE == nil || !c.BigIPVE.Enabled {
+		t.Fatal("BigIPVE: nil or disabled, want enabled")
+	}
+	// Check defaults applied.
+	if c.BigIPVE.InstanceType != "c5n.2xlarge" {
+		t.Errorf("InstanceType = %q, want c5n.2xlarge", c.BigIPVE.InstanceType)
+	}
+	if c.BigIPVE.VIP != "10.0.10.120" {
+		t.Errorf("VIP = %q, want 10.0.10.120", c.BigIPVE.VIP)
+	}
+	if c.BigIPVE.LicenseTier != "Good" {
+		t.Errorf("LicenseTier = %q, want Good", c.BigIPVE.LicenseTier)
+	}
+}
+
+// TestValidateBigIPVE_RejectsExternalOnlyPattern verifies that bigipVE requires
+// pattern: dual-interface and rejects external-only.
+func TestValidateBigIPVE_RejectsExternalOnlyPattern(t *testing.T) {
+	// Build a minimal external-only cluster with demo+jumphost then add bigipVE.
+	yaml := `
+apiVersion: awsbnkctl/v1
+kind: Cluster
+metadata:
+  name: my-cluster
+  region: ap-southeast-2
+network:
+  vpcCidr: 10.0.0.0/16
+  azs:
+    - ap-southeast-2a
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+  natGateways: 1
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24
+      az: ap-southeast-2a
+pattern: external-only
+cluster:
+  nodeGroups:
+    - name: ng
+testing:
+  jumphost:
+    enabled: true
+demo:
+  enabled: true
+bigipVE:
+  enabled: true
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for bigipVE with pattern external-only, got nil")
+	}
+	if !strings.Contains(err.Error(), "dual-interface") {
+		t.Errorf("error should mention 'dual-interface': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsJumphostDisabled verifies that bigipVE requires
+// testing.jumphost.enabled: true.
+func TestValidateBigIPVE_RejectsJumphostDisabled(t *testing.T) {
+	// hostDeviceMinimalYAML has no testing block.
+	yaml := hostDeviceMinimalYAML + `
+demo:
+  enabled: true
+bigipVE:
+  enabled: true
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for bigipVE without jumphost, got nil")
+	}
+	if !strings.Contains(err.Error(), "testing.jumphost.enabled") {
+		t.Errorf("error should mention 'testing.jumphost.enabled': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsDemoDisabled verifies that bigipVE requires demo.enabled: true.
+func TestValidateBigIPVE_RejectsDemoDisabled(t *testing.T) {
+	yaml := hostDeviceWithJumphostYAML + `
+bigipVE:
+  enabled: true
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for bigipVE without demo.enabled, got nil")
+	}
+	if !strings.Contains(err.Error(), "demo.enabled") {
+		t.Errorf("error should mention 'demo.enabled': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsBadInstanceType verifies that a malformed
+// instanceType is rejected.
+func TestValidateBigIPVE_RejectsBadInstanceType(t *testing.T) {
+	dir := t.TempDir()
+	yaml := bigipVEFullYAML + `  instanceType: "C5n.2xlarge"
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for bad instanceType, got nil")
+	}
+	if !strings.Contains(err.Error(), "instanceType") {
+		t.Errorf("error should mention 'instanceType': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsBadLicenseTier verifies that an invalid
+// licenseTier is rejected.
+func TestValidateBigIPVE_RejectsBadLicenseTier(t *testing.T) {
+	dir := t.TempDir()
+	yaml := bigipVEFullYAML + `  licenseTier: Premium
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for bad licenseTier, got nil")
+	}
+	if !strings.Contains(err.Error(), "licenseTier") {
+		t.Errorf("error should mention 'licenseTier': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsVIPOutsideCIDR verifies that a VIP outside the
+// external CIDR is rejected.
+func TestValidateBigIPVE_RejectsVIPOutsideCIDR(t *testing.T) {
+	dir := t.TempDir()
+	yaml := bigipVEFullYAML + `  vip: 192.168.1.120
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for VIP outside external CIDR, got nil")
+	}
+	if !strings.Contains(err.Error(), "not inside") {
+		t.Errorf("error should mention 'not inside': %v", err)
+	}
+}
+
+// TestValidateBigIPVE_RejectsVIPInReservedSet verifies that a VIP matching a
+// reserved address (e.g. .100 BNK Gateway VIP) is rejected with a clear error.
+func TestValidateBigIPVE_RejectsVIPInReservedSet(t *testing.T) {
+	reservedVIPs := []struct {
+		vip  string
+		desc string
+	}{
+		{"10.0.10.100", "BNK default gateway VIP"},
+		{"10.0.10.110", "Diameter demo VIP"},
+		{"10.0.10.111", "HTTP2 demo VIP"},
+		{"10.0.10.112", "gRPC demo VIP"},
+		{"10.0.10.113", "additional BNK VIP"},
+		{"10.0.10.200", "jumphost ENI secondary IP"},
+		{"10.0.10.240", "TMM SelfIP"},
+	}
+	for _, tc := range reservedVIPs {
+		tc := tc
+		t.Run(tc.desc, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := bigipVEFullYAML + "  vip: " + tc.vip + "\n"
+			p := writeFile(t, dir, "cluster.yaml", yaml)
+			_, err := Load(p)
+			if err == nil {
+				t.Fatalf("expected error for reserved VIP %s (%s), got nil", tc.vip, tc.desc)
+			}
+			if !strings.Contains(err.Error(), "collides") {
+				t.Errorf("error should mention 'collides': %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateBigIPVE_LicenseTierVariants verifies all three valid licenseTier values.
+func TestValidateBigIPVE_LicenseTierVariants(t *testing.T) {
+	for _, tier := range []string{"Good", "Better", "Best"} {
+		tier := tier
+		t.Run(tier, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := bigipVEFullYAML + "  licenseTier: " + tier + "\n"
+			p := writeFile(t, dir, "cluster.yaml", yaml)
+			_, err := Load(p)
+			if err != nil {
+				t.Errorf("licenseTier %q should be valid, got: %v", tier, err)
+			}
+		})
+	}
+}
+
+// TestLoad_BigIPVE_DisabledNotValidated verifies that a disabled bigipVE block
+// (enabled: false) with missing prerequisites does NOT fail validation.
+func TestLoad_BigIPVE_DisabledNotValidated(t *testing.T) {
+	dir := t.TempDir()
+	// minimalYAML has no pattern/jumphost/demo — all bigipVE prerequisites absent.
+	yaml := minimalYAML + `
+bigipVE:
+  enabled: false
+`
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+	_, err := Load(p)
+	if err != nil {
+		t.Fatalf("disabled bigipVE block should not fail validation: %v", err)
+	}
+}

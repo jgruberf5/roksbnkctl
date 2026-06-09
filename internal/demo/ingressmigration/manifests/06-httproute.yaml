@@ -1,0 +1,16 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: migration-route
+  namespace: {{.Namespace}}
+spec:
+  parentRefs:
+  - name: migration-gateway
+  hostnames:
+  - web.bnk.migration.local
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /}
+    backendRefs:
+    - name: migration-backend
+      port: 80

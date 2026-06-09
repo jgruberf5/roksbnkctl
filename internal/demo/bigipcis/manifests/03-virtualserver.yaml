@@ -1,0 +1,23 @@
+# VirtualServer custom resource — watched by k8s-bigip-ctlr (CIS) in
+# customResourceMode. CIS translates this into an LTM virtual server + pool on
+# the EXTERNAL BIG-IP (partition "cis") via AS3, fronting the in-cluster
+# cis-backend Service. The CRD itself is installed by the CIS Helm chart.
+#
+# apiVersion/shape pinned to k8s-bigip-ctlr 2.20.3 (group cis.f5.com/v1).
+# spec.pools[].service / .servicePort reference the in-namespace Service; with
+# args.pool_member_type=cluster CIS programs the pod IPs directly (VPC CNI).
+apiVersion: cis.f5.com/v1
+kind: VirtualServer
+metadata:
+  name: cis-migration-vs
+  namespace: {{.Namespace}}
+  labels:
+    f5cr: "true"
+spec:
+  host: {{.Host}}
+  virtualServerAddress: {{.VIP}}
+  virtualServerHTTPPort: 80
+  pools:
+  - path: /
+    service: cis-backend
+    servicePort: 80

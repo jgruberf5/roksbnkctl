@@ -448,6 +448,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}); err != nil {
 		return err
 	}
+	// Phase 17e: BIG-IP VE launch (no-op when bigipVE.enabled is false).
+	// Runs after jumphost (17b) so JUMPHOST_SG_ID is available for the mgmt SG rules.
+	// Onboarding (admin password, DO, AS3) is deferred to F2-B2.
+	if err := stage(3, "bigip-ve", func() error {
+		return phases.Phase17eBigIPVE(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
 	if err := stage(3, "iface-discovery", func() error {
 		return phases.Phase17cIfaceDiscovery(ctx, cl, st, clients, dryRun)
 	}); err != nil {
@@ -570,6 +578,17 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	// skipActivationPoll is set by --skip-activation-poll for reviewer re-runs.
 	if err := stage(4, "activation-poll", func() error {
 		return phases.Phase25ActivationPoll(ctx, cl, st, clients, dryRun, skipActivationPoll)
+	}); err != nil {
+		return err
+	}
+	// Phase 17f: BIG-IP VE onboarding (no-op when bigipVE.enabled is false).
+	// Runs LATE — after activation (phase 25), before postflight — so the ~30-min
+	// BIG-IP first-boot settle overlaps the BNK install. Drives tmsh + iControl
+	// REST THROUGH THE JUMPHOST over EICE (the operator host can't reach the VE
+	// mgmt IP — no public IP). Onboards: admin pw, LTM, dataplane, AS3, cis
+	// partition. Admin pw is read from AWSBNKCTL_BIGIP_PASSWORD (never argv).
+	if err := stage(4, "bigip-onboard", func() error {
+		return phases.Phase17fBigIPOnboard(ctx, cl, st, clients, dryRun)
 	}); err != nil {
 		return err
 	}
@@ -710,6 +729,13 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		{3, "kubeconfig", func() error { return phases.Phase11KubeconfigDown(ctx, cl, st, clients) }},
 		{3, "irsa-oidc", func() error { return phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA) }},
 		{3, "iface-discovery", func() error { return phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients) }},
+		// Phase 17e down: BIG-IP VE teardown (no-op when !BigIPVEEnabled — the phase
+		// self-gates on BIGIP_INSTANCE_ID / tag-discovery and tolerates not-found).
+		// Runs before jumphost-down so the jumphost is still reachable for diagnostics.
+		// NOTE: Phase 17f (onboarding) has NO dedicated down step — destroying the VE
+		// here removes everything onboarding created (Phase17fBigIPOnboardDown is a
+		// no-op), so it is intentionally omitted to avoid duplicating teardown.
+		{3, "bigip-ve", func() error { return phases.Phase17eBigIPVEDown(ctx, cl, st, clients) }},
 		{3, "jumphost", func() error { return phases.Phase17bJumphostDown(ctx, cl, st, clients) }},
 		{3, "secondary-enis", func() error { return phases.Phase17SecondaryENIsDown(ctx, cl, st, clients) }},
 		{3, "tmm-node-label", func() error { return phases.Phase16TMMNodeLabelDown(ctx, cl, st, clients) }},
@@ -773,6 +799,12 @@ func printDownPlan(w io.Writer, cl *intent.Cluster, st *state.State, keepIRSA, k
 		{label: "kubeconfig (local file)", key: "KUBECONFIG_PATH"},
 		{label: "OIDC provider", key: "OIDC_PROVIDER_ARN"},
 		{label: "CNE IRSA role", key: "CNE_IRSA_ROLE_NAME"},
+		{label: "BIG-IP VE instance", key: "BIGIP_INSTANCE_ID"},
+		{label: "BIG-IP mgmt SG", key: "BIGIP_MGMT_SG_ID"},
+		{label: "BIG-IP mgmt ENI", key: "BIGIP_MGMT_ENI_ID"},
+		{label: "BIG-IP ext ENI (VIP)", key: "BIGIP_EXT_ENI_ID"},
+		{label: "BIG-IP int ENI", key: "BIGIP_INT_ENI_ID"},
+		{label: "BIG-IP key pair", key: "BIGIP_KEY_NAME"},
 		{label: "jumphost instance", key: "JUMPHOST_INSTANCE_ID"},
 		{label: "jumphost IAM role", key: "JUMPHOST_ROLE_NAME"},
 		{label: "jumphost instance profile", key: "JUMPHOST_INSTANCE_PROFILE_NAME"},

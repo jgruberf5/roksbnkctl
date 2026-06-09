@@ -1,0 +1,13 @@
+apiVersion: k8s.f5net.com/v1
+kind: F5BnkGateway
+metadata:
+  name: {{.Namespace}}
+  namespace: {{.Namespace}}
+spec:
+  ingressConfig:
+    defaultListenerNetworks:
+    - name: external
+      ipv4BaseCidr: {{.ExternalCIDR}}
+      startAddress: {{.VIP}}
+      endAddress: {{.VIP}}
+      provider: f5-ip-provider
