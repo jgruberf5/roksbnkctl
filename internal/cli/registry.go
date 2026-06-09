@@ -64,6 +64,7 @@ var (
 	flagRegistryNoIncludeDep bool
 	flagRegistryKubeconfig   string
 	flagRegistryConcurrency  int
+	flagRegistryTarget       string
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -126,6 +127,7 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{registryReplicateCmd, registryVerifyCmd, registryPruneCmd} {
 		c.Flags().StringVar(&flagRegistryKubeconfig, "kubeconfig", "", "kubeconfig path (default: workspace/cluster default)")
+		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend (default: workspace registry.target, else "openshift")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
 
@@ -234,6 +236,9 @@ func buildTarget(ctx context.Context, ws *config.Workspace) (*openshift.Target, 
 	kind := "openshift"
 	if ws.Registry != nil && ws.Registry.Target != "" {
 		kind = ws.Registry.Target
+	}
+	if flagRegistryTarget != "" { // --target overrides the workspace config
+		kind = flagRegistryTarget
 	}
 	if kind != "openshift" {
 		return nil, fmt.Errorf("unsupported registry target %q (only \"openshift\" is implemented)", kind)
