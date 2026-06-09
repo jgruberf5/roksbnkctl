@@ -55,6 +55,14 @@ variable "cert_manager_version" {
   default     = "v1.17.3"
 }
 
+# Sprint 29 air-gap mirror. Empty (default) leaves the chart's public
+# image.repository untouched — byte-identical off the mirror path.
+variable "cert_manager_image_repository" {
+  description = "Override the cert-manager controller image repository (air-gap mirror image host). Empty leaves the chart default."
+  type        = string
+  default     = ""
+}
+
 variable "create_roks_cluster" {
   description = "When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch"
   type        = bool

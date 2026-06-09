@@ -84,6 +84,20 @@ variable "far_repo_url" {
   default     = ""
 }
 
+# Sprint 29 air-gap mirror — image host for spec.registry.uri. Empty
+# coalesces back to far_repo_url (byte-identical default).
+variable "far_image_repo_url" {
+  description = "Image-pull host for the mirror (spec.registry.uri). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "use_registry_mirror" {
+  description = "When true, render spec.registry.imagePullSecrets as an empty list (RBAC handles pulls)."
+  type        = bool
+  default     = false
+}
+
 variable "cneinstance_dynamic_routing" {
   description = "Enable dynamic routing"
   type        = bool

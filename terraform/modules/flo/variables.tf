@@ -50,6 +50,26 @@ variable "far_repo_url" {
   default     = "repo.f5.com"
 }
 
+# Sprint 29 air-gap mirror — chart/image host split. Both empty → fall back
+# to far_repo_url in the inner module's locals (byte-identical default).
+variable "far_chart_repo_url" {
+  description = "Chart-pull host for the mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "far_image_repo_url" {
+  description = "Image-pull host for the mirror (image.repository). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "use_registry_mirror" {
+  description = "When true, drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list (RBAC handles pulls)."
+  type        = bool
+  default     = false
+}
+
 variable "f5_bigip_k8s_manifest_version" {
   description = "Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)"
   type        = string

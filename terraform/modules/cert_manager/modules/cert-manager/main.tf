@@ -77,6 +77,17 @@ resource "helm_release" "cert_manager" {
     value = "ServerSideApply=true"
   }
 
+  # Sprint 29 air-gap mirror — point the controller image at the in-cluster
+  # image host. Emitted only when image_repository is set; the default empty
+  # value skips the block so the chart's public image.repository stands.
+  dynamic "set" {
+    for_each = var.image_repository != "" ? [var.image_repository] : []
+    content {
+      name  = "image.repository"
+      value = set.value
+    }
+  }
+
   depends_on = [kubernetes_namespace_v1.cert_manager]
 }
 
@@ -132,6 +143,7 @@ resource "null_resource" "cert_manager" {
         --version "${var.chart_version}" \
         --set installCRDs=true \
         --set "featureGates=ServerSideApply=true" \
+        ${var.image_repository != "" ? "--set image.repository=${var.image_repository}" : ""} \
         --wait --timeout "${var.timeout}s" \
         --kube-apiserver="${var.kube_host}" \
         --kube-token="${var.kube_token}" \
