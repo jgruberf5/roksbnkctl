@@ -126,6 +126,15 @@ type mockEC2 struct {
 	// Instance Types (slice 13+)
 	describeInstanceTypesOut *ec2.DescribeInstanceTypesOutput
 	describeInstanceTypesErr error
+
+	// Key Pairs (F2-B1+)
+	createKeyPairOut    *ec2.CreateKeyPairOutput
+	createKeyPairErr    error
+	createKeyPairCalls  int
+	deleteKeyPairCalls  int
+	deleteKeyPairErr    error
+	describeKeyPairsOut *ec2.DescribeKeyPairsOutput
+	describeKeyPairsErr error
 }
 
 func (m *mockEC2) DescribeVpcs(_ context.Context, _ *ec2.DescribeVpcsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
@@ -426,6 +435,39 @@ func (m *mockEC2) DescribeInstanceTypes(_ context.Context, _ *ec2.DescribeInstan
 		return &ec2.DescribeInstanceTypesOutput{}, m.describeInstanceTypesErr
 	}
 	return m.describeInstanceTypesOut, m.describeInstanceTypesErr
+}
+
+// mockEC2 F2-B1 additions: key pairs.
+
+func (m *mockEC2) CreateKeyPair(_ context.Context, _ *ec2.CreateKeyPairInput, _ ...func(*ec2.Options)) (*ec2.CreateKeyPairOutput, error) {
+	m.createKeyPairCalls++
+	if m.createKeyPairErr != nil {
+		return nil, m.createKeyPairErr
+	}
+	if m.createKeyPairOut != nil {
+		return m.createKeyPairOut, nil
+	}
+	keyName := "bnk-demo-bigip"
+	keyID := "key-mock-bigip"
+	material := "-----BEGIN RSA PRIVATE KEY-----\nmock-pem-for-test\n-----END RSA PRIVATE KEY-----\n"
+	return &ec2.CreateKeyPairOutput{
+		KeyName:     &keyName,
+		KeyPairId:   &keyID,
+		KeyMaterial: &material,
+	}, nil
+}
+
+func (m *mockEC2) DeleteKeyPair(_ context.Context, _ *ec2.DeleteKeyPairInput, _ ...func(*ec2.Options)) (*ec2.DeleteKeyPairOutput, error) {
+	m.deleteKeyPairCalls++
+	return &ec2.DeleteKeyPairOutput{}, m.deleteKeyPairErr
+}
+
+func (m *mockEC2) DescribeKeyPairs(_ context.Context, _ *ec2.DescribeKeyPairsInput, _ ...func(*ec2.Options)) (*ec2.DescribeKeyPairsOutput, error) {
+	if m.describeKeyPairsOut == nil {
+		// Default: return not-found (key does not exist yet).
+		return &ec2.DescribeKeyPairsOutput{}, m.describeKeyPairsErr
+	}
+	return m.describeKeyPairsOut, m.describeKeyPairsErr
 }
 
 // mockSTSImpl implements STSAPI for tests.

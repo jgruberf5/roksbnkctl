@@ -156,6 +156,25 @@ forge:
   credentialTemplateId: 1          # forge "AWS Production" template
   username: admin
 
+# bigipVE: opt-in F5 BIG-IP VE appliance for the migration demo (feature F2).
+# DISABLED by default. Set enabled: true only when you intend to run the full
+# BIG-IP → BNK migration demo.
+#
+# WARNING: enabling this provisions a chargeable c5n.2xlarge PAYG BIG-IP VE
+# appliance (approx. 15 min extra onboarding time and ongoing EC2 + licensing
+# costs). Tear it down with `awsbnkctl down` to stop charges.
+#
+# Admin password: supply via the AWSBNKCTL_BIGIP_PASSWORD environment variable —
+# it is NEVER stored in this file.
+#
+# bigipVE:
+#   enabled: false              # set true to provision the BIG-IP VE appliance
+#   instanceType: c5n.2xlarge   # default; minimum for PAYG Good/Better/Best
+#   mgmtSubnetIndex: 0          # public subnet index for the mgmt ENI (default 0)
+#   vip: 10.0.10.120            # BIG-IP virtual-server IP in the external subnet
+#   licenseTier: Good           # PAYG tier: Good | Better | Best
+#   # version: "17.5.1*"        # optional AMI version glob; omit for newest
+
 # tags merged into every AWS resource alongside the mandatory awsbnkctl:* keys.
 tags:
   cost-center: RnD-AI

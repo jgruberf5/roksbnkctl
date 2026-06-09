@@ -13,8 +13,10 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	// Side-effect imports: each use-case package registers into demo.registry via init().
 	// Alphabetical; one line per use-case as new slices ship.
-	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/diameter" // registers "diameter" use-case via init()
-	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/http2"    // registers "http2" use-case via init()
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/bigipcis"         // registers "bigip-cis" use-case via init()
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/diameter"         // registers "diameter" use-case via init()
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/http2"            // registers "http2" use-case via init()
+	_ "github.com/JLCode-tech/awsbnkctl/internal/demo/ingressmigration" // registers "ingress-migration" use-case via init()
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/scenarios"
 	"github.com/JLCode-tech/awsbnkctl/pkg/bnk"

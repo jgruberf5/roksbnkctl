@@ -111,6 +111,11 @@ type EC2API interface {
 
 	// Instance Types (slice 13+, preflight ENI-limit validation for host-device pattern)
 	DescribeInstanceTypes(ctx context.Context, in *ec2.DescribeInstanceTypesInput, opts ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error)
+
+	// Key Pairs (F2-B1+, BIG-IP VE SSH key management)
+	CreateKeyPair(ctx context.Context, in *ec2.CreateKeyPairInput, opts ...func(*ec2.Options)) (*ec2.CreateKeyPairOutput, error)
+	DeleteKeyPair(ctx context.Context, in *ec2.DeleteKeyPairInput, opts ...func(*ec2.Options)) (*ec2.DeleteKeyPairOutput, error)
+	DescribeKeyPairs(ctx context.Context, in *ec2.DescribeKeyPairsInput, opts ...func(*ec2.Options)) (*ec2.DescribeKeyPairsOutput, error)
 }
 
 // STSAPI is the subset of sts.Client used by the preflight phase.

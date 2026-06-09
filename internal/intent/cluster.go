@@ -140,6 +140,15 @@ type Cluster struct {
 	// and enabled, `up` writes DEMO_MODE/DEMO_STAGED_AT/DEMO_EXPIRY to state.env.
 	// Omitting the block (or leaving enabled: false) is the default (not a demo).
 	Demo *DemoSpec `yaml:"demo,omitempty"`
+	// BigIPVE declares a F5 BIG-IP VE appliance for a migration demo (F2+). When
+	// present and enabled, a later provisioning slice will create a c5n.2xlarge
+	// BIG-IP VE instance + F5 CIS side-by-side with the BNK cluster so operators
+	// can demonstrate a live traffic migration path. This slice adds schema +
+	// validation only — no AWS calls are made here.
+	//
+	// Admin password: NEVER stored in cluster.yaml. Supply via the
+	// AWSBNKCTL_BIGIP_PASSWORD environment variable at provisioning time.
+	BigIPVE *BigIPVESpec `yaml:"bigipVE,omitempty"`
 }
 
 // EndpointAccessSpec controls who can reach the EKS control-plane API endpoint.
@@ -337,6 +346,49 @@ type DemoSpec struct {
 	// "48h"). Default "24h" when Enabled is true and TTL is omitted. Must parse as
 	// a positive duration. DEMO_EXPIRY = DEMO_STAGED_AT + TTL.
 	TTL string `yaml:"ttl,omitempty"`
+}
+
+// BigIPVESpec declares an F5 BIG-IP VE appliance to be provisioned alongside
+// the BNK cluster as a migration demo target (feature F2). When Enabled is
+// true a later provisioning slice will launch a PAYG BIG-IP VE EC2 instance +
+// F5 CIS into the same VPC so operators can demonstrate a live traffic
+// migration from BIG-IP to BNK.
+//
+// Admin password: NEVER add a password field here. The BIG-IP admin password is
+// read from the AWSBNKCTL_BIGIP_PASSWORD environment variable at provisioning
+// time — it must never be written into a checked-in cluster.yaml.
+//
+// Requires: pattern: dual-interface (internal subnet needed for the VE's server-
+// side NIC), testing.jumphost.enabled: true, demo.enabled: true.
+type BigIPVESpec struct {
+	// Enabled is the master switch. Default false (omitted block = disabled).
+	// WARNING: enabling this provisions a chargeable c5n.2xlarge PAYG BIG-IP VE
+	// appliance (~15 min extra onboarding). Set Enabled: true only when you
+	// intend to run the full migration demo.
+	Enabled bool `yaml:"enabled"`
+	// InstanceType for the BIG-IP VE EC2 instance. Default "c5n.2xlarge".
+	// Must be an AWS instance type that is available in the BIG-IP PAYG AMI
+	// catalog (c5n.2xlarge is the recommended minimum for PAYG Good/Better/Best).
+	InstanceType string `yaml:"instanceType,omitempty"`
+	// MgmtSubnetIndex selects which public subnet to use for the BIG-IP management
+	// ENI (primary interface). Default 0 (first public subnet — same as the
+	// jumphost convention). Same semantics as testing.jumphost.mgmtSubnetIndex.
+	MgmtSubnetIndex int `yaml:"mgmtSubnetIndex,omitempty"`
+	// VIP is the BIG-IP virtual-server address — a secondary private IP that will
+	// be assigned to the BIG-IP's external (data-plane) ENI. Default "10.0.10.120".
+	// Must be a valid IPv4 host address inside network.dataPath.external.cidr and
+	// must not collide with the reserved BNK/TMM addresses in that subnet
+	// (.100, .110, .111, .112, .113 BNK VIPs; .200 jumphost ENI; .240 TMM SelfIP).
+	VIP string `yaml:"vip,omitempty"`
+	// LicenseTier is the PAYG BIG-IP license tier: Good, Better, or Best.
+	// Default "Good". Controls which AMI is resolved and which feature set is
+	// activated on first boot.
+	LicenseTier string `yaml:"licenseTier,omitempty"`
+	// Version is an optional glob override for AMI resolution, e.g. "17.5.1*".
+	// When empty (default), the newest available BIG-IP VE AMI for the chosen
+	// tier is used. No provisioning is performed in this slice — the field is
+	// carried here for the later provisioning slice.
+	Version string `yaml:"version,omitempty"`
 }
 
 // FloSpec configures the FLO (F5 Lifecycle Operator) Helm install in Phase 14.
@@ -669,6 +721,21 @@ func applyDefaults(c *Cluster) {
 		c.Demo.TTL = DefaultDemoTTL
 	}
 
+	// bigipVE defaults: fill zero fields when the block is present and enabled.
+	if c.BigIPVE != nil && c.BigIPVE.Enabled {
+		if c.BigIPVE.InstanceType == "" {
+			c.BigIPVE.InstanceType = "c5n.2xlarge"
+		}
+		// MgmtSubnetIndex defaults to 0; zero value is already correct.
+		if c.BigIPVE.VIP == "" {
+			c.BigIPVE.VIP = "10.0.10.120"
+		}
+		if c.BigIPVE.LicenseTier == "" {
+			c.BigIPVE.LicenseTier = "Good"
+		}
+		// Version intentionally left empty by default (newest AMI).
+	}
+
 	// BNK patterns: auto-derive TMM SelfIPs as <subnet>.240 when not explicitly
 	// set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
 	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST be
@@ -763,6 +830,11 @@ func validate(c *Cluster) error {
 	}
 	if c.Demo != nil && c.Demo.Enabled {
 		if err := ValidateDemo(c); err != nil {
+			return err
+		}
+	}
+	if c.BigIPVE != nil && c.BigIPVE.Enabled {
+		if err := validateBigIPVE(c); err != nil {
 			return err
 		}
 	}
@@ -902,6 +974,116 @@ const DefaultDemoTTL = "24h"
 // True when c.Demo is non-nil and c.Demo.Enabled is true.
 func (c *Cluster) DemoEnabled() bool {
 	return c.Demo != nil && c.Demo.Enabled
+}
+
+// BigIPVEEnabled reports whether the BIG-IP VE appliance is enabled.
+// True when c.BigIPVE is non-nil and c.BigIPVE.Enabled is true.
+func (c *Cluster) BigIPVEEnabled() bool {
+	return c.BigIPVE != nil && c.BigIPVE.Enabled
+}
+
+// bigipVEReservedOffsets lists the host-part offsets that are already allocated
+// in the external data-path subnet and may not be used as the BIG-IP VIP.
+//
+//	.100 — default BNK Gateway VIP (DefaultVIP)
+//	.110 — Diameter demo VIP (scnVIP)
+//	.111 — HTTP/2 demo VIP
+//	.112 — gRPC demo VIP
+//	.113 — additional BNK demo VIP
+//	.200 — jumphost external ENI secondary IP
+//	.240 — TMM SelfIP (auto-derived by applyDefaults)
+var bigipVEReservedOffsets = []int{100, 110, 111, 112, 113, 200, 240}
+
+// validateBigIPVE enforces the bigipVE: block constraints. Called from validate()
+// only when BigIPVE != nil && BigIPVE.Enabled.
+//
+// Rules:
+//  1. Requires pattern: dual-interface (internal subnet for the VE's backend NIC).
+//  2. Requires testing.jumphost.enabled: true.
+//  3. Requires demo.enabled: true.
+//  4. InstanceType must match instanceTypeRE.
+//  5. LicenseTier must be one of Good | Better | Best.
+//  6. VIP must be a valid IPv4 host address inside network.dataPath.external.cidr
+//     and must not equal any reserved address in that subnet.
+//  7. MgmtSubnetIndex must be a valid index into network.subnets.public.
+func validateBigIPVE(c *Cluster) error {
+	ve := c.BigIPVE
+
+	// Rule 1: dual-interface only (internal subnet needed for VE server-side NIC).
+	if !c.HasInternalInterface() {
+		return fmt.Errorf("bigipVE requires pattern: dual-interface "+
+			"(the BIG-IP VE needs the internal subnet for its server-side NIC); "+
+			"current pattern %q does not have an internal interface — "+
+			"set pattern: dual-interface in cluster.yaml",
+			c.Pattern)
+	}
+
+	// Rule 2: jumphost required (onboarding readiness poll + traffic probe).
+	if c.Testing == nil || c.Testing.Jumphost == nil || !c.Testing.Jumphost.Enabled {
+		return fmt.Errorf("bigipVE requires testing.jumphost.enabled: true " +
+			"(the migration demo uses the jumphost for traffic probes); " +
+			"add testing.jumphost.enabled: true to cluster.yaml")
+	}
+
+	// Rule 3: demo mode required (BIG-IP VE is a demo-only appliance).
+	if c.Demo == nil || !c.Demo.Enabled {
+		return fmt.Errorf("bigipVE requires demo.enabled: true " +
+			"(the BIG-IP VE is a demo-only appliance); " +
+			"add demo.enabled: true to cluster.yaml")
+	}
+
+	// Rule 4: instanceType format.
+	if !instanceTypeRE.MatchString(ve.InstanceType) {
+		return fmt.Errorf("bigipVE.instanceType %q does not match expected pattern (e.g. c5n.2xlarge, m5.xlarge)", ve.InstanceType)
+	}
+
+	// Rule 5: licenseTier membership.
+	switch ve.LicenseTier {
+	case "Good", "Better", "Best":
+		// valid
+	default:
+		return fmt.Errorf("bigipVE.licenseTier %q is not valid; must be one of: Good, Better, Best", ve.LicenseTier)
+	}
+
+	// Rule 6: VIP must be inside the external CIDR and not reserved.
+	if c.Network.DataPath == nil || c.Network.DataPath.External.CIDR == "" {
+		return fmt.Errorf("bigipVE.vip validation requires network.dataPath.external.cidr to be set")
+	}
+	extCIDR := c.Network.DataPath.External.CIDR
+	_, extNet, err := net.ParseCIDR(extCIDR)
+	if err != nil {
+		return fmt.Errorf("network.dataPath.external.cidr %q is not a valid CIDR: %w", extCIDR, err)
+	}
+	vipIP := net.ParseIP(ve.VIP)
+	if vipIP == nil {
+		return fmt.Errorf("bigipVE.vip %q is not a valid IPv4 address", ve.VIP)
+	}
+	if !extNet.Contains(vipIP) {
+		return fmt.Errorf("bigipVE.vip %q is not inside network.dataPath.external.cidr %s", ve.VIP, extCIDR)
+	}
+	// Build reserved IP set for the error message.
+	base := extNet.IP.To4()
+	if base == nil {
+		return fmt.Errorf("network.dataPath.external.cidr %q is not an IPv4 network", extCIDR)
+	}
+	var reserved []string
+	for _, off := range bigipVEReservedOffsets {
+		rip := net.IPv4(base[0], base[1], base[2], byte(off)).String()
+		reserved = append(reserved, rip)
+		if vipIP.Equal(net.ParseIP(rip)) {
+			return fmt.Errorf("bigipVE.vip %q collides with a reserved address in %s "+
+				"(reserved: %s)",
+				ve.VIP, extCIDR, strings.Join(reserved, ", "))
+		}
+	}
+
+	// Rule 7: mgmtSubnetIndex must be a valid index.
+	if idx := ve.MgmtSubnetIndex; idx < 0 || idx >= len(c.Network.Subnets.Public) {
+		return fmt.Errorf("bigipVE.mgmtSubnetIndex %d is out of range (network.subnets.public has %d entries)",
+			idx, len(c.Network.Subnets.Public))
+	}
+
+	return nil
 }
 
 // EnableDemo forces demo mode on (the --demo flag's effect), creating the

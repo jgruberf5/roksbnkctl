@@ -92,6 +92,18 @@ func CopyFileViaEICE(ctx context.Context, opts ProbeOptions, content []byte, rem
 	return nil
 }
 
+// ShellSingleQuote wraps s in single quotes safe for /bin/sh, escaping any
+// embedded single quotes via the close-quote/escaped-quote/reopen-quote idiom.
+//
+// Exported for callers (e.g. the BIG-IP onboarding phase, F2-B2) that compose
+// nested remote shell commands — an `ssh ... admin@bigip '<cmd>'` run ON the
+// jumphost — and must single-quote the inner BIG-IP command safely. Thin wrapper
+// over the package-internal shellSingleQuote so the internal helper stays
+// untouched.
+func ShellSingleQuote(s string) string {
+	return shellSingleQuote(s)
+}
+
 // GrpcurlInstallCmd returns the idempotent remote shell command that installs
 // grpcurl v1.9.3 to /usr/local/bin on an AL2023 x86_64 jumphost.
 //
