@@ -247,6 +247,16 @@ func runInit(_ *cobra.Command, _ []string) error {
 		TFSource:  tfCfg,
 	}
 
+	// BNK supply-chain knobs (Sprint 29): the manifest version + the FAR auth
+	// tarball name. Asked only when BNK is being deployed; seeded with the
+	// terraform-default values and stored in config.yaml so `registry` and the
+	// BNK phase run from the workspace without flags.
+	if resources != nil && resources.BNK.Create {
+		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
+		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
+		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
+	}
+
 	// Show the resolved name plan so the operator sees exactly what
 	// roksbnkctl will ask IBM Cloud to create (or reuse).
 	printNamePlan(os.Stderr, ws)

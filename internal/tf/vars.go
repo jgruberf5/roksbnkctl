@@ -321,6 +321,12 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)
 	}
+	if ws.BNK.FarAuthFile != "" {
+		fmt.Fprintf(w, "f5_cne_far_auth_file = %q\n", ws.BNK.FarAuthFile)
+	}
+	if ws.BNK.SubscriptionJWTFile != "" {
+		fmt.Fprintf(w, "f5_cne_subscription_jwt_file = %q\n", ws.BNK.SubscriptionJWTFile)
+	}
 	// Sprint 27 install-mode flag. Emitted only when set; an unset value
 	// lets the upstream TF default (kubectl) stand, keeping older configs
 	// byte-identical. "legacy_curl" selects the null_resource baseline.

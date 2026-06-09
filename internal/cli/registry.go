@@ -192,7 +192,9 @@ const (
 // dir helm pulls into (the workspace state/scratch tree); "" → a temp dir.
 func buildBOM(ctx context.Context, in registryBOMInputs, workspaceScratch string) (*bnkbom.BOM, error) {
 	if in.ManifestVersion == "" {
-		return nil, fmt.Errorf("no BNK manifest version: set bnk.manifest_version in the workspace config or pass --manifest-version")
+		// Fall back to the tfvar/init default so `registry` runs out-of-box;
+		// bnk.manifest_version (init) or --manifest-version override it.
+		in.ManifestVersion = config.DefaultManifestVersion
 	}
 	manifest, err := source.FetchManifest(ctx, in.FARRepoURL, in.ManifestVersion, "", workspaceScratch, in.SourceSAB64)
 	if err != nil {

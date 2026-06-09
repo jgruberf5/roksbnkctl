@@ -133,10 +133,29 @@ type ResourceToggle struct {
 	Existing string `yaml:"existing,omitempty"` // existing name/ID when Create=false
 }
 
+// Default{ManifestVersion,FARAuthFile,SubscriptionJWTFile} mirror the
+// f5_bigip_k8s_manifest_version / f5_cne_far_auth_file / f5_cne_subscription_jwt_file
+// terraform-variable defaults. The init interview offers them and seeds
+// bnk.{manifest_version,far_auth_file,subscription_jwt_file}; those config values
+// then override the tfvar defaults (via internal/tf/vars.go) and drive `registry`
+// (the manifest pull + the FAR auth).
+const (
+	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
+	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
+	DefaultSubscriptionJWTFile = "trial.jwt"
+)
+
 type BNKCfg struct {
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
 	FARRepoURL      string `yaml:"far_repo_url,omitempty"`
 	ManifestVersion string `yaml:"manifest_version,omitempty"`
+	// FarAuthFile is the FAR auth tarball's filename in the orchestration COS
+	// bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry`
+	// to resolve the FAR _json_key_base64 service account.
+	FarAuthFile string `yaml:"far_auth_file,omitempty"`
+	// SubscriptionJWTFile is the subscription/license JWT's filename in the
+	// orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.
+	SubscriptionJWTFile string `yaml:"subscription_jwt_file,omitempty"`
 
 	// CRMode selects the BNK custom-resource install mechanism rendered as
 	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
