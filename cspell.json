@@ -245,7 +245,15 @@
     "Snat",
     "VXLAN",
     "automap",
-    "snatpool"
+    "snatpool",
+    "h2load",
+    "OSLO",
+    "nighthawk",
+    "tmctl",
+    "ECDSA",
+    "BOM",
+    "ORAS",
+    "dockerconfigjson"
   ],
   "ignorePaths": [
     "book/book/**",
