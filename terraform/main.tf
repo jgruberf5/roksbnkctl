@@ -65,10 +65,11 @@ module "cert_manager" {
   roks_cluster_name_or_id = module.roks_cluster.roks_cluster_name
   cert_manager_namespace  = var.cert_manager_namespace
   cert_manager_version    = var.cert_manager_version
-  # Sprint 29 air-gap mirror: when a mirror is populated, pull the
-  # cert-manager controller image from the in-cluster image host. Empty (the
-  # default) leaves the chart's public image.repository untouched.
-  cert_manager_image_repository = var.use_registry_mirror ? "${var.far_image_repo_url}/cert-manager" : ""
+  # Sprint 29 air-gap mirror: when a mirror is populated, pull every cert-manager
+  # component image from the in-cluster image HOST. The module appends each
+  # component's jetstack/cert-manager-<comp> path (mirrored from quay.io/jetstack).
+  # Empty (the default) leaves the chart's public image.repository untouched.
+  cert_manager_image_repository = var.use_registry_mirror ? var.far_image_repo_url : ""
   create_roks_cluster           = var.create_roks_cluster
   deploy_cert_manager           = var.deploy_cert_manager
   bnk_cr_mode                   = var.bnk_cr_mode

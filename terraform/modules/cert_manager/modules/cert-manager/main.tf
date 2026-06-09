@@ -38,6 +38,20 @@ terraform {
 locals {
   use_kubectl = var.enabled && var.bnk_cr_mode == "kubectl"
   use_legacy  = var.enabled && var.bnk_cr_mode == "legacy_curl"
+
+  # Sprint 29 air-gap mirror — cert-manager's chart pins each component image to a
+  # full quay.io/jetstack/cert-manager-<comp> path, and the mirror keeps that
+  # layout under the image host. Redirect ALL of them: overriding only
+  # image.repository (the controller) leaves webhook/cainjector/startupapicheck on
+  # quay.io, which is blocked under air-gap and hangs the helm_release. Empty
+  # var.image_repository (the mirror image host) leaves the chart's public defaults.
+  cm_image_sets = var.image_repository == "" ? {} : {
+    "image.repository"                 = "${var.image_repository}/jetstack/cert-manager-controller"
+    "webhook.image.repository"         = "${var.image_repository}/jetstack/cert-manager-webhook"
+    "cainjector.image.repository"      = "${var.image_repository}/jetstack/cert-manager-cainjector"
+    "startupapicheck.image.repository" = "${var.image_repository}/jetstack/cert-manager-startupapicheck"
+    "acmesolver.image.repository"      = "${var.image_repository}/jetstack/cert-manager-acmesolver"
+  }
 }
 
 # ============================================================
@@ -77,13 +91,13 @@ resource "helm_release" "cert_manager" {
     value = "ServerSideApply=true"
   }
 
-  # Sprint 29 air-gap mirror — point the controller image at the in-cluster
-  # image host. Emitted only when image_repository is set; the default empty
-  # value skips the block so the chart's public image.repository stands.
+  # Sprint 29 air-gap mirror — redirect every cert-manager component image at the
+  # in-cluster mirror (see local.cm_image_sets). Empty image_repository → no sets,
+  # so the chart's public defaults stand.
   dynamic "set" {
-    for_each = var.image_repository != "" ? [var.image_repository] : []
+    for_each = local.cm_image_sets
     content {
-      name  = "image.repository"
+      name  = set.key
       value = set.value
     }
   }
@@ -143,7 +157,7 @@ resource "null_resource" "cert_manager" {
         --version "${var.chart_version}" \
         --set installCRDs=true \
         --set "featureGates=ServerSideApply=true" \
-        ${var.image_repository != "" ? "--set image.repository=${var.image_repository}" : ""} \
+        ${join(" ", [for k, v in local.cm_image_sets : "--set ${k}=${v}"])} \
         --wait --timeout "${var.timeout}s" \
         --kube-apiserver="${var.kube_host}" \
         --kube-token="${var.kube_token}" \
