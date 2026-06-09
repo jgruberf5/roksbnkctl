@@ -13,6 +13,9 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/bnkbom"
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/cos"
+	"github.com/jgruberf5/roksbnkctl/internal/cred"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/mirror"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/openshift"
@@ -188,13 +191,70 @@ const (
 	defaultNodeLabelerTag     = "latest"
 )
 
+// FAR-auth COS coordinates — the orchestration COS instance/bucket/region that
+// holds the FAR auth tarball + the license JWT. These mirror the terraform
+// ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
+// ibmcloud_cos_bucket_region defaults.
+const (
+	farOrchestrationCOSInstance = "bnk-orchestration"
+	farResourcesBucket          = "bnk-schematics-resources"
+	farCOSBucketRegion          = "us-south"
+)
+
+// resolveFARServiceAccount downloads the workspace's FAR auth tarball
+// (bnk.far_auth_file, default f5-far-auth-key.tgz) from the orchestration COS
+// using the workspace API key, and extracts the _json_key_base64 service account.
+// This is the flag-free path: with it, `registry` authenticates to FAR straight
+// from the workspace config (no --source-sa-b64).
+func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Workspace) (string, error) {
+	farAuthFile := ws.BNK.FarAuthFile
+	if farAuthFile == "" {
+		farAuthFile = config.DefaultFARAuthFile
+	}
+	apiKey, err := (&cred.Resolver{Workspace: name}).IBMCloudAPIKey(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving the workspace API key: %w", err)
+	}
+	ic, err := ibm.New(apiKey, ws.IBMCloud.Region)
+	if err != nil {
+		return "", err
+	}
+	inst, err := ic.GetCOSInstanceByName(ctx, farOrchestrationCOSInstance)
+	if err != nil {
+		return "", fmt.Errorf("finding the %q COS instance: %w", farOrchestrationCOSInstance, err)
+	}
+	cosClient, err := cos.New(apiKey, farCOSBucketRegion, inst.CRN)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp("", "far-auth-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	tgz := filepath.Join(tmp, "far-auth.tgz")
+	if err := cosClient.GetObjectToFile(ctx, farResourcesBucket, farAuthFile, tgz); err != nil {
+		return "", fmt.Errorf("downloading %s from COS %s/%s: %w", farAuthFile, farOrchestrationCOSInstance, farResourcesBucket, err)
+	}
+	return source.ExtractServiceAccountFromTarball(tgz)
+}
+
 // buildBOM pulls the FAR manifest and assembles the BOM. workspaceScratch is the
-// dir helm pulls into (the workspace state/scratch tree); "" → a temp dir.
-func buildBOM(ctx context.Context, in registryBOMInputs, workspaceScratch string) (*bnkbom.BOM, error) {
+// dir helm pulls into (the workspace state/scratch tree); "" → a temp dir. When
+// no source service account is configured, it is resolved from the workspace's
+// FAR auth tarball in COS (bnk.far_auth_file) so the command runs flag-free.
+func buildBOM(ctx context.Context, name string, ws *config.Workspace, in registryBOMInputs, workspaceScratch string) (*bnkbom.BOM, error) {
 	if in.ManifestVersion == "" {
 		// Fall back to the tfvar/init default so `registry` runs out-of-box;
 		// bnk.manifest_version (init) or --manifest-version override it.
 		in.ManifestVersion = config.DefaultManifestVersion
+	}
+	if in.SourceSAB64 == "" {
+		sa, err := resolveFARServiceAccount(ctx, name, ws)
+		if err != nil {
+			return nil, fmt.Errorf("resolving the FAR service account from COS (or set registry.source_service_account_b64 / --source-sa-b64): %w", err)
+		}
+		in.SourceSAB64 = sa
 	}
 	manifest, err := source.FetchManifest(ctx, in.FARRepoURL, in.ManifestVersion, "", workspaceScratch, in.SourceSAB64)
 	if err != nil {
@@ -272,7 +332,7 @@ func runRegistryBOM(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -328,7 +388,7 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -373,7 +433,7 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -430,7 +490,7 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -464,7 +524,7 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
