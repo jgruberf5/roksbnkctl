@@ -21,6 +21,7 @@ type Workspace struct {
 	Cluster  ClusterCfg           `yaml:"cluster"`
 	BNK      BNKCfg               `yaml:"bnk,omitempty"`
 	Gateway  GatewayCfg           `yaml:"gateway,omitempty"`
+	Registry *RegistryCfg         `yaml:"registry,omitempty"`
 	Test     TestCfg              `yaml:"test,omitempty"`
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
@@ -171,6 +172,54 @@ type GatewayCfg struct {
 	ClientSubnetLocal  string `yaml:"client_subnet_local,omitempty"`
 	ClientSubnetRemote string `yaml:"client_subnet_remote,omitempty"`
 	VXLANPort          int    `yaml:"vxlan_port,omitempty"`
+}
+
+// RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which
+// target the `roksbnkctl registry replicate` populates and which namespace it
+// uses, plus the optional source/target credentials. All fields are optional —
+// an absent block (nil) means the mirror is not configured and the BNK install
+// pulls directly from FAR (far_repo_url). Additive + omitempty, so existing
+// config.yaml files load unchanged.
+type RegistryCfg struct {
+	// Target selects the mirror backend. "" / "openshift" → the cluster's own
+	// OpenShift internal image registry (the first-class air-gap target).
+	Target string `yaml:"target,omitempty"`
+
+	// Namespace is the mirror project the artifacts land in. "" → "bnk-mirror".
+	Namespace string `yaml:"namespace,omitempty"`
+
+	// IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager
+	// chart + images, the bitnami/kubectl node-labeler image) into the BOM. A
+	// nil pointer means the default (true — a complete air-gap install set needs
+	// them); set it explicitly to false to mirror only the F5 manifest artifacts.
+	IncludeDeps *bool `yaml:"include_deps,omitempty"`
+
+	// SourceServiceAccountB64 is the FAR `_json_key_base64` service-account JSON,
+	// base64-encoded, used as the replication SOURCE credential for repo.f5.com.
+	// Empty → roksbnkctl falls back to the COS-tarball service account (the same
+	// path the FLO module uses), or an anonymous pull. Like ibmcloud.api_key_b64
+	// this is OBFUSCATION, NOT ENCRYPTION — the field name deliberately ends in
+	// `_b64` so it does not trip rejectPlaintextSecrets; treat the file as a
+	// plaintext credential (chmod 600, never commit).
+	SourceServiceAccountB64 string `yaml:"source_service_account_b64,omitempty"`
+}
+
+// MirrorNamespace returns the configured mirror namespace, or the "bnk-mirror"
+// default when unset. Safe on a nil receiver (returns the default).
+func (r *RegistryCfg) MirrorNamespace() string {
+	if r == nil || r.Namespace == "" {
+		return "bnk-mirror"
+	}
+	return r.Namespace
+}
+
+// IncludeDepsOrDefault returns IncludeDeps, defaulting to true when unset (a
+// complete air-gap install set needs the non-F5 deps). Safe on a nil receiver.
+func (r *RegistryCfg) IncludeDepsOrDefault() bool {
+	if r == nil || r.IncludeDeps == nil {
+		return true
+	}
+	return *r.IncludeDeps
 }
 
 // BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field
