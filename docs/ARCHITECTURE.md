@@ -283,8 +283,7 @@ hand; it works for any BNK pattern.
 
 `sriov-external` is reserved in the schema but **blocked at validation** pending a
 live ENA/`vfio-pci` feasibility spike — SR-IOV/DPDK on AWS ENA is undocumented
-and unsupported by F5 on the EKS host build. See
-`docs/spikes/sriov-ena-vfio/README.md` for the go/no-go gate.
+and unsupported by F5 on the EKS host build.
 
 ---
 

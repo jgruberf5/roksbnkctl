@@ -17,7 +17,7 @@ import (
 // password is read. The password is REQUIRED when bigipVE.enabled and is NEVER
 // stored in cluster.yaml, state.env, or placed on any command line (argv) — it
 // is written into a mode-600 file on the BIG-IP via an SSH stdin heredoc and
-// shredded after use. See docs/spikes/bigip-ve/README.md §S0b "Secrets handling".
+// shredded after use.
 const bigipPasswordEnv = "AWSBNKCTL_BIGIP_PASSWORD" // #nosec G101 -- env var NAME, not a credential
 
 const (
@@ -118,7 +118,7 @@ const bigipAS3RPMMinBytes = 1 << 20 // 1 MiB
 // BIG-IP first-boot settle overlaps the rest of the install. No-op when
 // !cl.BigIPVEEnabled().
 //
-// Recipe (spike-proven, docs/spikes/bigip-ve/README.md §S0b), in order:
+// Recipe (spike-proven), in order:
 //
 //  0. Copy the BIG-IP SSH key to the jumphost (mode 600).
 //  1. Two-stage readiness gate (framework-up; ≥30 min budget).

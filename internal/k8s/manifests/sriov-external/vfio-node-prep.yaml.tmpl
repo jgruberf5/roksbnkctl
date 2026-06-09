@@ -3,7 +3,7 @@
 # Binds the external data-plane ENA (PCI {{ .ExternalPCI }}) to vfio-pci in
 # No-IOMMU mode on the BNK node, so the sriov-network-device-plugin can expose it
 # as a k8s resource and TMM can attach it via DPDK. This is the awsbnkctl-encoded
-# version of the recipe proven live in docs/spikes/sriov-ena-vfio/README.md
+# version of the recipe proven live in an earlier feasibility spike
 # (stock AL2023 vfio supports No-IOMMU — CONFIG_VFIO_NOIOMMU=y — so no custom AMI).
 #
 # Runs on the TMM-target node (app=f5-tmm). Privileged + host /sys + /lib/modules

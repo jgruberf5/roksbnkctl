@@ -80,7 +80,7 @@ Use it sparingly and only against a sandbox account.
 - **No comments explaining WHAT** the code does, only WHY when non-obvious.
 - **No half-finished implementations** — if you can't finish a code path in this PR, document the limitation and gate the surface.
 
-The codebase uses standard `gofmt` formatting + `staticcheck` linting. See [`docs/design/`](docs/design/) for architectural design notes per subsystem.
+The codebase uses standard `gofmt` formatting + `staticcheck` linting. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the architectural overview.
 
 ## Adding a new phase
 
@@ -90,7 +90,7 @@ If you're extending the provisioning graph, please:
 2. Add a new file `phaseNN_<name>.go` and corresponding `phaseNN_<name>_test.go`.
 3. Wire it into `internal/cli/lifecycle.go:runPhasedUp` (and the inverse in `runPhasedDown`) at the correct ordering.
 4. Make sure the phase is **idempotent** on healthy re-runs — tag-discovery should be the source of truth.
-5. Update the relevant design spec under `docs/design/specs/`.
+5. Update [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) if the phase changes the provisioning model.
 
 ## Adding a new scenario or demo use-case
 
@@ -134,4 +134,4 @@ Open an issue using the templates in `.github/ISSUE_TEMPLATE/`. For bugs, please
 
 ## Questions
 
-For design questions, the per-subsystem PRDs under [`docs/design/specs/`](docs/design/specs/) are usually the right starting point — each is a self-contained "why we built it this way" narrative.
+For design questions, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is usually the right starting point — it traces the AWS-SDK phased model and the `cluster.yaml` intent.
