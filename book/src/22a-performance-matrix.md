@@ -1,92 +1,92 @@
 # The performance matrix
 
-[Throughput testing](./22-throughput-testing.md) runs **one** measurement: an iperf3 client against an iperf3 server, picked by a couple of flags. `roksbnkctl test matrix` runs the **whole grid** — a declarative file of cells (endpoint-pair × test-family), each one a row in a single diffable report. `test throughput` is one cell; `test matrix` is the campaign. They belong adjacent: reach for `test throughput` to debug a single path, for `test matrix` to characterise a deployment the way the hand-run BNK-on-ROKS perf plan does — CPS / TPS / throughput across locality, regenerated on every BNK/ROKS revision instead of remembered as a dozen `oc get po -owide | grep … | iperf3 …` incantations.
+[Throughput testing](./22-throughput-testing.md) runs a single measurement: one iperf3 client against one iperf3 server. `roksbnkctl test matrix` runs a whole set of them at once. You write a `matrix.yaml` listing the measurements you want — each one a row — and the command runs them all and prints the results in one report.
 
-This chapter is the user-facing surface: the two test families, the `matrix.yaml` schema, the fixtures-and-no-Terraform boundary, and the `--dry-run` → real-run → report workflow.
+Reach for `test throughput` to check a single path; reach for `test matrix` to characterise a deployment — throughput, request rates, and latency from several network locations — in one repeatable command instead of a dozen steps by hand. (Don't confuse it with `roksbnkctl testing up`, which *builds* the jumphosts. `test` only runs tests.)
 
-## What it is, and one honest divergence
+The matrix runs against an environment that is **already deployed**: a complete Cluster + BNK deploy with the [Testing phase](./08a-three-phase-lifecycle.md) jumphosts up, and — for the HTTP tests — the [Gateway phase](./10-deploying-bnk-trials.md) in place.
 
-The matrix turns the hand-run plan into one `matrix.yaml` plus one command, emitting a report on the `roksbnkctl.v1` schema so a campaign's numbers diff cleanly run-over-run. It runs against an **already-deployed** environment — a complete Cluster + BNK deploy, with the [Testing phase](./08a-three-phase-lifecycle.md) jumphost rig up, and (for the L7 family) the [Gateway phase](./10-deploying-bnk-trials.md) listeners in place. It is a `test` subcommand (it *runs probes*), disjoint from `roksbnkctl testing up/down` (which *provisions the rig*).
-
-One divergence from the source plan, stated plainly so you don't read numbers that aren't there:
-
-> **It's h2load, not OSLO.** The L7 family is driven by **h2load** (the nghttp2 load generator), not the OSLO tool the original plan used. h2load's native report gives **req/s**, a **transfer rate**, and request-time **min / max / mean** — *not* OSLO's CPS/TPS split or p50/p95/p99 percentiles. The matrix surfaces the honest h2load fields (`req_per_sec`, `throughput_mbps`, `req_time_{min,max,mean}_ms`) and **does not fabricate percentiles**. The cps / tps / throughput *modes* below are h2load flag presets shaped to *resemble* the plan's three measurement intents — they are not the plan's exact metrics. Read "CPS" as "connection-bound req/s," "TPS" as "transaction-bound req/s."
-
-> **Live-apply is not yet validated.** The `--dry-run` plan is cluster-free and exercised in CI; the transcript below is captured verbatim from the shipped binary. The **live fixture-apply + run path has not yet been validated against a real ROKS cluster.** Treat any throughput / req/s figures in this chapter as **illustrative**. The same caveat is in the CHANGELOG.
+> The example numbers in this chapter are **illustrative**. The `--dry-run` plan is exercised in CI and its transcript is real, but a full live run has not yet been measured against a production ROKS cluster.
 
 ## The two families
 
-A cell's `family` is one of `iperf3` (L4) or `l7` (L7). The runner resolves each cell to a backend + a tool argv and dispatches it exactly like `test throughput` does — local, or `ssh:<jumphost>` (see [§ The locality axis](#the-locality-axis-jumphost-placement)).
+Each row (a "cell") picks a `family`:
 
-### `iperf3` — L4 TCP throughput
+- **`iperf3`** — raw TCP throughput (Layer 4).
+- **`l7`** — HTTP load, driven by [h2load](https://nghttp2.org/documentation/h2load-howto.html) (Layer 7).
 
-iperf3 over a **TCPRoute VIP** (a `host:port` `address` endpoint). The content-size axis is the iperf3 `-l` block-size knob via the cell's `length:` field: `"128"` and `"512K"` are the L4 analog of the plan's 128 B / 512 KB payload axis. Other knobs map straight to iperf3 flags:
+The runner turns each cell into a tool command and runs it from wherever you point it — locally, or on a jumphost over SSH.
+
+### `iperf3` — TCP throughput
+
+iperf3 measures plain TCP throughput against a `host:port` target (a TCPRoute VIP). The `length` field sets the TCP block size, which stands in for message size: `"128"` for tiny messages, `"512K"` for bulk transfer. The other knobs map straight to iperf3 flags:
 
 | Cell field | iperf3 flag | Meaning |
 |---|---|---|
 | `length` | `-l` | block size (`"128"`, `"512K"`) |
-| `bytes` | `-n` | fixed transfer instead of a timed run |
+| `bytes` | `-n` | send a fixed number of bytes instead of running for a time |
 | `duration` | `-t` | run length in seconds |
 | `streams` | `-P` | parallel TCP streams |
 
-A cell resolves to, e.g., `iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K`. The result carries `throughput_gbps` + `retransmits` (same parser as [Chapter 22](./22-throughput-testing.md)), plus `length` for the report.
+A cell becomes, for example, `iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K`. The result reports `throughput_gbps` and `retransmits` (the same parser as [Chapter 22](./22-throughput-testing.md)).
 
-### `l7` — h2load over an HTTPRoute
+### `l7` — HTTP load
 
-h2load against a `url` endpoint. The scheme selects the path: an `http://` URL exercises the cleartext HTTPRoute, an `https://` URL the **TLS-terminate-at-TMM** path (h2load speaks TLS off the scheme and doesn't hard-fail on the self-signed leaf a TMM-internal terminate presents — no TLS toggle needed). Payload (128 B / 512 KB) is the **URL path** the nginx fixture serves — `/128`, `/5k`, `/512k` — so you define one endpoint per payload+scheme.
+h2load drives HTTP traffic at a URL. The scheme picks the path: an `http://` URL hits the plain HTTP route; an `https://` URL hits the TLS route, where TMM terminates TLS (h2load accepts the self-signed certificate, so there's nothing extra to configure). The response size is whatever the URL returns — the test's backend serves `/128`, `/5k`, and `/512k`, so you point a cell at the size you want.
 
-The cell's `l7.mode` is a preset that seeds h2load flags; any low-level knob you set explicitly wins. The three modes and how they map to `-c` (clients) / `-m` (streams) / `--h1` / `-n` (requests) / `-D` (duration):
+h2load reports **requests per second**, a **transfer rate**, and request latency as **min / max / mean** (it does not report percentiles).
 
-| Mode | Intent | Preset (when knobs unset) |
+The `l7.mode` field is a shortcut that fills in sensible h2load flags; anything you set yourself overrides it:
+
+| Mode | What it stresses | Defaults (when you leave the knobs unset) |
 |---|---|---|
-| `cps` | connection-bound — the plan's "CPS @ 1 request/connection" | `--h1`, `-m 1`, `-c 50`, `-n` = clients×200 (each conn serves few requests, so req/s ≈ conn/s) |
-| `tps` | transaction-bound — the plan's "TPS @ 100 requests/connection" | `-c 50`, `-m 100` (h2) or `1` (`--h1`), `-n` = clients×2000 (reuse connections) |
-| `throughput` | payload-bound — the plan's "throughput @ 512 KB" | `-c 8`, `-m 1`, `-n` = clients×200 (a few conns pulling a large body) |
+| `cps` | new connections — short connections, roughly one request each | `--h1`, `-m 1`, `-c 50`, `-n` = clients×200 |
+| `tps` | sustained requests — reuse connections, many requests each | `-c 50`, `-m 100` (or `1` with `--h1`), `-n` = clients×2000 |
+| `throughput` | payload — a few connections pulling a large body | `-c 8`, `-m 1`, `-n` = clients×200 |
 
-A `cps` cell resolves to `h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128`; a timed `tps` cell with `l7: { mode: tps, duration: 30 }` to `h2load -c 50 -m 100 -D 30 …`. Per-cell low-level fields (`clients`, `streams`, `threads`, `requests`, `duration`, `http1`) override the preset. The result carries `req_per_sec`, `throughput_mbps`, `requests_total` / `succeeded` / `failed`, status-code buckets, and `req_time_{min,max,mean}_ms` — the honest h2load surface, no percentiles.
+A `cps` cell becomes `h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128`; a `tps` cell written as `l7: { mode: tps, duration: 30 }` becomes `h2load -c 50 -m 100 -D 30 …`. Set any of `clients`, `streams`, `threads`, `requests`, `duration`, `http1` to override the defaults. The result reports `req_per_sec`, `throughput_mbps`, request counts (`requests_total` / `succeeded` / `failed`), status-code buckets, and `req_time_{min,max,mean}_ms`.
 
 ## The locality axis = jumphost placement
 
-There is **no locality enum.** Same-zone / different-zone / different-VPC is whichever `vsi` endpoint a cell names as its `client` — the topology is whatever the chosen jumphost actually is, which keeps the schema honest. A `vsi` endpoint's `target` is an SSH target name the [Testing phase auto-registered](./15-ssh-targets.md#auto-discovery-from-terraform-outputs): the singular `jumphost` (the TGW / client-VPC VSI — "different VPC"), or a per-AZ `jumphost-<zone>` (same VPC; same zone as TMM, or a different one). So:
+There is no "location" setting. Where the traffic comes from is simply **which jumphost a cell names as its `client`**. Each `vsi` endpoint's `target` is an SSH target name the [Testing phase registered](./15-ssh-targets.md#auto-discovery-from-terraform-outputs): `jumphost` (in the client VPC — a *different* VPC from the cluster), or `jumphost-<zone>` (in the cluster VPC, in the zone you pick).
 
-| To measure | Name as the cell's client |
+| To measure traffic from… | Name this jumphost as the cell's client |
 |---|---|
 | same VPC, same zone as TMM | `jumphost-<tmm-zone>` |
-| same VPC, different zone | `jumphost-<other-zone>` |
-| different VPC | `jumphost` (the TGW jumphost) |
+| same VPC, a different zone | `jumphost-<other-zone>` |
+| a different VPC | `jumphost` |
 
-The runner turns the client endpoint into the backend `ssh:<target>` and dispatches the tool there — see [Chapter 15](./15-ssh-targets.md) and [Chapter 16](./16-on-flag-ssh-jumphosts.md). Both generators are **preinstalled on every jumphost** by the Testing-phase `user_data` (`iperf3` + `nghttp2-client`/h2load), so the `ssh:<target>` runs need **no `--bootstrap`**. A cell with no `client` runs the tool locally.
+The runner runs the tool on that jumphost over SSH (see [Chapter 15](./15-ssh-targets.md) and [Chapter 16](./16-on-flag-ssh-jumphosts.md)). Both tools — iperf3 and h2load — are already installed on every jumphost, so there's nothing to set up first. A cell with no `client` runs the tool locally.
 
 ## The `matrix.yaml` schema
 
-A workspace-sibling file — under `~/.roksbnkctl/<workspace>/`, next to `config.yaml`, **not part of it** (the grid is large, churns independently of deploy config, and you want to diff it in git per-campaign). The runner looks for `--file`, then `<workspace>/matrix.yaml`, then `./matrix.yaml`. It has four top-level keys, walked off the shipped `internal/test/testdata/matrix.example.yaml`:
+This is a workspace-sibling file — under `~/.roksbnkctl/<workspace>/`, next to `config.yaml` but separate from it, so you can keep and diff a campaign's grid in git on its own. The runner looks for `--file`, then `<workspace>/matrix.yaml`, then `./matrix.yaml`. It has four top-level keys, shown here against the example grid (`internal/test/testdata/matrix.example.yaml`):
 
 ```yaml
-# gateway — IDENTITY of your already-deployed BNK gateway stack. Used ONLY
-# when fixtures.routes is true, to attach route fixtures to the EXISTING
-# Gateway. The runner adds Routes, never listeners.
+# gateway — names your already-deployed BNK gateway so the test's HTTP/TCP
+# routes can attach to it. Only needed when fixtures.routes is true.
 gateway:
-  app_namespace: bnk-apps     # namespace the fixtures + routes land in
-  name: bnk-gateway           # the existing Gateway object (parentRefs.name)
-  http_section: http          # an HTTP  listener section that already exists
-  https_section: https        # an HTTPS (TLS) listener section
-  tcp_section: tcp            # a TCP  listener section (for the L4 TCPRoute)
+  app_namespace: bnk-apps     # namespace the test's objects are created in
+  name: bnk-gateway           # the existing Gateway the routes attach to
+  http_section: http          # a listener on that Gateway, by section name
+  https_section: https        # the TLS listener
+  tcp_section: tcp            # the TCP listener (for the iperf3 route)
 
-# fixtures — the ephemeral, runner-owned k8s objects (all torn down after,
-# unless --keep). These are the ONLY cluster writes the matrix performs.
+# fixtures — the temporary objects the test creates and then removes
+# (kept in place if you pass --keep).
 fixtures:
-  iperf3_server: true         # L4 server (the throughput fixture) — TCPRoute backend
-  http_backend: true          # nginx serving /128 /5k /512k — L7 backend
-  routes: true                # apply TCPRoute + HTTPRoute(+TLS) attaching to the gateway
+  iperf3_server: true         # the TCP server for the iperf3 cells
+  http_backend: true          # an nginx server returning /128 /5k /512k
+  routes: true                # the HTTP/TCP routes wiring the gateway to them
 
-# endpoints — named (placement, role) anchors the cells reference.
+# endpoints — named (where, what) anchors the cells reference.
 endpoints:
   vsi-same-zone: { kind: vsi, target: jumphost-jp-osa-1 }       # client in TMM's zone
   vsi-diff-zone: { kind: vsi, target: jumphost-jp-osa-3 }       # another zone, same VPC
-  vsi-diff-vpc:  { kind: vsi, target: jumphost }                # the TGW/client VPC
-  tmm-tcp:       { kind: address, host: 10.240.0.10, port: 5201 }  # TCPRoute VIP:port
+  vsi-diff-vpc:  { kind: vsi, target: jumphost }                # the client VPC
+  tmm-tcp:       { kind: address, host: 10.240.0.10, port: 5201 }  # iperf3 target
   tmm-http-128:  { kind: url, url: "http://10.240.0.10/128"  }
-  tmm-https-512k:{ kind: url, url: "https://10.240.0.10/512k" }  # TLS terminate at TMM
+  tmm-https-512k:{ kind: url, url: "https://10.240.0.10/512k" }
 
 # cells — the grid. Each is one row in the report.
 cells:
@@ -95,24 +95,24 @@ cells:
   - { name: "L7 https THRU 512K", family: l7, client: vsi-diff-vpc, server: tmm-https-512k, l7: { mode: throughput, duration: 30 } }
 ```
 
-### `gateway:` — the existing-stack identity
+### `gateway:` — the existing-gateway identity
 
-Names the already-deployed gateway so the route fixtures can attach to it. Used **only** when `fixtures.routes` is true.
+Names your already-deployed gateway so the test's routes can attach to it. Only read when `fixtures.routes` is true.
 
 | Field | Notes |
 |---|---|
-| `app_namespace` | namespace the fixtures and routes are created in (required for `routes`) |
-| `name` | the existing `Gateway` object the routes' `parentRefs.name` point at (required for `routes`) |
-| `http_section` / `https_section` / `tcp_section` | listener `sectionName`s on that Gateway the http / https / tcp routes bind to. **They must already exist** — the runner adds Routes, never listeners. A section left empty means "don't render that route." |
-| `class_name` / `controller_name` / `bnkgateway_name` / `flo_namespace` | optional descriptive identity fields; not required to attach routes |
+| `app_namespace` | namespace the test's objects are created in (required for `routes`) |
+| `name` | the existing `Gateway` the routes attach to (required for `routes`) |
+| `http_section` / `https_section` / `tcp_section` | which listeners on that Gateway the http / https / tcp routes attach to, by section name. **They must already exist.** Leave one empty to skip that route. |
+| `class_name` / `controller_name` / `bnkgateway_name` / `flo_namespace` | optional descriptive fields; not needed to attach routes |
 
 ### `endpoints:` — named anchors
 
-| `kind` | Fields | Resolves to |
+| `kind` | Fields | Is |
 |---|---|---|
-| `vsi` | `target` | an `ssh:<target>` jumphost — a traffic-source "VSI" (the client side) |
-| `address` | `host`, `port` (default `5201`) | an iperf3 TCP server, e.g. a TCPRoute VIP (an `iperf3` cell's `server`) |
-| `url` | `url` | a full `http(s)://` URL — an HTTPRoute target (an `l7` cell's `server`) |
+| `vsi` | `target` | a jumphost the test sends traffic *from* (the client) |
+| `address` | `host`, `port` (default `5201`) | an iperf3 target — a `host:port` (an `iperf3` cell's `server`) |
+| `url` | `url` | an HTTP target — a full `http(s)://` URL (an `l7` cell's `server`) |
 
 ### `cells:` — the grid
 
@@ -120,31 +120,31 @@ Names the already-deployed gateway so the route fixtures can attach to it. Used 
 |---|---|---|
 | `name` | both | required; the report row label and the `--only` glob target |
 | `family` | both | `iperf3` \| `l7` |
-| `client` | both | an endpoint key of kind `vsi`; empty → run locally |
-| `server` | both | an endpoint key: kind `address` for `iperf3`, kind `url` for `l7` |
+| `client` | both | a `vsi` endpoint; empty → run locally |
+| `server` | both | an `address` endpoint for `iperf3`, a `url` endpoint for `l7` |
 | `length` / `bytes` / `duration` / `streams` | `iperf3` | iperf3 `-l` / `-n` / `-t` / `-P` |
 | `l7.mode` | `l7` | `cps` \| `tps` \| `throughput` (required for `l7`) |
-| `l7.{clients,streams,threads,requests,duration,http1}` | `l7` | h2load `-c` / `-m` / `-t` / `-n` / `-D` / `--h1`; override the mode preset |
+| `l7.{clients,streams,threads,requests,duration,http1}` | `l7` | h2load `-c` / `-m` / `-t` / `-n` / `-D` / `--h1`; override the mode defaults |
 
-`ParseMatrix` validates structurally before any run: a `client` must be a `vsi` with a `target`; an `iperf3` server must be an `address` with a `host`; an `l7` server must be a `url` with a `mode`; `fixtures.routes` requires `gateway.name` + `app_namespace` + at least one listener section.
+The file is checked before anything runs: a `client` must be a `vsi` with a `target`; an `iperf3` server must be an `address` with a `host`; an `l7` server must be a `url` and the cell must set a `mode`; and `routes` needs `gateway.name`, `app_namespace`, and at least one listener section.
 
-## Fixtures and the no-Terraform boundary
+## What the test sets up (and cleans up)
 
-The runner owns **only ephemeral objects** and **changes no Terraform**. The route fixtures **attach to your existing Gateway by name** — the runner never adds listeners and never touches the gateway phase. Three `fixtures` toggles, all skipped under `--dry-run`:
+For a real run the test creates a few temporary objects, runs the measurements, then deletes them again (unless you pass `--keep`). Three toggles under `fixtures` — all skipped under `--dry-run`:
 
-- **`iperf3_server`** — the L4 server (the same fixture `test throughput` deploys, `roksbnkctl-iperf3:5201`); the TCPRoute's backend.
-- **`http_backend`** — an nginx Deployment + Service that serves fixed-size bodies at `/128`, `/5k`, `/512k` (generated at startup from `/dev/zero`); the L7 cells select a payload by URL path.
-- **`routes`** — a TCPRoute, an HTTPRoute, and (when `https_section` is named) a TLS HTTPRoute plus a self-signed TLS Secret, each with `parentRefs` pointing at your Gateway's named listener sections.
+- **`iperf3_server`** — the TCP server the iperf3 cells measure against (the same one `test throughput` uses).
+- **`http_backend`** — an nginx server that returns fixed-size bodies at `/128`, `/5k`, and `/512k` for the HTTP cells.
+- **`routes`** — the HTTP and TCP routes (plus a TLS route and a self-signed certificate, when an https section is named) that wire your Gateway to those backends.
 
-Every fixture object carries `app.kubernetes.io/managed-by: roksbnkctl-matrix`, so teardown after the run (unless `--keep`) is a single label-selected delete per resource kind. The self-signed cert is an ECDSA P-256 leaf valid for a year, generated per-run — fine for a load test, which never validates the chain.
+Everything the test creates is labelled `app.kubernetes.io/managed-by: roksbnkctl-matrix`, so cleanup is a single delete by label. The TLS certificate is self-signed and generated fresh each run — fine for a load test.
 
-**The prerequisite this implies:** the Gateway must already expose the `http` / `https` / `tcp` listener sections the routes bind to. The runner only adds Routes + its own backend + the TLS Secret; **listener provisioning stays with you** (the [Gateway phase](./10-deploying-bnk-trials.md)). If a named section doesn't exist on the Gateway, the route attaches to nothing and the cell's traffic has no path. Use `--keep` to leave the fixtures up and inspect the route status after a run.
+**One prerequisite for the HTTP/TCP routes:** your Gateway must already have the listener sections the routes attach to (`http` / `https` / `tcp`). The test adds the routes and backends, not the listeners — those come from the [Gateway phase](./10-deploying-bnk-trials.md). If a named section doesn't exist, the route has nowhere to attach and that cell's traffic has no path. Run with `--keep` and check the route status if a cell isn't reaching its backend.
 
 ## The workflow
 
-### `--dry-run` — plan + fixtures, no cluster calls
+### `--dry-run` — see the plan first
 
-`--dry-run` expands the grid and prints the resolved (client backend, server, argv) per cell, plus the fixtures manifest it *would* apply — **without a single cluster call** (it never touches the cluster, so it's safe to capture verbatim). Confirm placement and the exact tool invocations before a long campaign:
+`--dry-run` expands the grid and prints, for each cell, the resolved client, server, and exact tool command — plus the objects it *would* create — and makes **no cluster calls**. Use it to confirm placement and commands before a long run:
 
 ```text
 $ roksbnkctl test matrix --dry-run --file matrix.example.yaml
@@ -202,16 +202,16 @@ spec:
 ...
 ```
 
-*(Cells and the fixtures manifest abridged; the full plan prints all ten cells of the example grid and the complete TCPRoute / HTTPRoute / TLS-Secret stream.)*
+*(Abridged; the full plan prints all ten cells of the example grid and the complete set of objects.)*
 
-`--only '<glob>'` narrows the plan (or a real run) to cells whose name matches a `path.Match` glob — `--only 'L7*'` for just the L7 rows, handy when iterating on one family.
+`--only '<glob>'` narrows the plan (or a real run) to cells whose name matches a glob — `--only 'L7*'` for just the HTTP rows, handy when iterating on one family.
 
 ### The real run and the report
 
-Drop `--dry-run` against a complete deployment. The runner deploys the fixtures, runs each cell over its resolved backend, tears the fixtures down (unless `--keep`), and emits the report. `-o` selects the shape:
+Drop `--dry-run` against a complete deployment. The runner creates the fixtures, runs each cell from its jumphost, removes the fixtures (unless `--keep`), and prints the report. `-o` selects the shape:
 
-- **`-o text`** (default) — the Markdown grid on stderr.
-- **`-o md`** — the Markdown grid on stdout. iperf3 rows show Gbit/s + retransmits; l7 rows show req/s + Mbit/s + mean ms:
+- **`-o text`** (default) — the grid on stderr.
+- **`-o md`** — the grid on stdout. iperf3 rows show Gbit/s and retransmits; HTTP rows show req/s, Mbit/s, and mean latency:
 
   ```markdown
   ## matrix (pass, 184230ms)
@@ -222,9 +222,9 @@ Drop `--dry-run` against a complete deployment. The runner deploys the fixtures,
   | L7 http CPS 128B VSI->TMM  | l7     | pass | 18.4 Mbit/s | 21340 | 2.34 | — |
   ```
 
-  *(Numbers illustrative — the live run path is not yet validated; see the caveat above.)*
+  *(Numbers illustrative.)*
 
-- **`-o json`** — additive `roksbnkctl.v1`: a `MatrixRun` with one `ProbeResult` per cell, each carrying its family-specific `Extra` (plus `client` / `server` labels). Exit code is **non-zero iff any cell failed** (CI-friendly):
+- **`-o json`** — the `roksbnkctl.v1` schema: one result per cell, each with its family-specific fields (plus the `client` / `server` it used). Exit code is **non-zero if any cell failed**, so it drops into CI:
 
   ```json
   {
@@ -255,16 +255,15 @@ Drop `--dry-run` against a complete deployment. The runner deploys the fixtures,
 |---|---|
 | `--file <path>` | the matrix.yaml (default: `<workspace>/matrix.yaml`, then `./matrix.yaml`) |
 | `--only <glob>` | run only cells whose name matches the glob |
-| `--dry-run` | expand + print plan + fixtures; no cluster calls |
-| `--keep` | leave the fixtures running after the run |
+| `--dry-run` | print the plan and the objects it would create; no cluster calls |
+| `--keep` | leave the test's objects in place after the run |
 | `-o json\|text\|md` | report shape |
 
 ## Cross-references
 
-- [Chapter 22 — Throughput testing](./22-throughput-testing.md) — the single-cell iperf3 suite the matrix's `iperf3` family re-composes; start here for the server-pod / SCC mechanics.
-- [Chapter 15 — SSH targets](./15-ssh-targets.md#per-az-cluster-jumphosts-jumphost-zone) — the `jumphost` / `jumphost-<zone>` targets the locality axis resolves to.
-- [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts) — the per-AZ jumphost fleet (preinstalled iperf3 + h2load).
-- [Chapter 17 — Execution backends](./17-execution-backends.md#ssh-backend) — how the `ssh:<target>` dispatch + the bundled tools images work.
+- [Chapter 22 — Throughput testing](./22-throughput-testing.md) — the single iperf3 measurement the matrix's `iperf3` family builds on; start there for the server-pod and SCC mechanics.
+- [Chapter 15 — SSH targets](./15-ssh-targets.md#per-az-cluster-jumphosts-jumphost-zone) — the `jumphost` / `jumphost-<zone>` targets the locality axis names.
+- [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts) — the per-AZ jumphost fleet (with iperf3 + h2load preinstalled).
+- [Chapter 17 — Execution backends](./17-execution-backends.md#ssh-backend) — how the `ssh:<target>` dispatch and the bundled tools images work.
 - [Chapter 28 — Configuration reference §"matrix.yaml"](./28-configuration-reference.md#matrixyaml-the-performance-grid) — the schema as a reference table.
 - [Chapter 27 — Command reference §`roksbnkctl test matrix`](./27-command-reference.md) — the generated flag surface.
-- [PRD 10 — the performance test matrix](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/10-PERF-TEST-MATRIX.md) — the design (this ships its in-scope subset; h2load substituted for OSLO).
