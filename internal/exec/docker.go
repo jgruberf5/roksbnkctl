@@ -76,6 +76,13 @@ var toolImages = func() map[string]string {
 		"iperf3":     "networkstatic/iperf3:latest",
 		"terraform":  "hashicorp/terraform:1.5.7",
 		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		// h2load: the L7 matrix family's load generator. The common path
+		// runs the L7 client from a jumphost VSI (ssh backend), where
+		// nghttp2-client is preinstalled by the testing module user_data —
+		// no --bootstrap. This bundled image (built by tools/docker/h2load
+		// + the tools-images workflow) covers the docker/k8s backends for
+		// in-cluster L7 runs.
+		"h2load": "ghcr.io/jgruberf5/roksbnkctl-tools-h2load:" + tag,
 	}
 }()
 
@@ -130,6 +137,13 @@ func SetToolImageTag(fn func() string) {
 		"iperf3":     "networkstatic/iperf3:latest",
 		"terraform":  "hashicorp/terraform:1.5.7",
 		"roksbnkctl": "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:" + tag,
+		// h2load: the L7 matrix family's load generator. The common path
+		// runs the L7 client from a jumphost VSI (ssh backend), where
+		// nghttp2-client is preinstalled by the testing module user_data —
+		// no --bootstrap. This bundled image (built by tools/docker/h2load
+		// + the tools-images workflow) covers the docker/k8s backends for
+		// in-cluster L7 runs.
+		"h2load": "ghcr.io/jgruberf5/roksbnkctl-tools-h2load:" + tag,
 	}
 }
 

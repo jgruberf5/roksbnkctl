@@ -642,13 +642,7 @@ func resolveIperf3Endpoint(ctx context.Context, kc *k8s.Client, ns, mode string)
 // PRD 03 §"iperf3" §"K8s shape" — server + client both in-cluster.
 func runIperf3ClientK8s(ctx context.Context, kc *k8s.Client, image string, opts test.ThroughputOptions) (test.SuiteRun, error) {
 	start := time.Now()
-	args := []string{"-c", opts.Endpoint, "-J"}
-	if opts.Duration > 0 {
-		args = append(args, "-t", fmt.Sprintf("%d", opts.Duration))
-	}
-	if opts.Streams > 0 {
-		args = append(args, "-P", fmt.Sprintf("%d", opts.Streams))
-	}
+	args := test.Iperf3Args(opts)
 
 	be, err := execbackend.ResolveBackend("k8s")
 	if err != nil {
@@ -701,13 +695,7 @@ func runIperf3ClientK8s(ctx context.Context, kc *k8s.Client, image string, opts 
 // --bootstrap), then `iperf3 -c <endpoint> -J`.
 func runIperf3ClientSSH(ctx context.Context, backendSpec string, opts test.ThroughputOptions) (test.SuiteRun, error) {
 	start := time.Now()
-	args := []string{"-c", opts.Endpoint, "-J"}
-	if opts.Duration > 0 {
-		args = append(args, "-t", fmt.Sprintf("%d", opts.Duration))
-	}
-	if opts.Streams > 0 {
-		args = append(args, "-P", fmt.Sprintf("%d", opts.Streams))
-	}
+	args := test.Iperf3Args(opts)
 
 	be, err := execbackend.ResolveBackend(backendSpec)
 	if err != nil {
@@ -779,6 +767,7 @@ func runTestListCmd(_ *cobra.Command, _ []string) error {
 		{"connectivity", "HTTP/HTTPS reachability of configured hosts"},
 		{"dns", "DNS resolution probe (miekg/dns; --gslb-compare for multi-vantage)"},
 		{"throughput", "iperf3 throughput (v1.x)"},
+		{"matrix", "declarative perf grid: iperf3 L4 (TCPRoute) + h2load L7 (HTTPRoute, http/https)"},
 		{"all", "runs connectivity + dns (throughput once available)"},
 	}
 	for _, s := range suites {

@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Added
+
+- **`roksbnkctl test matrix`** — a declarative, repeatable BNK-on-ROKS performance grid that runs against an already-deployed cluster (a post-setup process; it changes no Terraform and never mutates the gateway-phase objects). One `matrix.yaml` declares cells across two families and the runner executes each, emitting a `roksbnkctl.v1` report (`-o json|text|md`):
+  - **iperf3 (L4)** over a TCPRoute VIP, with a content-size knob (`length: "128"` vs `"512K"`, iperf3 `-l`) as the L4 analog of the perf plan's 128 B / 512 KB payload axis.
+  - **h2load (L7)** against an HTTPRoute, **http and https (TLS terminate at TMM)**, in `cps` / `tps` / `throughput` modes — reporting req/s, transfer rate, and request-time min/max/mean (h2load's native stats; no fabricated percentiles).
+
+  The locality axis (same-zone / different-zone / different-VPC) is implicit in which `vsi` jumphost a cell names as its client, so the per-AZ jumphost targets the Testing phase auto-registers (`jumphost`, `jumphost-<zone>`) are the traffic-source fleet. `--dry-run` expands the grid and prints the resolved (client, server, argv) plan plus the fixtures it would apply, with no cluster calls; `--only <glob>` runs a subset. The runner owns only ephemeral fixtures — an iperf3 server, an nginx file backend serving `/128`/`/5k`/`/512k`, and optional **TCPRoute / HTTPRoute / TLS** objects (with a self-signed cert) that **attach to the existing Gateway by name** — all torn down after (label-selected) unless `--keep`. Implements the in-scope subset of [PRD 10](docs/prd/10-PERF-TEST-MATRIX.md) with h2load substituted for the OSLO load generator. Both generators are now **preinstalled on every jumphost** by the Testing-phase `user_data` (`iperf3` + `nghttp2-client`), so the ssh runs need no `--bootstrap`; the tools images workflow also publishes a bundled `roksbnkctl-tools-h2load` for the docker/k8s backends.
+
+  > Caveat: the route/backend fixture *apply* path is wired against the existing SSA + iperf3-fixture machinery but has not yet been validated against a live ROKS cluster; the grid model, expansion, dry-run plan, argv builders, manifest rendering, and h2load/iperf3 parsers are unit-tested.
+
 ## v1.9.1 — 2026-06-08
 
 A patch fixing two `up`/`down` regressions found running a fresh end-to-end deploy after v1.9.0.
