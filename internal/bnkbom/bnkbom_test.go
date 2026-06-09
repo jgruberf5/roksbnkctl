@@ -87,7 +87,7 @@ func TestBuild_IncludeDeps(t *testing.T) {
 		byRef[a.Ref()] = a
 	}
 	for _, ref := range []string{
-		"charts.jetstack.io/cert-manager:v1.17.3",
+		"charts.jetstack.io/charts/cert-manager:v1.17.3",
 		"quay.io/jetstack/cert-manager-controller:v1.17.3",
 		"quay.io/jetstack/cert-manager-webhook:v1.17.3",
 		"docker.io/bitnami/kubectl:1.31",

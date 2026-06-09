@@ -228,9 +228,12 @@ func Deps(certManagerVersion, nodeLabelerImageTag string) []Artifact {
 	out := []Artifact{{
 		Kind:       KindChart,
 		SourceHost: "charts.jetstack.io",
-		Name:       "cert-manager",
-		Tag:        certManagerVersion,
-		Origin:     OriginCertManager,
+		// charts/<name> so it carries a category like the F5 charts — the classic-
+		// helm pull uses only the basename (pathBase), and a flat target maps it to
+		// project "charts" while a nested target gets "<ns>/charts/cert-manager".
+		Name:   "charts/cert-manager",
+		Tag:    certManagerVersion,
+		Origin: OriginCertManager,
 	}}
 	for _, img := range certManagerImages {
 		out = append(out, Artifact{
