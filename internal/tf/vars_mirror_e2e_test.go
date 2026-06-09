@@ -57,6 +57,39 @@ func TestWriteTFVarsForWorkspace_MirrorRecordOnDisk(t *testing.T) {
 	}
 }
 
+// TestWriteTFVarsForWorkspace_RecordWithoutRegistryBlock_Redirects pins the
+// Sprint-29 fix: `registry replicate` writes the record flag-driven (no registry:
+// block in config.yaml required), so the record's PRESENCE alone triggers the
+// install redirect — otherwise the mirror is built but the install still pulls
+// from far_repo_url (the live failure: 76 pods from repo.f5.com).
+func TestWriteTFVarsForWorkspace_RecordWithoutRegistryBlock_Redirects(t *testing.T) {
+	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
+	ws := mirrorE2EWorkspace() // NO Registry block — replicate ran via --target
+	if err := config.SaveWorkspace("ws", ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.WriteRegistryMirror("ws", &config.RegistryMirror{
+		ChartHost: "route.apps.x",
+		ImageHost: "image-registry.svc:5000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "terraform.tfvars")
+	if err := WriteTFVarsForWorkspace(out, "ws", ws, "", ""); err != nil {
+		t.Fatalf("WriteTFVarsForWorkspace: %v", err)
+	}
+	body := readFile(t, out)
+	for _, w := range []string{
+		`far_chart_repo_url = "route.apps.x"`,
+		`far_image_repo_url = "image-registry.svc:5000"`,
+		"use_registry_mirror = true",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("record present but redirect var %q missing:\n%s", w, body)
+		}
+	}
+}
+
 // TestWriteTFVarsForWorkspace_RegistryBlockButNoRecord: opting into a mirror
 // but not yet replicating (no registry-mirror.json) must NOT half-redirect —
 // the render falls back to far_repo_url and emits no Sprint-29 vars. (The up
@@ -84,10 +117,10 @@ func TestWriteTFVarsForWorkspace_RegistryBlockButNoRecord(t *testing.T) {
 }
 
 // TestWriteTFVarsForWorkspace_NoRegistry_ByteIdenticalToWriteTFVars pins the
-// off-path invariant at the public boundary: a workspace with no Registry block
+// off-path invariant at the public boundary: a workspace with no mirror record
 // renders byte-for-byte the same through WriteTFVarsForWorkspace (even with a
 // non-empty workspaceName) as through the legacy WriteTFVars. This guarantees
-// Sprint 29 is inert for every non-air-gap workspace.
+// Sprint 29 is inert for every workspace that has not replicated a mirror.
 func TestWriteTFVarsForWorkspace_NoRegistry_ByteIdenticalToWriteTFVars(t *testing.T) {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	ws := mirrorE2EWorkspace() // no Registry block
