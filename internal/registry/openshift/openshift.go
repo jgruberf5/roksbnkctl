@@ -163,16 +163,28 @@ func (t *Target) Prepare(ctx context.Context, cfg *rest.Config) error {
 
 func (t *Target) waitForRouteHost(ctx context.Context, dyn dynamic.Interface) (string, error) {
 	deadline := time.Now().Add(2 * time.Minute)
+	var lastErr error
 	for {
-		u, err := dyn.Resource(routeGVR).Namespace("openshift-image-registry").
-			Get(ctx, "default-route-openshift-image-registry", metav1.GetOptions{})
-		if err == nil {
-			if host, found, _ := unstructured.NestedString(u.Object, "spec", "host"); found && host != "" {
-				return host, nil
+		// The default registry route is named "default-route" (the
+		// "default-route-openshift-image-registry…" string is its HOST, not its
+		// name) and targets the image-registry service. List + match on the
+		// target service so we're robust to the route name.
+		list, err := dyn.Resource(routeGVR).Namespace("openshift-image-registry").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("no route to the image-registry service in openshift-image-registry yet")
+			for i := range list.Items {
+				obj := list.Items[i].Object
+				to, _, _ := unstructured.NestedString(obj, "spec", "to", "name")
+				host, _, _ := unstructured.NestedString(obj, "spec", "host")
+				if host != "" && (to == "image-registry" || list.Items[i].GetName() == "default-route") {
+					return host, nil
+				}
 			}
 		}
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("registry route not ready within 2m (last err: %v)", err)
+			return "", fmt.Errorf("registry route not ready within 2m (last err: %v)", lastErr)
 		}
 		select {
 		case <-ctx.Done():
