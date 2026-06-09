@@ -4,6 +4,17 @@ locals {
 
   cneinstance_name = "${var.flo_namespace}-f5-cne-controller"
 
+  # Sprint 29 air-gap mirror — spec.registry.uri host. The image host
+  # coalesces back to far_repo_url when no mirror is set (byte-identical
+  # default). In mirror mode imagePullSecrets collapses to an empty list and
+  # RBAC (system:image-puller) authorizes the pods' pulls.
+  cneinstance_registry_uri = replace(coalesce(var.far_image_repo_url, var.far_repo_url), "https://", "")
+  cneinstance_image_pull_secrets = var.use_registry_mirror ? [] : [
+    {
+      name = "far-secret"
+    }
+  ]
+
   # Define all service accounts that require privileged SCC
   # These service accounts are created by CNEInstance and FLO deployment
   scc_policy_assignments = concat(
@@ -113,13 +124,9 @@ locals {
     }
     deploymentSize = var.cneinstance_deployment_size
     registry = {
-      uri = replace(var.far_repo_url, "https://", "")
-      imagePullSecrets = [
-        {
-          name = "far-secret"
-        }
-      ]
-      imagePullPolicy = "Always"
+      uri              = local.cneinstance_registry_uri
+      imagePullSecrets = local.cneinstance_image_pull_secrets
+      imagePullPolicy  = "Always"
     }
     networkAttachments = var.cneinstance_network_attachments
     dynamicRouting = {

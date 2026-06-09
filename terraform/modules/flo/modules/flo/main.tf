@@ -3,8 +3,39 @@ locals {
   use_kubectl    = var.enabled && var.bnk_cr_mode == "kubectl"
   use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
 
-  far_registry_hostname   = replace(var.far_repo_url, "https://", "")
-  image_repository        = "${local.far_registry_hostname}/images"
+  far_registry_hostname = replace(var.far_repo_url, "https://", "")
+
+  # Sprint 29 air-gap mirror — chart/image host split. Each empty input
+  # coalesces back to far_repo_url, so an un-mirrored apply is byte-identical:
+  # both hosts resolve to far_registry_hostname exactly as before.
+  far_chart_hostname = replace(coalesce(var.far_chart_repo_url, var.far_repo_url), "https://", "")
+  far_image_hostname = replace(coalesce(var.far_image_repo_url, var.far_repo_url), "https://", "")
+
+  # The chart consumes image_repository as a PREFIX it appends the image name to,
+  # so it must end in "/images" — the mirror preserves the artifact's images/<name>
+  # path under <ns> (PushRef uses the full a.Name "images/<name>"), exactly as FAR
+  # serves repo.f5.com/images/<name>. far_image_hostname coalesces back to
+  # far_registry_hostname off the mirror path, so this is byte-identical there.
+  # (The CNEInstance spec.registry.uri, by contrast, is the BARE host — the CNE
+  # controller appends "/images/<name>" itself.)
+  image_repository = "${local.far_image_hostname}/images"
+
+  # Mirror mode: RBAC (system:image-puller) handles pulls, so the FAR
+  # dockerconfigjson secret is dropped and the chart/CR imagePullSecrets
+  # collapse to empty lists.
+  image_pull_secrets_flo = var.use_registry_mirror ? [] : [{ name = "far-secret" }]
+  image_pull_secrets_cis = var.use_registry_mirror ? [] : ["far-secret"]
+
+  # far-secret is provisioned only off the mirror path. In mirror mode the
+  # secret is dropped (RBAC handles pulls), so the count gates collapse to 0.
+  far_secret_legacy  = local.use_legacy && !var.use_registry_mirror ? 1 : 0
+  far_secret_kubectl = local.use_kubectl && !var.use_registry_mirror ? 1 : 0
+
+  # node-labeler helper image. Off the mirror path it's the public
+  # bitnami/kubectl:latest (byte-identical default). In mirror mode it pulls
+  # from the in-cluster image host (the BOM mirrors bitnami/kubectl:latest
+  # under the mirror namespace) so the air-gapped cluster needs no public pull.
+  node_labeler_image      = var.use_registry_mirror ? "${local.far_image_hostname}/bitnami/kubectl:latest" : "bitnami/kubectl:latest"
   far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : ""
   far_auth_value          = base64encode("_json_key_base64:${local.far_service_account_b64}")
   far_docker_config_json = replace(
@@ -64,21 +95,15 @@ locals {
     bigip_login_secret = "f5-bigip-ctlr-login"
 
     image = {
-      repository = local.image_repository
-      repo       = "f5-bnk-cis"
-      pullSecrets = [
-        "far-secret"
-      ]
+      repository  = local.image_repository
+      repo        = "f5-bnk-cis"
+      pullSecrets = local.image_pull_secrets_cis
     }
   }
 
   flo_helm_values = {
     global = {
-      imagePullSecrets = [
-        {
-          name = "far-secret"
-        }
-      ]
+      imagePullSecrets = local.image_pull_secrets_flo
       certmgr = {
         clusterIssuer = var.cluster_issuer_name
       }
@@ -446,8 +471,8 @@ resource "null_resource" "extract_flo_version" {
       fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${replace(var.far_repo_url, "https://", "")}
-      $HELM_BIN pull oci://${replace(var.far_repo_url, "https://", "")}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
+      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_chart_hostname}
+      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
       FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
       echo "$FLO_VERSION" > ${var.manifest_download_dir}/flo-version.txt
@@ -691,7 +716,7 @@ resource "null_resource" "bigip_ctlr_login" {
 
 # Create FAR image pull secret in flo namespace
 resource "null_resource" "far_secret_flo" {
-  count = local.use_legacy ? 1 : 0
+  count = local.far_secret_legacy
 
   triggers = {
     name      = "far-secret"
@@ -724,7 +749,7 @@ resource "null_resource" "far_secret_flo" {
 
 # Create FAR image pull secret in f5-utils namespace
 resource "null_resource" "far_secret_utils" {
-  count = local.use_legacy ? 1 : 0
+  count = local.far_secret_legacy
 
   triggers = {
     name      = "far-secret"
@@ -795,10 +820,10 @@ resource "null_resource" "f5_lifecycle_operator" {
       FLO_VERSION=$(cat ${var.manifest_download_dir}/flo-version.txt | tr -d '[:space:]')
       echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
         -u _json_key_base64 --password-stdin \
-        ${replace(var.far_repo_url, "https://", "")}
+        ${local.far_chart_hostname}
       printf '%s' "${base64encode(jsonencode(local.flo_helm_values))}" | base64 -d > /tmp/flo-helm-values.json
       $HELM_BIN upgrade --install flo \
-        oci://${replace(var.far_repo_url, "https://", "")}/charts/f5-lifecycle-operator \
+        oci://${local.far_chart_hostname}/charts/f5-lifecycle-operator \
         --version "$FLO_VERSION" \
         --namespace "${var.flo_namespace}" \
         --create-namespace \
@@ -873,10 +898,10 @@ resource "null_resource" "f5_bnk_cis" {
       CIS_VERSION=$(cat ${var.manifest_download_dir}/cis-version.txt | tr -d '[:space:]')
       echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
         -u _json_key_base64 --password-stdin \
-        ${replace(var.far_repo_url, "https://", "")}
+        ${local.far_chart_hostname}
       printf '%s' "${base64encode(jsonencode(local.cis_helm_values))}" | base64 -d > /tmp/cis-helm-values.json
       $HELM_BIN upgrade --install f5-bnk-cis \
-        oci://${replace(var.far_repo_url, "https://", "")}/charts/f5-bnk-cis \
+        oci://${local.far_chart_hostname}/charts/f5-bnk-cis \
         --version "$CIS_VERSION" \
         --namespace "${var.flo_namespace}" \
         --create-namespace \
@@ -1136,7 +1161,7 @@ resource "null_resource" "node_labeler_job" {
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/json" \
         -k "${var.kube_host}/apis/batch/v1/namespaces/kube-system/jobs" \
-        -d "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"name\":\"$JOB_NAME\",\"namespace\":\"kube-system\"},\"spec\":{\"backoffLimit\":3,\"template\":{\"metadata\":{\"name\":\"node-labeler\"},\"spec\":{\"serviceAccountName\":\"node-labeler\",\"restartPolicy\":\"Never\",\"containers\":[{\"name\":\"labeler\",\"image\":\"bitnami/kubectl:latest\",\"command\":[\"/bin/sh\",\"-c\",\"kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully\"]}]}}}}"
+        -d "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"name\":\"$JOB_NAME\",\"namespace\":\"kube-system\"},\"spec\":{\"backoffLimit\":3,\"template\":{\"metadata\":{\"name\":\"node-labeler\"},\"spec\":{\"serviceAccountName\":\"node-labeler\",\"restartPolicy\":\"Never\",\"containers\":[{\"name\":\"labeler\",\"image\":\"${local.node_labeler_image}\",\"command\":[\"/bin/sh\",\"-c\",\"kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully\"]}]}}}}"
     EOT
   }
 
@@ -1293,7 +1318,7 @@ locals {
           restartPolicy      = "Never"
           containers = [{
             name    = "labeler"
-            image   = "bitnami/kubectl:latest"
+            image   = local.node_labeler_image
             command = ["/bin/sh", "-c", "kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully"]
           }]
         }
@@ -1321,7 +1346,7 @@ resource "kubernetes_namespace_v1" "flo" {
 # --- Secrets (image-pull + CIS login — precede the charts) ------------------
 
 resource "kubernetes_secret_v1" "far_secret_flo" {
-  count = local.use_kubectl ? 1 : 0
+  count = local.far_secret_kubectl
   metadata {
     name      = "far-secret"
     namespace = var.flo_namespace
@@ -1334,7 +1359,7 @@ resource "kubernetes_secret_v1" "far_secret_flo" {
 }
 
 resource "kubernetes_secret_v1" "far_secret_utils" {
-  count = local.use_kubectl ? 1 : 0
+  count = local.far_secret_kubectl
   metadata {
     name      = "far-secret"
     namespace = var.utils_namespace
@@ -1433,7 +1458,7 @@ resource "helm_release" "flo" {
   count = local.use_kubectl ? 1 : 0
 
   name             = "flo"
-  repository       = "oci://${local.far_registry_hostname}/charts"
+  repository       = "oci://${local.far_chart_hostname}/charts"
   chart            = "f5-lifecycle-operator"
   version          = local.flo_chart_version
   namespace        = var.flo_namespace
@@ -1471,7 +1496,7 @@ resource "helm_release" "cis" {
   count = local.use_kubectl ? 1 : 0
 
   name             = "f5-bnk-cis"
-  repository       = "oci://${local.far_registry_hostname}/charts"
+  repository       = "oci://${local.far_chart_hostname}/charts"
   chart            = "f5-bnk-cis"
   version          = local.cis_chart_version
   namespace        = var.flo_namespace

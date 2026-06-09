@@ -44,6 +44,8 @@ module "cneinstance" {
   utils_namespace                    = var.flo_utils_namespace
   cluster_issuer_name                = var.flo_cluster_issuer_name
   far_repo_url                       = var.far_repo_url
+  far_image_repo_url                 = var.far_image_repo_url
+  use_registry_mirror                = var.use_registry_mirror
   f5_bigip_k8s_manifest_version      = var.f5_bigip_k8s_manifest_version
   cneinstance_ibm_trusted_profile_id = var.flo_trusted_profile_id
 

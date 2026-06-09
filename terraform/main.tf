@@ -59,17 +59,21 @@ module "roks_cluster" {
 module "cert_manager" {
   source = "./modules/cert_manager"
 
-  ibmcloud_api_key           = var.ibmcloud_api_key
-  ibmcloud_cluster_region    = var.ibmcloud_cluster_region
-  ibmcloud_resource_group    = var.ibmcloud_resource_group
-  roks_cluster_name_or_id    = module.roks_cluster.roks_cluster_name
-  cert_manager_namespace     = var.cert_manager_namespace
-  cert_manager_version       = var.cert_manager_version
-  create_roks_cluster        = var.create_roks_cluster
-  deploy_cert_manager        = var.deploy_cert_manager
-  bnk_cr_mode                = var.bnk_cr_mode
-  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
-  kubeconfig_dir             = "${var.kubeconfig_dir}/cert_manager"
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+  roks_cluster_name_or_id = module.roks_cluster.roks_cluster_name
+  cert_manager_namespace  = var.cert_manager_namespace
+  cert_manager_version    = var.cert_manager_version
+  # Sprint 29 air-gap mirror: when a mirror is populated, pull the
+  # cert-manager controller image from the in-cluster image host. Empty (the
+  # default) leaves the chart's public image.repository untouched.
+  cert_manager_image_repository = var.use_registry_mirror ? "${var.far_image_repo_url}/cert-manager" : ""
+  create_roks_cluster           = var.create_roks_cluster
+  deploy_cert_manager           = var.deploy_cert_manager
+  bnk_cr_mode                   = var.bnk_cr_mode
+  roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
+  kubeconfig_dir                = "${var.kubeconfig_dir}/cert_manager"
 }
 
 
@@ -96,6 +100,9 @@ module "flo" {
   # needs to know to deploy BNK resources against the existing namespace.
   cert_manager_namespace        = var.cert_manager_namespace
   far_repo_url                  = var.far_repo_url
+  far_chart_repo_url            = var.far_chart_repo_url
+  far_image_repo_url            = var.far_image_repo_url
+  use_registry_mirror           = var.use_registry_mirror
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   use_cos_bucket                = true
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
@@ -145,6 +152,8 @@ module "cne_instance" {
   ibmcloud_resource_group          = var.ibmcloud_resource_group
   roks_cluster_name_or_id          = module.roks_cluster.roks_cluster_name
   far_repo_url                     = var.far_repo_url
+  far_image_repo_url               = var.far_image_repo_url
+  use_registry_mirror              = var.use_registry_mirror
   flo_namespace                    = local.flo_namespace
   flo_utils_namespace              = var.flo_utils_namespace
   f5_bigip_k8s_manifest_version    = var.f5_bigip_k8s_manifest_version

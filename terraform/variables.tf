@@ -236,6 +236,30 @@ variable "far_repo_url" {
   default     = "repo.f5.com"
 }
 
+# Sprint 29 air-gap registry mirror. When a populated mirror exists, the
+# single FAR host splits into a chart host (the registry route, reachable
+# from the helm provider running on the host) and an image host (the
+# in-cluster registry service, reachable from pods). Both default to "" and
+# fall back to far_repo_url in the modules' locals, so behavior is
+# BYTE-IDENTICAL when no mirror is configured.
+variable "far_chart_repo_url" {
+  description = "Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "far_image_repo_url" {
+  description = "Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "use_registry_mirror" {
+  description = "When true, pull from the in-cluster mirror via RBAC: drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list."
+  type        = bool
+  default     = false
+}
+
 variable "f5_bigip_k8s_manifest_version" {
   description = "Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)"
   type        = string
