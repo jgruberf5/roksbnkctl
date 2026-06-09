@@ -34,10 +34,6 @@ const InternalServiceHost = "image-registry.openshift-image-registry.svc:5000"
 // pushSAName is the ServiceAccount roksbnkctl mints to push into the mirror.
 const pushSAName = "bnk-mirror-pusher"
 
-// bnkNamespaces are the BNK install namespaces whose ServiceAccounts must be
-// able to pull the mirrored images.
-var bnkNamespaces = []string{"f5-bnk", "f5-utils", "f5-app"}
-
 // mirrorProjects are the OpenShift projects (one per FAR category) the mirror
 // pushes into — because the internal registry is flat <project>/<name> and the
 // install pulls images from project "images", charts from "charts", etc. These
@@ -169,12 +165,14 @@ func (t *Target) Prepare(ctx context.Context, cfg *rest.Config) error {
 	}
 	t.PushToken = tok.Status.Token
 
-	// 5. Pull RBAC: let the BNK namespaces' ServiceAccounts pull from any mirror
-	//    project (cluster-wide image-puller).
-	var pullers []rbacv1.Subject
-	for _, ns := range bnkNamespaces {
-		pullers = append(pullers, rbacv1.Subject{Kind: "Group", Name: "system:serviceaccounts:" + ns, APIGroup: "rbac.authorization.k8s.io"})
-	}
+	// 5. Pull RBAC: let every ServiceAccount in the cluster pull from the mirror
+	//    projects (cluster-wide image-puller for system:serviceaccounts). The BNK
+	//    install spans many namespaces — f5-bnk/f5-utils/f5-app, cert-manager, and
+	//    more — and the mirrored images are the cluster's own, so a blanket SA
+	//    image-puller is the right scope and avoids per-namespace whack-a-mole
+	//    (cert-manager pods hit "authentication required" when only the f5-* SAs
+	//    were bound).
+	pullers := []rbacv1.Subject{{Kind: "Group", Name: "system:serviceaccounts", APIGroup: "rbac.authorization.k8s.io"}}
 	if err := ensureClusterRoleBinding(ctx, cs, "bnk-mirror-pullers", "system:image-puller", pullers); err != nil {
 		return err
 	}
@@ -231,7 +229,21 @@ func ensureClusterRoleBinding(ctx context.Context, cs kubernetes.Interface, name
 		Subjects:   subjects,
 	}
 	_, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{})
-	return ignoreAlreadyExists(err, "clusterrolebinding "+name)
+	if !apierrors.IsAlreadyExists(err) {
+		return ignoreAlreadyExists(err, "clusterrolebinding "+name)
+	}
+	// Already exists — reconcile the subject list, which can change between
+	// roksbnkctl versions (e.g. the puller widened from the f5-* SAs to all SAs).
+	// RoleRef is immutable but never changes here.
+	existing, err := cs.RbacV1().ClusterRoleBindings().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get clusterrolebinding %s: %w", name, err)
+	}
+	existing.Subjects = subjects
+	if _, err := cs.RbacV1().ClusterRoleBindings().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update clusterrolebinding %s: %w", name, err)
+	}
+	return nil
 }
 
 func ignoreAlreadyExists(err error, what string) error {
