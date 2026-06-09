@@ -24,7 +24,7 @@ log() { printf '\n=== %s ===\n' "$*"; }
 fail() { printf '\n✗ FAIL: %s\n' "$*" >&2; exit 1; }
 
 log "1/5 replicate the BOM into the internal registry"
-"$RB" registry replicate -w "$WS" --target openshift --auto
+"$RB" registry replicate -w "$WS" --target openshift
 
 log "2/5 verify the mirror is complete"
 "$RB" registry verify -w "$WS" || fail "registry verify reported missing/mismatched artifacts"
