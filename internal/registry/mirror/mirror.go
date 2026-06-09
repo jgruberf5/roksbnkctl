@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -66,7 +67,7 @@ func (e *Engine) concurrency() int {
 	if e.Concurrency > 0 {
 		return e.Concurrency
 	}
-	return 4
+	return 2 // the OpenShift internal registry 500s under heavier concurrency
 }
 
 func (e *Engine) helmBin() string {
@@ -142,8 +143,8 @@ func (e *Engine) copyOne(ctx context.Context, a bnkbom.Artifact) Result {
 // by digest. Idempotent: if the destination already resolves to the same digest
 // as the source, the copy is skipped.
 func (e *Engine) copyOCI(ctx context.Context, a bnkbom.Artifact) Result {
-	src := a.Ref()
-	dst := e.Target.PushRef(a)
+	src := sanitizeRef(a.Ref())
+	dst := sanitizeRef(e.Target.PushRef(a))
 	opts := e.craneOpts(ctx)
 
 	srcDigest, err := crane.Digest(src, opts...)
@@ -153,10 +154,48 @@ func (e *Engine) copyOCI(ctx context.Context, a bnkbom.Artifact) Result {
 	if dstDigest, err := crane.Digest(dst, opts...); err == nil && dstDigest == srcDigest {
 		return Result{Artifact: a, Digest: srcDigest, Skipped: true}
 	}
-	if err := crane.Copy(src, dst, opts...); err != nil {
-		return Result{Artifact: a, Err: fmt.Errorf("copy %s -> %s: %w", src, dst, err)}
+	// The OpenShift internal registry intermittently 500s under concurrent
+	// pushes; retry transient failures with a linear backoff.
+	var copyErr error
+	for attempt := 1; attempt <= copyMaxAttempts; attempt++ {
+		if copyErr = crane.Copy(src, dst, opts...); copyErr == nil {
+			return Result{Artifact: a, Digest: srcDigest}
+		}
+		if !isTransient(copyErr) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return Result{Artifact: a, Err: ctx.Err()}
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
 	}
-	return Result{Artifact: a, Digest: srcDigest}
+	return Result{Artifact: a, Err: fmt.Errorf("copy %s -> %s: %w", src, dst, copyErr)}
+}
+
+const copyMaxAttempts = 4
+
+// sanitizeRef makes an OCI reference valid: helm-OCI stores a chart version's "+"
+// build metadata as "_" (OCI tags can't contain "+"), so mirror the same.
+func sanitizeRef(ref string) string { return strings.ReplaceAll(ref, "+", "_") }
+
+// isTransient reports whether a copy error is worth retrying — the OpenShift
+// registry returns intermittent 5xx under concurrent pushes.
+func isTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, p := range []string{
+		"Internal Server Error", "status code 500", "status code 502",
+		"status code 503", "status code 504", "TOOMANYREQUESTS",
+		"connection reset", "unexpected EOF", "i/o timeout",
+	} {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // copyClassicHelmChart handles the one non-OCI source: pull the chart tarball
@@ -230,17 +269,17 @@ func (e *Engine) Verify(ctx context.Context, bom *bnkbom.BOM) []Result {
 		if a.SourceHost == classicHelmHost {
 			// Classic-helm charts are repackaged; presence is verified by a
 			// target-side existence check rather than a source-digest match.
-			if _, err := crane.Digest(e.Target.PushRef(a), opts...); err != nil {
+			if _, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...); err != nil {
 				bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
 			}
 			continue
 		}
-		srcDigest, err := crane.Digest(a.Ref(), opts...)
+		srcDigest, err := crane.Digest(sanitizeRef(a.Ref()), opts...)
 		if err != nil {
 			bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("resolve source: %w", err)})
 			continue
 		}
-		dstDigest, err := crane.Digest(e.Target.PushRef(a), opts...)
+		dstDigest, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...)
 		if err != nil {
 			bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
 			continue
