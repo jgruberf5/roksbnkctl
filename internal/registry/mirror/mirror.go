@@ -195,8 +195,9 @@ func isTransient(err error) bool {
 	s := err.Error()
 	for _, p := range []string{
 		"Internal Server Error", "status code 500", "status code 502",
-		"status code 503", "status code 504", "TOOMANYREQUESTS",
+		"status code 503", "status code 504", "TOOMANYREQUESTS", "toomanyrequests",
 		"connection reset", "unexpected EOF", "i/o timeout",
+		"unexpected end of JSON input", "end of JSON input", "EOF",
 	} {
 		if strings.Contains(s, p) {
 			return true
