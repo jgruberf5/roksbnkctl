@@ -339,6 +339,50 @@ func stateHasManagedModule(path, prefix string) (bool, error) {
 // shape detection a first-class concern — `DeleteWorkspace`'s existing
 // call site (workspace.go) continues to work because we're in the same
 // package.
+// TestingJumphostPrivateIPs reads the deployed Testing phase's jumphost
+// private IPs from state-testing/terraform.tfstate's outputs (PRD 12) so
+// `gateway up` can auto-derive the gateway client-subnet values from the
+// real test rig. Pure filesystem + JSON. Returns (tgw, cluster, ok); ok
+// is false when the state file, the outputs, or every IP is absent — the
+// caller falls back rather than failing.
+//
+// The TGW jumphost's "TGW jumphost not created" sentinel (emitted when
+// testing_create_tgw_jumphost = false) is normalised to "".
+func TestingJumphostPrivateIPs(workspace string) (tgw string, cluster map[string]string, ok bool) {
+	dir, err := WorkspaceTestingStateDir(workspace)
+	if err != nil {
+		return "", nil, false
+	}
+	return readJumphostPrivateIPs(filepath.Join(dir, "terraform.tfstate"))
+}
+
+func readJumphostPrivateIPs(path string) (string, map[string]string, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, false
+	}
+	var s struct {
+		Outputs struct {
+			TGW struct {
+				Value string `json:"value"`
+			} `json:"testing_tgw_jumphost_private_ip"`
+			Cluster struct {
+				Value map[string]string `json:"value"`
+			} `json:"testing_cluster_jumphost_private_ips"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return "", nil, false
+	}
+	tgw := strings.TrimSpace(s.Outputs.TGW.Value)
+	if tgw == "TGW jumphost not created" {
+		tgw = ""
+	}
+	cluster := s.Outputs.Cluster.Value
+	ok := tgw != "" || len(cluster) > 0
+	return tgw, cluster, ok
+}
+
 func tfstateHasResources(path string) (bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

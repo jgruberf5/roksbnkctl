@@ -88,3 +88,18 @@ output "testing_cluster_jumphost_ssh_commands" {
   description = "SSH commands keyed by availability zone for the cluster jumphosts (empty when testing_create_cluster_jumphosts = false)"
   value       = try(module.testing.testing_cluster_jumphost_ssh_commands, {})
 }
+
+# Private (in-VPC) IPs of the jumphosts. Forwarded so `roksbnkctl gateway up`
+# can auto-derive the gateway client-subnet /32s from the deployed test rig
+# (PRD 12): the TGW jumphost (client VPC, reached over the Transit Gateway)
+# is the "remote" client; a cluster-VPC jumphost is the "local" client.
+# try()-defaulted so a deploy without the jumphosts renders empty.
+output "testing_tgw_jumphost_private_ip" {
+  description = "Private (client-VPC) IP of the TGW jumphost (empty when testing_create_tgw_jumphost = false)"
+  value       = try(module.testing.testing_tgw_jumphost_private_ip, "")
+}
+
+output "testing_cluster_jumphost_private_ips" {
+  description = "Private (cluster-VPC) IPs of the per-zone cluster jumphosts, keyed by zone (empty when testing_create_cluster_jumphosts = false)"
+  value       = try(module.testing.testing_cluster_jumphost_private_ips, {})
+}
