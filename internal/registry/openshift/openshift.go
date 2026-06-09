@@ -38,6 +38,13 @@ const pushSAName = "bnk-mirror-pusher"
 // able to pull the mirrored images.
 var bnkNamespaces = []string{"f5-bnk", "f5-utils", "f5-app"}
 
+// mirrorProjects are the OpenShift projects (one per FAR category) the mirror
+// pushes into — because the internal registry is flat <project>/<name> and the
+// install pulls images from project "images", charts from "charts", etc. These
+// are the categories the BOM produces (F5 charts/images/utils + the cert-manager
+// and node-labeler deps).
+var mirrorProjects = []string{"images", "charts", "utils", "jetstack", "bitnami"}
+
 // Target is the OpenShift internal-registry RegistryTarget. RouteHost + PushToken
 // are populated by Prepare; the endpoint methods are usable once they are set
 // (or hydrated from a registry-mirror.json record).
@@ -52,10 +59,14 @@ type Target struct {
 // PushHost is the external route host roksbnkctl pushes to.
 func (t *Target) PushHost() string { return t.RouteHost }
 
-// PushRef is the destination reference for an artifact on the route, preserving
-// its charts/ | images/ | utils/ path: "<route>/<ns>/<name>:<tag>".
+// PushRef is the destination on the route. The OpenShift internal registry is a
+// FLAT <project>/<name> registry — imagestream names can't nest — so the FAR
+// category is the project: "images/tmm-img" → project "images", stream "tmm-img".
+// (This flattening is OpenShift-specific; a generic OCI target keeps the
+// configured namespace and nests the category under it, e.g.
+// "<host>/<ns>/images/tmm-img".)
 func (t *Target) PushRef(a bnkbom.Artifact) string {
-	return fmt.Sprintf("%s/%s/%s:%s", t.RouteHost, t.Namespace, a.Name, a.Tag)
+	return fmt.Sprintf("%s/%s:%s", t.RouteHost, a.Name, a.Tag)
 }
 
 // PushAuth authenticates pushes. The OpenShift registry accepts any username with
@@ -67,31 +78,33 @@ func (t *Target) PushAuth() authn.Authenticator {
 // ── pull-side endpoints (the install redirect consumes these) ───────────────
 
 // ImagePullRef is where pods pull an image — the in-cluster service, by digest
-// when known (immutable), else by tag.
+// when known. Category-as-project: "<svc>/images/tmm-img".
 func (t *Target) ImagePullRef(a bnkbom.Artifact) string {
-	ref := fmt.Sprintf("%s/%s/%s", InternalServiceHost, t.Namespace, a.Name)
+	ref := InternalServiceHost + "/" + a.Name
 	if a.Digest != "" {
 		return ref + "@" + a.Digest
 	}
 	return ref + ":" + a.Tag
 }
 
-// ChartPullRef is where the host's helm provider pulls a chart — the route, as an
-// OCI reference.
+// ChartPullRef is where the host's helm provider pulls a chart over the route.
 func (t *Target) ChartPullRef(a bnkbom.Artifact) string {
-	return fmt.Sprintf("oci://%s/%s/%s", t.RouteHost, t.Namespace, a.Name)
+	return "oci://" + t.RouteHost + "/" + a.Name
 }
 
-// ImageHostPath is the image-host root the BNK install redirect points
-// far_repo_url's image references at: "<svc>/<ns>" (pods → kubelet).
+// ImageHostPath is the image-host root the install redirect points the image
+// references at — the bare service host. Category-as-project makes this work with
+// the install's conventions unchanged: the FLO chart's image.repository becomes
+// "<svc>/images" (it appends the bare image name) and the CNEInstance
+// spec.registry.uri becomes "<svc>" (the CNE controller appends "/images/<name>").
 func (t *Target) ImageHostPath() string {
-	return InternalServiceHost + "/" + t.Namespace
+	return InternalServiceHost
 }
 
-// ChartHostPath is the chart-host root the helm_release repository points at:
-// "<route>/<ns>" (host → helm provider).
+// ChartHostPath is the chart-host root — the bare route (helm repo becomes
+// "oci://<route>/charts").
 func (t *Target) ChartHostPath() string {
-	return t.RouteHost + "/" + t.Namespace
+	return t.RouteHost
 }
 
 // ── Prepare (live cluster bootstrap) ────────────────────────────────────────
@@ -130,16 +143,22 @@ func (t *Target) Prepare(ctx context.Context, cfg *rest.Config) error {
 	}
 	t.RouteHost = host
 
-	// 3. Ensure the mirror namespace.
+	// 3. Ensure the SA-home namespace + one project per FAR category.
 	if err := ensureNamespace(ctx, cs, t.Namespace); err != nil {
 		return err
 	}
+	for _, p := range mirrorProjects {
+		if err := ensureNamespace(ctx, cs, p); err != nil {
+			return err
+		}
+	}
 
-	// 4. Push identity: a ServiceAccount + registry-editor binding + a token.
+	// 4. Push identity: a ServiceAccount + a cluster-wide registry-editor binding
+	//    (it pushes into every category project) + a token.
 	if err := ensureServiceAccount(ctx, cs, t.Namespace, pushSAName); err != nil {
 		return err
 	}
-	if err := ensureRoleBinding(ctx, cs, t.Namespace, "bnk-mirror-pusher-editor", "registry-editor",
+	if err := ensureClusterRoleBinding(ctx, cs, "bnk-mirror-pusher-editor", "registry-editor",
 		[]rbacv1.Subject{{Kind: "ServiceAccount", Name: pushSAName, Namespace: t.Namespace}}); err != nil {
 		return err
 	}
@@ -150,12 +169,13 @@ func (t *Target) Prepare(ctx context.Context, cfg *rest.Config) error {
 	}
 	t.PushToken = tok.Status.Token
 
-	// 5. Pull RBAC: let the BNK namespaces' ServiceAccounts pull from the mirror.
+	// 5. Pull RBAC: let the BNK namespaces' ServiceAccounts pull from any mirror
+	//    project (cluster-wide image-puller).
 	var pullers []rbacv1.Subject
 	for _, ns := range bnkNamespaces {
 		pullers = append(pullers, rbacv1.Subject{Kind: "Group", Name: "system:serviceaccounts:" + ns, APIGroup: "rbac.authorization.k8s.io"})
 	}
-	if err := ensureRoleBinding(ctx, cs, t.Namespace, "bnk-mirror-pullers", "system:image-puller", pullers); err != nil {
+	if err := ensureClusterRoleBinding(ctx, cs, "bnk-mirror-pullers", "system:image-puller", pullers); err != nil {
 		return err
 	}
 	return nil
@@ -204,14 +224,14 @@ func ensureServiceAccount(ctx context.Context, cs kubernetes.Interface, ns, name
 	return ignoreAlreadyExists(err, "serviceaccount "+name)
 }
 
-func ensureRoleBinding(ctx context.Context, cs kubernetes.Interface, ns, name, clusterRole string, subjects []rbacv1.Subject) error {
-	rb := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+func ensureClusterRoleBinding(ctx context.Context, cs kubernetes.Interface, name, clusterRole string, subjects []rbacv1.Subject) error {
+	crb := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: clusterRole},
 		Subjects:   subjects,
 	}
-	_, err := cs.RbacV1().RoleBindings(ns).Create(ctx, rb, metav1.CreateOptions{})
-	return ignoreAlreadyExists(err, "rolebinding "+name)
+	_, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{})
+	return ignoreAlreadyExists(err, "clusterrolebinding "+name)
 }
 
 func ignoreAlreadyExists(err error, what string) error {
