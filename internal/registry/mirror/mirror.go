@@ -183,6 +183,16 @@ func (e *Engine) copyClassicHelmChart(ctx context.Context, a bnkbom.Artifact) Re
 	tgz := filepath.Join(scratch, fmt.Sprintf("%s-%s.tgz", chart, a.Tag))
 	// helm push <chart>.tgz oci://<targetHost>/<ns>/charts
 	dstRepo := ociDir(e.Target.PushRef(a)) // strip the ":<tag>" + "/<chart>" → the OCI dir
+	// helm shells out for the push, so (unlike crane, which uses the keychain) it
+	// needs its own authenticated session to the target route — log it in first.
+	if auth := e.Target.PushAuth(); auth != nil {
+		if ac, aerr := auth.Authorization(); aerr == nil && ac != nil && (ac.Username != "" || ac.Password != "") {
+			login := exec.CommandContext(ctx, e.helmBin(), "registry", "login", e.Target.PushHost(), "-u", ac.Username, "-p", ac.Password)
+			if out, lerr := login.CombinedOutput(); lerr != nil {
+				return Result{Artifact: a, Err: fmt.Errorf("helm registry login %s: %w: %s", e.Target.PushHost(), lerr, strings.TrimSpace(string(out)))}
+			}
+		}
+	}
 	push := exec.CommandContext(ctx, e.helmBin(), "push", tgz, dstRepo)
 	if out, err := push.CombinedOutput(); err != nil {
 		return Result{Artifact: a, Err: fmt.Errorf("helm push %s -> %s: %w: %s", tgz, dstRepo, err, strings.TrimSpace(string(out)))}

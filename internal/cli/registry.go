@@ -243,7 +243,7 @@ func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Works
 // dir helm pulls into (the workspace state/scratch tree); "" → a temp dir. When
 // no source service account is configured, it is resolved from the workspace's
 // FAR auth tarball in COS (bnk.far_auth_file) so the command runs flag-free.
-func buildBOM(ctx context.Context, name string, ws *config.Workspace, in registryBOMInputs, workspaceScratch string) (*bnkbom.BOM, error) {
+func buildBOM(ctx context.Context, name string, ws *config.Workspace, in *registryBOMInputs, workspaceScratch string) (*bnkbom.BOM, error) {
 	if in.ManifestVersion == "" {
 		// Fall back to the tfvar/init default so `registry` runs out-of-box;
 		// bnk.manifest_version (init) or --manifest-version override it.
@@ -332,7 +332,7 @@ func runRegistryBOM(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -388,7 +388,7 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -433,7 +433,7 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -490,7 +490,7 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -524,7 +524,7 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, in, registryScratchDir(name))
+	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
