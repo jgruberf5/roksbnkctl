@@ -16,6 +16,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   > Caveat: the route/backend fixture *apply* path is wired against the existing SSA + iperf3-fixture machinery but has not yet been validated against a live ROKS cluster; the grid model, expansion, dry-run plan, argv builders, manifest rendering, and h2load/iperf3 parsers are unit-tested.
 
+### Changed
+
+- **`roksbnkctl status` now reports all four phases.** It read the old two-phase `DetectShape` and printed only **Cluster phase** + **BNK trial**, so a deployed **Testing** or **Gateway** phase was invisible (a workspace with jumphosts up showed nothing about them). It now reads `config.DetectPresence` — the same four-phase signal the `up`/`down` guards use — and prints a `deployed (last apply <time>)` / `not deployed` line for **Cluster, BNK trial, Testing, and Gateway**. Legacy single-state workspaces are unchanged (the v1.0.x `Last apply` line + shape callout are preserved for script-compat).
+
 ## v1.9.1 — 2026-06-08
 
 A patch fixing two `up`/`down` regressions found running a fresh end-to-end deploy after v1.9.0.

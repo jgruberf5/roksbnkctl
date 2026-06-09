@@ -36,7 +36,7 @@ var statusCmd = &cobra.Command{
   - workspace name + region
   - configured cluster name
   - pinned Terraform source
-  - per-phase deployment status (cluster phase + BNK trial)
+  - per-phase deployment status (Cluster, BNK trial, Testing, Gateway)
   - v1.0.x ` + "`Last apply`" + ` line preserved for legacy single-state workspaces
   - kubeconfig path (if any)
   - cluster reachability (node count + ready count)
@@ -98,12 +98,13 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(tw, "Cluster:\t%s\t%s\n", or(cctx.Workspace.Cluster.Name, "(unset)"), createOrAttach(cctx.Workspace.Cluster.Create))
 	fmt.Fprintf(tw, "TF source:\t%s\n", tfSourceDescription(cctx.Workspace.TFSource))
 
-	// PRD 06 §"`status` command integration" (Sprint 10): consume
-	// `config.DetectShape` and emit per-phase deployment lines for non-
-	// Legacy shapes. Legacy preserves the v1.0.x `Last apply` line
-	// verbatim plus a one-line shape callout for script-compat. Best-
-	// effort by convention — a DetectShape error or unreadable state
-	// file degrades to "not deployed" rather than failing the command.
+	// Per-phase deployment lines. Sprint 29: read the four-phase truth
+	// from `config.DetectPresence` (Cluster / BNK / Testing / Gateway) —
+	// the same signal the `up`/`down` phase guards use — instead of the
+	// old two-phase `DetectShape`. Legacy single-state workspaces keep the
+	// v1.0.x `Last apply` line verbatim plus a one-line shape callout for
+	// script-compat. Best-effort by convention — a DetectPresence error or
+	// unreadable state degrades rather than failing the command.
 	writeStatusPhaseLines(tw, cctx.WorkspaceName)
 
 	// Kubeconfig + cluster reachability.
@@ -122,23 +123,22 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// writeStatusPhaseLines emits the per-shape deployment lines for the
-// `status` command per PRD 06 §"`status` command integration"
-// (Sprint 10 scope addition). Output by shape:
+// writeStatusPhaseLines emits the per-phase deployment lines for the
+// `status` command. Sprint 29: reads the four-phase truth from
+// config.DetectPresence — Cluster / BNK / Testing / Gateway — and prints
+// each as "deployed (last apply <mtime>)" or "not deployed".
 //
-//	ShapeEmpty        — "Cluster phase: not deployed" + "BNK trial: not deployed"
-//	ShapeClusterOnly  — cluster phase with mtime; trial "not deployed"
-//	ShapeSplit        — both phases with their own mtimes
-//	ShapeLegacySingle — one-line shape callout + the v1.0.x "Last apply"
-//	                    line verbatim from `state/terraform.tfstate` mtime
-//	                    (script-compat for v1.0.x parsers)
-//	ShapeUnknown      — falls back to the v1.0.x "Last apply" line so a
-//	                    DetectShape error never blocks status output
+// A legacy single-state workspace (v1.0.x: cluster + trial in one
+// tfstate) keeps its original output — a one-line shape callout plus the
+// verbatim v1.0.x `Last apply` line, for script-compat — and no per-phase
+// lines.
 //
-// All filesystem failures are silenced — every section of `runStatus`
-// is best-effort.
+// Best-effort: a DetectPresence error (e.g. malformed state) degrades to
+// the v1.0.x `Last apply` line rather than failing the command. All
+// filesystem failures are silenced — every section of `runStatus` is
+// best-effort.
 func writeStatusPhaseLines(tw io.Writer, workspace string) {
-	shape, err := config.DetectShape(workspace)
+	pres, err := config.DetectPresence(workspace)
 	if err != nil {
 		// Malformed state files etc. — fall through to v1.0.x line so
 		// the user gets *some* signal rather than a hard failure here.
@@ -146,36 +146,33 @@ func writeStatusPhaseLines(tw io.Writer, workspace string) {
 		return
 	}
 
-	trialDir, _ := config.WorkspaceStateDir(workspace)
-	clusterDir, _ := config.WorkspaceClusterStateDir(workspace)
-	trialState := filepath.Join(trialDir, "terraform.tfstate")
-	clusterState := filepath.Join(clusterDir, "terraform.tfstate")
-
-	switch shape {
-	case config.ShapeEmpty:
-		fmt.Fprintln(tw, "Cluster phase:\tnot deployed")
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
-
-	case config.ShapeClusterOnly:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
-
-	case config.ShapeSplit:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintf(tw, "BNK trial:\t%s\n", deployedLine(trialState))
-
-	case config.ShapeLegacySingle:
-		// One-line callout so the reader sees "legacy" at a glance,
-		// plus the verbatim v1.0.x `Last apply` line for script-compat.
+	// Legacy monolith: preserve the v1.0.x output verbatim (script-compat).
+	if pres.Legacy {
 		fmt.Fprintln(tw, "Shape:\tlegacy single-state (cluster + trial in one tfstate)")
 		writeLegacyLastApply(tw, workspace)
-
-	default:
-		// ShapeUnknown should be unreachable on a successful DetectShape
-		// but handle defensively: surface the v1.0.x shape so nothing
-		// downstream parses a missing line.
-		writeLegacyLastApply(tw, workspace)
+		return
 	}
+
+	clusterDir, _ := config.WorkspaceClusterStateDir(workspace)
+	bnkDir, _ := config.WorkspaceStateDir(workspace)
+	testingDir, _ := config.WorkspaceTestingStateDir(workspace)
+	gatewayDir, _ := config.WorkspaceGatewayStateDir(workspace)
+
+	fmt.Fprintf(tw, "Cluster phase:\t%s\n", phaseStatusLine(pres.Cluster, clusterDir))
+	fmt.Fprintf(tw, "BNK trial:\t%s\n", phaseStatusLine(pres.BNK, bnkDir))
+	fmt.Fprintf(tw, "Testing phase:\t%s\n", phaseStatusLine(pres.Testing, testingDir))
+	fmt.Fprintf(tw, "Gateway phase:\t%s\n", phaseStatusLine(pres.Gateway, gatewayDir))
+}
+
+// phaseStatusLine renders one phase's status: "deployed (last apply …)"
+// when present (timestamp from the phase's tfstate mtime), else
+// "not deployed". `present` is the authoritative signal from
+// DetectPresence; the mtime is only for the human-readable timestamp.
+func phaseStatusLine(present bool, stateDir string) string {
+	if !present {
+		return "not deployed"
+	}
+	return deployedLine(filepath.Join(stateDir, "terraform.tfstate"))
 }
 
 // deployedLine returns the `deployed (last apply <timestamp>)` shape
