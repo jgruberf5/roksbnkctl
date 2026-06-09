@@ -18,75 +18,76 @@ import (
 )
 
 // tryAutoGatewayClientSubnets fills empty ws.Gateway.ClientSubnet{Local,
-// Remote} from the Testing phase's jumphost private IPs. It mutates ws in
+// Remote} from the Testing phase's jumphost subnet CIDRs. It mutates ws in
 // place BEFORE tfvars are rendered, so the values flow into the base
 // tfvars layer (vars.go renders gateway_client_subnet_* only when the
-// config field is non-empty). That layer is the LOWEST precedence, so a
+// config list is non-empty). That layer is the LOWEST precedence, so a
 // value set in config.yaml, a user tfvars file, or --var-file always wins
 // — this only ever fills a gap.
 //
-// Best-effort and non-fatal (mirrors tryAutoJumphost's posture):
-//   - remote ← the TGW jumphost private IP (client VPC, over the TGW) —
-//     a clean 1:1 mapping.
-//   - local  ← one cluster-VPC jumphost private IP (lowest zone name),
-//     logged with the single-client caveat: the var is scalar but the rig
-//     may have several cluster jumphosts, so set it explicitly to cover a
-//     wider subnet.
-//   - When the Testing phase isn't deployed (or its state predates the
-//     private-IP outputs) and a field is still empty, warn once and leave
-//     it to the module default — `gateway up` never fails on this.
+// The values are LISTS (the module installs one static route per entry ×
+// zone), so the matrix can drive traffic from every cluster jumphost —
+// same-zone AND different-zone — and each has a TMM return route:
+//   - local  ← every cluster-VPC jumphost subnet CIDR (one per AZ).
+//   - remote ← the client-VPC jumphost subnet CIDR (over the TGW).
+//
+// Best-effort and non-fatal (mirrors tryAutoJumphost's posture): when the
+// Testing phase isn't deployed (or its state predates the subnet-CIDR
+// outputs) and a field is still empty, warn once and leave it to the
+// module default — `gateway up` never fails on this.
 func tryAutoGatewayClientSubnets(ws *config.Workspace, workspace string, w io.Writer) {
 	if ws == nil {
 		return
 	}
-	needLocal := ws.Gateway.ClientSubnetLocal == ""
-	needRemote := ws.Gateway.ClientSubnetRemote == ""
+	needLocal := len(ws.Gateway.ClientSubnetLocal) == 0
+	needRemote := len(ws.Gateway.ClientSubnetRemote) == 0
 	if !needLocal && !needRemote {
 		return // fully specified by config/user — nothing to derive
 	}
 
-	tgwIP, clusterIPs, ok := config.TestingJumphostPrivateIPs(workspace)
+	tgwCIDR, clusterCIDRs, ok := config.TestingJumphostSubnetCIDRs(workspace)
 	if !ok {
-		fmt.Fprintln(w, "warning: gateway client subnet(s) unset and the Testing phase exposes no jumphost private IPs "+
+		fmt.Fprintln(w, "warning: gateway client subnet(s) unset and the Testing phase exposes no jumphost subnet CIDRs "+
 			"(testing not deployed, or its state predates this build) — falling back to config/module defaults. "+
 			"Set gateway.client_subnet_{local,remote} if the defaults don't match your clients.")
 		return
 	}
 
-	if needRemote && tgwIP != "" {
-		ws.Gateway.ClientSubnetRemote = tgwIP
-		fmt.Fprintf(w, "✓ gateway_client_subnet_remote auto-derived from the TGW jumphost: %s\n", tgwIP)
+	if needRemote && tgwCIDR != "" {
+		ws.Gateway.ClientSubnetRemote = []string{tgwCIDR}
+		fmt.Fprintf(w, "✓ gateway_client_subnet_remote auto-derived from the TGW jumphost subnet: %s\n", tgwCIDR)
 	}
 	if needLocal {
-		if ip, zone := pickClusterJumphost(clusterIPs); ip != "" {
-			ws.Gateway.ClientSubnetLocal = ip
-			fmt.Fprintf(w, "✓ gateway_client_subnet_local auto-derived from cluster jumphost %s: %s "+
-				"(single client — set gateway.client_subnet_local explicitly to cover a wider subnet)\n", zone, ip)
+		if cidrs := sortedClusterCIDRs(clusterCIDRs); len(cidrs) > 0 {
+			ws.Gateway.ClientSubnetLocal = cidrs
+			fmt.Fprintf(w, "✓ gateway_client_subnet_local auto-derived from %d cluster jumphost subnet(s): %s\n",
+				len(cidrs), strings.Join(cidrs, ", "))
 		}
 	}
 
 	// A partially-populated rig (e.g. only cluster jumphosts, no TGW one)
-	// can leave a field empty; say which so the module default isn't a
+	// can leave a list empty; say which so the module default isn't a
 	// silent surprise.
-	if (needRemote && ws.Gateway.ClientSubnetRemote == "") || (needLocal && ws.Gateway.ClientSubnetLocal == "") {
+	if (needRemote && len(ws.Gateway.ClientSubnetRemote) == 0) || (needLocal && len(ws.Gateway.ClientSubnetLocal) == 0) {
 		fmt.Fprintln(w, "warning: could not fully auto-derive gateway client subnets from the Testing phase "+
-			"(a jumphost private IP was missing) — the unfilled value falls back to the module default.")
+			"(a jumphost subnet CIDR was missing) — the unfilled value falls back to the module default.")
 	}
 }
 
-// pickClusterJumphost deterministically selects one cluster jumphost
-// (lowest zone name with a non-empty IP) from the {zone => private-IP}
-// map. Returns ("","") for an empty/all-blank map.
-func pickClusterJumphost(clusterIPs map[string]string) (ip, zone string) {
-	zones := make([]string, 0, len(clusterIPs))
-	for z := range clusterIPs {
+// sortedClusterCIDRs returns the cluster jumphost subnet CIDRs in
+// deterministic order (by zone name), dropping blanks. One per AZ, so the
+// local static routes cover every cluster-VPC client.
+func sortedClusterCIDRs(clusterCIDRs map[string]string) []string {
+	zones := make([]string, 0, len(clusterCIDRs))
+	for z := range clusterCIDRs {
 		zones = append(zones, z)
 	}
 	sort.Strings(zones)
+	out := make([]string, 0, len(zones))
 	for _, z := range zones {
-		if v := strings.TrimSpace(clusterIPs[z]); v != "" {
-			return v, z
+		if v := strings.TrimSpace(clusterCIDRs[z]); v != "" {
+			out = append(out, v)
 		}
 	}
-	return "", ""
+	return out
 }

@@ -184,13 +184,13 @@ type BNKNetworkCfg struct {
 // tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a
 // toggle here.
 type GatewayCfg struct {
-	AppNamespace       string `yaml:"app_namespace,omitempty"`
-	BackendService     string `yaml:"backend_service,omitempty"`
-	BackendPort        int    `yaml:"backend_port,omitempty"`
-	EgressMode         string `yaml:"egress_mode,omitempty"` // snatpool | automap | both
-	ClientSubnetLocal  string `yaml:"client_subnet_local,omitempty"`
-	ClientSubnetRemote string `yaml:"client_subnet_remote,omitempty"`
-	VXLANPort          int    `yaml:"vxlan_port,omitempty"`
+	AppNamespace       string   `yaml:"app_namespace,omitempty"`
+	BackendService     string   `yaml:"backend_service,omitempty"`
+	BackendPort        int      `yaml:"backend_port,omitempty"`
+	EgressMode         string   `yaml:"egress_mode,omitempty"` // snatpool | automap | both
+	ClientSubnetLocal  []string `yaml:"client_subnet_local,omitempty"`
+	ClientSubnetRemote []string `yaml:"client_subnet_remote,omitempty"`
+	VXLANPort          int      `yaml:"vxlan_port,omitempty"`
 }
 
 // RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which

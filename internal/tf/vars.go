@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
@@ -283,15 +284,24 @@ func renderGatewayFields(w io.Writer, ws *config.Workspace) {
 	if g.EgressMode != "" {
 		fmt.Fprintf(w, "gateway_egress_mode = %q\n", g.EgressMode)
 	}
-	if g.ClientSubnetLocal != "" {
-		fmt.Fprintf(w, "gateway_client_subnet_local = %q\n", g.ClientSubnetLocal)
+	if len(g.ClientSubnetLocal) > 0 {
+		fmt.Fprintf(w, "gateway_client_subnet_local = %s\n", hclStringList(g.ClientSubnetLocal))
 	}
-	if g.ClientSubnetRemote != "" {
-		fmt.Fprintf(w, "gateway_client_subnet_remote = %q\n", g.ClientSubnetRemote)
+	if len(g.ClientSubnetRemote) > 0 {
+		fmt.Fprintf(w, "gateway_client_subnet_remote = %s\n", hclStringList(g.ClientSubnetRemote))
 	}
 	if g.VXLANPort != 0 {
 		fmt.Fprintf(w, "gateway_vxlan_port = %d\n", g.VXLANPort)
 	}
+}
+
+// hclStringList renders a string slice as an HCL list literal: ["a", "b"].
+func hclStringList(items []string) string {
+	quoted := make([]string, len(items))
+	for i, s := range items {
+		quoted[i] = fmt.Sprintf("%q", s)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.

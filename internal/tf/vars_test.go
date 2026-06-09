@@ -9,6 +9,40 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
 )
 
+func TestRenderTFVars_GatewayClientSubnetLists(t *testing.T) {
+	// Gateway fields render in the prefix-driven body (real workspaces all
+	// carry a prefix since v1.8.0).
+	ws := &config.Workspace{
+		Prefix:   "tf",
+		IBMCloud: config.IBMCloudCfg{Region: "us-south"},
+		Gateway: config.GatewayCfg{
+			ClientSubnetLocal:  []string{"10.244.1.0/24", "10.244.2.0/24"},
+			ClientSubnetRemote: []string{"10.245.64.0/24"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		`gateway_client_subnet_local = ["10.244.1.0/24", "10.244.2.0/24"]`,
+		`gateway_client_subnet_remote = ["10.245.64.0/24"]`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered tfvars missing %q, got:\n%s", want, out)
+		}
+	}
+	// Empty lists render nothing (module default [] applies).
+	var buf2 bytes.Buffer
+	if err := RenderTFVars(&buf2, &config.Workspace{Prefix: "tf", IBMCloud: config.IBMCloudCfg{Region: "us-south"}}, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	if strings.Contains(buf2.String(), "gateway_client_subnet") {
+		t.Errorf("empty client-subnet lists should render nothing, got:\n%s", buf2.String())
+	}
+}
+
 func TestRenderTFVars_CreateMode(t *testing.T) {
 	ws := &config.Workspace{
 		IBMCloud: config.IBMCloudCfg{Region: "us-south", ResourceGroup: "default"},

@@ -285,26 +285,27 @@ gateway_egress_mode = "snatpool"
 gateway_vxlan_port = 6789
 
 # Client subnets the TMM static routes reach (the test-traffic sources).
-# These are the /32 hosts of your client VSIs — "local" = a jumphost in
-# the cluster VPC, "remote" = the TGW jumphost in the client VPC.
+# LISTS of CIDRs — the module installs one F5SPKStaticRoute per entry × zone,
+# so every client gets a TMM return route. "local" = cluster-VPC clients
+# (one CIDR per cluster jumphost subnet, so a same-zone AND a different-zone
+# jumphost are both reachable); "remote" = client-VPC clients over the TGW.
+# Empty (the default) = no client routes.
 #
-# The module defaults below are placeholders and are almost certainly
-# WRONG for your workspace. Two ways to get real values:
+# Two ways to fill them:
 #
-#   1. Let roksbnkctl fill them. `roksbnkctl gateway up` auto-derives these
-#      from the deployed Testing-phase jumphosts when you leave them unset
-#      (it picks the TGW jumphost for remote and a cluster jumphost for
-#      local, and logs what it chose). Just omit them here.
+#   1. Let roksbnkctl fill them. `roksbnkctl gateway up` auto-derives both
+#      lists from the deployed Testing-phase jumphost subnets when you leave
+#      them unset (local = every cluster jumphost subnet, remote = the TGW
+#      jumphost subnet), and logs what it chose. Just omit them here.
 #
-#   2. Discover them yourself, after `testing up`:
-#        roksbnkctl --on jumphost        -- hostname -I   # → remote (/32)
-#        roksbnkctl --on jumphost-<zone> -- hostname -I   # → local  (/32)
-#      or the whole subnet CIDR:
+#   2. Discover them yourself, after `testing up` — the jumphost subnet CIDRs:
 #        roksbnkctl --on jumphost -- ibmcloud is subnet <prefix>-jh-tgw-subnet \
-#          --output json | jq -r .ipv4_cidr_block
+#          --output json | jq -r .ipv4_cidr_block            # → one remote CIDR
+#        roksbnkctl --on jumphost -- ibmcloud is subnet <prefix>-jh-<zone>-subnet \
+#          --output json | jq -r .ipv4_cidr_block            # → one local CIDR per zone
 #
-# gateway_client_subnet_local  = "10.244.64.12"
-# gateway_client_subnet_remote = "10.245.64.5"
+# gateway_client_subnet_local  = ["10.244.1.0/24", "10.244.2.0/24"]
+# gateway_client_subnet_remote = ["10.245.64.0/24"]
 
 
 # ============================================================
