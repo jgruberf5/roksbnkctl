@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/jgruberf5/roksbnkctl/internal/bnkbom"
 )
 
@@ -146,6 +147,12 @@ func (e *Engine) copyOCI(ctx context.Context, a bnkbom.Artifact) Result {
 	src := sanitizeRef(a.Ref())
 	dst := sanitizeRef(e.Target.PushRef(a))
 	opts := e.craneOpts(ctx)
+	if a.Kind == bnkbom.KindImage {
+		// Flatten multi-arch images to the cluster's platform: the OpenShift
+		// internal registry 500s on manifest-list (image-index) pushes, and ROKS
+		// is linux/amd64, so a single-platform image is all the cluster needs.
+		opts = append(opts, crane.WithPlatform(&v1.Platform{OS: "linux", Architecture: "amd64"}))
+	}
 
 	srcDigest, err := crane.Digest(src, opts...)
 	if err != nil {
@@ -264,8 +271,12 @@ func ociDir(pushRef string) string {
 // matching the source. Returns the artifacts that are missing or mismatched.
 func (e *Engine) Verify(ctx context.Context, bom *bnkbom.BOM) []Result {
 	var bad []Result
-	opts := e.craneOpts(ctx)
 	for _, a := range bom.Artifacts {
+		opts := e.craneOpts(ctx)
+		if a.Kind == bnkbom.KindImage {
+			// Match copyOCI: compare the amd64 platform digest, not the index.
+			opts = append(opts, crane.WithPlatform(&v1.Platform{OS: "linux", Architecture: "amd64"}))
+		}
 		if a.SourceHost == classicHelmHost {
 			// Classic-helm charts are repackaged; presence is verified by a
 			// target-side existence check rather than a source-digest match.
