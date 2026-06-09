@@ -110,6 +110,19 @@ output "testing_cluster_jumphost_public_ips" {
   value       = { for zone, fip in ibm_is_floating_ip.cluster_jumphost_fip : zone => fip.address }
 }
 
+# Subnet CIDRs of the jumphost subnets. `roksbnkctl gateway up` reads these
+# to auto-derive the gateway client-subnet lists (PRD 12): one local route
+# per cluster-VPC jumphost subnet, one remote route for the client-VPC subnet.
+output "testing_cluster_jumphost_subnet_cidrs" {
+  description = "Map of availability zone to the cluster jumphost subnet CIDR"
+  value       = { for zone, sn in ibm_is_subnet.cluster_jumphost_subnet : zone => sn.ipv4_cidr_block }
+}
+
+output "testing_tgw_jumphost_subnet_cidr" {
+  description = "Subnet CIDR of the TGW (client-VPC) jumphost"
+  value       = var.testing_create_tgw_jumphost ? ibm_is_subnet.tgw_jumphost_subnet[0].ipv4_cidr_block : "TGW jumphost not created"
+}
+
 output "testing_cluster_jumphost_ssh_commands" {
   description = "Map of availability zone to SSH command for cluster jumphosts"
   value = {
