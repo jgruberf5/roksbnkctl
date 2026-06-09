@@ -3,6 +3,12 @@
   "language": "en",
   "words": [
     "roksbnkctl",
+    "nghttp",
+    "nghttp2",
+    "tcproute",
+    "tcproutes",
+    "httproute",
+    "httproutes",
     "kubeconfig",
     "kubectl",
     "terraform",
