@@ -1454,6 +1454,16 @@ resource "kubectl_manifest" "nad_macvlan" {
 
 # --- Charts: FLO + CIS (wait = true → real rollout readiness) ---------------
 
+locals {
+  # OCI chart-pull credentials. Off the mirror: repo.f5.com with the FAR
+  # _json_key_base64 service account. Under the air-gap mirror the chart comes
+  # from the OpenShift registry route, which REJECTS the FAR creds ("unable to
+  # validate token") — authenticate with the cluster's OpenShift token instead
+  # (the registry validates the token and ignores the username).
+  chart_pull_username = var.use_registry_mirror ? "unused" : "_json_key_base64"
+  chart_pull_password = var.use_registry_mirror ? var.kube_token : local.far_service_account_b64
+}
+
 resource "helm_release" "flo" {
   count = local.use_kubectl ? 1 : 0
 
@@ -1464,13 +1474,10 @@ resource "helm_release" "flo" {
   namespace        = var.flo_namespace
   create_namespace = false
 
-  # Authenticate the in-process helm provider's OCI chart pull to repo.f5.com.
-  # The legacy shell path ran `helm registry login -u _json_key_base64
-  # --password-stdin <far_repo>` before `helm upgrade`; the terraform-native
-  # helm_release must pass the same FAR service-account creds or it pulls the
-  # chart anonymously and the registry returns 403 Forbidden.
-  repository_username = "_json_key_base64"
-  repository_password = local.far_service_account_b64
+  # Authenticate the in-process helm provider's OCI chart pull — FAR creds off
+  # the mirror, the OpenShift cluster token under it (see local.chart_pull_*).
+  repository_username = local.chart_pull_username
+  repository_password = local.chart_pull_password
 
   # Match the legacy `helm upgrade --install ... --wait=false`: deploy the FLO
   # operator chart WITHOUT blocking on helm-level pod readiness. Real
@@ -1502,10 +1509,10 @@ resource "helm_release" "cis" {
   namespace        = var.flo_namespace
   create_namespace = false
 
-  # Same FAR registry auth as helm_release.flo above — the OCI chart pull
-  # needs the service-account creds or repo.f5.com answers 403.
-  repository_username = "_json_key_base64"
-  repository_password = local.far_service_account_b64
+  # Same chart-pull auth as helm_release.flo above (FAR creds off the mirror,
+  # the OpenShift cluster token under it).
+  repository_username = local.chart_pull_username
+  repository_password = local.chart_pull_password
 
   # Legacy parity: `--wait=false`. CIS readiness is not helm-gated here either.
   wait    = false
