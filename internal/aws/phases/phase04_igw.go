@@ -85,6 +85,20 @@ func Phase04IGWDown(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	}
 
 	vpcID := st.Get("VPC_ID")
+	if vpcID == "" {
+		// Tag-discovery path: state carries no VPC_ID, so read the attachment
+		// from the IGW itself. Silently skipping the detach here used to make
+		// the delete below fail with DependencyViolation (IGW still attached)
+		// whenever down ran from tag-discovery.
+		out, err := clients.EC2.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+			InternetGatewayIds: []string{igwID},
+		})
+		if err == nil && len(out.InternetGateways) > 0 &&
+			len(out.InternetGateways[0].Attachments) > 0 &&
+			out.InternetGateways[0].Attachments[0].VpcId != nil {
+			vpcID = *out.InternetGateways[0].Attachments[0].VpcId
+		}
+	}
 	fmt.Fprintf(os.Stderr, "[phase 04 down] detaching+deleting IGW %s\n", igwID)
 
 	// Detach if still attached.

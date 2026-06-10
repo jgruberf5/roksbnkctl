@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 )
@@ -324,5 +327,61 @@ func TestPhase07IAM_CreatesSGBNKData(t *testing.T) {
 	sgID := st.Get("SG_BNK_DATA")
 	if !strings.HasPrefix(sgID, "sg-") {
 		t.Errorf("SG_BNK_DATA = %q, want sg-... prefix", sgID)
+	}
+}
+
+// TestClearSGReferences_RevokesRefsAndDeletesOrphanEKSSG pins the
+// DependencyViolation regression hit live on bnk-demo teardown (2026-06-10):
+// the EKS-managed cluster SG survives cluster deletion when cross-SG rules
+// reference SG_BNK_DATA, and DeleteSecurityGroup then fails. clearSGReferences
+// must revoke exactly the referencing rules and delete the orphaned
+// eks-cluster-sg-<cluster>-* shell.
+func TestClearSGReferences_RevokesRefsAndDeletesOrphanEKSSG(t *testing.T) {
+	bnkData := "sg-0bnkdata"
+	eksSG := "sg-0ekscluster"
+	eksSGName := "eks-cluster-sg-tracer-12345"
+	otherSG := "sg-0unrelated"
+	proto := "-1"
+
+	ec2m := &mockEC2{
+		describeSGsOut: &ec2.DescribeSecurityGroupsOutput{
+			SecurityGroups: []ec2types.SecurityGroup{
+				{
+					GroupId:   &eksSG,
+					GroupName: &eksSGName,
+					IpPermissions: []ec2types.IpPermission{{
+						IpProtocol: &proto,
+						UserIdGroupPairs: []ec2types.UserIdGroupPair{
+							{GroupId: &bnkData},
+							{GroupId: &otherSG}, // must NOT be revoked
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	if err := clearSGReferences(context.Background(), ec2m, bnkData, "tracer"); err != nil {
+		t.Fatalf("clearSGReferences: %v", err)
+	}
+
+	if len(ec2m.revokeIngressInputs) != 1 {
+		t.Fatalf("expected 1 RevokeSecurityGroupIngress call, got %d", len(ec2m.revokeIngressInputs))
+	}
+	rev := ec2m.revokeIngressInputs[0]
+	if *rev.GroupId != eksSG {
+		t.Errorf("revoke targeted %q, want %q", *rev.GroupId, eksSG)
+	}
+	var revokedPairs []string
+	for _, p := range rev.IpPermissions {
+		for _, g := range p.UserIdGroupPairs {
+			revokedPairs = append(revokedPairs, *g.GroupId)
+		}
+	}
+	if len(revokedPairs) != 1 || revokedPairs[0] != bnkData {
+		t.Errorf("revoked pairs = %v, want exactly [%s] (unrelated refs must be preserved)", revokedPairs, bnkData)
+	}
+	if ec2m.deleteSGCalls != 1 {
+		t.Errorf("expected the orphaned EKS cluster SG to be deleted (1 DeleteSecurityGroup call), got %d", ec2m.deleteSGCalls)
 	}
 }
