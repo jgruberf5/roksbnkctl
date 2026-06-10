@@ -103,14 +103,35 @@ Cluster state is written to `.awsbnkctl/<name>/state.env`. Loss of the local cac
 
 ## Patterns
 
-`pattern: host-device` is the current supported data-path variant. TMM runs directly on EC2 host NIC interfaces via secondary ENIs (no SR-IOV `vfio` passthrough).
+`pattern:` selects the TMM data-plane interface topology and binding. Backend pods are always reached over the CNI; the pattern only changes how TMM gets its client-side (and optional server-side) interfaces.
 
-**Requirements:**
-- Instance type with at least 4 ENIs (primary + EKS CNI + 2 BNK secondaries). `m5.xlarge` minimum; `m6i.4xlarge` is the validated BNK 2.3 *Small* size.
+| `pattern:` | Interfaces | Binding | Min ENIs | Status |
+|---|---|---|---|---|
+| `external-only` | external only | host-device (kernel) | 2 | supported |
+| `dual-interface` | external + internal | host-device (kernel) | 3 | supported |
+| `sriov-external` | external only | SR-IOV / `vfio-pci` DPDK | 2 | experimental |
+
+`host-device` is the legacy alias for `dual-interface` (normalized at load), so existing configs keep working unchanged. `m6i.4xlarge` is the validated BNK 2.3 *Small* size; the ENI floor is `primary + one TMM secondary per data-plane interface`. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the per-pattern configs under [`examples/`](examples/) for the full model.
+
+**Common requirements:**
 - VPC CNI prefix delegation (enabled automatically in Phase 08b) so pods stay on the primary ENI and secondary ENIs remain available to BNK.
-- A `network.dataPath` block in `cluster.yaml` (Phase 03 creates the BNK ext/int subnets; Phase 17 attaches the secondary ENIs to the TMM node).
+- A `network.dataPath` block in `cluster.yaml` (Phase 03 creates the BNK subnets; Phase 17 attaches the secondary ENIs to the TMM node).
 
-Phase 00 preflight enforces these minimums and fails fast before any AWS writes.
+Phase 00 preflight enforces the ENI / CPU / memory minimums and fails fast before any AWS writes.
+
+## Examples
+
+Ready-to-edit `cluster.yaml` topologies live under [`examples/`](examples/):
+
+| Example | What it is |
+|---|---|
+| [`examples/tracer/`](examples/tracer/) | Minimal VPC-only tracer-bullet (fastest smoke test) |
+| [`examples/full-cluster/`](examples/full-cluster/) | Complete BNK cluster reference config |
+| [`examples/external-only/`](examples/external-only/) | Single-interface `external-only` pattern |
+| [`examples/sriov-external/`](examples/sriov-external/) | Experimental SR-IOV/DPDK `sriov-external` pattern |
+| [`examples/demo/`](examples/demo/) | Full demo cluster + curated walkthroughs ([README](examples/demo/README.md)) |
+
+The **demo** example also ships two migration scenarios — `demo run ingress-migration` (ingress-nginx / HAProxy / BNK side-by-side) and `demo run bigip-cis` (external BIG-IP VE + CIS, the model BNK replaces). Walkthrough: [`examples/demo/README.md`](examples/demo/README.md).
 
 ## Commands
 

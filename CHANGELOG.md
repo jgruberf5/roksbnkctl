@@ -12,11 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 - **`demo {list,run,clean}` command group** — curated audience catalogue alongside the `scenarios` validation suite. The two registries stay disjoint; `demo list` shows the union (demos + Green scenarios) with a `KIND` column.
 - **`http2` demo use-case** — proves end-to-end HTTP/2 (h2c) through TMM, asserting both legs (client→TMM wire HTTP/2 + TMM→backend body `HTTP/2.0`) via SSH+EICE curl from the pre-staged jumphost.
 - **`diameter` demo use-case** — proves Diameter (RFC 6733) CER→CEA Result-Code 2001 transit across an L4 BNK Gateway, pushing the embedded Python client via `CopyFileViaEICE` and running it via `RunStagingCommands`.
+- **`ingress-migration` demo use-case** — runs ingress-nginx, HAProxy, and a BNK Gateway API route side-by-side over one shared backend, so the legacy-ingress → BNK migration path can be compared live before cutover.
+- **`bigip-cis` demo use-case** — stands up an external F5 BIG-IP VE fronted by in-cluster CIS (`k8s-bigip-ctlr`) programming a `VirtualServer` — the traditional appliance model BNK replaces. Opt-in via the `bigipVE:` block; admin password supplied out-of-band via `AWSBNKCTL_BIGIP_PASSWORD`.
 - **Jumphost staging primitives** — exported `jumphost.RunStagingCommands` + `jumphost.CopyFileViaEICE` that mint+push ephemeral EICE keys internally (no operator key dance), shared by demo use-cases and the demo-client pre-staging phase.
 - **VPC CNI prefix delegation (Phase 08b)** — moved before the node group so nodes boot in prefix mode. Eliminates the cold-start hang caused by secondary-ENI asymmetric drop on the EKS CNI.
 - **Phase 11b** — EBS CSI managed addon + `gp3` StorageClass + hugepages-2Mi DaemonSet, in front of the BNK install.
 - **Phases 17b/c/d** — multi-ENI jumphost provisioning + interface discovery + (under `--demo`) jumphost client pre-staging.
 - **Phase 23b** — `F5SPKVlan` + `GatewayClass` for the host-device pattern, completing the TMM data-plane plumbing.
+- **Selectable interface patterns** — `pattern: external-only | dual-interface | sriov-external` (`host-device` is the legacy alias for `dual-interface`). `sriov-external` runs TMM's DPDK dataplane over a `vfio-pci`-bound ENA and is experimental.
 
 ### Changed
 

@@ -139,13 +139,13 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 // the existing PrintResults rendering doesn't change for the
 // no-target case (preserves Sprint 0's byte-equivalence).
 //
-// BackendName is "" today; Phase 3 (PRD 03) will switch to "ssh" once
-// the backend abstraction lands. Until then the Check renders without a
-// backend prefix, identical to the general checks.
+// BackendName is "" today; it will switch to "ssh" once the execution-backend
+// abstraction lands. Until then the Check renders without a backend prefix,
+// identical to the general checks.
 func runTargetCheck(ctx context.Context, cctx *config.Context, name string) doctor.Check {
 	c := doctor.Check{
 		Name:        "target " + name,
-		BackendName: "", // TODO(phase3): set "ssh" once PRD 03 backend lands
+		BackendName: "", // set to "ssh" once the SSH execution backend lands
 	}
 	if cctx == nil || cctx.Workspace == nil {
 		c.Status = doctor.StatusError

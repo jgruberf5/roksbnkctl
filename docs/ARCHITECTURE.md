@@ -281,9 +281,11 @@ instance plus an EC2 Instance Connect Endpoint inside the external data-path
 subnet so operators can verify TMM SelfIP routing without standing up EC2 by
 hand; it works for any BNK pattern.
 
-`sriov-external` is reserved in the schema but **blocked at validation** pending a
-live ENA/`vfio-pci` feasibility spike — SR-IOV/DPDK on AWS ENA is undocumented
-and unsupported by F5 on the EKS host build.
+`sriov-external` is **experimental**: TMM drives its own DPDK dataplane over an
+ENA bound to `vfio-pci` (No-IOMMU) instead of the kernel `host-device` path. The
+substrate is proven live on AL2023 EKS nodes, but SR-IOV/DPDK on AWS ENA is
+undocumented and unsupported by F5 on the EKS host build, so the pattern emits a
+loud warning at validation and is intended for evaluation only.
 
 ---
 
