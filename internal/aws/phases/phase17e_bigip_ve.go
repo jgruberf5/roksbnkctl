@@ -751,6 +751,9 @@ func cidrDotN(cidr string, n int) (string, error) {
 	if ip == nil {
 		return "", fmt.Errorf("CIDR %q is not IPv4", cidr)
 	}
+	if n < 0 || n > 255 {
+		return "", fmt.Errorf("host offset %d out of range [0,255] for CIDR %q", n, cidr)
+	}
 	// Copy to avoid modifying the shared slice.
 	result := make(net.IP, 4)
 	copy(result, ip)

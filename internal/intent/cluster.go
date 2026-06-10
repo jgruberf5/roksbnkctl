@@ -1068,7 +1068,7 @@ func validateBigIPVE(c *Cluster) error {
 	}
 	var reserved []string
 	for _, off := range bigipVEReservedOffsets {
-		rip := net.IPv4(base[0], base[1], base[2], byte(off)).String()
+		rip := net.IPv4(base[0], base[1], base[2], byte(off)).String() // #nosec G115 -- off is a fixed reserved host byte (<256) from bigipVEReservedOffsets
 		reserved = append(reserved, rip)
 		if vipIP.Equal(net.ParseIP(rip)) {
 			return fmt.Errorf("bigipVE.vip %q collides with a reserved address in %s "+
