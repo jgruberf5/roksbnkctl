@@ -55,8 +55,6 @@ func stageStatusWorkspace(t *testing.T, shape config.WorkspaceShape) string {
 		writeStateForStatusTest(t, ws, "", "tfstate_cluster_only.json")
 	case config.ShapeSplit:
 		writeStateForStatusTest(t, ws, "tfstate_split.json", "tfstate_cluster_only.json")
-	case config.ShapeLegacySingle:
-		writeStateForStatusTest(t, ws, "tfstate_legacy_single.json", "")
 	default:
 		t.Fatalf("unsupported test shape %v", shape)
 	}
@@ -252,23 +250,5 @@ func TestRunStatus_AllFourPhasesDeployed(t *testing.T) {
 	}
 	if strings.Contains(out, "not deployed") {
 		t.Errorf("all four phases should be deployed, got 'not deployed' in:\n%s", out)
-	}
-}
-
-func TestRunStatus_ShapeLegacySingle_PreservesV10xLastApply(t *testing.T) {
-	ws := stageStatusWorkspace(t, config.ShapeLegacySingle)
-	out := runStatusForTest(t, ws)
-
-	// Shape callout + v1.0.x Last apply line both present, per PRD 06
-	// §"`status` command integration" (script-compat preservation).
-	if !strings.Contains(out, "Shape:") || !strings.Contains(out, "legacy single-state") {
-		t.Errorf("ShapeLegacySingle: missing 'Shape: … legacy single-state' callout:\n%s", out)
-	}
-	if !strings.Contains(out, "Last apply:") {
-		t.Errorf("ShapeLegacySingle: v1.0.x 'Last apply' line must be preserved verbatim:\n%s", out)
-	}
-	// Per-phase lines should NOT appear under Legacy.
-	if strings.Contains(out, "Cluster phase:") || strings.Contains(out, "BNK trial:") {
-		t.Errorf("ShapeLegacySingle: should not emit per-phase lines (only the v1.0.x Last apply line + shape callout):\n%s", out)
 	}
 }

@@ -346,9 +346,6 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	if filepath.Base(w.stateDir) == "state-gateway" {
 		return "gateway"
 	}
-	if shape, err := config.DetectShape(w.name); err == nil && shape == config.ShapeLegacySingle {
-		return "legacy-single"
-	}
 	return "trial"
 }
 

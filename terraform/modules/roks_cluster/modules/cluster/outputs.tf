@@ -39,6 +39,20 @@ output "openshift_cluster_state" {
   value       = var.create_cluster ? data.ibm_container_vpc_cluster.cluster_info[0].state : "Cluster not created"
 }
 
+# Registry COS identity — emitted so `roksbnkctl cluster up` records it in
+# cluster-outputs.json directly, instead of reverse-guessing the instance name.
+# Empty when this phase didn't create the COS (count 0), so the CLI falls back
+# to its name-lookup for an existing/reused instance.
+output "registry_cos_name" {
+  description = "Name of the registry COS instance (empty when not created by this phase)"
+  value       = length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].name : ""
+}
+
+output "registry_cos_crn" {
+  description = "CRN of the registry COS instance (empty when not created by this phase)"
+  value       = length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].crn : ""
+}
+
 output "openshift_cluster_ingress_hostname" {
   description = "Ingress hostname for the OpenShift cluster"
   value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].ingress_hostname : "Cluster not created"

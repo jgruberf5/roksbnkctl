@@ -32,6 +32,16 @@ output "roks_transit_gateway_name" {
   value       = module.roks_cluster.transit_gateway_name
 }
 
+output "registry_cos_name" {
+  description = "Name of the registry COS instance created by the cluster phase (empty when reusing an existing one)"
+  value       = module.roks_cluster.registry_cos_name
+}
+
+output "registry_cos_crn" {
+  description = "CRN of the registry COS instance created by the cluster phase (empty when reusing an existing one)"
+  value       = module.roks_cluster.registry_cos_crn
+}
+
 
 # ============================================================
 # flo

@@ -41,8 +41,6 @@ func stageWorkspaceShape(t *testing.T, shape config.WorkspaceShape) string {
 		writeStateForTest(t, ws, "", "tfstate_cluster_only.json")
 	case config.ShapeSplit:
 		writeStateForTest(t, ws, "tfstate_split.json", "tfstate_cluster_only.json")
-	case config.ShapeLegacySingle:
-		writeStateForTest(t, ws, "tfstate_legacy_single.json", "")
 	default:
 		t.Fatalf("unsupported test shape %v", shape)
 	}
@@ -106,39 +104,6 @@ func newCmd() *cobra.Command {
 	return c
 }
 
-// TestRunBnkUp_LegacySingleRefuses — `bnk up` must refuse on legacy
-// single-state workspaces because cluster + trial share one state file
-// there, and the trial can't be applied in isolation.
-func TestRunBnkUp_LegacySingleRefuses(t *testing.T) {
-	ws := stageWorkspaceShape(t, config.ShapeLegacySingle)
-	pointWorkspaceFlag(t, ws)
-
-	err := runBnkUp(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "legacy single-state"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
-	}
-}
-
-// TestRunBnkDown_LegacySingleRefuses — same constraint as bnk up: no
-// trial-only destroy on legacy single-state.
-func TestRunBnkDown_LegacySingleRefuses(t *testing.T) {
-	ws := stageWorkspaceShape(t, config.ShapeLegacySingle)
-	pointWorkspaceFlag(t, ws)
-
-	err := runBnkDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "legacy single-state"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
-	}
-}
-
 // TestRunBnkDown_EmptyRefuses — `bnk down` must refuse on empty
 // workspaces with "no BNK trial state to destroy" (PRD 06 §"Refusal
 // messages").
@@ -194,30 +159,11 @@ func TestRunBnkDown_SplitDispatches(t *testing.T) {
 		return
 	}
 	for _, badMatch := range []string{
-		"legacy single-state",
 		"no BNK trial state to destroy",
 	} {
 		if strings.Contains(err.Error(), badMatch) {
 			t.Errorf("Split workspace tripped refusal %q\n  got: %v", badMatch, err)
 		}
-	}
-}
-
-// TestClusterDown_LegacySingleRefuses pins the `cluster down` refusal
-// on legacy single-state (PRD 06 §"Refusal messages"). cluster_phase
-// has the same shape-detection wiring as bnk_phase, so we cover its
-// happy-path-blocked behavior here.
-func TestClusterDown_LegacySingleRefuses(t *testing.T) {
-	ws := stageWorkspaceShape(t, config.ShapeLegacySingle)
-	pointWorkspaceFlag(t, ws)
-
-	err := runClusterDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "legacy single-state"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
 	}
 }
 
@@ -248,23 +194,6 @@ func TestClusterDown_EmptyRefuses(t *testing.T) {
 		t.Fatal("expected refusal, got nil")
 	}
 	want := "nothing to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
-	}
-}
-
-// TestClusterUp_LegacySingleRefuses — cluster up on legacy must
-// refuse: applying the cluster phase against an empty state-cluster/
-// would create a duplicate cluster.
-func TestClusterUp_LegacySingleRefuses(t *testing.T) {
-	ws := stageWorkspaceShape(t, config.ShapeLegacySingle)
-	pointWorkspaceFlag(t, ws)
-
-	err := runClusterUp(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "v1.0.x single-state"
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal message missing %q\n  got: %v", want, err)
 	}

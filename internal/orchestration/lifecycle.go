@@ -151,22 +151,6 @@ func RunUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	if pres.Legacy {
-		// Cluster + BNK + jumphosts share one state file — the monolithic
-		// path applies the whole HCL tree in one terraform run, matching
-		// v1.0.x semantics exactly.
-		return RunTrialUp(ctx, in)
-	}
-
-	// Nudge (not auto-run) the pre-Sprint-28 jumphost migration: the
-	// jumphosts still live in the BNK state and state-testing/ is empty.
-	if mig, merr := config.TestingMigrationNeeded(cctx.WorkspaceName); merr == nil && mig {
-		fmt.Fprintln(os.Stderr,
-			"note: this workspace's jumphosts still live in the BNK state (pre-Sprint-28 layout).")
-		fmt.Fprintln(os.Stderr,
-			"      run `roksbnkctl testing migrate` to split them into state-testing/ before `testing down` can manage them independently.")
-	}
-
 	// Cluster serial-first (both downstreams need it). Skip it when a
 	// cluster is already present in state-cluster/ OR when reusing a
 	// registered cluster (cluster-outputs.json present, no state-cluster/).
@@ -484,9 +468,6 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
-	}
-	if pres.Legacy {
-		return RunTrialDown(ctx, in)
 	}
 	if !pres.Any() {
 		return errors.New("nothing to destroy in this workspace")
