@@ -136,8 +136,8 @@ type Cluster struct {
 	// Testing holds optional test-infrastructure configuration (slice 12+).
 	// When absent, no test infrastructure is provisioned (zero AWS calls in Phase 17b).
 	Testing *TestingSpec `yaml:"testing,omitempty"`
-	// Demo declares this as a demo deployment (PRD 10, Slice A1+). When present
-	// and enabled, `up` writes DEMO_MODE/DEMO_STAGED_AT/DEMO_EXPIRY to state.env.
+	// Demo declares this as a demo deployment. When present and enabled, `up`
+	// writes DEMO_MODE/DEMO_STAGED_AT/DEMO_EXPIRY to state.env.
 	// Omitting the block (or leaving enabled: false) is the default (not a demo).
 	Demo *DemoSpec `yaml:"demo,omitempty"`
 	// BigIPVE declares a F5 BIG-IP VE appliance for a migration demo (F2+). When
@@ -243,7 +243,7 @@ type ForgeSpec struct {
 	// Override via AWSBNKCTL_FORGE_URL env (env > yaml > default).
 	URL string `yaml:"url,omitempty"`
 	// MCPURL is the forge MCP endpoint. Default http://localhost:8081/mcp/.
-	// Slice 4 prefers MCP and falls back to REST at URL on capability gaps.
+	// MCP is preferred over REST; falls back to REST at URL on capability gaps.
 	MCPURL string `yaml:"mcpUrl,omitempty"`
 	// Username is the forge REST login username. Default "admin".
 	// Set here or pass --forge-user (flag > yaml > default).
@@ -333,12 +333,12 @@ type JumphostSpec struct {
 	MgmtSubnetIndex int `yaml:"mgmtSubnetIndex,omitempty"`
 }
 
-// DemoSpec declares that this cluster is a demo deployment (PRD 10, Slice A1).
-// When Enabled is true, `awsbnkctl up` writes DEMO_MODE, DEMO_STAGED_AT, and
-// DEMO_EXPIRY to the cluster's state.env before the provisioning phase graph.
-// Demo mode requires testing.jumphost.enabled: true — every demo use-case runs
-// a test client from the EICE jumphost (Slice B onwards). The `--demo` CLI flag
-// is syntactic sugar that forces Enabled=true without requiring this block.
+// DemoSpec declares that this cluster is a demo deployment. When Enabled is
+// true, `awsbnkctl up` writes DEMO_MODE, DEMO_STAGED_AT, and DEMO_EXPIRY to
+// the cluster's state.env before the provisioning phase graph. Demo mode
+// requires testing.jumphost.enabled: true — every demo use-case runs a test
+// client from the EICE jumphost. The `--demo` CLI flag is syntactic sugar that
+// forces Enabled=true without requiring this block.
 type DemoSpec struct {
 	// Enabled is the master switch. Default false (omitted block = not a demo).
 	Enabled bool `yaml:"enabled"`

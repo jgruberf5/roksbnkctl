@@ -19,8 +19,8 @@ import (
 )
 
 // ErrHostKeyMismatch is returned when a known host's stored key differs
-// from the server's offered key. Callers map this to exit code 126 per
-// PRD 01 (man-in-the-middle protection).
+// from the server's offered key (man-in-the-middle protection). Callers
+// map this to exit code 126.
 var ErrHostKeyMismatch = errors.New("host key mismatch")
 
 // HostKeyOptions tunes the TOFU prompt + insecure-bypass behaviours.
@@ -37,7 +37,7 @@ type HostKeyOptions struct {
 }
 
 // HostKeyCallback returns an ssh.HostKeyCallback that consults
-// ~/.awsbnkctl/known_hosts. Behaviour matches PRD 01:
+// ~/.awsbnkctl/known_hosts:
 //
 //   - Stored key matches: accept silently.
 //   - Stored key differs: error wrapping ErrHostKeyMismatch.
@@ -107,7 +107,7 @@ func KnownHostsPath() (string, error) {
 
 // hostEntry is a parsed known_hosts line. We store one host per line in
 // the simple `<host> <keytype> <key-b64>` shape — no hashed names, no
-// CA markers, no @cert-authority. PRD 01 scope.
+// CA markers, no @cert-authority.
 type hostEntry struct {
 	host string
 	key  ssh.PublicKey
@@ -177,7 +177,7 @@ func appendKnownHost(path string, host string, key ssh.PublicKey) error {
 // hostname the caller passed (the value from Connect's addr arg), fall
 // back to the resolved address. Strip the port — known_hosts entries
 // for non-22 ports take the [host]:port form, but we only record one
-// shape today; PRD 01 doesn't promise per-port granularity.
+// shape today (no per-port granularity guarantee).
 func normalizedHost(hostname string, addr net.Addr) string {
 	h := hostname
 	if h == "" && addr != nil {

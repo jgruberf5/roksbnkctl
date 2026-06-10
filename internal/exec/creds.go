@@ -1,9 +1,7 @@
 // Package exec defines the Backend interface and per-backend
 // implementations awsbnkctl uses to run external tools (kubectl,
 // iperf3, etc.). Backends differ along network locality (where the
-// tool runs) and toolchain freshness (host install vs. pinned image);
-// see PRD 03 (docs/prd/03-EXECUTION-BACKENDS.md) for the full
-// rationale.
+// tool runs) and toolchain freshness (host install vs. pinned image).
 //
 // AWS credentials resolve via the SDK chain in `internal/aws` (env /
 // shared config / profile / instance role / SSO / web-identity) and
@@ -44,8 +42,7 @@ type Credentials struct {
 // AWS credentials are NOT threaded through this struct. The AWS SDK
 // chain resolves them at the caller (`internal/aws.NewClients`) and
 // external tools consume them via the standard AWS provider env vars
-// inherited from the awsbnkctl process environment. See PRD 04 for
-// the cross-package contract.
+// inherited from the awsbnkctl process environment.
 func (c *Credentials) EnvVars() []string {
 	if c == nil {
 		return nil
@@ -95,7 +92,7 @@ func (c *Credentials) DockerArgs(tempDir string) (envArgs, mountArgs []string, c
 			return nil, nil, nil, fmt.Errorf("materialising kubeconfig: %w", werr)
 		}
 		tempFiles = append(tempFiles, path)
-		// SINGLE FILE, read-only. PRD 04 §Docker §"Anti-patterns".
+		// SINGLE FILE, read-only — never mount the parent .kube dir.
 		mountArgs = append(mountArgs, "-v", path+":/root/.kube/config:ro")
 	}
 

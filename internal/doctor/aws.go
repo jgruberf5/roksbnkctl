@@ -11,15 +11,11 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
 )
 
-// serviceQuotasFeatureFlagEnv gates the Sprint 4 optional Service
-// Quotas probe in the doctor. Off by default — the operator opts in by
-// exporting AWSBNKCTL_DOCTOR_SERVICE_QUOTAS=1 (or `true`/`yes`/`on`)
-// before invoking `awsbnkctl doctor`. Once the operator-run spike
-// validates the live signal, v0.x flips the default and retires the
-// flag.
-//
-// Brief §"Optional Service Quotas check" — gated by an internal
-// feature flag (off by default).
+// serviceQuotasFeatureFlagEnv gates the optional Service Quotas probe
+// in the doctor. Off by default — the operator opts in by exporting
+// AWSBNKCTL_DOCTOR_SERVICE_QUOTAS=1 (or `true`/`yes`/`on`) before
+// invoking `awsbnkctl doctor`. Once the operator-run spike validates
+// the live signal, v0.x flips the default and retires the flag.
 const serviceQuotasFeatureFlagEnv = "AWSBNKCTL_DOCTOR_SERVICE_QUOTAS"
 
 // serviceQuotasEnabled reports whether the operator opted in to the
@@ -35,28 +31,23 @@ func serviceQuotasEnabled() bool {
 	return false
 }
 
-// awsChecks runs the AWS-shaped pre-flight checks introduced in
-// Sprint 1 + extended in Sprint 2 per PRD 07 § "internal/aws/" + PRD
-// 08 § "CLI surface" §"awsbnkctl doctor". Replaces the Sprint 0
-// "AWS support coming in Sprint 1" placeholder in doctor.Run().
+// awsChecks runs the AWS-shaped pre-flight checks.
 //
 // Six checks, ordered by failure cost (cheapest → most informative):
 //
 //  1. credentials configured — no API call.
 //  2. STS GetCallerIdentity — one API call; validates the resolved key.
 //  3. EKS DescribeCluster permission probe — bogus cluster name.
-//  4. EC2 vCPU quota probe — closes Sprint 1 staff Issue 2. Probes
-//     ec2:DescribeAccountAttributes (the cheapest EC2 read that
-//     answers "is the cred allowed to talk to EC2 at all?"); the
-//     actual running-on-demand quota lives in Service Quotas, which
-//     this row points the operator at.
-//  5. S3 PutObject feasibility probe — Sprint 2 (PRD 08). HeadBucket
-//     against the workspace's supply-chain bucket name; NotFound is
-//     OK (bucket not created yet, normal pre-`up`), AccessDenied
-//     surfaces the IAM gap.
-//  6. IAM:GetOpenIDConnectProvider permission probe — Sprint 2 (PRD 08).
-//     GetRole against the FLO IRSA role; NoSuchEntity is informational
-//     (role not yet created), other errors are actionable.
+//  4. EC2 vCPU quota probe — probes ec2:DescribeAccountAttributes (the
+//     cheapest EC2 read that answers "is the cred allowed to talk to
+//     EC2 at all?"); the actual running-on-demand quota lives in
+//     Service Quotas, which this row points the operator at.
+//  5. S3 PutObject feasibility probe — HeadBucket against the
+//     workspace's supply-chain bucket name; NotFound is OK (bucket not
+//     created yet, normal pre-`up`), AccessDenied surfaces the IAM gap.
+//  6. IAM:GetOpenIDConnectProvider permission probe — GetRole against
+//     the FLO IRSA role; NoSuchEntity is informational (role not yet
+//     created), other errors are actionable.
 func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 	var out []withWhy
 
@@ -169,11 +160,11 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 		})
 	}
 
-	// Check 4: EC2 vCPU quota probe — closes Sprint 1 staff Issue 2.
-	// The real "running on-demand" quota lives in Service Quotas; for
-	// the doctor row we probe ec2:DescribeAccountAttributes as the
-	// cheapest "EC2 read works at all" signal and surface a pointer
-	// at where the operator finds the live quota.
+	// Check 4: EC2 vCPU quota probe. The real "running on-demand" quota
+	// lives in Service Quotas; for the doctor row we probe
+	// ec2:DescribeAccountAttributes as the cheapest "EC2 read works at
+	// all" signal and surface a pointer at where the operator finds the
+	// live quota.
 	quota, qerr := clients.VCPUQuotaAttribute(ctx)
 	switch {
 	case qerr == nil:
@@ -181,9 +172,9 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 			Check: Check{
 				Name:   "aws ec2 vCPU quota",
 				Status: StatusOK,
-				Detail: fmt.Sprintf("ec2 read OK (default-vpc=%s); check Service Quotas for the Running On-Demand c5n quota (PRD 07 c5n.4xlarge target = 16 vCPU/node, default 5 instances = 80 vCPU)", quota),
+				Detail: fmt.Sprintf("ec2 read OK (default-vpc=%s); check Service Quotas for the Running On-Demand c5n quota (c5n.4xlarge target = 16 vCPU/node, default 5 instances = 80 vCPU)", quota),
 			},
-			Why: "PRD 07's self-managed node group needs ≥3 c5n.4xlarge (48 vCPU). Many accounts default to 5-instance / 80-vCPU running-on-demand quota — enough for the default node count but flagging the path to lift it.",
+			Why: "The self-managed node group needs ≥3 c5n.4xlarge (48 vCPU). Many accounts default to 5-instance / 80-vCPU running-on-demand quota — enough for the default node count but flagging the path to lift it.",
 		})
 	default:
 		out = append(out, withWhy{
@@ -192,7 +183,7 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 				Status: StatusWarning,
 				Detail: fmt.Sprintf("ec2:DescribeAccountAttributes failed: %v (verify ec2:Describe* IAM permissions)", qerr),
 			},
-			Why: "PRD 07's self-managed node group needs EC2 quota headroom; this probe validates the IAM permission path.",
+			Why: "The self-managed node group needs EC2 quota headroom; this probe validates the IAM permission path.",
 		})
 	}
 
@@ -215,7 +206,7 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 					Status: StatusOK,
 					Detail: fmt.Sprintf("L-1216C47A = %.0f vCPU (live Service Quotas value)", val),
 				},
-				Why: "PRD 07's self-managed node group needs ≥48 vCPU (3× c5n.4xlarge). The live quota answers whether the account can host that without a limit-increase ticket.",
+				Why: "The self-managed node group needs ≥48 vCPU (3× c5n.4xlarge). The live quota answers whether the account can host that without a limit-increase ticket.",
 			})
 		default:
 			out = append(out, withWhy{
@@ -229,8 +220,8 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 		}
 	}
 
-	// Check 5: S3 PutObject feasibility probe (PRD 08). HeadBucket
-	// against the workspace's expected supply-chain bucket. We don't
+	// Check 5: S3 PutObject feasibility probe. HeadBucket against the
+	// workspace's expected supply-chain bucket. We don't
 	// know the exact bucket name until `awsbnkctl up` runs (the
 	// random suffix is generated by the Go-SDK provisioning phase),
 	// so the probe uses the workspace-recorded bucket (if any) or
@@ -247,12 +238,12 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 		case awspkg.IsS3NotFound(herr):
 			out = append(out, withWhy{
 				Check: Check{Name: "aws s3:PutObject feasibility", Status: StatusOK, Detail: "HeadBucket returned NotFound (s3 permission OK; bucket not yet created)"},
-				Why:   "PRD 08 supply-chain bucket holds the FAR archive + JWT; validates `awsbnkctl init` will be able to PutObject when the bucket exists",
+				Why:   "the supply-chain bucket holds the FAR archive + JWT; validates `awsbnkctl init` will be able to PutObject when the bucket exists",
 			})
 		case awspkg.IsS3AccessDenied(herr):
 			out = append(out, withWhy{
 				Check: Check{Name: "aws s3:PutObject feasibility", Status: StatusWarning, Detail: "HeadBucket returned AccessDenied — verify the IAM policy attaches s3:HeadBucket + s3:PutObject"},
-				Why:   "PRD 08 supply-chain bucket holds the FAR archive + JWT",
+				Why:   "the supply-chain bucket holds the FAR archive + JWT",
 			})
 		default:
 			out = append(out, withWhy{
@@ -261,26 +252,26 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 					Status: StatusWarning,
 					Detail: fmt.Sprintf("probe failed: %v", herr),
 				},
-				Why: "PRD 08 supply-chain bucket holds the FAR archive + JWT",
+				Why: "the supply-chain bucket holds the FAR archive + JWT",
 			})
 		}
 	} else {
 		out = append(out, withWhy{
 			Check: Check{Name: "aws s3:PutObject feasibility", Status: StatusOK, Detail: "HeadBucket OK (s3 permission + bucket reachable)"},
-			Why:   "PRD 08 supply-chain bucket holds the FAR archive + JWT",
+			Why:   "the supply-chain bucket holds the FAR archive + JWT",
 		})
 	}
 
-	// Check 6: iam:GetRole probe for the FLO IRSA role (PRD 08).
-	// NoSuchEntity is informational (role not yet created by the
-	// Go-SDK IAM phase); other errors surface IAM-permission gaps.
+	// Check 6: iam:GetRole probe for the FLO IRSA role. NoSuchEntity
+	// is informational (role not yet created by the Go-SDK IAM phase);
+	// other errors surface IAM-permission gaps.
 	roleName := awspkg.IRSARoleNameForCluster(clusterNameFromContext(cctx))
 	if cctx != nil && cctx.Workspace != nil && cctx.Workspace.Cluster.Name == "" {
 		// No cluster name yet — surface as informational, don't
 		// fail the row.
 		out = append(out, withWhy{
 			Check: Check{Name: "aws iam:GetRole (FLO IRSA)", Status: StatusOK, Detail: "no cluster name in workspace yet — probe skipped"},
-			Why:   "validates the FLO IRSA role landed (PRD 08 Go-SDK IAM phase)",
+			Why:   "validates the FLO IRSA role landed (Go-SDK IAM phase)",
 		})
 	} else {
 		info, rerr := clients.HasIRSARole(ctx, roleName)
@@ -288,12 +279,12 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 		case rerr == nil && info != nil:
 			out = append(out, withWhy{
 				Check: Check{Name: "aws iam:GetRole (FLO IRSA)", Status: StatusOK, Detail: fmt.Sprintf("role exists: %s", info.ARN)},
-				Why:   "validates the FLO IRSA role landed (PRD 08 Go-SDK IAM phase)",
+				Why:   "validates the FLO IRSA role landed (Go-SDK IAM phase)",
 			})
 		case rerr == nil && info == nil:
 			out = append(out, withWhy{
 				Check: Check{Name: "aws iam:GetRole (FLO IRSA)", Status: StatusOK, Detail: fmt.Sprintf("role %s not found (normal pre-`awsbnkctl up`)", roleName)},
-				Why:   "validates the FLO IRSA role landed (PRD 08 Go-SDK IAM phase)",
+				Why:   "validates the FLO IRSA role landed (Go-SDK IAM phase)",
 			})
 		default:
 			out = append(out, withWhy{
@@ -302,7 +293,7 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 					Status: StatusWarning,
 					Detail: fmt.Sprintf("probe failed: %v (verify IAM policy attaches iam:GetRole)", rerr),
 				},
-				Why: "validates the FLO IRSA role landed (PRD 08 Go-SDK IAM phase)",
+				Why: "validates the FLO IRSA role landed (Go-SDK IAM phase)",
 			})
 		}
 	}
@@ -311,8 +302,7 @@ func awsChecks(ctx context.Context, cctx *config.Context) []withWhy {
 }
 
 // awsRegionFromContext extracts the AWS region from the workspace
-// config if present. AWS is the only first-class cloud block
-// (PRD 04 retarget).
+// config if present. AWS is the only first-class cloud block.
 //
 // Empty return falls through to the SDK's default chain, which reads
 // AWS_REGION env / shared config. internal/aws's NewClients surfaces

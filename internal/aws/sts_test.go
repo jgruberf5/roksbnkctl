@@ -8,8 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-// fakeSTS implements STSAPI for unit tests. The mock pattern follows
-// the explicit-interface style PRD 07 § "internal/aws/" calls out.
+// fakeSTS implements STSAPI for unit tests using the explicit-interface
+// mock pattern.
 type fakeSTS struct {
 	out *sts.GetCallerIdentityOutput
 	err error

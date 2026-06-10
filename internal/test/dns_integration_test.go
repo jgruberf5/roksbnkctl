@@ -2,7 +2,7 @@
 
 package test
 
-// Sprint 5 / PRD 03 §"DNS probe" — integration-tier coverage.
+// DNS probe integration-tier coverage.
 //
 // Two cases:
 //

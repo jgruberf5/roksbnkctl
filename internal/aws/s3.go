@@ -14,8 +14,7 @@ import (
 // S3API is the subset of s3.Client surface awsbnkctl exercises. The
 // init wizard uses PutObject to upload the FAR archive + JWT to the
 // supply-chain bucket; doctor uses HeadBucket to probe s3:PutObject
-// permission against a fresh workspace (PRD 08 § "CLI surface"
-// §"awsbnkctl doctor").
+// permission against a fresh workspace.
 //
 // Tests inject a fake; production code constructs the real client via
 // s3.NewFromConfig in EnsureS3.
@@ -26,9 +25,9 @@ type S3API interface {
 }
 
 // EnsureS3 constructs a real s3.Client off the resolved aws.Config and
-// caches it on the Clients struct. Sprint 2 doesn't pre-build S3 in
-// NewClients because not every awsbnkctl invocation touches S3 — the
-// init wizard does, doctor's S3 probe does, every other verb doesn't.
+// caches it on the Clients struct. S3 is not pre-built in NewClients
+// because not every awsbnkctl invocation touches S3 — the init wizard
+// does, doctor's S3 probe does, every other verb doesn't.
 //
 // Idempotent: returns the already-cached client on subsequent calls.
 func (c *Clients) EnsureS3() (S3API, error) {
@@ -45,9 +44,9 @@ func (c *Clients) EnsureS3() (S3API, error) {
 	return c.s3, nil
 }
 
-// PutObject uploads body to bucket/key with SSE-KMS enforced (PRD 08 §
-// "Decision" — the bucket policy DenyUnencryptedUploads statement
-// rejects any PutObject without aws:kms server-side encryption). If
+// PutObject uploads body to bucket/key with SSE-KMS enforced (the
+// bucket policy DenyUnencryptedUploads statement rejects any PutObject
+// without aws:kms server-side encryption). If
 // kmsKeyID is empty the bucket's default CMK is used.
 //
 // Returns the ETag from the SDK response so callers can pin
@@ -115,8 +114,8 @@ func (c *Clients) HeadObject(ctx context.Context, bucket, key string) (*ObjectIn
 }
 
 // HeadBucket probes bucket reachability + the caller's
-// s3:HeadBucket / s3:ListBucket permission. PRD 08's doctor row uses
-// this as the "PutObject permission feasibility" probe: HeadBucket
+// s3:HeadBucket / s3:ListBucket permission. The doctor uses this as
+// the "PutObject permission feasibility" probe: HeadBucket
 // against the workspace's expected supply-chain bucket name returns
 // either OK (bucket exists, perm OK), NotFound (bucket doesn't exist
 // yet — that's fine pre-`awsbnkctl up`), or AccessDenied (bucket

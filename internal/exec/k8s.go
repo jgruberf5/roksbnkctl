@@ -28,8 +28,8 @@ import (
 // has already provisioned these.
 //
 // No cred-Secret constant: AWS credentials reach the ops pod via the
-// EKS pod-identity webhook's env-var injection (PRD 04 §"In-cluster
-// identity"), so the backend never names a credential Secret by hand.
+// EKS pod-identity webhook's env-var injection, so the backend never
+// names a credential Secret by hand.
 const (
 	K8sOpsNamespace  = "awsbnkctl-ops"
 	K8sTestNamespace = "awsbnkctl-test"
@@ -41,12 +41,12 @@ const (
 	// fixture's defaultReadyTimeout in internal/k8s/iperf3.go.
 	k8sJobReadyTimeout = 3 * time.Minute
 
-	// k8sExitFailedToStart maps to PRD 03's 127 — backend couldn't
-	// reach the cluster, ops pod missing, etc.
+	// k8sExitFailedToStart (127): backend couldn't reach the cluster,
+	// ops pod missing, etc.
 	k8sExitFailedToStart = 127
 
-	// k8sExitStartedThenFailed maps to PRD 03's 126 — ops pod present
-	// but the exec stream errored, Job created but pod failed to come up.
+	// k8sExitStartedThenFailed (126): ops pod present but the exec
+	// stream errored, or Job created but pod failed to come up.
 	k8sExitStartedThenFailed = 126
 )
 
@@ -58,11 +58,9 @@ var jobNameSanitizer = strings.NewReplacer(":", "-", "/", "-", "@", "-")
 
 // K8sBackend executes argv either by exec'ing into a long-lived ops pod
 // (for ad-hoc shells) or by spawning a one-shot Job (for iperf3 client
-// + terraform).
-//
-// PRD 03 §"K8s" is the design spec. The two paths share a single Run
-// entrypoint and dispatch on RunOpts.LongLivedExec — true for the
-// ops-pod exec path, false (default) for the Job path.
+// + terraform). The two paths share a single Run entrypoint and
+// dispatch on RunOpts.LongLivedExec — true for the ops-pod exec path,
+// false (default) for the Job path.
 //
 // `awsbnkctl ops install` provisions the namespaces, ServiceAccount,
 // Secret, ClusterRole, and ops Pod this backend assumes exist. The
@@ -251,16 +249,14 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	// SPDY's CodeExitError carries the wrapped command's exit code.
 	var ee utilexec.CodeExitError
 	if errors.As(streamErr, &ee) {
-		// In-pod tool exited non-zero. The PRD 03 split says 126/127
-		// are reserved for backend faults; if the in-pod process
-		// genuinely exited with 126/127 we still pass it through
-		// (the user's tool said so).
+		// In-pod tool exited non-zero. 126/127 are reserved for backend
+		// faults; if the in-pod process genuinely exited with 126/127
+		// we still pass it through (the user's tool said so).
 		return ee.ExitStatus(), nil
 	}
 
 	// Anything else is a transport / SPDY error — backend started but
-	// the exec stream errored mid-flight. PRD 03 §"Backend interface"
-	// 126 split.
+	// the exec stream errored mid-flight (126 split).
 	return k8sExitStartedThenFailed, fmt.Errorf("k8s exec stream: %w", streamErr)
 }
 
@@ -447,7 +443,7 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 // Example: the dns-probe Job sets
 // `cmd=["/usr/local/bin/awsbnkctl"]` + `args=["test","dns",...]` so
 // the tools image's ENTRYPOINT doesn't override the binary the dns
-// probe wants to run. PRD 03 §"DNS probe" §"K8s shape".
+// probe wants to run.
 func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
 	envVars := buildJobEnv(opts)
 	var volumes []corev1.Volume
@@ -499,10 +495,9 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 						// 1000680000-1000689999); pinning 65532 collides
 						// and the Job is rejected at admission with
 						// "Invalid value: 65532: must be in the ranges
-						// [...]" — see PRD 05 §"Risks" + Sprint 5 staff
-						// Issue 2 carry-over. Leaving RunAsUser unset
-						// lets the SCC mutating-admission webhook pick
-						// a valid UID per namespace.
+						// [...]". Leaving RunAsUser unset lets the SCC
+						// mutating-admission webhook pick a valid UID
+						// per namespace.
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},

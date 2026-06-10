@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 # scripts/test-integration-aws.sh — convenience wrapper for the
 # `-tags integration` test pass over `internal/aws/...` plus the
-# Sprint 3 end-to-end `awsbnkctl up --dry-run` regression check.
+# end-to-end `awsbnkctl up --dry-run` regression check.
 #
-# Sprint 1 (PRD 07) introduces `internal/aws/{client,sts,ec2,eks,vpc}.go`
-# with companion test files that exercise the helpers against mocked
-# aws-sdk-go-v2 clients (no live AWS — see the staff agent's
-# middleware-test wiring). Sprint 2 (PRD 08) extends the same package
-# with `internal/aws/{s3,iam}.go` covering the S3 supply-chain (FAR
+# `internal/aws/{client,sts,ec2,eks,vpc}.go` ships with companion test
+# files that exercise the helpers against mocked aws-sdk-go-v2 clients
+# (no live AWS — middleware-test wiring). The same package includes
+# `internal/aws/{s3,iam}.go` covering the S3 supply-chain (FAR
 # archive + JWT upload via `PutObject` / `HeadObject`) and the IRSA /
 # OIDC reader paths (`GetOIDCProvider`, `HasIRSARole`). The wildcard
 # `./internal/aws/...` below picks all of them up — no per-file
 # invocation needed.
 #
-# Sprint 3 (PLAN.md § "Sprint 3") layers a full-up dry-run pass on top
-# of the per-package tests — same shape as the `full-up-dryrun` job in
-# .github/workflows/ci.yml. Toggle with `FULL_UP_DRYRUN=1` (default);
-# set `FULL_UP_DRYRUN=0` to run only the per-package suite, useful
-# when iterating on a single internal/aws helper without paying the
-# binary-build + terraform-plan cost on every iteration. The full-up
-# pass requires `terraform` on PATH.
+# A full-up dry-run pass runs on top of the per-package tests — same
+# shape as the `full-up-dryrun` job in .github/workflows/ci.yml.
+# Toggle with `FULL_UP_DRYRUN=1` (default); set `FULL_UP_DRYRUN=0` to
+# run only the per-package suite, useful when iterating on a single
+# internal/aws helper without paying the binary-build + terraform-plan
+# cost on every iteration. The full-up pass requires `terraform` on PATH.
 #
 # This script sets the env vars the suite expects so a contributor can
 # run the same matrix CI runs without remembering the incantation:
@@ -27,16 +25,15 @@
 #   $ ./scripts/test-integration-aws.sh
 #   $ ./scripts/test-integration-aws.sh -run TestIntegration_STS
 #   $ ./scripts/test-integration-aws.sh -run 'TestIntegration_S3|TestIntegration_IAM'
-#   $ FULL_UP_DRYRUN=0 ./scripts/test-integration-aws.sh   # skip Sprint 3 gate
+#   $ FULL_UP_DRYRUN=0 ./scripts/test-integration-aws.sh   # skip full-up-dryrun gate
 #
 # Extra args (after the script name) are forwarded to `go test`, not
 # to the full-up gate — keep the contract narrow.
 #
-# Live-AWS validation is a separate operator-run path (PRD 07 §4
-# "Spike protocol"); this script is mocked-only and never touches a
-# real AWS endpoint. The fake creds + `AWS_EC2_METADATA_DISABLED=true`
-# below match `.github/workflows/ci.yml` jobs `aws-mocked` and
-# `full-up-dryrun`.
+# Live-AWS validation is a separate operator-run path (spike protocol);
+# this script is mocked-only and never touches a real AWS endpoint.
+# The fake creds + `AWS_EC2_METADATA_DISABLED=true` below match
+# `.github/workflows/ci.yml` jobs `aws-mocked` and `full-up-dryrun`.
 
 set -euo pipefail
 
@@ -67,12 +64,12 @@ FULL_UP_DRYRUN=${FULL_UP_DRYRUN:-1}
 echo "→ go test -tags integration ./internal/aws/..." >&2
 go test -tags integration -timeout 3m -v ./internal/aws/... "$@"
 
-# ── Sprint 3 full-up dry-run gate ────────────────────────────────────
+# ── full-up dry-run gate ─────────────────────────────────────────────
 # Mirrors the `full-up-dryrun` job in CI: builds the binary, runs
 # `awsbnkctl up --dry-run`, asserts the plan output mentions every
-# module in the Sprint 3 graph. Skips cleanly when `terraform` is not
-# on PATH so a contributor without it installed can still iterate on
-# the per-package suite above.
+# expected module. Skips cleanly when `terraform` is not on PATH so a
+# contributor without it installed can still iterate on the per-package
+# suite above.
 if [[ "$FULL_UP_DRYRUN" != "1" ]]; then
     echo "→ full-up-dryrun: skipped (FULL_UP_DRYRUN=$FULL_UP_DRYRUN)" >&2
     exit 0
@@ -80,7 +77,7 @@ fi
 
 if ! command -v terraform >/dev/null 2>&1; then
     echo "⚠ full-up-dryrun: skipped — terraform not on PATH" >&2
-    echo "  Install terraform >= 1.0 to run the Sprint 3 end-to-end gate." >&2
+    echo "  Install terraform >= 1.0 to run the full-up-dryrun gate." >&2
     exit 0
 fi
 
@@ -103,11 +100,8 @@ if ! HOME="$HOME_OVERRIDE" ./bin/awsbnkctl up --dry-run 2>&1 | tee "$log"; then
     exit 1
 fi
 
-# Module list per Sprint 3 brief: eks_cluster, cert_manager,
-# s3_supply_chain, iam_irsa, flo, cne_instance, license, testing.
-# (Brief writes "7 modules" but lists 8 names; we check every name
-# in the list — see issues/issue_sprint3_validator.md Issue 1 for
-# the audit trail.)
+# Module list: eks_cluster, cert_manager, s3_supply_chain, iam_irsa,
+# flo, cne_instance, license, testing — all 8 names are checked.
 fail=0
 for mod in \
     eks_cluster \

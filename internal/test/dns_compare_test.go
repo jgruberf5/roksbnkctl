@@ -1,7 +1,6 @@
 package test
 
-// Sprint 5 / PRD 03 §"GSLB use case" — multi-vantage comparison logic
-// unit tests.
+// Multi-vantage GSLB comparison logic unit tests.
 //
 // CompareDNSVantages stitches a slice of per-vantage probe results into
 // a single DNSCompareResult and computes:
@@ -90,8 +89,7 @@ func TestCompareDNSVantages_DivergenceFalse_AllAgree(t *testing.T) {
 // TestCompareDNSVantages_TTLIgnoredInComparison: vantages return the
 // same rdata but different TTLs → still NOT a divergence (TTL drift
 // across resolvers is normal even for identical GSLB answers; the
-// PRD 03 §"GSLB use case" definition of divergence is the rdata, not
-// the TTL).
+// definition of divergence is the rdata, not the TTL).
 func TestCompareDNSVantages_TTLIgnoredInComparison(t *testing.T) {
 	vantages := []DNSProbeResult{
 		{

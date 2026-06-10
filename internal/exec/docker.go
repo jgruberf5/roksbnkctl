@@ -21,9 +21,6 @@ import (
 // fall back to argv[0] interpreted as a literal image reference (so
 // callers can pass "busybox:latest" directly for tests).
 //
-// PRD 03 §"Docker (internal/exec/docker.go)" + PRD 04 §"Docker
-// container" jointly drive the implementation:
-//
 //   - Per-tool image lookup (toolImages); the GH Actions workflow
 //     publishes :dev tags on tag releases.
 //
@@ -51,10 +48,8 @@ type DockerBackend struct {
 // link time) — see toolImageTag below — so a tag-released binary
 // (v0.10.0) pulls v0.10.0 images, and a `dev` build pulls :dev.
 //
-// PRD 03 §"Docker (internal/exec/docker.go)" §"Tool migration plan" +
-// Sprint 3 tech-writer Issue 8 carry-over (the :dev hard-code broke
-// `go install ./cmd/awsbnkctl` on a fresh host because CI doesn't
-// publish :dev). Sprint 4 fixes this by pinning to the binary's version.
+// Image tags are resolved from the binary version — a tagged release
+// (e.g., v0.10.0) pulls matching images; a `dev` build pulls :dev.
 //
 // Populated lazily via the tool-image accessor below; the var keeps
 // the same shape so existing tests using `toolImages["iperf3"]`
@@ -130,8 +125,8 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 
 	cli, err := b.dockerClient()
 	if err != nil {
-		// PRD 03 §"Backend interface": 127 == backend failed to start
-		// (daemon unreachable, equivalent of "command not found").
+		// 127 == backend failed to start (daemon unreachable, equivalent
+		// of "command not found").
 		return 127, fmt.Errorf("docker daemon unreachable; is dockerd running? (%w)", err)
 	}
 
@@ -162,10 +157,9 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		return 0, err
 	}
 
-	// Append caller-supplied HostMounts (Sprint 5 bind-mount path).
-	// PRD 03 §"Docker container": the caller-supplied host directories
-	// bind-mount at the specified container paths read-write so state
-	// persists across runs.
+	// Append caller-supplied HostMounts: the host directories bind-mount
+	// at the specified container paths read-write so state persists
+	// across runs.
 	for _, hm := range opts.HostMounts {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
@@ -211,10 +205,9 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 		HostConfig: hostCfg,
 	})
 	if err != nil {
-		// PRD 03 §"Backend interface": 126 == backend started but the
-		// wrapped invocation couldn't spawn (daemon up + image pulled,
-		// but `containerCreate` rejected — bad spec, image arch
-		// mismatch, etc.).
+		// 126 == backend started but the wrapped invocation couldn't
+		// spawn (daemon up + image pulled, but `containerCreate`
+		// rejected — bad spec, image arch mismatch, etc.).
 		return 126, fmt.Errorf("docker create: %w", err)
 	}
 	cid := created.ID
@@ -231,7 +224,7 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 	})
 	if err != nil {
 		// 126: container created but the attach (which runs before
-		// we can exec the wrapped tool) errored. PRD 03 split.
+		// we can exec the wrapped tool) errored.
 		return 126, fmt.Errorf("docker attach: %w", err)
 	}
 	defer hijack.Close()
@@ -276,7 +269,7 @@ func (b *DockerBackend) Run(ctx context.Context, argv []string, opts RunOpts) (i
 
 	if _, err := cli.ContainerStart(ctx, cid, dockerclient.ContainerStartOptions{}); err != nil {
 		// 126: created, attached, but start failed (wrapped process
-		// couldn't be spawned in the container). PRD 03 split.
+		// couldn't be spawned in the container).
 		return 126, fmt.Errorf("docker start: %w", err)
 	}
 
@@ -404,8 +397,8 @@ func (b *DockerBackend) buildMountsAndEnv(opts RunOpts, tempDir string) ([]mount
 	}
 
 	// Kubeconfig propagation: the SINGLE kubeconfig file is bind-
-	// mounted read-only at /root/.kube/config. PRD 04 §"Docker
-	// container" §"Anti-patterns" — never mount the parent .kube dir.
+	// mounted read-only at /root/.kube/config — never mount the
+	// parent .kube dir.
 	if opts.Credentials != nil && len(opts.Credentials.KubeconfigBytes) > 0 {
 		path := filepath.Join(tempDir, "kubeconfig")
 		if err := os.WriteFile(path, opts.Credentials.KubeconfigBytes, 0o600); err != nil {

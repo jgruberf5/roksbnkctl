@@ -14,7 +14,7 @@ type STSAPI interface {
 }
 
 // CallerIdentity is the awsbnkctl-shaped projection of sts:GetCallerIdentity.
-// Account is load-bearing for OIDC provider ARN derivation (Sprint 2 IRSA).
+// Account is load-bearing for OIDC provider ARN derivation (IRSA).
 type CallerIdentity struct {
 	Account string
 	ARN     string
@@ -23,8 +23,8 @@ type CallerIdentity struct {
 
 // CallerIdentity calls sts:GetCallerIdentity and projects the response.
 //
-// PRD 07 § "internal/aws/" lists this as the doctor pre-flight: STS
-// caller-identity is the cheapest "are credentials live?" probe.
+// STS caller-identity is the cheapest "are credentials live?" probe
+// and is used as the doctor pre-flight.
 // AccessDenied here means the cred chain resolved a key but the key
 // is rejected by AWS — distinct from "no credentials at all", which
 // CredentialsConfigured catches earlier.

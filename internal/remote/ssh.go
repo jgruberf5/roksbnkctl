@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Exit codes used by the --on flow. Match the conventions in PRD 01:
+// Exit codes used by the --on flow:
 //
 //	127 — "command not found" analog: connect failure / unreachable target
 //	126 — "permission denied" analog: auth failure or host-key mismatch
@@ -61,7 +61,7 @@ type ShellOpts struct {
 //
 // Context cancellation aborts both the TCP dial and the handshake.
 // Connect failures wrap a sentinel so callers can map them to the
-// 127 / 126 exit codes documented in PRD 01.
+// 127 / 126 exit codes.
 func Connect(ctx context.Context, target *Target) (*Client, error) {
 	if target == nil {
 		return nil, errors.New("nil target")
@@ -89,8 +89,7 @@ func Connect(ctx context.Context, target *Target) (*Client, error) {
 	}
 	if cfg.HostKeyCallback == nil {
 		// Defensive — every Target should set one. ssh.NewClientConn
-		// errors out instead of silently using an insecure default,
-		// matching PRD 01 host-key requirements.
+		// errors out instead of silently using an insecure default.
 		return nil, errors.New("target has no HostKeyCallback (refusing to connect)")
 	}
 

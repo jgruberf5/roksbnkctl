@@ -55,15 +55,13 @@ upgrade verb).`,
 }
 
 // flagDoctorTarget — when set, doctor adds an extra Check that runs a
-// no-op `whoami` on the named target (PRD 01 §11). The Check uses
-// BackendName="" today; Phase 3 (PRD 03) will set "ssh" once SSH is a
-// proper backend.
+// no-op `whoami` on the named target. BackendName will switch to "ssh"
+// once the SSH execution backend is wired into the doctor check.
 var flagDoctorTarget string
 
-// flagDoctorBackend — when set, doctor runs the per-backend availability
-// checks defined in PRD 03 §"doctor extensions" (k8s ops pod + RBAC,
-// ssh:<target> reachability + bootstrap feasibility). Empty preserves
-// Sprint 0+ behaviour.
+// flagDoctorBackend — when set, doctor runs per-backend availability
+// checks (k8s ops pod + RBAC, ssh:<target> reachability + bootstrap
+// feasibility). Empty preserves the default doctor behaviour.
 var flagDoctorBackend string
 
 var doctorCmd = &cobra.Command{
@@ -76,7 +74,7 @@ direction). Helm is internalised via the helm.sh/helm/v3 Go SDK.
 
 Informational (the binary internalises each surface; missing → no warning):
   - kubectl / oc — internalised via client-go (` + "`awsbnkctl k *`" + `)
-  - aws          — direct SDK use only; no CLI passthrough planned (PRD 00 §"Inheritance map")
+  - aws          — direct SDK use only; no CLI passthrough planned
   - iperf3       — bundled image, run via --backend k8s
   - dig          — DNS probe internalised via miekg/dns
 
@@ -113,12 +111,11 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	if flagDoctorTarget != "" {
 		results = append(results, runTargetCheck(cmd.Context(), cctx, flagDoctorTarget))
 	}
-	// Sprint 5: DNS probe sanity check. Runs the in-process miekg/dns
-	// probe against the workspace's `test.dns.default_target` (or
-	// skips silently if not configured). Mostly a no-op since the
-	// probe library is built into the binary, but useful for
-	// surfacing "DNS resolution latency" alongside the other doctor
-	// metrics.
+	// DNS probe sanity check. Runs the in-process miekg/dns probe against
+	// the workspace's `test.dns.default_target` (or skips silently if not
+	// configured). Mostly a no-op since the probe library is built into
+	// the binary, but useful for surfacing DNS resolution latency alongside
+	// the other doctor metrics.
 	if c, ok := runDNSProbeCheck(cmd.Context(), cctx); ok {
 		results = append(results, c)
 	}
@@ -137,7 +134,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 // runTargetCheck runs `whoami` against the named target and reports it
 // as a doctor.Check. Treated as a single Check rather than a stream so
 // the existing PrintResults rendering doesn't change for the
-// no-target case (preserves Sprint 0's byte-equivalence).
+// no-target case.
 //
 // BackendName is "" today; it will switch to "ssh" once the execution-backend
 // abstraction lands. Until then the Check renders without a backend prefix,

@@ -9,7 +9,7 @@ import (
 // TestVersionCmd_OutputShape pins the two-line shape of `awsbnkctl
 // version`: line 1 is the historical "awsbnkctl <ver> (commit <c>,
 // built <d>)" string that pre-v1.0 scripts may grep; line 2 is the
-// `Docs: <url>` addition landed for v1.0 (PLAN.md §"Sprint 7" row 2).
+// `Docs: <url>` addition landed for v1.0.
 func TestVersionCmd_OutputShape(t *testing.T) {
 	prevV, prevC, prevD := Version, Commit, BuildDate
 	t.Cleanup(func() {

@@ -11,7 +11,7 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/test"
 )
 
-// Sprint 4 — `awsbnkctl test {connectivity,dns,throughput,all} --dry-run`
+// `awsbnkctl test {connectivity,dns,throughput,all} --dry-run`
 // surface. Plans the probe by resolving the workspace-derived targets
 // (region, cluster, namespace, host list, DNS resolvers, iperf3 mode)
 // without executing any probe. Lets operators see "what would I be
@@ -47,8 +47,6 @@ type testPlan struct {
 // (`aws.supply_chain.flo_namespace`) for connectivity / DNS probes,
 // falling back to `k8s.Iperf3Namespace` ("awsbnkctl-test") for the
 // iperf3 fixture path.
-//
-// Sprint 4 staff brief §3 (Workspace plumbing).
 func workspacePlanContext(ws *config.Workspace) (region, cluster, ns string) {
 	if ws == nil {
 		return "", "", k8s.Iperf3Namespace

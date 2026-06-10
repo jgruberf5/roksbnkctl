@@ -22,7 +22,7 @@ func RunConnectivity(ctx context.Context, urls []string, insecureSkipVerify bool
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: insecureSkipVerify, // #nosec G402 -- explicit operator toggle, off by default; documented in PRD 03
+				InsecureSkipVerify: insecureSkipVerify, // #nosec G402 -- explicit operator toggle, off by default
 			},
 		},
 	}

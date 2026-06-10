@@ -36,8 +36,8 @@ Examples:
   awsbnkctl k exec my-pod -c sidecar -- cat /etc/hostname
 
 Note: this is the cluster-side exec. The host-side equivalent is
-'awsbnkctl exec <cmd>' — distinct on purpose (PRD 02 §"Disambiguating
-awsbnkctl exec", Option B).`,
+'awsbnkctl exec <cmd>' — distinct on purpose (Option B: cluster-side
+uses 'awsbnkctl k exec <pod>').`,
 		Args:               cobra.MinimumNArgs(2), // pod + at least one cmd token
 		DisableFlagParsing: false,
 		RunE:               runKExec,

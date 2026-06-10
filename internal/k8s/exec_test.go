@@ -43,8 +43,8 @@ func TestExecOptions_RequiresCommand(t *testing.T) {
 // We can't intercept the request without a real apiserver, but we can
 // at least sanity-check that ExecOptions stores the inputs we expect.
 //
-// Drift guard: PRD 02 §exec implementation describes -t merging stderr
-// into stdout; the staff TTY field on ExecOptions should round-trip.
+// Drift guard: the exec implementation merges stderr into stdout when
+// TTY=true (-t flag); the TTY field on ExecOptions should round-trip.
 func TestExecOptions_StderrTTYInteraction(t *testing.T) {
 	o := &ExecOptions{
 		PodName: "p",

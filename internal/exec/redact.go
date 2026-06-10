@@ -6,8 +6,7 @@ import (
 )
 
 // redactMarker is the placeholder substituted for any matched secret.
-// PRD 04 §"Cross-backend principles" #1 — backends shouldn't leak creds,
-// but the redactor catches accidental tool-side prints (e.g., a tool
+// The redactor catches accidental tool-side prints (e.g., a tool
 // running with verbose-logging that includes secret env vars). The
 // marker is plain ASCII so it shows up cleanly in any sink (terminal,
 // file, log pipeline).

@@ -1,5 +1,5 @@
 // Package remote implements the embedded SSH client and related plumbing
-// for awsbnkctl's --on <target> flag (PRD 01).
+// for awsbnkctl's --on <target> flag.
 //
 // Subdivisions:
 //

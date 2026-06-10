@@ -13,7 +13,7 @@ func init() {
 	// so the cli layer pushes a fully-resolved target back into the backend
 	// via SetSSHTargetResolver.
 	//
-	// PRD 03 §"SSH" — backend resolves its target identically to --on so
+	// The SSH backend resolves its target identically to --on so
 	// users don't have to maintain two key-resolution paths.
 	execbackend.SetSSHTargetResolver(func(workspace, name string) (*remote.Target, map[string][]byte, error) {
 		if workspace == "" {

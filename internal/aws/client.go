@@ -5,8 +5,7 @@
 // Tests inject mocks via the per-service interfaces (STSAPI, EC2API,
 // EKSAPI, VPCAPI) — see *_test.go files for the patterns.
 //
-// PRD 07 § "internal/aws/" + PRD 04's cross-backend principle #1 (never
-// log credentials) are the load-bearing contract. SDK constructors take
+// The load-bearing contract: never log credentials. SDK constructors take
 // `context.Context` so cancellation propagates from the cobra command
 // surface; long-running listing calls (DescribeInstanceTypes etc.) honour
 // it.
@@ -38,7 +37,7 @@ type Clients struct {
 	Region string
 
 	// AWSConfig is the resolved aws-sdk-go-v2 Config — exposed so callers
-	// that need a sub-client awsbnkctl doesn't wrap (e.g., S3 in Sprint 2)
+	// that need a sub-client awsbnkctl doesn't wrap (e.g., S3)
 	// can construct one without re-resolving credentials.
 	AWSConfig awssdk.Config
 
@@ -48,17 +47,16 @@ type Clients struct {
 	VPC VPCAPI
 
 	// s3 / iam are lazily constructed on first use via EnsureS3 /
-	// EnsureIAM. Sprint 2 keeps NewClients's cost identical to
-	// Sprint 1 for the verbs that don't touch S3 or IAM (most
-	// reads). Tests inject fakes by setting these directly before
-	// invoking the consumer method.
+	// EnsureIAM. This keeps NewClients's cost low for the verbs that
+	// don't touch S3 or IAM (most reads). Tests inject fakes by setting
+	// these directly before invoking the consumer method.
 	s3  S3API
 	iam IAMAPI
 
-	// serviceQuotas is the Sprint 4 optional probe surface — lazily
-	// constructed via EnsureServiceQuotas. Only the doctor's
-	// feature-flagged Service Quotas row touches this, so the SDK's
-	// import cost is kept off every other verb.
+	// serviceQuotas is the optional probe surface — lazily constructed
+	// via EnsureServiceQuotas. Only the doctor's feature-flagged Service
+	// Quotas row touches this, so the SDK's import cost is kept off
+	// every other verb.
 	serviceQuotas ServiceQuotasAPI
 }
 
@@ -75,8 +73,8 @@ func (c *Clients) SetIAMForTest(api IAMAPI) { c.iam = api }
 // (AWS_PROFILE), EC2 instance role / ECS task role, SSO.
 type Options struct {
 	// Region overrides AWS_REGION / shared-config region. Empty = use
-	// the resolved chain's default. PRD 07 § "Inputs" pins region as a
-	// required CLI input — callers normally pass it through.
+	// the resolved chain's default. Region is a required CLI input —
+	// callers normally pass it through.
 	Region string
 
 	// Profile overrides AWS_PROFILE. Empty = whatever the chain

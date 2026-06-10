@@ -13,8 +13,8 @@ import (
 )
 
 // InClusterKubeconfigSentinel is the magic value for kubeconfigPath that
-// triggers rest.InClusterConfig() lookup. Used by Phase 3's K8s execution
-// backend (PRD 03) when awsbnkctl runs inside an ops Pod and gets its
+// triggers rest.InClusterConfig() lookup. Used by the in-cluster K8s
+// execution backend when awsbnkctl runs inside an ops Pod and gets its
 // credentials from the projected service account.
 const InClusterKubeconfigSentinel = "in-cluster"
 
@@ -132,8 +132,8 @@ func BuildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 // kubeconfigPath: empty string → workspace default at
 // ~/.awsbnkctl/<ws>/state/kubeconfig (or whatever DefaultKubeconfigPath
 // resolves);
-// "in-cluster" sentinel → use rest.InClusterConfig() (used by the K8s
-// execution backend in Phase 3, PRD 03).
+// "in-cluster" sentinel → use rest.InClusterConfig() (used by the in-cluster
+// K8s execution backend).
 //
 // Returns the kubernetes.Interface so callers using fake clientsets in
 // tests can substitute drop-in.

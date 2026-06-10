@@ -56,7 +56,7 @@ func TestPutObject_EnforcesSSEKMS(t *testing.T) {
 		t.Fatal("no PutObject call captured")
 	}
 	if fake.lastPut.ServerSideEncryption != s3types.ServerSideEncryptionAwsKms {
-		t.Errorf("SSE: got %q, want aws:kms (PRD 08 bucket policy denies anything else)", fake.lastPut.ServerSideEncryption)
+		t.Errorf("SSE: got %q, want aws:kms (bucket policy denies anything else)", fake.lastPut.ServerSideEncryption)
 	}
 	if fake.lastPut.SSEKMSKeyId == nil || *fake.lastPut.SSEKMSKeyId == "" {
 		t.Error("SSEKMSKeyId should be set when caller passes a CMK")

@@ -24,8 +24,7 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/test"
 )
 
-// runBackendChecks dispatches to the per-backend doctor probes per PRD 03
-// §"doctor extensions". `spec` is one of:
+// runBackendChecks dispatches to the per-backend doctor probes. `spec` is one of:
 //
 //	k8s              → cluster reachable, ops pod Ready, RBAC subjects exist
 //	ssh:<target>     → target resolves, ssh connects, sudo / PATH readiness
@@ -55,7 +54,7 @@ func runBackendChecks(ctx context.Context, cctx *config.Context, spec string) []
 //   - apiserver reachable (clientset construction succeeds)
 //   - ops pod Ready
 //   - ServiceAccount + ClusterRole + ClusterRoleBinding present
-//   - IRSA shape probe (PRD 04 retarget): the ops SA must carry the
+//   - IRSA shape probe: the ops SA must carry the
 //     `eks.amazonaws.com/role-arn` annotation (the EKS pod-identity
 //     webhook injects `AWS_ROLE_ARN` + `AWS_WEB_IDENTITY_TOKEN_FILE`
 //     into the pod env from there); we surface whether the
@@ -63,8 +62,6 @@ func runBackendChecks(ctx context.Context, cctx *config.Context, spec string) []
 //     vars. No static AWS access key ever lands in any Secret under
 //     the IRSA model.
 //   - RBAC negative check: ops SA can NOT delete pods cluster-wide
-//
-// PRD 03 §"K8s" §"doctor extensions"; PRD 08 § "Decision" §"IRSA".
 func runK8sBackendChecks(ctx context.Context) []doctor.Check {
 	out := []doctor.Check{}
 	add := func(name string, status doctor.CheckStatus, detail string) {
@@ -130,7 +127,7 @@ func runK8sBackendChecks(ctx context.Context) []doctor.Check {
 		add("ops clusterrolebinding", doctor.StatusOK, "awsbnkctl-ops")
 	}
 
-	// IRSA-shape ops-pod check (PRD 04 retarget). The ops ServiceAccount
+	// IRSA-shape ops-pod check. The ops ServiceAccount
 	// must carry the `eks.amazonaws.com/role-arn` annotation; the
 	// EKS pod-identity webhook reads it and injects `AWS_ROLE_ARN`
 	// + `AWS_WEB_IDENTITY_TOKEN_FILE` env vars into the pod. Doctor
@@ -191,8 +188,6 @@ func runK8sBackendChecks(ctx context.Context) []doctor.Check {
 //   - ssh connect succeeds
 //   - sudo -n true succeeds (for the apt bootstrap path)
 //   - if a tool name is implied, command -v finds it on PATH
-//
-// PRD 03 §"SSH" §"doctor extensions".
 func runSSHBackendChecks(ctx context.Context, cctx *config.Context, name string) []doctor.Check {
 	out := []doctor.Check{}
 	add := func(rowName string, status doctor.CheckStatus, detail string) {
@@ -250,10 +245,9 @@ func runSSHBackendChecks(ctx context.Context, cctx *config.Context, name string)
 // when a probe was attempted; (zero, false) when there's no
 // default_target configured so the doctor output stays compact.
 //
-// Sprint 5 doctor extension. The probe library is built into the
-// binary (no external `dig` install required), so this is mostly an
-// informational latency measurement; an actual failure would surface
-// a real DNS infrastructure problem worth flagging.
+// The probe library is built into the binary (no external `dig` install
+// required), so this is mostly an informational latency measurement;
+// an actual failure would surface a real DNS infrastructure problem worth flagging.
 func runDNSProbeCheck(ctx context.Context, cctx *config.Context) (doctor.Check, bool) {
 	if cctx == nil || cctx.Workspace == nil {
 		return doctor.Check{}, false
@@ -300,11 +294,10 @@ func runDNSProbeCheck(ctx context.Context, cctx *config.Context) (doctor.Check, 
 // secret) but we still discard it locally — only the present/empty
 // verdict surfaces via the boolean return.
 //
-// PRD 04 retarget: the IRSA-shape probe replaces the v0.x cred-env
-// probe. Failure modes this catches: the SA
-// annotation missed (webhook had nothing to read); the pod was created
-// before the annotation landed and needs deletion; the eks pod-identity
-// webhook isn't running in the cluster.
+// The IRSA-shape probe replaces the v0.x cred-env probe. Failure modes
+// this catches: the SA annotation missed (webhook had nothing to read);
+// the pod was created before the annotation landed and needs deletion;
+// the eks pod-identity webhook isn't running in the cluster.
 func probeOpsPodIRSA(ctx context.Context, cs kubernetes.Interface, cfg *rest.Config) bool {
 	req := cs.CoreV1().RESTClient().Post().
 		Resource("pods").

@@ -13,7 +13,7 @@ import (
 // awsbnkctl. Wraps `os/exec` with the credential-propagation +
 // stream-redaction behaviour the Backend interface requires.
 //
-// Behaviour matches the pre-Sprint-3 passthrough callsites in
+// Behaviour matches the original passthrough callsites in
 // internal/cli/cluster.go (runWithEnv): host env is inherited; Env
 // entries from RunOpts.Env are appended (later wins for duplicates,
 // per os/exec's documented semantics); cred env vars come from
@@ -31,11 +31,11 @@ func (LocalBackend) Name() string { return "local" }
 
 // Run implements Backend.
 //
-// Exit-code semantics (PRD 03 §"Backend interface", 126/127 split):
+// Exit-code semantics (126/127 split):
 //
 //   - argv[0] not on PATH → returns (127, error). Matches POSIX shell
-//     "command not found" convention; PRD 03 reserves 127 for
-//     backend-side failed-to-start, and "binary not on PATH" is the
+//     "command not found" convention; 127 is the backend-side
+//     failed-to-start code, and "binary not on PATH" is the
 //     local-backend analog (no daemon to be unreachable, no SSH to fail
 //     to connect). The 126 ("started then failed") case doesn't apply
 //     to the local backend — there's no backend-startup phase distinct
@@ -111,8 +111,7 @@ func (LocalBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, 
 	// Wrap stdout/stderr through the redactor so a wrapped tool that
 	// accidentally prints a secret (verbose tool logging — e.g.
 	// kubectl --v=10 or a tool's debug log mode) gets caught before
-	// the bytes reach the caller. PRD 04 §"Cross-backend principles"
-	// #1 — defense-in-depth.
+	// the bytes reach the caller (defense-in-depth).
 	stdout, stdoutClose := wrapForRedaction(opts.Stdout, opts.Credentials)
 	stderr, stderrClose := wrapForRedaction(opts.Stderr, opts.Credentials)
 	defer func() {
@@ -129,9 +128,9 @@ func (LocalBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, 
 	cmd.Stderr = stderr
 
 	// CommandContext + a non-nil Cancel callback makes ctx cancellation
-	// SIGKILL the process group. For Sprint 3 we use the default Cancel
-	// (sends os.Kill); a per-pgid kill that catches grandchildren can
-	// land in a Sprint 4 polish pass if any tool starts misbehaving.
+	// SIGKILL the process group. We use the default Cancel (sends
+	// os.Kill); a per-pgid kill that catches grandchildren can be added
+	// if any tool starts misbehaving.
 	runErr := cmd.Run()
 	if runErr == nil {
 		return 0, nil

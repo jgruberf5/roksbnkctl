@@ -9,8 +9,8 @@ import (
 )
 
 // ServiceQuotasAPI is the subset of servicequotas.Client awsbnkctl uses
-// for the optional doctor probe added in Sprint 4. The doctor's
-// VCPUQuotaAttribute check probes ec2:DescribeAccountAttributes for the
+// for the optional doctor probe. The doctor's VCPUQuotaAttribute check
+// probes ec2:DescribeAccountAttributes for the
 // cheap "ec2 permissions work" signal; this richer probe surfaces the
 // actual running-on-demand-vCPU quota when the operator's IAM permits
 // the servicequotas:GetServiceQuota call.
@@ -24,7 +24,7 @@ type ServiceQuotasAPI interface {
 // QuotaCodeRunningOnDemandStandardInstances is the AWS Service Quotas
 // quota code for "Running On-Demand Standard (A, C, D, H, I, M, R, T,
 // Z) instances" — the per-account vCPU ceiling enforced against the
-// self-managed EKS node group PRD 07 spins up. Documented at
+// self-managed EKS node group. Documented at
 // https://docs.aws.amazon.com/general/latest/gr/ec2-service.html
 // §"Service quotas".
 const QuotaCodeRunningOnDemandStandardInstances = "L-1216C47A"
@@ -66,9 +66,8 @@ func (c *Clients) EnsureServiceQuotas() (ServiceQuotasAPI, error) {
 // attach servicequotas:GetServiceQuota. The doctor falls back to the
 // existing "default 5 instances / 80 vCPU" pointer in that case.
 //
-// Sprint 4 staff brief §"Optional Service Quotas check" — gated by an
-// internal feature flag (off by default) until v0.x validates the
-// signal on a live AWS account.
+// Gated by an env-var feature flag (off by default) until v0.x
+// validates the signal on a live AWS account.
 func (c *Clients) RunningOnDemandVCPUQuota(ctx context.Context) (float64, error) {
 	cli, err := c.EnsureServiceQuotas()
 	if err != nil {

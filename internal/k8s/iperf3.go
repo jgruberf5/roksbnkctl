@@ -85,8 +85,7 @@ func (c *Client) DeployIperf3(ctx context.Context, opts Iperf3Options) error {
 //   - Container.Capabilities.Drop=[ALL] (PSA `restricted` requires the
 //     ALL drop to baseline)
 //
-// PRD 03 §"iperf3" §"OpenShift SCC" + Sprint 4 staff brief
-// §"throughput.go PSA compliance" pin this contract.
+// This PSA compliance contract is intentional and must be preserved.
 //
 // RunAsUser is set to 1000 at the pod level for plain Kubernetes (the
 // bundled awsbnkctl-tools-iperf3 image's USER directive). OpenShift's

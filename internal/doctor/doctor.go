@@ -68,11 +68,8 @@ var lastWhys []string
 // each surface:
 //
 //   - kubectl: internalised via client-go in `awsbnkctl k *`
-//     (PRD 02, Sprint 2).
 //   - iperf3: in-cluster fixture runnable via `--backend k8s`
-//     (PRD 03, Sprint 4).
-//   - dig: miekg/dns probe library compiled into the binary (PRD 03
-//     §"DNS probe", Sprint 5).
+//   - dig: miekg/dns probe library compiled into the binary
 //   - helm: Helm 3 SDK (helm.sh/helm/v3) embedded directly; no host
 //     `helm` binary needed.
 //
@@ -102,14 +99,13 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 
 	// Workspace + AWS pre-flight checks.
 	//
-	// Sprint 3 (PRD 04 retarget): the AWS row block now surfaces
-	// unconditionally — closes Sprint 2 tech-writer Issue 4. On a
-	// stock dev box without a workspace, the `aws credentials` row
-	// degrades to a Warning naming the missing env var; downstream
-	// rows (sts / eks / ec2 / s3 / iam) render as Skipped. A first-
-	// time user runs `awsbnkctl doctor` and sees the AWS-side gap
-	// even before `awsbnkctl init`. The legacy v0.x checkAPIKey row
-	// retired with the workspace schema change.
+	// The AWS row block surfaces unconditionally. On a stock dev box
+	// without a workspace, the `aws credentials` row degrades to a
+	// Warning naming the missing env var; downstream rows (sts / eks /
+	// ec2 / s3 / iam) render as Skipped. A first-time user runs
+	// `awsbnkctl doctor` and sees the AWS-side gap even before
+	// `awsbnkctl init`. The legacy v0.x checkAPIKey row retired with
+	// the workspace schema change.
 	if cctx == nil {
 		out = append(out, withWhy{
 			Check: Check{Name: "workspace", Status: StatusError, Detail: "no config context"},
@@ -122,14 +118,14 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	return out
 }
 
-// checkBinaryInformational is the post-Sprint-2 variant for kubectl and
+// checkBinaryInformational is the informational variant for kubectl and
 // oc: the binary is no longer needed because the relevant verbs are
 // internalised via client-go. Missing → StatusOK with an explanatory
 // detail (rather than StatusWarning, which would imply something to
 // fix). Present → StatusOK with the path/version, same as before.
 //
 // The intent: a fresh dev box without kubectl/oc should produce no
-// warnings for everyday awsbnkctl use post-Sprint-2.
+// warnings for everyday awsbnkctl use.
 func checkBinaryInformational(name, w string) withWhy {
 	c := Check{Name: name, Optional: true}
 	path, err := exec.LookPath(name)
@@ -175,15 +171,13 @@ func versionLine(name string) string {
 	return ""
 }
 
-// checkKubeconfigInformational is the Sprint 6 green-by-default
-// variant. A doctor run BEFORE `awsbnkctl up` happens on a host that
+// checkKubeconfigInformational is the green-by-default kubeconfig
+// check. A doctor run BEFORE `awsbnkctl up` happens on a host that
 // hasn't yet downloaded a kubeconfig — surfacing that as a warning is
 // noise. Render the absence as informational with a one-line nudge at
 // how to populate it (`awsbnkctl up` does this automatically post-
 // apply; `awsbnkctl kubeconfig --download` is the manual path).
-//
-// PLAN.md §"Gate to Sprint 7": stock dev box should produce exit 0 +
-// zero warnings.
+// A stock dev box should produce exit 0 + zero warnings.
 func checkKubeconfigInformational() withWhy {
 	c := Check{Name: "kubeconfig"}
 	path := k8s.DefaultKubeconfigPath()
@@ -209,7 +203,7 @@ func checkWorkspace(cctx *config.Context) withWhy {
 	return withWhy{Check: c, Why: "per-environment config + state"}
 }
 
-// The v0.x checkAPIKey resolver probe retired with the PRD 04 retarget.
+// The v0.x checkAPIKey resolver probe is retired.
 // AWS credentials resolve via the SDK chain — the `aws credentials`
 // row in awsChecks surfaces the equivalent signal.
 

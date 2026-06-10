@@ -13,8 +13,7 @@ import (
 // IAMAPI is the subset of iam.Client surface awsbnkctl uses. It covers
 // the OIDC-provider lookup (equivalent to what a Terraform data source
 // would do, now expressed directly in Go via the AWS SDK) + the IRSA
-// role existence probe (for the doctor row). PRD 08 § "internal/aws/"
-// pins this list.
+// role existence probe (for the doctor row).
 type IAMAPI interface {
 	GetOpenIDConnectProvider(ctx context.Context, in *iam.GetOpenIDConnectProviderInput, opts ...func(*iam.Options)) (*iam.GetOpenIDConnectProviderOutput, error)
 	GetRole(ctx context.Context, in *iam.GetRoleInput, opts ...func(*iam.Options)) (*iam.GetRoleOutput, error)
@@ -41,7 +40,7 @@ func (c *Clients) EnsureIAM() (IAMAPI, error) {
 // (with no scheme — IAM strips https://); ClientIDs are the audiences
 // the provider trusts (typically just "sts.amazonaws.com" for EKS
 // IRSA). The Go-SDK IAM phase uses both at trust-policy composition
-// time (PRD 08).
+// time.
 type OIDCProviderInfo struct {
 	ARN       string
 	URL       string
@@ -83,8 +82,7 @@ func (c *Clients) GetOIDCProvider(ctx context.Context, arn string) (*OIDCProvide
 }
 
 // RoleInfo is the awsbnkctl-shaped projection of iam:GetRole sufficient
-// for the doctor's "FLO IRSA role exists" probe (PRD 08 § "CLI
-// surface" §"awsbnkctl doctor").
+// for the doctor's "FLO IRSA role exists" probe.
 type RoleInfo struct {
 	RoleName string
 	ARN      string
@@ -139,7 +137,7 @@ func IsIAMNoSuchEntity(err error) bool {
 }
 
 // IRSARoleNameForCluster derives the IAM role name the Go-SDK IAM phase
-// creates from the cluster name, per PRD 08's
+// creates from the cluster name, following the
 // "<cluster>-flo-supply-chain-reader" naming convention. Callers can
 // override via workspace config; most invocations will exercise this
 // default.
