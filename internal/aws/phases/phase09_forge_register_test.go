@@ -360,8 +360,20 @@ func TestPhase09ForgeRegisterDown_WithLink(t *testing.T) {
 	if _, readErr := forge.ReadLink(cl.StateDir()); readErr == nil {
 		t.Error("link file still present after unregister")
 	}
+	// purge=true: down must delete the project shell too, not just the cluster.
+	var projectDeleted bool
+	for _, c := range mcp.callsMade() {
+		if c == "delete_project" {
+			projectDeleted = true
+		}
+	}
+	if !projectDeleted {
+		t.Errorf("delete_project not called — project shell left hanging; calls: %v", mcp.callsMade())
+	}
 }
 
+// No link + forge enabled but unreachable → by-name discovery fails with a
+// connection error and the phase soft-fails (returns nil; never blocks teardown).
 func TestPhase09ForgeRegisterDown_NoLink(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
@@ -375,6 +387,114 @@ func TestPhase09ForgeRegisterDown_NoLink(t *testing.T) {
 	err := Phase09ForgeRegisterDown(context.Background(), cl, st, clients, false)
 	if err != nil {
 		t.Fatalf("expected nil when no link, got: %v", err)
+	}
+}
+
+// TestPhase09ForgeRegisterDown_NoLinkDiscoveryFallback covers the lost-state
+// scenario (verified live 2026-06-10): forge_link.json is gone but forge is
+// enabled in intent and the forge-side registration still exists. Down must
+// fall back to REST by-name discovery, delete the cluster record AND project,
+// and clear the FORGE_* state keys.
+func TestPhase09ForgeRegisterDown_NoLinkDiscoveryFallback(t *testing.T) {
+	awsmw.ResetForTest()
+
+	var (
+		restMu  sync.Mutex
+		deletes []string
+	)
+	restSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"projects": []map[string]any{
+					{"id": 7, "name": "some-other-project"},
+					{"id": 45, "name": "awsbnkctl-syd-tracer"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/45/k8s/clusters":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"clusters": []map[string]any{
+					{"id": 29, "name": "syd-tracer"},
+				},
+			})
+		case r.Method == http.MethodDelete:
+			restMu.Lock()
+			deletes = append(deletes, "DELETE "+r.URL.Path)
+			restMu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer restSrv.Close()
+
+	dir := t.TempDir()
+	cl := forgeEnabledCluster("http://unused", restSrv.URL)
+	st, _ := state.Load(dir)
+	// Simulate stale forge state surviving the lost link file.
+	st.Set("FORGE_PROJECT_ID", "45")
+	st.Set("FORGE_CLUSTER_ID", "29")
+	st.Set("FORGE_STATUS", "registered")
+	st.Set("FORGE_LINK_PATH", "/gone/forge_link.json")
+
+	restoreWd := chdirTemp(t, dir)
+	defer restoreWd()
+
+	// No forge_link.json written — the workspace state directory was "lost".
+	clients := &Clients{Profile: "test"}
+	err := Phase09ForgeRegisterDown(context.Background(), cl, st, clients, false)
+	if err != nil {
+		t.Fatalf("Phase09ForgeRegisterDown: %v", err)
+	}
+
+	restMu.Lock()
+	defer restMu.Unlock()
+	want := []string{"DELETE /api/projects/45/k8s/clusters/29", "DELETE /api/projects/45"}
+	if len(deletes) != 2 || deletes[0] != want[0] || deletes[1] != want[1] {
+		t.Errorf("deletes = %v, want %v", deletes, want)
+	}
+	for _, key := range []string{"FORGE_PROJECT_ID", "FORGE_CLUSTER_ID", "FORGE_STATUS", "FORGE_LINK_PATH"} {
+		if got := st.Get(key); got != "" {
+			t.Errorf("%s = %q, want cleared", key, got)
+		}
+	}
+}
+
+// TestPhase09ForgeRegisterDown_NoLinkForgeDisabled verifies the instant skip:
+// when forge isn't in cluster.yaml AND there's no link, down must not probe
+// any forge endpoint (no HTTP calls at all) and return nil.
+func TestPhase09ForgeRegisterDown_NoLinkForgeDisabled(t *testing.T) {
+	awsmw.ResetForTest()
+
+	var calls int
+	var callsMu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callsMu.Lock()
+		calls++
+		callsMu.Unlock()
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cl := sydTracerCluster() // no forge block
+	st, _ := state.Load(dir)
+
+	restoreWd := chdirTemp(t, dir)
+	defer restoreWd()
+
+	clients := &Clients{Profile: "test", ForgeClient: forge.NewClient(srv.URL + "/mcp/")}
+	err := Phase09ForgeRegisterDown(context.Background(), cl, st, clients, false)
+	if err != nil {
+		t.Fatalf("expected nil for no-link + nil forge block, got: %v", err)
+	}
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 0 {
+		t.Errorf("expected zero HTTP calls (instant skip), got %d", calls)
 	}
 }
 

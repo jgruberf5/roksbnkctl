@@ -3,9 +3,12 @@ package forge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -219,6 +222,134 @@ func TestUnregisterREST_404Tolerated(t *testing.T) {
 	link := &Link{ProjectID: 11, ClusterID: 99}
 	if err := UnregisterREST(context.Background(), ts.URL, link, RestCreds{}); err != nil {
 		t.Fatalf("UnregisterREST should tolerate 404, got: %v", err)
+	}
+}
+
+// TestUnregisterREST_PurgesProject verifies that UnregisterREST deletes the
+// project shell after the cluster record — down must leave nothing hanging
+// forge-side (the project is created by registration and named for the
+// cluster).
+func TestUnregisterREST_PurgesProject(t *testing.T) {
+	srv := &forgeRESTServer{}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+
+	link := &Link{ProjectID: 11, ClusterID: 99}
+	if err := UnregisterREST(context.Background(), ts.URL, link, RestCreds{}); err != nil {
+		t.Fatalf("UnregisterREST: %v", err)
+	}
+
+	var clusterDeleted, projectDeleted bool
+	for _, c := range srv.calls {
+		switch c {
+		case "DELETE /api/projects/11/k8s/clusters/99":
+			clusterDeleted = true
+		case "DELETE /api/projects/11":
+			projectDeleted = true
+		}
+	}
+	if !clusterDeleted {
+		t.Errorf("cluster DELETE not received; calls: %v", srv.calls)
+	}
+	if !projectDeleted {
+		t.Errorf("project DELETE not received — project shell left hanging; calls: %v", srv.calls)
+	}
+}
+
+// unregisterByNameServer serves the endpoints UnregisterRESTByName needs:
+// login, project list, cluster list, and the two deletes. It records which
+// deletes were received.
+func unregisterByNameServer(t *testing.T, projects []map[string]any, clusters []map[string]any, deletes *[]string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"projects": projects})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/45/k8s/clusters":
+			_ = json.NewEncoder(w).Encode(map[string]any{"clusters": clusters})
+		case r.Method == http.MethodDelete:
+			mu.Lock()
+			*deletes = append(*deletes, "DELETE "+r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+// TestUnregisterRESTByName_DeletesClusterAndProject covers the link-less
+// discovery path: find project "awsbnkctl-tracer" by name, delete its cluster
+// record by name, then delete the project.
+func TestUnregisterRESTByName_DeletesClusterAndProject(t *testing.T) {
+	var deletes []string
+	ts := unregisterByNameServer(t,
+		[]map[string]any{
+			{"id": 7, "name": "some-other-project"},
+			{"id": 45, "name": "awsbnkctl-tracer"},
+		},
+		[]map[string]any{
+			{"id": 29, "name": "tracer"},
+		},
+		&deletes)
+	defer ts.Close()
+
+	if err := UnregisterRESTByName(context.Background(), ts.URL, "tracer", RestCreds{}); err != nil {
+		t.Fatalf("UnregisterRESTByName: %v", err)
+	}
+	want := []string{"DELETE /api/projects/45/k8s/clusters/29", "DELETE /api/projects/45"}
+	if len(deletes) != 2 || deletes[0] != want[0] || deletes[1] != want[1] {
+		t.Errorf("deletes = %v, want %v", deletes, want)
+	}
+}
+
+// TestUnregisterRESTByName_NotRegistered verifies that an absent project
+// returns an error wrapping os.ErrNotExist and issues no DELETEs.
+func TestUnregisterRESTByName_NotRegistered(t *testing.T) {
+	var deletes []string
+	ts := unregisterByNameServer(t,
+		[]map[string]any{
+			{"id": 7, "name": "some-other-project"},
+		},
+		nil,
+		&deletes)
+	defer ts.Close()
+
+	err := UnregisterRESTByName(context.Background(), ts.URL, "tracer", RestCreds{})
+	if err == nil {
+		t.Fatal("expected error for unregistered cluster, got nil")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("error does not wrap os.ErrNotExist: %v", err)
+	}
+	if len(deletes) != 0 {
+		t.Errorf("expected no DELETEs, got %v", deletes)
+	}
+}
+
+// TestUnregisterRESTByName_ClusterAlreadyGone verifies that when the project
+// exists but its cluster record is already gone, the project shell is still
+// purged without error.
+func TestUnregisterRESTByName_ClusterAlreadyGone(t *testing.T) {
+	var deletes []string
+	ts := unregisterByNameServer(t,
+		[]map[string]any{
+			{"id": 45, "name": "awsbnkctl-tracer"},
+		},
+		[]map[string]any{},
+		&deletes)
+	defer ts.Close()
+
+	if err := UnregisterRESTByName(context.Background(), ts.URL, "tracer", RestCreds{}); err != nil {
+		t.Fatalf("UnregisterRESTByName: %v", err)
+	}
+	want := "DELETE /api/projects/45"
+	if len(deletes) != 1 || deletes[0] != want {
+		t.Errorf("deletes = %v, want [%s]", deletes, want)
 	}
 }
 
