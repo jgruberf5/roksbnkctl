@@ -350,18 +350,17 @@ func TestWriteTestingPhaseOverride_ByteExactBlock_WithTGW(t *testing.T) {
 
 	// The full forced block, byte-identical, in exact order with single-LF
 	// separators. clusterIdentity prefers the ID, so roks_cluster_id_or_name
-	// is the cluster ID. cluster_vpc_id == existing_cluster_vpc_id == VPCID.
+	// is the cluster ID. The TGW name is carried by the DECLARED root var
+	// roks_transit_gateway_name (testing_transit_gateway_name is a module input).
 	const wantBlock = "create_roks_cluster = false\n" +
 		"roks_cluster_id_or_name = \"crt-cluster-id\"\n" +
 		"use_existing_cluster_vpc = true\n" +
 		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
-		"# existing_cluster_vpc_id is the cluster VPC; cluster_vpc_id below is the same value\n" +
-		"cluster_vpc_id = \"r038-ef6305af-vpc\"\n" +
 		"create_roks_transit_gateway = false\n" +
 		"create_roks_registry_cos_instance = false\n" +
 		"deploy_bnk = false\n" +
 		"deploy_cert_manager = false\n" +
-		"testing_transit_gateway_name = \"canada-roks-tgw\"\n"
+		"roks_transit_gateway_name = \"canada-roks-tgw\"\n"
 	if !strings.Contains(got, wantBlock) {
 		t.Fatalf("testing-phase override missing the byte-identical block.\n--- want block ---\n%s\n--- got file ---\n%s", wantBlock, got)
 	}
@@ -417,8 +416,8 @@ func TestWriteTestingPhaseOverride_OmitsTGWLineWhenNameEmpty(t *testing.T) {
 	}
 	got := string(body)
 
-	if strings.Contains(got, "testing_transit_gateway_name") {
-		t.Errorf("empty TGW name must OMIT the testing_transit_gateway_name line\n--- override ---\n%s", got)
+	if strings.Contains(got, "roks_transit_gateway_name") {
+		t.Errorf("empty TGW name must OMIT the roks_transit_gateway_name line\n--- override ---\n%s", got)
 	}
 	// The architectural-off block + reuse inputs are still all present and the
 	// file ends at deploy_cert_manager = false (no dangling TGW line).
