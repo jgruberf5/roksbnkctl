@@ -231,12 +231,19 @@ locals {
   ] : []
   tgw_jumphost_image_id = length(local.tgw_ubuntu_images) > 0 ? local.tgw_ubuntu_images[0].id : null
 
+  # Exclude confidential-computing profiles (the *dc family, e.g. bx3dc): they
+  # require a CC-enabled image, so on the stock minimal Ubuntu image the VM
+  # boots ("running"/health=ok) but never brings up networking and drops all
+  # TCP on every port. The IBM profile API can list one first — in eu-de
+  # bx3dc-4x20 is the first >=4-vCPU profile — so without this filter the
+  # [0] pick silently produces an unreachable jumphost. sort() makes the
+  # remaining choice deterministic across regions instead of API-order-dependent.
   tgw_eligible_profiles = (var.testing_create_tgw_jumphost && var.testing_jumphost_profile == "") ? [
     for profile in data.ibm_is_instance_profiles.tgw_profiles[0].profiles :
-    profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb
+    profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb && length(regexall("dc-[0-9]", profile.name)) == 0
   ] : []
   tgw_jumphost_profile = var.testing_jumphost_profile != "" ? var.testing_jumphost_profile : (
-    length(local.tgw_eligible_profiles) > 0 ? local.tgw_eligible_profiles[0].name : "bx2-4x16"
+    length(local.tgw_eligible_profiles) > 0 ? sort([for p in local.tgw_eligible_profiles : p.name])[0] : "bx2-4x16"
   )
 
   # ----------------------------------------------------------
@@ -251,12 +258,16 @@ locals {
   ] : []
   cluster_jumphost_image_id = length(local.cluster_ubuntu_images) > 0 ? local.cluster_ubuntu_images[0].id : null
 
+  # Same confidential-computing exclusion + deterministic sort as the TGW
+  # jumphost above (this is the path that actually bit test-005: eu-de's first
+  # eligible profile was the confidential bx3dc-4x20, giving cluster jumphosts
+  # that ran but were unreachable on every port).
   cluster_eligible_profiles = (var.testing_create_cluster_jumphosts && var.testing_jumphost_profile == "") ? [
     for profile in data.ibm_is_instance_profiles.cluster_profiles[0].profiles :
-    profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb
+    profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb && length(regexall("dc-[0-9]", profile.name)) == 0
   ] : []
   cluster_jumphost_profile = var.testing_jumphost_profile != "" ? var.testing_jumphost_profile : (
-    length(local.cluster_eligible_profiles) > 0 ? local.cluster_eligible_profiles[0].name : "bx2-4x16"
+    length(local.cluster_eligible_profiles) > 0 ? sort([for p in local.cluster_eligible_profiles : p.name])[0] : "bx2-4x16"
   )
 
   # Map of zone → existing PGW ID for the cluster VPC.
