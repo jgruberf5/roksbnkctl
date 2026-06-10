@@ -129,6 +129,12 @@ type ResourcesCfg struct {
 	// private key per-workspace, and uploads the public key. Empty → no named key
 	// (the jumphosts use only the generated cloud-init key).
 	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
+	// CopiedSSHKeyFiles lists the ~/.ssh basenames `roksbnkctl init` ACTUALLY
+	// wrote when the user accepted the "copy the private key to ~/.ssh" prompt
+	// (only files it created — pre-existing files are skipped, never recorded).
+	// `ws delete` removes exactly these so a generated key doesn't outlive its
+	// workspace. Empty when nothing was copied.
+	CopiedSSHKeyFiles []string `yaml:"copied_ssh_key_files,omitempty"`
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the
