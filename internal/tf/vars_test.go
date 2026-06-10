@@ -43,6 +43,33 @@ func TestRenderTFVars_GatewayClientSubnetLists(t *testing.T) {
 	}
 }
 
+func TestRenderTFVars_TestingSSHKeyName(t *testing.T) {
+	ws := &config.Workspace{
+		Prefix:   "tf",
+		IBMCloud: config.IBMCloudCfg{Region: "us-south"},
+		Resources: &config.ResourcesCfg{
+			TGWJumphost:       config.ResourceToggle{Create: true},
+			TestingSSHKeyName: "tf-jumphost",
+		},
+	}
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `testing_ssh_key_name = "tf-jumphost"`) {
+		t.Errorf("missing testing_ssh_key_name:\n%s", buf.String())
+	}
+
+	ws.Resources.TestingSSHKeyName = ""
+	var buf2 bytes.Buffer
+	if err := RenderTFVars(&buf2, ws, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf2.String(), "testing_ssh_key_name") {
+		t.Errorf("testing_ssh_key_name should be absent when unset:\n%s", buf2.String())
+	}
+}
+
 func TestRenderTFVars_CreateMode(t *testing.T) {
 	ws := &config.Workspace{
 		IBMCloud: config.IBMCloudCfg{Region: "us-south", ResourceGroup: "default"},

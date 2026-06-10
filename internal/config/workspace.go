@@ -123,6 +123,12 @@ type ResourcesCfg struct {
 	// is installed in. Empty → the terraform default (testing_client_vpc_region).
 	// Lets the test client live in a different region from the cluster.
 	ClientRegion string `yaml:"client_region,omitempty"`
+	// TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing
+	// jumphosts (rendered as testing_ssh_key_name). `roksbnkctl init` resolves it:
+	// an existing key is used as-is, otherwise roksbnkctl generates one, stores the
+	// private key per-workspace, and uploads the public key. Empty → no named key
+	// (the jumphosts use only the generated cloud-init key).
+	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the

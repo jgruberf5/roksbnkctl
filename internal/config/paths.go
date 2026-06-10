@@ -78,6 +78,16 @@ func WorkspaceConfigPath(name string) (string, error) {
 	return filepath.Join(dir, workspaceConfigFile), nil
 }
 
+// WorkspaceSSHDir: ~/.roksbnkctl/<name>/ssh/ — holds the jumphost SSH keypair
+// roksbnkctl generates + uploads to IBM Cloud (private key chmod 600).
+func WorkspaceSSHDir(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ssh"), nil
+}
+
 // WorkspaceStateDir: ~/.roksbnkctl/<name>/state/  (terraform.tfstate, kubeconfig, scratch/)
 func WorkspaceStateDir(name string) (string, error) {
 	dir, err := WorkspaceDir(name)

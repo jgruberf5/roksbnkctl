@@ -18,6 +18,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
+	"github.com/jgruberf5/roksbnkctl/internal/sshkey"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -230,6 +231,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("verifying resource group: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Resource group %q (id %s)\n\n", rgName, rgID)
+
+	// Resolve the testing jumphost SSH key: use an existing IBM Cloud key, or
+	// generate + store + upload one (in every region a jumphost uses).
+	if err := resolveTestingSSHKey(ctx, ic, cctx.WorkspaceName, region, resources, rgID); err != nil {
+		return err
+	}
 
 	tfCfg, err := promptTFSource(ctx, cctx)
 	if err != nil {
@@ -497,7 +504,139 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 	// Per-zone cluster jumphosts (default off).
 	res.ClusterJumphosts.Create = promptYesNo("Create per-zone cluster jumphosts?", false)
 
+	// SSH key for the jumphosts — only when a jumphost is enabled. The name is
+	// captured here; the check/generate/upload happens once the resource group
+	// is resolved (resolveTestingSSHKey).
+	if res.TGWJumphost.Create || res.ClusterJumphosts.Create {
+		res.TestingSSHKeyName = promptString("SSH key name for the testing jumphosts", out.Prefix+"-jumphost")
+	}
+
 	return out, nil
+}
+
+// resolveTestingSSHKey resolves the IBM Cloud VPC SSH key for the testing
+// jumphosts (res.TestingSSHKeyName). An existing key is reused (and replicated
+// into any region a jumphost uses but where it's missing); otherwise roksbnkctl
+// generates an ed25519 keypair, stores the private key in the workspace ssh/ dir
+// (offering to copy it into ~/.ssh), and uploads the public key. No-op when no
+// jumphost is enabled or no key name was given.
+func resolveTestingSSHKey(ctx context.Context, ic *ibm.Client, workspace, clusterRegion string, res *config.ResourcesCfg, rgID string) error {
+	if res == nil || res.TestingSSHKeyName == "" {
+		return nil
+	}
+	keyName := res.TestingSSHKeyName
+
+	// Regions a jumphost lives in — the key must resolve by name in each.
+	var regions []string
+	seen := map[string]bool{}
+	add := func(r string) {
+		if r != "" && !seen[r] {
+			seen[r] = true
+			regions = append(regions, r)
+		}
+	}
+	if res.ClusterJumphosts.Create {
+		add(clusterRegion)
+	}
+	if res.TGWJumphost.Create {
+		cr := res.ClientRegion
+		if cr == "" {
+			cr = clusterRegion
+		}
+		add(cr)
+	}
+	if len(regions) == 0 {
+		return nil
+	}
+
+	// Existence per region.
+	var existingPub string
+	var missing []string
+	for _, r := range regions {
+		k, err := ic.GetSSHKeyByName(ctx, r, keyName)
+		if err != nil {
+			return fmt.Errorf("checking SSH key %q in %s: %w", keyName, r, err)
+		}
+		if k != nil && k.PublicKey != "" {
+			existingPub = k.PublicKey
+		} else {
+			missing = append(missing, r)
+		}
+	}
+
+	// Reuse an existing key, replicating into any missing region.
+	if existingPub != "" {
+		for _, r := range missing {
+			if _, err := ic.CreateSSHKey(ctx, r, keyName, existingPub, rgID); err != nil {
+				return fmt.Errorf("replicating SSH key %q to %s: %w", keyName, r, err)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q (replicated into %s)\n", keyName, strings.Join(missing, ", "))
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q\n", keyName)
+		}
+		return nil
+	}
+
+	// Absent everywhere — generate, store, upload.
+	pub, priv, err := sshkey.Generate()
+	if err != nil {
+		return err
+	}
+	sshDir, err := config.WorkspaceSSHDir(workspace)
+	if err != nil {
+		return err
+	}
+	privPath, err := sshkey.Write(sshDir, keyName, priv, pub)
+	if err != nil {
+		return fmt.Errorf("storing SSH key: %w", err)
+	}
+	for _, r := range regions {
+		if _, err := ic.CreateSSHKey(ctx, r, keyName, pub, rgID); err != nil {
+			return fmt.Errorf("uploading SSH key to %s: %w", r, err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "✓ Generated SSH key %q → %s (uploaded to %s)\n", keyName, privPath, strings.Join(regions, ", "))
+
+	if promptYesNo(fmt.Sprintf("Copy the private key to ~/.ssh/%s?", keyName), true) {
+		if err := copyKeyToUserSSH(sshDir, keyName); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not copy to ~/.ssh (%v)\n", err)
+		}
+	}
+	return nil
+}
+
+// copyKeyToUserSSH copies <name>{,.pub} from srcDir into ~/.ssh, never
+// overwriting an existing file.
+func copyKeyToUserSSH(srcDir, name string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dstDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name string
+		perm os.FileMode
+	}{{name, 0o600}, {name + ".pub", 0o644}} {
+		dst := filepath.Join(dstDir, f.name)
+		if _, err := os.Stat(dst); err == nil {
+			fmt.Fprintf(os.Stderr, "  ~/.ssh/%s already exists — not overwriting\n", f.name)
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, f.name))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, f.perm); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  ✓ copied to ~/.ssh/%s\n", name)
+	return nil
 }
 
 // pickRegion shows the account's available regions as a menu and returns the

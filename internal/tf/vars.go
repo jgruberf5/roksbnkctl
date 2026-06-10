@@ -254,6 +254,11 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "testing_client_vpc_region = %q\n", res.ClientRegion)
 	}
 
+	// IBM Cloud VPC SSH key attached to the jumphosts (resolved by `init`).
+	if res.TestingSSHKeyName != "" {
+		fmt.Fprintf(w, "testing_ssh_key_name = %q\n", res.TestingSSHKeyName)
+	}
+
 	// Per-zone cluster jumphosts (the module appends -<zone> to the prefix).
 	fmt.Fprintf(w, "testing_create_cluster_jumphosts = %v\n", res.ClusterJumphosts.Create)
 	if res.ClusterJumphosts.Create {
