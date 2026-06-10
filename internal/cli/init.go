@@ -557,25 +557,34 @@ func resolveTestingSSHKey(ctx context.Context, ic *ibm.Client, workspace, cluste
 		return nil
 	}
 
-	// Existence per region.
+	// Existence per region (one spinner for the batch of checks).
 	var existingPub string
 	var missing []string
-	for _, r := range regions {
-		k, err := ic.GetSSHKeyByName(ctx, r, keyName)
-		if err != nil {
-			return fmt.Errorf("checking SSH key %q in %s: %w", keyName, r, err)
+	if err := spin(fmt.Sprintf("Checking IBM Cloud for SSH key %q", keyName), func() error {
+		for _, r := range regions {
+			k, e := ic.GetSSHKeyByName(ctx, r, keyName)
+			if e != nil {
+				return fmt.Errorf("in %s: %w", r, e)
+			}
+			if k != nil && k.PublicKey != "" {
+				existingPub = k.PublicKey
+			} else {
+				missing = append(missing, r)
+			}
 		}
-		if k != nil && k.PublicKey != "" {
-			existingPub = k.PublicKey
-		} else {
-			missing = append(missing, r)
-		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("checking SSH key %q: %w", keyName, err)
 	}
 
 	// Reuse an existing key, replicating into any missing region.
 	if existingPub != "" {
 		for _, r := range missing {
-			if _, err := ic.CreateSSHKey(ctx, r, keyName, existingPub, rgID); err != nil {
+			r := r
+			if err := spin(fmt.Sprintf("Replicating SSH key %q into %s", keyName, r), func() error {
+				_, e := ic.CreateSSHKey(ctx, r, keyName, existingPub, rgID)
+				return e
+			}); err != nil {
 				return fmt.Errorf("replicating SSH key %q to %s: %w", keyName, r, err)
 			}
 		}
@@ -601,7 +610,11 @@ func resolveTestingSSHKey(ctx context.Context, ic *ibm.Client, workspace, cluste
 		return fmt.Errorf("storing SSH key: %w", err)
 	}
 	for _, r := range regions {
-		if _, err := ic.CreateSSHKey(ctx, r, keyName, pub, rgID); err != nil {
+		r := r
+		if err := spin(fmt.Sprintf("Uploading the public key to %s", r), func() error {
+			_, e := ic.CreateSSHKey(ctx, r, keyName, pub, rgID)
+			return e
+		}); err != nil {
 			return fmt.Errorf("uploading SSH key to %s: %w", r, err)
 		}
 	}
@@ -972,4 +985,39 @@ func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 // already bounded by the ibm package's http client per-request timeout.
 func apiCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, initTimeout)
+}
+
+// spin runs fn while animating a one-line spinner after "→ label" on stderr,
+// leaving a "→ label... ✓" (or ✗) trace when it finishes. On a non-TTY it just
+// prints the label line and runs fn (no animation). Used for the SSH-key network
+// round-trips so a slow IBM Cloud call doesn't look hung.
+func spin(label string, fn func() error) error {
+	if !isTTY() {
+		fmt.Fprintf(os.Stderr, "→ %s...\n", label)
+		return fn()
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		const frames = `|/-\`
+		t := time.NewTicker(120 * time.Millisecond)
+		defer t.Stop()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "\r→ %s... %c", label, frames[i%len(frames)])
+			}
+		}
+	}()
+	err := fn()
+	close(stop)
+	<-done
+	mark := "✓"
+	if err != nil {
+		mark = "✗"
+	}
+	fmt.Fprintf(os.Stderr, "\r\033[K→ %s... %s\n", label, mark)
+	return err
 }
