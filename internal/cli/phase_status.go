@@ -264,6 +264,7 @@ var testingStatusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return runPhaseStatus(cmd, "testing", config.WorkspaceTestingStateDir,
 			[]string{
+				"testing_ssh_key_name",
 				"testing_tgw_jumphost_ip", "testing_tgw_jumphost_ssh_command",
 				"testing_cluster_jumphost_ips", "testing_cluster_jumphost_ssh_commands",
 				"testing_tgw_jumphost_subnet_cidr", "testing_cluster_jumphost_subnet_cidrs",

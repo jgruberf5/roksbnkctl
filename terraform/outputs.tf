@@ -84,6 +84,11 @@ output "jumphost_shared_key" {
   sensitive   = true
 }
 
+output "testing_ssh_key_name" {
+  description = "IBM Cloud VPC SSH key name attached to the testing jumphosts (non-sensitive; empty when only the generated cloud-init key is used)"
+  value       = try(module.testing.testing_ssh_key_name, "")
+}
+
 output "testing_tgw_jumphost_ssh_command" {
   description = "SSH command to connect to the TGW-connected jumphost (empty when testing_create_tgw_jumphost = false)"
   value       = try(module.testing.testing_tgw_jumphost_ssh_command, "")
