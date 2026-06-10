@@ -99,6 +99,32 @@ func (r *realHelmRunner) EnsureRelease(rel helmRelease) error {
 	}
 
 	existing := releases[0]
+
+	// A pending release (pending-install / pending-upgrade / pending-rollback —
+	// e.g. a previously killed Apply) cannot be upgraded: Helm rejects the
+	// upgrade with "another operation is in progress", permanently blocking
+	// re-runs. Recover by uninstalling the wedged release (best-effort) and
+	// installing fresh.
+	if existing.Info != nil && existing.Info.Status.IsPending() {
+		r.logFn("release %s is in pending state %s — uninstalling wedged release and reinstalling", rel.ReleaseName, existing.Info.Status)
+		uns := action.NewUninstall(cfg)
+		uns.IgnoreNotFound = true
+		if _, unsErr := uns.Run(rel.ReleaseName); unsErr != nil {
+			r.logFn("warn: uninstall of pending release %s: %v — attempting install anyway", rel.ReleaseName, unsErr)
+		}
+		inst := action.NewInstall(cfg)
+		inst.ReleaseName = rel.ReleaseName
+		inst.Namespace = rel.Namespace
+		inst.Wait = true
+		inst.Timeout = helmInstallTimeout
+		inst.CreateNamespace = true
+		if _, instErr := inst.Run(ch, rel.Values); instErr != nil {
+			return fmt.Errorf("helm install %s (after pending-release recovery): %w", rel.ReleaseName, instErr)
+		}
+		r.logFn("helm install %s complete (recovered from pending state)", rel.ReleaseName)
+		return nil
+	}
+
 	deployedVersion := ""
 	if existing.Chart != nil && existing.Chart.Metadata != nil {
 		deployedVersion = existing.Chart.Metadata.Version

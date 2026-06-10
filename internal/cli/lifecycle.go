@@ -615,6 +615,22 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	return nil
 }
 
+// confirmDestroy prompts the operator to type 'destroy' and reports whether
+// teardown may proceed. It requires an AFFIRMATIVE read: a closed/empty stdin
+// (EOF, `</dev/null`, CI pipe) or any input other than exactly "destroy"
+// aborts. This guards against the gate falling through to a full teardown
+// when Scan() returns false without any operator input.
+func confirmDestroy(in io.Reader, out io.Writer, name, region string) bool {
+	fmt.Fprintf(out, "About to DESTROY cluster %q in %s.\n", name, region)
+	fmt.Fprintln(out, "Type 'destroy' to proceed:")
+	scanner := bufio.NewScanner(in)
+	if !scanner.Scan() || scanner.Text() != "destroy" {
+		fmt.Fprintln(out, "Aborted.")
+		return false
+	}
+	return true
+}
+
 // runPhasedDown is the Go-SDK phased destroy path activated by
 // `awsbnkctl down --config <file>`. It reads the cluster.yaml intent,
 // loads the IDs cache (with tag-discovery fallback), then destroys
@@ -655,14 +671,8 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		return nil
 	}
 
-	if !yes {
-		fmt.Fprintf(os.Stderr, "About to DESTROY cluster %q in %s.\n", cl.Metadata.Name, cl.Metadata.Region)
-		fmt.Fprintln(os.Stderr, "Type 'destroy' to proceed:")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() && scanner.Text() != "destroy" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
+	if !yes && !confirmDestroy(os.Stdin, os.Stderr, cl.Metadata.Name, cl.Metadata.Region) {
+		return nil
 	}
 
 	// Reverse phase order: 15 → 14 → 12 → 11 → 10 → 09 → 08 → 07 → 06 → 05 → 04 → 03 → 02.

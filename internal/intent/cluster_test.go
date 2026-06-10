@@ -1922,6 +1922,7 @@ func TestValidateBigIPVE_RejectsVIPInReservedSet(t *testing.T) {
 		vip  string
 		desc string
 	}{
+		{"10.0.10.50", "BIG-IP VE ENI primary IP"},
 		{"10.0.10.100", "BNK default gateway VIP"},
 		{"10.0.10.110", "Diameter demo VIP"},
 		{"10.0.10.111", "HTTP2 demo VIP"},
@@ -1944,6 +1945,66 @@ func TestValidateBigIPVE_RejectsVIPInReservedSet(t *testing.T) {
 				t.Errorf("error should mention 'collides': %v", err)
 			}
 		})
+	}
+}
+
+// TestValidateBigIPVE_RejectsAWSReservedOffsets verifies that VIPs at host
+// offsets AWS reserves in every subnet (.0-.3 and .255 broadcast) are rejected
+// at validation time instead of exploding deep in provisioning.
+func TestValidateBigIPVE_RejectsAWSReservedOffsets(t *testing.T) {
+	for _, vip := range []string{"10.0.10.0", "10.0.10.1", "10.0.10.2", "10.0.10.3", "10.0.10.255"} {
+		vip := vip
+		t.Run(vip, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := bigipVEFullYAML + "  vip: " + vip + "\n"
+			p := writeFile(t, dir, "cluster.yaml", yaml)
+			_, err := Load(p)
+			if err == nil {
+				t.Fatalf("expected error for AWS-reserved VIP %s, got nil", vip)
+			}
+			if !strings.Contains(err.Error(), "AWS reserves") {
+				t.Errorf("error should mention 'AWS reserves': %v", err)
+			}
+		})
+	}
+}
+
+// TestValidatePattern_RejectsNon24DataPathCIDR verifies the explicit /24
+// requirement on dataPath subnets (SelfIP derivation, reserved-offset math and
+// phase17f's "address <ip>/24" rendering all assume /24).
+func TestValidatePattern_RejectsNon24DataPathCIDR(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{"external /25", "10.0.10.0/24", "10.0.10.0/25"},
+		{"external /23", "10.0.10.0/24", "10.0.10.0/23"},
+		{"internal /26", "10.0.20.0/24", "10.0.20.0/26"},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := strings.Replace(hostDeviceMinimalYAML, tc.old, tc.new, 1)
+			p := writeFile(t, dir, "cluster.yaml", yaml)
+			_, err := Load(p)
+			if err == nil {
+				t.Fatalf("expected error for non-/24 dataPath CIDR (%s), got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "only /24 dataPath subnets are supported") {
+				t.Errorf("error should mention 'only /24 dataPath subnets are supported': %v", err)
+			}
+		})
+	}
+}
+
+// TestValidatePattern_Allows24DataPathCIDR verifies /24 dataPath subnets still load.
+func TestValidatePattern_Allows24DataPathCIDR(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", hostDeviceMinimalYAML)
+	if _, err := Load(p); err != nil {
+		t.Fatalf("/24 dataPath subnets should load cleanly: %v", err)
 	}
 }
 

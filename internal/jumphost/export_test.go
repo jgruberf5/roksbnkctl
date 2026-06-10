@@ -28,6 +28,11 @@ var PrepareEICEKeyFn = &prepareEICEKeyFn
 // commands without network.
 var SSHRunViaEICEFn = &sshRunViaEICEFn
 
+// SSHRunViaEICEStdinFn is the overridable seam for SSHRunViaEICEWithStdin
+// consumed by RunStagingCommandWithStdin and CopyFileViaEICEStdin. Tests
+// replace it to capture commands + stdin payloads without network.
+var SSHRunViaEICEStdinFn = &sshRunViaEICEStdinFn
+
 // PushSSHPublicKeyFn is the overridable seam for PushSSHPublicKey consumed by
 // RunStagingCommands and CopyFileViaEICE. Tests replace it to assert
 // re-push-per-step behaviour without network.

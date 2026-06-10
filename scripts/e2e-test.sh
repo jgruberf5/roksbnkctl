@@ -101,9 +101,8 @@ skip_phase() {
 # ── phases ──────────────────────────────────────────────────────────
 #
 # Each phase below is a skip-stub. The descriptions preserve the
-# original phase contract — see git history (and the upstream
-# `jgruberf5/roksbnkctl` repo's `scripts/e2e-test.sh`) for the
-# full inherited shape.
+# original phase contract — see git history for the full inherited
+# shape.
 #
 # Phases A-H (cluster bring-up + BNK trial) split apply-tier vs
 # dry-run-tier marker text. The dry-run tier is exercised by the CI

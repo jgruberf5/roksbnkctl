@@ -8,6 +8,11 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	dembigipcis "github.com/JLCode-tech/awsbnkctl/internal/demo/bigipcis"
@@ -473,4 +478,66 @@ func assertionMentions(res scenarios.Result, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestCleanup_DeletesSecretFromCISNamespace pins the Cleanup namespace bug:
+// createBigIPLoginSecret creates bigip-login in the CIS namespace (kube-system),
+// so Cleanup must delete it from kube-system — deleting from the demo namespace
+// is a guaranteed NotFound no-op that leaves the admin-password Secret behind.
+func TestCleanup_DeletesSecretFromCISNamespace(t *testing.T) {
+	clientset := k8sfake.NewClientset(
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bigip-login", Namespace: "kube-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-bigip-cis"}},
+	)
+
+	cfg := dembigipcis.ScenarioTestConfig{
+		RemoveRoutesFn: func(_ context.Context, _ *scenarios.Context, _ []string) error { return nil },
+	}
+	s := dembigipcis.NewScenarioForTest(cfg)
+
+	sctx := &scenarios.Context{
+		Ctx:       context.Background(),
+		Cluster:   makeCluster(),
+		State:     onboardedState(t),
+		Out:       io.Discard,
+		Clientset: clientset,
+		Options:   map[string]string{},
+	}
+
+	if err := s.Cleanup(sctx); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+
+	_, err := clientset.CoreV1().Secrets("kube-system").Get(context.Background(), "bigip-login", metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("bigip-login Secret should be deleted from kube-system, Get err = %v", err)
+	}
+
+	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "demo-bigip-cis", metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("demo namespace should be deleted, Get err = %v", err)
+	}
+}
+
+// TestCleanup_TolerantWhenSecretMissing asserts Cleanup stays idempotent: a
+// second run (Secret + namespace already gone) must not error.
+func TestCleanup_TolerantWhenSecretMissing(t *testing.T) {
+	clientset := k8sfake.NewClientset()
+	cfg := dembigipcis.ScenarioTestConfig{
+		RemoveRoutesFn: func(_ context.Context, _ *scenarios.Context, _ []string) error { return nil },
+	}
+	s := dembigipcis.NewScenarioForTest(cfg)
+
+	sctx := &scenarios.Context{
+		Ctx:       context.Background(),
+		Cluster:   makeCluster(),
+		State:     onboardedState(t),
+		Out:       io.Discard,
+		Clientset: clientset,
+		Options:   map[string]string{},
+	}
+
+	if err := s.Cleanup(sctx); err != nil {
+		t.Errorf("Cleanup on empty cluster should be a tolerated no-op, got: %v", err)
+	}
 }

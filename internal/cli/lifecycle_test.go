@@ -345,3 +345,36 @@ func TestRunDemoCleanDown_SafeWithZeroUseCases(t *testing.T) {
 		t.Errorf("runDemoCleanDown with DEMO_MODE=true + empty registry: got error %v, want nil", err)
 	}
 }
+
+// TestConfirmDestroy guards the destroy confirmation gate: only an explicit
+// "destroy" line proceeds. Crucially, a closed/empty stdin (EOF — e.g.
+// `awsbnkctl down </dev/null` or a CI pipe) must ABORT, not fall through to a
+// full teardown (the bug this test pins).
+func TestConfirmDestroy(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"affirmative", "destroy\n", true},
+		{"affirmative no newline", "destroy", true},
+		{"wrong word", "yes\n", false},
+		{"empty line", "\n", false},
+		{"EOF / closed stdin", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			got := confirmDestroy(strings.NewReader(tc.input), &out, "test-cluster", "ap-southeast-2")
+			if got != tc.want {
+				t.Errorf("confirmDestroy(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+			if !got && !strings.Contains(out.String(), "Aborted.") {
+				t.Errorf("abort path should print Aborted., got: %q", out.String())
+			}
+			if !strings.Contains(out.String(), "test-cluster") {
+				t.Errorf("prompt should name the cluster, got: %q", out.String())
+			}
+		})
+	}
+}

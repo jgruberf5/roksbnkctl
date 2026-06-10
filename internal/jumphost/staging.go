@@ -1,22 +1,26 @@
 package jumphost
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"path/filepath"
 )
 
-// Package-level function-variable seams consumed ONLY by RunStagingCommands and
-// CopyFileViaEICE. Default to the real implementations. Tests override these via
-// export_test.go to assert command sequencing without network.
+// Package-level function-variable seams consumed ONLY by the staging helpers
+// (RunStagingCommands, RunStagingCommandWithStdin, CopyFileViaEICE,
+// CopyFileViaEICEStdin). Default to the real implementations. Tests override
+// these via export_test.go to assert command sequencing without network.
 //
 // Do NOT route RunCurlProbes / StartHTTPResponder / etc. through these seams —
 // those paths are left byte-for-byte untouched.
 var (
-	prepareEICEKeyFn   = prepareEICEKey
-	sshRunViaEICEFn    = SSHRunViaEICE
-	pushSSHPublicKeyFn = PushSSHPublicKey
+	prepareEICEKeyFn     = prepareEICEKey
+	sshRunViaEICEFn      = SSHRunViaEICE
+	sshRunViaEICEStdinFn = SSHRunViaEICEWithStdin
+	pushSSHPublicKeyFn   = PushSSHPublicKey
 )
 
 // RunStagingCommands mints+pushes an ephemeral EICE key internally (mirroring
@@ -55,6 +59,30 @@ func RunStagingCommands(ctx context.Context, opts ProbeOptions, commands []strin
 	return out, nil
 }
 
+// RunStagingCommandWithStdin mints+pushes an ephemeral EICE key (mirroring
+// RunStagingCommands), then runs a SINGLE command over SSH-via-EICE with the
+// local ssh process's stdin attached to the given reader. stdin propagates
+// through ssh → sshd → the remote command (and onward through any nested ssh
+// the remote command runs), so callers can deliver a secret to a remote
+// `cat > file` without the secret ever appearing on any command line (argv) —
+// neither in the operator host's process list nor the jumphost's.
+//
+// Like RunStagingCommands, it is a pure leaf — no cli/scenarios/intent/demo/
+// state imports.
+func RunStagingCommandWithStdin(ctx context.Context, opts ProbeOptions, command string, stdin io.Reader) (string, error) {
+	keyPath, pubKeyPath, cleanup, err := prepareEICEKeyFn(ctx, opts.Region, opts.InstanceID)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	// Re-push before the command to reset the ~60s EICE TTL (best-effort, same
+	// rationale as RunStagingCommands).
+	_ = pushSSHPublicKeyFn(ctx, opts.Region, opts.InstanceID, pubKeyPath)
+
+	return sshRunViaEICEStdinFn(ctx, opts.Region, opts.InstanceID, keyPath, command, stdin)
+}
+
 // CopyFileViaEICE mints+pushes an ephemeral key, then writes content to remotePath
 // on the jumphost by base64-encoding content and piping it through SSH where it is
 // decoded back to bytes. Overwrites remotePath unconditionally (idempotent re-run =
@@ -63,6 +91,10 @@ func RunStagingCommands(ctx context.Context, opts ProbeOptions, commands []strin
 //
 // The base64 mechanism is binary-safe for arbitrary bytes including Python source
 // files — unlike cat-heredoc which breaks on embedded sentinel strings.
+//
+// NOTE: the base64 payload rides on the local ssh process's ARGV, so the
+// content is visible in `ps` on the operator host (and is capped by ARG_MAX).
+// Never use this for secrets (keys, passwords) — use CopyFileViaEICEStdin.
 func CopyFileViaEICE(ctx context.Context, opts ProbeOptions, content []byte, remotePath string) error {
 	keyPath, pubKeyPath, cleanup, err := prepareEICEKeyFn(ctx, opts.Region, opts.InstanceID)
 	if err != nil {
@@ -86,6 +118,37 @@ func CopyFileViaEICE(ctx context.Context, opts ProbeOptions, content []byte, rem
 	)
 
 	_, runErr := sshRunViaEICEFn(ctx, opts.Region, opts.InstanceID, keyPath, remoteCmd)
+	if runErr != nil {
+		return fmt.Errorf("copy %s: %w", remotePath, runErr)
+	}
+	return nil
+}
+
+// CopyFileViaEICEStdin writes content to remotePath on the jumphost by piping
+// the bytes through the SSH channel's STDIN into a remote `cat > file` — the
+// content never appears on any command line (argv), so it is safe for secrets
+// (private keys, credentials), unlike CopyFileViaEICE whose base64 payload is
+// visible in the operator host's process list. Binary-safe for arbitrary bytes
+// and not bounded by ARG_MAX. Overwrites remotePath unconditionally (same
+// idempotent-overwrite contract as CopyFileViaEICE).
+func CopyFileViaEICEStdin(ctx context.Context, opts ProbeOptions, content []byte, remotePath string) error {
+	keyPath, pubKeyPath, cleanup, err := prepareEICEKeyFn(ctx, opts.Region, opts.InstanceID)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	// Re-push before the write to reset the EICE TTL.
+	_ = pushSSHPublicKeyFn(ctx, opts.Region, opts.InstanceID, pubKeyPath)
+
+	dir := filepath.Dir(remotePath)
+	remoteCmd := fmt.Sprintf(
+		"mkdir -p %s && cat > %s",
+		shellSingleQuote(dir),
+		shellSingleQuote(remotePath),
+	)
+
+	_, runErr := sshRunViaEICEStdinFn(ctx, opts.Region, opts.InstanceID, keyPath, remoteCmd, bytes.NewReader(content))
 	if runErr != nil {
 		return fmt.Errorf("copy %s: %w", remotePath, runErr)
 	}

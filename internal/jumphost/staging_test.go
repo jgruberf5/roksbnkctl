@@ -3,6 +3,7 @@ package jumphost_test
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -222,6 +223,127 @@ func TestCopyFileViaEICE_PropagatesError(t *testing.T) {
 	defer restore()
 
 	err := jumphost.CopyFileViaEICE(context.Background(), opts(), []byte("x"), "/tmp/x.py")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, copyErr) {
+		t.Errorf("want copyErr, got %v", err)
+	}
+}
+
+// --- stdin-based staging helpers ---
+
+// stdinRunRecord captures commands + stdin payloads passed to the
+// SSHRunViaEICEWithStdin seam.
+type stdinRunRecord struct {
+	cmds   []string
+	stdins []string
+}
+
+// installStdinSeams stubs the mint/push seams plus the stdin-capable run seam,
+// recording each command and its full stdin payload.
+func installStdinSeams(t *testing.T, mint *mintRecord, pushes *pushRecord, runs *stdinRunRecord, runErr error) (restore func()) {
+	t.Helper()
+
+	origMint := *jumphost.PrepareEICEKeyFn
+	origStdin := *jumphost.SSHRunViaEICEStdinFn
+	origPush := *jumphost.PushSSHPublicKeyFn
+
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		mint.count++
+		return "fake-key", "fake-pub", func() {}, nil
+	}
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, pub string) error {
+		pushes.keys = append(pushes.keys, pub)
+		return nil
+	}
+	*jumphost.SSHRunViaEICEStdinFn = func(_ context.Context, _, _, _, cmd string, stdin io.Reader) (string, error) {
+		runs.cmds = append(runs.cmds, cmd)
+		payload := ""
+		if stdin != nil {
+			b, _ := io.ReadAll(stdin)
+			payload = string(b)
+		}
+		runs.stdins = append(runs.stdins, payload)
+		if runErr != nil {
+			return "", runErr
+		}
+		return "ok", nil
+	}
+
+	return func() {
+		*jumphost.PrepareEICEKeyFn = origMint
+		*jumphost.SSHRunViaEICEStdinFn = origStdin
+		*jumphost.PushSSHPublicKeyFn = origPush
+	}
+}
+
+func TestRunStagingCommandWithStdin_PassesStdinAndCommand(t *testing.T) {
+	mint := &mintRecord{}
+	pushes := &pushRecord{}
+	runs := &stdinRunRecord{}
+	defer installStdinSeams(t, mint, pushes, runs, nil)()
+
+	out, err := jumphost.RunStagingCommandWithStdin(
+		context.Background(), opts(), "cat > /var/tmp/secret", strings.NewReader("s3cret\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "ok" {
+		t.Errorf("stdout: got %q, want %q", out, "ok")
+	}
+	if mint.count != 1 || len(pushes.keys) != 1 {
+		t.Errorf("expected 1 mint + 1 push, got mint=%d push=%d", mint.count, len(pushes.keys))
+	}
+	if len(runs.cmds) != 1 || runs.cmds[0] != "cat > /var/tmp/secret" {
+		t.Errorf("commands: got %v", runs.cmds)
+	}
+	if len(runs.stdins) != 1 || runs.stdins[0] != "s3cret\n" {
+		t.Errorf("stdin payloads: got %q", runs.stdins)
+	}
+	// The secret must NOT leak into the command string (argv).
+	if strings.Contains(runs.cmds[0], "s3cret") {
+		t.Errorf("secret leaked into the command string: %q", runs.cmds[0])
+	}
+}
+
+func TestCopyFileViaEICEStdin_ContentViaStdinNotArgv(t *testing.T) {
+	mint := &mintRecord{}
+	pushes := &pushRecord{}
+	runs := &stdinRunRecord{}
+	defer installStdinSeams(t, mint, pushes, runs, nil)()
+
+	content := []byte("-----BEGIN PRIVATE KEY-----\nsecret-bytes\n-----END PRIVATE KEY-----\n")
+	err := jumphost.CopyFileViaEICEStdin(context.Background(), opts(), content, "/home/ec2-user/bigip.pem")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs.cmds) != 1 {
+		t.Fatalf("expected 1 ssh command, got %d", len(runs.cmds))
+	}
+	cmd := runs.cmds[0]
+	if !strings.Contains(cmd, "mkdir -p") || !strings.Contains(cmd, "cat > '/home/ec2-user/bigip.pem'") {
+		t.Errorf("remote cmd must mkdir + cat-to-path: %q", cmd)
+	}
+	// The content must travel ONLY on stdin — never in the command string
+	// (which becomes a local ssh argv element, visible in ps), and never
+	// base64-smuggled either.
+	if strings.Contains(cmd, "secret-bytes") || strings.Contains(cmd, "base64") {
+		t.Errorf("file content (or a base64 of it) leaked into the command string: %q", cmd)
+	}
+	if runs.stdins[0] != string(content) {
+		t.Errorf("stdin payload: got %q, want the exact file content", runs.stdins[0])
+	}
+}
+
+func TestCopyFileViaEICEStdin_PropagatesError(t *testing.T) {
+	mint := &mintRecord{}
+	pushes := &pushRecord{}
+	runs := &stdinRunRecord{}
+	copyErr := errors.New("ssh failed")
+	defer installStdinSeams(t, mint, pushes, runs, copyErr)()
+
+	err := jumphost.CopyFileViaEICEStdin(context.Background(), opts(), []byte("x"), "/tmp/x.pem")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

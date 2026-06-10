@@ -878,6 +878,9 @@ func validatePattern(c *Cluster) error {
 	if dp.External.CIDR == "" || dp.External.AZ == "" {
 		return fmt.Errorf("pattern %s requires network.dataPath.external.{cidr,az}", c.Pattern)
 	}
+	if err := requireSlash24(dp.External.CIDR, "network.dataPath.external.cidr"); err != nil {
+		return err
+	}
 	azSet := make(map[string]bool, len(c.Network.AZs))
 	for _, az := range c.Network.AZs {
 		azSet[az] = true
@@ -891,6 +894,9 @@ func validatePattern(c *Cluster) error {
 	if c.HasInternalInterface() {
 		if dp.Internal.CIDR == "" || dp.Internal.AZ == "" {
 			return fmt.Errorf("pattern dual-interface requires network.dataPath.internal.{cidr,az}")
+		}
+		if err := requireSlash24(dp.Internal.CIDR, "network.dataPath.internal.cidr"); err != nil {
+			return err
 		}
 		if !azSet[dp.Internal.AZ] {
 			return fmt.Errorf("network.dataPath.internal.az %q is not in network.azs %v", dp.Internal.AZ, c.Network.AZs)
@@ -911,6 +917,22 @@ func validatePattern(c *Cluster) error {
 				)
 			}
 		}
+	}
+	return nil
+}
+
+// requireSlash24 rejects data-path CIDRs that are not exactly IPv4 /24.
+// SelfIP derivation (DeriveSelfIP), the BIG-IP VE reserved-offset table,
+// phase 17's host-offset math and phase17f's "address <ip>/24" self-IP
+// rendering all assume a /24 host part — a non-/24 CIDR would validate
+// here and then fail (or silently misbehave) deep in provisioning.
+func requireSlash24(cidr, field string) error {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("%s %q is not a valid CIDR: %w", field, cidr, err)
+	}
+	if ones, bits := ipnet.Mask.Size(); bits != 32 || ones != 24 {
+		return fmt.Errorf("%s %q: currently only /24 dataPath subnets are supported (got /%d)", field, cidr, ones)
 	}
 	return nil
 }
@@ -985,6 +1007,7 @@ func (c *Cluster) BigIPVEEnabled() bool {
 // bigipVEReservedOffsets lists the host-part offsets that are already allocated
 // in the external data-path subnet and may not be used as the BIG-IP VIP.
 //
+//	.50  — BIG-IP VE ENI primary IP (phase 17e hardcodes .50 on mgmt/ext/int)
 //	.100 — default BNK Gateway VIP (DefaultVIP)
 //	.110 — Diameter demo VIP (scnVIP)
 //	.111 — HTTP/2 demo VIP
@@ -992,7 +1015,7 @@ func (c *Cluster) BigIPVEEnabled() bool {
 //	.113 — additional BNK demo VIP
 //	.200 — jumphost external ENI secondary IP
 //	.240 — TMM SelfIP (auto-derived by applyDefaults)
-var bigipVEReservedOffsets = []int{100, 110, 111, 112, 113, 200, 240}
+var bigipVEReservedOffsets = []int{50, 100, 110, 111, 112, 113, 200, 240}
 
 // validateBigIPVE enforces the bigipVE: block constraints. Called from validate()
 // only when BigIPVE != nil && BigIPVE.Enabled.
@@ -1060,6 +1083,17 @@ func validateBigIPVE(c *Cluster) error {
 	}
 	if !extNet.Contains(vipIP) {
 		return fmt.Errorf("bigipVE.vip %q is not inside network.dataPath.external.cidr %s", ve.VIP, extCIDR)
+	}
+	// AWS reserves the first four host addresses (.0-.3: network, VPC router,
+	// DNS, future use) and the last (.255 broadcast) in every subnet — a VIP
+	// at any of these would validate here then fail deep in provisioning.
+	vip4 := vipIP.To4()
+	if vip4 == nil {
+		return fmt.Errorf("bigipVE.vip %q is not a valid IPv4 address", ve.VIP)
+	}
+	if off := int(vip4[3]); off <= 3 || off == 255 {
+		return fmt.Errorf("bigipVE.vip %q uses host offset .%d, which AWS reserves in every subnet "+
+			"(.0-.3 and .255 are unusable); choose a different host address", ve.VIP, off)
 	}
 	// Build reserved IP set for the error message.
 	base := extNet.IP.To4()

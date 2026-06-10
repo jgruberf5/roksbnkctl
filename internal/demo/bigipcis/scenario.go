@@ -51,6 +51,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -437,9 +438,11 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 		}
 	}
 
-	// Delete the bigip-login Secret. Tolerate missing.
+	// Delete the bigip-login Secret from the CIS namespace (kube-system) —
+	// that is where createBigIPLoginSecret creates it, NOT the demo namespace.
+	// Tolerate missing.
 	if ctx.Clientset != nil {
-		secErr := ctx.Clientset.CoreV1().Secrets(ns).Delete(ctx.Ctx, bigipLoginSecret, metav1.DeleteOptions{})
+		secErr := ctx.Clientset.CoreV1().Secrets(cisNS).Delete(ctx.Ctx, bigipLoginSecret, metav1.DeleteOptions{})
 		if secErr != nil && !scenarios.IsNotFound(secErr) {
 			fmt.Fprintf(ctx.Out, "[demo/bigip-cis] warn: delete %s secret: %v\n", bigipLoginSecret, secErr)
 		}
@@ -530,16 +533,12 @@ func createBigIPLoginSecret(ctx context.Context, sctx *scenarios.Context, passwo
 	if err == nil {
 		return nil
 	}
-	if !isAlreadyExists(err) {
+	if !apierrors.IsAlreadyExists(err) {
 		return err
 	}
 	// Already exists — update in place so a re-run picks up a rotated password.
 	_, upErr := sctx.Clientset.CoreV1().Secrets(cisNS).Update(ctx, sec, metav1.UpdateOptions{})
 	return upErr
-}
-
-func isAlreadyExists(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "already exists")
 }
 
 // --- BIG-IP static routes (jumphost → BIG-IP SSH, mirrors phase17f) ---
