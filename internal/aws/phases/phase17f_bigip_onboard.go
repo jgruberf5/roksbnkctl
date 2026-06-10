@@ -55,7 +55,7 @@ const (
 	// password (read by curl -sku "admin:$(cat ...)" — keeps the pw off argv).
 	// Written once after framework-up, referenced by every authed op, shredded
 	// at the end of onboarding (and on the idempotency-skip path).
-	bigipPWRemotePath = "/var/tmp/.bigip-pw"
+	bigipPWRemotePath = "/var/tmp/.bigip-pw" // #nosec G101 -- file PATH on the BIG-IP, not a credential value
 
 	// bigipAS3InstallTimeout caps the AS3 package-management-task poll.
 	bigipAS3InstallTimeout = 5 * time.Minute
