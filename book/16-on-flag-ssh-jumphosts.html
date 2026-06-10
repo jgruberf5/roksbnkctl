@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72b535b1.js";
+            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6925ce2d.js"></script>
+        <script src="toc-ce6156b4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -334,6 +334,9 @@ roksbnkctl targets list
 roksbnkctl kubectl --on jumphost-ca-tor-2 get nodes
 roksbnkctl shell --on jumphost-ca-tor-1
 </code></pre>
+<blockquote>
+<p><strong>Preinstalled perf tools.</strong> Every jumphost ships with <code>iperf3</code> and <code>h2load</code> (the <code>nghttp2-client</code> package) preinstalled by the Testing-phase <code>user_data</code>, so the <a href="./22a-performance-matrix.html">performance matrix</a> and <a href="./22-throughput-testing.html"><code>test throughput</code></a> run over <code>ssh:&lt;target&gt;</code> with no <code>--bootstrap</code>. The matrix’s locality axis (same-zone / different-zone / different-VPC) is just <em>which</em> <code>jumphost-&lt;zone&gt;</code> (or the TGW <code>jumphost</code>) a cell names as its client — see <a href="./22a-performance-matrix.html#the-locality-axis-jumphost-placement">Chapter 22a</a>.</p>
+</blockquote>
 <blockquote>
 <p><strong>Pre-v1.5.0 fallback.</strong> On a release before v1.5.0 the per-AZ jumphosts are <em>not</em> auto-registered. Look up their floating IPs and register each by hand — <code>roksbnkctl terraform output testing_cluster_jumphost_ips</code> (v1.5.0’s read-only <code>terraform</code>, <a href="./15-ssh-targets.html#auto-discovery-from-terraform-outputs">Chapter 15</a>), or on an even older release <code>cd ~/.roksbnkctl/&lt;ws&gt;/state &amp;&amp; TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips</code> — then <code>roksbnkctl targets add jumphost-&lt;zone&gt; --host &lt;fip&gt; --user ubuntu --key-source tf-output:jumphost_shared_key</code> per zone. Chapter 15 §“Auto-discovery from terraform outputs” documents this fallback in full.</p>
 </blockquote>

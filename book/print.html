@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72b535b1.js";
+            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6925ce2d.js"></script>
+        <script src="toc-ce6156b4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2349,6 +2349,86 @@ resource "kubectl_manifest" "license" {
 <li><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="air-gapped-install-mirroring-bnk-into-the-cluster-registry"><a class="header" href="#air-gapped-install-mirroring-bnk-into-the-cluster-registry">Air-gapped install: mirroring BNK into the cluster registry</a></h1>
+<p>Some ROKS environments forbid pulling install resources from external repositories
+at deploy time. For these, <code>roksbnkctl</code> can <strong>replicate every artifact BNK needs</strong>
+— the F5 charts and images, plus the non-F5 dependencies — from the F5 Artifact
+Repository (FAR, <code>repo.f5.com</code>) into the cluster’s <strong>own OpenShift internal
+registry</strong>, and then install BNK entirely from there. With the mirror in place, the
+cluster needs no egress to <code>repo.f5.com</code>, <code>quay.io</code>, <code>docker.io</code>, or
+<code>charts.jetstack.io</code> to bring up BNK.</p>
+<p>The registry surface is CRUD-shaped, modeled on the IBM COS client:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>roksbnkctl registry bom</code></td><td>Print the bill-of-materials — every chart + image BNK needs</td></tr>
+<tr><td><code>roksbnkctl registry replicate</code></td><td>Mirror the BOM into the target registry</td></tr>
+<tr><td><code>roksbnkctl registry list</code></td><td>What’s present in the target</td></tr>
+<tr><td><code>roksbnkctl registry diff</code></td><td>BOM vs. target — what’s missing or stale</td></tr>
+<tr><td><code>roksbnkctl registry verify</code></td><td>Every BOM artifact present + digest-matched</td></tr>
+<tr><td><code>roksbnkctl registry prune</code></td><td>Remove mirrored artifacts no longer in the BOM</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="the-bill-of-materials"><a class="header" href="#the-bill-of-materials">The bill-of-materials</a></h2>
+<p>The BOM comes from the <strong><code>f5-bigip-k8s-manifest</code></strong> that FAR publishes per BNK
+release — the same manifest <code>roksbnkctl</code> reads for version discovery. It
+enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
+tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
+cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
+<strong><code>bitnami/kubectl</code></strong> node-labeler image — so the mirror is complete:</p>
+<pre><code class="language-console">$ roksbnkctl registry bom
+charts  repo.f5.com/charts/f5-lifecycle-operator   v2.21.13-0.0.28
+charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
+...
+images  repo.f5.com/images/tmm-img                 v10.159.3-0.1.5
+images  quay.io/jetstack/cert-manager-controller   v1.17.3
+images  docker.io/bitnami/kubectl                  &lt;tag&gt;
+...
+81 F5 artifacts + 6 dependency artifacts
+</code></pre>
+<h2 id="the-walk-through"><a class="header" href="#the-walk-through">The walk-through</a></h2>
+<pre><code class="language-console">$ roksbnkctl cluster up                              # the durable cluster
+$ roksbnkctl registry replicate --target openshift   # mirror the BOM (one-time per BNK version)
+$ roksbnkctl registry verify                          # confirm completeness
+$ roksbnkctl bnk up                                   # installs from the internal registry
+</code></pre>
+<p><code>registry replicate</code> runs <strong>after</strong> the Cluster phase and <strong>before</strong> BNK. It is a
+deliberate, occasional supply-chain step — it is <strong>not</strong> part of the composite
+<code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). It copies each artifact
+registry-to-registry by digest, idempotently — re-running it only moves what
+changed (e.g. after a BNK version bump, <code>registry diff</code> shows exactly the changed
+artifacts).</p>
+<p>Once the mirror is populated, the BNK phase reads it and redirects the install: the
+container images resolve from the cluster’s internal registry, and BNK comes up
+with no external pulls. The Stage acceptance is exactly this, with egress to the
+external registries blocked.</p>
+<h2 id="how-it-works-the-registrys-two-faces"><a class="header" href="#how-it-works-the-registrys-two-faces">How it works: the registry’s two faces</a></h2>
+<p>The OpenShift internal registry is reachable two ways, and <code>roksbnkctl</code> uses both:</p>
+<ul>
+<li><strong>Charts</strong> are pulled by the in-process helm provider on the <code>roksbnkctl</code> host,
+over the registry’s external <strong>route</strong> (<code>oci://&lt;route&gt;/&lt;ns&gt;/charts/…</code>).</li>
+<li><strong>Images</strong> are pulled by the cluster’s pods over the in-cluster <strong>service</strong>
+(<code>image-registry.openshift-image-registry.svc:5000/&lt;ns&gt;/images/…</code>), authorized by
+a <code>system:image-puller</code> role binding — <strong>no image pull secret</strong>.</li>
+</ul>
+<p><code>registry replicate</code> bootstraps this for you: it enables the registry’s default
+route, creates a mirror project, mints a push credential, and binds the pull RBAC.</p>
+<blockquote>
+<p><strong>Custom ingress certificate.</strong> The host pulls charts over the route, trusting the
+cluster’s <code>*.apps</code> ingress certificate. ROKS apps domains carry a publicly-trusted
+cert by default. If your cluster uses a custom or self-signed ingress cert, add its
+CA to the host’s trust store before <code>registry replicate</code>.</p>
+</blockquote>
+<h2 id="other-targets"><a class="header" href="#other-targets">Other targets</a></h2>
+<p>The OpenShift internal registry is the first-class target. The mirror is built
+against a pluggable <code>RegistryTarget</code>, so IBM Container Registry (<code>icr.io</code>) and a
+generic private OCI registry (Harbor / Artifactory / Quay) are natural follow-on
+targets — <code>--target</code> selects which.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h1>
 <blockquote>
 <p><strong>Three-phase note.</strong> With the Cluster / BNK / Testing split there is now a
@@ -3812,7 +3892,10 @@ roksbnkctl targets add backup-jump \
 </code></pre>
 </li>
 </ol>
-<p>Verify with <code>roksbnkctl targets list</code> — you should see <code>jumphost</code> plus one <code>jumphost-&lt;zone&gt;</code> per AZ. Each is a first-class <code>--on</code> target (full <code>kubectl</code>/<code>oc</code>/<code>ibmcloud</code>/<code>shell</code> passthrough, no SSH hop): <code>roksbnkctl --on jumphost-ca-tor-2 kubectl get pods</code>. Like the singular <code>jumphost</code>, registration is <strong>best-effort and idempotent</strong> — a parse/write failure logs a single <code>warning:</code> and does not fail <code>up</code>, and re-running <code>up</code> after a floating-IP rotation refreshes each <code>jumphost-&lt;zone&gt;</code> host in place. When <code>testing_create_cluster_jumphosts = false</code> (or the output is absent/empty), this is a silent no-op — only <code>jumphost</code> is seeded, with no warning noise.</p>
+<p>Verify with <code>roksbnkctl targets list</code> — you should see <code>jumphost</code> plus one <code>jumphost-&lt;zone&gt;</code> per AZ. Each is a first-class <code>--on</code> target (full <code>kubectl</code>/<code>oc</code>/<code>ibmcloud</code>/<code>shell</code> passthrough, no SSH hop): <code>roksbnkctl --on jumphost-ca-tor-2 kubectl get pods</code>.</p>
+<blockquote>
+<p><strong>Preinstalled load generators.</strong> Every jumphost — the TGW <code>jumphost</code> and each per-AZ <code>jumphost-&lt;zone&gt;</code> — comes with <strong><code>iperf3</code> and <code>h2load</code></strong> (the <code>nghttp2-client</code> package) already installed by the Testing-phase <code>user_data</code>. So both <a href="#throughput-testing"><code>test throughput</code></a> (iperf3) and the <a href="#the-performance-matrix">performance matrix</a> (iperf3 + h2load) run over <code>--backend ssh:&lt;target&gt;</code> with <strong>no <code>--bootstrap</code></strong> — the SSH backend’s apt-bootstrap path (<a href="#ssh-backend">Chapter 17 §“SSH backend”</a>) is needed only for hosts you registered by hand. Like the singular <code>jumphost</code>, registration is <strong>best-effort and idempotent</strong> — a parse/write failure logs a single <code>warning:</code> and does not fail <code>up</code>, and re-running <code>up</code> after a floating-IP rotation refreshes each <code>jumphost-&lt;zone&gt;</code> host in place. When <code>testing_create_cluster_jumphosts = false</code> (or the output is absent/empty), this is a silent no-op — only <code>jumphost</code> is seeded, with no warning noise.</p>
+</blockquote>
 <blockquote>
 <p><strong>Orphaned-target caveat (option (a) upsert-only).</strong> Auto-registration upserts but never prunes. If a later apply removes a zone, or <code>testing_create_cluster_jumphosts</code> is flipped to <code>false</code>, the now-orphaned <code>jumphost-&lt;oldzone&gt;</code> target points at a destroyed host and lingers in your config until you remove it by hand:</p>
 <pre><code class="language-bash">roksbnkctl targets remove jumphost-ca-tor-3
@@ -4032,6 +4115,9 @@ roksbnkctl targets list
 roksbnkctl kubectl --on jumphost-ca-tor-2 get nodes
 roksbnkctl shell --on jumphost-ca-tor-1
 </code></pre>
+<blockquote>
+<p><strong>Preinstalled perf tools.</strong> Every jumphost ships with <code>iperf3</code> and <code>h2load</code> (the <code>nghttp2-client</code> package) preinstalled by the Testing-phase <code>user_data</code>, so the <a href="#the-performance-matrix">performance matrix</a> and <a href="#throughput-testing"><code>test throughput</code></a> run over <code>ssh:&lt;target&gt;</code> with no <code>--bootstrap</code>. The matrix’s locality axis (same-zone / different-zone / different-VPC) is just <em>which</em> <code>jumphost-&lt;zone&gt;</code> (or the TGW <code>jumphost</code>) a cell names as its client — see <a href="#the-locality-axis-jumphost-placement">Chapter 22a</a>.</p>
+</blockquote>
 <blockquote>
 <p><strong>Pre-v1.5.0 fallback.</strong> On a release before v1.5.0 the per-AZ jumphosts are <em>not</em> auto-registered. Look up their floating IPs and register each by hand — <code>roksbnkctl terraform output testing_cluster_jumphost_ips</code> (v1.5.0’s read-only <code>terraform</code>, <a href="#auto-discovery-from-terraform-outputs">Chapter 15</a>), or on an even older release <code>cd ~/.roksbnkctl/&lt;ws&gt;/state &amp;&amp; TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips</code> — then <code>roksbnkctl targets add jumphost-&lt;zone&gt; --host &lt;fip&gt; --user ubuntu --key-source tf-output:jumphost_shared_key</code> per zone. Chapter 15 §“Auto-discovery from terraform outputs” documents this fallback in full.</p>
 </blockquote>
@@ -4287,10 +4373,12 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 <tbody>
 <tr><td><code>ibmcloud</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;tag&gt;</code> (vendored from <code>icr.io/ibm-cloud/ibmcloud-cli</code> upstream)</td></tr>
 <tr><td><code>iperf3</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;tag&gt;</code> (Alpine + iperf3)</td></tr>
+<tr><td><code>h2load</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-h2load:&lt;tag&gt;</code> (Alpine + <code>nghttp2</code>; the L7 load generator for <a href="#the-performance-matrix"><code>test matrix</code></a>)</td></tr>
 <tr><td><code>terraform</code></td><td><code>hashicorp/terraform:&lt;v&gt;</code> (official upstream)</td></tr>
 </tbody>
 </table>
 </div>
+<p>The <code>h2load</code> image is the L7 generator the <a href="#the-performance-matrix">performance matrix</a> runs for <code>family: l7</code> cells. It’s built from <code>tools/docker/h2load/Dockerfile</code> (Alpine’s <code>nghttp2</code> package, built against OpenSSL so <code>https</code> / TLS-terminate-at-TMM targets work) and published by the <code>tools-images</code> workflow alongside the other per-tool images. Like the iperf3 image it declares <code>USER 1000</code> so it satisfies the OpenShift <code>restricted-v2</code> SCC (h2load is a pure client and binds no privileged port). The <code>docker</code> / <code>k8s</code> backends pull this image; the <code>ssh</code> backend uses the jumphost’s apt-installed <code>nghttp2-client</code> instead (preinstalled by the Testing phase — see <a href="#per-az-cluster-jumphosts-jumphost-zone">Chapter 15 §“Per-AZ cluster jumphosts”</a>).</p>
 <p>The <code>&lt;tag&gt;</code> for the vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) is resolved at runtime by <code>internal/exec/docker.go::toolImageTag()</code>. It reads the binary’s <code>internal/version.Version</code> (set via ldflags at build time): a release-built binary like <code>v0.10.0</code> pulls <code>:v0.10.0</code>; a dev build (<code>Version == "dev"</code>) pulls <code>:dev</code>. Sprint 4 landed this version-pinning in place of Sprint 3’s hard-coded <code>:dev</code> so a <code>go install</code> of a tagged release pulls a matching tagged image rather than a <code>:dev</code> that may not exist for the published binary. The <code>terraform</code> row is the exception — it points at the upstream <code>hashicorp/terraform</code> image and stays pinned to a specific version (currently <code>1.5.7</code>) regardless of <code>roksbnkctl</code>’s own version.</p>
 <p>The <code>:dev</code> tag is still the local-development idiom: <code>cd tools/docker &amp;&amp; make build-all</code> builds and tags every tools image as <code>:dev</code> locally; a dev-build <code>roksbnkctl</code> finds them via the local docker cache without a ghcr.io round-trip.</p>
 <p>If you’re cutting a custom tools image and want <code>roksbnkctl</code> to pick it up, the simplest path is <code>docker tag your-image ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> locally — the docker backend pulls the local-cached version first.</p>
@@ -6198,6 +6286,282 @@ kubectl delete -n roksbnkctl-test pod/roksbnkctl-iperf3 svc/roksbnkctl-iperf3
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#iperf3">PRD 03 §“iperf3”</a> — the design spec.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-performance-matrix"><a class="header" href="#the-performance-matrix">The performance matrix</a></h1>
+<p><a href="#throughput-testing">Throughput testing</a> runs a single measurement: one iperf3 client against one iperf3 server. <code>roksbnkctl test matrix</code> runs a whole set of them at once. You write a <code>matrix.yaml</code> listing the measurements you want — each one a row — and the command runs them all and prints the results in one report.</p>
+<p>Reach for <code>test throughput</code> to check a single path; reach for <code>test matrix</code> to characterise a deployment — throughput, request rates, and latency from several network locations — in one repeatable command instead of a dozen steps by hand. (Don’t confuse it with <code>roksbnkctl testing up</code>, which <em>builds</em> the jumphosts. <code>test</code> only runs tests.)</p>
+<p>The matrix runs against an environment that is <strong>already deployed</strong>: a complete Cluster + BNK deploy with the <a href="#the-three-phase-lifecycle-cluster--bnk--testing">Testing phase</a> jumphosts up, and — for the HTTP tests — the <a href="#deploying-bnk-trials-on-top">Gateway phase</a> in place.</p>
+<blockquote>
+<p>The example numbers in this chapter are <strong>illustrative</strong>. The <code>--dry-run</code> plan is exercised in CI and its transcript is real, but a full live run has not yet been measured against a production ROKS cluster.</p>
+</blockquote>
+<h2 id="the-two-families"><a class="header" href="#the-two-families">The two families</a></h2>
+<p>Each row (a “cell”) picks a <code>family</code>:</p>
+<ul>
+<li><strong><code>iperf3</code></strong> — raw TCP throughput (Layer 4).</li>
+<li><strong><code>l7</code></strong> — HTTP load, driven by <a href="https://nghttp2.org/documentation/h2load-howto.html">h2load</a> (Layer 7).</li>
+</ul>
+<p>The runner turns each cell into a tool command and runs it from wherever you point it — locally, or on a jumphost over SSH.</p>
+<h3 id="iperf3--tcp-throughput"><a class="header" href="#iperf3--tcp-throughput"><code>iperf3</code> — TCP throughput</a></h3>
+<p>iperf3 measures plain TCP throughput against a <code>host:port</code> target (a TCPRoute VIP). The <code>length</code> field sets the TCP block size, which stands in for message size: <code>"128"</code> for tiny messages, <code>"512K"</code> for bulk transfer. The other knobs map straight to iperf3 flags:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Cell field</th><th>iperf3 flag</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>length</code></td><td><code>-l</code></td><td>block size (<code>"128"</code>, <code>"512K"</code>)</td></tr>
+<tr><td><code>bytes</code></td><td><code>-n</code></td><td>send a fixed number of bytes instead of running for a time</td></tr>
+<tr><td><code>duration</code></td><td><code>-t</code></td><td>run length in seconds</td></tr>
+<tr><td><code>streams</code></td><td><code>-P</code></td><td>parallel TCP streams</td></tr>
+</tbody>
+</table>
+</div>
+<p>A cell becomes, for example, <code>iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K</code>. The result reports <code>throughput_gbps</code> and <code>retransmits</code> (the same parser as <a href="#throughput-testing">Chapter 22</a>).</p>
+<h3 id="l7--http-load"><a class="header" href="#l7--http-load"><code>l7</code> — HTTP load</a></h3>
+<p>h2load drives HTTP traffic at a URL. The scheme picks the path: an <code>http://</code> URL hits the plain HTTP route; an <code>https://</code> URL hits the TLS route, where TMM terminates TLS (h2load accepts the self-signed certificate, so there’s nothing extra to configure). The response size is whatever the URL returns — the test’s backend serves <code>/128</code>, <code>/5k</code>, and <code>/512k</code>, so you point a cell at the size you want.</p>
+<p>h2load reports <strong>requests per second</strong>, a <strong>transfer rate</strong>, and request latency as <strong>min / max / mean</strong> (it does not report percentiles).</p>
+<p>The <code>l7.mode</code> field is a shortcut that fills in sensible h2load flags; anything you set yourself overrides it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>What it stresses</th><th>Defaults (when you leave the knobs unset)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cps</code></td><td>new connections — short connections, roughly one request each</td><td><code>--h1</code>, <code>-m 1</code>, <code>-c 50</code>, <code>-n</code> = clients×200</td></tr>
+<tr><td><code>tps</code></td><td>sustained requests — reuse connections, many requests each</td><td><code>-c 50</code>, <code>-m 100</code> (or <code>1</code> with <code>--h1</code>), <code>-n</code> = clients×2000</td></tr>
+<tr><td><code>throughput</code></td><td>payload — a few connections pulling a large body</td><td><code>-c 8</code>, <code>-m 1</code>, <code>-n</code> = clients×200</td></tr>
+</tbody>
+</table>
+</div>
+<p>A <code>cps</code> cell becomes <code>h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128</code>; a <code>tps</code> cell written as <code>l7: { mode: tps, duration: 30 }</code> becomes <code>h2load -c 50 -m 100 -D 30 …</code>. Set any of <code>clients</code>, <code>streams</code>, <code>threads</code>, <code>requests</code>, <code>duration</code>, <code>http1</code> to override the defaults. The result reports <code>req_per_sec</code>, <code>throughput_mbps</code>, request counts (<code>requests_total</code> / <code>succeeded</code> / <code>failed</code>), status-code buckets, and <code>req_time_{min,max,mean}_ms</code>.</p>
+<h2 id="the-locality-axis--jumphost-placement"><a class="header" href="#the-locality-axis--jumphost-placement">The locality axis = jumphost placement</a></h2>
+<p>There is no “location” setting. Where the traffic comes from is simply <strong>which jumphost a cell names as its <code>client</code></strong>. Each <code>vsi</code> endpoint’s <code>target</code> is an SSH target name the <a href="#auto-discovery-from-terraform-outputs">Testing phase registered</a>: <code>jumphost</code> (in the client VPC — a <em>different</em> VPC from the cluster), or <code>jumphost-&lt;zone&gt;</code> (in the cluster VPC, in the zone you pick).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>To measure traffic from…</th><th>Name this jumphost as the cell’s client</th></tr>
+</thead>
+<tbody>
+<tr><td>same VPC, same zone as TMM</td><td><code>jumphost-&lt;tmm-zone&gt;</code></td></tr>
+<tr><td>same VPC, a different zone</td><td><code>jumphost-&lt;other-zone&gt;</code></td></tr>
+<tr><td>a different VPC</td><td><code>jumphost</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The runner runs the tool on that jumphost over SSH (see <a href="#ssh-targets">Chapter 15</a> and <a href="#the-on-flag-and-ssh-jumphosts">Chapter 16</a>). Both tools — iperf3 and h2load — are already installed on every jumphost, so there’s nothing to set up first. A cell with no <code>client</code> runs the tool locally.</p>
+<h2 id="the-matrixyaml-schema"><a class="header" href="#the-matrixyaml-schema">The <code>matrix.yaml</code> schema</a></h2>
+<p>This is a workspace-sibling file — under <code>~/.roksbnkctl/&lt;workspace&gt;/</code>, next to <code>config.yaml</code> but separate from it, so you can keep and diff a campaign’s grid in git on its own. The runner looks for <code>--file</code>, then <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>. It has four top-level keys, shown here against the example grid (<code>internal/test/testdata/matrix.example.yaml</code>):</p>
+<pre><code class="language-yaml"># gateway — names your already-deployed BNK gateway so the test's HTTP/TCP
+# routes can attach to it. Only needed when fixtures.routes is true.
+gateway:
+  app_namespace: bnk-apps     # namespace the test's objects are created in
+  name: bnk-gateway           # the existing Gateway the routes attach to
+  http_section: http          # a listener on that Gateway, by section name
+  https_section: https        # the TLS listener
+  tcp_section: tcp            # the TCP listener (for the iperf3 route)
+
+# fixtures — the temporary objects the test creates and then removes
+# (kept in place if you pass --keep).
+fixtures:
+  iperf3_server: true         # the TCP server for the iperf3 cells
+  http_backend: true          # an nginx server returning /128 /5k /512k
+  routes: true                # the HTTP/TCP routes wiring the gateway to them
+
+# endpoints — named (where, what) anchors the cells reference.
+endpoints:
+  vsi-same-zone: { kind: vsi, target: jumphost-jp-osa-1 }       # client in TMM's zone
+  vsi-diff-zone: { kind: vsi, target: jumphost-jp-osa-3 }       # another zone, same VPC
+  vsi-diff-vpc:  { kind: vsi, target: jumphost }                # the client VPC
+  tmm-tcp:       { kind: address, host: 10.240.0.10, port: 5201 }  # iperf3 target
+  tmm-http-128:  { kind: url, url: "http://10.240.0.10/128"  }
+  tmm-https-512k:{ kind: url, url: "https://10.240.0.10/512k" }
+
+# cells — the grid. Each is one row in the report.
+cells:
+  - { name: "L4 512K VSI-&gt;TMM diff-zone", family: iperf3, client: vsi-diff-zone, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L7 http CPS 128B",  family: l7, client: vsi-diff-vpc, server: tmm-http-128,  l7: { mode: cps } }
+  - { name: "L7 https THRU 512K", family: l7, client: vsi-diff-vpc, server: tmm-https-512k, l7: { mode: throughput, duration: 30 } }
+</code></pre>
+<h3 id="gateway--the-existing-gateway-identity"><a class="header" href="#gateway--the-existing-gateway-identity"><code>gateway:</code> — the existing-gateway identity</a></h3>
+<p>Names your already-deployed gateway so the test’s routes can attach to it. Only read when <code>fixtures.routes</code> is true.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>app_namespace</code></td><td>namespace the test’s objects are created in (required for <code>routes</code>)</td></tr>
+<tr><td><code>name</code></td><td>the existing <code>Gateway</code> the routes attach to (required for <code>routes</code>)</td></tr>
+<tr><td><code>http_section</code> / <code>https_section</code> / <code>tcp_section</code></td><td>which listeners on that Gateway the http / https / tcp routes attach to, by section name. <strong>They must already exist.</strong> Leave one empty to skip that route.</td></tr>
+<tr><td><code>class_name</code> / <code>controller_name</code> / <code>bnkgateway_name</code> / <code>flo_namespace</code></td><td>optional descriptive fields; not needed to attach routes</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="endpoints--named-anchors"><a class="header" href="#endpoints--named-anchors"><code>endpoints:</code> — named anchors</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>kind</code></th><th>Fields</th><th>Is</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vsi</code></td><td><code>target</code></td><td>a jumphost the test sends traffic <em>from</em> (the client)</td></tr>
+<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 target — a <code>host:port</code> (an <code>iperf3</code> cell’s <code>server</code>)</td></tr>
+<tr><td><code>url</code></td><td><code>url</code></td><td>an HTTP target — a full <code>http(s)://</code> URL (an <code>l7</code> cell’s <code>server</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cells--the-grid"><a class="header" href="#cells--the-grid"><code>cells:</code> — the grid</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Applies to</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>both</td><td>required; the report row label and the <code>--only</code> glob target</td></tr>
+<tr><td><code>family</code></td><td>both</td><td><code>iperf3</code> | <code>l7</code></td></tr>
+<tr><td><code>client</code></td><td>both</td><td>a <code>vsi</code> endpoint; empty → run locally</td></tr>
+<tr><td><code>server</code></td><td>both</td><td>an <code>address</code> endpoint for <code>iperf3</code>, a <code>url</code> endpoint for <code>l7</code></td></tr>
+<tr><td><code>length</code> / <code>bytes</code> / <code>duration</code> / <code>streams</code></td><td><code>iperf3</code></td><td>iperf3 <code>-l</code> / <code>-n</code> / <code>-t</code> / <code>-P</code></td></tr>
+<tr><td><code>l7.mode</code></td><td><code>l7</code></td><td><code>cps</code> | <code>tps</code> | <code>throughput</code> (required for <code>l7</code>)</td></tr>
+<tr><td><code>l7.{clients,streams,threads,requests,duration,http1}</code></td><td><code>l7</code></td><td>h2load <code>-c</code> / <code>-m</code> / <code>-t</code> / <code>-n</code> / <code>-D</code> / <code>--h1</code>; override the mode defaults</td></tr>
+</tbody>
+</table>
+</div>
+<p>The file is checked before anything runs: a <code>client</code> must be a <code>vsi</code> with a <code>target</code>; an <code>iperf3</code> server must be an <code>address</code> with a <code>host</code>; an <code>l7</code> server must be a <code>url</code> and the cell must set a <code>mode</code>; and <code>routes</code> needs <code>gateway.name</code>, <code>app_namespace</code>, and at least one listener section.</p>
+<h2 id="what-the-test-sets-up-and-cleans-up"><a class="header" href="#what-the-test-sets-up-and-cleans-up">What the test sets up (and cleans up)</a></h2>
+<p>For a real run the test creates a few temporary objects, runs the measurements, then deletes them again (unless you pass <code>--keep</code>). Three toggles under <code>fixtures</code> — all skipped under <code>--dry-run</code>:</p>
+<ul>
+<li><strong><code>iperf3_server</code></strong> — the TCP server the iperf3 cells measure against (the same one <code>test throughput</code> uses).</li>
+<li><strong><code>http_backend</code></strong> — an nginx server that returns fixed-size bodies at <code>/128</code>, <code>/5k</code>, and <code>/512k</code> for the HTTP cells.</li>
+<li><strong><code>routes</code></strong> — the HTTP and TCP routes (plus a TLS route and a self-signed certificate, when an https section is named) that wire your Gateway to those backends.</li>
+</ul>
+<p>Everything the test creates is labelled <code>app.kubernetes.io/managed-by: roksbnkctl-matrix</code>, so cleanup is a single delete by label. The TLS certificate is self-signed and generated fresh each run — fine for a load test.</p>
+<p><strong>One prerequisite for the HTTP/TCP routes:</strong> your Gateway must already have the listener sections the routes attach to (<code>http</code> / <code>https</code> / <code>tcp</code>). The test adds the routes and backends, not the listeners — those come from the <a href="#deploying-bnk-trials-on-top">Gateway phase</a>. If a named section doesn’t exist, the route has nowhere to attach and that cell’s traffic has no path. Run with <code>--keep</code> and check the route status if a cell isn’t reaching its backend.</p>
+<h2 id="the-workflow"><a class="header" href="#the-workflow">The workflow</a></h2>
+<h3 id="--dry-run--see-the-plan-first"><a class="header" href="#--dry-run--see-the-plan-first"><code>--dry-run</code> — see the plan first</a></h3>
+<p><code>--dry-run</code> expands the grid and prints, for each cell, the resolved client, server, and exact tool command — plus the objects it <em>would</em> create — and makes <strong>no cluster calls</strong>. Use it to confirm placement and commands before a long run:</p>
+<pre><code class="language-text">$ roksbnkctl test matrix --dry-run --file matrix.example.yaml
+→ matrix file: matrix.example.yaml
+matrix plan — 10 cell(s)
+
+[1] L4 128B  VSI-&gt;TMM same-zone
+    family : iperf3
+    client : ssh:jumphost-jp-osa-1
+    server : 10.240.0.10:5201
+    run    : iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -l 128
+
+[2] L4 512K  VSI-&gt;TMM same-zone
+    family : iperf3
+    client : ssh:jumphost-jp-osa-1
+    server : 10.240.0.10:5201
+    run    : iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K
+
+[5] L7 http CPS  128B VSI-&gt;TMM
+    family : l7
+    client : ssh:jumphost
+    server : http://10.240.0.10/128
+    run    : h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128
+
+[8] L7 https CPS  128B VSI-&gt;TMM
+    family : l7
+    client : ssh:jumphost
+    server : https://10.240.0.10/128
+    run    : h2load -c 50 -m 1 --h1 -n 10000 https://10.240.0.10/128
+
+--- fixtures (would apply) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matrix-http-backend
+  namespace: bnk-apps
+  labels:
+    app.kubernetes.io/managed-by: roksbnkctl-matrix
+...
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: matrix-httproute
+  namespace: bnk-apps
+spec:
+  parentRefs:
+  - name: bnk-gateway
+    namespace: bnk-apps
+    sectionName: http
+  rules:
+  - backendRefs:
+    - name: matrix-http-backend
+      port: 80
+...
+</code></pre>
+<p><em>(Abridged; the full plan prints all ten cells of the example grid and the complete set of objects.)</em></p>
+<p><code>--only '&lt;glob&gt;'</code> narrows the plan (or a real run) to cells whose name matches a glob — <code>--only 'L7*'</code> for just the HTTP rows, handy when iterating on one family.</p>
+<h3 id="the-real-run-and-the-report"><a class="header" href="#the-real-run-and-the-report">The real run and the report</a></h3>
+<p>Drop <code>--dry-run</code> against a complete deployment. The runner creates the fixtures, runs each cell from its jumphost, removes the fixtures (unless <code>--keep</code>), and prints the report. <code>-o</code> selects the shape:</p>
+<ul>
+<li>
+<p><strong><code>-o text</code></strong> (default) — the grid on stderr.</p>
+</li>
+<li>
+<p><strong><code>-o md</code></strong> — the grid on stdout. iperf3 rows show Gbit/s and retransmits; HTTP rows show req/s, Mbit/s, and mean latency:</p>
+<pre><code class="language-markdown">## matrix (pass, 184230ms)
+
+| Cell | Family | Status | Throughput | req/s | mean ms | notes |
+|---|---|---|---|---|---|---|
+| L4 512K VSI-&gt;TMM diff-zone | iperf3 | pass | 9.21 Gbit/s | — | — | 312 retransmits |
+| L7 http CPS 128B VSI-&gt;TMM  | l7     | pass | 18.4 Mbit/s | 21340 | 2.34 | — |
+</code></pre>
+<p><em>(Numbers illustrative.)</em></p>
+</li>
+<li>
+<p><strong><code>-o json</code></strong> — the <code>roksbnkctl.v1</code> schema: one result per cell, each with its family-specific fields (plus the <code>client</code> / <code>server</code> it used). Exit code is <strong>non-zero if any cell failed</strong>, so it drops into CI:</p>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "matrix",
+  "cells": [
+    {
+      "suite": "l7",
+      "name": "L7 http CPS 128B VSI-&gt;TMM",
+      "status": "pass",
+      "extra": {
+        "req_per_sec": 21340.0,
+        "throughput_mbps": 18.4,
+        "req_time_mean_ms": 2.34,
+        "client": "ssh:jumphost",
+        "server": "http://10.240.0.10/128"
+      }
+    }
+  ],
+  "overall": "pass"
+}
+</code></pre>
+</li>
+</ul>
+<h3 id="flag-summary"><a class="header" href="#flag-summary">Flag summary</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--file &lt;path&gt;</code></td><td>the matrix.yaml (default: <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>)</td></tr>
+<tr><td><code>--only &lt;glob&gt;</code></td><td>run only cells whose name matches the glob</td></tr>
+<tr><td><code>--dry-run</code></td><td>print the plan and the objects it would create; no cluster calls</td></tr>
+<tr><td><code>--keep</code></td><td>leave the test’s objects in place after the run</td></tr>
+<tr><td><code>-o json|text|md</code></td><td>report shape</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="cross-references-16"><a class="header" href="#cross-references-16">Cross-references</a></h2>
+<ul>
+<li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — the single iperf3 measurement the matrix’s <code>iperf3</code> family builds on; start there for the server-pod and SCC mechanics.</li>
+<li><a href="#per-az-cluster-jumphosts-jumphost-zone">Chapter 15 — SSH targets</a> — the <code>jumphost</code> / <code>jumphost-&lt;zone&gt;</code> targets the locality axis names.</li>
+<li><a href="#per-az-cluster-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a> — the per-AZ jumphost fleet (with iperf3 + h2load preinstalled).</li>
+<li><a href="#ssh-backend">Chapter 17 — Execution backends</a> — how the <code>ssh:&lt;target&gt;</code> dispatch and the bundled tools images work.</li>
+<li><a href="#matrixyaml-the-performance-grid">Chapter 28 — Configuration reference §“matrix.yaml”</a> — the schema as a reference table.</li>
+<li><a href="#command-reference">Chapter 27 — Command reference §<code>roksbnkctl test matrix</code></a> — the generated flag surface.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-e2e-test-plan"><a class="header" href="#the-e2e-test-plan">The E2E test plan</a></h1>
 <p><code>roksbnkctl</code> ships a layered end-to-end test suite that exercises the full surface — install, lifecycle, four execution backends, internalised kubectl, the DNS probe, the cred-leak audit, and a mixed-mode lifecycle — against a live IBM Cloud account. This chapter is the user-facing guide: what the suite is, how to run it locally, what each phase validates, what it costs, and how it’s re-run when (not if) part of it flakes.</p>
 <p>The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/05-E2E-TEST-PLAN.md">PRD 05</a>; read that for the <em>why</em>. This chapter is the <em>how</em> and <em>what</em>.</p>
@@ -6406,7 +6770,7 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 PHASE_FROM=L ./scripts/e2e-test-backends.sh
 </code></pre>
 <p>If the same phase flakes on consecutive <code>PHASE_FROM=</code> runs, it’s a real bug — open an issue with the per-phase log attached.</p>
-<h2 id="cross-references-16"><a class="header" href="#cross-references-16">Cross-references</a></h2>
+<h2 id="cross-references-17"><a class="header" href="#cross-references-17">Cross-references</a></h2>
 <ul>
 <li><a href="#troubleshooting">Chapter 26 — Troubleshooting</a> — symptom → root cause → fix entries for the failure modes phase D through phase N can surface.</li>
 <li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — the four-backend matrix that phases I, K, L exercise.</li>
@@ -6736,7 +7100,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 </table>
 </div>
 <p>The general pattern: if it’s <code>get</code> / <code>describe</code> / <code>apply</code> / <code>delete</code> / <code>logs</code> / <code>exec</code> / <code>port-forward</code> against a typed or unstructured Kubernetes resource, the internalised verb is the right answer. Anything else, fall back to the passthrough.</p>
-<h2 id="cross-references-17"><a class="header" href="#cross-references-17">Cross-references</a></h2>
+<h2 id="cross-references-18"><a class="header" href="#cross-references-18">Cross-references</a></h2>
 <ul>
 <li><a href="#doctor-checking-your-environment">Chapter 5 — Doctor</a> — the kubectl/oc downgrade in context.</li>
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
@@ -6966,7 +7330,7 @@ roksbnkctl logs flo
 # Expected: no "failed to pull FAR image: unauthorized" lines
 </code></pre>
 <p>The third step is the verification gate. If FLO’s logs still show auth failures after the pod restart, the new auth key was rejected by <code>repo.f5.com</code> — re-issue the key on the F5 side, not in the bucket.</p>
-<h2 id="cross-references-18"><a class="header" href="#cross-references-18">Cross-references</a></h2>
+<h2 id="cross-references-19"><a class="header" href="#cross-references-19">Cross-references</a></h2>
 <ul>
 <li><a href="#cos--cos-supply-chain-optional">Chapter 12 §“<code>cos:</code> — COS supply-chain (optional)”</a> — the workspace-config block this chapter operationalises.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — <code>f5_cne_far_auth_file</code>, <code>f5_cne_subscription_jwt_file</code>, <code>ibmcloud_cos_instance_name</code>, <code>ibmcloud_resources_cos_bucket</code> are the HCL handles.</li>
@@ -8058,6 +8422,138 @@ static-key Secret.</p>
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-registry"><a class="header" href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></h2>
+<p>Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)</p>
+<p>Manage the air-gap registry mirror: replicate every chart + image a BNK
+install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
+the F5 Artifact Repository (repo.f5.com) into a private target — the cluster’s
+own OpenShift internal registry — so an air-gapped cluster installs BNK from
+images it hosts itself.</p>
+<p>Commands:
+roksbnkctl registry bom        Build + print the bill-of-materials
+roksbnkctl registry list       List artifacts currently in the mirror
+roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
+roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
+roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM</p>
+<p><code>registry bom</code> works offline against the FAR manifest; the cluster-touching
+verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
+registry: block in the workspace config.</p>
+<h3 id="roksbnkctl-registry-bom"><a class="header" href="#roksbnkctl-registry-bom"><code>roksbnkctl registry bom</code></a></h3>
+<p>Build + print the BNK bill-of-materials from the FAR manifest</p>
+<pre><code>roksbnkctl registry bom [flags]
+</code></pre>
+<p>Pulls the f5-bigip-k8s-manifest for the configured BNK release, parses it
+into the full artifact set (charts + images), unions the non-F5 dependencies,
+and prints the resulting BOM. Needs no target — it only reads from FAR.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
+<tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>emit the BOM as JSON (overrides –output)</td></tr>
+<tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
+<tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-diff"><a class="header" href="#roksbnkctl-registry-diff"><code>roksbnkctl registry diff</code></a></h3>
+<p>Show BOM vs. mirror drift (what <code>replicate</code> would copy)</p>
+<pre><code>roksbnkctl registry diff [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
+<tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
+<tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-list"><a class="header" href="#roksbnkctl-registry-list"><code>roksbnkctl registry list</code></a></h3>
+<p>List artifacts currently recorded in the mirror</p>
+<p>Lists the artifacts the last replicate recorded in registry-mirror.json.</p>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-prune"><a class="header" href="#roksbnkctl-registry-prune"><code>roksbnkctl registry prune</code></a></h3>
+<p>Remove mirrored artifacts no longer in the BOM</p>
+<pre><code>roksbnkctl registry prune [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
+<tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
+<tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
+<tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-replicate"><a class="header" href="#roksbnkctl-registry-replicate"><code>roksbnkctl registry replicate</code></a></h3>
+<p>Copy the BOM into the mirror (needs a live cluster)</p>
+<pre><code>roksbnkctl registry replicate [flags]
+</code></pre>
+<p>Prepares the target registry (enables the route, mints a push token, binds
+pull RBAC), then copies every BOM artifact into it, idempotently. Records the
+result in registry-mirror.json so the BNK install can be redirected to the mirror.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--concurrency</code></td><td><code>int</code></td><td><code>0</code></td><td>parallel copy workers (default: 4)</td></tr>
+<tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
+<tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
+<tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
+<tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-verify"><a class="header" href="#roksbnkctl-registry-verify"><code>roksbnkctl registry verify</code></a></h3>
+<p>Confirm every BOM artifact is present + digest-matched in the mirror</p>
+<pre><code>roksbnkctl registry verify [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
+<tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
+<tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
+<tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
 <h2 id="roksbnkctl-self"><a class="header" href="#roksbnkctl-self"><code>roksbnkctl self</code></a></h2>
 <p>Manage the roksbnkctl binary itself</p>
 <h3 id="roksbnkctl-self-update"><a class="header" href="#roksbnkctl-self-update"><code>roksbnkctl self update</code></a></h3>
@@ -8277,6 +8773,50 @@ the order of remaining entries.</p>
 <p>← back to <a href="#roksbnkctl-test-hosts"><code>roksbnkctl test hosts</code></a></p>
 <h3 id="roksbnkctl-test-list"><a class="header" href="#roksbnkctl-test-list"><code>roksbnkctl test list</code></a></h3>
 <p>List available test suites</p>
+<p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
+<h3 id="roksbnkctl-test-matrix"><a class="header" href="#roksbnkctl-test-matrix"><code>roksbnkctl test matrix</code></a></h3>
+<p>Run the declarative BNK-on-ROKS performance grid (iperf3 L4 + h2load L7)</p>
+<pre><code>roksbnkctl test matrix [flags]
+</code></pre>
+<p>roksbnkctl test matrix runs a declarative performance grid against an
+already-deployed cluster + BNK. It reads a matrix.yaml describing cells
+(endpoint-pair × test-family) and runs each, emitting a report shaped
+like the BNK-on-ROKS perf plan.</p>
+<p>Two families:
+iperf3  — L4 TCP throughput over a TCPRoute VIP, with content-size knobs
+(length: “128” vs “512K”) — the L4 analog of the plan’s
+128 B / 512 KB payload axis.
+l7      — h2load against an HTTPRoute, http and https (TLS terminate at
+TMM); cps / tps / throughput modes.</p>
+<p>The locality axis (same-zone / different-zone / different-VPC) is implicit
+in which jumphost (“vsi”) endpoint a cell names as its client, so the
+per-AZ jumphost targets the Testing phase auto-registers (jumphost,
+jumphost-<code>&lt;zone&gt;</code>) are the traffic-source fleet. The Testing phase
+preinstalls both generators (iperf3 + h2load/nghttp2-client) on every
+jumphost, so the ssh runs need no –bootstrap.</p>
+<p>This command provisions only ephemeral, runner-owned fixtures (an iperf3
+server, an HTTP file backend, and optional TCPRoute/HTTPRoute/TLS objects
+that attach to the EXISTING Gateway by name) and tears them down after
+(unless –keep). It never touches Terraform or the gateway-phase objects.</p>
+<p>roksbnkctl test matrix –dry-run         expand + print the plan, no cluster calls
+roksbnkctl test matrix –only ‘L7*’      run a subset (glob on cell name)
+roksbnkctl test matrix -o md             Markdown grid report</p>
+<p>Honors -o json|text|md with the roksbnkctl.v1 schema. Exit code is
+non-zero if any cell fails.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--dry-run</code></td><td><code>bool</code></td><td><code>false</code></td><td>expand the grid and print the plan + fixtures; no cluster calls</td></tr>
+<tr><td><code>--file</code></td><td><code>string</code></td><td>—</td><td>path to matrix.yaml (default: <code>&lt;workspace&gt;</code>/matrix.yaml, then ./matrix.yaml)</td></tr>
+<tr><td><code>--keep</code></td><td><code>bool</code></td><td><code>false</code></td><td>leave fixtures running after the run</td></tr>
+<tr><td><code>--only</code></td><td><code>string</code></td><td>—</td><td>glob on cell name; run only matching cells</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-test"><code>roksbnkctl test</code></a></p>
 <h3 id="roksbnkctl-test-throughput"><a class="header" href="#roksbnkctl-test-throughput"><code>roksbnkctl test throughput</code></a></h3>
 <p>iperf3 throughput; deploys server pod automatically (v1.x)</p>
@@ -8661,6 +9201,89 @@ exec:            # optional; per-tool default-backend map
 </tbody>
 </table>
 </div>
+<h2 id="matrixyaml--the-performance-grid"><a class="header" href="#matrixyaml--the-performance-grid"><code>matrix.yaml</code> — the performance grid</a></h2>
+<blockquote>
+<p><strong>This is its own file, not part of <code>config.yaml</code>.</strong> The <a href="#the-performance-matrix">performance matrix</a> grid lives in a <strong>workspace-sibling</strong> <code>matrix.yaml</code> — under <code>~/.roksbnkctl/&lt;workspace&gt;/</code>, <em>next to</em> <code>config.yaml</code>, never inside it. The grid is large, churns independently of deploy config, and is the kind of thing you diff in git per-campaign, so it stays out of the deploy-shaped <code>config.yaml</code>. <code>roksbnkctl test matrix</code> resolves it via <code>--file</code>, then <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>.</p>
+</blockquote>
+<p>Four top-level keys. The example grid is <code>internal/test/testdata/matrix.example.yaml</code>; <a href="#the-matrixyaml-schema">Chapter 22a §“The matrix.yaml schema”</a> walks it with worked cells.</p>
+<pre><code class="language-yaml">gateway:
+  app_namespace: bnk-apps
+  name: bnk-gateway
+  http_section: http
+  https_section: https
+  tcp_section: tcp
+fixtures:
+  iperf3_server: true
+  http_backend: true
+  routes: true
+endpoints:
+  vsi-diff-vpc: { kind: vsi, target: jumphost }
+  tmm-tcp:      { kind: address, host: 10.240.0.10, port: 5201 }
+  tmm-http-128: { kind: url, url: "http://10.240.0.10/128" }
+cells:
+  - { name: "L4 512K diff-VPC", family: iperf3, client: vsi-diff-vpc, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L7 http CPS 128B", family: l7, client: vsi-diff-vpc, server: tmm-http-128, l7: { mode: cps } }
+</code></pre>
+<h3 id="gateway--existing-stack-identity"><a class="header" href="#gateway--existing-stack-identity"><code>gateway:</code> — existing-stack identity</a></h3>
+<p>Names the already-deployed BNK gateway so route fixtures can attach to it. Used <strong>only</strong> when <code>fixtures.routes</code> is true; the runner adds Routes, never listeners.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>app_namespace</code></td><td>string</td><td>with <code>routes</code></td><td>Namespace the fixtures + routes are created in.</td></tr>
+<tr><td><code>name</code></td><td>string</td><td>with <code>routes</code></td><td>The existing <code>Gateway</code> object the routes’ <code>parentRefs.name</code> point at.</td></tr>
+<tr><td><code>http_section</code> / <code>https_section</code> / <code>tcp_section</code></td><td>string</td><td>one+, with <code>routes</code></td><td>Listener <code>sectionName</code>s on that Gateway the http / https / tcp routes bind to. <strong>Must already exist.</strong> Empty → that route isn’t rendered.</td></tr>
+<tr><td><code>class_name</code> / <code>controller_name</code> / <code>bnkgateway_name</code> / <code>flo_namespace</code></td><td>string</td><td>no</td><td>Descriptive identity; not needed to attach routes.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="fixtures--ephemeral-runner-owned-objects"><a class="header" href="#fixtures--ephemeral-runner-owned-objects"><code>fixtures:</code> — ephemeral runner-owned objects</a></h3>
+<p>The only cluster writes the matrix performs; all torn down after the run unless <code>--keep</code>, all skipped under <code>--dry-run</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>iperf3_server</code></td><td>bool</td><td><code>false</code></td><td>Deploy the L4 iperf3 server (the throughput fixture); the TCPRoute’s backend.</td></tr>
+<tr><td><code>http_backend</code></td><td>bool</td><td><code>false</code></td><td>Deploy an nginx backend serving <code>/128</code>, <code>/5k</code>, <code>/512k</code>; the L7 backend.</td></tr>
+<tr><td><code>routes</code></td><td>bool</td><td><code>false</code></td><td>Apply TCPRoute + HTTPRoute (+ TLS HTTPRoute &amp; self-signed Secret when <code>https_section</code> is set), attaching to <code>gateway.name</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="endpoints--named-placement-role-anchors"><a class="header" href="#endpoints--named-placement-role-anchors"><code>endpoints:</code> — named <code>(placement, role)</code> anchors</a></h3>
+<p>A map of <code>name → { kind, … }</code>. The locality axis is implicit in which <code>vsi</code> endpoint a cell names as its client — there is no locality enum.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>kind</code></th><th>Fields</th><th>Resolves to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vsi</code></td><td><code>target</code> (SSH target name)</td><td>an <code>ssh:&lt;target&gt;</code> jumphost — a traffic-source client</td></tr>
+<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 TCP server (e.g. a TCPRoute VIP); an <code>iperf3</code> cell’s <code>server</code></td></tr>
+<tr><td><code>url</code></td><td><code>url</code> (full <code>http(s)://</code>)</td><td>an HTTPRoute target; an <code>l7</code> cell’s <code>server</code>. The scheme selects cleartext vs TLS-terminate-at-TMM.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cells--the-grid-one-row-per-report-cell"><a class="header" href="#cells--the-grid-one-row-per-report-cell"><code>cells:</code> — the grid (one row per report cell)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Applies to</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>both</td><td>yes</td><td>Report label + <code>--only</code> glob target.</td></tr>
+<tr><td><code>family</code></td><td>both</td><td>yes</td><td><code>iperf3</code> | <code>l7</code>.</td></tr>
+<tr><td><code>client</code></td><td>both</td><td>no</td><td>Endpoint key of kind <code>vsi</code>; empty → run locally.</td></tr>
+<tr><td><code>server</code></td><td>both</td><td>yes</td><td>Endpoint key: <code>address</code> for <code>iperf3</code>, <code>url</code> for <code>l7</code>.</td></tr>
+<tr><td><code>length</code> / <code>bytes</code> / <code>duration</code> / <code>streams</code></td><td><code>iperf3</code></td><td>no</td><td>iperf3 <code>-l</code> / <code>-n</code> / <code>-t</code> / <code>-P</code>.</td></tr>
+<tr><td><code>l7.mode</code></td><td><code>l7</code></td><td>yes (<code>l7</code>)</td><td><code>cps</code> | <code>tps</code> | <code>throughput</code> — h2load flag preset.</td></tr>
+<tr><td><code>l7.clients</code> / <code>streams</code> / <code>threads</code> / <code>requests</code> / <code>duration</code> / <code>http1</code></td><td><code>l7</code></td><td>no</td><td>h2load <code>-c</code> / <code>-m</code> / <code>-t</code> / <code>-n</code> / <code>-D</code> / <code>--h1</code>; override the mode preset.</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="tf_source-block"><a class="header" href="#tf_source-block"><code>tf_source:</code> block</a></h2>
 <pre><code class="language-yaml">tf_source:
   type: embedded         # or: github | local
@@ -8848,7 +9471,7 @@ exec:            # optional; per-tool default-backend map
 <p><code>roksbnkctl up --var-file &lt;file&gt;</code> layers user-supplied tfvars <strong>after</strong> the auto-rendered tfvars derived from <code>config.yaml</code>. Later wins, terraform-style. Multiple <code>--var-file</code> flags are accepted and stack in command-line order.</p>
 <p>The auto-render path: <code>config.yaml</code> → typed <code>Workspace</code> struct → key/value tfvars → <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code>. The user’s <code>--var-file</code> is appended to the terraform invocation as an additional <code>-var-file=&lt;path&gt;</code> argument. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the layering rules.</p>
 <p>A workspace-persistent override file is <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> — when present, it’s auto-layered after the rendered tfvars and before any explicit <code>--var-file</code>. Useful for “always pass this <code>bigip_password</code> value when applying this workspace” without putting it in <code>config.yaml</code> (where the plaintext-secret rejection would reject it).</p>
-<h2 id="cross-references-19"><a class="header" href="#cross-references-19">Cross-references</a></h2>
+<h2 id="cross-references-20"><a class="header" href="#cross-references-20">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the teaching counterpart to this lookup.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — how <code>config.yaml</code> fields render into tfvars.</li>
@@ -9233,7 +9856,7 @@ The release this book is the launch deliverable for. All E2E phases pass on a cl
 A named slot under <code>~/.roksbnkctl/&lt;name&gt;/</code> containing one <code>config.yaml</code>, one Terraform state directory, and (usually) one kubeconfig. The kubectl-style multi-environment isolation primitive. See <a href="#workspaces">Chapter 6</a>.</p>
 <p><strong><code>ws</code> / <code>workspace</code></strong>
 The CLI subtree managing workspaces. <code>roksbnkctl ws new/use/list/delete</code>.</p>
-<h2 id="cross-references-20"><a class="header" href="#cross-references-20">Cross-references</a></h2>
+<h2 id="cross-references-21"><a class="header" href="#cross-references-21">Cross-references</a></h2>
 <ul>
 <li><a href="#what-is-big-ip-next-for-kubernetes-bnk">Chapter 1</a> — BNK context.</li>
 <li><a href="#why-roks-red-hat-openshift-on-ibm-cloud">Chapter 2</a> — ROKS context.</li>
@@ -9397,7 +10020,7 @@ git push origin v1.0.0
 <li>Generate release notes from the CHANGELOG and the commits since the previous tag.</li>
 </ol>
 <p>The release-gate criteria — what has to hold before tagging — are documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md">PLAN.md §“v1.0 (M4)”</a>. The most important: full E2E green for 3 consecutive nights on the release branch.</p>
-<h2 id="cross-references-21"><a class="header" href="#cross-references-21">Cross-references</a></h2>
+<h2 id="cross-references-22"><a class="header" href="#cross-references-22">Cross-references</a></h2>
 <ul>
 <li><a href="#installation">Chapter 4 — Installation</a> — for users who just want the binary, not the source.</li>
 <li><a href="#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a> — how a from-source binary picks tool images.</li>
@@ -9628,7 +10251,7 @@ DRY_RUN=1 ./scripts/e2e-test-backends.sh
 </code></pre>
 <p>The PR should land all eight steps in one commit-set. A reviewer will look for: registered <code>init()</code>, doctor check, cred-audit test, e2e phase, and the two chapter additions. Without the audit + docs, the PR isn’t complete — see the cardinal rule at the top of the <a href="#adding-a-new-execution-backend">Adding a new execution backend</a> section.</p>
 <p>The same pattern applies to a new test suite, a new tool on an existing backend, or a new chapter — the eight-step recipe is the long version; the worked example is the copy-paste short version. Pick the shape that matches your contribution.</p>
-<h2 id="cross-references-22"><a class="header" href="#cross-references-22">Cross-references</a></h2>
+<h2 id="cross-references-23"><a class="header" href="#cross-references-23">Cross-references</a></h2>
 <ul>
 <li><a href="#execution-backends-local-docker-k8s-ssh">Chapter 17 — Execution backends</a> — the four-backend matrix you’re extending.</li>
 <li><a href="#the-in-cluster-ops-pod">Chapter 19 — The in-cluster ops pod</a> — the k8s-backend pattern your new tool might join.</li>

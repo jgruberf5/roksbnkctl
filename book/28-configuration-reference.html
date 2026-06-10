@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72b535b1.js";
+            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6925ce2d.js"></script>
+        <script src="toc-ce6156b4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -378,6 +378,89 @@ exec:            # optional; per-tool default-backend map
 <tbody>
 <tr><td><code>resolvers</code></td><td>map[string]string</td><td>(empty)</td><td>name → <code>&lt;ip&gt;[:&lt;port&gt;]</code></td><td>Friendly-name aliases for <code>--server &lt;name&gt;</code>. Lets workspace config push GSLB VIP addresses out of the command line.</td></tr>
 <tr><td><code>default_target</code></td><td>string</td><td>(empty)</td><td>DNS name</td><td>Default <code>--target</code> when not passed on the command line. Useful for “always probe this name”.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="matrixyaml--the-performance-grid"><a class="header" href="#matrixyaml--the-performance-grid"><code>matrix.yaml</code> — the performance grid</a></h2>
+<blockquote>
+<p><strong>This is its own file, not part of <code>config.yaml</code>.</strong> The <a href="./22a-performance-matrix.html">performance matrix</a> grid lives in a <strong>workspace-sibling</strong> <code>matrix.yaml</code> — under <code>~/.roksbnkctl/&lt;workspace&gt;/</code>, <em>next to</em> <code>config.yaml</code>, never inside it. The grid is large, churns independently of deploy config, and is the kind of thing you diff in git per-campaign, so it stays out of the deploy-shaped <code>config.yaml</code>. <code>roksbnkctl test matrix</code> resolves it via <code>--file</code>, then <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>.</p>
+</blockquote>
+<p>Four top-level keys. The example grid is <code>internal/test/testdata/matrix.example.yaml</code>; <a href="./22a-performance-matrix.html#the-matrixyaml-schema">Chapter 22a §“The matrix.yaml schema”</a> walks it with worked cells.</p>
+<pre><code class="language-yaml">gateway:
+  app_namespace: bnk-apps
+  name: bnk-gateway
+  http_section: http
+  https_section: https
+  tcp_section: tcp
+fixtures:
+  iperf3_server: true
+  http_backend: true
+  routes: true
+endpoints:
+  vsi-diff-vpc: { kind: vsi, target: jumphost }
+  tmm-tcp:      { kind: address, host: 10.240.0.10, port: 5201 }
+  tmm-http-128: { kind: url, url: "http://10.240.0.10/128" }
+cells:
+  - { name: "L4 512K diff-VPC", family: iperf3, client: vsi-diff-vpc, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L7 http CPS 128B", family: l7, client: vsi-diff-vpc, server: tmm-http-128, l7: { mode: cps } }
+</code></pre>
+<h3 id="gateway--existing-stack-identity"><a class="header" href="#gateway--existing-stack-identity"><code>gateway:</code> — existing-stack identity</a></h3>
+<p>Names the already-deployed BNK gateway so route fixtures can attach to it. Used <strong>only</strong> when <code>fixtures.routes</code> is true; the runner adds Routes, never listeners.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>app_namespace</code></td><td>string</td><td>with <code>routes</code></td><td>Namespace the fixtures + routes are created in.</td></tr>
+<tr><td><code>name</code></td><td>string</td><td>with <code>routes</code></td><td>The existing <code>Gateway</code> object the routes’ <code>parentRefs.name</code> point at.</td></tr>
+<tr><td><code>http_section</code> / <code>https_section</code> / <code>tcp_section</code></td><td>string</td><td>one+, with <code>routes</code></td><td>Listener <code>sectionName</code>s on that Gateway the http / https / tcp routes bind to. <strong>Must already exist.</strong> Empty → that route isn’t rendered.</td></tr>
+<tr><td><code>class_name</code> / <code>controller_name</code> / <code>bnkgateway_name</code> / <code>flo_namespace</code></td><td>string</td><td>no</td><td>Descriptive identity; not needed to attach routes.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="fixtures--ephemeral-runner-owned-objects"><a class="header" href="#fixtures--ephemeral-runner-owned-objects"><code>fixtures:</code> — ephemeral runner-owned objects</a></h3>
+<p>The only cluster writes the matrix performs; all torn down after the run unless <code>--keep</code>, all skipped under <code>--dry-run</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>iperf3_server</code></td><td>bool</td><td><code>false</code></td><td>Deploy the L4 iperf3 server (the throughput fixture); the TCPRoute’s backend.</td></tr>
+<tr><td><code>http_backend</code></td><td>bool</td><td><code>false</code></td><td>Deploy an nginx backend serving <code>/128</code>, <code>/5k</code>, <code>/512k</code>; the L7 backend.</td></tr>
+<tr><td><code>routes</code></td><td>bool</td><td><code>false</code></td><td>Apply TCPRoute + HTTPRoute (+ TLS HTTPRoute &amp; self-signed Secret when <code>https_section</code> is set), attaching to <code>gateway.name</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="endpoints--named-placement-role-anchors"><a class="header" href="#endpoints--named-placement-role-anchors"><code>endpoints:</code> — named <code>(placement, role)</code> anchors</a></h3>
+<p>A map of <code>name → { kind, … }</code>. The locality axis is implicit in which <code>vsi</code> endpoint a cell names as its client — there is no locality enum.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>kind</code></th><th>Fields</th><th>Resolves to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vsi</code></td><td><code>target</code> (SSH target name)</td><td>an <code>ssh:&lt;target&gt;</code> jumphost — a traffic-source client</td></tr>
+<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 TCP server (e.g. a TCPRoute VIP); an <code>iperf3</code> cell’s <code>server</code></td></tr>
+<tr><td><code>url</code></td><td><code>url</code> (full <code>http(s)://</code>)</td><td>an HTTPRoute target; an <code>l7</code> cell’s <code>server</code>. The scheme selects cleartext vs TLS-terminate-at-TMM.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cells--the-grid-one-row-per-report-cell"><a class="header" href="#cells--the-grid-one-row-per-report-cell"><code>cells:</code> — the grid (one row per report cell)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Applies to</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>both</td><td>yes</td><td>Report label + <code>--only</code> glob target.</td></tr>
+<tr><td><code>family</code></td><td>both</td><td>yes</td><td><code>iperf3</code> | <code>l7</code>.</td></tr>
+<tr><td><code>client</code></td><td>both</td><td>no</td><td>Endpoint key of kind <code>vsi</code>; empty → run locally.</td></tr>
+<tr><td><code>server</code></td><td>both</td><td>yes</td><td>Endpoint key: <code>address</code> for <code>iperf3</code>, <code>url</code> for <code>l7</code>.</td></tr>
+<tr><td><code>length</code> / <code>bytes</code> / <code>duration</code> / <code>streams</code></td><td><code>iperf3</code></td><td>no</td><td>iperf3 <code>-l</code> / <code>-n</code> / <code>-t</code> / <code>-P</code>.</td></tr>
+<tr><td><code>l7.mode</code></td><td><code>l7</code></td><td>yes (<code>l7</code>)</td><td><code>cps</code> | <code>tps</code> | <code>throughput</code> — h2load flag preset.</td></tr>
+<tr><td><code>l7.clients</code> / <code>streams</code> / <code>threads</code> / <code>requests</code> / <code>duration</code> / <code>http1</code></td><td><code>l7</code></td><td>no</td><td>h2load <code>-c</code> / <code>-m</code> / <code>-t</code> / <code>-n</code> / <code>-D</code> / <code>--h1</code>; override the mode preset.</td></tr>
 </tbody>
 </table>
 </div>

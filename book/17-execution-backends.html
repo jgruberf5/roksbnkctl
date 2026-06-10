@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72b535b1.js";
+            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6925ce2d.js"></script>
+        <script src="toc-ce6156b4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -391,10 +391,12 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 <tbody>
 <tr><td><code>ibmcloud</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:&lt;tag&gt;</code> (vendored from <code>icr.io/ibm-cloud/ibmcloud-cli</code> upstream)</td></tr>
 <tr><td><code>iperf3</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:&lt;tag&gt;</code> (Alpine + iperf3)</td></tr>
+<tr><td><code>h2load</code></td><td><code>ghcr.io/jgruberf5/roksbnkctl-tools-h2load:&lt;tag&gt;</code> (Alpine + <code>nghttp2</code>; the L7 load generator for <a href="./22a-performance-matrix.html"><code>test matrix</code></a>)</td></tr>
 <tr><td><code>terraform</code></td><td><code>hashicorp/terraform:&lt;v&gt;</code> (official upstream)</td></tr>
 </tbody>
 </table>
 </div>
+<p>The <code>h2load</code> image is the L7 generator the <a href="./22a-performance-matrix.html">performance matrix</a> runs for <code>family: l7</code> cells. It’s built from <code>tools/docker/h2load/Dockerfile</code> (Alpine’s <code>nghttp2</code> package, built against OpenSSL so <code>https</code> / TLS-terminate-at-TMM targets work) and published by the <code>tools-images</code> workflow alongside the other per-tool images. Like the iperf3 image it declares <code>USER 1000</code> so it satisfies the OpenShift <code>restricted-v2</code> SCC (h2load is a pure client and binds no privileged port). The <code>docker</code> / <code>k8s</code> backends pull this image; the <code>ssh</code> backend uses the jumphost’s apt-installed <code>nghttp2-client</code> instead (preinstalled by the Testing phase — see <a href="./15-ssh-targets.html#per-az-cluster-jumphosts-jumphost-zone">Chapter 15 §“Per-AZ cluster jumphosts”</a>).</p>
 <p>The <code>&lt;tag&gt;</code> for the vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) is resolved at runtime by <code>internal/exec/docker.go::toolImageTag()</code>. It reads the binary’s <code>internal/version.Version</code> (set via ldflags at build time): a release-built binary like <code>v0.10.0</code> pulls <code>:v0.10.0</code>; a dev build (<code>Version == "dev"</code>) pulls <code>:dev</code>. Sprint 4 landed this version-pinning in place of Sprint 3’s hard-coded <code>:dev</code> so a <code>go install</code> of a tagged release pulls a matching tagged image rather than a <code>:dev</code> that may not exist for the published binary. The <code>terraform</code> row is the exception — it points at the upstream <code>hashicorp/terraform</code> image and stays pinned to a specific version (currently <code>1.5.7</code>) regardless of <code>roksbnkctl</code>’s own version.</p>
 <p>The <code>:dev</code> tag is still the local-development idiom: <code>cd tools/docker &amp;&amp; make build-all</code> builds and tags every tools image as <code>:dev</code> locally; a dev-build <code>roksbnkctl</code> finds them via the local docker cache without a ghcr.io round-trip.</p>
 <p>If you’re cutting a custom tools image and want <code>roksbnkctl</code> to pick it up, the simplest path is <code>docker tag your-image ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> locally — the docker backend pulls the local-cached version first.</p>

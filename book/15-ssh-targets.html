@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72b535b1.js";
+            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6925ce2d.js"></script>
+        <script src="toc-ce6156b4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -419,7 +419,10 @@ roksbnkctl targets add backup-jump \
 </code></pre>
 </li>
 </ol>
-<p>Verify with <code>roksbnkctl targets list</code> — you should see <code>jumphost</code> plus one <code>jumphost-&lt;zone&gt;</code> per AZ. Each is a first-class <code>--on</code> target (full <code>kubectl</code>/<code>oc</code>/<code>ibmcloud</code>/<code>shell</code> passthrough, no SSH hop): <code>roksbnkctl --on jumphost-ca-tor-2 kubectl get pods</code>. Like the singular <code>jumphost</code>, registration is <strong>best-effort and idempotent</strong> — a parse/write failure logs a single <code>warning:</code> and does not fail <code>up</code>, and re-running <code>up</code> after a floating-IP rotation refreshes each <code>jumphost-&lt;zone&gt;</code> host in place. When <code>testing_create_cluster_jumphosts = false</code> (or the output is absent/empty), this is a silent no-op — only <code>jumphost</code> is seeded, with no warning noise.</p>
+<p>Verify with <code>roksbnkctl targets list</code> — you should see <code>jumphost</code> plus one <code>jumphost-&lt;zone&gt;</code> per AZ. Each is a first-class <code>--on</code> target (full <code>kubectl</code>/<code>oc</code>/<code>ibmcloud</code>/<code>shell</code> passthrough, no SSH hop): <code>roksbnkctl --on jumphost-ca-tor-2 kubectl get pods</code>.</p>
+<blockquote>
+<p><strong>Preinstalled load generators.</strong> Every jumphost — the TGW <code>jumphost</code> and each per-AZ <code>jumphost-&lt;zone&gt;</code> — comes with <strong><code>iperf3</code> and <code>h2load</code></strong> (the <code>nghttp2-client</code> package) already installed by the Testing-phase <code>user_data</code>. So both <a href="./22-throughput-testing.html"><code>test throughput</code></a> (iperf3) and the <a href="./22a-performance-matrix.html">performance matrix</a> (iperf3 + h2load) run over <code>--backend ssh:&lt;target&gt;</code> with <strong>no <code>--bootstrap</code></strong> — the SSH backend’s apt-bootstrap path (<a href="./17-execution-backends.html#ssh-backend">Chapter 17 §“SSH backend”</a>) is needed only for hosts you registered by hand. Like the singular <code>jumphost</code>, registration is <strong>best-effort and idempotent</strong> — a parse/write failure logs a single <code>warning:</code> and does not fail <code>up</code>, and re-running <code>up</code> after a floating-IP rotation refreshes each <code>jumphost-&lt;zone&gt;</code> host in place. When <code>testing_create_cluster_jumphosts = false</code> (or the output is absent/empty), this is a silent no-op — only <code>jumphost</code> is seeded, with no warning noise.</p>
+</blockquote>
 <blockquote>
 <p><strong>Orphaned-target caveat (option (a) upsert-only).</strong> Auto-registration upserts but never prunes. If a later apply removes a zone, or <code>testing_create_cluster_jumphosts</code> is flipped to <code>false</code>, the now-orphaned <code>jumphost-&lt;oldzone&gt;</code> target points at a destroyed host and lingers in your config until you remove it by hand:</p>
 <pre><code class="language-bash">roksbnkctl targets remove jumphost-ca-tor-3

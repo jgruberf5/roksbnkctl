@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>The three-phase lifecycle (Cluster / BNK / Testing) - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>Air-gapped install: mirroring BNK into the cluster registry - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,288 +177,95 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="the-three-phase-lifecycle-cluster--bnk--testing"><a class="header" href="#the-three-phase-lifecycle-cluster--bnk--testing">The three-phase lifecycle (Cluster / BNK / Testing)</a></h1>
-<blockquote>
-<p><strong>Transcripts in this chapter are illustrative.</strong> They show the <em>shape</em>
-of the output, not byte-exact captures. Resource counts and timings vary
-with upstream chart releases and IBM Cloud region behaviour.</p>
-</blockquote>
-<p>As of this release, a <code>roksbnkctl</code> workspace is <strong>three independent phases</strong>
-rather than two. The durable <strong>Cluster</strong> phase (the ROKS cluster + cluster
-VPC + transit gateway + registry COS) sits underneath two independent
-sibling phases that deploy on top of it: the <strong>BNK</strong> phase (cert-manager +
-F5 Lifecycle Operator + CNE Instance + License — everything that talks to
-the Kubernetes API) and the <strong>Testing</strong> phase (the jumphost rig — pure IBM
-VPC, no Kubernetes).</p>
-<pre><code>           ┌──────────── 1. CLUSTER ────────────┐  (create OR reuse)
-           │  ROKS cluster + cluster VPC + TGW   │  → cluster-outputs.json
-           │  + registry COS                     │
-           └──────────────────┬──────────────────┘
-                     ┌─────────┴─────────┐
-                     ▼                   ▼
-           ┌──────────────────┐   ┌──────────────────┐
-           │ 2. BNK  (k8s)    │   │ 3. TESTING (VPC) │
-           │ cert-manager,    │   │ jumphosts (pure  │
-           │ flo, cne, license│   │ IBM VPC, no k8s) │
-           │ needs: cluster   │   │ needs: cluster   │
-           │   (k8s API)      │   │   VPC + TGW only  │
-           └──────────────────┘   └──────────────────┘
-                └── parallel; independent up/down ──┘
-</code></pre>
-<p><strong>Why three?</strong> BNK depends fully on the cluster (its resources live <em>in</em> the
-cluster and need the Kubernetes API). Testing depends on the cluster only
-for the <strong>network</strong> — the cluster VPC it attaches a jumphost to, and the
-transit gateway it bridges across regions. The two workloads are otherwise
-unrelated. Splitting them means:</p>
-<ul>
-<li>You can tear down the BNK trial and <strong>keep the jumphosts</strong> for the next
-iteration (<code>roksbnkctl bnk down</code> leaves Testing alone) — and the inverse
-(<code>roksbnkctl testing down</code> leaves BNK alone).</li>
-<li>The two unrelated workloads <strong>deploy in parallel</strong> after the cluster is
-ready, shaving wall-clock off a fresh <code>up</code>.</li>
-</ul>
-<blockquote>
-<p><strong><code>testing</code> is not <code>test</code>.</strong> This is the one naming collision worth
-internalising up front:</p>
-<ul>
-<li><strong><code>roksbnkctl testing up/down</code></strong> — a <strong>provisioning phase</strong>. It creates
-and destroys the jumphost <em>infrastructure</em> (the TGW jumphost, the per-AZ
-cluster jumphosts, the optional client VPC). Parallel to <code>cluster</code> and
-<code>bnk</code>. Writes <code>state-testing/</code>.</li>
-<li><strong><code>roksbnkctl test</code></strong> — <strong>runs validation probes</strong> (connectivity, DNS,
-throughput) against an already-deployed environment. Provisions nothing.
-See <a href="./20-connectivity-testing.html">Chapter 20</a>.</li>
-<li><strong><code>roksbnkctl test hosts</code></strong> — manages the <strong>list of hosts</strong> the <code>test</code>
-probes target. Still no provisioning.</li>
-</ul>
-<p>Mnemonic: <em><code>testing</code> builds the rig; <code>test</code> runs the checks.</em></p>
-</blockquote>
-<h2 id="the-three-state-directories"><a class="header" href="#the-three-state-directories">The three state directories</a></h2>
-<p>Each phase owns its own Terraform state directory so the phases never tangle:</p>
-<pre><code>~/.roksbnkctl/&lt;workspace&gt;/
-  state-cluster/      # Cluster phase — `cluster up/down`
-    terraform.tfstate
-    cluster-phase-override.tfvars
-  state/              # BNK phase — `bnk up/down` (and `up`/`down`/`plan`/`apply`)
-    terraform.tfstate
-    bnk-phase-override.tfvars
-  state-testing/      # Testing phase — `testing up/down`
-    terraform.tfstate
-    testing-phase-override.tfvars
-  cluster-outputs.json   # the cluster's identity — the handoff to BNK + Testing
-</code></pre>
-<p>The BNK phase keeps the original <code>state/</code> directory it has always used
-(this is deliberate — see <a href="#migration-from-the-two-phase-layout">§“Migration”</a>
-below); the jumphosts now live in the new <code>state-testing/</code>. Naming is
-slightly asymmetric (<code>state/</code> for BNK vs the explicit <code>state-cluster/</code> /
-<code>state-testing/</code>) for exactly one reason: keeping <code>state/</code> as BNK means
-existing workspaces don’t have to migrate their BNK resources, only evict
-the jumphosts.</p>
-<h2 id="cluster-outputsjson--the-handoff-both-siblings-read"><a class="header" href="#cluster-outputsjson--the-handoff-both-siblings-read"><code>cluster-outputs.json</code> — the handoff both siblings read</a></h2>
-<p>The Cluster phase writes <code>cluster-outputs.json</code> on success (or
-<code>cluster register</code> writes it for a pre-existing cluster). Both BNK and
-Testing read it to learn the cluster’s identity without re-specifying it:</p>
-<ul>
-<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster) and
-the VPC id.</li>
-<li><strong>Testing</strong> reads the cluster VPC id (the jumphost attaches to it), the
-cluster id/name, and the <strong>transit gateway name</strong> (the Testing module
-looks the gateway up by name to bridge the client VPC to the cluster).</li>
-</ul>
-<p>The transit-gateway <em>name</em> is recorded alongside the id specifically so the
-Testing phase can run standalone against a registered cluster.</p>
-<h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
-<p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
-siblings depend on it), then launches <strong>BNK and Testing concurrently</strong>:</p>
-<pre><code class="language-bash">roksbnkctl up --auto
-</code></pre>
-<pre><code>→ Cluster phase (serial; both BNK and Testing depend on it)
-  module.roks_cluster.ibm_container_vpc_cluster.cluster: Creating...
-  ...
-  Apply complete! Resources: 36 added.
-✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
-
-→ BNK || Testing (parallel)
-  [bnk]     → terraform apply
-  [testing] → terraform apply
-  [testing] module.testing.ibm_is_instance.tgw_jumphost: Creating...
-  [bnk]     module.cert_manager.helm_release.cert_manager: Creating...
-  [testing] module.testing.tls_private_key.jumphost_shared_key: Creation complete
-  [bnk]     module.flo.helm_release.flo: Creating...
-  [testing] Apply complete! Resources: 9 added.
-  [bnk]     Apply complete! Resources: 32 added.
-✓ Auto-registered target jumphost (169.45.91.177)
-</code></pre>
-<p>The two parallel phases’ output is <strong>line-prefixed</strong> (<code>[bnk]</code> / <code>[testing]</code>)
-so you can follow each independently. The Cluster phase, being serial, prints
-unprefixed.</p>
-<p>Without <code>--auto</code>, <code>up</code> <strong>plans both phases first</strong> (sequentially, so each diff
-is cleanly attributed), then asks a <strong>separate confirmation for each</strong> —
-<code>Apply BNK plan? [y/N]</code> and <code>Apply Testing plan? [y/N]</code>. Two concurrent
-applies can’t each own an interactive prompt on one terminal, so the approval
-is taken up front; the approved phases then apply <strong>in parallel</strong>. Approving
-only one (e.g. <code>y</code> to BNK, <code>N</code> to Testing) brings up just that phase — handy
-when you want to redeploy the BNK trial without touching the jumphosts. A
-phase whose plan shows no changes is skipped without prompting.</p>
-<p>Why Cluster-completes-first rather than starting Testing the moment the
-cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
-Testing is a handful of VSIs (minutes). Starting Testing against a half-built
-cluster invites data-source races for a few minutes’ savings. Cluster-first
-is simpler and correct.</p>
-<h2 id="per-phase-up--down"><a class="header" href="#per-phase-up--down">Per-phase <code>up</code> / <code>down</code></a></h2>
-<p>Each phase has its own command pair, all sharing the same flag model
-(<code>--auto</code>, <code>--var-file</code>, …):</p>
+                        <h1 id="air-gapped-install-mirroring-bnk-into-the-cluster-registry"><a class="header" href="#air-gapped-install-mirroring-bnk-into-the-cluster-registry">Air-gapped install: mirroring BNK into the cluster registry</a></h1>
+<p>Some ROKS environments forbid pulling install resources from external repositories
+at deploy time. For these, <code>roksbnkctl</code> can <strong>replicate every artifact BNK needs</strong>
+— the F5 charts and images, plus the non-F5 dependencies — from the F5 Artifact
+Repository (FAR, <code>repo.f5.com</code>) into the cluster’s <strong>own OpenShift internal
+registry</strong>, and then install BNK entirely from there. With the mirror in place, the
+cluster needs no egress to <code>repo.f5.com</code>, <code>quay.io</code>, <code>docker.io</code>, or
+<code>charts.jetstack.io</code> to bring up BNK.</p>
+<p>The registry surface is CRUD-shaped, modeled on the IBM COS client:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Phase</th><th>Up</th><th>Down</th><th>State</th></tr>
+<tr><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr><td>Cluster</td><td><code>roksbnkctl cluster up</code></td><td><code>roksbnkctl cluster down</code></td><td><code>state-cluster/</code></td></tr>
-<tr><td>BNK</td><td><code>roksbnkctl bnk up</code></td><td><code>roksbnkctl bnk down</code></td><td><code>state/</code></td></tr>
-<tr><td>Testing</td><td><code>roksbnkctl testing up</code></td><td><code>roksbnkctl testing down</code></td><td><code>state-testing/</code></td></tr>
+<tr><td><code>roksbnkctl registry bom</code></td><td>Print the bill-of-materials — every chart + image BNK needs</td></tr>
+<tr><td><code>roksbnkctl registry replicate</code></td><td>Mirror the BOM into the target registry</td></tr>
+<tr><td><code>roksbnkctl registry list</code></td><td>What’s present in the target</td></tr>
+<tr><td><code>roksbnkctl registry diff</code></td><td>BOM vs. target — what’s missing or stale</td></tr>
+<tr><td><code>roksbnkctl registry verify</code></td><td>Every BOM artifact present + digest-matched</td></tr>
+<tr><td><code>roksbnkctl registry prune</code></td><td>Remove mirrored artifacts no longer in the BOM</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>bnk up</code> and <code>testing up</code> each bootstrap the Cluster phase first if the
-workspace has no cluster yet (with a confirmation prompt — the cluster take
-~30 min). Against an existing cluster they go straight to their own apply.</p>
-<h3 id="bnk-down-leaves-the-jumphosts-and-the-inverse"><a class="header" href="#bnk-down-leaves-the-jumphosts-and-the-inverse"><code>bnk down</code> leaves the jumphosts (and the inverse)</a></h3>
-<p>The headline capability of the split: the two siblings tear down
-independently.</p>
-<pre><code class="language-bash"># Iterate on BNK while keeping the jumphost rig warm:
-roksbnkctl bnk down      # destroys cert-manager/flo/cne/license; Testing untouched
-roksbnkctl bnk up        # redeploy BNK against the same cluster + same jumphosts
+<h2 id="the-bill-of-materials"><a class="header" href="#the-bill-of-materials">The bill-of-materials</a></h2>
+<p>The BOM comes from the <strong><code>f5-bigip-k8s-manifest</code></strong> that FAR publishes per BNK
+release — the same manifest <code>roksbnkctl</code> reads for version discovery. It
+enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
+tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
+cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
+<strong><code>bitnami/kubectl</code></strong> node-labeler image — so the mirror is complete:</p>
+<pre><code class="language-console">$ roksbnkctl registry bom
+charts  repo.f5.com/charts/f5-lifecycle-operator   v2.21.13-0.0.28
+charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
+...
+images  repo.f5.com/images/tmm-img                 v10.159.3-0.1.5
+images  quay.io/jetstack/cert-manager-controller   v1.17.3
+images  docker.io/bitnami/kubectl                  &lt;tag&gt;
+...
+81 F5 artifacts + 6 dependency artifacts
 </code></pre>
-<pre><code>✓ BNK phase destroyed. Cluster phase state-cluster/ and Testing phase
-  state-testing/ are intact. Run `roksbnkctl bnk up` to redeploy.
+<h2 id="the-walk-through"><a class="header" href="#the-walk-through">The walk-through</a></h2>
+<pre><code class="language-console">$ roksbnkctl cluster up                              # the durable cluster
+$ roksbnkctl registry replicate --target openshift   # mirror the BOM (one-time per BNK version)
+$ roksbnkctl registry verify                          # confirm completeness
+$ roksbnkctl bnk up                                   # installs from the internal registry
 </code></pre>
-<p>And the inverse — destroy the jumphost rig but keep BNK running:</p>
-<pre><code class="language-bash">roksbnkctl testing down   # destroys the jumphosts; cluster + BNK untouched
-</code></pre>
-<p>Because each phase owns a separate state directory, <code>bnk down</code> physically
-cannot touch <code>state-testing/</code>, and <code>testing down</code> cannot touch <code>state/</code>.</p>
-<h2 id="reuse-an-existing-cluster"><a class="header" href="#reuse-an-existing-cluster">Reuse an existing cluster</a></h2>
-<p>If you already have a ROKS cluster (yours or a teammate’s), skip the Cluster
-phase entirely — <a href="./09-registering-existing-cluster.html">register it</a>, then
-deploy BNK and Testing on top:</p>
-<pre><code class="language-bash">roksbnkctl cluster register existing-bnk-cluster
-roksbnkctl up --auto        # Cluster phase skipped; BNK || Testing deploy on the registered cluster
-# or per-phase:
-roksbnkctl bnk up --auto
-roksbnkctl testing up --auto
-</code></pre>
-<p><code>cluster down</code> is a no-op there — the cluster wasn’t yours to destroy.</p>
-<h2 id="teardown-ordering-and-the-cluster-down-guard"><a class="header" href="#teardown-ordering-and-the-cluster-down-guard">Teardown ordering and the <code>cluster down</code> guard</a></h2>
-<p>Destroy in <strong>reverse of create</strong>: the siblings first (in parallel, they’re
-independent), then the cluster.</p>
-<pre><code class="language-bash">roksbnkctl down --auto
-</code></pre>
-<pre><code>This will destroy the BNK, Testing, AND Cluster phases for workspace "default".
-Continue? [y/N]: y
-
-→ BNK || Testing (parallel destroy)
-  [bnk]     Destroy complete! Resources: 32 destroyed.
-  [testing] Destroy complete! Resources: 9 destroyed.
-→ Cluster phase (destroy)
-  Destroy complete! Resources: 36 destroyed.
-</code></pre>
-<p>The bare <code>down</code> takes <strong>one</strong> composite confirmation naming every present
-phase, then runs the parallel sibling-destroy followed by the cluster
-destroy — you can’t accidentally confirm one phase and miss another.</p>
-<p><code>roksbnkctl cluster down</code> <strong>refuses</strong> while BNK or Testing state still has
-resources — they reference the cluster VPC/TGW, so destroying the cluster
-out from under them would orphan resources:</p>
-<pre><code>$ roksbnkctl cluster down
-BNK and Testing state exist in this workspace; run `roksbnkctl bnk down` and
-`roksbnkctl testing down` first (or `roksbnkctl down` to tear down all phases)
-</code></pre>
-<p>This is a correctness guard, not a prompt — <code>--auto</code> does not bypass it.
-<code>cluster-outputs.json</code> is deleted only on <code>cluster down</code> (it’s the cluster’s
-identity); <code>bnk down</code> and <code>testing down</code> leave it in place.</p>
-<h2 id="migration-from-the-two-phase-layout"><a class="header" href="#migration-from-the-two-phase-layout">Migration from the two-phase layout</a></h2>
-<p>Workspaces created before the three-phase split have their jumphosts living
-in the <strong>BNK state</strong> (<code>state/</code>, alongside the BNK modules — that’s how the
-old two-phase “trial” worked). The three-phase split needs those jumphosts
-in <code>state-testing/</code> instead. Three cases:</p>
-<ol>
-<li>
-<p><strong>Fresh / empty workspaces</strong> — nothing to migrate. The first <code>up</code> lays
-out all three state directories cleanly.</p>
-</li>
-<li>
-<p><strong>Legacy single-state (v1.0.x) workspaces</strong> — <strong>left alone</strong>. The cluster</p>
+<p><code>registry replicate</code> runs <strong>after</strong> the Cluster phase and <strong>before</strong> BNK. It is a
+deliberate, occasional supply-chain step — it is <strong>not</strong> part of the composite
+<code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). It copies each artifact
+registry-to-registry by digest, idempotently — re-running it only moves what
+changed (e.g. after a BNK version bump, <code>registry diff</code> shows exactly the changed
+artifacts).</p>
+<p>Once the mirror is populated, the BNK phase reads it and redirects the install: the
+container images resolve from the cluster’s internal registry, and BNK comes up
+with no external pulls. The Stage acceptance is exactly this, with egress to the
+external registries blocked.</p>
+<h2 id="how-it-works-the-registrys-two-faces"><a class="header" href="#how-it-works-the-registrys-two-faces">How it works: the registry’s two faces</a></h2>
+<p>The OpenShift internal registry is reachable two ways, and <code>roksbnkctl</code> uses both:</p>
 <ul>
-<li>BNK + jumphosts stay in one <code>state/</code>; <code>up</code> / <code>down</code> keep operating
-monolithically; the phase verbs (<code>cluster</code>, <code>bnk</code>, <strong>and the new
-<code>testing</code></strong>) all refuse and point you back at the unscoped <code>up</code>/<code>down</code>.</li>
+<li><strong>Charts</strong> are pulled by the in-process helm provider on the <code>roksbnkctl</code> host,
+over the registry’s external <strong>route</strong> (<code>oci://&lt;route&gt;/&lt;ns&gt;/charts/…</code>).</li>
+<li><strong>Images</strong> are pulled by the cluster’s pods over the in-cluster <strong>service</strong>
+(<code>image-registry.openshift-image-registry.svc:5000/&lt;ns&gt;/images/…</code>), authorized by
+a <code>system:image-puller</code> role binding — <strong>no image pull secret</strong>.</li>
 </ul>
-</li>
-<li>
-<p><strong>Two-phase split workspaces (the common case)</strong> — the jumphosts need to
-move out of <code>state/</code> into <code>state-testing/</code> <strong>without destroying the live
-jumphosts</strong>. The recommended path preserves them:</p>
-<pre><code class="language-bash">roksbnkctl testing migrate    # terraform state mv: jumphosts → state-testing/
-</code></pre>
-<p>This <code>terraform state mv</code>s every <code>module.testing.*</code> resource (including
-the shared SSH key) from <code>state/</code> into a fresh <code>state-testing/</code>, with
-<strong>no cloud churn</strong> — the jumphosts keep their IPs and your <code>known_hosts</code>
-stays valid. A subsequent <code>bnk up</code> reconciles the now-jumphost-free BNK
-state (it plans no jumphost create), and <code>testing up</code> adopts the moved
-resources (in-place, not create).</p>
-<p>If a workspace is in an awkward partial-apply state, the bulletproof
-fallback is a full <code>roksbnkctl down</code> then <code>roksbnkctl up</code>, which
-re-creates everything in the three-state layout. This <em>does</em> churn the
-jumphosts (new IPs, <code>known_hosts</code> reset), so the <code>state mv</code> path is
-preferred whenever it’s available.</p>
-</li>
-</ol>
-<p><code>roksbnkctl</code> nudges you when it detects jumphosts still living in the BNK
-state with an empty <code>state-testing/</code> — it won’t silently rewrite your state.</p>
-<h2 id="the-optional-gateway-phase-gateway-up--down"><a class="header" href="#the-optional-gateway-phase-gateway-up--down">The optional Gateway phase (<code>gateway up</code> / <code>down</code>)</a></h2>
-<p>The BNK phase brings up a licensed, running control plane and now also creates
-the <code>cloud-network-mapping</code> ConfigMap and the external/internal VLANs that TMM
-needs to program its data plane. The <strong>rest</strong> of the install guide’s
-“Configuration” section — the Gateway API objects, egress SnatPool/Egress, the
-per-zone static routes, and the cluster security-group VXLAN rule — is a
-<strong>separate, optional phase</strong> with its own state (<code>state-gateway/</code>):</p>
-<pre><code class="language-bash">roksbnkctl up                  # Cluster → BNK ∥ Testing  (Gateway NOT included)
-# … verify BNK is healthy: TMM pods Ready, CNEInstance Available …
-roksbnkctl gateway up          # apply the data-plane config
-roksbnkctl gateway down        # remove it, leaving cluster/BNK/testing intact
-</code></pre>
-<p>It is <strong>never</strong> run by the composite <code>up</code>/<code>down</code> — the Gateway config needs a
-healthy BNK (its <code>F5SPK*</code> CRDs ship with the BNK manifest, and TMM must be up),
-so it is strictly opt-in. It reuses the existing cluster via
-<code>cluster-outputs.json</code> (like the Testing phase), forces every other phase’s
-creation off in its override, and manages only its own resources. Defaults all
-come from the BNK 2.3 install guide; override the HTTPRoute backend, client
-subnets, egress mode (<code>snatpool</code>/<code>automap</code>/<code>both</code>) and VXLAN port via the
-<code>config.yaml</code> <code>gateway</code> block. <code>cluster down</code> refuses while the Gateway phase
-has resources, so tear it down first (<code>gateway down</code>).</p>
-<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
-<ul>
-<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — the Cluster phase
-in depth.</li>
-<li><a href="./09-registering-existing-cluster.html">Chapter 9 — Registering an existing cluster</a>
-— the reuse-existing-cluster path.</li>
-<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — the BNK
-phase (<code>bnk up/down</code>) in depth.</li>
-<li><a href="./11-tearing-down.html">Chapter 11 — Tearing down</a> — the full destroy decision
-tree and refusal catalogue.</li>
-<li><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> — what
-<code>roksbnkctl test</code> (not <code>testing</code>!) actually runs.</li>
-</ul>
+<p><code>registry replicate</code> bootstraps this for you: it enables the registry’s default
+route, creates a mirror project, mints a push credential, and binds the pull RBAC.</p>
+<blockquote>
+<p><strong>Custom ingress certificate.</strong> The host pulls charts over the route, trusting the
+cluster’s <code>*.apps</code> ingress certificate. ROKS apps domains carry a publicly-trusted
+cert by default. If your cluster uses a custom or self-signed ingress cert, add its
+CA to the host’s trust store before <code>registry replicate</code>.</p>
+</blockquote>
+<h2 id="other-targets"><a class="header" href="#other-targets">Other targets</a></h2>
+<p>The OpenShift internal registry is the first-class target. The mirror is built
+against a pluggable <code>RegistryTarget</code>, so IBM Container Registry (<code>icr.io</code>) and a
+generic private OCI registry (Harbor / Artifactory / Quay) are natural follow-on
+targets — <code>--target</code> selects which.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="08-cluster-phase.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="10-deploying-bnk-trials.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="09-registering-existing-cluster.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="11-tearing-down.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -468,11 +275,11 @@ tree and refusal catalogue.</li>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="08-cluster-phase.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="10-deploying-bnk-trials.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="09-registering-existing-cluster.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="11-tearing-down.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

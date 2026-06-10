@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>The three-phase lifecycle (Cluster / BNK / Testing) - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>The performance matrix - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,288 +177,291 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="the-three-phase-lifecycle-cluster--bnk--testing"><a class="header" href="#the-three-phase-lifecycle-cluster--bnk--testing">The three-phase lifecycle (Cluster / BNK / Testing)</a></h1>
+                        <h1 id="the-performance-matrix"><a class="header" href="#the-performance-matrix">The performance matrix</a></h1>
+<p><a href="./22-throughput-testing.html">Throughput testing</a> runs a single measurement: one iperf3 client against one iperf3 server. <code>roksbnkctl test matrix</code> runs a whole set of them at once. You write a <code>matrix.yaml</code> listing the measurements you want — each one a row — and the command runs them all and prints the results in one report.</p>
+<p>Reach for <code>test throughput</code> to check a single path; reach for <code>test matrix</code> to characterise a deployment — throughput, request rates, and latency from several network locations — in one repeatable command instead of a dozen steps by hand. (Don’t confuse it with <code>roksbnkctl testing up</code>, which <em>builds</em> the jumphosts. <code>test</code> only runs tests.)</p>
+<p>The matrix runs against an environment that is <strong>already deployed</strong>: a complete Cluster + BNK deploy with the <a href="./08a-three-phase-lifecycle.html">Testing phase</a> jumphosts up, and — for the HTTP tests — the <a href="./10-deploying-bnk-trials.html">Gateway phase</a> in place.</p>
 <blockquote>
-<p><strong>Transcripts in this chapter are illustrative.</strong> They show the <em>shape</em>
-of the output, not byte-exact captures. Resource counts and timings vary
-with upstream chart releases and IBM Cloud region behaviour.</p>
+<p>The example numbers in this chapter are <strong>illustrative</strong>. The <code>--dry-run</code> plan is exercised in CI and its transcript is real, but a full live run has not yet been measured against a production ROKS cluster.</p>
 </blockquote>
-<p>As of this release, a <code>roksbnkctl</code> workspace is <strong>three independent phases</strong>
-rather than two. The durable <strong>Cluster</strong> phase (the ROKS cluster + cluster
-VPC + transit gateway + registry COS) sits underneath two independent
-sibling phases that deploy on top of it: the <strong>BNK</strong> phase (cert-manager +
-F5 Lifecycle Operator + CNE Instance + License — everything that talks to
-the Kubernetes API) and the <strong>Testing</strong> phase (the jumphost rig — pure IBM
-VPC, no Kubernetes).</p>
-<pre><code>           ┌──────────── 1. CLUSTER ────────────┐  (create OR reuse)
-           │  ROKS cluster + cluster VPC + TGW   │  → cluster-outputs.json
-           │  + registry COS                     │
-           └──────────────────┬──────────────────┘
-                     ┌─────────┴─────────┐
-                     ▼                   ▼
-           ┌──────────────────┐   ┌──────────────────┐
-           │ 2. BNK  (k8s)    │   │ 3. TESTING (VPC) │
-           │ cert-manager,    │   │ jumphosts (pure  │
-           │ flo, cne, license│   │ IBM VPC, no k8s) │
-           │ needs: cluster   │   │ needs: cluster   │
-           │   (k8s API)      │   │   VPC + TGW only  │
-           └──────────────────┘   └──────────────────┘
-                └── parallel; independent up/down ──┘
-</code></pre>
-<p><strong>Why three?</strong> BNK depends fully on the cluster (its resources live <em>in</em> the
-cluster and need the Kubernetes API). Testing depends on the cluster only
-for the <strong>network</strong> — the cluster VPC it attaches a jumphost to, and the
-transit gateway it bridges across regions. The two workloads are otherwise
-unrelated. Splitting them means:</p>
+<h2 id="the-two-families"><a class="header" href="#the-two-families">The two families</a></h2>
+<p>Each row (a “cell”) picks a <code>family</code>:</p>
 <ul>
-<li>You can tear down the BNK trial and <strong>keep the jumphosts</strong> for the next
-iteration (<code>roksbnkctl bnk down</code> leaves Testing alone) — and the inverse
-(<code>roksbnkctl testing down</code> leaves BNK alone).</li>
-<li>The two unrelated workloads <strong>deploy in parallel</strong> after the cluster is
-ready, shaving wall-clock off a fresh <code>up</code>.</li>
+<li><strong><code>iperf3</code></strong> — raw TCP throughput (Layer 4).</li>
+<li><strong><code>l7</code></strong> — HTTP load, driven by <a href="https://nghttp2.org/documentation/h2load-howto.html">h2load</a> (Layer 7).</li>
 </ul>
-<blockquote>
-<p><strong><code>testing</code> is not <code>test</code>.</strong> This is the one naming collision worth
-internalising up front:</p>
-<ul>
-<li><strong><code>roksbnkctl testing up/down</code></strong> — a <strong>provisioning phase</strong>. It creates
-and destroys the jumphost <em>infrastructure</em> (the TGW jumphost, the per-AZ
-cluster jumphosts, the optional client VPC). Parallel to <code>cluster</code> and
-<code>bnk</code>. Writes <code>state-testing/</code>.</li>
-<li><strong><code>roksbnkctl test</code></strong> — <strong>runs validation probes</strong> (connectivity, DNS,
-throughput) against an already-deployed environment. Provisions nothing.
-See <a href="./20-connectivity-testing.html">Chapter 20</a>.</li>
-<li><strong><code>roksbnkctl test hosts</code></strong> — manages the <strong>list of hosts</strong> the <code>test</code>
-probes target. Still no provisioning.</li>
-</ul>
-<p>Mnemonic: <em><code>testing</code> builds the rig; <code>test</code> runs the checks.</em></p>
-</blockquote>
-<h2 id="the-three-state-directories"><a class="header" href="#the-three-state-directories">The three state directories</a></h2>
-<p>Each phase owns its own Terraform state directory so the phases never tangle:</p>
-<pre><code>~/.roksbnkctl/&lt;workspace&gt;/
-  state-cluster/      # Cluster phase — `cluster up/down`
-    terraform.tfstate
-    cluster-phase-override.tfvars
-  state/              # BNK phase — `bnk up/down` (and `up`/`down`/`plan`/`apply`)
-    terraform.tfstate
-    bnk-phase-override.tfvars
-  state-testing/      # Testing phase — `testing up/down`
-    terraform.tfstate
-    testing-phase-override.tfvars
-  cluster-outputs.json   # the cluster's identity — the handoff to BNK + Testing
-</code></pre>
-<p>The BNK phase keeps the original <code>state/</code> directory it has always used
-(this is deliberate — see <a href="#migration-from-the-two-phase-layout">§“Migration”</a>
-below); the jumphosts now live in the new <code>state-testing/</code>. Naming is
-slightly asymmetric (<code>state/</code> for BNK vs the explicit <code>state-cluster/</code> /
-<code>state-testing/</code>) for exactly one reason: keeping <code>state/</code> as BNK means
-existing workspaces don’t have to migrate their BNK resources, only evict
-the jumphosts.</p>
-<h2 id="cluster-outputsjson--the-handoff-both-siblings-read"><a class="header" href="#cluster-outputsjson--the-handoff-both-siblings-read"><code>cluster-outputs.json</code> — the handoff both siblings read</a></h2>
-<p>The Cluster phase writes <code>cluster-outputs.json</code> on success (or
-<code>cluster register</code> writes it for a pre-existing cluster). Both BNK and
-Testing read it to learn the cluster’s identity without re-specifying it:</p>
-<ul>
-<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster) and
-the VPC id.</li>
-<li><strong>Testing</strong> reads the cluster VPC id (the jumphost attaches to it), the
-cluster id/name, and the <strong>transit gateway name</strong> (the Testing module
-looks the gateway up by name to bridge the client VPC to the cluster).</li>
-</ul>
-<p>The transit-gateway <em>name</em> is recorded alongside the id specifically so the
-Testing phase can run standalone against a registered cluster.</p>
-<h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
-<p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
-siblings depend on it), then launches <strong>BNK and Testing concurrently</strong>:</p>
-<pre><code class="language-bash">roksbnkctl up --auto
-</code></pre>
-<pre><code>→ Cluster phase (serial; both BNK and Testing depend on it)
-  module.roks_cluster.ibm_container_vpc_cluster.cluster: Creating...
-  ...
-  Apply complete! Resources: 36 added.
-✓ Wrote ~/.roksbnkctl/default/cluster-outputs.json
-
-→ BNK || Testing (parallel)
-  [bnk]     → terraform apply
-  [testing] → terraform apply
-  [testing] module.testing.ibm_is_instance.tgw_jumphost: Creating...
-  [bnk]     module.cert_manager.helm_release.cert_manager: Creating...
-  [testing] module.testing.tls_private_key.jumphost_shared_key: Creation complete
-  [bnk]     module.flo.helm_release.flo: Creating...
-  [testing] Apply complete! Resources: 9 added.
-  [bnk]     Apply complete! Resources: 32 added.
-✓ Auto-registered target jumphost (169.45.91.177)
-</code></pre>
-<p>The two parallel phases’ output is <strong>line-prefixed</strong> (<code>[bnk]</code> / <code>[testing]</code>)
-so you can follow each independently. The Cluster phase, being serial, prints
-unprefixed.</p>
-<p>Without <code>--auto</code>, <code>up</code> <strong>plans both phases first</strong> (sequentially, so each diff
-is cleanly attributed), then asks a <strong>separate confirmation for each</strong> —
-<code>Apply BNK plan? [y/N]</code> and <code>Apply Testing plan? [y/N]</code>. Two concurrent
-applies can’t each own an interactive prompt on one terminal, so the approval
-is taken up front; the approved phases then apply <strong>in parallel</strong>. Approving
-only one (e.g. <code>y</code> to BNK, <code>N</code> to Testing) brings up just that phase — handy
-when you want to redeploy the BNK trial without touching the jumphosts. A
-phase whose plan shows no changes is skipped without prompting.</p>
-<p>Why Cluster-completes-first rather than starting Testing the moment the
-cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
-Testing is a handful of VSIs (minutes). Starting Testing against a half-built
-cluster invites data-source races for a few minutes’ savings. Cluster-first
-is simpler and correct.</p>
-<h2 id="per-phase-up--down"><a class="header" href="#per-phase-up--down">Per-phase <code>up</code> / <code>down</code></a></h2>
-<p>Each phase has its own command pair, all sharing the same flag model
-(<code>--auto</code>, <code>--var-file</code>, …):</p>
+<p>The runner turns each cell into a tool command and runs it from wherever you point it — locally, or on a jumphost over SSH.</p>
+<h3 id="iperf3--tcp-throughput"><a class="header" href="#iperf3--tcp-throughput"><code>iperf3</code> — TCP throughput</a></h3>
+<p>iperf3 measures plain TCP throughput against a <code>host:port</code> target (a TCPRoute VIP). The <code>length</code> field sets the TCP block size, which stands in for message size: <code>"128"</code> for tiny messages, <code>"512K"</code> for bulk transfer. The other knobs map straight to iperf3 flags:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Phase</th><th>Up</th><th>Down</th><th>State</th></tr>
+<tr><th>Cell field</th><th>iperf3 flag</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td>Cluster</td><td><code>roksbnkctl cluster up</code></td><td><code>roksbnkctl cluster down</code></td><td><code>state-cluster/</code></td></tr>
-<tr><td>BNK</td><td><code>roksbnkctl bnk up</code></td><td><code>roksbnkctl bnk down</code></td><td><code>state/</code></td></tr>
-<tr><td>Testing</td><td><code>roksbnkctl testing up</code></td><td><code>roksbnkctl testing down</code></td><td><code>state-testing/</code></td></tr>
+<tr><td><code>length</code></td><td><code>-l</code></td><td>block size (<code>"128"</code>, <code>"512K"</code>)</td></tr>
+<tr><td><code>bytes</code></td><td><code>-n</code></td><td>send a fixed number of bytes instead of running for a time</td></tr>
+<tr><td><code>duration</code></td><td><code>-t</code></td><td>run length in seconds</td></tr>
+<tr><td><code>streams</code></td><td><code>-P</code></td><td>parallel TCP streams</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>bnk up</code> and <code>testing up</code> each bootstrap the Cluster phase first if the
-workspace has no cluster yet (with a confirmation prompt — the cluster take
-~30 min). Against an existing cluster they go straight to their own apply.</p>
-<h3 id="bnk-down-leaves-the-jumphosts-and-the-inverse"><a class="header" href="#bnk-down-leaves-the-jumphosts-and-the-inverse"><code>bnk down</code> leaves the jumphosts (and the inverse)</a></h3>
-<p>The headline capability of the split: the two siblings tear down
-independently.</p>
-<pre><code class="language-bash"># Iterate on BNK while keeping the jumphost rig warm:
-roksbnkctl bnk down      # destroys cert-manager/flo/cne/license; Testing untouched
-roksbnkctl bnk up        # redeploy BNK against the same cluster + same jumphosts
-</code></pre>
-<pre><code>✓ BNK phase destroyed. Cluster phase state-cluster/ and Testing phase
-  state-testing/ are intact. Run `roksbnkctl bnk up` to redeploy.
-</code></pre>
-<p>And the inverse — destroy the jumphost rig but keep BNK running:</p>
-<pre><code class="language-bash">roksbnkctl testing down   # destroys the jumphosts; cluster + BNK untouched
-</code></pre>
-<p>Because each phase owns a separate state directory, <code>bnk down</code> physically
-cannot touch <code>state-testing/</code>, and <code>testing down</code> cannot touch <code>state/</code>.</p>
-<h2 id="reuse-an-existing-cluster"><a class="header" href="#reuse-an-existing-cluster">Reuse an existing cluster</a></h2>
-<p>If you already have a ROKS cluster (yours or a teammate’s), skip the Cluster
-phase entirely — <a href="./09-registering-existing-cluster.html">register it</a>, then
-deploy BNK and Testing on top:</p>
-<pre><code class="language-bash">roksbnkctl cluster register existing-bnk-cluster
-roksbnkctl up --auto        # Cluster phase skipped; BNK || Testing deploy on the registered cluster
-# or per-phase:
-roksbnkctl bnk up --auto
-roksbnkctl testing up --auto
-</code></pre>
-<p><code>cluster down</code> is a no-op there — the cluster wasn’t yours to destroy.</p>
-<h2 id="teardown-ordering-and-the-cluster-down-guard"><a class="header" href="#teardown-ordering-and-the-cluster-down-guard">Teardown ordering and the <code>cluster down</code> guard</a></h2>
-<p>Destroy in <strong>reverse of create</strong>: the siblings first (in parallel, they’re
-independent), then the cluster.</p>
-<pre><code class="language-bash">roksbnkctl down --auto
-</code></pre>
-<pre><code>This will destroy the BNK, Testing, AND Cluster phases for workspace "default".
-Continue? [y/N]: y
+<p>A cell becomes, for example, <code>iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K</code>. The result reports <code>throughput_gbps</code> and <code>retransmits</code> (the same parser as <a href="./22-throughput-testing.html">Chapter 22</a>).</p>
+<h3 id="l7--http-load"><a class="header" href="#l7--http-load"><code>l7</code> — HTTP load</a></h3>
+<p>h2load drives HTTP traffic at a URL. The scheme picks the path: an <code>http://</code> URL hits the plain HTTP route; an <code>https://</code> URL hits the TLS route, where TMM terminates TLS (h2load accepts the self-signed certificate, so there’s nothing extra to configure). The response size is whatever the URL returns — the test’s backend serves <code>/128</code>, <code>/5k</code>, and <code>/512k</code>, so you point a cell at the size you want.</p>
+<p>h2load reports <strong>requests per second</strong>, a <strong>transfer rate</strong>, and request latency as <strong>min / max / mean</strong> (it does not report percentiles).</p>
+<p>The <code>l7.mode</code> field is a shortcut that fills in sensible h2load flags; anything you set yourself overrides it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>What it stresses</th><th>Defaults (when you leave the knobs unset)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cps</code></td><td>new connections — short connections, roughly one request each</td><td><code>--h1</code>, <code>-m 1</code>, <code>-c 50</code>, <code>-n</code> = clients×200</td></tr>
+<tr><td><code>tps</code></td><td>sustained requests — reuse connections, many requests each</td><td><code>-c 50</code>, <code>-m 100</code> (or <code>1</code> with <code>--h1</code>), <code>-n</code> = clients×2000</td></tr>
+<tr><td><code>throughput</code></td><td>payload — a few connections pulling a large body</td><td><code>-c 8</code>, <code>-m 1</code>, <code>-n</code> = clients×200</td></tr>
+</tbody>
+</table>
+</div>
+<p>A <code>cps</code> cell becomes <code>h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128</code>; a <code>tps</code> cell written as <code>l7: { mode: tps, duration: 30 }</code> becomes <code>h2load -c 50 -m 100 -D 30 …</code>. Set any of <code>clients</code>, <code>streams</code>, <code>threads</code>, <code>requests</code>, <code>duration</code>, <code>http1</code> to override the defaults. The result reports <code>req_per_sec</code>, <code>throughput_mbps</code>, request counts (<code>requests_total</code> / <code>succeeded</code> / <code>failed</code>), status-code buckets, and <code>req_time_{min,max,mean}_ms</code>.</p>
+<h2 id="the-locality-axis--jumphost-placement"><a class="header" href="#the-locality-axis--jumphost-placement">The locality axis = jumphost placement</a></h2>
+<p>There is no “location” setting. Where the traffic comes from is simply <strong>which jumphost a cell names as its <code>client</code></strong>. Each <code>vsi</code> endpoint’s <code>target</code> is an SSH target name the <a href="./15-ssh-targets.html#auto-discovery-from-terraform-outputs">Testing phase registered</a>: <code>jumphost</code> (in the client VPC — a <em>different</em> VPC from the cluster), or <code>jumphost-&lt;zone&gt;</code> (in the cluster VPC, in the zone you pick).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>To measure traffic from…</th><th>Name this jumphost as the cell’s client</th></tr>
+</thead>
+<tbody>
+<tr><td>same VPC, same zone as TMM</td><td><code>jumphost-&lt;tmm-zone&gt;</code></td></tr>
+<tr><td>same VPC, a different zone</td><td><code>jumphost-&lt;other-zone&gt;</code></td></tr>
+<tr><td>a different VPC</td><td><code>jumphost</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The runner runs the tool on that jumphost over SSH (see <a href="./15-ssh-targets.html">Chapter 15</a> and <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>). Both tools — iperf3 and h2load — are already installed on every jumphost, so there’s nothing to set up first. A cell with no <code>client</code> runs the tool locally.</p>
+<h2 id="the-matrixyaml-schema"><a class="header" href="#the-matrixyaml-schema">The <code>matrix.yaml</code> schema</a></h2>
+<p>This is a workspace-sibling file — under <code>~/.roksbnkctl/&lt;workspace&gt;/</code>, next to <code>config.yaml</code> but separate from it, so you can keep and diff a campaign’s grid in git on its own. The runner looks for <code>--file</code>, then <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>. It has four top-level keys, shown here against the example grid (<code>internal/test/testdata/matrix.example.yaml</code>):</p>
+<pre><code class="language-yaml"># gateway — names your already-deployed BNK gateway so the test's HTTP/TCP
+# routes can attach to it. Only needed when fixtures.routes is true.
+gateway:
+  app_namespace: bnk-apps     # namespace the test's objects are created in
+  name: bnk-gateway           # the existing Gateway the routes attach to
+  http_section: http          # a listener on that Gateway, by section name
+  https_section: https        # the TLS listener
+  tcp_section: tcp            # the TCP listener (for the iperf3 route)
 
-→ BNK || Testing (parallel destroy)
-  [bnk]     Destroy complete! Resources: 32 destroyed.
-  [testing] Destroy complete! Resources: 9 destroyed.
-→ Cluster phase (destroy)
-  Destroy complete! Resources: 36 destroyed.
+# fixtures — the temporary objects the test creates and then removes
+# (kept in place if you pass --keep).
+fixtures:
+  iperf3_server: true         # the TCP server for the iperf3 cells
+  http_backend: true          # an nginx server returning /128 /5k /512k
+  routes: true                # the HTTP/TCP routes wiring the gateway to them
+
+# endpoints — named (where, what) anchors the cells reference.
+endpoints:
+  vsi-same-zone: { kind: vsi, target: jumphost-jp-osa-1 }       # client in TMM's zone
+  vsi-diff-zone: { kind: vsi, target: jumphost-jp-osa-3 }       # another zone, same VPC
+  vsi-diff-vpc:  { kind: vsi, target: jumphost }                # the client VPC
+  tmm-tcp:       { kind: address, host: 10.240.0.10, port: 5201 }  # iperf3 target
+  tmm-http-128:  { kind: url, url: "http://10.240.0.10/128"  }
+  tmm-https-512k:{ kind: url, url: "https://10.240.0.10/512k" }
+
+# cells — the grid. Each is one row in the report.
+cells:
+  - { name: "L4 512K VSI-&gt;TMM diff-zone", family: iperf3, client: vsi-diff-zone, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L7 http CPS 128B",  family: l7, client: vsi-diff-vpc, server: tmm-http-128,  l7: { mode: cps } }
+  - { name: "L7 https THRU 512K", family: l7, client: vsi-diff-vpc, server: tmm-https-512k, l7: { mode: throughput, duration: 30 } }
 </code></pre>
-<p>The bare <code>down</code> takes <strong>one</strong> composite confirmation naming every present
-phase, then runs the parallel sibling-destroy followed by the cluster
-destroy — you can’t accidentally confirm one phase and miss another.</p>
-<p><code>roksbnkctl cluster down</code> <strong>refuses</strong> while BNK or Testing state still has
-resources — they reference the cluster VPC/TGW, so destroying the cluster
-out from under them would orphan resources:</p>
-<pre><code>$ roksbnkctl cluster down
-BNK and Testing state exist in this workspace; run `roksbnkctl bnk down` and
-`roksbnkctl testing down` first (or `roksbnkctl down` to tear down all phases)
-</code></pre>
-<p>This is a correctness guard, not a prompt — <code>--auto</code> does not bypass it.
-<code>cluster-outputs.json</code> is deleted only on <code>cluster down</code> (it’s the cluster’s
-identity); <code>bnk down</code> and <code>testing down</code> leave it in place.</p>
-<h2 id="migration-from-the-two-phase-layout"><a class="header" href="#migration-from-the-two-phase-layout">Migration from the two-phase layout</a></h2>
-<p>Workspaces created before the three-phase split have their jumphosts living
-in the <strong>BNK state</strong> (<code>state/</code>, alongside the BNK modules — that’s how the
-old two-phase “trial” worked). The three-phase split needs those jumphosts
-in <code>state-testing/</code> instead. Three cases:</p>
-<ol>
-<li>
-<p><strong>Fresh / empty workspaces</strong> — nothing to migrate. The first <code>up</code> lays
-out all three state directories cleanly.</p>
-</li>
-<li>
-<p><strong>Legacy single-state (v1.0.x) workspaces</strong> — <strong>left alone</strong>. The cluster</p>
+<h3 id="gateway--the-existing-gateway-identity"><a class="header" href="#gateway--the-existing-gateway-identity"><code>gateway:</code> — the existing-gateway identity</a></h3>
+<p>Names your already-deployed gateway so the test’s routes can attach to it. Only read when <code>fixtures.routes</code> is true.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>app_namespace</code></td><td>namespace the test’s objects are created in (required for <code>routes</code>)</td></tr>
+<tr><td><code>name</code></td><td>the existing <code>Gateway</code> the routes attach to (required for <code>routes</code>)</td></tr>
+<tr><td><code>http_section</code> / <code>https_section</code> / <code>tcp_section</code></td><td>which listeners on that Gateway the http / https / tcp routes attach to, by section name. <strong>They must already exist.</strong> Leave one empty to skip that route.</td></tr>
+<tr><td><code>class_name</code> / <code>controller_name</code> / <code>bnkgateway_name</code> / <code>flo_namespace</code></td><td>optional descriptive fields; not needed to attach routes</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="endpoints--named-anchors"><a class="header" href="#endpoints--named-anchors"><code>endpoints:</code> — named anchors</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>kind</code></th><th>Fields</th><th>Is</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vsi</code></td><td><code>target</code></td><td>a jumphost the test sends traffic <em>from</em> (the client)</td></tr>
+<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 target — a <code>host:port</code> (an <code>iperf3</code> cell’s <code>server</code>)</td></tr>
+<tr><td><code>url</code></td><td><code>url</code></td><td>an HTTP target — a full <code>http(s)://</code> URL (an <code>l7</code> cell’s <code>server</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cells--the-grid"><a class="header" href="#cells--the-grid"><code>cells:</code> — the grid</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Applies to</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>both</td><td>required; the report row label and the <code>--only</code> glob target</td></tr>
+<tr><td><code>family</code></td><td>both</td><td><code>iperf3</code> | <code>l7</code></td></tr>
+<tr><td><code>client</code></td><td>both</td><td>a <code>vsi</code> endpoint; empty → run locally</td></tr>
+<tr><td><code>server</code></td><td>both</td><td>an <code>address</code> endpoint for <code>iperf3</code>, a <code>url</code> endpoint for <code>l7</code></td></tr>
+<tr><td><code>length</code> / <code>bytes</code> / <code>duration</code> / <code>streams</code></td><td><code>iperf3</code></td><td>iperf3 <code>-l</code> / <code>-n</code> / <code>-t</code> / <code>-P</code></td></tr>
+<tr><td><code>l7.mode</code></td><td><code>l7</code></td><td><code>cps</code> | <code>tps</code> | <code>throughput</code> (required for <code>l7</code>)</td></tr>
+<tr><td><code>l7.{clients,streams,threads,requests,duration,http1}</code></td><td><code>l7</code></td><td>h2load <code>-c</code> / <code>-m</code> / <code>-t</code> / <code>-n</code> / <code>-D</code> / <code>--h1</code>; override the mode defaults</td></tr>
+</tbody>
+</table>
+</div>
+<p>The file is checked before anything runs: a <code>client</code> must be a <code>vsi</code> with a <code>target</code>; an <code>iperf3</code> server must be an <code>address</code> with a <code>host</code>; an <code>l7</code> server must be a <code>url</code> and the cell must set a <code>mode</code>; and <code>routes</code> needs <code>gateway.name</code>, <code>app_namespace</code>, and at least one listener section.</p>
+<h2 id="what-the-test-sets-up-and-cleans-up"><a class="header" href="#what-the-test-sets-up-and-cleans-up">What the test sets up (and cleans up)</a></h2>
+<p>For a real run the test creates a few temporary objects, runs the measurements, then deletes them again (unless you pass <code>--keep</code>). Three toggles under <code>fixtures</code> — all skipped under <code>--dry-run</code>:</p>
 <ul>
-<li>BNK + jumphosts stay in one <code>state/</code>; <code>up</code> / <code>down</code> keep operating
-monolithically; the phase verbs (<code>cluster</code>, <code>bnk</code>, <strong>and the new
-<code>testing</code></strong>) all refuse and point you back at the unscoped <code>up</code>/<code>down</code>.</li>
+<li><strong><code>iperf3_server</code></strong> — the TCP server the iperf3 cells measure against (the same one <code>test throughput</code> uses).</li>
+<li><strong><code>http_backend</code></strong> — an nginx server that returns fixed-size bodies at <code>/128</code>, <code>/5k</code>, and <code>/512k</code> for the HTTP cells.</li>
+<li><strong><code>routes</code></strong> — the HTTP and TCP routes (plus a TLS route and a self-signed certificate, when an https section is named) that wire your Gateway to those backends.</li>
 </ul>
+<p>Everything the test creates is labelled <code>app.kubernetes.io/managed-by: roksbnkctl-matrix</code>, so cleanup is a single delete by label. The TLS certificate is self-signed and generated fresh each run — fine for a load test.</p>
+<p><strong>One prerequisite for the HTTP/TCP routes:</strong> your Gateway must already have the listener sections the routes attach to (<code>http</code> / <code>https</code> / <code>tcp</code>). The test adds the routes and backends, not the listeners — those come from the <a href="./10-deploying-bnk-trials.html">Gateway phase</a>. If a named section doesn’t exist, the route has nowhere to attach and that cell’s traffic has no path. Run with <code>--keep</code> and check the route status if a cell isn’t reaching its backend.</p>
+<h2 id="the-workflow"><a class="header" href="#the-workflow">The workflow</a></h2>
+<h3 id="--dry-run--see-the-plan-first"><a class="header" href="#--dry-run--see-the-plan-first"><code>--dry-run</code> — see the plan first</a></h3>
+<p><code>--dry-run</code> expands the grid and prints, for each cell, the resolved client, server, and exact tool command — plus the objects it <em>would</em> create — and makes <strong>no cluster calls</strong>. Use it to confirm placement and commands before a long run:</p>
+<pre><code class="language-text">$ roksbnkctl test matrix --dry-run --file matrix.example.yaml
+→ matrix file: matrix.example.yaml
+matrix plan — 10 cell(s)
+
+[1] L4 128B  VSI-&gt;TMM same-zone
+    family : iperf3
+    client : ssh:jumphost-jp-osa-1
+    server : 10.240.0.10:5201
+    run    : iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -l 128
+
+[2] L4 512K  VSI-&gt;TMM same-zone
+    family : iperf3
+    client : ssh:jumphost-jp-osa-1
+    server : 10.240.0.10:5201
+    run    : iperf3 -c 10.240.0.10 -J -p 5201 -t 30 -P 8 -l 512K
+
+[5] L7 http CPS  128B VSI-&gt;TMM
+    family : l7
+    client : ssh:jumphost
+    server : http://10.240.0.10/128
+    run    : h2load -c 50 -m 1 --h1 -n 10000 http://10.240.0.10/128
+
+[8] L7 https CPS  128B VSI-&gt;TMM
+    family : l7
+    client : ssh:jumphost
+    server : https://10.240.0.10/128
+    run    : h2load -c 50 -m 1 --h1 -n 10000 https://10.240.0.10/128
+
+--- fixtures (would apply) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matrix-http-backend
+  namespace: bnk-apps
+  labels:
+    app.kubernetes.io/managed-by: roksbnkctl-matrix
+...
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: matrix-httproute
+  namespace: bnk-apps
+spec:
+  parentRefs:
+  - name: bnk-gateway
+    namespace: bnk-apps
+    sectionName: http
+  rules:
+  - backendRefs:
+    - name: matrix-http-backend
+      port: 80
+...
+</code></pre>
+<p><em>(Abridged; the full plan prints all ten cells of the example grid and the complete set of objects.)</em></p>
+<p><code>--only '&lt;glob&gt;'</code> narrows the plan (or a real run) to cells whose name matches a glob — <code>--only 'L7*'</code> for just the HTTP rows, handy when iterating on one family.</p>
+<h3 id="the-real-run-and-the-report"><a class="header" href="#the-real-run-and-the-report">The real run and the report</a></h3>
+<p>Drop <code>--dry-run</code> against a complete deployment. The runner creates the fixtures, runs each cell from its jumphost, removes the fixtures (unless <code>--keep</code>), and prints the report. <code>-o</code> selects the shape:</p>
+<ul>
+<li>
+<p><strong><code>-o text</code></strong> (default) — the grid on stderr.</p>
 </li>
 <li>
-<p><strong>Two-phase split workspaces (the common case)</strong> — the jumphosts need to
-move out of <code>state/</code> into <code>state-testing/</code> <strong>without destroying the live
-jumphosts</strong>. The recommended path preserves them:</p>
-<pre><code class="language-bash">roksbnkctl testing migrate    # terraform state mv: jumphosts → state-testing/
+<p><strong><code>-o md</code></strong> — the grid on stdout. iperf3 rows show Gbit/s and retransmits; HTTP rows show req/s, Mbit/s, and mean latency:</p>
+<pre><code class="language-markdown">## matrix (pass, 184230ms)
+
+| Cell | Family | Status | Throughput | req/s | mean ms | notes |
+|---|---|---|---|---|---|---|
+| L4 512K VSI-&gt;TMM diff-zone | iperf3 | pass | 9.21 Gbit/s | — | — | 312 retransmits |
+| L7 http CPS 128B VSI-&gt;TMM  | l7     | pass | 18.4 Mbit/s | 21340 | 2.34 | — |
 </code></pre>
-<p>This <code>terraform state mv</code>s every <code>module.testing.*</code> resource (including
-the shared SSH key) from <code>state/</code> into a fresh <code>state-testing/</code>, with
-<strong>no cloud churn</strong> — the jumphosts keep their IPs and your <code>known_hosts</code>
-stays valid. A subsequent <code>bnk up</code> reconciles the now-jumphost-free BNK
-state (it plans no jumphost create), and <code>testing up</code> adopts the moved
-resources (in-place, not create).</p>
-<p>If a workspace is in an awkward partial-apply state, the bulletproof
-fallback is a full <code>roksbnkctl down</code> then <code>roksbnkctl up</code>, which
-re-creates everything in the three-state layout. This <em>does</em> churn the
-jumphosts (new IPs, <code>known_hosts</code> reset), so the <code>state mv</code> path is
-preferred whenever it’s available.</p>
+<p><em>(Numbers illustrative.)</em></p>
 </li>
-</ol>
-<p><code>roksbnkctl</code> nudges you when it detects jumphosts still living in the BNK
-state with an empty <code>state-testing/</code> — it won’t silently rewrite your state.</p>
-<h2 id="the-optional-gateway-phase-gateway-up--down"><a class="header" href="#the-optional-gateway-phase-gateway-up--down">The optional Gateway phase (<code>gateway up</code> / <code>down</code>)</a></h2>
-<p>The BNK phase brings up a licensed, running control plane and now also creates
-the <code>cloud-network-mapping</code> ConfigMap and the external/internal VLANs that TMM
-needs to program its data plane. The <strong>rest</strong> of the install guide’s
-“Configuration” section — the Gateway API objects, egress SnatPool/Egress, the
-per-zone static routes, and the cluster security-group VXLAN rule — is a
-<strong>separate, optional phase</strong> with its own state (<code>state-gateway/</code>):</p>
-<pre><code class="language-bash">roksbnkctl up                  # Cluster → BNK ∥ Testing  (Gateway NOT included)
-# … verify BNK is healthy: TMM pods Ready, CNEInstance Available …
-roksbnkctl gateway up          # apply the data-plane config
-roksbnkctl gateway down        # remove it, leaving cluster/BNK/testing intact
+<li>
+<p><strong><code>-o json</code></strong> — the <code>roksbnkctl.v1</code> schema: one result per cell, each with its family-specific fields (plus the <code>client</code> / <code>server</code> it used). Exit code is <strong>non-zero if any cell failed</strong>, so it drops into CI:</p>
+<pre><code class="language-json">{
+  "schema": "roksbnkctl.v1",
+  "command": "test",
+  "suite": "matrix",
+  "cells": [
+    {
+      "suite": "l7",
+      "name": "L7 http CPS 128B VSI-&gt;TMM",
+      "status": "pass",
+      "extra": {
+        "req_per_sec": 21340.0,
+        "throughput_mbps": 18.4,
+        "req_time_mean_ms": 2.34,
+        "client": "ssh:jumphost",
+        "server": "http://10.240.0.10/128"
+      }
+    }
+  ],
+  "overall": "pass"
+}
 </code></pre>
-<p>It is <strong>never</strong> run by the composite <code>up</code>/<code>down</code> — the Gateway config needs a
-healthy BNK (its <code>F5SPK*</code> CRDs ship with the BNK manifest, and TMM must be up),
-so it is strictly opt-in. It reuses the existing cluster via
-<code>cluster-outputs.json</code> (like the Testing phase), forces every other phase’s
-creation off in its override, and manages only its own resources. Defaults all
-come from the BNK 2.3 install guide; override the HTTPRoute backend, client
-subnets, egress mode (<code>snatpool</code>/<code>automap</code>/<code>both</code>) and VXLAN port via the
-<code>config.yaml</code> <code>gateway</code> block. <code>cluster down</code> refuses while the Gateway phase
-has resources, so tear it down first (<code>gateway down</code>).</p>
+</li>
+</ul>
+<h3 id="flag-summary"><a class="header" href="#flag-summary">Flag summary</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--file &lt;path&gt;</code></td><td>the matrix.yaml (default: <code>&lt;workspace&gt;/matrix.yaml</code>, then <code>./matrix.yaml</code>)</td></tr>
+<tr><td><code>--only &lt;glob&gt;</code></td><td>run only cells whose name matches the glob</td></tr>
+<tr><td><code>--dry-run</code></td><td>print the plan and the objects it would create; no cluster calls</td></tr>
+<tr><td><code>--keep</code></td><td>leave the test’s objects in place after the run</td></tr>
+<tr><td><code>-o json|text|md</code></td><td>report shape</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
-<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — the Cluster phase
-in depth.</li>
-<li><a href="./09-registering-existing-cluster.html">Chapter 9 — Registering an existing cluster</a>
-— the reuse-existing-cluster path.</li>
-<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — the BNK
-phase (<code>bnk up/down</code>) in depth.</li>
-<li><a href="./11-tearing-down.html">Chapter 11 — Tearing down</a> — the full destroy decision
-tree and refusal catalogue.</li>
-<li><a href="./20-connectivity-testing.html">Chapter 20 — Connectivity testing</a> — what
-<code>roksbnkctl test</code> (not <code>testing</code>!) actually runs.</li>
+<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the single iperf3 measurement the matrix’s <code>iperf3</code> family builds on; start there for the server-pod and SCC mechanics.</li>
+<li><a href="./15-ssh-targets.html#per-az-cluster-jumphosts-jumphost-zone">Chapter 15 — SSH targets</a> — the <code>jumphost</code> / <code>jumphost-&lt;zone&gt;</code> targets the locality axis names.</li>
+<li><a href="./16-on-flag-ssh-jumphosts.html#per-az-cluster-jumphosts">Chapter 16 — The –on flag and SSH jumphosts</a> — the per-AZ jumphost fleet (with iperf3 + h2load preinstalled).</li>
+<li><a href="./17-execution-backends.html#ssh-backend">Chapter 17 — Execution backends</a> — how the <code>ssh:&lt;target&gt;</code> dispatch and the bundled tools images work.</li>
+<li><a href="./28-configuration-reference.html#matrixyaml-the-performance-grid">Chapter 28 — Configuration reference §“matrix.yaml”</a> — the schema as a reference table.</li>
+<li><a href="./27-command-reference.html">Chapter 27 — Command reference §<code>roksbnkctl test matrix</code></a> — the generated flag surface.</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="08-cluster-phase.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="22-throughput-testing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="09-registering-existing-cluster.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="23-e2e-test-plan.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -468,11 +471,11 @@ tree and refusal catalogue.</li>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="08-cluster-phase.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="22-throughput-testing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="09-registering-existing-cluster.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="23-e2e-test-plan.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
