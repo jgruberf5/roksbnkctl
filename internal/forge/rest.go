@@ -75,7 +75,7 @@ func RegisterREST(ctx context.Context, restURL string, req RegisterRequest, cred
 		return RegisterResult{}, fmt.Errorf("forge.RegisterREST: kubeconfig is empty")
 	}
 	if req.ProjectName == "" {
-		req.ProjectName = "awsbnkctl-" + req.WorkspaceName
+		req.ProjectName = defaultProjectName(req.WorkspaceName)
 	}
 
 	base := strings.TrimRight(restURL, "/")
@@ -114,7 +114,9 @@ func RegisterREST(ctx context.Context, restURL string, req RegisterRequest, cred
 	return RegisterResult{Link: link, ForgeURL: restURL}, nil
 }
 
-// UnregisterREST tears down the forge-side registration via REST.
+// UnregisterREST tears down the forge-side registration via REST: it deletes
+// the cluster record AND the project shell (the project is created by
+// registration and named for the cluster — after down nothing should remain).
 // Tolerates 404 responses (operator may have cleaned up via forge UI).
 // creds carries the forge login credentials; pass a zero RestCreds for
 // back-compat default behaviour (admin/changeme).
@@ -131,7 +133,55 @@ func UnregisterREST(ctx context.Context, restURL string, link *Link, creds RestC
 	if err := restDeleteCluster(ctx, base, token, link.ProjectID, link.ClusterID); err != nil && !is404(err) {
 		return fmt.Errorf("forge REST delete cluster: %w", err)
 	}
+	if err := restDeleteProject(ctx, base, token, link.ProjectID); err != nil && !is404(err) {
+		return fmt.Errorf("forge REST delete project: %w", err)
+	}
 	return nil
+}
+
+// UnregisterRESTByName removes a cluster's forge registration when no local
+// forge_link.json exists (e.g. the workspace state directory was lost):
+// it logs in over REST, finds the project by the canonical registration name
+// ("awsbnkctl-<clusterName>"), deletes the cluster record by name within it
+// (tolerating absence), and deletes the project. Returns an error wrapping
+// os.ErrNotExist when no such project exists forge-side.
+func UnregisterRESTByName(ctx context.Context, restURL, clusterName string, creds RestCreds) error {
+	base := strings.TrimRight(restURL, "/")
+	token, err := restLogin(ctx, base, creds.restUsername(), creds.restPassword())
+	if err != nil {
+		return fmt.Errorf("forge REST login: %w", err)
+	}
+
+	proj, err := restFindProjectByName(ctx, base, token, defaultProjectName(clusterName))
+	if err != nil {
+		// Propagates the os.ErrNotExist wrap so callers can distinguish
+		// "never registered" from "lookup failed".
+		return err
+	}
+
+	cluster, err := restFindClusterByName(ctx, base, token, proj.ID, clusterName)
+	switch {
+	case err == nil:
+		if derr := restDeleteCluster(ctx, base, token, proj.ID, cluster.ID); derr != nil && !is404(derr) {
+			return fmt.Errorf("forge REST delete cluster: %w", derr)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// Cluster record already gone — still purge the project shell below.
+	default:
+		return err
+	}
+
+	if err := restDeleteProject(ctx, base, token, proj.ID); err != nil && !is404(err) {
+		return fmt.Errorf("forge REST delete project: %w", err)
+	}
+	return nil
+}
+
+// defaultProjectName returns the canonical forge project name awsbnkctl
+// registers a workspace under. Shared by RegisterREST, Register and
+// UnregisterRESTByName so the naming convention cannot drift.
+func defaultProjectName(workspace string) string {
+	return "awsbnkctl-" + workspace
 }
 
 // IsMCPCatalogGapErr returns true when err indicates the MCP catalog does not

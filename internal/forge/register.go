@@ -72,7 +72,7 @@ func Register(ctx context.Context, c *Client, req RegisterRequest) (RegisterResu
 	}
 
 	if req.ProjectName == "" {
-		req.ProjectName = "awsbnkctl-" + req.WorkspaceName
+		req.ProjectName = defaultProjectName(req.WorkspaceName)
 	}
 	if req.AWSProfile == "" {
 		req.AWSProfile = os.Getenv("AWS_PROFILE")

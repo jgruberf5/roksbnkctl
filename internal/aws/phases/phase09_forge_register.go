@@ -154,6 +154,12 @@ func Phase09ForgeRegister(ctx context.Context, cl *intent.Cluster, st *state.Sta
 // the phased destroy sequence. Runs between Phase10NodeGroupDown and
 // Phase08EKSClusterDown.
 //
+// Down purges both the cluster record AND the project — the project is
+// created by registration and named for the cluster ("awsbnkctl-<cluster>"),
+// so after down nothing should remain forge-side. When the local
+// forge-link.json is missing but forge is enabled in intent, the phase falls
+// back to REST by-name discovery (mirrors the AWS tag-discovery philosophy).
+//
 // D-005: CheckAuthOrDie is called at entry even though forge calls do not
 // touch AWS.
 func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, keepLink bool) error {
@@ -167,17 +173,18 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 	workspaceDir := cl.StateDir()
 	link, err := forge.ReadLink(workspaceDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, "[phase 09 down] forge: no link, nothing to unregister")
-			return nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("phase09 down: read forge link: %w", err)
 		}
-		return fmt.Errorf("phase09 down: read forge link: %w", err)
+		link = nil // no local link — maybe fall back to by-name discovery below
 	}
 
 	// Resolve forge URLs and credentials: prefer cluster.yaml values, fall
 	// back to cached link fields / defaults. This handles the case where the
 	// operator removed the forge: block from cluster.yaml between up and down
 	// — cl.Forge is nil but a forge-link.json still exists with the original URLs.
+	// Hoisted above the link handling so the link-less discovery fallback can
+	// reuse the same resolution.
 	forgeURL := intent.DefaultForgeRESTURL
 	mcpURL := forge.DefaultMCPURL
 	var restCreds forge.RestCreds
@@ -194,10 +201,10 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 		restCreds = forge.RestCreds{Username: forgeUsername, Password: forgePassword}
 	} else {
 		// cl.Forge is nil — use URLs cached in the link file if available.
-		if link.ForgeURL != "" {
+		if link != nil && link.ForgeURL != "" {
 			forgeURL = link.ForgeURL
 		}
-		if link.ForgeMCPURL != "" {
+		if link != nil && link.ForgeMCPURL != "" {
 			mcpURL = link.ForgeMCPURL
 		}
 		// Credentials: resolve from env only (no ForgeSpec to read yaml from).
@@ -211,12 +218,40 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 		}
 	}
 
+	if link == nil {
+		// No local link (e.g. the workspace state dir was lost). Only attempt
+		// REST by-name discovery when forge is enabled in intent — when forge
+		// isn't in cluster.yaml AND there's no link, keep the instant skip so
+		// every down doesn't probe localhost.
+		if cl.Forge == nil || !cl.Forge.Enabled {
+			fmt.Fprintln(os.Stderr, "[phase 09 down] forge: no link, nothing to unregister")
+			return nil
+		}
+		discErr := forge.UnregisterRESTByName(ctx, forgeURL, cl.Metadata.Name, restCreds)
+		if discErr == nil {
+			fmt.Fprintln(os.Stderr, "[phase 09 down] forge: unregistered via REST by-name discovery (no local link)")
+			st.Set("FORGE_STATUS", "")
+			st.Set("FORGE_PROJECT_ID", "")
+			st.Set("FORGE_CLUSTER_ID", "")
+			st.Set("FORGE_LINK_PATH", "")
+			return st.Save()
+		}
+		if errors.Is(discErr, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "[phase 09 down] forge: not registered (no link; no project awsbnkctl-%s)\n", cl.Metadata.Name)
+			return nil
+		}
+		// Discovery failed — log and continue teardown. Don't block on forge.
+		fmt.Fprintf(os.Stderr, "[phase 09 down] warning: forge by-name unregister failed (%v) — clean up forge-side manually\n", discErr)
+		return nil
+	}
+
 	if clients.ForgeClient == nil {
 		clients.AttachForgeClient(true, mcpURL)
 	}
 
-	// Try MCP unregister first.
-	mcpErr := forge.Unregister(ctx, clients.ForgeClient, workspaceDir, false)
+	// Try MCP unregister first. purge=true: the project was created by
+	// registration and named for the cluster — nothing should remain after down.
+	mcpErr := forge.Unregister(ctx, clients.ForgeClient, workspaceDir, true)
 	if mcpErr == nil {
 		fmt.Fprintln(os.Stderr, "[phase 09 down] forge: unregistered via MCP")
 		st.Set("FORGE_STATUS", "")
