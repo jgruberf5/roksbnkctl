@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -36,8 +37,7 @@ var statusCmd = &cobra.Command{
   - workspace name + region
   - configured cluster name
   - pinned Terraform source
-  - per-phase deployment status (cluster phase + BNK trial)
-  - v1.0.x ` + "`Last apply`" + ` line preserved for legacy single-state workspaces
+  - per-phase deployment status (Cluster, BNK trial, Testing, Gateway)
   - kubeconfig path (if any)
   - cluster reachability (node count + ready count)
 
@@ -71,6 +71,7 @@ func init() {
 	logsCmd.Flags().BoolVar(&flagLogsPrevious, "previous", false, "fetch logs from the previous container instance")
 	logsCmd.Flags().StringVar(&flagLogsSince, "since", "", "only return logs newer than this duration (e.g. 5s, 2m, 1h)")
 	logsCmd.Flags().Int64Var(&flagLogsTailLines, "tail", -1, "tail the last N lines (-1 = full log)")
+	statusCmd.Flags().BoolVar(&flagStatusJSON, "json", false, "output JSON (CI-friendly)")
 	rootCmd.AddCommand(statusCmd, logsCmd)
 }
 
@@ -82,6 +83,9 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
+	}
+	if flagStatusJSON {
+		return runStatusJSON(cmd, cctx)
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -98,12 +102,13 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(tw, "Cluster:\t%s\t%s\n", or(cctx.Workspace.Cluster.Name, "(unset)"), createOrAttach(cctx.Workspace.Cluster.Create))
 	fmt.Fprintf(tw, "TF source:\t%s\n", tfSourceDescription(cctx.Workspace.TFSource))
 
-	// PRD 06 §"`status` command integration" (Sprint 10): consume
-	// `config.DetectShape` and emit per-phase deployment lines for non-
-	// Legacy shapes. Legacy preserves the v1.0.x `Last apply` line
-	// verbatim plus a one-line shape callout for script-compat. Best-
-	// effort by convention — a DetectShape error or unreadable state
-	// file degrades to "not deployed" rather than failing the command.
+	// Per-phase deployment lines. Sprint 29: read the four-phase truth
+	// from `config.DetectPresence` (Cluster / BNK / Testing / Gateway) —
+	// the same signal the `up`/`down` phase guards use — instead of the
+	// old two-phase `DetectShape`. Legacy single-state workspaces keep the
+	// v1.0.x `Last apply` line verbatim plus a one-line shape callout for
+	// script-compat. Best-effort by convention — a DetectPresence error or
+	// unreadable state degrades rather than failing the command.
 	writeStatusPhaseLines(tw, cctx.WorkspaceName)
 
 	// Kubeconfig + cluster reachability.
@@ -122,60 +127,82 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// writeStatusPhaseLines emits the per-shape deployment lines for the
-// `status` command per PRD 06 §"`status` command integration"
-// (Sprint 10 scope addition). Output by shape:
-//
-//	ShapeEmpty        — "Cluster phase: not deployed" + "BNK trial: not deployed"
-//	ShapeClusterOnly  — cluster phase with mtime; trial "not deployed"
-//	ShapeSplit        — both phases with their own mtimes
-//	ShapeLegacySingle — one-line shape callout + the v1.0.x "Last apply"
-//	                    line verbatim from `state/terraform.tfstate` mtime
-//	                    (script-compat for v1.0.x parsers)
-//	ShapeUnknown      — falls back to the v1.0.x "Last apply" line so a
-//	                    DetectShape error never blocks status output
-//
-// All filesystem failures are silenced — every section of `runStatus`
-// is best-effort.
+// workspaceStatus is the --json shape of the top-level `status` command — the
+// same facts as the human summary, structured for CI consumption.
+type workspaceStatus struct {
+	Workspace     string          `json:"workspace"`
+	Initialized   bool            `json:"initialized"`
+	Region        string          `json:"region,omitempty"`
+	ResourceGroup string          `json:"resource_group,omitempty"`
+	Cluster       string          `json:"cluster,omitempty"`
+	ClusterCreate bool            `json:"cluster_create"`
+	TFSource      string          `json:"tf_source,omitempty"`
+	Phases        map[string]bool `json:"phases,omitempty"`
+	Kubeconfig    string          `json:"kubeconfig,omitempty"`
+	ClusterProbe  string          `json:"cluster_probe,omitempty"`
+}
+
+// runStatusJSON emits the workspace summary as JSON. Best-effort like the human
+// path: a missing presence/probe just omits that field.
+func runStatusJSON(cmd *cobra.Command, cctx *config.Context) error {
+	ws := workspaceStatus{Workspace: cctx.WorkspaceName}
+	if cctx.Workspace != nil {
+		ws.Initialized = true
+		ws.Region = cctx.Workspace.IBMCloud.Region
+		ws.ResourceGroup = cctx.Workspace.IBMCloud.ResourceGroup
+		ws.Cluster = cctx.Workspace.Cluster.Name
+		ws.ClusterCreate = cctx.Workspace.Cluster.Create
+		ws.TFSource = tfSourceDescription(cctx.Workspace.TFSource)
+		if pres, err := config.DetectPresence(cctx.WorkspaceName); err == nil {
+			ws.Phases = map[string]bool{
+				"cluster": pres.Cluster,
+				"bnk":     pres.BNK,
+				"testing": pres.Testing,
+				"gateway": pres.Gateway,
+			}
+		}
+		if kc := k8s.DefaultKubeconfigPath(); kc != "" {
+			ws.Kubeconfig = kc
+			ws.ClusterProbe = probeCluster(cmd.Context(), kc)
+		}
+	}
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	return enc.Encode(ws)
+}
+
+// writeStatusPhaseLines emits the per-phase deployment lines for the
+// `status` command: reads the four-phase truth from config.DetectPresence
+// (Cluster / BNK / Testing / Gateway) and prints each as
+// "deployed (last apply <mtime>)" or "not deployed". Best-effort — a
+// DetectPresence error (e.g. malformed state) is silenced, like every
+// other section of runStatus.
 func writeStatusPhaseLines(tw io.Writer, workspace string) {
-	shape, err := config.DetectShape(workspace)
+	pres, err := config.DetectPresence(workspace)
 	if err != nil {
-		// Malformed state files etc. — fall through to v1.0.x line so
-		// the user gets *some* signal rather than a hard failure here.
-		writeLegacyLastApply(tw, workspace)
 		return
 	}
 
-	trialDir, _ := config.WorkspaceStateDir(workspace)
 	clusterDir, _ := config.WorkspaceClusterStateDir(workspace)
-	trialState := filepath.Join(trialDir, "terraform.tfstate")
-	clusterState := filepath.Join(clusterDir, "terraform.tfstate")
+	bnkDir, _ := config.WorkspaceStateDir(workspace)
+	testingDir, _ := config.WorkspaceTestingStateDir(workspace)
+	gatewayDir, _ := config.WorkspaceGatewayStateDir(workspace)
 
-	switch shape {
-	case config.ShapeEmpty:
-		fmt.Fprintln(tw, "Cluster phase:\tnot deployed")
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
+	fmt.Fprintf(tw, "Cluster phase:\t%s\n", phaseStatusLine(pres.Cluster, clusterDir))
+	fmt.Fprintf(tw, "BNK trial:\t%s\n", phaseStatusLine(pres.BNK, bnkDir))
+	fmt.Fprintf(tw, "Testing phase:\t%s\n", phaseStatusLine(pres.Testing, testingDir))
+	fmt.Fprintf(tw, "Gateway phase:\t%s\n", phaseStatusLine(pres.Gateway, gatewayDir))
+}
 
-	case config.ShapeClusterOnly:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintln(tw, "BNK trial:\tnot deployed")
-
-	case config.ShapeSplit:
-		fmt.Fprintf(tw, "Cluster phase:\t%s\n", deployedLine(clusterState))
-		fmt.Fprintf(tw, "BNK trial:\t%s\n", deployedLine(trialState))
-
-	case config.ShapeLegacySingle:
-		// One-line callout so the reader sees "legacy" at a glance,
-		// plus the verbatim v1.0.x `Last apply` line for script-compat.
-		fmt.Fprintln(tw, "Shape:\tlegacy single-state (cluster + trial in one tfstate)")
-		writeLegacyLastApply(tw, workspace)
-
-	default:
-		// ShapeUnknown should be unreachable on a successful DetectShape
-		// but handle defensively: surface the v1.0.x shape so nothing
-		// downstream parses a missing line.
-		writeLegacyLastApply(tw, workspace)
+// phaseStatusLine renders one phase's status: "deployed (last apply …)"
+// when present (timestamp from the phase's tfstate mtime), else
+// "not deployed". `present` is the authoritative signal from
+// DetectPresence; the mtime is only for the human-readable timestamp.
+func phaseStatusLine(present bool, stateDir string) string {
+	if !present {
+		return "not deployed"
 	}
+	return deployedLine(filepath.Join(stateDir, "terraform.tfstate"))
 }
 
 // deployedLine returns the `deployed (last apply <timestamp>)` shape
@@ -188,21 +215,6 @@ func deployedLine(statePath string) string {
 		return "not deployed"
 	}
 	return fmt.Sprintf("deployed (last apply %s)", info.ModTime().Format("2006-01-02 15:04:05 MST"))
-}
-
-// writeLegacyLastApply emits the verbatim v1.0.x `Last apply` line from
-// `state/terraform.tfstate` mtime. Used both for `ShapeLegacySingle`
-// (per PRD 06 §"`status` command integration" — script-compat preservation)
-// and as a defensive fallback for `ShapeUnknown` / `DetectShape` errors.
-func writeLegacyLastApply(tw io.Writer, workspace string) {
-	stateDir, _ := config.WorkspaceStateDir(workspace)
-	statePath := filepath.Join(stateDir, "terraform.tfstate")
-	if info, err := os.Stat(statePath); err == nil {
-		age := time.Since(info.ModTime()).Round(time.Second)
-		fmt.Fprintf(tw, "Last apply:\t%s\t(%s ago)\n", info.ModTime().Format("2006-01-02 15:04:05 MST"), age)
-	} else {
-		fmt.Fprintln(tw, "Last apply:\t(no state — run `roksbnkctl up`)")
-	}
 }
 
 // probeCluster does a single timed call to list nodes and summarises

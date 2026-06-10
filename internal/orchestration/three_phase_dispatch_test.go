@@ -53,15 +53,12 @@ func (a phaseAction) String() string {
 	return fmt.Sprintf("%v", a.phases)
 }
 
-// upAction models bare `up` (§2d / §3a): Legacy → monolithic trial up;
-// otherwise Cluster serial-first (unless already present or reused), then BNK
-// ∥ Testing — only the phases that need it, but in the steady state all
-// present phases refresh. We encode "act on" as: cluster touched unless
-// already present, BNK + Testing always touched (created or refreshed).
+// upAction models bare `up` (§2d / §3a): Cluster serial-first (unless already
+// present or reused), then BNK ∥ Testing — only the phases that need it, but
+// in the steady state all present phases refresh. We encode "act on" as:
+// cluster touched unless already present, BNK + Testing always touched
+// (created or refreshed).
 func upAction(p config.Presence, reuse bool) phaseAction {
-	if p.Legacy {
-		return phaseAction{phases: []string{"trial-monolith"}}
-	}
 	var phases []string
 	if !p.Cluster && !reuse {
 		phases = append(phases, "cluster")
@@ -72,13 +69,9 @@ func upAction(p config.Presence, reuse bool) phaseAction {
 	return phaseAction{phases: phases}
 }
 
-// downAction models bare `down` (§3c): Legacy → monolithic; nothing present →
-// refused ("nothing to destroy"); otherwise BNK ∥ Testing (the present ones)
-// then Cluster.
+// downAction models bare `down` (§3c): nothing present → refused ("nothing to
+// destroy"); otherwise BNK ∥ Testing (the present ones) then Cluster.
 func downAction(p config.Presence) phaseAction {
-	if p.Legacy {
-		return phaseAction{phases: []string{"trial-monolith"}}
-	}
 	if !p.Any() {
 		return phaseAction{refused: true}
 	}
@@ -96,12 +89,9 @@ func downAction(p config.Presence) phaseAction {
 }
 
 // clusterDownAction models the `cluster down` guard (cluster_phase.go
-// runClusterDown): refuse on Legacy; refuse while BNK OR Testing present;
-// refuse (nothing) when no cluster; else act on cluster.
+// runClusterDown): refuse while BNK OR Testing present; refuse (nothing) when
+// no cluster; else act on cluster.
 func clusterDownAction(p config.Presence) phaseAction {
-	if p.Legacy {
-		return phaseAction{refused: true}
-	}
 	if p.BNK || p.Testing {
 		return phaseAction{refused: true}
 	}
@@ -111,13 +101,10 @@ func clusterDownAction(p config.Presence) phaseAction {
 	return phaseAction{phases: []string{"cluster"}}
 }
 
-// bnkDownAction / testingDownAction model the leaf phase-down verbs: refuse on
-// Legacy; refuse when that phase has no state; else act on exactly that phase
-// (the sibling + cluster are untouched — guaranteed by separate state dirs).
+// bnkDownAction / testingDownAction model the leaf phase-down verbs: refuse
+// when that phase has no state; else act on exactly that phase (the sibling +
+// cluster are untouched — guaranteed by separate state dirs).
 func bnkDownAction(p config.Presence) phaseAction {
-	if p.Legacy {
-		return phaseAction{refused: true}
-	}
 	if !p.BNK {
 		return phaseAction{refused: true}
 	}
@@ -125,9 +112,6 @@ func bnkDownAction(p config.Presence) phaseAction {
 }
 
 func testingDownAction(p config.Presence) phaseAction {
-	if p.Legacy {
-		return phaseAction{refused: true}
-	}
 	if !p.Testing {
 		return phaseAction{refused: true}
 	}
@@ -166,7 +150,6 @@ func TestDispatchDecisionTable(t *testing.T) {
 	CB := config.Presence{Cluster: true, BNK: true}
 	CT := config.Presence{Cluster: true, Testing: true}
 	CBT := config.Presence{Cluster: true, BNK: true, Testing: true}
-	legacy := config.Presence{Legacy: true}
 
 	rows := []row{
 		{
@@ -215,15 +198,6 @@ func TestDispatchDecisionTable(t *testing.T) {
 			testingDown: phaseAction{phases: []string{"testing"}},
 		},
 		{
-			name:        "Legacy single-state",
-			pres:        legacy,
-			up:          phaseAction{phases: []string{"trial-monolith"}},
-			down:        phaseAction{phases: []string{"trial-monolith"}},
-			clusterDown: phaseAction{refused: true},
-			bnkDown:     phaseAction{refused: true},
-			testingDown: phaseAction{refused: true},
-		},
-		{
 			// Reuse-existing-cluster: cluster-outputs.json present, no
 			// state-cluster/. Treated as "C present" for BNK/Testing dispatch
 			// — the cluster phase is skipped, BNK ∥ Testing deploy against the
@@ -263,8 +237,8 @@ func TestDispatchDecisionTable(t *testing.T) {
 // TestClusterDownGuard_RefusesWithBNKorTesting_AutoDoesNotBypass pins the
 // most safety-critical decision: `cluster down` is a correctness guard, not a
 // prompt, so it refuses whenever BNK OR Testing has resources REGARDLESS of
-// --auto. We model the guard's exact branch order (Legacy → BNK||Testing →
-// no-cluster) and assert --auto changes nothing.
+// --auto. We model the guard's exact branch order (BNK||Testing → no-cluster)
+// and assert --auto changes nothing.
 func TestClusterDownGuard_RefusesWithBNKorTesting_AutoDoesNotBypass(t *testing.T) {
 	mustRefuse := []config.Presence{
 		{Cluster: true, BNK: true},
@@ -272,7 +246,6 @@ func TestClusterDownGuard_RefusesWithBNKorTesting_AutoDoesNotBypass(t *testing.T
 		{Cluster: true, BNK: true, Testing: true},
 		{BNK: true},     // even with no cluster present locally
 		{Testing: true}, // ditto
-		{Legacy: true},  // legacy refuses
 		{},              // nothing to destroy → refused
 	}
 	for _, p := range mustRefuse {

@@ -252,7 +252,10 @@ The vendored images live at:
 |---|---|
 | `ibmcloud` | `ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:<tag>` (vendored from `icr.io/ibm-cloud/ibmcloud-cli` upstream) |
 | `iperf3` | `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:<tag>` (Alpine + iperf3) |
+| `h2load` | `ghcr.io/jgruberf5/roksbnkctl-tools-h2load:<tag>` (Alpine + `nghttp2`; the L7 load generator for [`test matrix`](./22a-performance-matrix.md)) |
 | `terraform` | `hashicorp/terraform:<v>` (official upstream) |
+
+The `h2load` image is the L7 generator the [performance matrix](./22a-performance-matrix.md) runs for `family: l7` cells. It's built from `tools/docker/h2load/Dockerfile` (Alpine's `nghttp2` package, built against OpenSSL so `https` / TLS-terminate-at-TMM targets work) and published by the `tools-images` workflow alongside the other per-tool images. Like the iperf3 image it declares `USER 1000` so it satisfies the OpenShift `restricted-v2` SCC (h2load is a pure client and binds no privileged port). The `docker` / `k8s` backends pull this image; the `ssh` backend uses the jumphost's apt-installed `nghttp2-client` instead (preinstalled by the Testing phase — see [Chapter 15 §"Per-AZ cluster jumphosts"](./15-ssh-targets.md#per-az-cluster-jumphosts-jumphost-zone)).
 
 The `<tag>` for the vendored per-tool images (`ibmcloud`, `iperf3`) is resolved at runtime by `internal/exec/docker.go::toolImageTag()`. It reads the binary's `internal/version.Version` (set via ldflags at build time): a release-built binary like `v0.10.0` pulls `:v0.10.0`; a dev build (`Version == "dev"`) pulls `:dev`. Sprint 4 landed this version-pinning in place of Sprint 3's hard-coded `:dev` so a `go install` of a tagged release pulls a matching tagged image rather than a `:dev` that may not exist for the published binary. The `terraform` row is the exception — it points at the upstream `hashicorp/terraform` image and stays pinned to a specific version (currently `1.5.7`) regardless of `roksbnkctl`'s own version.
 

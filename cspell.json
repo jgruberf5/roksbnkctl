@@ -3,6 +3,15 @@
   "language": "en",
   "words": [
     "roksbnkctl",
+    "nghttp",
+    "nghttp2",
+    "cidrhost",
+    "autosubnet",
+    "ipv4",
+    "tcproute",
+    "tcproutes",
+    "httproute",
+    "httproutes",
     "kubeconfig",
     "kubectl",
     "terraform",
@@ -239,7 +248,15 @@
     "Snat",
     "VXLAN",
     "automap",
-    "snatpool"
+    "snatpool",
+    "h2load",
+    "OSLO",
+    "nighthawk",
+    "tmctl",
+    "ECDSA",
+    "BOM",
+    "ORAS",
+    "dockerconfigjson"
   ],
   "ignorePaths": [
     "book/book/**",

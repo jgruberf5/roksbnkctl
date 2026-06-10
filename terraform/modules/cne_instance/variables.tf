@@ -50,6 +50,20 @@ variable "far_repo_url" {
   default     = "repo.f5.com"
 }
 
+# Sprint 29 air-gap mirror — image host for the CNEInstance spec.registry.uri.
+# Empty falls back to far_repo_url in the inner module (byte-identical default).
+variable "far_image_repo_url" {
+  description = "Image-pull host for the mirror (CNEInstance spec.registry.uri). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "use_registry_mirror" {
+  description = "When true, render the CNEInstance with imagePullSecrets: [] (RBAC handles pulls)."
+  type        = bool
+  default     = false
+}
+
 # ============================================================
 # FLO Namespace Configuration
 # ============================================================

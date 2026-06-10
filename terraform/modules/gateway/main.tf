@@ -32,18 +32,27 @@ locals {
   # SnatPool addressList is a list-of-lists (one address list per zone).
   snat_address_list = [for z in var.cneinstance_network_zones : [cidrhost(z.int_snat_cidr, var.gateway_snat_host)]]
 
-  # Per-zone static routes, both the local-VSI and remote-VSI client subnets,
-  # each via that zone's external-VLAN gateway (ext_vlan .1).
-  static_routes = merge(
-    { for i, z in var.cneinstance_network_zones : "static-route-client-z${i + 1}" => {
-      destination = var.gateway_client_subnet_local
-      gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
-    } },
-    { for i, z in var.cneinstance_network_zones : "static-route-client-z${i + 1}-remote" => {
-      destination = var.gateway_client_subnet_remote
-      gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
-    } },
-  )
+  # Per-zone static routes: one F5SPKStaticRoute per (client subnet × zone),
+  # each via that zone's external-VLAN gateway (ext_vlan .1). The client
+  # subnets are LISTS, so several local clients (e.g. per-AZ cluster
+  # jumphosts in different subnets) and remote clients each get a return
+  # route in every zone. Empty lists → no client routes.
+  static_routes = merge(concat(
+    [for i, z in var.cneinstance_network_zones : {
+      for j, dest in var.gateway_client_subnet_local :
+      "static-route-local-z${i + 1}-${j + 1}" => {
+        destination = dest
+        gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
+      }
+    }],
+    [for i, z in var.cneinstance_network_zones : {
+      for j, dest in var.gateway_client_subnet_remote :
+      "static-route-remote-z${i + 1}-${j + 1}" => {
+        destination = dest
+        gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
+      }
+    }],
+  )...)
 
   egress_pseudo_cni = {
     namespaces      = [var.app_namespace]

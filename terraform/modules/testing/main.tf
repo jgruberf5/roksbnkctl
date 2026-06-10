@@ -43,7 +43,11 @@ locals {
 
     apt-get update
     apt-get upgrade -y
-    apt-get install -y curl wget apt-transport-https ca-certificates gnupg lsb-release software-properties-common iperf3 dnsutils net-tools netcat-openbsd
+    # nghttp2-client provides h2load — the L7 load generator for
+    # `roksbnkctl test matrix` (HTTPRoute, http/https). iperf3 covers the
+    # matrix L4 family. Both are preinstalled here so the matrix runs from
+    # a jumphost with no --bootstrap apt step.
+    apt-get install -y curl wget apt-transport-https ca-certificates gnupg lsb-release software-properties-common iperf3 nghttp2-client dnsutils net-tools netcat-openbsd
 
     # IBM Cloud CLI
     curl -fsSL https://clis.cloud.ibm.com/install/linux | sh

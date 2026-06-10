@@ -219,15 +219,15 @@ variable "gateway_vxlan_port" {
 
 # ── Static routes (client subnets reachable via the TMM zone gateways) ───────
 variable "gateway_client_subnet_local" {
-  description = "Local-VSI client subnet/host the static routes reach (/32)"
-  type        = string
-  default     = "10.244.64.12"
+  description = "Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one F5SPKStaticRoute per entry × zone). Empty = no local client routes."
+  type        = list(string)
+  default     = []
 }
 
 variable "gateway_client_subnet_remote" {
-  description = "Remote-VSI client subnet/host the static routes reach (/32)"
-  type        = string
-  default     = "10.245.64.5"
+  description = "Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one F5SPKStaticRoute per entry × zone). Empty = no remote client routes."
+  type        = list(string)
+  default     = []
 }
 
 variable "gateway_static_route_gw_host" {

@@ -485,7 +485,7 @@ book-clean:
 # ldflags for version stamping). See issues/issue_sprint0_staff.md for
 # the rationale.
 
-.PHONY: test-short test-integration test-live test-cred-audit lint pre-commit-install
+.PHONY: test-short test-integration test-live test-cred-audit shakeout lint pre-commit-install
 
 test-short:
 	go test -short ./...
@@ -522,6 +522,20 @@ test-integration:
 # acceptance criteria.
 test-live:
 	go test -tags live -timeout 5m ./internal/k8s/...
+
+# shakeout drives scripts/full-shakeout.sh — the single-button pre-flight
+# for a deep, full product shake-out. Runs every FREE tier (Tier 0 local
+# build/lint/unit/cred-audit + Tier 1 DRY_RUN plan-walkthroughs of every
+# live e2e driver), prints a pass/fail/skip summary, then PRINTS (does not
+# run) the Tier 2 + Tier 3 live-cloud commands for you to launch by hand
+# with IBMCLOUD_API_KEY. Spends no cloud money and needs no key.
+#
+# Knobs are env vars on the script (forwarded through make):
+#   make shakeout                          # full free pre-flight
+#   SKIP_LOCAL=1 make shakeout             # skip Tier 0 (drivers only)
+#   WS=e2e SSH_TARGET=jumphost make shakeout   # parameterize printed cloud cmds
+shakeout:
+	./scripts/full-shakeout.sh
 
 lint:
 	gofmt -d -l . && go vet ./... && (command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not on PATH; skipping")

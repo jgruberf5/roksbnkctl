@@ -119,6 +119,16 @@ output "transit_gateway_name" {
   value       = var.roks_transit_gateway_name
 }
 
+output "registry_cos_name" {
+  description = "Name of the registry COS instance (empty when not created by this phase)"
+  value       = module.cluster.registry_cos_name
+}
+
+output "registry_cos_crn" {
+  description = "CRN of the registry COS instance (empty when not created by this phase)"
+  value       = module.cluster.registry_cos_crn
+}
+
 # Apply-time sentinel ID — (known after apply) when create_roks_cluster=true, null otherwise.
 # Pass as roks_cluster_dependency_id to downstream modules to enforce apply ordering.
 output "cluster_ready_id" {

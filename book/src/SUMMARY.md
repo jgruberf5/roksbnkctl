@@ -21,6 +21,7 @@
 - [The three-phase lifecycle (Cluster / BNK / Testing)](./08a-three-phase-lifecycle.md)
 - [Registering an existing cluster](./09-registering-existing-cluster.md)
 - [Deploying BNK trials on top](./10-deploying-bnk-trials.md)
+- [Air-gapped install: mirroring BNK into the cluster registry](./10a-air-gapped-install.md)
 - [Tearing down](./11-tearing-down.md)
 
 # Part IV — Configuration
@@ -42,6 +43,7 @@
 - [Connectivity testing](./20-connectivity-testing.md)
 - [DNS testing for GSLB](./21-dns-testing-gslb.md)
 - [Throughput testing](./22-throughput-testing.md)
+- [The performance matrix](./22a-performance-matrix.md)
 - [The E2E test plan](./23-e2e-test-plan.md)
 
 # Part VII — Operations

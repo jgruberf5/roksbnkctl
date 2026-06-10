@@ -32,6 +32,16 @@ output "roks_transit_gateway_name" {
   value       = module.roks_cluster.transit_gateway_name
 }
 
+output "registry_cos_name" {
+  description = "Name of the registry COS instance created by the cluster phase (empty when reusing an existing one)"
+  value       = module.roks_cluster.registry_cos_name
+}
+
+output "registry_cos_crn" {
+  description = "CRN of the registry COS instance created by the cluster phase (empty when reusing an existing one)"
+  value       = module.roks_cluster.registry_cos_crn
+}
+
 
 # ============================================================
 # flo
@@ -74,6 +84,11 @@ output "jumphost_shared_key" {
   sensitive   = true
 }
 
+output "testing_ssh_key_name" {
+  description = "IBM Cloud VPC SSH key name attached to the testing jumphosts (non-sensitive; empty when only the generated cloud-init key is used)"
+  value       = try(module.testing.testing_ssh_key_name, "")
+}
+
 output "testing_tgw_jumphost_ssh_command" {
   description = "SSH command to connect to the TGW-connected jumphost (empty when testing_create_tgw_jumphost = false)"
   value       = try(module.testing.testing_tgw_jumphost_ssh_command, "")
@@ -87,4 +102,20 @@ output "testing_cluster_jumphost_ips" {
 output "testing_cluster_jumphost_ssh_commands" {
   description = "SSH commands keyed by availability zone for the cluster jumphosts (empty when testing_create_cluster_jumphosts = false)"
   value       = try(module.testing.testing_cluster_jumphost_ssh_commands, {})
+}
+
+# Jumphost SUBNET CIDRs. Forwarded so `roksbnkctl gateway up` can auto-derive
+# the gateway client-subnet LISTS from the deployed test rig (PRD 12): one
+# local route per cluster-VPC jumphost subnet (so same-zone AND different-zone
+# clients each get a return route), one remote route for the client-VPC subnet
+# (reached over the Transit Gateway). try()-defaulted so a deploy without the
+# jumphosts renders empty.
+output "testing_tgw_jumphost_subnet_cidr" {
+  description = "Subnet CIDR of the TGW (client-VPC) jumphost (empty when testing_create_tgw_jumphost = false)"
+  value       = try(module.testing.testing_tgw_jumphost_subnet_cidr, "")
+}
+
+output "testing_cluster_jumphost_subnet_cidrs" {
+  description = "Per-zone subnet CIDRs of the cluster jumphosts, keyed by zone (empty when testing_create_cluster_jumphosts = false)"
+  value       = try(module.testing.testing_cluster_jumphost_subnet_cidrs, {})
 }

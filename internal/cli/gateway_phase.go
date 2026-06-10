@@ -41,7 +41,7 @@ var gatewayUpCmd = &cobra.Command{
 VXLAN security-group rule against the existing cluster + BNK (read from
 cluster-outputs.json). Runs in its own state (state-gateway/).
 
-Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.`,
+Refuses when no cluster/BNK exists yet.`,
 	Args: cobra.NoArgs,
 	RunE: runGatewayUp,
 }
@@ -68,7 +68,7 @@ func init() {
 }
 
 // runGatewayUp applies the data-plane config against state-gateway/. Refuses
-// on legacy single-state and when no cluster/BNK is present yet.
+// when no cluster/BNK is present yet.
 func runGatewayUp(cmd *cobra.Command, _ []string) error {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
@@ -77,9 +77,6 @@ func runGatewayUp(cmd *cobra.Command, _ []string) error {
 	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
-	}
-	if pres.Legacy {
-		return errors.New("this workspace is legacy single-state; the gateway phase needs the three-phase layout. Use `roksbnkctl up`")
 	}
 	if !pres.Cluster && !pres.BNK {
 		return errors.New("no cluster/BNK found — run `roksbnkctl up` (the cluster + BNK phases) first, then `roksbnkctl gateway up`")

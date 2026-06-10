@@ -1,0 +1,66 @@
+# Example BNK-on-ROKS performance grid for `roksbnkctl test matrix`.
+#
+# Run AFTER a full cluster + BNK (+ optional gateway) deployment. The
+# matrix owns only ephemeral fixtures (an iperf3 server, an HTTP file
+# backend, and — when fixtures.routes is on — TCPRoute / HTTPRoute / TLS
+# objects that ATTACH to your existing Gateway by name). It never touches
+# Terraform or the gateway-phase objects.
+#
+# Map to the source perf plan:
+#   - L4 TCP (TC01–04) -> family: iperf3 over a TCPRoute VIP, length knob
+#     as the 128 B / 512 KB content-size analog.
+#   - L7 HTTP  (TC05)  -> family: l7, http:// URL (cps / tps / throughput).
+#   - L7 HTTPS (TC06)  -> family: l7, https:// URL (TLS terminate at TMM).
+# Locality (TC01 same-zone, TC02 diff-VPC, TC03 diff-zone) is implicit in
+# WHICH jumphost a cell names as its client.
+
+# Identity of your already-deployed BNK gateway stack. Only used when
+# fixtures.routes is true, to attach route fixtures to the existing
+# Gateway. The listener *sections* must already exist on that Gateway —
+# the runner adds Routes, never listeners.
+gateway:
+  app_namespace: bnk-apps
+  name: bnk-gateway
+  http_section: http      # an HTTP listener section on the Gateway
+  https_section: https    # an HTTPS (TLS) listener section
+  tcp_section: tcp         # a TCP listener section (for the L4 TCPRoute)
+
+# Ephemeral, runner-owned fixtures (all torn down after, unless --keep).
+fixtures:
+  iperf3_server: true      # L4 server (roksbnkctl-iperf3:5201) — TCPRoute backend
+  http_backend: true       # nginx serving /128, /5k, /512k — L7 backend
+  routes: true             # apply TCPRoute + HTTPRoute(+TLS) attaching to the gateway
+
+# Named (placement, role) anchors. "vsi" -> an ssh:<target> jumphost the
+# Testing phase auto-registered. "address" -> an iperf3 TCP server (a
+# TCPRoute VIP). "url" -> an HTTPRoute target.
+endpoints:
+  vsi-same-zone: { kind: vsi, target: jumphost-jp-osa-1 }  # client in TMM's zone
+  vsi-diff-zone: { kind: vsi, target: jumphost-jp-osa-3 }  # client in another zone, same VPC
+  vsi-diff-vpc:  { kind: vsi, target: jumphost }           # client in the TGW/client VPC
+
+  tmm-tcp:   { kind: address, host: 10.240.0.10, port: 5201 }   # TCPRoute VIP:port
+
+  # L7 targets. Payload (128 B / 512 KB) is the URL path the nginx fixture
+  # serves (/128, /5k, /512k), so define one endpoint per payload+scheme.
+  tmm-http-128:   { kind: url, url: "http://10.240.0.10/128" }
+  tmm-http-512k:  { kind: url, url: "http://10.240.0.10/512k" }
+  tmm-https-128:  { kind: url, url: "https://10.240.0.10/128" }   # TLS terminate at TMM
+  tmm-https-512k: { kind: url, url: "https://10.240.0.10/512k" }
+
+cells:
+  # ── L4 TCP throughput, content-size axis (iperf3 -l) ──────────────────
+  - { name: "L4 128B  VSI->TMM same-zone",  family: iperf3, client: vsi-same-zone, server: tmm-tcp, length: "128",  duration: 30 }
+  - { name: "L4 512K  VSI->TMM same-zone",  family: iperf3, client: vsi-same-zone, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L4 512K  VSI->TMM diff-zone",  family: iperf3, client: vsi-diff-zone, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L4 512K  VSI->TMM diff-VPC",   family: iperf3, client: vsi-diff-vpc,  server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+
+  # ── L7 HTTP (cleartext HTTPRoute) ─────────────────────────────────────
+  - { name: "L7 http CPS  128B VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-http-128,  l7: { mode: cps } }
+  - { name: "L7 http TPS  128B VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-http-128,  l7: { mode: tps, duration: 30 } }
+  - { name: "L7 http THRU 512K VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-http-512k, l7: { mode: throughput, duration: 30 } }
+
+  # ── L7 HTTPS (TLS terminate at TMM) ───────────────────────────────────
+  - { name: "L7 https CPS  128B VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-https-128,  l7: { mode: cps } }
+  - { name: "L7 https TPS  128B VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-https-128,  l7: { mode: tps, duration: 30 } }
+  - { name: "L7 https THRU 512K VSI->TMM", family: l7, client: vsi-diff-vpc, server: tmm-https-512k, l7: { mode: throughput, duration: 30 } }

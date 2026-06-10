@@ -34,12 +34,7 @@ var bnkUpCmd = &cobra.Command{
 	Long: `Provisions the BNK trial against the existing cluster phase. If
 the workspace has no cluster registered yet, ` + "`bnk up`" + ` bootstraps the
 cluster phase first (with a confirmation prompt — the cluster
-provision takes ~30 min) before the trial apply.
-
-Refuses on legacy single-state workspaces (those provisioned with
-v1.0.x ` + "`roksbnkctl up`" + `): cluster + trial share one state file there,
-so the trial can't be applied in isolation without state migration.
-Use ` + "`roksbnkctl up`" + ` on those workspaces.`,
+provision takes ~30 min) before the trial apply.`,
 	Args: cobra.NoArgs,
 	RunE: runBnkUp,
 }
@@ -99,10 +94,6 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace shape: %w", err)
 	}
-	if shape == config.ShapeLegacySingle {
-		return errors.New("this workspace is legacy single-state; `bnk up` can't isolate the trial phase. Use `roksbnkctl up` for in-place behavior, or migrate the state first")
-	}
-
 	if shape == config.ShapeEmpty {
 		fmt.Fprintln(os.Stderr, "No cluster registered for this workspace.")
 		fmt.Fprintln(os.Stderr, "→ Provisioning the cluster phase first (ROKS cluster + transit gateway + registry COS + cert-manager + jumphost; ~30 min) before the BNK trial.")
@@ -121,7 +112,6 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 // leaving the cluster phase in place. Dispatch per PRD 06 §"Dispatch
 // table":
 //
-//   - LegacySingle      → refuse (shared state; use `roksbnkctl down`).
 //   - Empty/ClusterOnly → refuse (no trial state to destroy).
 //   - Split             → trial down.
 func runBnkDown(cmd *cobra.Command, _ []string) error {
@@ -138,8 +128,6 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("detecting workspace shape: %w", err)
 	}
 	switch shape {
-	case config.ShapeLegacySingle:
-		return errors.New("this workspace is legacy single-state; `bnk down` can't isolate the trial phase. Use `roksbnkctl down` to tear down both, or migrate the state first")
 	case config.ShapeEmpty, config.ShapeClusterOnly:
 		return errors.New("no BNK trial state to destroy in this workspace")
 	}

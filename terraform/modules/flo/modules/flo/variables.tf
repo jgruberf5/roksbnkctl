@@ -46,6 +46,26 @@ variable "far_repo_url" {
   default     = "repo.f5.com"
 }
 
+# Sprint 29 air-gap mirror — chart/image host split. Both empty → coalesce
+# back to far_repo_url in locals so the default path is byte-identical.
+variable "far_chart_repo_url" {
+  description = "Chart-pull host (helm_release repository + manifest pull). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "far_image_repo_url" {
+  description = "Image-pull host (image.repository). Empty falls back to far_repo_url."
+  type        = string
+  default     = ""
+}
+
+variable "use_registry_mirror" {
+  description = "When true, drop the far-secret dockerconfigjson dependency and render imagePullSecrets as an empty list (RBAC handles pulls)."
+  type        = bool
+  default     = false
+}
+
 variable "cert_manager_namespace" {
   description = "Namespace for cert-manager installation"
   type        = string

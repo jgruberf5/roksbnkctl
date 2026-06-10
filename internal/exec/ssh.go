@@ -35,6 +35,11 @@ type toolPackage struct {
 var toolPackages = map[string]toolPackage{
 	"iperf3":   {Name: "iperf3", IBMRepo: false},
 	"ibmcloud": {Name: "ibmcloud-cli", IBMRepo: true},
+	// h2load ships in nghttp2-client on Ubuntu — the L7 matrix family's
+	// load generator, run from a jumphost VSI against the BNK HTTPRoute.
+	// The testing module preinstalls it on every jumphost, so this entry
+	// is the --bootstrap fallback for a host that lacks it.
+	"h2load": {Name: "nghttp2-client", IBMRepo: false},
 }
 
 // SSHBackendOpts are runtime knobs the SSH backend reads via package-

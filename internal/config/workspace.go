@@ -21,6 +21,7 @@ type Workspace struct {
 	Cluster  ClusterCfg           `yaml:"cluster"`
 	BNK      BNKCfg               `yaml:"bnk,omitempty"`
 	Gateway  GatewayCfg           `yaml:"gateway,omitempty"`
+	Registry *RegistryCfg         `yaml:"registry,omitempty"`
 	Test     TestCfg              `yaml:"test,omitempty"`
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
@@ -122,6 +123,12 @@ type ResourcesCfg struct {
 	// is installed in. Empty → the terraform default (testing_client_vpc_region).
 	// Lets the test client live in a different region from the cluster.
 	ClientRegion string `yaml:"client_region,omitempty"`
+	// TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing
+	// jumphosts (rendered as testing_ssh_key_name). `roksbnkctl init` resolves it:
+	// an existing key is used as-is, otherwise roksbnkctl generates one, stores the
+	// private key per-workspace, and uploads the public key. Empty → no named key
+	// (the jumphosts use only the generated cloud-init key).
+	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the
@@ -132,10 +139,29 @@ type ResourceToggle struct {
 	Existing string `yaml:"existing,omitempty"` // existing name/ID when Create=false
 }
 
+// Default{ManifestVersion,FARAuthFile,SubscriptionJWTFile} mirror the
+// f5_bigip_k8s_manifest_version / f5_cne_far_auth_file / f5_cne_subscription_jwt_file
+// terraform-variable defaults. The init interview offers them and seeds
+// bnk.{manifest_version,far_auth_file,subscription_jwt_file}; those config values
+// then override the tfvar defaults (via internal/tf/vars.go) and drive `registry`
+// (the manifest pull + the FAR auth).
+const (
+	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
+	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
+	DefaultSubscriptionJWTFile = "trial.jwt"
+)
+
 type BNKCfg struct {
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
 	FARRepoURL      string `yaml:"far_repo_url,omitempty"`
 	ManifestVersion string `yaml:"manifest_version,omitempty"`
+	// FarAuthFile is the FAR auth tarball's filename in the orchestration COS
+	// bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry`
+	// to resolve the FAR _json_key_base64 service account.
+	FarAuthFile string `yaml:"far_auth_file,omitempty"`
+	// SubscriptionJWTFile is the subscription/license JWT's filename in the
+	// orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.
+	SubscriptionJWTFile string `yaml:"subscription_jwt_file,omitempty"`
 
 	// CRMode selects the BNK custom-resource install mechanism rendered as
 	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
@@ -164,13 +190,61 @@ type BNKNetworkCfg struct {
 // tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a
 // toggle here.
 type GatewayCfg struct {
-	AppNamespace       string `yaml:"app_namespace,omitempty"`
-	BackendService     string `yaml:"backend_service,omitempty"`
-	BackendPort        int    `yaml:"backend_port,omitempty"`
-	EgressMode         string `yaml:"egress_mode,omitempty"` // snatpool | automap | both
-	ClientSubnetLocal  string `yaml:"client_subnet_local,omitempty"`
-	ClientSubnetRemote string `yaml:"client_subnet_remote,omitempty"`
-	VXLANPort          int    `yaml:"vxlan_port,omitempty"`
+	AppNamespace       string   `yaml:"app_namespace,omitempty"`
+	BackendService     string   `yaml:"backend_service,omitempty"`
+	BackendPort        int      `yaml:"backend_port,omitempty"`
+	EgressMode         string   `yaml:"egress_mode,omitempty"` // snatpool | automap | both
+	ClientSubnetLocal  []string `yaml:"client_subnet_local,omitempty"`
+	ClientSubnetRemote []string `yaml:"client_subnet_remote,omitempty"`
+	VXLANPort          int      `yaml:"vxlan_port,omitempty"`
+}
+
+// RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which
+// target the `roksbnkctl registry replicate` populates and which namespace it
+// uses, plus the optional source/target credentials. All fields are optional —
+// an absent block (nil) means the mirror is not configured and the BNK install
+// pulls directly from FAR (far_repo_url). Additive + omitempty, so existing
+// config.yaml files load unchanged.
+type RegistryCfg struct {
+	// Target selects the mirror backend. "" / "openshift" → the cluster's own
+	// OpenShift internal image registry (the first-class air-gap target).
+	Target string `yaml:"target,omitempty"`
+
+	// Namespace is the mirror project the artifacts land in. "" → "bnk-mirror".
+	Namespace string `yaml:"namespace,omitempty"`
+
+	// IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager
+	// chart + images, the bitnami/kubectl node-labeler image) into the BOM. A
+	// nil pointer means the default (true — a complete air-gap install set needs
+	// them); set it explicitly to false to mirror only the F5 manifest artifacts.
+	IncludeDeps *bool `yaml:"include_deps,omitempty"`
+
+	// SourceServiceAccountB64 is the FAR `_json_key_base64` service-account JSON,
+	// base64-encoded, used as the replication SOURCE credential for repo.f5.com.
+	// Empty → roksbnkctl falls back to the COS-tarball service account (the same
+	// path the FLO module uses), or an anonymous pull. Like ibmcloud.api_key_b64
+	// this is OBFUSCATION, NOT ENCRYPTION — the field name deliberately ends in
+	// `_b64` so it does not trip rejectPlaintextSecrets; treat the file as a
+	// plaintext credential (chmod 600, never commit).
+	SourceServiceAccountB64 string `yaml:"source_service_account_b64,omitempty"`
+}
+
+// MirrorNamespace returns the configured mirror namespace, or the "bnk-mirror"
+// default when unset. Safe on a nil receiver (returns the default).
+func (r *RegistryCfg) MirrorNamespace() string {
+	if r == nil || r.Namespace == "" {
+		return "bnk-mirror"
+	}
+	return r.Namespace
+}
+
+// IncludeDepsOrDefault returns IncludeDeps, defaulting to true when unset (a
+// complete air-gap install set needs the non-F5 deps). Safe on a nil receiver.
+func (r *RegistryCfg) IncludeDepsOrDefault() bool {
+	if r == nil || r.IncludeDeps == nil {
+		return true
+	}
+	return *r.IncludeDeps
 }
 
 // BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field

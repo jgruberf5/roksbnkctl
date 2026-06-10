@@ -253,7 +253,9 @@ func (w *Workspace) StatePath() string {
 // IBM provider's data sources and FLO's local-exec provisioners find
 // them.
 func (w *Workspace) WriteTFVars(wsCfg *config.Workspace) error {
-	return WriteTFVars(w.TFVarsPath(), wsCfg, w.KubeconfigDir(), w.ScratchDir())
+	// Pass the workspace name so the render can resolve the Sprint-29 air-gap
+	// registry-mirror record and redirect the BNK install off far_repo_url.
+	return WriteTFVarsForWorkspace(w.TFVarsPath(), w.name, wsCfg, w.KubeconfigDir(), w.ScratchDir())
 }
 
 // KubeconfigDir is the path threaded through to the root TF's
@@ -343,9 +345,6 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	}
 	if filepath.Base(w.stateDir) == "state-gateway" {
 		return "gateway"
-	}
-	if shape, err := config.DetectShape(w.name); err == nil && shape == config.ShapeLegacySingle {
-		return "legacy-single"
 	}
 	return "trial"
 }

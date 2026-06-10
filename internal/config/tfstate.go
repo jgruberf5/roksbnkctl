@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -40,13 +41,6 @@ const (
 	// files. The "new normal" once `cluster up` + `bnk up` (or a
 	// post-register `up`) have both run.
 	ShapeSplit
-
-	// ShapeLegacySingle — the trial-phase state contains cluster-phase
-	// modules from a pre-split v1.0.x `roksbnkctl up` run. The cluster
-	// phase state directory is typically empty / absent in this shape.
-	// Triggers refusals on `cluster up/down` and `bnk up/down` — the
-	// only safe command surface is the monolithic `up`/`down`.
-	ShapeLegacySingle
 )
 
 // String returns the human-readable shape name used in logs, errors,
@@ -60,8 +54,6 @@ func (s WorkspaceShape) String() string {
 		return "cluster-only"
 	case ShapeSplit:
 		return "split"
-	case ShapeLegacySingle:
-		return "legacy-single-state"
 	default:
 		return "unknown"
 	}
@@ -116,25 +108,7 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 		return ShapeUnknown, err
 	}
 
-	// Only check for the legacy-single-state signature when the trial
-	// state actually has something in it — saves a re-read for the
-	// common "empty trial" case and keeps the legacy classification
-	// from triggering on a truly empty workspace.
-	trialHasCluster := false
-	if trialHas {
-		trialHasCluster, err = trialStateHasClusterModules(trialState)
-		if err != nil {
-			return ShapeUnknown, err
-		}
-	}
-
 	switch {
-	case trialHasCluster:
-		// Cluster + trial share one state file. Legacy takes
-		// precedence over Split even when the cluster state happens
-		// to also have something in it — the shared-state shape is
-		// the meaningful constraint for dispatch.
-		return ShapeLegacySingle, nil
 	case trialHas && clusterHas:
 		return ShapeSplit, nil
 	case trialHas:
@@ -156,25 +130,17 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 // derived purely from the per-phase state dir — no terraform / cloud
 // calls, same contract as DetectShape. See
 // issues/issue_sprint28_architect.md §2c.
-//
-// Legacy is special: when a workspace is a v1.0.x single-state monolith
-// (cluster modules live in state/), Legacy is true and BNK / Testing are
-// reported false — the monolith is its own world and the phase verbs
-// refuse on it. Cluster may still be reported true via state-cluster/ in
-// the unusual case both exist, but in practice a legacy workspace has no
-// state-cluster/.
 type Presence struct {
 	Cluster bool // state-cluster/ has managed resources (the ROKS cluster)
-	BNK     bool // state/ has managed BNK resources (and is NOT legacy-monolith)
+	BNK     bool // state/ has managed BNK resources
 	Testing bool // state-testing/ has managed resources (the jumphosts)
 	Gateway bool // state-gateway/ has managed resources (the data-plane config)
-	Legacy  bool // state/ carries cluster modules (v1.0.x single-state)
 }
 
-// Any reports whether at least one phase (or the legacy monolith) has
-// resources — i.e. the workspace is non-empty.
+// Any reports whether at least one phase has resources — i.e. the
+// workspace is non-empty.
 func (p Presence) Any() bool {
-	return p.Cluster || p.BNK || p.Testing || p.Gateway || p.Legacy
+	return p.Cluster || p.BNK || p.Testing || p.Gateway
 }
 
 // DetectPresence inspects on-disk state for `workspace` and reports the
@@ -184,11 +150,8 @@ func (p Presence) Any() bool {
 //
 // Detection rules (architect §2c):
 //   - Cluster = state-cluster/ has a managed ibm_container_vpc_cluster
-//     under a clusterPhaseModules prefix (the authoritative cluster
-//     signal, retargeted at the cluster state).
-//   - Legacy  = state/ carries that same managed-cluster signal (the
-//     v1.0.x monolith). When Legacy, BNK and Testing are forced false.
-//   - BNK     = state/ has ≥1 managed resource AND not Legacy.
+//     under a clusterPhaseModules prefix (the authoritative cluster signal).
+//   - BNK     = state/ has ≥1 managed resource.
 //   - Testing = state-testing/ has ≥1 managed resource.
 func DetectPresence(workspace string) (Presence, error) {
 	var p Presence
@@ -216,22 +179,12 @@ func DetectPresence(workspace string) (Presence, error) {
 	}
 	p.Cluster = clusterHasCluster
 
-	// Legacy / BNK — both keyed off state/.
+	// BNK — any managed resource in state/.
 	bnkHas, err := tfstateHasResources(bnkState)
 	if err != nil {
 		return p, err
 	}
-	if bnkHas {
-		legacy, lerr := stateHasManagedClusterResource(bnkState)
-		if lerr != nil {
-			return p, lerr
-		}
-		if legacy {
-			p.Legacy = true
-		} else {
-			p.BNK = true
-		}
-	}
+	p.BNK = bnkHas
 
 	// Testing — any managed resource in state-testing/.
 	testingHas, err := tfstateHasResources(testingState)
@@ -254,38 +207,6 @@ func DetectPresence(workspace string) (Presence, error) {
 	return p, nil
 }
 
-// TestingMigrationNeeded reports the Sprint 28 migration condition: the
-// jumphosts (module.testing.*) still live in the BNK state (state/) AND
-// state-testing/ has no resources yet. This is the pre-Sprint-28 split
-// workspace whose jumphosts need evicting from state/ into state-testing/
-// (architect §1d). Pure filesystem; surfaced as a one-line nudge, never
-// auto-run.
-func TestingMigrationNeeded(workspace string) (bool, error) {
-	bnkDir, err := WorkspaceStateDir(workspace)
-	if err != nil {
-		return false, err
-	}
-	testingDir, err := WorkspaceTestingStateDir(workspace)
-	if err != nil {
-		return false, err
-	}
-	bnkState := filepath.Join(bnkDir, "terraform.tfstate")
-	testingState := filepath.Join(testingDir, "terraform.tfstate")
-
-	bnkHasTesting, err := stateHasManagedModule(bnkState, "module.testing")
-	if err != nil {
-		return false, err
-	}
-	if !bnkHasTesting {
-		return false, nil
-	}
-	testingHas, err := tfstateHasResources(testingState)
-	if err != nil {
-		return false, err
-	}
-	return !testingHas, nil
-}
-
 // stateHasManagedClusterResource is the generalized form of
 // trialStateHasClusterModules, retargetable at any state file (Sprint 28
 // reuses it for both the legacy-detection on state/ and the
@@ -294,39 +215,6 @@ func TestingMigrationNeeded(workspace string) (bool, error) {
 // clusterPhaseModules prefix.
 func stateHasManagedClusterResource(path string) (bool, error) {
 	return trialStateHasClusterModules(path)
-}
-
-// stateHasManagedModule reports whether `path` carries at least one
-// MANAGED resource whose module address equals `prefix` or begins with
-// `prefix + "."`. Used by TestingMigrationNeeded to detect jumphosts
-// (module.testing.*) lingering in the BNK state. Data-source reads
-// (mode == "data") don't count — only ownership.
-func stateHasManagedModule(path, prefix string) (bool, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	var s struct {
-		Resources []struct {
-			Mode   string `json:"mode"`
-			Module string `json:"module"`
-		} `json:"resources"`
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return false, err
-	}
-	for _, r := range s.Resources {
-		if r.Mode != "managed" {
-			continue
-		}
-		if r.Module == prefix || strings.HasPrefix(r.Module, prefix+".") {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // tfstateHasResources reports whether `path` is a terraform.tfstate
@@ -339,6 +227,88 @@ func stateHasManagedModule(path, prefix string) (bool, error) {
 // shape detection a first-class concern — `DeleteWorkspace`'s existing
 // call site (workspace.go) continues to work because we're in the same
 // package.
+// TestingJumphostSubnetCIDRs reads the deployed Testing phase's jumphost
+// subnet CIDRs from state-testing/terraform.tfstate's outputs (PRD 12) so
+// `gateway up` can auto-derive the gateway client-subnet LISTS from the
+// real test rig — one local route per cluster-VPC jumphost subnet, one
+// remote route for the client-VPC subnet. Pure filesystem + JSON. Returns
+// (tgw, cluster, ok); ok is false when the state file, the outputs, or
+// every CIDR is absent — the caller falls back rather than failing.
+//
+// The TGW jumphost's "TGW jumphost not created" sentinel (emitted when
+// testing_create_tgw_jumphost = false) is normalised to "".
+func TestingJumphostSubnetCIDRs(workspace string) (tgw string, cluster map[string]string, ok bool) {
+	dir, err := WorkspaceTestingStateDir(workspace)
+	if err != nil {
+		return "", nil, false
+	}
+	return readJumphostSubnetCIDRs(filepath.Join(dir, "terraform.tfstate"))
+}
+
+func readJumphostSubnetCIDRs(path string) (string, map[string]string, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, false
+	}
+	var s struct {
+		Outputs struct {
+			TGW struct {
+				Value string `json:"value"`
+			} `json:"testing_tgw_jumphost_subnet_cidr"`
+			Cluster struct {
+				Value map[string]string `json:"value"`
+			} `json:"testing_cluster_jumphost_subnet_cidrs"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return "", nil, false
+	}
+	tgw := strings.TrimSpace(s.Outputs.TGW.Value)
+	if tgw == "TGW jumphost not created" {
+		tgw = ""
+	}
+	cluster := s.Outputs.Cluster.Value
+	ok := tgw != "" || len(cluster) > 0
+	return tgw, cluster, ok
+}
+
+// StateOutput is one terraform output read from a phase's terraform.tfstate.
+type StateOutput struct {
+	Value     any
+	Sensitive bool
+}
+
+// ReadStateOutputs reads the `.outputs` map from <stateDir>/terraform.tfstate,
+// returning each output's decoded value + sensitivity. The per-phase `status`
+// commands use it to surface runtime state (jumphost IPs, cluster endpoints,
+// gateway listeners, …) straight from state — no terraform init, no API key.
+// Returns an fs.ErrNotExist-wrapping error when the phase has no state file
+// (i.e. the phase is not deployed); callers test that with errors.Is.
+func ReadStateOutputs(stateDir string) (map[string]StateOutput, error) {
+	b, err := os.ReadFile(filepath.Join(stateDir, "terraform.tfstate"))
+	if err != nil {
+		return nil, err // fs.ErrNotExist when the phase isn't deployed
+	}
+	var s struct {
+		Outputs map[string]struct {
+			Value     json.RawMessage `json:"value"`
+			Sensitive bool            `json:"sensitive"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil, fmt.Errorf("parsing terraform.tfstate outputs in %s: %w", stateDir, err)
+	}
+	out := make(map[string]StateOutput, len(s.Outputs))
+	for name, o := range s.Outputs {
+		var v any
+		if len(o.Value) > 0 {
+			_ = json.Unmarshal(o.Value, &v)
+		}
+		out[name] = StateOutput{Value: v, Sensitive: o.Sensitive}
+	}
+	return out, nil
+}
+
 func tfstateHasResources(path string) (bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

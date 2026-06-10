@@ -23,7 +23,8 @@ Every jumphost is provisioned at boot with the following tools via `user_data`:
 | kubectl | Kubernetes API access |
 | OpenShift CLI (`oc`) | OpenShift-specific cluster operations |
 | `curl` | HTTP/HTTPS endpoint testing |
-| `iperf3` | Network throughput measurement between jumphosts or to cluster nodes |
+| `iperf3` | Network throughput measurement between jumphosts or to cluster nodes; the `test matrix` L4 family |
+| `h2load` (nghttp2-client) | HTTP/1.1+HTTP/2 load generation for the `test matrix` L7 family (http/https) |
 | `dig` (dnsutils) | DNS resolution testing and troubleshooting |
 | `nc` (netcat) | TCP/UDP port reachability checks |
 | `netstat` (net-tools) | Active connection and routing table inspection |
