@@ -22,7 +22,7 @@ A purpose-built provisioner for one workload — F5 BIG-IP Next for Kubernetes �
 - **Imperative phased provisioner.** ~30 ordered phases (`Phase00Preflight` → `Phase25ActivationPoll` → `Phase13Postflight`) run via the AWS Go SDK. AWS resource tags are the source of truth; a local `state.env` cache is rebuildable from tags.
 - **`cluster.yaml` intent file.** Declarative inputs (VPC, network, node group, BNK credentials) → imperative AWS calls. Validated up-front before any mutation.
 - **`scenarios` framework.** Built-in end-to-end traffic validation against the provisioned cluster (5 green data-plane scenarios + a curated demo catalogue).
-- **`demo` experience.** Audience-friendly walkthrough surface with a rocket-themed launch renderer (gated on `--demo` + TTY) and protocol demos for HTTP/2 (h2c) and Diameter (L4).
+- **`demo` experience.** Audience-friendly walkthrough surface with a rocket-themed launch renderer (gated on `--demo` + TTY): protocol demos (HTTP/2 h2c, Diameter L4) plus **migration scenarios** that run BNK side-by-side with ingress-nginx/HAProxy (`ingress-migration`) and against an external BIG-IP VE + CIS (`bigip-cis`) — the appliance model BNK replaces.
 
 ## Quick start
 
@@ -144,7 +144,7 @@ The **demo** example also ships two migration scenarios — `demo run ingress-mi
 | `validate <path>` | Parse + validate a `cluster.yaml` (no AWS API calls). |
 | `topology` | Render the cluster data-path topology (VPC, TMM VLANs, jumphost, gateways). |
 | `scenarios {list,run,clean}` | Built-in data-plane traffic validation suite. |
-| `demo {list,run,clean}` | Curated audience walkthrough (HTTP/2, Diameter, green scenarios). |
+| `demo {list,run,clean}` | Curated audience walkthrough — HTTP/2, Diameter, and the `ingress-migration` / `bigip-cis` migration scenarios. |
 | `test traffic` | Shorthand for `scenarios run http-routing-e2e`. |
 | `bnk resync [route]` | Force the CNE controller to re-resolve stale TMM pool members. |
 | `k <verb> [args]` | Kubernetes passthrough — `get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`. No host `kubectl` needed. |
@@ -155,10 +155,12 @@ The **demo** example also ships two migration scenarios — `demo run ingress-mi
 
 `awsbnkctl up --demo` provisions the **identical** cluster as a normal `up`, plus:
 
-- a rocket-themed launch renderer that maps the ~30 phases into 4 stages
+- a rocket-themed launch renderer that maps the phases into 4 stages
 - pre-stages a demo client (`grpcurl`, diameter python client) on the jumphost
 - tags resources `awsbnkctl:demo=true` with an absolute expiry tag
-- enables `awsbnkctl demo run` to drive narrated protocol walkthroughs
+- enables `awsbnkctl demo run` to drive narrated walkthroughs: protocol demos
+  (HTTP/2, Diameter) and migration scenarios (`ingress-migration`, `bigip-cis` —
+  see [`examples/demo/README.md`](examples/demo/README.md))
 
 ```
    awsbnkctl ▸ tracer ▸ DEMO LAUNCH   T+38s
