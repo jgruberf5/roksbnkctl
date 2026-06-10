@@ -27,16 +27,6 @@ const (
 	// bigipVEInstanceTerminatedTimeout is the maximum time to wait for terminated state.
 	bigipVEInstanceTerminatedTimeout = 15 * time.Minute
 
-	// bigipVEKeyName is the EC2 key pair name created for BIG-IP SSH access.
-	// The corresponding PEM private key is written to <StateDir>/bigip-ssh.pem
-	// (mode 0600). It is used by the onboarding slice (F2-B2) to SSH from the
-	// jumphost into the BIG-IP management interface.
-	//
-	// IMPORTANT: The BIG-IP admin PASSWORD is NOT handled here — it is read from
-	// AWSBNKCTL_BIGIP_PASSWORD at F2-B2 onboarding time. Never store credentials
-	// in cluster.yaml or state.env.
-	bigipVEKeyName = "bnk-demo-bigip"
-
 	// bigipVEPEMFile is the filename (relative to StateDir) for the SSH private key.
 	bigipVEPEMFile = "bigip-ssh.pem"
 
@@ -49,13 +39,30 @@ const (
 	bigipVEAMIOwner = "aws-marketplace"
 )
 
+// bigipVEKeyName derives the per-cluster EC2 key pair name for BIG-IP SSH
+// access: "<cluster-name>-bigip". The name MUST be cluster-scoped — a shared
+// constant name collides when two clusters with bigipVE run in the same
+// account/region (the second cluster "reuses" the key pair but has no PEM)
+// and makes `down` of one cluster delete the other cluster's key.
+//
+// The corresponding PEM private key is written to <StateDir>/bigip-ssh.pem
+// (mode 0600). It is used by the onboarding slice (F2-B2) to SSH from the
+// jumphost into the BIG-IP management interface.
+//
+// IMPORTANT: The BIG-IP admin PASSWORD is NOT handled here — it is read from
+// AWSBNKCTL_BIGIP_PASSWORD at F2-B2 onboarding time. Never store credentials
+// in cluster.yaml or state.env.
+func bigipVEKeyName(clusterName string) string {
+	return clusterName + "-bigip"
+}
+
 // Phase17eBigIPVE provisions a 3-NIC F5 BIG-IP VE EC2 instance when
 // bigipVE.enabled is true in cluster.yaml. This phase handles LAUNCH ONLY —
 // BIG-IP onboarding (setting the admin password, provisioning modules, AS3)
 // is deferred to F2-B2. The phase is a no-op when !cl.BigIPVEEnabled().
 //
 // Provisioned resources:
-//  1. EC2 key pair "bnk-demo-bigip" (PEM saved to <StateDir>/bigip-ssh.pem).
+//  1. EC2 key pair "<cluster>-bigip" (PEM saved to <StateDir>/bigip-ssh.pem).
 //  2. BIG-IP mgmt SG (ingress 443+22 from jumphost SG; 443 from EKS node SG).
 //  3. eth0 mgmt ENI  — public subnet [MgmtSubnetIndex], IP .50, mgmt SG.
 //  4. eth1 external ENI — BNK_EXT_SUBNET, IP .50 + VIP as secondary, data SG, src/dst-check off.
@@ -79,6 +86,7 @@ func Phase17eBigIPVE(ctx context.Context, cl *intent.Cluster, st *state.State, c
 	}
 
 	ve := cl.BigIPVE
+	keyName := bigipVEKeyName(name)
 	instanceType := ve.InstanceType
 	if instanceType == "" {
 		instanceType = "c5n.2xlarge"
@@ -88,7 +96,7 @@ func Phase17eBigIPVE(ctx context.Context, cl *intent.Cluster, st *state.State, c
 		fmt.Fprintf(os.Stderr, "[phase 17e] dry-run: would resolve BIG-IP PAYG AMI (owner=%s tier=%s)\n",
 			bigipVEAMIOwner, ve.LicenseTier)
 		fmt.Fprintf(os.Stderr, "[phase 17e] dry-run: would create key pair %s → %s/bigip-ssh.pem\n",
-			bigipVEKeyName, name)
+			keyName, name)
 		fmt.Fprintf(os.Stderr, "[phase 17e] dry-run: would create BIG-IP mgmt SG (443+22 jumphost; 443 EKS node SG)\n")
 		fmt.Fprintf(os.Stderr, "[phase 17e] dry-run: would create 3 ENIs (mgmt/ext/int) and launch %s VE\n", instanceType)
 		fmt.Fprintf(os.Stderr, "[phase 17e] dry-run: would write 11 BIGIP_* state keys\n")
@@ -101,7 +109,7 @@ func Phase17eBigIPVE(ctx context.Context, cl *intent.Cluster, st *state.State, c
 		st.Set("BIGIP_INT_ENI_ID", "eni-dry-run-bigip-int")
 		st.Set("BIGIP_INT_IP", "10.0.20.50")
 		st.Set("BIGIP_MGMT_SG_ID", "sg-dry-run-bigip-mgmt")
-		st.Set("BIGIP_KEY_NAME", bigipVEKeyName)
+		st.Set("BIGIP_KEY_NAME", keyName)
 		st.Set("BIGIP_AMI_ID", "ami-dry-run-bigip")
 		st.Set("BIGIP_SSH_KEY_PATH", ".awsbnkctl/"+name+"/"+bigipVEPEMFile)
 		return nil
@@ -156,10 +164,10 @@ func Phase17eBigIPVE(ctx context.Context, cl *intent.Cluster, st *state.State, c
 
 	// Step 1: EC2 key pair — create or reuse.
 	// ensureBigIPKeyPair writes the PEM on fresh creation and is a no-op on reuse.
-	if _, err := ensureBigIPKeyPair(ctx, clients.EC2, bigipVEKeyName, st); err != nil {
+	if _, err := ensureBigIPKeyPair(ctx, clients.EC2, keyName, st); err != nil {
 		return fmt.Errorf("phase17e: key pair: %w", err)
 	}
-	st.Set("BIGIP_KEY_NAME", bigipVEKeyName)
+	st.Set("BIGIP_KEY_NAME", keyName)
 	pemFilePath := st.Dir() + "/" + bigipVEPEMFile
 	st.Set("BIGIP_SSH_KEY_PATH", pemFilePath)
 
@@ -231,7 +239,7 @@ func Phase17eBigIPVE(ctx context.Context, cl *intent.Cluster, st *state.State, c
 
 	// Step 7: Launch BIG-IP VE with all 3 ENIs pre-attached.
 	instanceID, err := ensureBigIPInstance(ctx, clients.EC2, name, amiID, instanceType,
-		bigipVEKeyName, mgmtENIID, extENIID, intENIID, cl.Tags, cl.Metadata.Labels, st)
+		keyName, mgmtENIID, extENIID, intENIID, cl.Tags, cl.Metadata.Labels, st)
 	if err != nil {
 		// Surface a helpful error if the operator hasn't subscribed to the AMI.
 		if isBigIPOptInRequired(err) {
@@ -319,10 +327,13 @@ func Phase17eBigIPVEDown(ctx context.Context, cl *intent.Cluster, st *state.Stat
 		}
 	}
 
-	// Step 4: delete key pair.
+	// Step 4: delete key pair. Prefer the name recorded in state (covers
+	// legacy state files that recorded the old shared "bnk-demo-bigip" name);
+	// otherwise fall back to the per-cluster derived name. NEVER fall back to
+	// a shared constant — that could delete another cluster's key pair.
 	keyName := st.Get("BIGIP_KEY_NAME")
 	if keyName == "" {
-		keyName = bigipVEKeyName
+		keyName = bigipVEKeyName(name)
 	}
 	fmt.Fprintf(os.Stderr, "[phase 17e down] deleting key pair %s\n", keyName)
 	if _, err := clients.EC2.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{
@@ -333,14 +344,28 @@ func Phase17eBigIPVEDown(ctx context.Context, cl *intent.Cluster, st *state.Stat
 		}
 	}
 
+	// Step 5: best-effort removal of the local PEM (tolerates missing).
+	pemFilePath := st.Dir() + "/" + bigipVEPEMFile
+	if err := os.Remove(pemFilePath); err == nil {
+		fmt.Fprintf(os.Stderr, "[phase 17e down] removed local SSH key %s\n", pemFilePath)
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[phase 17e down] warning: could not remove %s: %v\n", pemFilePath, err)
+	}
+
 	clearBigIPVEState(st)
 	return st.Save()
 }
 
 // ensureBigIPKeyPair creates the EC2 key pair, saves the PEM to StateDir, and
-// returns the path. If the key pair already exists (DescribeKeyPairs finds it),
-// it is reused and "" is returned as the PEM path (existing PEM is preserved on
-// disk). This is idempotent: a second run with the PEM already written is a no-op.
+// returns the path. If the key pair already exists (DescribeKeyPairs finds it)
+// AND the local PEM is on disk, it is reused and "" is returned as the PEM path.
+// This is idempotent: a second run with the PEM already written is a no-op.
+//
+// If the key pair exists in AWS but the local PEM is missing, the pair is
+// useless (the private key is unrecoverable): the AWS key pair is deleted and
+// recreated so a fresh PEM lands on disk — unless the BIG-IP VE instance from
+// state still exists (it was launched with the old key), in which case a clear
+// actionable error is returned instead.
 func ensureBigIPKeyPair(ctx context.Context, ec2c EC2API, keyName string, st *state.State) (string, error) {
 	pemFilePath := st.Dir() + "/" + bigipVEPEMFile
 
@@ -349,9 +374,30 @@ func ensureBigIPKeyPair(ctx context.Context, ec2c EC2API, keyName string, st *st
 		KeyNames: []string{keyName},
 	})
 	if err == nil && len(descOut.KeyPairs) > 0 {
-		fmt.Fprintf(os.Stderr, "[phase 17e] key pair %s already exists — reusing\n", keyName)
-		// If PEM is already on disk, nothing to do.
-		return "", nil
+		if _, statErr := os.Stat(pemFilePath); statErr == nil {
+			fmt.Fprintf(os.Stderr, "[phase 17e] key pair %s already exists — reusing\n", keyName)
+			return "", nil
+		}
+		// Key pair exists in AWS but the PEM is gone locally. If the VE
+		// instance is still using the key, recreating it won't help (the
+		// instance keeps the old public key) — fail with guidance instead.
+		if instID := st.Get("BIGIP_INSTANCE_ID"); instID != "" && instID != "i-dry-run-bigip" &&
+			bigipInstanceInUse(ctx, ec2c, instID) {
+			return "", fmt.Errorf("key pair %s exists in AWS but the local PEM %s is missing, "+
+				"and BIG-IP instance %s was launched with it; restore the PEM from a backup, "+
+				"or tear down the BIG-IP VE (down) and re-run to recreate the key pair",
+				keyName, pemFilePath, instID)
+		}
+		fmt.Fprintf(os.Stderr, "[phase 17e] key pair %s exists but PEM %s is missing — recreating key pair\n",
+			keyName, pemFilePath)
+		if _, delErr := ec2c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{
+			KeyName: ptr(keyName),
+		}); delErr != nil {
+			if e := ignoreNotFound(delErr); e != nil {
+				return "", fmt.Errorf("ec2:DeleteKeyPair %s (recreate for missing PEM): %w", keyName, delErr)
+			}
+		}
+		// Fall through to creation below.
 	}
 
 	// Key pair not found — create it and save the PEM.
@@ -383,6 +429,28 @@ func ensureBigIPKeyPair(ctx context.Context, ec2c EC2API, keyName string, st *st
 	}
 	fmt.Fprintf(os.Stderr, "[phase 17e] created key pair %s → %s\n", keyName, pemFilePath)
 	return pemFilePath, nil
+}
+
+// bigipInstanceInUse reports whether the given BIG-IP VE instance still exists
+// in a non-terminated state (i.e. it is still using the key pair it was
+// launched with). Describe errors (e.g. NotFound for an already-gone instance)
+// are treated as "not in use".
+func bigipInstanceInUse(ctx context.Context, ec2c EC2API, instanceID string) bool {
+	out, err := ec2c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil || len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
+		return false
+	}
+	inst := out.Reservations[0].Instances[0]
+	if inst.State == nil {
+		return true // unknown state — be conservative, don't delete the key
+	}
+	switch inst.State.Name {
+	case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
+		return false
+	}
+	return true
 }
 
 // resolveBigIPAMI resolves the newest BIG-IP VE PAYG AMI from AWS Marketplace.
@@ -536,11 +604,17 @@ func ensureBigIPENI(ctx context.Context, ec2c EC2API, clusterName, subnetID, sgI
 	// Check state first.
 	if eniID := st.Get(stateKey); eniID != "" {
 		fmt.Fprintf(os.Stderr, "[phase 17e] %s ENI found in state: %s\n", component, eniID)
+		if err := reassertBigIPENIConfig(ctx, ec2c, eniID, secondaryIP, disableSrcDstCheck); err != nil {
+			return "", err
+		}
 		return eniID, nil
 	}
 	// Tag-discovery fallback.
 	if eniID := lookupENIByTag(ctx, ec2c, clusterName, component); eniID != "" {
 		fmt.Fprintf(os.Stderr, "[phase 17e] %s ENI found via tags: %s\n", component, eniID)
+		if err := reassertBigIPENIConfig(ctx, ec2c, eniID, secondaryIP, disableSrcDstCheck); err != nil {
+			return "", err
+		}
 		return eniID, nil
 	}
 
@@ -585,6 +659,55 @@ func ensureBigIPENI(ctx context.Context, ec2c EC2API, clusterName, subnetID, sgI
 
 	fmt.Fprintf(os.Stderr, "[phase 17e] created BIG-IP %s ENI %s (ip=%s)\n", nameSuffix, eniID, primaryIP)
 	return eniID, nil
+}
+
+// reassertBigIPENIConfig re-applies attributes on an existing (reused) ENI
+// that a prior run may have failed to set mid-flight:
+//   - SourceDestCheck=false (ModifyNetworkInterfaceAttribute is idempotent).
+//   - The VIP secondary private IP — verified via DescribeNetworkInterfaces
+//     and assigned when missing (mirrors the create path's secondary-IP logic).
+//
+// Without this, a re-run that finds the ENI via state or tags would silently
+// leave a broken data path when the original Modify/Assign failed.
+func reassertBigIPENIConfig(ctx context.Context, ec2c EC2API, eniID, secondaryIP string, disableSrcDstCheck bool) error {
+	if disableSrcDstCheck {
+		if _, err := ec2c.ModifyNetworkInterfaceAttribute(ctx, &ec2.ModifyNetworkInterfaceAttributeInput{
+			NetworkInterfaceId: ptr(eniID),
+			SourceDestCheck:    &ec2types.AttributeBooleanValue{Value: boolPtr(false)},
+		}); err != nil {
+			return fmt.Errorf("ec2:ModifyNetworkInterfaceAttribute --no-source-dest-check %s: %w", eniID, err)
+		}
+	}
+	if secondaryIP == "" {
+		return nil
+	}
+	out, err := ec2c.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
+	if err != nil {
+		return fmt.Errorf("ec2:DescribeNetworkInterfaces %s (verify VIP secondary IP): %w", eniID, err)
+	}
+	for _, ni := range out.NetworkInterfaces {
+		if ni.NetworkInterfaceId == nil || *ni.NetworkInterfaceId != eniID {
+			continue
+		}
+		for _, addr := range ni.PrivateIpAddresses {
+			if addr.PrivateIpAddress != nil && *addr.PrivateIpAddress == secondaryIP {
+				return nil // VIP already present
+			}
+		}
+		if _, err := ec2c.AssignPrivateIpAddresses(ctx, &ec2.AssignPrivateIpAddressesInput{
+			NetworkInterfaceId: ptr(eniID),
+			PrivateIpAddresses: []string{secondaryIP},
+		}); err != nil {
+			return fmt.Errorf("ec2:AssignPrivateIpAddresses %s (VIP %s): %w", eniID, secondaryIP, err)
+		}
+		fmt.Fprintf(os.Stderr, "[phase 17e] re-assigned missing VIP secondary IP %s on ENI %s\n", secondaryIP, eniID)
+		return nil
+	}
+	// ENI not in the describe output — nothing to verify here; the caller's
+	// state/tag lookup already established the ENI exists.
+	return nil
 }
 
 // ensureBigIPInstance launches (or finds) the BIG-IP VE EC2 instance with 3
@@ -672,10 +795,14 @@ func ensureBigIPInstance(ctx context.Context, ec2c EC2API, clusterName, amiID, i
 // waitBigIPInstanceRunning polls until the BIG-IP VE EC2 instance is running.
 func waitBigIPInstanceRunning(ctx context.Context, ec2c EC2API, instanceID string) error {
 	deadline := time.Now().Add(bigipVEInstanceRunningTimeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		out, err := ec2c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 			InstanceIds: []string{instanceID},
 		})
+		if err != nil {
+			lastErr = err
+		}
 		if err == nil && len(out.Reservations) > 0 && len(out.Reservations[0].Instances) > 0 {
 			s := out.Reservations[0].Instances[0].State
 			if s != nil && s.Name == ec2types.InstanceStateNameRunning {
@@ -688,12 +815,16 @@ func waitBigIPInstanceRunning(ctx context.Context, ec2c EC2API, instanceID strin
 		case <-time.After(bigipVEInstancePollInterval):
 		}
 	}
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for BIG-IP instance %s to reach running state (last describe error: %w)", instanceID, lastErr)
+	}
 	return fmt.Errorf("timeout waiting for BIG-IP instance %s to reach running state", instanceID)
 }
 
 // waitBigIPInstanceTerminated polls until the BIG-IP VE EC2 instance is terminated.
 func waitBigIPInstanceTerminated(ctx context.Context, ec2c EC2API, instanceID string) error {
 	deadline := time.Now().Add(bigipVEInstanceTerminatedTimeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		out, err := ec2c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 			InstanceIds: []string{instanceID},
@@ -702,6 +833,7 @@ func waitBigIPInstanceTerminated(ctx context.Context, ec2c EC2API, instanceID st
 			if ignoreNotFound(err) == nil {
 				return nil // already gone
 			}
+			lastErr = err
 		}
 		if err == nil && len(out.Reservations) > 0 && len(out.Reservations[0].Instances) > 0 {
 			s := out.Reservations[0].Instances[0].State
@@ -716,6 +848,9 @@ func waitBigIPInstanceTerminated(ctx context.Context, ec2c EC2API, instanceID st
 			return ctx.Err()
 		case <-time.After(bigipVEInstancePollInterval):
 		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for BIG-IP instance %s to terminate (last describe error: %w)", instanceID, lastErr)
 	}
 	return fmt.Errorf("timeout waiting for BIG-IP instance %s to terminate", instanceID)
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -339,6 +340,16 @@ func RunCurlBodyProbes(ctx context.Context, opts ProbeOptions) ([]BodyProbeResul
 // is responsible for minting + pushing the key before calling this (use
 // prepareEICEKey).
 func SSHRunViaEICE(ctx context.Context, region, instanceID, keyPath, remoteCmd string) (string, error) {
+	return SSHRunViaEICEWithStdin(ctx, region, instanceID, keyPath, remoteCmd, nil)
+}
+
+// SSHRunViaEICEWithStdin is SSHRunViaEICE with the local ssh process's stdin
+// attached to the given reader (nil = no stdin, identical to SSHRunViaEICE).
+// stdin propagates through ssh → sshd → the remote command (and onward through
+// any nested ssh the remote command runs), so callers can deliver secrets to a
+// remote `cat > file` without the secret ever appearing on a command line
+// (argv) — neither in the operator host's process list nor the jumphost's.
+func SSHRunViaEICEWithStdin(ctx context.Context, region, instanceID, keyPath, remoteCmd string, stdin io.Reader) (string, error) {
 	proxy := fmt.Sprintf(`ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id %s --region %s`, instanceID, region)
 	args := []string{
 		"-o", proxy,
@@ -354,6 +365,7 @@ func SSHRunViaEICE(ctx context.Context, region, instanceID, keyPath, remoteCmd s
 	// remoteCmd built from package-controlled values (port + shell-escaped
 	// marker); no caller-supplied free text reaches the subprocess.
 	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

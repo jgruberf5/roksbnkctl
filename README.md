@@ -31,9 +31,11 @@ A purpose-built provisioner for one workload — F5 BIG-IP Next for Kubernetes �
 go build -o awsbnkctl ./cmd/awsbnkctl
 
 # 2. Copy an example and edit it
-cp examples/tracer/cluster.yaml my-cluster.yaml
+#    For a complete BNK deployment start from full-cluster:
+cp examples/full-cluster/cluster.yaml my-cluster.yaml
 #    Set: metadata.name, metadata.region, network CIDRs, cluster.nodeGroups,
 #         bnk.farArchive (FAR pull credentials JSON), bnk.jwt (subscription JWT).
+#    (examples/tracer/ is a network-only smoke test — no EKS/BNK blocks.)
 
 # 3. Authenticate to AWS (standard credential chain)
 export AWS_PROFILE=my-profile
@@ -145,11 +147,16 @@ The **demo** example also ships two migration scenarios — `demo run ingress-mi
 | `topology` | Render the cluster data-path topology (VPC, TMM VLANs, jumphost, gateways). |
 | `scenarios {list,run,clean}` | Built-in data-plane traffic validation suite. |
 | `demo {list,run,clean}` | Curated audience walkthrough — HTTP/2, Diameter, and the `ingress-migration` / `bigip-cis` migration scenarios. |
-| `test traffic` | Shorthand for `scenarios run http-routing-e2e`. |
+| `test {traffic,connectivity,dns,throughput}` | Deployment validation tests; `test traffic` is shorthand for `scenarios run http-routing-e2e`. |
 | `bnk resync [route]` | Force the CNE controller to re-resolve stale TMM pool members. |
 | `k <verb> [args]` | Kubernetes passthrough — `get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`. No host `kubectl` needed. |
 | `forge {register,status,unregister}` | Optional handoff to a running [bnk-forge](docs/FORGE_INTEGRATION.md) instance. |
-| `install` | Copy the running binary into a directory on PATH. |
+| `init` | Interactive setup — collects region/VPC/subnets/FAR/JWT, writes the workspace config. |
+| `workspaces` / `targets` | Manage per-environment workspaces and SSH targets (used by `--on`). |
+| `install` / `self update` | Copy the binary onto PATH / pull the latest GitHub release in place. |
+| `version` | Print version, commit, and build date. |
+
+Run `awsbnkctl --help` for the complete command tree.
 
 ## Demo experience
 

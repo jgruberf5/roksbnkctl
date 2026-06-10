@@ -417,10 +417,12 @@ func (s *scenario) Cleanup(ctx *scenarios.Context) error {
 	}
 
 	// Delete the demo namespace (idempotent).
-	ns := namespace(ctx)
-	err := ctx.Clientset.CoreV1().Namespaces().Delete(ctx.Ctx, ns, metav1.DeleteOptions{})
-	if err != nil && !scenarios.IsNotFound(err) {
-		return fmt.Errorf("deleting namespace %s: %w", ns, err)
+	if ctx.Clientset != nil {
+		ns := namespace(ctx)
+		err := ctx.Clientset.CoreV1().Namespaces().Delete(ctx.Ctx, ns, metav1.DeleteOptions{})
+		if err != nil && !scenarios.IsNotFound(err) {
+			return fmt.Errorf("deleting namespace %s: %w", ns, err)
+		}
 	}
 	return nil
 }

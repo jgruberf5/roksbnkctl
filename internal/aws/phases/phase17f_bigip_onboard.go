@@ -16,8 +16,8 @@ import (
 // bigipPasswordEnv is the environment variable from which the BIG-IP admin
 // password is read. The password is REQUIRED when bigipVE.enabled and is NEVER
 // stored in cluster.yaml, state.env, or placed on any command line (argv) — it
-// is written into a mode-600 file on the BIG-IP via an SSH stdin heredoc and
-// shredded after use.
+// is piped over SSH STDIN (through both hops: operator → jumphost → BIG-IP)
+// into a mode-600 file on the BIG-IP and shredded after use.
 const bigipPasswordEnv = "AWSBNKCTL_BIGIP_PASSWORD" // #nosec G101 -- env var NAME, not a credential
 
 const (
@@ -91,17 +91,27 @@ var (
 	bigipTokenVerifyBackoff = 9 * time.Second
 )
 
-// onboardRunStagingCmds and onboardCopyFile are package-level seams defaulting to
-// the real jumphost helpers. Tests in phase17f_bigip_onboard_test.go override
-// them to capture the emitted command sequence without any network/SSH calls
-// (same injection style as the jumphost package's own seams).
+// onboardRunStagingCmds, onboardRunStagingCmdStdin and onboardCopyFile are
+// package-level seams defaulting to the real jumphost helpers. Tests in
+// phase17f_bigip_onboard_test.go override them to capture the emitted command
+// sequence without any network/SSH calls (same injection style as the jumphost
+// package's own seams).
 //
 // onboardRunStagingCmds runs each command ON THE JUMPHOST over EICE; the BIG-IP
 // is reached from inside those command strings via `ssh -i <pem> admin@<mgmt>`
 // or `curl -sk https://<mgmt>/...`.
+//
+// onboardRunStagingCmdStdin is the secret-delivery path: it runs a single
+// jumphost command with the local ssh process's stdin attached, so the admin
+// password rides the SSH channel (operator ssh → jumphost sshd → inner ssh →
+// BIG-IP `cat`) and never appears on any argv.
+//
+// onboardCopyFile is the STDIN-based copy (CopyFileViaEICEStdin) so the BIG-IP
+// SSH PEM bytes never ride the local ssh argv either.
 var (
-	onboardRunStagingCmds = jumphost.RunStagingCommands
-	onboardCopyFile       = jumphost.CopyFileViaEICE
+	onboardRunStagingCmds     = jumphost.RunStagingCommands
+	onboardRunStagingCmdStdin = jumphost.RunStagingCommandWithStdin
+	onboardCopyFile           = jumphost.CopyFileViaEICEStdin
 )
 
 // bigipAS3RPMMinBytes guards against a truncated/redirected-to-error download.
@@ -130,7 +140,8 @@ const bigipAS3RPMMinBytes = 1 << 20 // 1 MiB
 //     lockout that 401s all auth ("Maximum number of login attempts exceeded"). Two
 //     idempotent `sys db` writes (password.maxloginfailures=0 +
 //     systemauth.disablelocaladminlockout=true) stop the admin account ever locking.
-//  3. Stage the admin-password 600-file on the BIG-IP (stdin heredoc, never argv).
+//  3. Stage the admin-password 600-file on the BIG-IP (piped via SSH stdin
+//     through both hops, never argv).
 //  4. Set admin password (tmsh -f from the 600-file; verify authed sys/ready 200).
 //  5. Provision LTM nominal (assert; usually already nominal on this AMI).
 //  6. Dataplane: external/internal VLANs + self-IPs from BIGIP_EXT_IP/BIGIP_INT_IP.
@@ -180,7 +191,7 @@ func Phase17fBigIPOnboard(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would copy BIG-IP SSH key to jumphost (mode 600)")
 		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would poll BIG-IP framework-up readiness (≥30 min budget)")
-		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would stage admin-pw 600-file (pw=*** from "+bigipPasswordEnv+", via stdin heredoc, never argv)")
+		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would stage admin-pw 600-file (pw=*** from "+bigipPasswordEnv+", piped via ssh stdin, never argv)")
 		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would set admin shell bash")
 		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would disable admin login-failure lockout (sys db password.maxloginfailures=0 + systemauth.disablelocaladminlockout=true)")
 		fmt.Fprintln(os.Stderr, "[phase 17f] dry-run: would set admin password + verify authed")
@@ -229,8 +240,10 @@ func Phase17fBigIPOnboard(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		InstanceID: jhInstanceID,
 	}
 
-	// Step 0: copy the BIG-IP SSH key to the jumphost (mode 600). All later
-	// BIG-IP access is `ssh -i <bigipPEMRemotePath> admin@<mgmtIP>` run ON the jumphost.
+	// Step 0: copy the BIG-IP SSH key to the jumphost (mode 600). The key bytes
+	// are piped via ssh STDIN (CopyFileViaEICEStdin), never placed on argv. All
+	// later BIG-IP access is `ssh -i <bigipPEMRemotePath> admin@<mgmtIP>` run ON
+	// the jumphost.
 	pemBytes, err := os.ReadFile(pemPath) // #nosec G304 -- path is our own state-managed PEM
 	if err != nil {
 		return fmt.Errorf("phase17f: reading BIG-IP SSH key %s: %w", pemPath, err)
@@ -287,13 +300,17 @@ func Phase17fBigIPOnboard(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return fmt.Errorf("phase17f: disable login-failure lockout: %w", err)
 	}
 
-	// Step 3: stage the admin-password 600-file on the BIG-IP via a stdin heredoc.
-	// This requires bash (umask + heredoc), which is now active after step 2.
-	// This single file backs every authed op below (curl -sku "admin:$(cat ...)")
-	// and the tmsh password-set — so the password never appears on argv anywhere.
-	// It is shredded at the end (and on the idempotency path above).
-	fmt.Fprintln(os.Stderr, "[phase 17f] staging admin-pw 600-file on BIG-IP (stdin heredoc, never argv)")
-	if _, err := onboardRunStagingCmds(ctx, opts, []string{bigipSSH(mgmtIP, bigipWritePWFileScript(pw))}); err != nil {
+	// Step 3: stage the admin-password 600-file on the BIG-IP. The password is
+	// supplied as STDIN to the outer (local) ssh and propagates through both hops
+	// (ssh → jumphost sshd → inner ssh → remote `cat`), so it never appears on
+	// any command line — not in the operator host's process list, not in the
+	// jumphost's, not on the BIG-IP. This requires bash (umask), which is now
+	// active after step 2. This single file backs every authed op below
+	// (curl -sku "admin:$(cat ...)") and the tmsh password-set — so the password
+	// never appears on argv anywhere. It is shredded at the end (and on the
+	// idempotency path above).
+	fmt.Fprintln(os.Stderr, "[phase 17f] staging admin-pw 600-file on BIG-IP (piped via ssh stdin, never argv)")
+	if _, err := onboardRunStagingCmdStdin(ctx, opts, bigipSSH(mgmtIP, bigipWritePWFileScript()), strings.NewReader(pw+"\n")); err != nil {
 		return fmt.Errorf("phase17f: staging admin-pw file: %w", err)
 	}
 
@@ -414,8 +431,13 @@ func bigipDisableLoginLockout(ctx context.Context, opts jumphost.ProbeOptions, m
 
 // shredBigIPPWFile best-effort shreds the admin-pw 600-file on the BIG-IP.
 // Errors are ignored — this is cleanup of a secret, never a phase-failing op.
+// It runs under a cancellation-immune context (with its own short timeout):
+// on Ctrl-C / phase-timeout paths the caller's ctx is already cancelled, and
+// the shred must still execute so the secret is not left on the box.
 func shredBigIPPWFile(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP string) {
-	_, _ = onboardRunStagingCmds(ctx, opts, []string{
+	shredCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_, _ = onboardRunStagingCmds(shredCtx, opts, []string{
 		bigipSSH(mgmtIP, fmt.Sprintf("shred -u %s 2>/dev/null || rm -f %s", bigipPWRemotePath, bigipPWRemotePath)),
 	})
 }
@@ -438,10 +460,16 @@ func bigipReadinessGate(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP 
 	// Print the body so we can distinguish Apache-HTML-401 from JSON-401.
 	probe := fmt.Sprintf("curl -sk --max-time 10 https://%s/mgmt/shared/authn/login", mgmtIP)
 	attempt := 0
+	// Track the last probe failure so a timeout reports WHY the gate never
+	// passed (e.g. a persistent EICE/SSH transport error) instead of a bare
+	// "timed out".
+	var lastErr error
+	var lastBody string
 	for {
 		attempt++
 		outs, err := onboardRunStagingCmds(ctx, opts, []string{probe})
 		body := lastOf(outs)
+		lastErr, lastBody = err, body
 		// Framework-up signal: the iControl REST JSON error shape. Before this,
 		// the body is either empty (mgmt plane down) or an Apache HTML 401 page.
 		frameworkUp := err == nil &&
@@ -457,7 +485,8 @@ func bigipReadinessGate(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP 
 
 		if !time.Now().Add(bigipReadyPollInterval).Before(deadline) {
 			return fmt.Errorf("timeout after %s waiting for BIG-IP iControl REST framework on %s "+
-				"(last probe attempt %d)", bigipReadyGateTimeout, mgmtIP, attempt)
+				"(last probe attempt %d; %s)", bigipReadyGateTimeout, mgmtIP, attempt,
+				probeFailureDetail(lastErr, lastBody))
 		}
 		select {
 		case <-ctx.Done():
@@ -471,7 +500,8 @@ func bigipReadinessGate(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP 
 // fully onboarded: a TOKEN-auth login succeeds (the exact path CIS uses) AND AS3
 // (pinned version) is installed AND the cis partition exists. All on-box: the
 // password is read from a mode-600 file on the BIG-IP (never on argv) which this
-// function writes via heredoc and shreds.
+// function writes from ssh stdin (the pw rides the SSH channel, not argv) and
+// shreds.
 //
 // The onboarded gate is TOKEN auth (POST /mgmt/shared/authn/login → 200 + a
 // "token" in the body), NOT basic sys/ready. This is the durability-bug fix: a box
@@ -484,7 +514,9 @@ func bigipReadinessGate(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP 
 // proceed to the mutating steps, not fail the phase.
 func bigipAlreadyOnboarded(ctx context.Context, opts jumphost.ProbeOptions, mgmtIP, pw string) bool {
 	remote := strings.Join([]string{
-		bigipWritePWFileScript(pw),
+		// `cat > pw-file` consumes the ssh channel's stdin (the pw piped in by the
+		// caller below) to EOF, then the rest of the script runs normally.
+		bigipWritePWFileScript(),
 		// Token auth — the exact method CIS uses. 200 + a "token" in the body means
 		// the durable admin password authenticates (pw from the 600-file, never argv).
 		bigipTokenLoginScript("LOGIN"),
@@ -497,11 +529,10 @@ func bigipAlreadyOnboarded(ctx context.Context, opts jumphost.ProbeOptions, mgmt
 		`echo "LOGIN=$LOGIN"; echo "AS3=$AS3"; echo "PART=$PART"`,
 	}, "\n")
 
-	outs, err := onboardRunStagingCmds(ctx, opts, []string{bigipSSH(mgmtIP, remote)})
-	if err != nil || len(outs) == 0 {
+	out, err := onboardRunStagingCmdStdin(ctx, opts, bigipSSH(mgmtIP, remote), strings.NewReader(pw+"\n"))
+	if err != nil {
 		return false
 	}
-	out := lastOf(outs)
 	// Token auth succeeded: the login response carries a "token" object.
 	loginOK := strings.Contains(out, `"token"`)
 	as3OK := strings.Contains(out, `"version":"`+bigipAS3Version+`"`)
@@ -526,16 +557,16 @@ func bigipTokenLoginScript(varName string) string {
 }
 
 // bigipWritePWFileScript returns a shell snippet (for use INSIDE a BIG-IP remote
-// command) that writes the admin password into a mode-600 file via a heredoc on
-// stdin — so the password never appears on a command line (argv) on the BIG-IP
-// or in the jumphost process list. The heredoc body is the only place the literal
-// pw appears, and it is consumed by `cat`, not exec'd as an argument.
-func bigipWritePWFileScript(pw string) string {
-	// umask 077 + heredoc → the file is created 600 and the pw is on stdin only.
-	return fmt.Sprintf(
-		"umask 077; cat > %s <<'__BIGIP_PW_EOF__'\n%s\n__BIGIP_PW_EOF__",
-		bigipPWRemotePath, pw,
-	)
+// command) that writes the admin password into a mode-600 file from STDIN — so
+// the password never appears on a command line (argv) on the operator host, in
+// the jumphost process list, or on the BIG-IP. The caller supplies the password
+// (with a single trailing newline) as stdin to the OUTER local ssh via
+// onboardRunStagingCmdStdin; it propagates ssh → sshd → inner ssh → this `cat`.
+// All consumers read the file with `$(cat ...)`, which strips trailing
+// newlines, so the trailing newline is content-neutral.
+func bigipWritePWFileScript() string {
+	// umask 077 + cat-from-stdin → the file is created 600 and the pw is on stdin only.
+	return fmt.Sprintf("umask 077; cat > %s", bigipPWRemotePath)
 }
 
 // bigipSetPasswordScript returns the shell snippet (for use INSIDE a BIG-IP remote
@@ -679,10 +710,13 @@ func bigipWaitFrameworkUp(ctx context.Context, opts jumphost.ProbeOptions, mgmtI
 	deadline := time.Now().Add(timeout)
 	probe := fmt.Sprintf("curl -sk --max-time 10 https://%s/mgmt/shared/authn/login", mgmtIP)
 	attempt := 0
+	var lastErr error
+	var lastBody string
 	for {
 		attempt++
 		outs, err := onboardRunStagingCmds(ctx, opts, []string{probe})
 		body := lastOf(outs)
+		lastErr, lastBody = err, body
 		frameworkUp := err == nil &&
 			(strings.Contains(body, ":resterrorresponse") ||
 				strings.Contains(body, "Authentication failed") ||
@@ -692,8 +726,8 @@ func bigipWaitFrameworkUp(ctx context.Context, opts jumphost.ProbeOptions, mgmtI
 			return nil
 		}
 		if !time.Now().Add(interval).Before(deadline) {
-			return fmt.Errorf("timeout after %s waiting for restjavad framework on %s (attempt %d)",
-				timeout, mgmtIP, attempt)
+			return fmt.Errorf("timeout after %s waiting for restjavad framework on %s (attempt %d; %s)",
+				timeout, mgmtIP, attempt, probeFailureDetail(lastErr, lastBody))
 		}
 		select {
 		case <-ctx.Done():
@@ -722,9 +756,12 @@ func bigipOnboardTmshSteps(mgmtIP, extIP, intIP string) []onboardStep {
 	// sys/ready 200 (pw again from the 600-file). The shared pw 600-file persists
 	// for later authed ops. The same pw-set helper is reused by the final durable
 	// password step (step 9) so the secret only ever flows through one code path.
+	// The verify must ASSERT the 200 — a bare `-w '%{http_code}'` curl exits 0
+	// on a 401, which would silently pass a failed password set.
 	pwScript := strings.Join([]string{
 		bigipSetPasswordScript(),
-		fmt.Sprintf(`curl -sku "admin:$(cat %s)" -o /dev/null -w '%%{http_code}' https://localhost/mgmt/tm/sys/ready`, bigipPWRemotePath),
+		fmt.Sprintf(`CODE=$(curl -sku "admin:$(cat %s)" -o /dev/null -w '%%{http_code}' https://localhost/mgmt/tm/sys/ready)`, bigipPWRemotePath),
+		`[ "$CODE" = 200 ] || { echo "sys/ready returned $CODE" >&2; exit 1; }`,
 	}, "\n")
 
 	// Each create is wrapped so a pre-existing object (from a prior partial run) is
@@ -787,10 +824,9 @@ func bigipTolerantCreate(createCmd string) string {
 //  3. POST an iControl INSTALL task referencing that now-local path, poll FINISHED;
 //  4. best-effort remove the RPM copy on the jumphost.
 //
-// The operator host is skipped entirely: pushing a ~13 MB RPM through
-// CopyFileViaEICE base64-encodes the bytes into the ssh argv and blows ARG_MAX
-// (`fork/exec /usr/bin/ssh: argument list too long`), so the jumphost downloads
-// it directly instead.
+// The operator host is skipped entirely: the jumphost has internet egress, so
+// it downloads the RPM itself rather than the operator host hauling ~13 MB
+// over the EICE channel.
 //
 // The admin pw is read from the shared 600-file on the box for the authed
 // iControl calls (never argv).
@@ -935,6 +971,22 @@ func parseAS3TaskID(body string) string {
 		return ""
 	}
 	return rest[:j]
+}
+
+// probeFailureDetail formats the last probe failure (transport error and/or
+// response body) for inclusion in a poll-timeout error, so the operator can
+// see WHY the poll never matched instead of a bare timeout. The body is
+// truncated to keep the error readable.
+func probeFailureDetail(lastErr error, lastBody string) string {
+	const maxBody = 300
+	body := lastBody
+	if len(body) > maxBody {
+		body = body[:maxBody] + "…"
+	}
+	if lastErr != nil {
+		return fmt.Sprintf("last probe error: %v; last body: %q", lastErr, body)
+	}
+	return fmt.Sprintf("last probe succeeded but never matched the framework-up signature; last body: %q", body)
 }
 
 // lastOf returns the last element of a string slice or "".

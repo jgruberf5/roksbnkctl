@@ -92,6 +92,9 @@ type mockEC2 struct {
 	assignSelfIPErr   error
 	assignedSelfIPs   []string
 
+	modifyENIAttrCalls  int
+	modifyENIAttrInputs []*ec2.ModifyNetworkInterfaceAttributeInput
+
 	// Instances (slice 7+)
 	describeInstancesOut    *ec2.DescribeInstancesOutput
 	describeInstancesErr    error
@@ -131,8 +134,10 @@ type mockEC2 struct {
 	createKeyPairOut    *ec2.CreateKeyPairOutput
 	createKeyPairErr    error
 	createKeyPairCalls  int
+	createKeyPairNames  []string
 	deleteKeyPairCalls  int
 	deleteKeyPairErr    error
+	deleteKeyPairNames  []string
 	describeKeyPairsOut *ec2.DescribeKeyPairsOutput
 	describeKeyPairsErr error
 }
@@ -312,7 +317,9 @@ func (m *mockEC2) DeleteNetworkInterface(_ context.Context, _ *ec2.DeleteNetwork
 	m.deleteENICalls++
 	return &ec2.DeleteNetworkInterfaceOutput{}, m.deleteENIErr
 }
-func (m *mockEC2) ModifyNetworkInterfaceAttribute(_ context.Context, _ *ec2.ModifyNetworkInterfaceAttributeInput, _ ...func(*ec2.Options)) (*ec2.ModifyNetworkInterfaceAttributeOutput, error) {
+func (m *mockEC2) ModifyNetworkInterfaceAttribute(_ context.Context, in *ec2.ModifyNetworkInterfaceAttributeInput, _ ...func(*ec2.Options)) (*ec2.ModifyNetworkInterfaceAttributeOutput, error) {
+	m.modifyENIAttrCalls++
+	m.modifyENIAttrInputs = append(m.modifyENIAttrInputs, in)
 	return &ec2.ModifyNetworkInterfaceAttributeOutput{}, nil
 }
 func (m *mockEC2) AttachNetworkInterface(_ context.Context, _ *ec2.AttachNetworkInterfaceInput, _ ...func(*ec2.Options)) (*ec2.AttachNetworkInterfaceOutput, error) {
@@ -439,15 +446,19 @@ func (m *mockEC2) DescribeInstanceTypes(_ context.Context, _ *ec2.DescribeInstan
 
 // mockEC2 F2-B1 additions: key pairs.
 
-func (m *mockEC2) CreateKeyPair(_ context.Context, _ *ec2.CreateKeyPairInput, _ ...func(*ec2.Options)) (*ec2.CreateKeyPairOutput, error) {
+func (m *mockEC2) CreateKeyPair(_ context.Context, in *ec2.CreateKeyPairInput, _ ...func(*ec2.Options)) (*ec2.CreateKeyPairOutput, error) {
 	m.createKeyPairCalls++
+	keyName := "mock-bigip-key"
+	if in != nil && in.KeyName != nil {
+		keyName = *in.KeyName
+	}
+	m.createKeyPairNames = append(m.createKeyPairNames, keyName)
 	if m.createKeyPairErr != nil {
 		return nil, m.createKeyPairErr
 	}
 	if m.createKeyPairOut != nil {
 		return m.createKeyPairOut, nil
 	}
-	keyName := "bnk-demo-bigip"
 	keyID := "key-mock-bigip"
 	material := "-----BEGIN RSA PRIVATE KEY-----\nmock-pem-for-test\n-----END RSA PRIVATE KEY-----\n"
 	return &ec2.CreateKeyPairOutput{
@@ -457,8 +468,11 @@ func (m *mockEC2) CreateKeyPair(_ context.Context, _ *ec2.CreateKeyPairInput, _ 
 	}, nil
 }
 
-func (m *mockEC2) DeleteKeyPair(_ context.Context, _ *ec2.DeleteKeyPairInput, _ ...func(*ec2.Options)) (*ec2.DeleteKeyPairOutput, error) {
+func (m *mockEC2) DeleteKeyPair(_ context.Context, in *ec2.DeleteKeyPairInput, _ ...func(*ec2.Options)) (*ec2.DeleteKeyPairOutput, error) {
 	m.deleteKeyPairCalls++
+	if in != nil && in.KeyName != nil {
+		m.deleteKeyPairNames = append(m.deleteKeyPairNames, *in.KeyName)
+	}
 	return &ec2.DeleteKeyPairOutput{}, m.deleteKeyPairErr
 }
 

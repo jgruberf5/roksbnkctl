@@ -3,6 +3,7 @@ package phases
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,13 +18,41 @@ import (
 // --- test harness: capture the jumphost seam calls without any network ---
 
 // onboardRecorder captures every command string passed to onboardRunStagingCmds
-// and every (path) passed to onboardCopyFile, and lets a test script the stdout
-// returned per command (matched by substring).
+// / onboardRunStagingCmdStdin and every (path) passed to onboardCopyFile, and
+// lets a test script the stdout returned per command (matched by substring).
+// stdins records the payload piped to each stdin-run command, in order.
 type onboardRecorder struct {
 	cmds      []string          // every command string run on the jumphost
-	copied    []string          // remote paths written via CopyFileViaEICE
+	stdins    []string          // stdin payload per onboardRunStagingCmdStdin call
+	copied    []string          // remote paths written via the EICE copy seam
 	responses map[string]string // substring → stdout
 	errOn     map[string]error  // substring → error
+}
+
+// respond resolves the scripted stdout for cmd, picking the LONGEST matching
+// substring so matches are deterministic even when several keys match (Go map
+// iteration is random) — e.g. the final durable-pw verify command contains
+// both "authn/login" (in the URL) and the more-specific "loginProviderName".
+func (r *onboardRecorder) respond(cmd string) string {
+	resp := "ok"
+	bestLen := -1
+	for sub, o := range r.responses {
+		if strings.Contains(cmd, sub) && len(sub) > bestLen {
+			resp = o
+			bestLen = len(sub)
+		}
+	}
+	return resp
+}
+
+// errFor returns the scripted error for cmd, if any.
+func (r *onboardRecorder) errFor(cmd string) error {
+	for sub, err := range r.errOn {
+		if strings.Contains(cmd, sub) {
+			return err
+		}
+	}
+	return nil
 }
 
 // installOnboardSeams swaps the phase-level seams and returns a restore func.
@@ -33,33 +62,28 @@ type onboardRecorder struct {
 func installOnboardSeams(t *testing.T, r *onboardRecorder) (restore func()) {
 	t.Helper()
 	origRun := onboardRunStagingCmds
+	origRunStdin := onboardRunStagingCmdStdin
 	origCopy := onboardCopyFile
 
 	onboardRunStagingCmds = func(_ context.Context, _ jumphost.ProbeOptions, commands []string) ([]string, error) {
 		out := make([]string, 0, len(commands))
 		for _, cmd := range commands {
 			r.cmds = append(r.cmds, cmd)
-			for sub, err := range r.errOn {
-				if strings.Contains(cmd, sub) {
-					return out, err
-				}
+			if err := r.errFor(cmd); err != nil {
+				return out, err
 			}
-			// Pick the LONGEST matching substring so matches are deterministic even
-			// when several keys match the same command (Go map iteration is random).
-			// e.g. the final durable-pw verify command contains both "authn/login"
-			// (in the URL) and the more-specific "loginProviderName" — the longer key
-			// must win.
-			resp := "ok"
-			bestLen := -1
-			for sub, o := range r.responses {
-				if strings.Contains(cmd, sub) && len(sub) > bestLen {
-					resp = o
-					bestLen = len(sub)
-				}
-			}
-			out = append(out, resp)
+			out = append(out, r.respond(cmd))
 		}
 		return out, nil
+	}
+	onboardRunStagingCmdStdin = func(_ context.Context, _ jumphost.ProbeOptions, command string, stdin io.Reader) (string, error) {
+		r.cmds = append(r.cmds, command)
+		payload, _ := io.ReadAll(stdin)
+		r.stdins = append(r.stdins, string(payload))
+		if err := r.errFor(command); err != nil {
+			return "", err
+		}
+		return r.respond(command), nil
 	}
 	onboardCopyFile = func(_ context.Context, _ jumphost.ProbeOptions, _ []byte, remotePath string) error {
 		r.copied = append(r.copied, remotePath)
@@ -68,6 +92,7 @@ func installOnboardSeams(t *testing.T, r *onboardRecorder) (restore func()) {
 
 	return func() {
 		onboardRunStagingCmds = origRun
+		onboardRunStagingCmdStdin = origRunStdin
 		onboardCopyFile = origCopy
 	}
 }
@@ -182,24 +207,24 @@ func TestPhase17fOnboard_FullSequence(t *testing.T) {
 		t.Fatalf("onboard error: %v", err)
 	}
 
-	// Only the PEM is copied to the jumphost via the EICE copy seam (base64-in-argv,
-	// fine for a ~2KB key). The RPM is NO LONGER pushed that way — that path blows
-	// ARG_MAX on a ~13MB blob — so the jumphost curls it directly instead.
+	// Only the PEM is copied to the jumphost via the EICE copy seam (stdin-piped,
+	// never argv). The RPM is NOT pushed from the operator host at all — the
+	// jumphost curls it directly instead.
 	if len(r.copied) != 1 || r.copied[0] != bigipPEMRemotePath {
 		t.Errorf("expected ONLY the PEM copied to [%s], got %v", bigipPEMRemotePath, r.copied)
 	}
 
 	all := strings.Join(r.cmds, "\n")
 	// Ordered markers of the recipe. Shell-bootstrap (step 2) MUST appear before
-	// the pw-file heredoc staging (step 3), which in turn must precede the pw-set
-	// (step 4) — this is the ordering that fixes the tmsh-umask bug. The AS3
-	// transfer (step 7) is: jumphost curl download → scp jumphost → BIG-IP →
-	// INSTALL POST, in that order.
+	// the pw-file staging (step 3, stdin-piped `cat > 600-file`), which in turn
+	// must precede the pw-set (step 4) — this is the ordering that fixes the
+	// tmsh-umask bug. The AS3 transfer (step 7) is: jumphost curl download →
+	// scp jumphost → BIG-IP → INSTALL POST, in that order.
 	wantOrder := []string{
 		"chmod 600 " + bigipPEMRemotePath,            // step 0
 		"authn/login",                                // step 1 readiness probe
 		"modify auth user admin shell bash",          // step 2 shell-bootstrap (bare, in tmsh)
-		"__BIGIP_PW_EOF__",                           // step 3 pw-file heredoc (needs bash)
+		"umask 077; cat > " + bigipPWRemotePath,      // step 3 pw-file staged from ssh stdin (needs bash)
 		"modify auth user admin password",            // step 4 (pw-set, via tmsh -f)
 		"modify sys provision ltm level nominal",     // step 5
 		"create net vlan external",                   // step 6 dataplane
@@ -263,9 +288,11 @@ func TestPhase17fOnboard_FullSequence(t *testing.T) {
 }
 
 // TestPhase17fOnboard_PasswordNeverOnArgv scans every emitted command and asserts
-// the literal password never appears as a bare argv token. The only place the pw
-// is allowed is inside the heredoc body that writes the 600-file (consumed by cat,
-// never exec'd as an argument); every other reference must be `$(cat <file>)`.
+// the literal password NEVER appears in any command string — command strings
+// become argv elements of the locally-exec'd ssh, visible in `ps` on the
+// operator host and inside the jumphost's process list. The password may only
+// travel as STDIN to the stdin-capable run seam (ssh → sshd → inner ssh →
+// remote `cat > 600-file`); every on-box reference must be `$(cat <file>)`.
 func TestPhase17fOnboard_PasswordNeverOnArgv(t *testing.T) {
 	r := &onboardRecorder{responses: frameworkUpResponses()}
 	defer installOnboardSeams(t, r)()
@@ -278,22 +305,23 @@ func TestPhase17fOnboard_PasswordNeverOnArgv(t *testing.T) {
 	}
 
 	for _, cmd := range r.cmds {
-		if !strings.Contains(cmd, testPW) {
-			continue
+		if strings.Contains(cmd, testPW) {
+			t.Fatalf("password appeared in a command string (argv leak — visible in ps on the operator host and jumphost):\n%s", cmd)
 		}
-		// The pw may ONLY appear inside the heredoc that writes the 600-file.
-		// That heredoc is fingerprinted by the sentinel; the pw must be on its
-		// own line between the sentinels, not on a tmsh/curl/ssh argv.
-		if !strings.Contains(cmd, "__BIGIP_PW_EOF__") {
-			t.Fatalf("password appeared in a command without the heredoc sentinel (argv leak):\n%s", cmd)
+	}
+
+	// The pw MUST still reach the box: it is delivered via stdin (with exactly
+	// one trailing newline, which `$(cat ...)` consumers strip).
+	delivered := false
+	for _, in := range r.stdins {
+		if in == testPW+"\n" {
+			delivered = true
+		} else if strings.Contains(in, testPW) {
+			t.Fatalf("stdin pw payload must be exactly pw+\\n (single trailing newline), got %q", in)
 		}
-		// Belt-and-suspenders: ensure the pw is not also glued onto a curl -u /
-		// tmsh ... password <pw> token in the same command.
-		if strings.Contains(cmd, "password "+testPW) ||
-			strings.Contains(cmd, "admin:"+testPW) ||
-			strings.Contains(cmd, "-u admin:"+testPW) {
-			t.Fatalf("password used as an argv token:\n%s", cmd)
-		}
+	}
+	if !delivered {
+		t.Fatalf("password was never delivered via stdin; stdins=%q", r.stdins)
 	}
 }
 
@@ -308,28 +336,43 @@ func TestPhase17fOnboard_IdempotentSkip(t *testing.T) {
 		`PART={"name":"cis"}`
 
 	origRun := onboardRunStagingCmds
+	origRunStdin := onboardRunStagingCmdStdin
 	origCopy := onboardCopyFile
-	defer func() { onboardRunStagingCmds = origRun; onboardCopyFile = origCopy }()
+	defer func() {
+		onboardRunStagingCmds = origRun
+		onboardRunStagingCmdStdin = origRunStdin
+		onboardCopyFile = origCopy
+	}()
 
 	var cmds []string
+	respond := func(cmd string) string {
+		switch {
+		// The idempotency probe is the combined script that echoes LOGIN=/AS3=/PART=
+		// (TOKEN auth — the durability-bug-aware gate, NOT basic sys/ready).
+		case strings.Contains(cmd, `echo "LOGIN=$LOGIN"`):
+			return onboarded
+		// Plain readiness gate probe (framework-up, /mgmt/shared/authn/login).
+		case strings.Contains(cmd, "authn/login"):
+			return `{"kind":":resterrorresponse"}`
+		default:
+			return "ok"
+		}
+	}
 	onboardCopyFile = func(_ context.Context, _ jumphost.ProbeOptions, _ []byte, _ string) error { return nil }
 	onboardRunStagingCmds = func(_ context.Context, _ jumphost.ProbeOptions, commands []string) ([]string, error) {
 		out := make([]string, 0, len(commands))
 		for _, cmd := range commands {
 			cmds = append(cmds, cmd)
-			switch {
-			// The idempotency probe is the combined script that echoes LOGIN=/AS3=/PART=
-			// (TOKEN auth — the durability-bug-aware gate, NOT basic sys/ready).
-			case strings.Contains(cmd, `echo "LOGIN=$LOGIN"`):
-				out = append(out, onboarded)
-			// Plain readiness gate probe (framework-up, /mgmt/shared/authn/login).
-			case strings.Contains(cmd, "authn/login"):
-				out = append(out, `{"kind":":resterrorresponse"}`)
-			default:
-				out = append(out, "ok")
-			}
+			out = append(out, respond(cmd))
 		}
 		return out, nil
+	}
+	// The idempotency probe delivers the pw via stdin and runs through the
+	// stdin-capable seam.
+	onboardRunStagingCmdStdin = func(_ context.Context, _ jumphost.ProbeOptions, command string, stdin io.Reader) (string, error) {
+		_, _ = io.ReadAll(stdin)
+		cmds = append(cmds, command)
+		return respond(command), nil
 	}
 
 	t.Setenv(bigipPasswordEnv, testPW)
@@ -397,36 +440,44 @@ func TestPhase17fOnboard_ReadinessTimeout(t *testing.T) {
 func TestPhase17fOnboard_ReadinessPollsThenSucceeds(t *testing.T) {
 	attempts := 0
 	origRun := onboardRunStagingCmds
+	origRunStdin := onboardRunStagingCmdStdin
 	origCopy := onboardCopyFile
 	defer func() {
 		onboardRunStagingCmds = origRun
+		onboardRunStagingCmdStdin = origRunStdin
 		onboardCopyFile = origCopy
 	}()
 
+	respond := func(cmd string) string {
+		switch {
+		// Final durable-password token-auth verify (carries loginProviderName +
+		// the CODE=/LOGIN= echo): healthy 200 + token. Checked BEFORE the bare
+		// authn/login case because that command also contains "authn/login".
+		case strings.Contains(cmd, "loginProviderName"):
+			return "CODE=200\nLOGIN={\"token\":{\"token\":\"ABC123\"}}"
+		case strings.Contains(cmd, "authn/login"):
+			attempts++
+			if attempts < 3 {
+				return "<html><title>401 Unauthorized</title></html>"
+			}
+			return `{"kind":":resterrorresponse"}`
+		case strings.Contains(cmd, "package-management-tasks"):
+			return `{"id":"t1","status":"FINISHED"}`
+		default:
+			return "ok"
+		}
+	}
 	onboardCopyFile = func(_ context.Context, _ jumphost.ProbeOptions, _ []byte, _ string) error { return nil }
 	onboardRunStagingCmds = func(_ context.Context, _ jumphost.ProbeOptions, commands []string) ([]string, error) {
 		out := make([]string, 0, len(commands))
 		for _, cmd := range commands {
-			switch {
-			// Final durable-password token-auth verify (carries loginProviderName +
-			// the CODE=/LOGIN= echo): healthy 200 + token. Checked BEFORE the bare
-			// authn/login case because that command also contains "authn/login".
-			case strings.Contains(cmd, "loginProviderName"):
-				out = append(out, "CODE=200\nLOGIN={\"token\":{\"token\":\"ABC123\"}}")
-			case strings.Contains(cmd, "authn/login"):
-				attempts++
-				if attempts < 3 {
-					out = append(out, "<html><title>401 Unauthorized</title></html>")
-				} else {
-					out = append(out, `{"kind":":resterrorresponse"}`)
-				}
-			case strings.Contains(cmd, "package-management-tasks"):
-				out = append(out, `{"id":"t1","status":"FINISHED"}`)
-			default:
-				out = append(out, "ok")
-			}
+			out = append(out, respond(cmd))
 		}
 		return out, nil
+	}
+	onboardRunStagingCmdStdin = func(_ context.Context, _ jumphost.ProbeOptions, command string, stdin io.Reader) (string, error) {
+		_, _ = io.ReadAll(stdin)
+		return respond(command), nil
 	}
 
 	t.Setenv(bigipPasswordEnv, testPW)
@@ -986,7 +1037,7 @@ func shrinkFinalizeCadences(t *testing.T) {
 
 // TestPhase17fOnboard_DisablesLoginLockoutEarly asserts the login-failure-lockout
 // disable runs AFTER the shell-bootstrap and BEFORE the early pw-set (and before the
-// pw-file heredoc staging), and emits both `sys db` writes. This is the fix for the
+// pw-file staging), and emits both `sys db` writes. This is the fix for the
 // mcpd account lockout that CIS's continuous auth retries would otherwise trip.
 func TestPhase17fOnboard_DisablesLoginLockoutEarly(t *testing.T) {
 	r := &onboardRecorder{responses: frameworkUpResponses()}
@@ -1011,11 +1062,11 @@ func TestPhase17fOnboard_DisablesLoginLockoutEarly(t *testing.T) {
 		}
 	}
 
-	// Ordering: shell-bootstrap → lockout-disable → pw-file heredoc → early pw-set.
+	// Ordering: shell-bootstrap → lockout-disable → pw-file staging → early pw-set.
 	assertOrdered(t, all, []string{
 		"modify auth user admin shell bash",                  // step 2 shell-bootstrap
 		"tmsh modify sys db password.maxloginfailures value", // step 2b lockout-disable
-		"__BIGIP_PW_EOF__",                                   // step 3 pw-file heredoc
+		"umask 077; cat > " + bigipPWRemotePath,              // step 3 pw-file staged from ssh stdin
 		"modify auth user admin password",                    // step 4 early pw-set
 	})
 }
@@ -1153,6 +1204,81 @@ func TestBigipDisableLoginLockout_NoArgvPassword(t *testing.T) {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("expected %q in the lockout-disable command: %s", want, cmd)
 		}
+	}
+}
+
+// TestBigipOnboardTmshSteps_VerifyAuthedAsserts200 asserts the step-4 "verify
+// authed" curl actually FAILS on a non-200: the script must capture the HTTP
+// code and exit non-zero unless it is 200 (a bare `-w '%{http_code}'` curl
+// exits 0 on a 401, silently passing a failed password set).
+func TestBigipOnboardTmshSteps_VerifyAuthedAsserts200(t *testing.T) {
+	steps := bigipOnboardTmshSteps("10.0.1.50", "10.0.10.50", "10.0.20.50")
+	pwStep := steps[0].cmd
+	if !strings.Contains(pwStep, "sys/ready") {
+		t.Fatalf("expected the pw-set step to verify via sys/ready: %s", pwStep)
+	}
+	if !strings.Contains(pwStep, `CODE=$(curl`) {
+		t.Errorf("verify must capture the HTTP code into CODE: %s", pwStep)
+	}
+	if !strings.Contains(pwStep, `[ "$CODE" = 200 ] ||`) || !strings.Contains(pwStep, "exit 1") {
+		t.Errorf("verify must assert CODE=200 and exit non-zero otherwise: %s", pwStep)
+	}
+}
+
+// TestShredBigIPPWFile_RunsAfterCtxCancel asserts the pw-file shred still
+// executes when the caller's context is already cancelled (Ctrl-C / timeout
+// paths) — the shred must run under a cancellation-immune context so the
+// secret is not left on the box.
+func TestShredBigIPPWFile_RunsAfterCtxCancel(t *testing.T) {
+	origRun := onboardRunStagingCmds
+	defer func() { onboardRunStagingCmds = origRun }()
+
+	called := false
+	var gotCtxErr error
+	var gotDeadline bool
+	onboardRunStagingCmds = func(ctx context.Context, _ jumphost.ProbeOptions, commands []string) ([]string, error) {
+		called = true
+		gotCtxErr = ctx.Err()
+		_, gotDeadline = ctx.Deadline()
+		return []string{"ok"}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the Ctrl-C / phase-timeout path
+
+	shredBigIPPWFile(ctx, jumphost.ProbeOptions{}, "10.0.1.50")
+	if !called {
+		t.Fatal("shred command was never attempted")
+	}
+	if gotCtxErr != nil {
+		t.Errorf("shred must run under a live context after parent cancellation, got ctx.Err()=%v", gotCtxErr)
+	}
+	if !gotDeadline {
+		t.Error("shred context must carry its own short deadline so cleanup cannot hang")
+	}
+}
+
+// TestBigipReadinessGate_TimeoutIncludesLastFailure asserts a readiness-gate
+// timeout reports the underlying reason (last transport error / last body)
+// instead of a bare "timed out" — a persistent EICE/SSH failure must be
+// visible in the final error.
+func TestBigipReadinessGate_TimeoutIncludesLastFailure(t *testing.T) {
+	r := &onboardRecorder{
+		errOn: map[string]error{"authn/login": errors.New("eice tunnel refused: connection reset")},
+	}
+	defer installOnboardSeams(t, r)()
+
+	origTimeout, origInterval := bigipReadyGateTimeout, bigipReadyPollInterval
+	bigipReadyGateTimeout = 10 * time.Millisecond
+	bigipReadyPollInterval = 50 * time.Millisecond // first interval check already exceeds the budget
+	defer func() { bigipReadyGateTimeout = origTimeout; bigipReadyPollInterval = origInterval }()
+
+	err := bigipReadinessGate(context.Background(), jumphost.ProbeOptions{}, "10.0.1.50")
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if !strings.Contains(err.Error(), "eice tunnel refused") {
+		t.Errorf("timeout error must include the last probe error, got: %v", err)
 	}
 }
 
