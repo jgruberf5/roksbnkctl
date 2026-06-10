@@ -1,18 +1,16 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
 
 // Sprint 28 — additive hermetic coverage for the per-phase presence model
-// (DetectPresence) + the pre-Sprint-28 jumphost migration condition
-// (TestingMigrationNeeded). Fixtures are staged into a per-test
+// (DetectPresence). Fixtures are staged into a per-test
 // ROKSBNKCTL_HOME exactly as the runtime would see them:
 //
 //	<home>/<ws>/state-cluster/terraform.tfstate   (Cluster)
-//	<home>/<ws>/state/terraform.tfstate            (BNK or Legacy monolith)
+//	<home>/<ws>/state/terraform.tfstate            (BNK)
 //	<home>/<ws>/state-testing/terraform.tfstate    (Testing jumphosts)
 //
 // No terraform / cloud calls — pure filesystem + JSON-decode, the same
@@ -52,8 +50,7 @@ func setupWorkspacePresence(t *testing.T, clusterFixture, bnkFixture, testingFix
 }
 
 // TestDetectPresence_Table walks every presence combination the §2d dispatch
-// table keys off, plus the data-source-only no-false-positive edges and the
-// legacy precedence rule (Legacy forces BNK/Testing false).
+// table keys off, plus the data-source-only no-false-positive edges.
 func TestDetectPresence_Table(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -100,22 +97,6 @@ func TestDetectPresence_Table(t *testing.T) {
 			bnkFixture:     "tfstate_split.json",
 			testingFixture: "tfstate_testing.json",
 			want:           Presence{Cluster: true, BNK: true, Testing: true},
-		},
-		{
-			// The v1.0.x monolith: cluster modules live in state/. Legacy
-			// must be true and BNK/Testing forced false (the monolith is its
-			// own world; the phase verbs refuse on it).
-			name:       "legacy single-state (cluster modules in state/) → Legacy, BNK/Testing forced false",
-			bnkFixture: "tfstate_legacy_single.json",
-			want:       Presence{Legacy: true},
-		},
-		{
-			// Legacy keys off state/ alone; a stray state-testing/ does not
-			// flip BNK true, but Testing is still its own independent signal.
-			name:           "legacy state/ + populated state-testing/ → Legacy true, BNK false, Testing true",
-			bnkFixture:     "tfstate_legacy_single.json",
-			testingFixture: "tfstate_testing.json",
-			want:           Presence{Legacy: true, Testing: true},
 		},
 		{
 			// Sprint 22 regression, retargeted: a post-up BNK state carries
@@ -190,7 +171,6 @@ func TestPresence_Any(t *testing.T) {
 		{Presence{Cluster: true}, true},
 		{Presence{BNK: true}, true},
 		{Presence{Testing: true}, true},
-		{Presence{Legacy: true}, true},
 		{Presence{Cluster: true, BNK: true, Testing: true}, true},
 	}
 	for _, c := range cases {
@@ -210,101 +190,5 @@ func TestDetectPresence_MissingHomeIsEmpty(t *testing.T) {
 	}
 	if (got != Presence{}) {
 		t.Errorf("expected zero Presence for a never-applied workspace, got %+v", got)
-	}
-}
-
-// TestTestingMigrationNeeded_Table pins the architect's §1d migration
-// condition: jumphosts (module.testing.*) still live in the BNK state AND
-// state-testing/ is empty. It must be true ONLY for that pre-Sprint-28 split
-// shape — not for a fresh workspace, not once the jumphosts are split out, and
-// not for a legacy monolith whose jumphosts are already adopted by a populated
-// state-testing/.
-func TestTestingMigrationNeeded_Table(t *testing.T) {
-	tests := []struct {
-		name           string
-		bnkFixture     string
-		testingFixture string
-		want           bool
-	}{
-		{
-			name: "fresh workspace — nothing to migrate",
-			want: false,
-		},
-		{
-			// The migration target shape: a pre-Sprint-28 split workspace
-			// where state/ still owns module.testing.* and state-testing/ is
-			// absent.
-			name:       "jumphosts in BNK state, state-testing/ absent → migration needed",
-			bnkFixture: "tfstate_bnk_with_jumphosts.json",
-			want:       true,
-		},
-		{
-			// Same BNK state, but state-testing/ already populated → the move
-			// already happened (or is in progress); don't re-nudge.
-			name:           "jumphosts in BNK state, state-testing/ populated → NOT needed",
-			bnkFixture:     "tfstate_bnk_with_jumphosts.json",
-			testingFixture: "tfstate_testing.json",
-			want:           false,
-		},
-		{
-			// A clean post-Sprint-28 BNK state (no module.testing.*) never
-			// triggers the nudge, even with an empty state-testing/.
-			name:       "BNK state without jumphosts → NOT needed",
-			bnkFixture: "tfstate_split.json",
-			want:       false,
-		},
-		{
-			// Legacy monolith carries module.testing.* in state/ too; with no
-			// state-testing/ this is technically the same "jumphosts in
-			// state/" signal. TestingMigrationNeeded is structural (it does
-			// not special-case legacy) — the dispatchers gate the nudge on
-			// !Legacy separately, so assert the structural truth here.
-			name:       "legacy monolith (jumphosts in state/, no state-testing/) → structurally needed",
-			bnkFixture: "tfstate_legacy_single.json",
-			want:       true,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			ws := setupWorkspacePresence(t, "", tc.bnkFixture, tc.testingFixture)
-			got, err := TestingMigrationNeeded(ws)
-			if err != nil {
-				t.Fatalf("TestingMigrationNeeded: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("TestingMigrationNeeded = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestStateHasManagedModule_DataVsManaged pins that the migration probe
-// counts only MANAGED module.testing.* ownership — a data-source read under
-// module.testing must not be mistaken for a jumphost the workspace owns.
-func TestStateHasManagedModule_DataVsManaged(t *testing.T) {
-	dir := t.TempDir()
-	managedPath := filepath.Join(dir, "managed.tfstate")
-	writeJSON(t, managedPath, `{"resources":[{"mode":"managed","module":"module.testing.module.jumphost"}]}`)
-	dataPath := filepath.Join(dir, "data.tfstate")
-	writeJSON(t, dataPath, `{"resources":[{"mode":"data","module":"module.testing"}]}`)
-
-	if has, err := stateHasManagedModule(managedPath, "module.testing"); err != nil || !has {
-		t.Errorf("managed module.testing.* should match: has=%v err=%v", has, err)
-	}
-	if has, err := stateHasManagedModule(dataPath, "module.testing"); err != nil || has {
-		t.Errorf("data-source-only module.testing must NOT match: has=%v err=%v", has, err)
-	}
-	// Missing file → (false, nil), same contract as the other probes.
-	if has, err := stateHasManagedModule(filepath.Join(dir, "nope.tfstate"), "module.testing"); err != nil || has {
-		t.Errorf("missing file should be (false,nil): has=%v err=%v", has, err)
-	}
-}
-
-// writeJSON drops a literal JSON body at path (parent dirs must already
-// exist). Small helper for the inline state bodies above.
-func writeJSON(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("writing %s: %v", path, err)
 	}
 }

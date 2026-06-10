@@ -54,10 +54,8 @@ func setupWorkspaceShape(t *testing.T, trialFixture, clusterFixture string) stri
 	return testWorkspace
 }
 
-// TestDetectShape_Table covers the four classifications PRD 06
-// promises, the two error edges (missing state → empty, malformed JSON
-// → error), plus the legacy single-state precedence ("both states have
-// resources, but trial has cluster modules" → LegacySingle, not Split).
+// TestDetectShape_Table covers the classifications PRD 06 promises plus
+// the two error edges (missing state → empty, malformed JSON → error).
 func TestDetectShape_Table(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -88,17 +86,6 @@ func TestDetectShape_Table(t *testing.T) {
 			// the cluster identity lives in cluster-outputs.json on the
 			// register path, not in state-cluster/.
 			wantShape: ShapeSplit,
-		},
-		{
-			name:         "legacy single-state (v1.0.x pre-split)",
-			trialFixture: "tfstate_legacy_single.json",
-			wantShape:    ShapeLegacySingle,
-		},
-		{
-			name:           "legacy beats split when trial carries cluster modules",
-			trialFixture:   "tfstate_legacy_single.json",
-			clusterFixture: "tfstate_cluster_only.json",
-			wantShape:      ShapeLegacySingle,
 		},
 		{
 			// Sprint 22 regression: a post-up Split trial state
@@ -401,7 +388,6 @@ func TestWorkspaceShape_String(t *testing.T) {
 		ShapeEmpty:         "empty",
 		ShapeClusterOnly:   "cluster-only",
 		ShapeSplit:         "split",
-		ShapeLegacySingle:  "legacy-single-state",
 		WorkspaceShape(99): "unknown",
 	}
 	for s, want := range cases {
