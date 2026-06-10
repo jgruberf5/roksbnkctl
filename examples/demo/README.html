@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>awsbnkctl — full BNK-on-EKS demo deployment</title>
+  <style>
+
+html {
+color: #1a1a1a;
+background-color: #fdfdfd;
+}
+body {
+margin: 0 auto;
+max-width: 36em;
+padding-left: 50px;
+padding-right: 50px;
+padding-top: 50px;
+padding-bottom: 50px;
+hyphens: auto;
+overflow-wrap: break-word;
+text-rendering: optimizeLegibility;
+font-kerning: normal;
+}
+@media (max-width: 600px) {
+body {
+font-size: 0.9em;
+padding: 12px;
+}
+h1 {
+font-size: 1.8em;
+}
+}
+@media print {
+html {
+background-color: white;
+}
+body {
+background-color: transparent;
+color: black;
+font-size: 12pt;
+}
+p, h2, h3 {
+orphans: 3;
+widows: 3;
+}
+h2, h3, h4 {
+page-break-after: avoid;
+}
+}
+p {
+margin: 1em 0;
+}
+a {
+color: #1a1a1a;
+}
+a:visited {
+color: #1a1a1a;
+}
+img {
+max-width: 100%;
+}
+svg {
+height: auto;
+max-width: 100%;
+}
+h1, h2, h3, h4, h5, h6 {
+margin-top: 1.4em;
+}
+h5, h6 {
+font-size: 1em;
+font-style: italic;
+}
+h6 {
+font-weight: normal;
+}
+ol, ul {
+padding-left: 1.7em;
+margin-top: 1em;
+}
+li > ol, li > ul {
+margin-top: 0;
+}
+blockquote {
+margin: 1em 0 1em 1.7em;
+padding-left: 1em;
+border-left: 2px solid #e6e6e6;
+color: #606060;
+}
+code {
+white-space: pre-wrap;
+font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+font-size: 85%;
+margin: 0;
+hyphens: manual;
+}
+pre {
+margin: 1em 0;
+overflow: auto;
+}
+pre code {
+padding: 0;
+overflow: visible;
+overflow-wrap: normal;
+}
+.sourceCode {
+background-color: transparent;
+overflow: visible;
+}
+hr {
+border: none;
+border-top: 1px solid #1a1a1a;
+height: 1px;
+margin: 1em 0;
+}
+table {
+margin: 1em 0;
+border-collapse: collapse;
+width: 100%;
+overflow-x: auto;
+display: block;
+font-variant-numeric: lining-nums tabular-nums;
+}
+table caption {
+margin-bottom: 0.75em;
+}
+tbody {
+margin-top: 0.5em;
+border-top: 1px solid #1a1a1a;
+border-bottom: 1px solid #1a1a1a;
+}
+th {
+border-top: 1px solid #1a1a1a;
+padding: 0.25em 0.5em 0.25em 0.5em;
+}
+td {
+padding: 0.125em 0.5em 0.25em 0.5em;
+}
+header {
+margin-bottom: 4em;
+text-align: center;
+}
+#TOC li {
+list-style: none;
+}
+#TOC ul {
+padding-left: 1.3em;
+}
+#TOC > ul {
+padding-left: 0;
+}
+#TOC a:not(:hover) {
+text-decoration: none;
+}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+:root {
+--fg: #1b1f24;
+--muted: #57606a;
+--bg: #ffffff;
+--soft: #f6f8fa;
+--border: #d0d7de;
+--accent: #c1442e; 
+--accent-soft: #fbeae6;
+--link: #0a5ad6;
+--code-bg: #f6f8fa;
+--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+:root {
+--fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --soft: #161b22;
+--border: #30363d; --accent: #ff7b6b; --accent-soft: #2a1512;
+--link: #4493f8; --code-bg: #161b22;
+}
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+color: var(--fg); background: var(--bg);
+line-height: 1.6; margin: 0 auto;
+max-width: 860px;
+padding: 3rem 1.25rem 5rem;
+font-size: 16px;
+}
+h1, h2, h3 { line-height: 1.25; font-weight: 650; }
+h1 {
+font-size: 2.1rem; margin: 0 0 .4rem;
+border-bottom: 3px solid var(--accent); padding-bottom: .5rem;
+}
+h2 {
+font-size: 1.45rem; margin: 2.6rem 0 .9rem;
+border-bottom: 1px solid var(--border); padding-bottom: .35rem;
+}
+h3 { font-size: 1.15rem; margin: 1.8rem 0 .6rem; color: var(--accent); }
+p { margin: .7rem 0; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+font-family: var(--mono); font-size: .88em;
+background: var(--code-bg); padding: .15em .4em; border-radius: 6px;
+border: 1px solid var(--border);
+}
+pre {
+background: var(--code-bg); border: 1px solid var(--border);
+border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto;
+line-height: 1.5;
+}
+pre code { background: none; border: none; padding: 0; font-size: .86rem; }
+table {
+border-collapse: collapse; width: 100%; margin: 1.1rem 0; font-size: .95rem;
+}
+th, td { border: 1px solid var(--border); padding: .5rem .75rem; text-align: left; }
+thead th { background: var(--soft); font-weight: 650; }
+tbody tr:nth-child(even) { background: var(--soft); }
+blockquote {
+margin: 1.2rem 0; padding: .8rem 1.1rem;
+background: var(--accent-soft); border-left: 4px solid var(--accent);
+border-radius: 0 8px 8px 0; color: var(--fg);
+}
+blockquote p { margin: .3rem 0; }
+blockquote strong { color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: .25rem 0; }
+.subtitle { color: var(--muted); font-size: 1.02rem; margin-top: 0; }
+footer {
+margin-top: 3.5rem; padding-top: 1.2rem; border-top: 1px solid var(--border);
+color: var(--muted); font-size: .85rem;
+}
+</style>
+</head>
+<body>
+<h1 id="demo--full-bnk-on-eks-demo-deployment">demo — full BNK-on-EKS
+demo deployment</h1>
+<p>The <code>demo</code> topology provisions a complete BNK 2.3 cluster
+(host-device data path) plus a multi-ENI jumphost, marked as a
+<strong>demo</strong> so the curated protocol use-cases can drive test
+traffic from inside the BNK external subnet.</p>
+<p>It is the <code>examples/full-cluster</code> topology with
+<code>demo.enabled: true</code> — equivalent to running
+<code>awsbnkctl up --demo</code>. Demo mode writes
+<code>DEMO_MODE</code>/<code>DEMO_EXPIRY</code> to state, tags every
+resource with <code>awsbnkctl:demo=true</code>, pre-stages the demo test
+clients on the jumphost, and makes <code>down</code> clean the demo
+use-cases first.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>An AWS account with credentials configured (SSO or static
+keys).</li>
+<li><code>awsbnkctl</code> built locally
+(<code>go build -o awsbnkctl ./cmd/awsbnkctl</code>).</li>
+<li>Your F5 supply-chain files (see the <code>bnk:</code> block in
+<code>cluster.yaml</code>):
+<ul>
+<li>FAR pull credentials JSON → referenced as
+<code>./cne_pull_64.json</code></li>
+<li>subscription JWT → referenced as <code>./license.jwt</code> These
+are gitignored, so they are never committed. Update the two paths in
+<code>cluster.yaml</code> if your files live elsewhere.</li>
+</ul></li>
+<li>Quota for: 1 VPC, 1 IGW, 1 NAT GW, 1 EIP, 6 subnets, an EKS cluster,
+a 3-node <code>m6i.4xlarge</code> managed node group, and a
+<code>t3.small</code> jumphost.</li>
+</ul>
+<h2 id="steps">Steps</h2>
+<p><strong>1. Authenticate</strong></p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">aws</span> sso login <span class="at">--profile</span> <span class="op">&lt;</span>your-profile<span class="op">&gt;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">aws</span> sts get-caller-identity     <span class="co"># sanity check</span></span></code></pre></div>
+<p><strong>2. Validate the intent (no AWS calls)</strong></p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> validate examples/demo/cluster.yaml</span></code></pre></div>
+<p><strong>3. Dry-run the plan (requires AWS creds; no
+mutations)</strong></p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> up <span class="at">--config</span> examples/demo/cluster.yaml <span class="at">--dry-run</span></span></code></pre></div>
+<p><strong>4. Provision</strong></p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> up <span class="at">--config</span> examples/demo/cluster.yaml</span></code></pre></div>
+<p>Each phase prints as it runs; state is written to
+<code>.awsbnkctl/bnk-demo/state.env</code> after every successful phase,
+so a mid-run failure is safe to resume.</p>
+<p><strong>5. Run the demos</strong></p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> demo list</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> demo run http2 <span class="at">--config</span> examples/demo/cluster.yaml</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> demo run <span class="at">--all</span> <span class="at">--config</span> examples/demo/cluster.yaml</span></code></pre></div>
+<p><strong>6. Tear down</strong></p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> down <span class="at">--config</span> examples/demo/cluster.yaml <span class="at">--yes</span></span></code></pre></div>
+<p>Reverse-order destroy. Demo use-cases are cleaned first, then the
+infrastructure. Tolerates resources that are already gone (safe to
+re-run). If <code>.awsbnkctl/bnk-demo/state.env</code> is missing,
+<code>down</code> falls back to tag-discovery
+(<code>awsbnkctl:cluster=bnk-demo</code>).</p>
+<h2 id="migration-demo-scenarios">Migration demo scenarios</h2>
+<p>Beyond the protocol use-cases (<code>http2</code>, <code>grpc</code>,
+<code>diameter</code>, …), the demo ships two scenarios that tell the
+<strong>&quot;migrate to BNK&quot;</strong> story — useful for a side-by-side
+walkthrough and visible in forge. List everything with
+<code>awsbnkctl demo list</code>.</p>
+<h3 id="ingress-migration--old-and-new-ingress-side-by-side"><code>ingress-migration</code>
+— old and new ingress, side by side</h3>
+<div class="sourceCode" id="cb7"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> demo run ingress-migration <span class="at">--config</span> examples/demo/cluster.yaml</span></code></pre></div>
+<p>Installs <strong>ingress-nginx</strong>, <strong>HAProxy</strong>,
+and a <strong>BNK Gateway API</strong> route via Helm, all fronting one
+shared <code>traefik/whoami</code> backend at the same time, so you can
+compare the three traffic paths live before cutting over:</p>
+<table>
+<thead>
+<tr>
+<th>Front-end</th>
+<th>Host header</th>
+<th>Reached via</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>nginx</td>
+<td><code>web.nginx.migration.local</code></td>
+<td>in-cluster ClusterIP</td>
+</tr>
+<tr>
+<td>HAProxy</td>
+<td><code>web.haproxy.migration.local</code></td>
+<td>in-cluster ClusterIP</td>
+</tr>
+<tr>
+<td>BNK</td>
+<td><code>web.bnk.migration.local</code></td>
+<td>BNK VIP <code>10.0.10.113</code></td>
+</tr>
+</tbody>
+</table>
+<p>No extra configuration — it runs on the standard demo cluster.
+<code>Cleanup</code> removes the namespace, so it is safe to re-run.</p>
+<h3 id="bigip-cis--the-traditional-model-bnk-replaces"><code>bigip-cis</code>
+— the traditional model BNK replaces</h3>
+<div class="sourceCode" id="cb8"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Enable the BIG-IP VE in cluster.yaml (uncomment the bigipVE: block, enabled: true)</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Supply the BIG-IP admin password out-of-band (never stored in any file):</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">AWSBNKCTL_BIGIP_PASSWORD</span><span class="op">=</span><span class="st">&#39;&lt;choose-a-strong-password&gt;&#39;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Provision (launches + onboards the appliance) and run the scenario:</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> up   <span class="at">--config</span> examples/demo/cluster.yaml</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="ex">awsbnkctl</span> demo run bigip-cis <span class="at">--config</span> examples/demo/cluster.yaml</span></code></pre></div>
+<p>Stands up an <strong>external F5 BIG-IP VE</strong> appliance fronted
+by an in-cluster <strong>CIS</strong> controller
+(<code>k8s-bigip-ctlr</code>) that programs a <code>VirtualServer</code>
+custom resource — the classic appliance-plus-controller model that BNK&#39;s
+<code>cne-controller</code> collapses into the cluster. Routes on
+<code>web.cis.migration.local</code> via BIG-IP VIP
+<code>10.0.10.120</code>.</p>
+<blockquote>
+<p><strong>Cost:</strong> enabling <code>bigipVE</code> provisions a
+chargeable <code>c5n.2xlarge</code> PAYG BIG-IP VE (≈15 min extra
+onboarding, plus ongoing EC2 + licensing). <code>awsbnkctl down</code>
+tears it down with the rest of the cluster.</p>
+</blockquote>
+<blockquote>
+<p><strong>Known limitation (data-path routing).</strong> The BIG-IP
+management subnet (<code>10.0.1.0/24</code>) overlaps the EKS node/pod
+subnet, so the <code>/24</code> data-plane route the onboarder would add
+is rejected. The proven workaround is a per-pod <code>/32</code> host
+route on the BIG-IP; until that route exists on a freshly provisioned
+cluster, the scenario&#39;s HTTP-200 data-path assertion can fail even
+though onboarding succeeded. The durable fix (placing the management ENI
+on a non-overlapping subnet) is planned.</p>
+</blockquote>
+<footer>
+Generated from <code>examples/demo/README.md</code> — the Markdown file is the source of truth.
+</footer>
+</body>
+</html>
