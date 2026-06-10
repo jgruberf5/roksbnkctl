@@ -37,6 +37,14 @@ variable "chart_repository" {
   default     = "https://charts.jetstack.io"
 }
 
+# Sprint 29 air-gap mirror. Empty (default) → no image.repository override is
+# emitted, so the chart's public default stands (byte-identical).
+variable "image_repository" {
+  description = "Air-gap mirror image HOST (e.g. image-registry.openshift-image-registry.svc:5000). When set, every cert-manager component image (controller/webhook/cainjector/startupapicheck/acmesolver) is redirected to <host>/jetstack/cert-manager-<comp>. Empty leaves the chart defaults."
+  type        = string
+  default     = ""
+}
+
 variable "wait_for_deployment" {
   description = "Wait for cert-manager deployment to be ready"
   type        = bool

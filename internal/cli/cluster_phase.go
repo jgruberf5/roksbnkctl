@@ -34,7 +34,8 @@ Commands:
   roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
   roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
   roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
-  roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json
+  roksbnkctl cluster config    Print the recorded cluster identity from cluster-outputs.json
+  roksbnkctl cluster status    Live runtime status (endpoints + node readiness)
 
 Each ` + "`roksbnkctl up`" + ` against this workspace will reuse the registered
 cluster (reading cluster-outputs.json) so multiple BNK trials can share
@@ -65,11 +66,16 @@ value).`,
 	RunE: runClusterRegister,
 }
 
-var clusterShowCmd = &cobra.Command{
-	Use:   "show",
-	Short: "Print the registered cluster (cluster-outputs.json)",
-	Args:  cobra.NoArgs,
-	RunE:  runClusterShow,
+var clusterConfigCmd = &cobra.Command{
+	Use:     "config",
+	Aliases: []string{"show"}, // back-compat: `cluster show` still works
+	Short:   "Print the recorded cluster identity (cluster-outputs.json)",
+	Long: `Prints the cluster identity recorded at cluster up / register time
+(~/.roksbnkctl/<workspace>/cluster-outputs.json): cluster ID, endpoints, VPC,
+transit gateway, and registry COS. This is the RECORDED config; for live runtime
+state (node readiness) use ` + "`roksbnkctl cluster status`" + `.`,
+	Args: cobra.NoArgs,
+	RunE: runClusterShow,
 }
 
 var clusterUpCmd = &cobra.Command{
@@ -112,7 +118,8 @@ func init() {
 	clusterDownCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 	clusterDownCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 
-	clusterCmd.AddCommand(clusterRegisterCmd, clusterShowCmd, clusterUpCmd, clusterDownCmd)
+	clusterConfigCmd.Flags().BoolVar(&flagStatusJSON, "json", false, "output JSON (CI-friendly)")
+	clusterCmd.AddCommand(clusterRegisterCmd, clusterConfigCmd, clusterUpCmd, clusterDownCmd)
 	rootCmd.AddCommand(clusterCmd)
 }
 
@@ -203,6 +210,12 @@ func runClusterShow(cmd *cobra.Command, _ []string) error {
 	out, err := config.ReadClusterOutputs(cctx.WorkspaceName)
 	if err != nil {
 		return err
+	}
+
+	if flagStatusJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
 	}
 
 	// Stable, easy-to-grep key:value layout — same shape regardless of
@@ -312,22 +325,6 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 	// resolveInvocationContext) before openClusterTF folds them into the
 	// varFiles slice. No per-RunE re-derivation (Sprint 12 Issue 1).
 
-	// Refuse on legacy single-state per PRD 06 §"Refusal messages" —
-	// the cluster modules live in the *trial* state file there, so
-	// applying the cluster phase against an empty state-cluster/ would
-	// silently provision a second cluster.
-	cctx0, err := config.New(flagWorkspace)
-	if err != nil {
-		return err
-	}
-	shape, err := config.DetectShape(cctx0.WorkspaceName)
-	if err != nil {
-		return fmt.Errorf("detecting workspace shape: %w", err)
-	}
-	if shape == config.ShapeLegacySingle {
-		return errors.New("this workspace was provisioned with v1.0.x single-state — its cluster lives in the trial state file. Use `roksbnkctl up` to operate on it, or migrate the state to two-phase shape first")
-	}
-
 	cctx, tfws, varFiles, err := openClusterTF(ctx)
 	if err != nil {
 		return err
@@ -384,9 +381,6 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	pres, err := config.DetectPresence(cctx0.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
-	}
-	if pres.Legacy {
-		return errors.New("this workspace is legacy single-state; cluster and BNK share one state. Use `roksbnkctl down` to tear down both, or migrate the state first")
 	}
 	if pres.BNK || pres.Testing || pres.Gateway {
 		var present []string
@@ -506,19 +500,18 @@ func persistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.W
 		OpenShiftVersion:   info.MasterKubeVersion,
 		Source:             source,
 	}
-	// Registry COS lookup uses the same name-derivation rule the user's
-	// tfvars implies: try config.Workspace's cluster.name + "-cos" or
-	// "-cos-instance" (the two patterns we see in practice). Best-effort —
-	// failure here doesn't fail the parent up.
-	cosCandidates := []string{
-		info.Name + "-cos-instance",
-		info.Name + "-cos",
-	}
-	for _, n := range cosCandidates {
-		if cos, lookupErr := ic.GetCOSInstanceByName(ctx, n); lookupErr == nil {
-			out.RegistryCOSName = cos.Name
-			out.RegistryCOSCRN = cos.CRN
-			break
+	// Registry COS: prefer the terraform outputs (deterministic when this phase
+	// created the instance) and fall back to a name-guess SDK lookup for an
+	// existing/reused COS. Best-effort — a miss doesn't fail the parent up.
+	out.RegistryCOSName = stringOutput(outputs, "registry_cos_name")
+	out.RegistryCOSCRN = stringOutput(outputs, "registry_cos_crn")
+	if out.RegistryCOSCRN == "" {
+		for _, n := range []string{info.Name + "-cos-instance", info.Name + "-cos"} {
+			if cos, lookupErr := ic.GetCOSInstanceByName(ctx, n); lookupErr == nil {
+				out.RegistryCOSName = cos.Name
+				out.RegistryCOSCRN = cos.CRN
+				break
+			}
 		}
 	}
 	return config.WriteClusterOutputs(cctx.WorkspaceName, out)

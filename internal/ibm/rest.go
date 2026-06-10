@@ -1,6 +1,7 @@
 package ibm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -56,6 +57,41 @@ func (c *Client) authedGET(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("GET %s returned %s: %s", url, resp.Status, strings.TrimSpace(snippet))
 	}
 	return body, nil
+}
+
+// authedPOST performs an authenticated POST with a JSON body, returning the
+// response body on 2xx. Mirrors authedGET's transport + error shape.
+func (c *Client) authedPOST(ctx context.Context, url string, body []byte) ([]byte, error) {
+	token, err := c.authToken()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "roksbnkctl")
+
+	resp, err := kubeconfigHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet := string(respBody)
+		if len(snippet) > 4096 {
+			snippet = snippet[:4096]
+		}
+		return nil, fmt.Errorf("POST %s returned %s: %s", url, resp.Status, strings.TrimSpace(snippet))
+	}
+	return respBody, nil
 }
 
 // authedDELETE performs an authenticated DELETE. A 404 is treated as success so

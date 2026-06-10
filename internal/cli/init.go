@@ -18,6 +18,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
+	"github.com/jgruberf5/roksbnkctl/internal/sshkey"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -174,8 +175,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		region = seeds.Region
 	}
 
-	// Network ops below — bound to a timeout.
-	ctx, cancel := contextWithTimeout(initTimeout)
+	// The interview is interactive, so the flow context must NOT carry a
+	// wall-clock deadline — slow human answers between prompts would otherwise
+	// expire the API calls (the resource-group lookup in particular). Each
+	// network call is bounded individually instead: SDK calls via apiCtx,
+	// raw-REST calls by the ibm http client's own per-request 60s timeout.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	fmt.Fprintln(os.Stderr, "\n→ Verifying IBM Cloud credentials...")
@@ -183,7 +188,9 @@ func runInit(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	id, err := ic.Verify(ctx)
+	vctx, vcancel := apiCtx(ctx)
+	id, err := ic.Verify(vctx)
+	vcancel()
 	if err != nil {
 		return err
 	}
@@ -225,11 +232,19 @@ func runInit(_ *cobra.Command, _ []string) error {
 	if rgName == "" {
 		rgName = promptString("Resource group", dRG)
 	}
-	rgID, err := ic.ResolveResourceGroup(ctx, rgName)
+	rgCtx, rgCancel := apiCtx(ctx)
+	rgID, err := ic.ResolveResourceGroup(rgCtx, rgName)
+	rgCancel()
 	if err != nil {
 		return fmt.Errorf("verifying resource group: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Resource group %q (id %s)\n\n", rgName, rgID)
+
+	// Resolve the testing jumphost SSH key: use an existing IBM Cloud key, or
+	// generate + store + upload one (in every region a jumphost uses).
+	if err := resolveTestingSSHKey(ctx, ic, cctx.WorkspaceName, region, resources, rgID); err != nil {
+		return err
+	}
 
 	tfCfg, err := promptTFSource(ctx, cctx)
 	if err != nil {
@@ -245,6 +260,16 @@ func runInit(_ *cobra.Command, _ []string) error {
 		Prefix:    prefix,
 		Resources: resources,
 		TFSource:  tfCfg,
+	}
+
+	// BNK supply-chain knobs (Sprint 29): the manifest version + the FAR auth
+	// tarball name. Asked only when BNK is being deployed; seeded with the
+	// terraform-default values and stored in config.yaml so `registry` and the
+	// BNK phase run from the workspace without flags.
+	if resources != nil && resources.BNK.Create {
+		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
+		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
+		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
 	}
 
 	// Show the resolved name plan so the operator sees exactly what
@@ -487,7 +512,152 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 	// Per-zone cluster jumphosts (default off).
 	res.ClusterJumphosts.Create = promptYesNo("Create per-zone cluster jumphosts?", false)
 
+	// SSH key for the jumphosts — only when a jumphost is enabled. The name is
+	// captured here; the check/generate/upload happens once the resource group
+	// is resolved (resolveTestingSSHKey).
+	if res.TGWJumphost.Create || res.ClusterJumphosts.Create {
+		res.TestingSSHKeyName = promptString("SSH key name for the testing jumphosts", out.Prefix+"-jumphost")
+	}
+
 	return out, nil
+}
+
+// resolveTestingSSHKey resolves the IBM Cloud VPC SSH key for the testing
+// jumphosts (res.TestingSSHKeyName). An existing key is reused (and replicated
+// into any region a jumphost uses but where it's missing); otherwise roksbnkctl
+// generates an ed25519 keypair, stores the private key in the workspace ssh/ dir
+// (offering to copy it into ~/.ssh), and uploads the public key. No-op when no
+// jumphost is enabled or no key name was given.
+func resolveTestingSSHKey(ctx context.Context, ic *ibm.Client, workspace, clusterRegion string, res *config.ResourcesCfg, rgID string) error {
+	if res == nil || res.TestingSSHKeyName == "" {
+		return nil
+	}
+	keyName := res.TestingSSHKeyName
+
+	// Regions a jumphost lives in — the key must resolve by name in each.
+	var regions []string
+	seen := map[string]bool{}
+	add := func(r string) {
+		if r != "" && !seen[r] {
+			seen[r] = true
+			regions = append(regions, r)
+		}
+	}
+	if res.ClusterJumphosts.Create {
+		add(clusterRegion)
+	}
+	if res.TGWJumphost.Create {
+		cr := res.ClientRegion
+		if cr == "" {
+			cr = clusterRegion
+		}
+		add(cr)
+	}
+	if len(regions) == 0 {
+		return nil
+	}
+
+	// Existence per region (one spinner for the batch of checks).
+	var existingPub string
+	var missing []string
+	if err := spin(fmt.Sprintf("Checking IBM Cloud for SSH key %q", keyName), func() error {
+		for _, r := range regions {
+			k, e := ic.GetSSHKeyByName(ctx, r, keyName)
+			if e != nil {
+				return fmt.Errorf("in %s: %w", r, e)
+			}
+			if k != nil && k.PublicKey != "" {
+				existingPub = k.PublicKey
+			} else {
+				missing = append(missing, r)
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("checking SSH key %q: %w", keyName, err)
+	}
+
+	// Reuse an existing key, replicating into any missing region.
+	if existingPub != "" {
+		for _, r := range missing {
+			r := r
+			if err := spin(fmt.Sprintf("Replicating SSH key %q into %s", keyName, r), func() error {
+				_, e := ic.CreateSSHKey(ctx, r, keyName, existingPub, rgID)
+				return e
+			}); err != nil {
+				return fmt.Errorf("replicating SSH key %q to %s: %w", keyName, r, err)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q (replicated into %s)\n", keyName, strings.Join(missing, ", "))
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q\n", keyName)
+		}
+		return nil
+	}
+
+	// Absent everywhere — generate, store, upload.
+	pub, priv, err := sshkey.Generate()
+	if err != nil {
+		return err
+	}
+	sshDir, err := config.WorkspaceSSHDir(workspace)
+	if err != nil {
+		return err
+	}
+	privPath, err := sshkey.Write(sshDir, keyName, priv, pub)
+	if err != nil {
+		return fmt.Errorf("storing SSH key: %w", err)
+	}
+	for _, r := range regions {
+		r := r
+		if err := spin(fmt.Sprintf("Uploading the public key to %s", r), func() error {
+			_, e := ic.CreateSSHKey(ctx, r, keyName, pub, rgID)
+			return e
+		}); err != nil {
+			return fmt.Errorf("uploading SSH key to %s: %w", r, err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "✓ Generated SSH key %q → %s (uploaded to %s)\n", keyName, privPath, strings.Join(regions, ", "))
+
+	if promptYesNo(fmt.Sprintf("Copy the private key to ~/.ssh/%s?", keyName), true) {
+		if err := copyKeyToUserSSH(sshDir, keyName); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not copy to ~/.ssh (%v)\n", err)
+		}
+	}
+	return nil
+}
+
+// copyKeyToUserSSH copies <name>{,.pub} from srcDir into ~/.ssh, never
+// overwriting an existing file.
+func copyKeyToUserSSH(srcDir, name string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dstDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name string
+		perm os.FileMode
+	}{{name, 0o600}, {name + ".pub", 0o644}} {
+		dst := filepath.Join(dstDir, f.name)
+		if _, err := os.Stat(dst); err == nil {
+			fmt.Fprintf(os.Stderr, "  ~/.ssh/%s already exists — not overwriting\n", f.name)
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, f.name))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, f.perm); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  ✓ copied to ~/.ssh/%s\n", name)
+	return nil
 }
 
 // pickRegion shows the account's available regions as a menu and returns the
@@ -807,4 +977,47 @@ func refDescription(c config.TFSourceCfg) string {
 // given timeout. Used to keep init's network ops bounded.
 func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
+}
+
+// apiCtx bounds a single SDK network call within the (deadline-free) interview
+// context: a hung call still times out after initTimeout, but the human's
+// answer time between prompts never counts against it. Raw-REST calls are
+// already bounded by the ibm package's http client per-request timeout.
+func apiCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, initTimeout)
+}
+
+// spin runs fn while animating a one-line spinner after "→ label" on stderr,
+// leaving a "→ label... ✓" (or ✗) trace when it finishes. On a non-TTY it just
+// prints the label line and runs fn (no animation). Used for the SSH-key network
+// round-trips so a slow IBM Cloud call doesn't look hung.
+func spin(label string, fn func() error) error {
+	if !isTTY() {
+		fmt.Fprintf(os.Stderr, "→ %s...\n", label)
+		return fn()
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		const frames = `|/-\`
+		t := time.NewTicker(120 * time.Millisecond)
+		defer t.Stop()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "\r→ %s... %c", label, frames[i%len(frames)])
+			}
+		}
+	}()
+	err := fn()
+	close(stop)
+	<-done
+	mark := "✓"
+	if err != nil {
+		mark = "✗"
+	}
+	fmt.Fprintf(os.Stderr, "\r\033[K→ %s... %s\n", label, mark)
+	return err
 }

@@ -215,6 +215,8 @@ roksbnkctl kubectl --on jumphost-ca-tor-2 get nodes
 roksbnkctl shell --on jumphost-ca-tor-1
 ```
 
+> **Preinstalled perf tools.** Every jumphost ships with `iperf3` and `h2load` (the `nghttp2-client` package) preinstalled by the Testing-phase `user_data`, so the [performance matrix](./22a-performance-matrix.md) and [`test throughput`](./22-throughput-testing.md) run over `ssh:<target>` with no `--bootstrap`. The matrix's locality axis (same-zone / different-zone / different-VPC) is just *which* `jumphost-<zone>` (or the TGW `jumphost`) a cell names as its client — see [Chapter 22a](./22a-performance-matrix.md#the-locality-axis-jumphost-placement).
+
 > **Pre-v1.5.0 fallback.** On a release before v1.5.0 the per-AZ jumphosts are *not* auto-registered. Look up their floating IPs and register each by hand — `roksbnkctl terraform output testing_cluster_jumphost_ips` (v1.5.0's read-only `terraform`, [Chapter 15](./15-ssh-targets.md#auto-discovery-from-terraform-outputs)), or on an even older release `cd ~/.roksbnkctl/<ws>/state && TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips` — then `roksbnkctl targets add jumphost-<zone> --host <fip> --user ubuntu --key-source tf-output:jumphost_shared_key` per zone. Chapter 15 §"Auto-discovery from terraform outputs" documents this fallback in full.
 
 #### Hopping to a cluster jumphost *via* the registered `jumphost` (zero-setup, no roksbnkctl state)

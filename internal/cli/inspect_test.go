@@ -1,17 +1,16 @@
 package cli
 
-// Sprint 10 / PRD 06 §"`status` command integration" — table tests for
-// `runStatus`'s per-shape deployment lines. The four shapes (Empty,
-// ClusterOnly, Split, LegacySingle) each have their own expected
-// line-set; the fixtures from `internal/config/testdata/` provide the
-// raw tfstate JSON, and we stage them into a temp `ROKSBNKCTL_HOME` so
-// `config.DetectShape` picks them up the same way it does at runtime.
+// Table tests for `runStatus`'s per-phase deployment lines. Sprint 29:
+// the lines are driven by `config.DetectPresence` (four phases — Cluster
+// / BNK / Testing / Gateway) rather than the old two-phase DetectShape.
+// We stage tfstate fixtures from `internal/config/testdata/` into a temp
+// `ROKSBNKCTL_HOME` so DetectPresence picks them up the way it does at
+// runtime, then assert on the per-phase lines plus the legacy script-
+// compat `Last apply` line.
 //
-// What we assert: presence/absence of the per-phase deployment lines,
-// the script-compat `Last apply` line for ShapeLegacySingle, and the
-// shape-callout line. We DON'T assert exact timestamps (file mtimes
-// drift); the format token `last apply ` is enough to distinguish
-// "deployed (last apply …)" from "not deployed".
+// We DON'T assert exact timestamps (file mtimes drift); the token
+// `deployed (last apply ` is enough to distinguish a deployed phase from
+// "not deployed".
 
 import (
 	"bytes"
@@ -56,8 +55,6 @@ func stageStatusWorkspace(t *testing.T, shape config.WorkspaceShape) string {
 		writeStateForStatusTest(t, ws, "", "tfstate_cluster_only.json")
 	case config.ShapeSplit:
 		writeStateForStatusTest(t, ws, "tfstate_split.json", "tfstate_cluster_only.json")
-	case config.ShapeLegacySingle:
-		writeStateForStatusTest(t, ws, "tfstate_legacy_single.json", "")
 	default:
 		t.Fatalf("unsupported test shape %v", shape)
 	}
@@ -208,33 +205,50 @@ func TestRunStatus_ShapeSplit_BothPhasesDeployed(t *testing.T) {
 	if !strings.Contains(out, "BNK trial:") {
 		t.Errorf("missing 'BNK trial:' line:\n%s", out)
 	}
-	// Both phases deployed → two `deployed (last apply` substrings.
+	// Cluster + BNK deployed → two `deployed (last apply` substrings.
 	if got := strings.Count(out, "deployed (last apply"); got != 2 {
 		t.Errorf("ShapeSplit: want 2 'deployed (last apply' occurrences, got %d in:\n%s", got, out)
 	}
-	// Neither phase should read `not deployed`.
-	if strings.Contains(out, "not deployed") {
-		t.Errorf("ShapeSplit: both phases should be deployed, got 'not deployed' in:\n%s", out)
+	// Testing + Gateway aren't staged here, so both read `not deployed`.
+	if !strings.Contains(out, "Testing phase:") || !strings.Contains(out, "Gateway phase:") {
+		t.Errorf("ShapeSplit: missing Testing/Gateway phase lines:\n%s", out)
+	}
+	if got := strings.Count(out, "not deployed"); got != 2 {
+		t.Errorf("ShapeSplit: want 2 'not deployed' (Testing + Gateway), got %d in:\n%s", got, out)
 	}
 	if strings.Contains(out, "Last apply:") {
 		t.Errorf("ShapeSplit: should not emit v1.0.x 'Last apply' line:\n%s", out)
 	}
 }
 
-func TestRunStatus_ShapeLegacySingle_PreservesV10xLastApply(t *testing.T) {
-	ws := stageStatusWorkspace(t, config.ShapeLegacySingle)
+// stagePhaseState copies a tfstate fixture into one phase's state dir.
+// dirFn is the config helper yielding that phase's directory (e.g.
+// config.WorkspaceTestingStateDir).
+func stagePhaseState(t *testing.T, ws, fixture string, dirFn func(string) (string, error)) {
+	t.Helper()
+	dir, err := dirFn(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyStatusFixture(t, fixture, filepath.Join(dir, "terraform.tfstate"))
+}
+
+func TestRunStatus_AllFourPhasesDeployed(t *testing.T) {
+	// Cluster + BNK from the split shape; Testing + Gateway staged on top.
+	ws := stageStatusWorkspace(t, config.ShapeSplit)
+	stagePhaseState(t, ws, "tfstate_testing.json", config.WorkspaceTestingStateDir)
+	stagePhaseState(t, ws, "tfstate_testing.json", config.WorkspaceGatewayStateDir)
 	out := runStatusForTest(t, ws)
 
-	// Shape callout + v1.0.x Last apply line both present, per PRD 06
-	// §"`status` command integration" (script-compat preservation).
-	if !strings.Contains(out, "Shape:") || !strings.Contains(out, "legacy single-state") {
-		t.Errorf("ShapeLegacySingle: missing 'Shape: … legacy single-state' callout:\n%s", out)
+	for _, label := range []string{"Cluster phase:", "BNK trial:", "Testing phase:", "Gateway phase:"} {
+		if !strings.Contains(out, label) {
+			t.Errorf("missing %q line:\n%s", label, out)
+		}
 	}
-	if !strings.Contains(out, "Last apply:") {
-		t.Errorf("ShapeLegacySingle: v1.0.x 'Last apply' line must be preserved verbatim:\n%s", out)
+	if got := strings.Count(out, "deployed (last apply"); got != 4 {
+		t.Errorf("want 4 deployed phases, got %d in:\n%s", got, out)
 	}
-	// Per-phase lines should NOT appear under Legacy.
-	if strings.Contains(out, "Cluster phase:") || strings.Contains(out, "BNK trial:") {
-		t.Errorf("ShapeLegacySingle: should not emit per-phase lines (only the v1.0.x Last apply line + shape callout):\n%s", out)
+	if strings.Contains(out, "not deployed") {
+		t.Errorf("all four phases should be deployed, got 'not deployed' in:\n%s", out)
 	}
 }

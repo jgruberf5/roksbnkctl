@@ -60,7 +60,10 @@ module "flo" {
 
   cert_manager_crd_ready = true
 
-  far_repo_url = var.far_repo_url
+  far_repo_url        = var.far_repo_url
+  far_chart_repo_url  = var.far_chart_repo_url
+  far_image_repo_url  = var.far_image_repo_url
+  use_registry_mirror = var.use_registry_mirror
 
   # COS Bucket Configuration
   use_cos_bucket                = var.use_cos_bucket

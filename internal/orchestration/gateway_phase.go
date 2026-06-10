@@ -92,6 +92,10 @@ func RunGatewayUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// PRD 12: fill empty gateway client subnets from the deployed Testing
+	// phase's jumphost private IPs before tfvars render. Best-effort —
+	// config/user values always win, and a missing test rig just warns.
+	tryAutoGatewayClientSubnets(cctx.Workspace, in.Workspace, in.errOut())
 	extraVF, err := writeAndInitGatewayPhase(ctx, tfws, cctx.Workspace, in.Workspace)
 	if err != nil {
 		return err

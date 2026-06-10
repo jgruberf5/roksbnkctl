@@ -46,6 +46,11 @@
 #   - iperf3
 #       → bundled in `tools/docker/iperf3/` and runs via --backend k8s
 #         (the throughput suite's one-shot Job). Host install unneeded.
+#   - h2load (nghttp2-client)
+#       → bundled in `tools/docker/h2load/` for the docker/k8s backends
+#         and preinstalled on every jumphost by the testing module
+#         user_data; the `test matrix` L7 family runs it from a jumphost
+#         via --backend ssh:<target>. Host install unneeded.
 # What this also installs:
 #   - helm (Helm 3)   (REQUIRED — terraform's null_resource +
 #                      local-exec provisioner for cert_manager / flo

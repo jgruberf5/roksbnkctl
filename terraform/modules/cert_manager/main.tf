@@ -48,6 +48,7 @@ module "cert_manager" {
   bnk_cr_mode           = var.bnk_cr_mode
   namespace             = var.cert_manager_namespace
   chart_version         = var.cert_manager_version
+  image_repository      = var.cert_manager_image_repository
   post_deployment_delay = 30
   kube_host             = data.ibm_container_cluster_config.runtime_config.host
   kube_token            = data.ibm_container_cluster_config.runtime_config.token

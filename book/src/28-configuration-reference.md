@@ -178,6 +178,75 @@ test:
 | `resolvers` | map[string]string | (empty) | name → `<ip>[:<port>]` | Friendly-name aliases for `--server <name>`. Lets workspace config push GSLB VIP addresses out of the command line. |
 | `default_target` | string | (empty) | DNS name | Default `--target` when not passed on the command line. Useful for "always probe this name". |
 
+## `matrix.yaml` — the performance grid
+
+> **This is its own file, not part of `config.yaml`.** The [performance matrix](./22a-performance-matrix.md) grid lives in a **workspace-sibling** `matrix.yaml` — under `~/.roksbnkctl/<workspace>/`, *next to* `config.yaml`, never inside it. The grid is large, churns independently of deploy config, and is the kind of thing you diff in git per-campaign, so it stays out of the deploy-shaped `config.yaml`. `roksbnkctl test matrix` resolves it via `--file`, then `<workspace>/matrix.yaml`, then `./matrix.yaml`.
+
+Four top-level keys. The example grid is `internal/test/testdata/matrix.example.yaml`; [Chapter 22a §"The matrix.yaml schema"](./22a-performance-matrix.md#the-matrixyaml-schema) walks it with worked cells.
+
+```yaml
+gateway:
+  app_namespace: bnk-apps
+  name: bnk-gateway
+  http_section: http
+  https_section: https
+  tcp_section: tcp
+fixtures:
+  iperf3_server: true
+  http_backend: true
+  routes: true
+endpoints:
+  vsi-diff-vpc: { kind: vsi, target: jumphost }
+  tmm-tcp:      { kind: address, host: 10.240.0.10, port: 5201 }
+  tmm-http-128: { kind: url, url: "http://10.240.0.10/128" }
+cells:
+  - { name: "L4 512K diff-VPC", family: iperf3, client: vsi-diff-vpc, server: tmm-tcp, length: "512K", duration: 30, streams: 8 }
+  - { name: "L7 http CPS 128B", family: l7, client: vsi-diff-vpc, server: tmm-http-128, l7: { mode: cps } }
+```
+
+### `gateway:` — existing-stack identity
+
+Names the already-deployed BNK gateway so route fixtures can attach to it. Used **only** when `fixtures.routes` is true; the runner adds Routes, never listeners.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `app_namespace` | string | with `routes` | Namespace the fixtures + routes are created in. |
+| `name` | string | with `routes` | The existing `Gateway` object the routes' `parentRefs.name` point at. |
+| `http_section` / `https_section` / `tcp_section` | string | one+, with `routes` | Listener `sectionName`s on that Gateway the http / https / tcp routes bind to. **Must already exist.** Empty → that route isn't rendered. |
+| `class_name` / `controller_name` / `bnkgateway_name` / `flo_namespace` | string | no | Descriptive identity; not needed to attach routes. |
+
+### `fixtures:` — ephemeral runner-owned objects
+
+The only cluster writes the matrix performs; all torn down after the run unless `--keep`, all skipped under `--dry-run`.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `iperf3_server` | bool | `false` | Deploy the L4 iperf3 server (the throughput fixture); the TCPRoute's backend. |
+| `http_backend` | bool | `false` | Deploy an nginx backend serving `/128`, `/5k`, `/512k`; the L7 backend. |
+| `routes` | bool | `false` | Apply TCPRoute + HTTPRoute (+ TLS HTTPRoute & self-signed Secret when `https_section` is set), attaching to `gateway.name`. |
+
+### `endpoints:` — named `(placement, role)` anchors
+
+A map of `name → { kind, … }`. The locality axis is implicit in which `vsi` endpoint a cell names as its client — there is no locality enum.
+
+| `kind` | Fields | Resolves to |
+|---|---|---|
+| `vsi` | `target` (SSH target name) | an `ssh:<target>` jumphost — a traffic-source client |
+| `address` | `host`, `port` (default `5201`) | an iperf3 TCP server (e.g. a TCPRoute VIP); an `iperf3` cell's `server` |
+| `url` | `url` (full `http(s)://`) | an HTTPRoute target; an `l7` cell's `server`. The scheme selects cleartext vs TLS-terminate-at-TMM. |
+
+### `cells:` — the grid (one row per report cell)
+
+| Field | Applies to | Required | Notes |
+|---|---|---|---|
+| `name` | both | yes | Report label + `--only` glob target. |
+| `family` | both | yes | `iperf3` \| `l7`. |
+| `client` | both | no | Endpoint key of kind `vsi`; empty → run locally. |
+| `server` | both | yes | Endpoint key: `address` for `iperf3`, `url` for `l7`. |
+| `length` / `bytes` / `duration` / `streams` | `iperf3` | no | iperf3 `-l` / `-n` / `-t` / `-P`. |
+| `l7.mode` | `l7` | yes (`l7`) | `cps` \| `tps` \| `throughput` — h2load flag preset. |
+| `l7.clients` / `streams` / `threads` / `requests` / `duration` / `http1` | `l7` | no | h2load `-c` / `-m` / `-t` / `-n` / `-D` / `--h1`; override the mode preset. |
+
 ## `tf_source:` block
 
 ```yaml

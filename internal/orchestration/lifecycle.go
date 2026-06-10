@@ -151,22 +151,6 @@ func RunUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	if pres.Legacy {
-		// Cluster + BNK + jumphosts share one state file — the monolithic
-		// path applies the whole HCL tree in one terraform run, matching
-		// v1.0.x semantics exactly.
-		return RunTrialUp(ctx, in)
-	}
-
-	// Nudge (not auto-run) the pre-Sprint-28 jumphost migration: the
-	// jumphosts still live in the BNK state and state-testing/ is empty.
-	if mig, merr := config.TestingMigrationNeeded(cctx.WorkspaceName); merr == nil && mig {
-		fmt.Fprintln(os.Stderr,
-			"note: this workspace's jumphosts still live in the BNK state (pre-Sprint-28 layout).")
-		fmt.Fprintln(os.Stderr,
-			"      run `roksbnkctl testing migrate` to split them into state-testing/ before `testing down` can manage them independently.")
-	}
-
 	// Cluster serial-first (both downstreams need it). Skip it when a
 	// cluster is already present in state-cluster/ OR when reusing a
 	// registered cluster (cluster-outputs.json present, no state-cluster/).
@@ -316,6 +300,14 @@ func RunTrialUp(ctx context.Context, in *LifecycleInputs) error {
 func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.Context) error, error) {
 	cctx, tfws, err := openTF(ctx, in, true)
 	if err != nil {
+		return false, nil, err
+	}
+	// Sprint 29 air-gap guard: when the workspace config opts into a registry
+	// mirror (registry: block) but the mirror has not been populated yet
+	// (no/incomplete registry-mirror.json), fail before plan rather than
+	// deploying BNK against far_repo_url — which an air-gapped cluster cannot
+	// reach. Off the mirror path (ws.Registry == nil) this is a no-op.
+	if err := guardRegistryMirror(cctx.WorkspaceName, cctx.Workspace); err != nil {
 		return false, nil, err
 	}
 	// Second-phase preamble: renders tfvars and, when this workspace
@@ -476,9 +468,6 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
-	}
-	if pres.Legacy {
-		return RunTrialDown(ctx, in)
 	}
 	if !pres.Any() {
 		return errors.New("nothing to destroy in this workspace")
@@ -685,6 +674,45 @@ func openTF(ctx context.Context, in *LifecycleInputs, needAPIKey bool) (*config.
 		return nil, nil, err
 	}
 	return cctx, tfws, nil
+}
+
+// guardRegistryMirror enforces the Sprint-29 air-gap precondition: a
+// workspace that opts into a registry mirror (config.yaml registry: block)
+// MUST have a populated mirror record (registry-mirror.json with both the
+// chart and image hosts) before the BNK phase deploys. Otherwise BNK would be
+// rendered against far_repo_url, which an air-gapped cluster cannot reach.
+//
+// Off the mirror path (ws.Registry == nil) it returns nil immediately —
+// behavior is unchanged for every non-air-gap workspace.
+func guardRegistryMirror(workspaceName string, ws *config.Workspace) error {
+	if ws == nil || ws.Registry == nil {
+		return nil
+	}
+	m, err := config.ReadRegistryMirror(workspaceName)
+	if err != nil {
+		if errors.Is(err, config.ErrNoRegistryMirror) {
+			return fmt.Errorf("a registry mirror is configured for this workspace but has not been populated — run `roksbnkctl registry replicate` before bringing up BNK")
+		}
+		return fmt.Errorf("reading registry-mirror record: %w", err)
+	}
+	if m.ChartHost == "" || m.ImageHost == "" {
+		return fmt.Errorf("the registry-mirror record is incomplete (missing %s) — re-run `roksbnkctl registry replicate`",
+			missingMirrorHosts(m))
+	}
+	return nil
+}
+
+// missingMirrorHosts names which mirror host(s) are absent, for the guard's
+// error message.
+func missingMirrorHosts(m *config.RegistryMirror) string {
+	switch {
+	case m.ChartHost == "" && m.ImageHost == "":
+		return "chart_host and image_host"
+	case m.ChartHost == "":
+		return "chart_host"
+	default:
+		return "image_host"
+	}
 }
 
 // writeAndInit renders tfvars and runs terraform init. Common preamble
