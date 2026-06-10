@@ -100,7 +100,9 @@ RUN npm install -g --no-fund --no-audit @mermaid-js/mermaid-cli@latest \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-COPY puppeteer-config.json /opt/puppeteer-config.json
+# Path is relative to the build CONTEXT, which the tools-images workflow sets to
+# the repo ROOT (for the ibmcloud image's Go build), so reference the full path.
+COPY tools/docker/mdbook/puppeteer-config.json /opt/puppeteer-config.json
 ENV MERMAID_PUPPETEER_CONFIG=/opt/puppeteer-config.json
 
 # Rust binaries from the builder stage.
@@ -112,7 +114,7 @@ COPY --from=builder /out/bin/mdbook-pandoc /usr/local/bin/mdbook-pandoc
 # mmdc during the PDF build. Configured via book.toml's
 # [output.pandoc.profile.pdf]::filters array (which references the
 # in-container path `/opt/render-mermaid.lua`).
-COPY render-mermaid.lua /opt/render-mermaid.lua
+COPY tools/docker/mdbook/render-mermaid.lua /opt/render-mermaid.lua
 
 WORKDIR /book
 
