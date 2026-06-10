@@ -1,30 +1,27 @@
 # syntax=docker/dockerfile:1
 # awsbnkctl-tools-aws — Alpine-based tools image carrying:
 #   - awscli v2 (official AWS bundle — NOT `pip install awscli` which is v1)
-#   - kubectl  (matched to PRD 07 cluster_version default 1.30)
-#   - helm     (v3.x — used by Sprint 2's S3 supply-chain manifests)
+#   - kubectl  (matched to cluster_version default 1.30)
+#   - helm     (v3.x — used by the S3 supply-chain manifests)
 #   - iperf3 / dig / jq / curl / ca-certificates (runtime deps)
 #
-# Consumed by the PRD 03 docker execution backend's AWS code paths
-# (Sprint 4) — `awsbnkctl up cluster --backend docker` shells into this
-# image to run `aws eks describe-cluster`, `kubectl apply`, `helm
-# install`, etc. without requiring host installs.
+# Consumed by the docker execution backend's AWS code paths —
+# `awsbnkctl up cluster --backend docker` shells into this image to run
+# `aws eks describe-cluster`, `kubectl apply`, `helm install`, etc.
+# without requiring host installs.
 #
-# Sprint 0 carry-over (issue_sprint0_validator.md Issue 2): the inherited
-# tools-image was IBM-shaped (`tools/docker/ibmcloud/Dockerfile`,
-# deleted in Sprint 0). This is its AWS-flavoured replacement. The uid
-# 1000 + writable /home/runner + ENV HOME=/home/runner posture is
-# directly carried over from roksbnkctl v1.2.0's post-mortem fix for
-# `mkdir /.bluemix: permission denied`-style failures (CLI tools that
-# expect to write $HOME at first invocation will explode if HOME is
-# unset or unwritable).
+# The inherited tools-image was IBM-shaped (`tools/docker/ibmcloud/Dockerfile`).
+# This is its AWS-flavoured replacement. The uid 1000 + writable
+# /home/runner + ENV HOME=/home/runner posture is carried over from
+# roksbnkctl v1.2.0's post-mortem fix for `mkdir /.bluemix: permission
+# denied`-style failures (CLI tools that expect to write $HOME at first
+# invocation will explode if HOME is unset or unwritable).
 #
-# Sprint 2 (tech-writer Sprint 1 Issue 6): the awscli/kubectl/helm
-# download URLs now branch on $TARGETARCH so this image builds cleanly
-# on linux/amd64 AND linux/arm64. Both arches get their own pinned
-# sha256 checksums — supply-chain protection survives the multi-arch
-# split because each architecture's binary is verified independently
-# against an architecture-specific pin.
+# The awscli/kubectl/helm download URLs branch on $TARGETARCH so this
+# image builds cleanly on linux/amd64 AND linux/arm64. Both arches get
+# their own pinned sha256 checksums — supply-chain protection survives
+# the multi-arch split because each architecture's binary is verified
+# independently against an architecture-specific pin.
 #
 # Multi-stage:
 #   Stage 1 (downloader) — fetches awscli v2 zip, kubectl + helm
@@ -148,8 +145,8 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 #   bash         — awscli v2's wrapper expects it
 #   ca-certificates — TLS to AWS endpoints
 #   curl, jq     — common HTTP + JSON-munging tools
-#   iperf3       — throughput probe surface (PRD 03)
-#   bind-tools   — provides `dig` for the DNS probe surface (PRD 03)
+#   iperf3       — throughput probe surface
+#   bind-tools   — provides `dig` for the DNS probe surface
 #   groff, less  — awscli v2 help pager (awscli v2's vendored python
 #                  shells out to `less`; without it `aws help` emits a
 #                  confusing error)

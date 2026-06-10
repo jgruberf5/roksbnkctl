@@ -13,19 +13,18 @@ import (
 
 // Workspace is ~/.awsbnkctl/<name>/config.yaml.
 //
-// Mirrors the per-workspace example in docs/PRD.md. Note that there is no
-// `api_key` field — secrets live in env vars or the OS keychain, never in
-// this struct. Plaintext keys in the YAML are rejected at load time by
-// rejectPlaintextSecrets.
+// There is no `api_key` field — secrets live in env vars or the OS
+// keychain, never in this struct. Plaintext keys in the YAML are
+// rejected at load time by rejectPlaintextSecrets.
 //
-// AWS retarget (PRD 04): the `aws:` block is the only first-class
-// shape. AWS credentials resolve via the SDK chain (env / shared
-// config / profile / instance role / SSO) — never written to the
-// workspace file. Legacy on-disk workspaces with a v0.x cloud-cred
-// block load cleanly because YAML ignores unknown keys at unmarshal
-// time; the region/profile/etc values formerly carried under that
-// block are no longer consulted. Operators upgrading from a v0.1
-// workspace must re-run `awsbnkctl init` to populate the `aws:` block.
+// The `aws:` block is the only first-class cloud shape. AWS credentials
+// resolve via the SDK chain (env / shared config / profile / instance
+// role / SSO) — never written to the workspace file. Legacy on-disk
+// workspaces with a v0.x cloud-cred block load cleanly because YAML
+// ignores unknown keys at unmarshal time; the region/profile/etc values
+// formerly carried under that block are no longer consulted. Operators
+// upgrading from a v0.1 workspace must re-run `awsbnkctl init` to
+// populate the `aws:` block.
 type Workspace struct {
 	// AWS is the only first-class cloud block; new workspaces written
 	// by `awsbnkctl init` populate this. Doctor + tf vars renderer
@@ -39,11 +38,11 @@ type Workspace struct {
 	COS     *COSCfg              `yaml:"cos,omitempty"`
 	Targets map[string]TargetCfg `yaml:"targets,omitempty"`
 
-	// Exec is the per-tool execution-backend config block introduced
-	// in Sprint 3 (PRD 03). Maps a tool name (`iperf3`, `kubectl`) to
-	// its preferred backend (`local`, `docker`, `k8s`, or
-	// `ssh:<target>`). Per-invocation `--backend` flag wins over the
-	// workspace config; missing entries default to `local`.
+	// Exec is the per-tool execution-backend config block. Maps a tool
+	// name (`iperf3`, `kubectl`) to its preferred backend (`local`,
+	// `docker`, `k8s`, or `ssh:<target>`). Per-invocation `--backend`
+	// flag wins over the workspace config; missing entries default to
+	// `local`.
 	//
 	// Example:
 	//
@@ -75,9 +74,9 @@ type TargetCfg struct {
 	KeySource string `yaml:"key_source,omitempty"` // "agent" | "tf-output:<name>"
 }
 
-// AWSCfg is the AWS-shaped workspace block introduced in Sprint 2
-// (PRD 04 fold + PRD 07/08 inputs). Mirrors the inputs `awsbnkctl init`
-// (AWS path) collects and threads into the AWS-SDK provisioning phases.
+// AWSCfg is the AWS-shaped workspace block. Mirrors the inputs
+// `awsbnkctl init` (AWS path) collects and threads into the AWS-SDK
+// provisioning phases.
 //
 // No credential fields appear here: AWS credentials resolve via the
 // SDK's default chain (env / shared config / profile / instance role /
@@ -95,21 +94,21 @@ type AWSCfg struct {
 	Profile string `yaml:"profile,omitempty"`
 
 	// VPCID is the VPC hosting the cluster. Empty = `awsbnkctl init`
-	// will offer the "create new VPC" path (v1.x; Sprint 2 init
-	// requires an existing VPC ID).
+	// will offer the "create new VPC" path (v1.x requires an existing
+	// VPC ID).
 	VPCID string `yaml:"vpc_id,omitempty"`
 
 	// SubnetIDs is the list of private subnets passed through to the
-	// EKS cluster module. PRD 07 § "Decision" requires >=3 AZs for
-	// HA; the init wizard enforces this.
+	// EKS cluster module. >=3 AZs are required for HA; the init wizard
+	// enforces this.
 	SubnetIDs []string `yaml:"subnet_ids,omitempty"`
 
-	// SupplyChain captures the local FAR archive + JWT paths the
-	// init wizard collected. Sprint 2 staff uploads these to the S3
-	// supply-chain bucket via `internal/aws/s3.go` at workspace save
-	// time (or via the S3 upload phase on `awsbnkctl up`). The
-	// fields are local paths, not secrets — empty when the operator
-	// skipped the wizard's supply-chain step (e.g. `--dry-run`).
+	// SupplyChain captures the local FAR archive + JWT paths the init
+	// wizard collected. These are uploaded to the S3 supply-chain
+	// bucket via `internal/aws/s3.go` at workspace save time (or via
+	// the S3 upload phase on `awsbnkctl up`). The fields are local
+	// paths, not secrets — empty when the operator skipped the wizard's
+	// supply-chain step (e.g. `--dry-run`).
 	SupplyChain SupplyChainCfg `yaml:"supply_chain,omitempty"`
 }
 
@@ -127,8 +126,8 @@ type SupplyChainCfg struct {
 	JWTPath string `yaml:"jwt_path,omitempty"`
 
 	// BucketName overrides the auto-generated supply-chain bucket
-	// name (PRD 08 § "Decision" — `awsbnkctl-<workspace>-<random>`
-	// is the default). Empty = let the provisioner pick.
+	// name (`awsbnkctl-<workspace>-<random>` is the default).
+	// Empty = let the provisioner pick.
 	BucketName string `yaml:"bucket_name,omitempty"`
 
 	// KMSKeyARN pins an existing CMK ARN; empty = the
@@ -136,12 +135,11 @@ type SupplyChainCfg struct {
 	KMSKeyARN string `yaml:"kms_key_arn,omitempty"`
 
 	// FLONamespace is the Kubernetes namespace the FLO service
-	// account lives in. Defaults to "flo-system" (PRD 08).
+	// account lives in. Defaults to "flo-system".
 	FLONamespace string `yaml:"flo_namespace,omitempty"`
 
-	// EnableECRMirror gates the optional ECR mirror module
-	// (PRD 08 § "Decision" v1.0 stretch). Default false; v1.x
-	// promotes to first-class.
+	// EnableECRMirror gates the optional ECR mirror module (v1.0
+	// stretch). Default false; v1.x promotes to first-class.
 	EnableECRMirror bool `yaml:"enable_ecr_mirror,omitempty"`
 }
 
@@ -164,8 +162,7 @@ type TestCfg struct {
 	DNS          DNSCfg          `yaml:"dns,omitempty"`
 }
 
-// DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe
-// (GSLB-aware)" §"Server resolution"). The map's keys are the names
+// DNSCfg drives the flag-driven DNS probe. The map's keys are the names
 // users pass to `--server <name>` and the values are concrete
 // "<ip>[:<port>]" strings the miekg/dns client dials. DefaultTarget is
 // used when --target isn't passed on the command line.

@@ -1,6 +1,5 @@
 // Unit tests for the client builder helpers in
-// `internal/k8s/client.go` (the new Build* constructors added in
-// Sprint 2 / PRD 02).
+// `internal/k8s/client.go` (the Build* constructors).
 //
 // We can exercise the kubeconfig-resolution branches without a real
 // cluster by feeding the helpers a minimal but valid kubeconfig file
@@ -101,7 +100,7 @@ func TestBuildDynamicClient_FromFile(t *testing.T) {
 }
 
 // TestInClusterSentinel_Constant guards against accidental rename of
-// the magic string the K8s execution backend (PRD 03) will key off.
+// the magic string the in-cluster K8s execution backend keys off.
 func TestInClusterSentinel_Constant(t *testing.T) {
 	if InClusterKubeconfigSentinel != "in-cluster" {
 		t.Errorf("InClusterKubeconfigSentinel value drift: got %q; want \"in-cluster\"",

@@ -13,15 +13,14 @@ import (
 
 // DNSSchemaVersion is the schema string emitted by the new
 // `awsbnkctl test dns` flag-driven path. Distinct from SchemaVersion
-// (the umbrella `awsbnkctl.v1`) because PRD 03 §"DNS probe" specifies
-// a richer per-vantage shape with RTT distribution + GSLB divergence.
+// (the umbrella `awsbnkctl.v1`) because the DNS probe specifies a
+// richer per-vantage shape with RTT distribution + GSLB divergence.
 const (
 	DNSSchemaVersion        = "awsbnkctl.dns.v1"
 	DNSVantageSchemaVersion = "awsbnkctl.dns.v1.vantage"
 )
 
-// Probe is a single-vantage DNS probe (PRD 03 §"DNS probe (GSLB-aware)"
-// §"CLI surface" + §"Server resolution"). One Probe instance issues
+// Probe is a single-vantage DNS probe (GSLB-aware). One Probe instance issues
 // `Iterations` queries against `Server` for `Target`/`Type` and returns
 // a ProbeResult with RTT distribution + answer set.
 //
@@ -80,9 +79,6 @@ type DNSProbeResult struct {
 // per-subnet. Surfacing the option here lets users verify the GSLB
 // is acting on the subnet they expect without dropping into `dig
 // +subnet=`.
-//
-// Sprint 6 — Priority 5b. PRD 03 §"DNS probe" reserves the field;
-// v0.10 implements it.
 type EDNSClientSubnet struct {
 	Family        int    `json:"family"`         // 1 = IPv4, 2 = IPv6 (RFC 7871 §6)
 	SourceNetmask uint8  `json:"source_netmask"` // bits the client sent
@@ -232,9 +228,6 @@ func (p *Probe) Run(ctx context.Context) (*DNSProbeResult, error) {
 // Option slice; bails on the first ECS hit. Returns nil for any
 // response that lacks an OPT record or whose OPT carries no ECS
 // option (the common case for non-GSLB / non-anycast queries).
-//
-// Sprint 6 — Priority 5b: PRD 03 §"DNS probe" reserves the
-// `edns_client_subnet` field; this helper surfaces it.
 func extractEDNSClientSubnet(msg *dns.Msg) *EDNSClientSubnet {
 	if msg == nil {
 		return nil
@@ -373,9 +366,9 @@ func isTimeoutErr(err error) bool {
 }
 
 // ParseDNSType maps a user-facing record-type name to a miekg/dns
-// type constant. Accepts the full PRD 03 §"Record types supported"
-// surface plus any other type miekg/dns knows about (lookup is via
-// dns.StringToType so future RFC adds come along for free).
+// type constant. Accepts A, AAAA, CNAME, MX, NS, TXT, SRV, SOA, PTR,
+// CAA, DS, DNSKEY, and any other type miekg/dns knows about (lookup
+// is via dns.StringToType so future RFC adds come along for free).
 //
 // Returns (0, error) on unknown names so the CLI can render a clear
 // "unknown record type" with the input string in the message.
@@ -397,9 +390,8 @@ func ParseDNSType(s string) (uint16, error) {
 // tuple list (TTL/name are excluded — TTLs vary across resolvers even
 // for identical GSLB answers; the FQDN is the same query target).
 //
-// PRD 03 §"DNS probe" §"GSLB use case": divergence is *expected* in a
-// healthy GSLB; --require-divergence flips the exit code so CI can
-// assert the GSLB is doing something.
+// Divergence is *expected* in a healthy GSLB; --require-divergence flips
+// the exit code so CI can assert the GSLB is doing something.
 func CompareDNSVantages(target string, qtype uint16, vantages []DNSProbeResult) DNSCompareResult {
 	out := DNSCompareResult{
 		Schema:   DNSSchemaVersion,
@@ -470,11 +462,8 @@ func summariseDivergence(vantages []DNSProbeResult) string {
 
 // RunDNS is the workspace-config-driven path used by `awsbnkctl test`
 // (the umbrella command) and `awsbnkctl test dns` when no flags are
-// passed. Probes each `extra_hosts` entry with the std-lib resolver —
-// preserving Sprint 0/1/2/3 behaviour byte-for-byte.
-//
-// PRD 03 §"DNS probe (GSLB-aware)" §"CLI surface" §"backwards-
-// compatible path": flag-driven Probe activates only when one of
+// passed. Probes each `extra_hosts` entry with the std-lib resolver.
+// The flag-driven Probe activates only when one of
 // --target/--type/--server/--gslb-compare is set on the command line.
 func RunDNS(ctx context.Context, hosts []string) SuiteRun {
 	start := time.Now()

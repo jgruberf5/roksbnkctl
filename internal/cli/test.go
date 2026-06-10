@@ -31,10 +31,9 @@ var (
 	flagKeepFixtures        bool
 	flagInsecureTLS         bool
 
-	// DNS probe flags (Sprint 5; PRD 03 §"DNS probe (GSLB-aware)").
-	// All optional — when none of them are set, `awsbnkctl test dns`
-	// keeps today's workspace-extra_hosts behaviour unchanged. As soon
-	// as any one is set, the new flag-driven path activates.
+	// DNS probe flags. All optional — when none of them are set,
+	// `awsbnkctl test dns` keeps today's workspace-extra_hosts behaviour
+	// unchanged. As soon as any one is set, the new flag-driven path activates.
 	flagDNSTarget            string
 	flagDNSType              string
 	flagDNSServer            string
@@ -48,7 +47,7 @@ var (
 	// (region, cluster, namespace, host list, DNS resolvers) and prints
 	// the resulting plan to stderr without executing any probe. Lets
 	// operators see "what would I be measuring" without paying for the
-	// LB / DNS / iperf3 setup cost. Sprint 4 staff brief §3 + §"Verification".
+	// LB / DNS / iperf3 setup cost.
 	flagTestDryRun bool
 )
 
@@ -83,9 +82,8 @@ var testDNSCmd = &cobra.Command{
 Two modes:
 
   Workspace-driven (no flags) — resolves each host listed under
-  test.connectivity.extra_hosts via the std-lib resolver. Same as
-  Sprint 0–4 behaviour; preserves CI invocations using the legacy
-  ` + "`awsbnkctl.v1`" + ` schema.
+  test.connectivity.extra_hosts via the std-lib resolver. Preserves
+  CI invocations using the legacy ` + "`awsbnkctl.v1`" + ` schema.
 
   Flag-driven (any of --target/--type/--server/--gslb-compare set) —
   uses the embedded miekg/dns probe (no external dig install needed).
@@ -94,8 +92,7 @@ Two modes:
   all configured backends (local + k8s + ssh:<targets>).
 
 Use --backend local|k8s|ssh:<target> to pick a single vantage point;
---gslb-compare fans out across all available vantages. PRD 03 §"DNS
-probe (GSLB-aware)".`,
+--gslb-compare fans out across all available vantages.`,
 	RunE: runTestDNSCmd,
 }
 
@@ -121,10 +118,10 @@ func init() {
 	testCmd.Flags().BoolVar(&flagInsecureTLS, "insecure", false, "skip TLS certificate validation (connectivity only)")
 
 	// --dry-run is a persistent flag on the `test` parent so every
-	// subcommand inherits it. The Sprint 4 contract: --dry-run prints
-	// the resolved workspace-derived targets to stderr (region,
-	// cluster, namespace, host list, DNS resolvers, iperf3 mode) and
-	// returns 0 without executing the probe. Pinned by
+	// subcommand inherits it. When set, --dry-run prints the resolved
+	// workspace-derived targets to stderr (region, cluster, namespace,
+	// host list, DNS resolvers, iperf3 mode) and returns 0 without
+	// executing the probe. Pinned by
 	// TestTestSubcommands_DryRun_PlansWithoutExecuting in
 	// internal/cli/test_test.go.
 	testCmd.PersistentFlags().BoolVar(&flagTestDryRun, "dry-run", false, "resolve and print the probe plan without executing it (workspace-derived defaults)")
@@ -133,10 +130,10 @@ func init() {
 	testThroughputCmd.Flags().BoolVar(&flagThroughputCrossNode, "cross-node", false, "force east-west client and server onto different nodes")
 	testThroughputCmd.Flags().BoolVar(&flagKeepFixtures, "keep", false, "leave the iperf3 server pod running after the test")
 
-	// DNS probe flag surface (PRD 03 §"DNS probe (GSLB-aware)" §"CLI surface").
-	// Setting any one of these (or --gslb-compare) activates the new
-	// flag-driven path; otherwise `awsbnkctl test dns` keeps the legacy
-	// workspace-extra_hosts probe behaviour for backwards compatibility.
+	// DNS probe flag surface. Setting any one of these (or --gslb-compare)
+	// activates the new flag-driven path; otherwise `awsbnkctl test dns`
+	// keeps the legacy workspace-extra_hosts probe behaviour for backwards
+	// compatibility.
 	testDNSCmd.Flags().StringVar(&flagDNSTarget, "target", "", "DNS name to query (overrides workspace test.dns.default_target)")
 	testDNSCmd.Flags().StringVar(&flagDNSType, "type", "A", "record type: A | AAAA | CNAME | MX | NS | TXT | SRV | SOA | PTR | CAA | DS | DNSKEY | ANY")
 	testDNSCmd.Flags().StringVar(&flagDNSServer, "server", "", "resolver: <ip>[:<port>] | system | cluster | <named-from-workspace> (default: system)")
@@ -212,8 +209,7 @@ func runTestDNSCmd(cmd *cobra.Command, _ []string) error {
 	// New flag-driven path activates when any of --target / --type
 	// (when set to anything other than the default "A" — handled via
 	// the cmd.Flags().Changed check) / --server / --gslb-compare is
-	// set on the command line. PRD 03 §"DNS probe" §"backwards-
-	// compatible path".
+	// set on the command line.
 	if dnsFlagDriven(cmd) {
 		return runTestDNSProbe(cmd)
 	}
@@ -240,10 +236,9 @@ func dnsFlagDriven(cmd *cobra.Command) bool {
 
 // runTestDNSProbe runs the new miekg/dns-based probe surface.
 //
-// Reject `--backend docker` here per PRD 03 §"DNS probe" §"Why no
-// docker backend": a docker container shares the host's network
-// identity (default bridge), so it's a useless extra hop with no
-// GSLB-relevant locality difference.
+// Reject `--backend docker` here: a docker container shares the host's
+// network identity (default bridge), so it's a useless extra hop with
+// no GSLB-relevant locality difference.
 func runTestDNSProbe(cmd *cobra.Command) error {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
@@ -295,8 +290,7 @@ func runTestDNSProbe(cmd *cobra.Command) error {
 }
 
 // runDNSSingleVantage runs the probe on a single backend (default
-// local) and emits the per-vantage result document. The shape matches
-// PRD 03 §"DNS probe" §"JSON output schema" — a single
+// local) and emits the per-vantage result document as a single
 // `awsbnkctl.dns.v1.vantage` document, not the multi-vantage
 // comparison wrapper.
 func runDNSSingleVantage(ctx context.Context, cctx *config.Context, target string, qtype uint16, server string, iterations int, timeout time.Duration) error {
@@ -331,9 +325,8 @@ func runDNSSingleVantage(ctx context.Context, cctx *config.Context, target strin
 // vantages (local always, plus k8s if a kubeconfig + ops-pod-equivalent
 // is reachable, plus each ssh target the workspace defines).
 //
-// PRD 03 §"DNS probe" §"GSLB use case": divergence is *expected* in a
-// healthy GSLB; --require-divergence flips the exit code so CI can
-// assert the GSLB rules are taking effect.
+// Divergence is *expected* in a healthy GSLB; --require-divergence flips
+// the exit code so CI can assert the GSLB rules are taking effect.
 func runDNSGSLBCompare(ctx context.Context, cctx *config.Context, target string, qtype uint16, server string, iterations int, timeout time.Duration) error {
 	specs := []string{"local"}
 	// k8s vantage if a default kubeconfig is reachable. We probe via
@@ -414,7 +407,7 @@ func runDNSGSLBCompare(ctx context.Context, cctx *config.Context, target string,
 //     parsed back into a DNSProbeResult.
 //   - "ssh:<target>" runs the binary on the named SSH target.
 //
-// Sprint 5 implements local + k8s; ssh is a stub that returns an
+// local + k8s are implemented; ssh is a stub that returns an
 // error pointing at the deferred-to-v1.x tracking issue.
 func dispatchDNSProbe(ctx context.Context, cctx *config.Context, spec, target string, qtype uint16, server string, iterations int, timeout time.Duration) (*test.DNSProbeResult, error) {
 	switch {
@@ -442,8 +435,7 @@ func dispatchDNSProbe(ctx context.Context, cctx *config.Context, spec, target st
 // same flags. The Job's image is the bundled ops pod image (which
 // carries the `awsbnkctl` binary).
 //
-// PRD 03 §"DNS probe" §"K8s shape": the binary itself runs in-cluster;
-// no separate image needed.
+// The binary itself runs in-cluster; no separate image needed.
 func runDNSProbeK8s(ctx context.Context, cctx *config.Context, target string, qtype uint16, server string, iterations int, timeout time.Duration) (*test.DNSProbeResult, error) {
 	be, err := execbackend.ResolveBackend("k8s")
 	if err != nil {
@@ -556,10 +548,9 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("workspace %q is not initialised; run `awsbnkctl init` first", cctx.WorkspaceName)
 	}
 
-	// Resolve the iperf3 client backend. Sprint 4 default is "k8s" per
-	// PRD 03 §"iperf3" §"Default backend"; users can override via
-	// --backend. Docker isn't useful for iperf3 — call it out before
-	// the user wonders why the bandwidth numbers are funny.
+	// Resolve the iperf3 client backend. Default is "k8s"; users can
+	// override via --backend. Docker isn't useful for iperf3 — call it
+	// out before the user wonders why the bandwidth numbers are funny.
 	backendSpec := resolveBackendSpecWith(cctx, "iperf3", flagBackend)
 	switch {
 	case backendSpec == "" || backendSpec == "k8s" || backendSpec == "local":
@@ -626,11 +617,10 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Backend dispatch for the iperf3 *client*. The server lives
-	// in-cluster regardless (the deploy above). Sprint 4: --backend k8s
-	// runs the client as an in-cluster Job for true pod-to-pod
-	// throughput. --backend local (or empty) keeps today's host-iperf3
-	// path. --backend ssh:<target> runs the client on the named SSH
-	// jumphost.
+	// in-cluster regardless (the deploy above). --backend k8s runs the
+	// client as an in-cluster Job for true pod-to-pod throughput.
+	// --backend local (or empty) keeps today's host-iperf3 path.
+	// --backend ssh:<target> runs the client on the named SSH jumphost.
 	switch {
 	case backendSpec == "" || backendSpec == "local":
 		s := test.RunThroughput(cmd.Context(), opts)
@@ -672,7 +662,7 @@ func resolveIperf3Endpoint(ctx context.Context, kc *k8s.Client, ns, mode string)
 // is already deployed by the caller; endpoint is the cluster-side
 // address (LB IP/hostname for north-south, ClusterIP for east-west).
 //
-// PRD 03 §"iperf3" §"K8s shape" — server + client both in-cluster.
+// Server + client both run in-cluster.
 func runIperf3ClientK8s(ctx context.Context, kc *k8s.Client, image string, opts test.ThroughputOptions) (test.SuiteRun, error) {
 	start := time.Now()
 	args := []string{"-c", opts.Endpoint, "-J"}
@@ -730,8 +720,8 @@ func runIperf3ClientK8s(ctx context.Context, kc *k8s.Client, image string, opts 
 // runIperf3ClientSSH runs the iperf3 client over the SSH backend (e.g.,
 // from a jumphost) and parses its JSON output.
 //
-// PRD 03 §"iperf3" §"SSH shape" — auto-install via apt (with
-// --bootstrap), then `iperf3 -c <endpoint> -J`.
+// Auto-installs via apt when --bootstrap is set, then runs
+// `iperf3 -c <endpoint> -J`.
 func runIperf3ClientSSH(ctx context.Context, backendSpec string, opts test.ThroughputOptions) (test.SuiteRun, error) {
 	start := time.Now()
 	args := []string{"-c", opts.Endpoint, "-J"}
@@ -865,11 +855,10 @@ func dnsTypeName(t uint16) string {
 	return fmt.Sprintf("TYPE%d", t)
 }
 
-// dnsTypeStringTable mirrors dns.TypeToString for the subset PRD 03
-// §"Record types supported" calls out. Inlined to avoid the cli
-// package importing miekg/dns directly — that's the test package's
-// concern. Anything beyond this table falls through to "TYPE<n>" which
-// the miekg/dns parser still accepts.
+// dnsTypeStringTable mirrors dns.TypeToString for the supported record
+// types. Inlined to avoid the cli package importing miekg/dns directly
+// — that's the test package's concern. Anything beyond this table falls
+// through to "TYPE<n>" which the miekg/dns parser still accepts.
 var dnsTypeStringTable = map[uint16]string{
 	1:   "A",
 	2:   "NS",

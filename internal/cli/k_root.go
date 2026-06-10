@@ -3,10 +3,9 @@ package cli
 import "github.com/spf13/cobra"
 
 // kCmd is the parent command for kubectl-internalised verbs. The
-// disambiguation pattern (PRD 02 §"Disambiguating awsbnkctl exec",
-// Option B): host-side `awsbnkctl exec` stays as-is; cluster-side
-// equivalent is `awsbnkctl k exec`. Same shape for `k get`, `k apply`,
-// `k logs`, `k describe`, `k delete`, `k port-forward`.
+// disambiguation pattern (Option B): host-side `awsbnkctl exec` stays
+// as-is; cluster-side equivalent is `awsbnkctl k exec`. Same shape for
+// `k get`, `k apply`, `k logs`, `k describe`, `k delete`, `k port-forward`.
 //
 // Top-level shortcuts for the most common verbs (`get`, `apply`,
 // `logs`) are added in k_aliases.go so users don't need to learn the

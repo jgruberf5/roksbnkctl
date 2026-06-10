@@ -1300,7 +1300,7 @@ forge:
 	}
 }
 
-// ─── DemoSpec tests (PRD 10, Slice A1) ───────────────────────────────────────
+// ─── DemoSpec tests ───────────────────────────────────────────────────────────
 
 // hostDeviceWithJumphostYAML is a valid host-device cluster with jumphost enabled —
 // the minimum required for demo mode.
@@ -1573,7 +1573,7 @@ demo:
 	}
 }
 
-// ─── SetDemoTags tests (PRD 10, Slice A2) ────────────────────────────────────
+// ─── SetDemoTags tests ───────────────────────────────────────────────────────
 
 // TestSetDemoTags_NilMap verifies that SetDemoTags nil-inits c.Tags and writes
 // both demo tag keys.
@@ -1663,7 +1663,7 @@ demo:
 	}
 }
 
-// ─── BigIPVESpec tests (F2, Slice A) ─────────────────────────────────────────
+// ─── BigIPVESpec tests (F2) ──────────────────────────────────────────────────
 
 // bigipVEFullYAML is a valid dual-interface cluster with jumphost + demo enabled
 // — the minimum required for bigipVE: enabled: true.

@@ -10,8 +10,8 @@ import (
 )
 
 // VPCAPI is the subset of the EC2 client's VPC surface awsbnkctl uses
-// for the "use existing VPC" path (PRD 07 § "Inputs" §"vpc_id"). Kept as
-// a distinct interface from EC2API so tests can mock the two
+// for the "use existing VPC" path. Kept as a distinct interface from
+// EC2API so tests can mock the two
 // independently — the doctor pre-flight calls a small set of VPC
 // methods that's deliberately separate from the instance-type probes.
 type VPCAPI interface {
@@ -56,8 +56,8 @@ func (c *Clients) DescribeVpc(ctx context.Context, vpcID string) (*VPCInfo, erro
 }
 
 // SubnetInfo is the awsbnkctl-shaped projection of ec2:DescribeSubnets.
-// PRD 07 § "Decision" requires >=3 AZs for HA; the doctor pre-flight
-// validates this from the returned AZ set.
+// The cluster requires >=3 AZs for HA; the doctor pre-flight validates
+// this from the returned AZ set.
 type SubnetInfo struct {
 	ID               string
 	VpcID            string
@@ -94,8 +94,8 @@ func (c *Clients) DescribeSubnets(ctx context.Context, subnetIDs []string) ([]Su
 }
 
 // CountUniqueAZs returns the number of distinct AZs across the given
-// subnets. PRD 07 § "Decision" requires >=3 AZs; the doctor surfaces a
-// failure when this drops below 3.
+// subnets. The cluster requires >=3 AZs; the doctor surfaces a failure
+// when this drops below 3.
 func CountUniqueAZs(subnets []SubnetInfo) int {
 	seen := map[string]struct{}{}
 	for _, s := range subnets {

@@ -1,4 +1,4 @@
-// Sprint 4 — PSA / SCC compliance pin for the iperf3 server Pod the
+// PSA / SCC compliance pin for the iperf3 server Pod the
 // awsbnkctl test throughput verb deploys into the cluster.
 //
 // EKS 1.25+ enforces Pod Security Admission's `restricted` profile by

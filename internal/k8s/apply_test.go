@@ -130,8 +130,8 @@ func TestSplitYAML_LeadingSeparator(t *testing.T) {
 	}
 }
 
-// TestApplyPatchOptions_DefaultFieldManager: PRD 02 §Apply
-// implementation requires field-manager `awsbnkctl`.
+// TestApplyPatchOptions_DefaultFieldManager: server-side apply
+// requires field-manager `awsbnkctl`.
 func TestApplyPatchOptions_DefaultFieldManager(t *testing.T) {
 	po := applyPatchOptions(false)
 	if po.FieldManager != FieldManager {

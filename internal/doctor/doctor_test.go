@@ -26,7 +26,7 @@ import (
 // the doctor emits no StatusError rows. There are no required host
 // binaries (terraform removed; helm internalised via Go SDK).
 //
-// AWS-row block (PRD 04): the `aws credentials` row is StatusWarning
+// AWS-row block: the `aws credentials` row is StatusWarning
 // (naming the missing AWS_PROFILE / AWS_ACCESS_KEY_ID env var) and
 // every downstream AWS row (sts / eks / ec2 / s3 / iam) is
 // StatusSkipped.
@@ -49,13 +49,13 @@ func TestRunWithWhy_StockDevBox_NoWorkspace(t *testing.T) {
 				p.Check.Name, p.Check.Detail)
 		case StatusWarning:
 			// Allowed warnings: `workspace` (unchanged) +
-			// `aws credentials` (Sprint 3 visibility relaxation —
-			// closes Sprint 2 tech-writer Issue 4).
+			// `aws credentials` (surfaced unconditionally so a
+			// first-time user sees the AWS-side gap pre-init).
 			switch p.Check.Name {
 			case "workspace", "aws credentials":
 				// expected
 			default:
-				t.Errorf("unexpected StatusWarning on %q: %s — Sprint 3 contract allows 'workspace' + 'aws credentials' warnings only",
+				t.Errorf("unexpected StatusWarning on %q: %s — only 'workspace' + 'aws credentials' warnings are allowed on a stock dev box",
 					p.Check.Name, p.Check.Detail)
 			}
 		case StatusSkipped:

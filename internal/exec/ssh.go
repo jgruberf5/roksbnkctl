@@ -13,7 +13,7 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/remote"
 )
 
-// Exit codes for the SSH backend, aligned with PRD 03 §"Backend interface".
+// Exit codes for the SSH backend (127 = failed to start, 126 = started then failed).
 const (
 	sshExitFailedToStart     = 127 // backend couldn't connect or bootstrap couldn't reach repo
 	sshExitStartedThenFailed = 126 // session established but exec couldn't spawn the wrapped process
@@ -34,8 +34,7 @@ var toolPackages = map[string]toolPackage{
 // layer out of the exec package.
 type SSHBackendOpts struct {
 	// Bootstrap toggles the "auto-install missing tools via apt" path.
-	// Default false (PRD 03 §"open questions" recommendation: opt-in).
-	// CLI plumbs `--bootstrap` here.
+	// Default false (opt-in). CLI plumbs `--bootstrap` here.
 	Bootstrap bool
 
 	// Workspace + Target plumbing — backend resolves target via
@@ -74,10 +73,9 @@ func SetSSHTargetResolver(fn func(workspace, name string) (*remote.Target, map[s
 // bootstrap-failure modes (sudo failure, non-Ubuntu, repo
 // unreachable) without dialing a live sshd.
 //
-// Sprint 4 validator Issue 3 carry-over: the production *remote.Client
-// satisfies this surface natively (its Run + Close signatures match);
-// tests replace `sshClientFactory` with a mock that captures the
-// argv + stdin streams that the SSHBackend's wrapper-script path
+// The production *remote.Client satisfies this surface natively (its
+// Run + Close signatures match); tests replace `sshClientFactory` with
+// a mock that captures the argv + stdin streams the wrapper-script path
 // emits.
 type remoteClient interface {
 	Run(ctx context.Context, argv []string, opts remote.RunOpts) (int, error)
@@ -89,8 +87,8 @@ type remoteClient interface {
 // through to remote.Connect; tests assign a func returning a mock
 // remoteClient.
 //
-// Mirrors the existing Sprint 4 SetSSHTargetResolver pattern (PRD 03
-// §"SSH" §"open questions" + resolved_sprint4_validator.md Issue 3).
+// Mirrors the SetSSHTargetResolver pattern — production callers leave
+// the factory unset; tests assign a func returning a mock remoteClient.
 var sshClientFactory func(ctx context.Context, target *remote.Target) (remoteClient, error)
 
 // SetSSHClientFactory wires a custom remote.Client constructor for
@@ -122,16 +120,13 @@ func connectViaFactory(ctx context.Context, t *remote.Target) (remoteClient, err
 	return c, nil
 }
 
-// SSHBackend wraps internal/remote.Client with the surface PRD 03 specifies:
-// pre-flight tool check + apt bootstrap, file materialization in a
-// per-run tempdir on the remote, env propagation via SetEnv with a
-// wrapper-script-with-trap fallback, TTY pass-through, and trap-on-EXIT
-// cleanup.
+// SSHBackend wraps internal/remote.Client: pre-flight tool check + apt
+// bootstrap, file materialization in a per-run tempdir on the remote,
+// env propagation via SetEnv with a wrapper-script-with-trap fallback,
+// TTY pass-through, and trap-on-EXIT cleanup.
 //
 // One SSHBackend instance handles all targets — the per-Run target name
 // comes from the spec ("ssh:<target>") parsed by ResolveBackend.
-//
-// PRD 03 §"SSH" + PRD 04 §"SSH" jointly drive the design.
 type SSHBackend struct{}
 
 // Name implements Backend.
@@ -193,9 +188,9 @@ func (b *SSHBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int,
 		return sshExitStartedThenFailed, fmt.Errorf("ssh file materialisation: %w", err)
 	}
 
-	// Build the env-passing strategy. PRD 04 §"SSH": prefer SetEnv,
-	// fall back to wrapper-script-with-trap when the remote's
-	// AcceptEnv silently drops our values.
+	// Build the env-passing strategy: prefer SetEnv, fall back to
+	// wrapper-script-with-trap when the remote's AcceptEnv silently
+	// drops our values.
 	mergedEnv := mergeSSHEnv(opts.Env, opts.Credentials)
 
 	stdout, stdoutClose := wrapForRedaction(opts.Stdout, opts.Credentials)
@@ -293,7 +288,7 @@ func defaultSSHTargetResolver(workspace, name string) (*remote.Target, map[strin
 
 // ensureTool checks whether `tool` is on the remote PATH; if not, runs
 // the apt-bootstrap path when --bootstrap is opted in. Returns
-// (exitCode, error) following the PRD 03 split.
+// (exitCode, error).
 func (b *SSHBackend) ensureTool(ctx context.Context, client remoteClient, tool string) (int, error) {
 	rc, _ := client.Run(ctx, []string{"sh", "-c", "command -v " + shellSingleQuote(tool)}, remote.RunOpts{
 		Stdout: io.Discard, Stderr: io.Discard,
@@ -310,7 +305,7 @@ func (b *SSHBackend) ensureTool(ctx context.Context, client remoteClient, tool s
 		return sshExitStartedThenFailed, fmt.Errorf("ssh: no apt package mapping for tool %q (pre-install on the target)", tool)
 	}
 
-	// Detect Ubuntu — PRD 03 only supports Ubuntu auto-install in v1.
+	// Detect Ubuntu — auto-install only supports Ubuntu in v1.
 	// The exit code is intentionally ignored: `lsb_release -is` may not
 	// be installed on minimal images (the `|| true` shell-side fallback
 	// keeps the command's exit at 0); we read the empty stdout in that
@@ -395,9 +390,9 @@ func (b *SSHBackend) writeFiles(ctx context.Context, client remoteClient, tempdi
 // canary; if the value comes back, native SetEnv works for this host
 // + sshd configuration. Otherwise we fall back to the wrapper script.
 //
-// PRD 04 §"SSH" — the AcceptEnv-restricted-by-default behaviour means
-// most hosts silently drop our env; the canary detects that without
-// surfacing real secrets.
+// The AcceptEnv-restricted-by-default behaviour means most hosts
+// silently drop our env; the canary detects that without surfacing
+// real secrets.
 func (b *SSHBackend) canarySetEnvCheck(ctx context.Context, client remoteClient, name, value string, env []string) (bool, error) {
 	var out bytes.Buffer
 	rc, err := client.Run(ctx, []string{"printenv", name}, remote.RunOpts{

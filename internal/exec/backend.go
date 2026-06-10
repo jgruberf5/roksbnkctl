@@ -14,17 +14,14 @@ import (
 // how credentials and files are propagated (env vs bind-mount vs
 // projected Secret vs SSH wrapper).
 //
-// PRD 03 §"Backend interface" is the authoritative spec. Implementations
-// in this package: local.go, docker.go (Sprint 3); k8s.go, ssh.go are
-// Sprint 4.
+// Implementations in this package: local.go, docker.go, k8s.go, ssh.go.
 type Backend interface {
 	// Run executes argv with stdin/stdout/stderr wired to the streams
 	// in opts. Returns the wrapped process's exit code.
 	//
-	// 126 + 127 are reserved per PRD 03 §"Backend interface" for
-	// backend-side failures (e.g., docker daemon unreachable, SSH
-	// connect refused). Codes 0-125 + 128-255 mirror the wrapped
-	// process exit code unchanged.
+	// 126 + 127 are reserved for backend-side failures (e.g., docker
+	// daemon unreachable, SSH connect refused). Codes 0-125 + 128-255
+	// mirror the wrapped process exit code unchanged.
 	//
 	// ctx cancellation must terminate the wrapped process within a
 	// few seconds — backends signal/kill the container/process and
@@ -39,8 +36,8 @@ type Backend interface {
 
 // RunOpts is the options bundle for one Backend.Run invocation.
 //
-// PRD 03 §"Backend interface" defines the shape; this package adds two
-// implementation conveniences:
+// This package adds two implementation conveniences on top of the
+// interface shape:
 //
 //   - Stdin/Stdout/Stderr default to nil-ignored / nil-discarded
 //     (backends use io.Discard as a fallback, so callers don't have to).
@@ -85,8 +82,6 @@ type RunOpts struct {
 	// backend. Other backends ignore HostMounts (the local backend
 	// has no need; ssh / k8s would need scp / projected-volume
 	// shapes that aren't worth the v1 complexity).
-	//
-	// PRD 03 §"docker backend" + chapter 17 §"docker subsection".
 	HostMounts []HostMount
 
 	// RunAsUser pins the container's UID:GID. Set for the docker
@@ -119,7 +114,7 @@ type HostMount struct {
 // Registered backends are "local" + "docker". The "ssh:<target>" spec
 // parser is in place so the integrator's CLI flag parsing has a stable
 // hook; resolving an unregistered spec (k8s, ssh:foo) returns a clear
-// "backend not implemented yet" error pointing at PRD 03.
+// "backend not implemented yet" error.
 //
 // Empty spec defaults to "local".
 func ResolveBackend(spec string) (Backend, error) {
@@ -127,10 +122,8 @@ func ResolveBackend(spec string) (Backend, error) {
 		spec = "local"
 	}
 
-	// Strip the "<name>:<target>" form for ssh / k8s. Sprint 3 doesn't
-	// dispatch on the target (no SSH backend yet) but we accept the
-	// form so callers don't get "unknown backend" errors on a
-	// well-formed ssh:<target> spec.
+	// Strip the "<name>:<target>" form for ssh / k8s so callers don't
+	// get "unknown backend" errors on a well-formed ssh:<target> spec.
 	name := spec
 	if idx := strings.IndexByte(spec, ':'); idx > 0 {
 		name = spec[:idx]
@@ -140,10 +133,8 @@ func ResolveBackend(spec string) (Backend, error) {
 	b, ok := registry[name]
 	registryMu.RUnlock()
 	if !ok {
-		// Spec parsed cleanly but the backend isn't registered. The
-		// most likely cause for k8s / ssh in Sprint 3 is "not
-		// implemented yet"; emit a clearer error than "unknown" to
-		// save users a docs round-trip.
+		// Spec parsed cleanly but the backend isn't registered; emit a
+		// clearer error than "unknown" to save users a docs round-trip.
 		switch name {
 		case "k8s", "ssh":
 			return nil, fmt.Errorf("backend %q not implemented in this build; see docs/prd/03-EXECUTION-BACKENDS.md", name)
@@ -171,7 +162,7 @@ func Register(name string, b Backend) {
 }
 
 // SpecTarget extracts the "<target>" component from a spec like
-// "ssh:<target>". Returns "" for specs without a colon. Sprint 4 SSH
+// "ssh:<target>". Returns "" for specs without a colon. The SSH
 // backend uses this to look up the target by name.
 func SpecTarget(spec string) string {
 	if idx := strings.IndexByte(spec, ':'); idx > 0 {

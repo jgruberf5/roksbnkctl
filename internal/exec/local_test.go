@@ -1,8 +1,8 @@
 package exec
 
-// Sprint 3 / PRD 03 — Local backend unit tests.
+// Local backend unit tests.
 //
-// Asserts the contract from staff.md Priority 5: the local backend wraps
+// Asserts the contract: the local backend wraps
 // `os/exec` and is byte-identical to today's behaviour (it's a refactor so
 // docker/k8s/ssh backends share a single Backend interface).
 //
@@ -63,9 +63,8 @@ func TestLocalBackend_RunEcho(t *testing.T) {
 }
 
 // TestLocalBackend_ExitCodePropagation asserts the backend mirrors the child's
-// exit code. PRD 03 §"Backend interface" reserves 126/127 for backend-side
-// failures, so any non-reserved code (here 7) must come straight from the
-// child.
+// exit code. 126/127 are reserved for backend-side failures, so any
+// non-reserved code (here 7) must come straight from the child.
 func TestLocalBackend_ExitCodePropagation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh -c exit 7")
@@ -139,8 +138,7 @@ func TestLocalBackend_StdinPipe(t *testing.T) {
 }
 
 // TestLocalBackend_ContextCancel asserts that ctx cancellation terminates
-// the child process within a few seconds. PRD 03 §"Backend interface": "ctx
-// cancellation must terminate the remote process within a few seconds."
+// the child process within a few seconds.
 //
 // Without proper ctx wiring, a `sleep 30` would block the test for 30
 // seconds. We assert the test returns within 5s — generous slack for slow

@@ -7,8 +7,7 @@
 # ${OPS_IMAGE} (the awsbnkctl tools image ref, resolved at install
 # time from the binary's version).
 #
-# PRD 03 §"K8s" + PRD 04 §"In-cluster identity" jointly drive this
-# layout. Two namespaces are created up front so the long-lived ops
+# Two namespaces are created up front so the long-lived ops
 # Pod (in awsbnkctl-ops) and the per-Job ephemeral pods (in
 # awsbnkctl-test) both have a place to land without race-y
 # namespace-creation logic during test runs.
@@ -74,7 +73,7 @@ rules:
   # long-lived ops-pod path; log is required for the Job path.
   #
   # We don't grant pods/exec cluster-wide — only the two namespaces we
-  # manage. PRD 03 §"K8s" §"least privilege".
+  # manage (least privilege).
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
@@ -89,7 +88,7 @@ rules:
   # Secret mounted at /work; cleanup runs via Job ownerRef on success
   # and explicit Delete on context cancel. Scoped to the test namespace
   # only — no cluster-wide Secret read; AWS credentials reach pods via
-  # IRSA. PRD 04 §"In-cluster identity".
+  # IRSA.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "delete", "patch"]
@@ -147,7 +146,7 @@ spec:
       # AWS_WEB_IDENTITY_TOKEN_FILE based on the ServiceAccount's
       # eks.amazonaws.com/role-arn annotation; aws-sdk-go-v2 picks them
       # up and exchanges the projected SA token for short-lived IAM
-      # credentials. PRD 04 §"In-cluster identity".
+      # credentials via IRSA.
       securityContext:
         allowPrivilegeEscalation: false
         runAsNonRoot: true

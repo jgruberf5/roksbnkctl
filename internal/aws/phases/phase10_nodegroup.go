@@ -48,11 +48,11 @@ done
 // Phase10NodeGroup creates managed node groups defined in cluster.yaml.
 // One node group per NodeGroupSpec entry. Subnets used are public only.
 //
-// Slice 7 introduces a Launch Template (LT) with MIME-multipart UserData
+// The node group uses a Launch Template (LT) with MIME-multipart UserData
 // containing sysctl + udev rules required for BNK host-device ENI bring-up.
 // The LT is created once and the node group is bound via LaunchTemplate{Id, Version=$Latest}.
-// EKS UpdateNodegroupConfig does NOT accept retroactive LT addition — slice 6→7
-// upgrades require down + re-up per D-007.
+// EKS UpdateNodegroupConfig does NOT accept retroactive LT addition — changing
+// the LT requires down + re-up per D-007.
 //
 // State keys written per node group: NODEGROUP_<UPPER>_NAME, NODEGROUP_<UPPER>_ARN.
 // State key LT_ID: the launch template ID.

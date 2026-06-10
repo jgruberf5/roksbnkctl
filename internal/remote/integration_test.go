@@ -21,9 +21,9 @@
 // is Linux-only).
 //
 // API expectations: this file references the package's `Connect`, `Client`,
-// `RunOpts`, and `Target` per the PRD 01 contract. If staff's final API
-// names differ (e.g. `Dial` vs `Connect`, `ExecOpts` vs `RunOpts`), this
-// file is the single point of update.
+// `RunOpts`, and `Target`. If the API names change (e.g. `Dial` vs
+// `Connect`, `ExecOpts` vs `RunOpts`), this file is the single point of
+// update.
 package remote
 
 import (
@@ -235,8 +235,8 @@ func TestIntegration_Connect_Whoami(t *testing.T) {
 }
 
 // TestIntegration_ExitCode_Propagates ensures non-zero exit codes from the
-// remote process flow through Run unchanged. PRD 01's "remote command
-// failed → pass through the remote process's exit code unchanged" clause.
+// remote process flow through Run unchanged (remote command failed →
+// pass through the remote process's exit code unchanged).
 func TestIntegration_ExitCode_Propagates(t *testing.T) {
 	t.Setenv("AWSBNKCTL_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -333,18 +333,11 @@ func TestIntegration_StderrSeparation(t *testing.T) {
 	}
 }
 
-// TestIntegration_HostKeyTOFU is intentionally deferred to a follow-up
-// commit: PRD 01 §Host key handling specifies a TOFU flow against
-// `~/.awsbnkctl/known_hosts` plus an `--insecure-host-key` flag, but
-// the exact API shape staff exposes for *injecting* a custom known_hosts
-// path and a per-call insecure override isn't pinned down in their spec
-// (it could be on Target, on RunOpts, on a separate ConnectOpts, or only
-// reachable via a global root flag). Rather than guess and constantly
-// rewrite this test as staff iterates, the validator filed a follow-up
-// in issues/issue_sprint1_validator.md to land this test once the
-// surface is stable. The unit-tier `hostkeys_test.go` (staff's) covers
-// the parsing logic; this integration test would only add MITM /
-// second-connect-silent confidence.
+// TestIntegration_HostKeyTOFU is intentionally deferred: the TOFU flow
+// against `~/.awsbnkctl/known_hosts` plus the `--insecure-host-key` flag
+// is exercised at the unit tier in `hostkeys_test.go`. This integration
+// test would only add MITM / second-connect-silent confidence and is left
+// for a follow-up once the full API surface stabilises.
 
 // TestIntegration_ContextCancellation confirms a cancelled context tears
 // down a long-running remote command within ~5s. Without this, ctrl-C
@@ -376,19 +369,16 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 
 	select {
 	case <-done:
-		// Run returned within the 5s budget — that's the PRD 01
-		// guarantee. The returned error can be context.Canceled wrapped,
-		// an SSH-level session-closed error, OR nil (gliderlabs/testcontainers
-		// sshd sometimes closes the session cleanly before propagating
-		// the cancel — see resolved_sprint4_validator.md Issue 2). What
-		// matters is the goroutine + TCP connection didn't leak past the
-		// timeout.
+		// Run returned within the 5s budget. The returned error can be
+		// context.Canceled wrapped, an SSH-level session-closed error, OR
+		// nil (sshd sometimes closes the session cleanly before propagating
+		// the cancel). What matters is the goroutine + TCP connection
+		// didn't leak past the timeout.
 	case <-time.After(5 * time.Second):
-		// 5s budget aligns with PRD 01 §Implementation tasks 1: "Context
-		// cancellation closes the session within a few seconds." If Run
-		// hasn't returned by then, the SSH client is leaking a goroutine
-		// + an open TCP connection on every Ctrl-C — bad UX, real bug.
-		// See issue_sprint1_validator.md Issue 8.
-		t.Fatal("Run did not return within 5s after context cancellation (PRD 01 §1 requires prompt teardown)")
+		// If Run hasn't returned by 5s, the SSH client is leaking a
+		// goroutine + an open TCP connection on every Ctrl-C — bad UX,
+		// real bug. Context cancellation must close the session within a
+		// few seconds.
+		t.Fatal("Run did not return within 5s after context cancellation")
 	}
 }

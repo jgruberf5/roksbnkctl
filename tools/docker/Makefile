@@ -24,8 +24,7 @@ AWSBNKCTL_VERSION ?= $(TAG)
 AWSBNKCTL_COMMIT  ?= $(shell git -C $(REPO_ROOT) rev-parse --short HEAD 2>/dev/null || echo none)
 AWSBNKCTL_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Sprint 1 adds `build-aws` (AWS-flavoured tools image, replacing the
-# Sprint-0-stripped `build-ibmcloud` target).  Bumping awscli/kubectl/helm
+# `build-aws` builds the AWS-flavoured tools image. Bumping awscli/kubectl/helm
 # versions is a `--build-arg` override:
 #
 #   make build-aws AWSCLI_VERSION=2.18.0 KUBECTL_VERSION=v1.31.0

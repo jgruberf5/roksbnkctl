@@ -89,7 +89,7 @@ func IsResourceNotFound(err error) bool {
 // ----------------------------------------------------------------
 // Kubeconfig generation (no shell-out to `aws eks update-kubeconfig`).
 //
-// PRD 07 § "internal/aws/" requires this be in-process. EKS API
+// Kubeconfig generation is performed in-process. EKS API
 // authentication is a presigned URL for sts:GetCallerIdentity with an
 // `x-k8s-aws-id` header carrying the cluster name; the kubelet client
 // passes that URL as the bearer token, EKS resolves it back to an IAM
@@ -178,9 +178,8 @@ func (c *Clients) EKSAuthToken(ctx context.Context, clusterName string) (string,
 // given cluster. The user entry uses the `exec` plugin shape so kubectl
 // re-acquires a fresh token on each invocation — matches the standard
 // `aws eks update-kubeconfig` output but produced entirely in-process.
-//
-// PRD 07 § "internal/aws/" pins this as load-bearing because if it
-// breaks no kubectl access works post-apply. Exec args follow the AWS
+// If this breaks, no kubectl access works post-apply. Exec args follow
+// the AWS
 // CLI's `aws eks get-token` contract so existing kubectl + aws-cli
 // stacks treat the kubeconfig identically.
 func (c *Clients) KubeconfigFromCluster(ci *ClusterInfo) (string, error) {
@@ -252,7 +251,7 @@ func sha256OfEmpty() string {
 // EnsureRegion guards against the SDK's empty-region surprise:
 // LoadDefaultConfig succeeds when neither AWS_REGION nor a profile is
 // set, but the first API call then errors with "operation error … no
-// region configured". PRD 07's doctor pre-flight runs EnsureRegion to
+// region configured". The doctor pre-flight runs EnsureRegion to
 // surface this earlier and with a friendlier message.
 func EnsureRegion(c *Clients) error {
 	if c == nil {

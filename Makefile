@@ -72,21 +72,19 @@ goreleaser-snapshot:
 # staticcheck: run honnef.co/go/tools/cmd/staticcheck against the whole
 # module. Pinned via the `tool` directive in go.mod (Go 1.24+), so the
 # version travels with the source tree — no global install, no PATH
-# lookup, no "skipping" branch. Sprint-0 (2026-05-25) replaced the
-# previous classifier-blocked `go install` flow.
+# lookup, no "skipping" branch.
 staticcheck:
 	go tool staticcheck ./...
 
 # build-integration-tags: compile-check the whole tree under the
-# `integration` build tag without executing any tests. Sprint 9 /
-# PLAN.md §"Sprint 9" code deliverable 5: closes the
-# v1.1.0 → v1.1.1 → v1.1.2 gap where `internal/exec/*_integration_test.go`
-# files compiled fine on `go test ./...` (which skips integration-tagged
-# files) but broke under `go test -tags integration ./...`. Running the
-# build alone is faster than the full integration test sweep and catches
-# the same shape of compile-time gap (unused imports, undefined symbols
-# behind the tag, drift between the production code and the
-# tag-gated test code).
+# `integration` build tag without executing any tests. Closes the
+# gap where `internal/exec/*_integration_test.go` files compiled fine
+# on `go test ./...` (which skips integration-tagged files) but broke
+# under `go test -tags integration ./...`. Running the build alone is
+# faster than the full integration test sweep and catches the same
+# shape of compile-time gap (unused imports, undefined symbols behind
+# the tag, drift between the production code and the tag-gated test
+# code).
 build-integration-tags:
 	go build -tags integration ./...
 
@@ -142,11 +140,9 @@ release:
 	    echo "    git tag $(VERSION) && git push origin main --tags"; \
 	fi
 
-# --- Sprint 0 staff additions ---
+# --- additional targets ---
 # Note: `build` and `test` already exist above and are kept verbatim
-# (their existing recipes are richer than the Sprint 0 spec — build wires
-# ldflags for version stamping). See issues/issue_sprint0_staff.md for
-# the rationale.
+# (their existing recipes wire ldflags for version stamping).
 
 .PHONY: test-short test-integration test-live test-cred-audit lint ci-local pre-commit-install
 
@@ -154,9 +150,9 @@ test-short:
 	go test -short ./...
 
 # test-cred-audit runs the security-spine regression suite from
-# `internal/exec/audit_test.go` (Sprint 3 / PRD 04 §"Acceptance criteria"
-# item 5). Quick: < 5s on a clean tree. Run before tagging a release —
-# a leaked credential in any backend is a stop-ship.
+# `internal/exec/audit_test.go`. Quick: < 5s on a clean tree.
+# Run before tagging a release — a leaked credential in any backend
+# is a stop-ship.
 #
 # Run -v to see exactly which audit cases fired:
 #   make test-cred-audit ARGS="-v"
@@ -181,16 +177,15 @@ test-integration:
 #
 # Tests skip cleanly (rather than fail) when prerequisites are missing,
 # so it's safe to invoke from CI as a manual-trigger job. Recommended:
-# run before tagging v0.8 — the byte-equivalence is part of PRD 02's
-# acceptance criteria.
+# run before tagging a release to verify byte-equivalence.
 test-live:
 	go test -tags live -timeout 5m ./internal/k8s/...
 
 # lint: the canonical local pre-push gate. Must run the SAME tools CI
 # runs, in the SAME order, with the SAME failure semantics — otherwise
 # every push turns into a snowflake-fix cycle (push → CI red → patch →
-# repeat). Sprint-0 (2026-05-25) made staticcheck a hard requirement
-# (vendored via go.mod `tool` directive) instead of a silent skip.
+# repeat). staticcheck is a hard requirement (vendored via go.mod `tool`
+# directive) instead of a silent skip.
 #
 # Mirror this with .github/workflows/ci.yml's `test` job:
 #   1. gofmt -d -l . (fail on any diff)

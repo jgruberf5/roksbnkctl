@@ -12,15 +12,12 @@ import (
 
 // Cross-verb helpers shared by test.go + doctor_backend.go.
 //
-// Origin: Sprint 0 split-out from the deleted IBM lifecycle verbs.
-// Sprint 3 trims the file to the helpers that still have live
-// callers in test.go / doctor_backend.go (workspaceEnv,
-// resolveBackendSpecWith, podReady). The IBM-cred
-// silencer + context import dropped alongside the PRD 04 retarget;
-// the cred package no longer threads an IBM Cloud API key through
-// the execution backends — AWS credentials resolve via the SDK chain
-// in internal/aws and IRSA in-cluster, so there's nothing for these
-// helpers to inject.
+// These are legacy back-compat shims split out from the deleted IBM
+// lifecycle verbs. The file is trimmed to the helpers that still have
+// live callers in test.go / doctor_backend.go (workspaceEnv,
+// resolveBackendSpecWith, podReady). IBM Cloud API key injection was
+// removed when AWS credentials moved to the SDK chain in internal/aws
+// and IRSA in-cluster; there is nothing left for these helpers to inject.
 
 // workspaceEnv composes a child-process env for inherited tool
 // passthroughs. Returns the host env plus KUBECONFIG if a kubeconfig
@@ -63,9 +60,9 @@ func resolveBackendSpecWith(cctx *config.Context, tool, flagOverride string) str
 	return "local"
 }
 
-// perToolDefaultBackend is the per-tool default backend table (PRD 03
-// §"Tool migration plan"). AWS doesn't ship a CLI passthrough — the
-// binary uses internal/aws SDK directly per PRD 00 § "Inheritance map".
+// perToolDefaultBackend is the per-tool default backend table. AWS
+// doesn't ship a CLI passthrough — the binary uses internal/aws SDK
+// directly.
 var perToolDefaultBackend = map[string]string{
 	"iperf3": "k8s",
 }

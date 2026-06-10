@@ -2,20 +2,18 @@
 //
 // Staff's GetOptions.Run drives cli-runtime's resource.Builder, which
 // requires a real RESTClientGetter and reaches a real cluster — not
-// fakeable with `kubernetes/fake`. The PRD 02 byte-equivalence check
-// is delivered by the live golden tests in golden_test.go (build-tag
+// fakeable with `kubernetes/fake`. The byte-equivalence check is
+// delivered by the live golden tests in golden_test.go (build-tag
 // `live`); these unit tests cover what's testable without a cluster:
 //
 //   - GetOptions zero-value validation: missing args
 //   - IsNotFound helper round-trips a real API "not found" error
 //   - DefaultKubeconfigPath behaviour (which Get falls back to)
 //
-// Validator note: the original brief assumed a fake-clientset-friendly
-// surface; staff's chosen design (cli-runtime resource.Builder) is the
-// kubectl-byte-equivalent path PRD 02 requires, but trades unit
-// testability for output fidelity. We document this in
-// issues/issue_sprint2_validator.md as informational and rely on the
-// golden tests for end-to-end coverage.
+// Note: the original brief assumed a fake-clientset-friendly
+// surface; the chosen design (cli-runtime resource.Builder) is the
+// kubectl-byte-equivalent path, but trades unit testability for output
+// fidelity. The golden tests provide end-to-end coverage.
 
 package k8s
 

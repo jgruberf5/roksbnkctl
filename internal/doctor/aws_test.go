@@ -1,6 +1,6 @@
 package doctor
 
-// Sprint 4 — pin the Service Quotas feature-flag toggle. The doctor
+// Pin the Service Quotas feature-flag toggle. The doctor
 // row is OFF by default; the operator opts in via
 // AWSBNKCTL_DOCTOR_SERVICE_QUOTAS=1. These tests pin the accepted
 // truthy values + the off-by-default invariant so a future refactor

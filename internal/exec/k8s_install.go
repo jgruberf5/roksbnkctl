@@ -13,15 +13,14 @@ import (
 // `AWS_WEB_IDENTITY_TOKEN_FILE` + a projected SA token, and
 // aws-sdk-go-v2 inside the pod assumes the role via
 // `sts:AssumeRoleWithWebIdentity`. No static credential lands in
-// any Secret. PRD 04 §"In-cluster identity".
+// any Secret.
 //
 // Template placeholders substituted at apply-time:
 //
 //	${OPS_IRSA_ROLE_ARN} — the IAM role ARN provisioned for the
-//	                       ops pod's ServiceAccount by the
-//	                       Go-SDK IAM phase (PRD 08); resolved
-//	                       from the workspace state by the CLI
-//	                       layer at install time.
+//	                       ops pod's ServiceAccount; resolved from
+//	                       the workspace state by the CLI layer at
+//	                       install time.
 //	${OPS_IMAGE}         — the awsbnkctl tools image ref;
 //	                       version-pinned to internal/cli.Version.
 //

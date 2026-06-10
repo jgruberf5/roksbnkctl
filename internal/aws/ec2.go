@@ -17,8 +17,8 @@ type EC2API interface {
 }
 
 // InstanceTypeOffering captures whether a given instance type is
-// orderable in a given AZ. PRD 07 § "Open questions" tracks per-region
-// availability gaps for c5n / m5n as a doctor pre-flight check.
+// orderable in a given AZ. Per-region availability gaps for c5n / m5n
+// are surfaced as a doctor pre-flight check.
 type InstanceTypeOffering struct {
 	InstanceType string
 	Location     string // region or AZ identifier, depending on LocationType
@@ -61,7 +61,7 @@ func (c *Clients) InstanceTypeOfferings(ctx context.Context, instanceTypes []str
 }
 
 // InstanceTypeCapabilities is the awsbnkctl-shaped projection of the
-// SR-IOV / ENA capability flags PRD 07 cares about. The SDK doesn't
+// SR-IOV / ENA capability flags. The SDK doesn't
 // surface a "sriov-net-support" field directly; ENA support implies
 // SR-IOV capability on every Nitro-generation family. The actual VF
 // vendor/device IDs are resolved at runtime by the SR-IOV device
@@ -75,9 +75,9 @@ type InstanceTypeCapabilities struct {
 }
 
 // DescribeInstanceCapabilities returns the ENA + SR-IOV flags for the
-// given instance types. PRD 07 § "Decision" requires ENA-SR-IOV; the
-// doctor check fails loudly when the chosen instance family doesn't
-// support either.
+// given instance types. ENA-SR-IOV capability is required; the doctor
+// check fails loudly when the chosen instance family doesn't support
+// either.
 func (c *Clients) DescribeInstanceCapabilities(ctx context.Context, instanceTypes []string) ([]InstanceTypeCapabilities, error) {
 	if c == nil || c.EC2 == nil {
 		return nil, fmt.Errorf("aws.Clients is nil")
@@ -117,8 +117,8 @@ func (c *Clients) DescribeInstanceCapabilities(ctx context.Context, instanceType
 }
 
 // VCPUQuotaAttribute returns the running on-demand vCPU quota for the
-// account. PRD 07 § "Open questions" pins this as a doctor pre-flight.
-// AWS surfaces multiple quota attribute names; we ask for the "running
+// account. This is a doctor pre-flight check. AWS surfaces multiple
+// quota attribute names; we ask for the "running
 // on-demand instances" family which is the relevant one for the
 // self-managed node group.
 func (c *Clients) VCPUQuotaAttribute(ctx context.Context) (string, error) {

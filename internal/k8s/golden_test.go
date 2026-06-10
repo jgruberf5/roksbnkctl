@@ -20,9 +20,9 @@
 //   - kubectl isn't on PATH (we need it for the comparison side)
 //   - the cluster isn't reachable
 //
-// PRD 02 §Acceptance criteria requires byte equivalence for Node, Pod,
-// Service, ConfigMap. We expose one TestGolden_* per resource so a
-// single flake is easy to localise.
+// Byte equivalence is required for Node, Pod, Service, ConfigMap. We
+// expose one TestGolden_* per resource so a single flake is easy to
+// localise.
 
 package k8s
 
@@ -84,7 +84,7 @@ func runKubectl(ctx context.Context, args ...string) (string, error) {
 // what byte equivalence is testing — we want to catch real divergence
 // (different field ordering, extra fields, formatting).
 //
-// PRD 02's "(modulo timestamps)" wording is realised here.
+// The "(modulo timestamps)" contract is realised here.
 func stripVolatileFields(s string) string {
 	var out []string
 	skipBlock := false
@@ -154,7 +154,7 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// TestGolden_GetNodes_YAML — PRD 02 acceptance criterion #1.
+// TestGolden_GetNodes_YAML — byte-equivalence for nodes.
 func TestGolden_GetNodes_YAML(t *testing.T) {
 	_ = goldenSetup(t)
 	ctx, cancel := context.WithTimeout(context.Background(), liveTimeout)

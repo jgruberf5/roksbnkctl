@@ -15,10 +15,9 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/config"
 )
 
-// Sprint 2 `awsbnkctl init` — AWS path (PRD 08 § "CLI surface" +
-// PRD 07 § "Inputs"). Interactive wizard collecting region / profile
-// / VPC / subnets / cluster name + the FAR archive + JWT local paths
-// the supply-chain S3 upload phase needs at apply time.
+// `awsbnkctl init` — AWS path. Interactive wizard collecting region /
+// profile / VPC / subnets / cluster name + the FAR archive + JWT local
+// paths the supply-chain S3 upload phase needs at apply time.
 //
 // SPIKE DEFERRAL: --dry-run flag short-circuits the AWS PutObject
 // call so this binary runs on a stock dev box without live AWS. The
@@ -28,8 +27,7 @@ import (
 
 // flagInitDryRun is the workspace-side `--dry-run` for `awsbnkctl init`.
 // Distinct from the per-up-command flag (flagClusterDryRun) so the
-// two flows can move at different cadences as Sprint 3 fills the
-// non-dry-run lifecycle in.
+// two flows can evolve independently.
 var flagInitDryRun bool
 
 // Register the --dry-run flag onto the existing initCmd (declared in
@@ -37,7 +35,7 @@ var flagInitDryRun bool
 // lifecycle.go's flag wiring so the init.go file owns the AWS-wizard
 // surface end-to-end.
 func init() {
-	initCmd.Flags().BoolVar(&flagInitDryRun, "dry-run", false, "walk the wizard + write the workspace config but skip the live AWS upload step (Sprint 2 spike-deferral path)")
+	initCmd.Flags().BoolVar(&flagInitDryRun, "dry-run", false, "walk the wizard + write the workspace config but skip the live AWS upload step")
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {
@@ -74,8 +72,8 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	ws.Cluster.Name = promptString("EKS cluster name", firstNonEmpty(ws.Cluster.Name, "bnk-demo"))
 	ws.Cluster.Create = promptYesNo("create new cluster?", ws.Cluster.Create || ws.Cluster.Name == "bnk-demo")
 
-	// ── Supply chain block (PRD 08) ──────────────────────────────────
-	fmt.Fprintln(os.Stderr, "\nSupply chain (PRD 08):")
+	// ── Supply chain block ────────────────────────────────────────────
+	fmt.Fprintln(os.Stderr, "\nSupply chain:")
 	ws.AWS.SupplyChain.FARArchivePath = promptString("FAR archive path (f5cne-far-auth-*.tar.gz)", ws.AWS.SupplyChain.FARArchivePath)
 	ws.AWS.SupplyChain.JWTPath = promptString("subscription JWT path (f5cne-subscription-*.jwt)", ws.AWS.SupplyChain.JWTPath)
 	ws.AWS.SupplyChain.FLONamespace = promptString("FLO namespace", firstNonEmpty(ws.AWS.SupplyChain.FLONamespace, "flo-system"))
@@ -170,15 +168,13 @@ func validateInitInputs(ws *config.Workspace, dryRun bool) error {
 	}
 	if !dryRun {
 		// VPC + subnets are mandatory in the strict path because the
-		// provisioning phases need them up front. The Sprint 1
-		// `awsbnkctl up cluster --dry-run` still works with these
-		// unset (synthetic workspace path), but `awsbnkctl init`
+		// provisioning phases need them up front. `awsbnkctl init`
 		// without --dry-run is a "ready to apply" intent.
 		if ws.AWS.VPCID == "" {
 			return errors.New("VPC ID is required (pass --dry-run to skip strict validation)")
 		}
 		if len(ws.AWS.SubnetIDs) < 3 {
-			return errors.New("at least 3 subnet IDs required for HA per PRD 07 (pass --dry-run to skip strict validation)")
+			return errors.New("at least 3 subnet IDs required for HA (pass --dry-run to skip strict validation)")
 		}
 	}
 	if ws.Cluster.Name == "" {

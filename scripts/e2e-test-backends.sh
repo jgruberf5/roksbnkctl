@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
 # scripts/e2e-test-backends.sh — backend-matrix end-to-end driver.
 #
-# ▶ Sprint 4 status: the AWS-flavoured test verbs (connectivity, dns,
-#   throughput) and the K8s + SSH execution backends have landed in
-#   dry-run / mocked form — the offline regression surface is exercised
-#   by the `test-dryrun` job in `.github/workflows/ci.yml`. The
-#   live-AWS exercise of these phases still gates on the operator-run
-#   PRD 07 spike (SPIKE DEFERRAL carries — no live AWS resources in
-#   the agent dispatch lane).
+# The AWS-flavoured test verbs (connectivity, dns, throughput) and the
+# K8s + SSH execution backends have landed in dry-run / mocked form —
+# the offline regression surface is exercised by the `test-dryrun` job
+# in `.github/workflows/ci.yml`. The live-AWS exercise of these phases
+# still gates on the operator-run spike.
 #
-#     Phase I     (SSH backend)              → Sprint 4 dry-run + spike for apply
-#     Phase K     (Docker backend)           → Sprint 4 dry-run + spike for apply
-#     Phase L     (K8s backend / iperf3)     → Sprint 4 dry-run + spike for apply
-#     Phase L-DNS (DNS probe + GSLB compare) → Sprint 4 dry-run + spike for apply
-#     Phase M     (cred-leak audit)          → Sprint 4 implements; spike validates
-#     Phase N     (mixed-mode lifecycle)     → Sprint 4 implements; spike validates
+#     Phase I     (SSH backend)              → dry-run via CI; spike for live apply
+#     Phase K     (Docker backend)           → dry-run via CI; spike for live apply
+#     Phase L     (K8s backend / iperf3)     → dry-run via CI; spike for live apply
+#     Phase L-DNS (DNS probe + GSLB compare) → dry-run via CI; spike for live apply
+#     Phase M     (cred-leak audit)          → CI implements; spike validates live
+#     Phase N     (mixed-mode lifecycle)     → CI implements; spike validates live
 #
 #   Invocation surface preserved (PHASE_FROM, DRY_RUN, env vars) so
 #   downstream consumers (scripts/e2e-test-full.sh, the babysit loop)
 #   keep parsing the script. Phase bodies still emit skip banners —
-#   the markers below point operators at the right Sprint 4 artefact
-#   (the CI `test-dryrun` job or the PRD 07 spike) for each surface.
+#   the markers below point operators at the right artefact
+#   (the CI `test-dryrun` job or the live spike) for each surface.
 
 set -e
 set -u
@@ -53,34 +51,27 @@ skip_phase() {
     local desc="$2"
     local marker="$3"
     phase_header "$letter" "$desc"
-    # Auto-suffix " retarget" only on the bare "Sprint N" style markers
-    # used by Sprint 0-3 callers; Sprint 4 callers pass a fully-formed
-    # sentence so the skip banner reads naturally without the suffix.
-    # Mirrors the helper in scripts/e2e-test.sh for consistency.
-    if [[ "$marker" =~ ^Sprint\ [0-9]+$ ]]; then
-        marker="pending $marker retarget"
-    fi
-    yellow "  ⊘ Phase $letter skipped — $marker (see docs/PLAN.md)"
+    yellow "  ⊘ Phase $letter skipped — $marker"
 }
 
 should_run() {
     [[ "$1" > "$PHASE_FROM" || "$1" == "$PHASE_FROM" ]]
 }
 
-# ── phases (Sprint 4 marker refresh — dry-run tier covered by CI's
-#   test-dryrun job, live tier gates on the operator-run PRD 07 spike) ─
-phase_I()     { skip_phase I     "SSH backend (awsbnkctl --backend ssh)"            "Sprint 4 implements dry-run; live apply gates on PRD 07 spike"; }
-phase_K()     { skip_phase K     "Docker backend (awsbnkctl --backend docker)"      "Sprint 4 implements dry-run; live apply gates on PRD 07 spike"; }
-phase_L()     { skip_phase L     "K8s backend (iperf3 + ops pod via --backend k8s)" "Sprint 4 implements dry-run; live apply gates on PRD 07 spike"; }
-phase_L_DNS() { skip_phase L-DNS "AWS Route 53 GSLB DNS probe + cross-vantage compare (miekg/dns)" "Sprint 4 implements dry-run; live apply gates on PRD 07 spike"; }
-phase_M()     { skip_phase M     "cred-leak audit across all backends"              "Sprint 4 implements; live exercise in PRD 07 spike"; }
-phase_N()     { skip_phase N     "mixed-mode lifecycle (backends share state)"      "Sprint 4 implements; live exercise in PRD 07 spike"; }
+# ── phases (dry-run tier covered by CI's test-dryrun job; live tier
+#   gates on the operator-run spike) ──────────────────────────────────
+phase_I()     { skip_phase I     "SSH backend (awsbnkctl --backend ssh)"            "dry-run via CI; live apply gates on spike"; }
+phase_K()     { skip_phase K     "Docker backend (awsbnkctl --backend docker)"      "dry-run via CI; live apply gates on spike"; }
+phase_L()     { skip_phase L     "K8s backend (iperf3 + ops pod via --backend k8s)" "dry-run via CI; live apply gates on spike"; }
+phase_L_DNS() { skip_phase L-DNS "AWS Route 53 GSLB DNS probe + cross-vantage compare (miekg/dns)" "dry-run via CI; live apply gates on spike"; }
+phase_M()     { skip_phase M     "cred-leak audit across all backends"              "CI implements; live exercise in spike"; }
+phase_N()     { skip_phase N     "mixed-mode lifecycle (backends share state)"      "CI implements; live exercise in spike"; }
 
 # ── main ────────────────────────────────────────────────────────────
 main() {
     bold "awsbnkctl backends E2E — run-id $RUN_TS"
     echo "[$(date +%H:%M:%S)] log: $RUN_LOG" | tee -a "$RUN_LOG" >&2
-    echo "[$(date +%H:%M:%S)] Sprint 4 status: backend + DNS phases at dry-run tier; live apply gates on PRD 07 spike." \
+    echo "[$(date +%H:%M:%S)] Status: backend + DNS phases at dry-run tier; live apply gates on operator-run spike." \
         | tee -a "$RUN_LOG" >&2
 
     should_run I     && phase_I
@@ -92,11 +83,10 @@ main() {
 
     echo "" >&2
     yellow "════════════════════════════════════════════════════════════"
-    yellow "Sprint 4 status: backend matrix (I, K, L) + L-DNS + audit (M, N)"
+    yellow "Status: backend matrix (I, K, L) + L-DNS + audit (M, N)"
     yellow "  at dry-run / mocked tier — see CI test-dryrun job."
-    yellow "Live-apply tier still gates on the operator-run PRD 07 spike"
+    yellow "Live-apply tier gates on the operator-run spike"
     yellow "  (docs/prd/07-EKS-CLUSTER-SRIOV.md § \"Spike protocol\")."
-    yellow "(see docs/PLAN.md § Sprint 4 for the retarget plan)."
     yellow "════════════════════════════════════════════════════════════"
 }
 

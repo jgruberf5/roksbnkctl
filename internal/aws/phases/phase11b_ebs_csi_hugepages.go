@@ -55,7 +55,7 @@ const (
 //     up.sh:639 chk_hugepages_on_node.
 //
 // D-005: CheckAuthOrDie at entry.
-// Slice 7 lifecycle order: ... Phase11 → Phase11bEBSCSIHugepages → Phase12 ...
+// Lifecycle order: ... Phase11 → Phase11bEBSCSIHugepages → Phase12 ...
 func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name

@@ -1,8 +1,8 @@
 package test
 
-// Sprint 5 / PRD 03 §"DNS probe (GSLB-aware)" — miekg-based probe unit tests.
+// miekg-based DNS probe unit tests.
 //
-// These tests pin the unit-tier surface of the rewritten DNS probe:
+// These tests pin the unit-tier surface of the DNS probe:
 //
 //   - Record-type translation (A, AAAA, CNAME, MX, NS, TXT, SRV, SOA,
 //     PTR, CAA, DS, DNSKEY) into parsed DNSAnswer entries with the
@@ -14,9 +14,8 @@ package test
 //     RTT; iterations=N preserves ordering p50 ≤ p95 ≤ p99
 //   - Error paths: NXDOMAIN, SERVFAIL, REFUSED, TIMEOUT each surface as
 //     the documented Rcode string
-//   - JSON schema conformance: DNSProbeResult marshals into a shape
-//     that matches the awsbnkctl.dns.v1.vantage schema documented in
-//     PRD 03 §"JSON output schema"
+//   - JSON schema conformance: DNSProbeResult marshals into the
+//     awsbnkctl.dns.v1.vantage shape
 //   - Truncated + Authoritative flags pulled from response.MsgHdr
 //   - Concurrent iterations: N queries against a single mock server all
 //     complete cleanly with RTTs recorded
@@ -132,12 +131,11 @@ func hangHandler() dns.HandlerFunc {
 
 // — record-type coverage — //
 
-// TestProbe_RecordTypes_AllParseAndProjectType walks every record type
-// listed in PRD 03 §"Record types supported" and asserts:
+// TestProbe_RecordTypes_AllParseAndProjectType walks the supported record
+// types (A, AAAA, CNAME, MX, NS, TXT, SRV, SOA, PTR, CAA) and asserts:
 //   - Probe.Run returns NOERROR
 //   - exactly one DNSAnswer is parsed
-//   - DNSAnswer.Type is the canonical string ("A", "AAAA", …) — the
-//     JSON-output schema's contract from PRD 03
+//   - DNSAnswer.Type is the canonical string ("A", "AAAA", …)
 func TestProbe_RecordTypes_AllParseAndProjectType(t *testing.T) {
 	cases := []struct {
 		typeName string
@@ -434,10 +432,10 @@ func TestProbe_AuthoritativeFlag(t *testing.T) {
 // — JSON schema conformance — //
 
 // TestProbeResult_JSON_SchemaConformance asserts the marshalled
-// DNSProbeResult has the documented PRD 03 §"JSON output schema"
-// fields: schema, server, iterations, rtt_ms.{p50,p95,p99}, answers[],
-// rcode, authoritative, truncated. Hand-rolled field-presence check
-// (avoids dragging gojsonschema in for one assertion).
+// DNSProbeResult carries all required fields: schema, server,
+// iterations, rtt_ms.{p50,p95,p99}, answers[], rcode, authoritative,
+// truncated. Hand-rolled field-presence check (avoids dragging
+// gojsonschema in for one assertion).
 func TestProbeResult_JSON_SchemaConformance(t *testing.T) {
 	srv := startMockDNSServer(t, answerHandler(map[uint16][]dns.RR{
 		dns.TypeA: {mustRR(t, "example.com. 60 IN A 192.0.2.1")},
@@ -609,9 +607,8 @@ func startMockDNSServerDualStack(t *testing.T, handler dns.HandlerFunc) string {
 	return udpAddr.String()
 }
 
-// TestProbe_TruncatedFlag asserts the documented PRD 03 §"Truncated +
-// authoritative flags" surface: when the response carries TC=1, the
-// DNSProbeResult.Truncated field reports true.
+// TestProbe_TruncatedFlag asserts that when the response carries TC=1,
+// DNSProbeResult.Truncated reports true.
 //
 // The Probe correctly retries truncated UDP responses over TCP (per
 // RFC 1035 §4.2.2). To make Truncated=true *stick* through to the
@@ -619,12 +616,8 @@ func startMockDNSServerDualStack(t *testing.T, handler dns.HandlerFunc) string {
 // listener on the same port — each returns TC=1 + an empty Answers
 // list. The retry happens, but the TCP response is *also* truncated,
 // so lastResp.Truncated remains true and projects into the result.
-//
-// This is the TCP-only path proposed in Sprint 5 validator Issue 4
-// resolution — the alternative ("TCP-only mock server") would still
-// need to satisfy the UDP-first dispatch in Probe.Run; a dual-stack
-// mock keeps the UDP query path live while exercising the truncated
-// retry sticking through to the surfaced flag.
+// A dual-stack mock keeps the UDP query path live while exercising
+// the truncated retry sticking through to the surfaced flag.
 func TestProbe_TruncatedFlag(t *testing.T) {
 	handler := func(w dns.ResponseWriter, r *dns.Msg) {
 		m := new(dns.Msg)
@@ -656,10 +649,9 @@ func TestProbe_TruncatedFlag(t *testing.T) {
 	}
 }
 
-// TestProbe_EDNSClientSubnet_Echoed pins the Sprint 6 ECS surfacing
-// (PRD 03 §"DNS probe" — `edns_client_subnet` field). A mock server
-// answers every query with an OPT record carrying an ECS option;
-// Probe.Run extracts the option into DNSProbeResult.EDNSClientSubnet.
+// TestProbe_EDNSClientSubnet_Echoed pins the ECS surfacing behaviour.
+// A mock server answers every query with an OPT record carrying an ECS
+// option; Probe.Run extracts it into DNSProbeResult.EDNSClientSubnet.
 //
 // The field is `omitempty` on the JSON, so non-ECS-aware servers
 // produce a nil field that doesn't appear in the output. The

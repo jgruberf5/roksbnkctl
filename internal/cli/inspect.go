@@ -106,7 +106,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// AWS is the only first-class cloud block (PRD 04 retarget).
+	// AWS is the only first-class cloud block.
 	region := cctx.Workspace.AWS.Region
 	fmt.Fprintf(tw, "Region:\t%s\n", or(region, "(unset)"))
 	if cctx.Workspace.AWS.Profile != "" {

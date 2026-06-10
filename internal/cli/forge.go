@@ -181,7 +181,7 @@ func runForgeRegister(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 1) build kubeconfig: either read --kubeconfig <path> or generate
-	// in-process via the EKS presigned-URL flow (PRD 07).
+	// in-process via the EKS presigned-URL flow.
 	kubeconfigYAML, err := buildKubeconfig(cmd.Context(), t.profile, clusterName, t.region)
 	if err != nil {
 		return err

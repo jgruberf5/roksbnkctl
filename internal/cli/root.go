@@ -33,8 +33,8 @@ var (
 	flagNoColor         bool
 	flagOn              string // --on <target>: dispatch a passthrough over SSH instead of locally
 	flagInsecureHostKey bool   // --insecure-host-key: skip TOFU prompt; just record the key (CI use)
-	flagBackend         string // --backend <local|docker|k8s|ssh:<target>>: per-invocation execution backend override (PRD 03)
-	flagBootstrap       bool   // --bootstrap: opt-in to apt-get auto-install of missing tools on the SSH backend (PRD 03 §"open questions")
+	flagBackend         string // --backend <local|docker|k8s|ssh:<target>>: per-invocation execution backend override
+	flagBootstrap       bool   // --bootstrap: opt-in to apt-get auto-install of missing tools on the SSH backend
 )
 
 var rootCmd = &cobra.Command{
@@ -140,9 +140,8 @@ func init() {
 	pf.BoolVar(&flagBootstrap, "bootstrap", false, "for --backend ssh:<target>: auto-install missing tools on Ubuntu via apt-get (requires passwordless sudo on the target)")
 
 	// Wire the docker / k8s backends' image-tag resolver to the
-	// binary's build-time Version. Sprint 4 polish carry-over 5b: a
-	// tag-released binary pulls matching tag-released tool images
-	// instead of the :dev tag CI doesn't publish.
+	// binary's build-time Version. A tag-released binary pulls matching
+	// tag-released tool images instead of the :dev tag CI doesn't publish.
 	execbackend.SetToolImageTag(func() string { return Version })
 }
 
