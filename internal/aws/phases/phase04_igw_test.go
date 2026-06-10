@@ -88,6 +88,39 @@ func TestPhase04IGW_ErrorsWithoutVPCID(t *testing.T) {
 	}
 }
 
+// TestPhase04IGWDown_DiscoversVPCForDetach pins the tag-discovery regression:
+// when state carries no VPC_ID (down running from tag-discovery), the detach
+// must read the attached VPC from the IGW itself instead of being silently
+// skipped — a skipped detach makes DeleteInternetGateway fail with
+// DependencyViolation (hit live on bnk-demo teardown, 2026-06-10).
+func TestPhase04IGWDown_DiscoversVPCForDetach(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	st.Set("IGW_ID", "igw-0attached")
+	// VPC_ID deliberately absent.
+
+	igwID := "igw-0attached"
+	vpcID := "vpc-0discovered"
+	ec2m := &mockEC2{
+		describeIGWsOut: &ec2.DescribeInternetGatewaysOutput{
+			InternetGateways: []ec2types.InternetGateway{{
+				InternetGatewayId: &igwID,
+				Attachments:       []ec2types.InternetGatewayAttachment{{VpcId: &vpcID}},
+			}},
+		},
+	}
+	if err := Phase04IGWDown(context.Background(), testCluster(), st, testClients(ec2m)); err != nil {
+		t.Fatalf("Phase04IGWDown: %v", err)
+	}
+	if len(ec2m.detachIGWInputs) != 1 {
+		t.Fatalf("expected exactly 1 DetachInternetGateway call, got %d", len(ec2m.detachIGWInputs))
+	}
+	if got := *ec2m.detachIGWInputs[0].VpcId; got != vpcID {
+		t.Fatalf("detach used VpcId %q, want discovered %q", got, vpcID)
+	}
+}
+
 func TestPhase04IGWDown_ToleratesAlreadyGone(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()

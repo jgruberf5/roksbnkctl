@@ -32,6 +32,7 @@ type mockEC2 struct {
 	describeIGWsErr error
 	createIGWOut    *ec2.CreateInternetGatewayOutput
 	createIGWErr    error
+	detachIGWInputs []*ec2.DetachInternetGatewayInput
 	createIGWCalls  int
 	attachIGWCalls  int
 
@@ -190,7 +191,8 @@ func (m *mockEC2) AttachInternetGateway(_ context.Context, _ *ec2.AttachInternet
 	m.attachIGWCalls++
 	return &ec2.AttachInternetGatewayOutput{}, nil
 }
-func (m *mockEC2) DetachInternetGateway(_ context.Context, _ *ec2.DetachInternetGatewayInput, _ ...func(*ec2.Options)) (*ec2.DetachInternetGatewayOutput, error) {
+func (m *mockEC2) DetachInternetGateway(_ context.Context, in *ec2.DetachInternetGatewayInput, _ ...func(*ec2.Options)) (*ec2.DetachInternetGatewayOutput, error) {
+	m.detachIGWInputs = append(m.detachIGWInputs, in)
 	return &ec2.DetachInternetGatewayOutput{}, nil
 }
 func (m *mockEC2) DeleteInternetGateway(_ context.Context, _ *ec2.DeleteInternetGatewayInput, _ ...func(*ec2.Options)) (*ec2.DeleteInternetGatewayOutput, error) {

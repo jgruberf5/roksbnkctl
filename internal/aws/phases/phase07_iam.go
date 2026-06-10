@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -203,6 +204,15 @@ func Phase07IAMDown(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 		sgID = lookupSGByName(ctx, clients.EC2, name+"-bnk-data")
 	}
 	if sgID != "" {
+		// EKS leaves its managed cluster SG (eks-cluster-sg-<cluster>-*) behind
+		// when cross-SG rules reference SG_BNK_DATA (phase 18 wires cluster-SG ↔
+		// bnk-data both ways, and its state-driven revoke is skipped when down
+		// runs from tag-discovery with no CLUSTER_SG_ID). Those references make
+		// DeleteSecurityGroup fail with DependencyViolation, so clear them by
+		// discovery first and remove the orphaned EKS SG shell.
+		if err := clearSGReferences(ctx, clients.EC2, sgID, name); err != nil {
+			fmt.Fprintf(os.Stderr, "[phase 07 down] warning: clearing SG references: %v\n", err)
+		}
 		fmt.Fprintf(os.Stderr, "[phase 07 down] deleting security group %s (SG_BNK_DATA)\n", sgID)
 		_, err := clients.EC2.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: ptr(sgID)})
 		if err := ignoreNotFound(err); err != nil {
@@ -292,6 +302,71 @@ func findSGByName(ctx context.Context, ec2c EC2API, clusterName, vpcID, sgName s
 		return "", nil
 	}
 	return *out.SecurityGroups[0].GroupId, nil
+}
+
+// clearSGReferences removes everything that would make DeleteSecurityGroup on
+// sgID fail with DependencyViolation: it finds every SG whose ingress rules
+// reference sgID, revokes exactly those referencing rules, and best-effort
+// deletes the orphaned EKS-managed cluster SG shell
+// (eks-cluster-sg-<cluster>-*) — EKS leaves it behind when the cluster is
+// deleted while cross-SG references exist. Errors on individual revokes are
+// returned; the caller treats the whole step as best-effort.
+func clearSGReferences(ctx context.Context, ec2c EC2API, sgID, clusterName string) error {
+	out, err := ec2c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{
+			{Name: ptr("ip-permission.group-id"), Values: []string{sgID}},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("ec2:DescribeSecurityGroups referencing %s: %w", sgID, err)
+	}
+	for _, sg := range out.SecurityGroups {
+		// Build the subset of this SG's ingress permissions that reference sgID.
+		var perms []ec2types.IpPermission
+		for _, p := range sg.IpPermissions {
+			var pairs []ec2types.UserIdGroupPair
+			for _, g := range p.UserIdGroupPairs {
+				if g.GroupId != nil && *g.GroupId == sgID {
+					pairs = append(pairs, ec2types.UserIdGroupPair{GroupId: g.GroupId})
+				}
+			}
+			if len(pairs) > 0 {
+				perms = append(perms, ec2types.IpPermission{
+					IpProtocol:       p.IpProtocol,
+					FromPort:         p.FromPort,
+					ToPort:           p.ToPort,
+					UserIdGroupPairs: pairs,
+				})
+			}
+		}
+		if len(perms) == 0 || sg.GroupId == nil {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[phase 07 down] revoking %d rule(s) referencing %s from %s\n",
+			len(perms), sgID, *sg.GroupId)
+		_, err := ec2c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+			GroupId:       sg.GroupId,
+			IpPermissions: perms,
+		})
+		if err != nil && !isInvalidPermissionNotFound(err) {
+			return fmt.Errorf("ec2:RevokeSecurityGroupIngress %s: %w", *sg.GroupId, err)
+		}
+		// Orphaned EKS-managed shell: the cluster is already gone by the time
+		// phase 07 down runs, so the SG serves nothing — delete it. Tolerate
+		// failures (it may still be referenced elsewhere); the primary goal,
+		// unblocking sgID, is already achieved by the revoke above.
+		if *sg.GroupId != sgID && sg.GroupName != nil &&
+			strings.HasPrefix(*sg.GroupName, "eks-cluster-sg-"+clusterName+"-") {
+			fmt.Fprintf(os.Stderr, "[phase 07 down] deleting orphaned EKS cluster SG %s (%s)\n",
+				*sg.GroupId, *sg.GroupName)
+			if _, err := ec2c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: sg.GroupId}); err != nil {
+				if e := ignoreNotFound(err); e != nil {
+					fmt.Fprintf(os.Stderr, "[phase 07 down] warning: orphaned EKS SG %s not deleted: %v\n", *sg.GroupId, e)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // lookupSGByName does a best-effort name-based lookup for the down-path
