@@ -175,8 +175,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		region = seeds.Region
 	}
 
-	// Network ops below — bound to a timeout.
-	ctx, cancel := contextWithTimeout(initTimeout)
+	// The interview is interactive, so the flow context must NOT carry a
+	// wall-clock deadline — slow human answers between prompts would otherwise
+	// expire the API calls (the resource-group lookup in particular). Each
+	// network call is bounded individually instead: SDK calls via apiCtx,
+	// raw-REST calls by the ibm http client's own per-request 60s timeout.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	fmt.Fprintln(os.Stderr, "\n→ Verifying IBM Cloud credentials...")
@@ -184,7 +188,9 @@ func runInit(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	id, err := ic.Verify(ctx)
+	vctx, vcancel := apiCtx(ctx)
+	id, err := ic.Verify(vctx)
+	vcancel()
 	if err != nil {
 		return err
 	}
@@ -226,7 +232,9 @@ func runInit(_ *cobra.Command, _ []string) error {
 	if rgName == "" {
 		rgName = promptString("Resource group", dRG)
 	}
-	rgID, err := ic.ResolveResourceGroup(ctx, rgName)
+	rgCtx, rgCancel := apiCtx(ctx)
+	rgID, err := ic.ResolveResourceGroup(rgCtx, rgName)
+	rgCancel()
 	if err != nil {
 		return fmt.Errorf("verifying resource group: %w", err)
 	}
@@ -956,4 +964,12 @@ func refDescription(c config.TFSourceCfg) string {
 // given timeout. Used to keep init's network ops bounded.
 func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
+}
+
+// apiCtx bounds a single SDK network call within the (deadline-free) interview
+// context: a hung call still times out after initTimeout, but the human's
+// answer time between prompts never counts against it. Raw-REST calls are
+// already bounded by the ibm package's http client per-request timeout.
+func apiCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, initTimeout)
 }
