@@ -24,6 +24,14 @@ output "testing_jumphost_shared_private_key" {
   sensitive = true
 }
 
+# The IBM Cloud VPC SSH key NAME attached to the jumphost VMs (non-sensitive,
+# an identifier — distinct from the private key above). Empty when no named key
+# is used (the jumphosts then take only the generated cloud-init key).
+output "testing_ssh_key_name" {
+  description = "IBM Cloud VPC SSH key name attached to the jumphosts (empty when only the generated cloud-init key is used)"
+  value       = var.testing_ssh_key_name
+}
+
 # ============================================================
 # Referenced Cluster
 # ============================================================
