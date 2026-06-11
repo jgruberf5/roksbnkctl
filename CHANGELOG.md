@@ -4,6 +4,24 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Added
+
+- **Unattended workspace setup** ([PRD 13](docs/prd/13-WORKSPACE-CONFIG-SEEDING.md)). `roksbnkctl init` gains three options for CI / fleet provisioning from a committed template, no secrets in version control:
+  - **`--config-file <path|url>`** seeds the workspace `config.yaml` directly (sibling of `--var-file`, which seeds `terraform.tfvars`). Strict parse — unknown fields are rejected, not silently dropped — and non-interactive when the config is complete; otherwise a clear error names the missing required fields.
+  - **`--var-file` and `--config-file` accept an `http(s)` URL** as well as a local path (fetched with a 30 s timeout, 10 MB cap).
+  - **`--override-from-env`** overlays a fixed set of `config.yaml` fields from environment variables (`IBMCLOUD_API_KEY` → `ibmcloud.api_key_b64`, plus `ROKSBNKCTL_{PREFIX,REGION,RESOURCE_GROUP,API_KEY_B64,TESTING_SSH_KEY_NAME,GENERIC_PASSWORD}`); the environment wins, and applied-field labels are logged without secret values. Full table in the book.
+- **`registry replicate` targets IBM Container Registry and any generic OCI registry** ([PRD 14](docs/prd/14-REGISTRY-TARGETS.md)). The air-gap mirror now has three backends — `icr` (the **new default**), `generic` (Artifactory / Harbor / `registry:2`), and `openshift` (the cluster internal registry). ICR derives its host from `ibmcloud.region` (override `registry.icr_host`), namespaces under `registry.icr_namespace` (default: the workspace prefix), and authenticates with `iamapikey` + the workspace API key. The generic target is `registry.generic_{host,repo_prefix,username,password_b64}` (the password templatable via `ROKSBNKCTL_GENERIC_PASSWORD`). The book adds a FAR → private-Artifactory walkthrough.
+
+### Changed
+
+- **`registry replicate` now defaults to `icr`** when `registry.target` is unset (was `openshift`). Existing air-gap workspaces must set `registry.target: openshift` explicitly — see the migration note in the book.
+
+### Fixed
+
+- **`ws delete` removes SSH keys `init` copied into `~/.ssh/`.** When `init` generated a testing SSH key and you accepted the copy prompt, the copied files now follow the workspace to the grave — but only files `init` itself created (recorded in `resources.copied_ssh_key_files`); a pre-existing `~/.ssh` key with the same name is never touched.
+
 ## v1.10.0 — 2026-06-10
 
 ### Added
