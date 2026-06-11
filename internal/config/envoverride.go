@@ -29,6 +29,7 @@ import (
 //	ROKSBNKCTL_REGION               → ibmcloud.region
 //	ROKSBNKCTL_RESOURCE_GROUP       → ibmcloud.resource_group
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
+//	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
 //
 // ROKSBNKCTL_API_KEY_B64 takes precedence over IBMCLOUD_API_KEY when both are
 // set (an explicit pre-encoded value beats the raw-key convenience path).
@@ -62,6 +63,16 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 		ws.Resources.TestingSSHKeyName = v
 		applied = append(applied, "resources.testing_ssh_key_name (ROKSBNKCTL_TESTING_SSH_KEY_NAME)")
+	}
+
+	// Generic OCI registry password (e.g. an Artifactory access token) — raw in
+	// the env, base64-encoded into the config like the API key.
+	if v := envValue("ROKSBNKCTL_GENERIC_PASSWORD"); v != "" {
+		if ws.Registry == nil {
+			ws.Registry = &RegistryCfg{}
+		}
+		ws.Registry.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
+		applied = append(applied, "registry.generic_password_b64 (ROKSBNKCTL_GENERIC_PASSWORD)")
 	}
 
 	return applied

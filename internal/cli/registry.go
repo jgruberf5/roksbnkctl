@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/bnkbom"
@@ -18,6 +20,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/mirror"
+	"github.com/jgruberf5/roksbnkctl/internal/registry/ocireg"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/openshift"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/source"
 )
@@ -292,28 +295,123 @@ func registryScratchDir(name string) string {
 	return filepath.Join(dir, "scratch", "registry")
 }
 
-// buildTarget constructs + prepares the OpenShift mirror target against the live
-// cluster. Used by the cluster-touching verbs.
-func buildTarget(ctx context.Context, ws *config.Workspace) (*openshift.Target, error) {
-	kind := "openshift"
+// mirrorTarget is the registry-target contract the CLI consumes: the engine's
+// push side (mirror.Target) plus the pull-side endpoints the install redirect
+// reads. Both *openshift.Target and *ocireg.Target satisfy it. (Prepare is NOT
+// on the interface — its signature differs per impl, so buildTarget prepares
+// each kind inline.)
+type mirrorTarget interface {
+	mirror.Target
+	ImagePullRef(bnkbom.Artifact) string
+	ChartPullRef(bnkbom.Artifact) string
+	ImageHostPath() string
+	ChartHostPath() string
+	// MirrorNamespace is the namespace/project recorded in registry-mirror.json
+	// (the OpenShift mirror project, or the ICR/generic repo prefix).
+	MirrorNamespace() string
+}
+
+// registryTargetKind resolves the active target backend: --target flag >
+// registry.target > "icr" (the Sprint 30 default — existing air-gap workspaces
+// must set registry.target: openshift explicitly).
+func registryTargetKind(ws *config.Workspace) string {
+	kind := "icr"
 	if ws.Registry != nil && ws.Registry.Target != "" {
 		kind = ws.Registry.Target
 	}
-	if flagRegistryTarget != "" { // --target overrides the workspace config
+	if flagRegistryTarget != "" {
 		kind = flagRegistryTarget
 	}
-	if kind != "openshift" {
-		return nil, fmt.Errorf("unsupported registry target %q (only \"openshift\" is implemented)", kind)
+	return kind
+}
+
+// buildTarget resolves the configured registry target and prepares it.
+// "openshift" bootstraps the live cluster's internal registry; "icr"/"generic"
+// build a static nesting OCI target.
+func buildTarget(ctx context.Context, name string, ws *config.Workspace) (mirrorTarget, error) {
+	switch kind := registryTargetKind(ws); kind {
+	case "openshift":
+		cfg, err := k8s.BuildRESTConfig(flagRegistryKubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		t := &openshift.Target{Namespace: ws.Registry.MirrorNamespace()} // nil-safe
+		if err := t.Prepare(ctx, cfg); err != nil {
+			return nil, fmt.Errorf("preparing mirror target: %w", err)
+		}
+		return t, nil
+	case "icr":
+		return buildICRTarget(ctx, name, ws)
+	case "generic":
+		return buildGenericTarget(ws)
+	default:
+		return nil, fmt.Errorf("unsupported registry target %q (expected openshift, icr, or generic)", kind)
 	}
-	cfg, err := k8s.BuildRESTConfig(flagRegistryKubeconfig)
+}
+
+// icrHostForRegion maps an IBM Cloud region to its regional ICR registry host.
+var icrHostForRegion = map[string]string{
+	"us-south": "us.icr.io", "us-east": "us.icr.io",
+	"eu-de": "de.icr.io", "eu-gb": "uk.icr.io", "eu-es": "es.icr.io",
+	"jp-tok": "jp.icr.io", "jp-osa": "jp2.icr.io",
+	"au-syd": "au.icr.io", "ca-tor": "ca.icr.io", "br-sao": "br.icr.io",
+}
+
+// buildICRTarget builds the IBM Container Registry target: host from
+// registry.icr_host (else derived from ibmcloud.region), namespace from
+// registry.icr_namespace (else the workspace prefix), and iamapikey auth using
+// the workspace's resolved IBM Cloud API key.
+func buildICRTarget(ctx context.Context, name string, ws *config.Workspace) (mirrorTarget, error) {
+	reg := ws.Registry
+	if reg == nil {
+		reg = &config.RegistryCfg{}
+	}
+	host := reg.ICRHost
+	if host == "" {
+		h, ok := icrHostForRegion[ws.IBMCloud.Region]
+		if !ok {
+			return nil, fmt.Errorf("registry target icr: cannot derive an ICR host for region %q — set registry.icr_host (e.g. de.icr.io)", ws.IBMCloud.Region)
+		}
+		host = h
+	}
+	ns := reg.ICRNamespace
+	if ns == "" {
+		ns = ws.Prefix
+	}
+	if ns == "" {
+		return nil, fmt.Errorf("registry target icr: set registry.icr_namespace (or a workspace prefix) for the ICR namespace")
+	}
+	apiKey, err := (&cred.Resolver{Workspace: name}).IBMCloudAPIKey(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry target icr: resolving API key: %w", err)
 	}
-	t := &openshift.Target{Namespace: ws.Registry.MirrorNamespace()}
-	if err := t.Prepare(ctx, cfg); err != nil {
-		return nil, fmt.Errorf("preparing mirror target: %w", err)
+	return &ocireg.Target{
+		Host:      host,
+		Namespace: ns,
+		Auth:      &authn.Basic{Username: "iamapikey", Password: apiKey},
+	}, nil
+}
+
+// buildGenericTarget builds a generic OCI target (Artifactory / Harbor /
+// registry:2) from registry.generic_*. Anonymous when no credential is set.
+func buildGenericTarget(ws *config.Workspace) (mirrorTarget, error) {
+	reg := ws.Registry
+	if reg == nil || reg.GenericHost == "" {
+		return nil, fmt.Errorf("registry target generic: set registry.generic_host (the OCI registry host)")
 	}
-	return t, nil
+	var auth authn.Authenticator = authn.Anonymous
+	if reg.GenericUsername != "" || reg.GenericPasswordB64 != "" {
+		pw, derr := base64.StdEncoding.DecodeString(reg.GenericPasswordB64)
+		if derr != nil {
+			return nil, fmt.Errorf("registry target generic: decoding generic_password_b64: %w", derr)
+		}
+		auth = &authn.Basic{Username: reg.GenericUsername, Password: string(pw)}
+	}
+	return &ocireg.Target{
+		Host:      reg.GenericHost,
+		Namespace: reg.GenericRepoPrefix,
+		Auth:      auth,
+	}, nil
 }
 
 func registryEngine(t mirror.Target, in registryBOMInputs) *mirror.Engine {
@@ -437,7 +535,7 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(cmd.Context(), ws)
+	target, err := buildTarget(cmd.Context(), name, ws)
 	if err != nil {
 		return err
 	}
@@ -465,8 +563,8 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	}
 
 	rec := &config.RegistryMirror{
-		Target:          "openshift",
-		Namespace:       target.Namespace,
+		Target:          registryTargetKind(ws),
+		Namespace:       target.MirrorNamespace(),
 		ChartHost:       target.ChartHostPath(),
 		ImageHost:       target.ImageHostPath(),
 		ManifestVersion: bom.ManifestVersion,
@@ -494,7 +592,7 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(cmd.Context(), ws)
+	target, err := buildTarget(cmd.Context(), name, ws)
 	if err != nil {
 		return err
 	}
