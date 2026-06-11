@@ -795,9 +795,9 @@ tolerations:
 
 	checks := []string{
 		"nvcr.io/nvidia/k8s-device-plugin:v0.17.1", // version substituted
-		`awsbnkctl.io/gpu: "true"`,                  // GPU nodeSelector
-		"nvidia.com/gpu",                             // taint toleration key
-		"NoSchedule",                                 // taint effect
+		`awsbnkctl.io/gpu: "true"`,                 // GPU nodeSelector
+		"nvidia.com/gpu",                           // taint toleration key
+		"NoSchedule",                               // taint effect
 	}
 	for _, want := range checks {
 		if !strings.Contains(rendered, want) {
