@@ -968,8 +968,8 @@ func validateNodeGroups(c *Cluster) error {
 			if deniedSet[az] {
 				return fmt.Errorf(
 					"cluster.nodeGroups[%d] (%s) pins az %q which has no g5/GPU "+
-						"capacity in region %s (available: %v). "+
-						"Remove it from nodeGroups[%d].azs or set AWSBNKCTL_GPU_AZ_DENY to override.",
+						"capacity in region %s (available: %v); "+
+						"remove it from nodeGroups[%d].azs or set AWSBNKCTL_GPU_AZ_DENY to override",
 					i, ng.Name, az, region, available, i,
 				)
 			}
