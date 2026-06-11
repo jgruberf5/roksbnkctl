@@ -26,6 +26,7 @@ type Workspace struct {
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
+	State    StateCfg             `yaml:"state,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base
 	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
@@ -129,6 +130,12 @@ type ResourcesCfg struct {
 	// private key per-workspace, and uploads the public key. Empty → no named key
 	// (the jumphosts use only the generated cloud-init key).
 	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
+	// CopiedSSHKeyFiles lists the ~/.ssh basenames `roksbnkctl init` ACTUALLY
+	// wrote when the user accepted the "copy the private key to ~/.ssh" prompt
+	// (only files it created — pre-existing files are skipped, never recorded).
+	// `ws delete` removes exactly these so a generated key doesn't outlive its
+	// workspace. Empty when nothing was copied.
+	CopiedSSHKeyFiles []string `yaml:"copied_ssh_key_files,omitempty"`
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the
@@ -189,6 +196,30 @@ type BNKNetworkCfg struct {
 // terraform gateway module's BNK install-guide defaults. Rendered as gateway_*
 // tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a
 // toggle here.
+// StateCfg selects where terraform state lives (PRD 16). Backend "" or
+// "local" (the default) keeps per-phase local tfstate under the workspace
+// dir — byte-identical to pre-Sprint-31. "s3" stores each phase's state in
+// an S3-compatible bucket (IBM COS), so a stateless runner / parallel CI
+// needs no shared volume, with native lockfile locking (terraform >= 1.10).
+// Additive + omitempty — an absent `state:` block loads as the local default.
+type StateCfg struct {
+	Backend string      `yaml:"backend,omitempty"` // "" | "local" | "s3"
+	S3      *StateS3Cfg `yaml:"s3,omitempty"`
+}
+
+// StateS3Cfg configures the COS/S3 remote backend. The HMAC access/secret
+// keys are NOT stored here — *KeySource names the env var they come from
+// (env-first), and roksbnkctl injects them as AWS_* env to the terraform
+// child, never into the rendered HCL or the state object.
+type StateS3Cfg struct {
+	Endpoint        string `yaml:"endpoint"`                    // COS S3 endpoint URL
+	Bucket          string `yaml:"bucket"`                      // pre-provisioned bucket
+	Region          string `yaml:"region"`                      // COS location / region
+	KeyPrefix       string `yaml:"key_prefix,omitempty"`        // default: the workspace name
+	AccessKeySource string `yaml:"access_key_source,omitempty"` // env var name; default ROKSBNKCTL_COS_HMAC_ACCESS_KEY
+	SecretKeySource string `yaml:"secret_key_source,omitempty"` // env var name; default ROKSBNKCTL_COS_HMAC_SECRET_KEY
+}
+
 type GatewayCfg struct {
 	AppNamespace       string   `yaml:"app_namespace,omitempty"`
 	BackendService     string   `yaml:"backend_service,omitempty"`
@@ -206,9 +237,34 @@ type GatewayCfg struct {
 // pulls directly from FAR (far_repo_url). Additive + omitempty, so existing
 // config.yaml files load unchanged.
 type RegistryCfg struct {
-	// Target selects the mirror backend. "" / "openshift" → the cluster's own
-	// OpenShift internal image registry (the first-class air-gap target).
+	// Target selects the mirror backend: "openshift" (the air-gap OpenShift
+	// internal registry), "icr" (IBM Container Registry — the Sprint 30 DEFAULT
+	// when unset), or "generic" (any OCI registry — Artifactory / Harbor /
+	// registry:2). Empty resolves to "icr"; existing air-gap workspaces must set
+	// "openshift" explicitly.
 	Target string `yaml:"target,omitempty"`
+
+	// ICRHost overrides the IBM Container Registry host for target=icr (e.g.
+	// "de.icr.io"). Empty → derived from ibmcloud.region.
+	ICRHost string `yaml:"icr_host,omitempty"`
+	// ICRNamespace is the ICR namespace artifacts nest under for target=icr.
+	// Empty → the workspace prefix.
+	ICRNamespace string `yaml:"icr_namespace,omitempty"`
+
+	// GenericHost is the OCI registry host for target=generic (e.g.
+	// "artifactory.example.com").
+	GenericHost string `yaml:"generic_host,omitempty"`
+	// GenericRepoPrefix is the repository path artifacts nest under for
+	// target=generic (e.g. an Artifactory repo key). Empty → no prefix.
+	GenericRepoPrefix string `yaml:"generic_repo_prefix,omitempty"`
+	// GenericUsername / GenericPasswordB64 are the static basic-auth credential
+	// for target=generic (an Artifactory user + access token). The password is
+	// base64-encoded; like the other `_b64` fields this is OBFUSCATION, not
+	// encryption (it dodges rejectPlaintextSecrets) — chmod 600, never commit.
+	// Both empty → anonymous push/pull. Templatable from the environment via
+	// `init --override-from-env` (ROKSBNKCTL_GENERIC_PASSWORD).
+	GenericUsername    string `yaml:"generic_username,omitempty"`
+	GenericPasswordB64 string `yaml:"generic_password_b64,omitempty"`
 
 	// Namespace is the mirror project the artifacts land in. "" → "bnk-mirror".
 	Namespace string `yaml:"namespace,omitempty"`

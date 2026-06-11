@@ -12,12 +12,14 @@ The registry surface is CRUD-shaped, modeled on the IBM COS client:
 
 | Command | What it does |
 |---|---|
+| `roksbnkctl registry target` | Show or set the mirror target — icr / generic / openshift (see [Registry targets](./10b-registry-targets.md)) |
 | `roksbnkctl registry bom` | Print the bill-of-materials — every chart + image BNK needs |
 | `roksbnkctl registry replicate` | Mirror the BOM into the target registry |
 | `roksbnkctl registry list` | What's present in the target |
 | `roksbnkctl registry diff` | BOM vs. target — what's missing or stale |
 | `roksbnkctl registry verify` | Every BOM artifact present + digest-matched |
 | `roksbnkctl registry prune` | Remove mirrored artifacts no longer in the BOM |
+| `roksbnkctl registry delete` | Delete **all** replicated artifacts from the target + clear the record |
 
 ## The bill-of-materials
 

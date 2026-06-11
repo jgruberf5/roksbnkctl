@@ -13,7 +13,7 @@
 > decisions staff codes against** + the operator prose. Full spec:
 > [PRD 11](../docs/prd/11-REGISTRY-MIRROR.md).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — shipped in v1.10.0 (2026-06-10)
 
 ---
 

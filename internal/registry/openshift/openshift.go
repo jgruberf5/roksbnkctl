@@ -103,6 +103,11 @@ func (t *Target) ChartHostPath() string {
 	return t.RouteHost
 }
 
+// MirrorNamespace is the mirror project recorded in registry-mirror.json.
+func (t *Target) MirrorNamespace() string {
+	return t.Namespace
+}
+
 // ── Prepare (live cluster bootstrap) ────────────────────────────────────────
 
 var (

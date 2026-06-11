@@ -287,6 +287,34 @@ cos:
 
 See [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) for the full surface.
 
+## `state:` block
+
+Selects where terraform state lives. Absent (or `backend: local`) keeps per-phase local `terraform.tfstate` — byte-identical to before. `backend: s3` stores each phase's state in an S3-compatible bucket (IBM COS). See [Chapter 12a — Remote state](./12a-remote-state.md) for the full walkthrough.
+
+```yaml
+state:
+  backend: s3          # "" | local (default) | s3
+  s3:
+    endpoint: "https://s3.us-south.cloud-object-storage.appdomain.cloud"
+    bucket:   "acme-bnk-tfstate"
+    region:   "us-south"
+    key_prefix: "roksbnkctl"
+    access_key_source: ""    # env var name; default ROKSBNKCTL_COS_HMAC_ACCESS_KEY → AWS_ACCESS_KEY_ID
+    secret_key_source: ""    # env var name; default ROKSBNKCTL_COS_HMAC_SECRET_KEY → AWS_SECRET_ACCESS_KEY
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `backend` | string | `local` | `local` \| `s3`. Empty = local. |
+| `s3.endpoint` | string | — | COS S3 endpoint URL (required for `s3`). |
+| `s3.bucket` | string | — | Pre-provisioned bucket (required). roksbnkctl never creates/deletes it. |
+| `s3.region` | string | — | COS location / region (required). |
+| `s3.key_prefix` | string | the workspace name | First segment of the per-phase key `<prefix>/<workspace>/<phase>/terraform.tfstate`. |
+| `s3.access_key_source` | string | `ROKSBNKCTL_COS_HMAC_ACCESS_KEY` → `AWS_ACCESS_KEY_ID` | Env var the **HMAC** access key is read from. Never stored in config / HCL / state. |
+| `s3.secret_key_source` | string | `ROKSBNKCTL_COS_HMAC_SECRET_KEY` → `AWS_SECRET_ACCESS_KEY` | Env var for the HMAC secret key. |
+
+`s3` requires **terraform ≥ 1.10** (the native lockfile) — a preflight error fires otherwise. Convert an existing local-state workspace with `roksbnkctl state migrate`.
+
 ## `targets:` block
 
 ```yaml

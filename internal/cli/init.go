@@ -134,11 +134,17 @@ func runInit(_ *cobra.Command, _ []string) error {
 	// resolved once, at its own seam.
 	var seeds varFileSeeds
 	varFilePath := ""
-	if flagInitVarFile != "" {
-		varFilePath, err = absVarFilePath(flagInitVarFile)
+	// --config-file (Sprint 30) owns its own var-file copy in
+	// runInitFromConfigFile; only the interactive/interview path parses the
+	// var-file into interview seeds here. resolveSeedInput accepts a local path
+	// or an http(s) URL (Sprint 30 Issue 3).
+	if flagInitVarFile != "" && flagInitConfigFile == "" {
+		var cleanup func()
+		varFilePath, cleanup, err = resolveSeedInput(flagInitVarFile)
 		if err != nil {
 			return err
 		}
+		defer cleanup()
 		seeds, err = loadInitVarFile(varFilePath)
 		if err != nil {
 			return err
@@ -151,6 +157,13 @@ func runInit(_ *cobra.Command, _ []string) error {
 		if !promptYesNo("Overwrite config?", false) {
 			return errors.New("aborted")
 		}
+	}
+
+	// --config-file (Sprint 30 Issue 2): non-interactive seed of config.yaml —
+	// validate + write, skipping the interview. The overwrite confirmation above
+	// still gates a re-init.
+	if flagInitConfigFile != "" {
+		return runInitFromConfigFile(cctx)
 	}
 
 	fmt.Fprintf(os.Stderr, "Setting up workspace %q\n\n", cctx.WorkspaceName)
@@ -270,6 +283,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
 		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
 		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
+	}
+
+	// --override-from-env (Sprint 30 Issue 4) on the interactive path too:
+	// overlay env vars onto the interview-built config before persisting.
+	if flagInitOverrideFromEnv {
+		if applied := config.OverrideFromEnv(ws); len(applied) > 0 {
+			fmt.Fprintf(os.Stderr, "✓ Applied %d override(s) from environment: %s\n", len(applied), strings.Join(applied, ", "))
+		}
 	}
 
 	// Show the resolved name plan so the operator sees exactly what
@@ -621,23 +642,29 @@ func resolveTestingSSHKey(ctx context.Context, ic *ibm.Client, workspace, cluste
 	fmt.Fprintf(os.Stderr, "✓ Generated SSH key %q → %s (uploaded to %s)\n", keyName, privPath, strings.Join(regions, ", "))
 
 	if promptYesNo(fmt.Sprintf("Copy the private key to ~/.ssh/%s?", keyName), true) {
-		if err := copyKeyToUserSSH(sshDir, keyName); err != nil {
+		created, err := copyKeyToUserSSH(sshDir, keyName)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: could not copy to ~/.ssh (%v)\n", err)
 		}
+		// Record only the files we actually wrote, so `ws delete` can remove
+		// them without ever touching a pre-existing ~/.ssh file the user owned.
+		res.CopiedSSHKeyFiles = created
 	}
 	return nil
 }
 
 // copyKeyToUserSSH copies <name>{,.pub} from srcDir into ~/.ssh, never
-// overwriting an existing file.
-func copyKeyToUserSSH(srcDir, name string) error {
+// overwriting an existing file. Returns the basenames it ACTUALLY wrote (a
+// pre-existing file is skipped and not included) so the caller can record
+// exactly what to clean up at `ws delete` time.
+func copyKeyToUserSSH(srcDir, name string) (created []string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dstDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dstDir, 0o700); err != nil {
-		return err
+		return nil, err
 	}
 	for _, f := range []struct {
 		name string
@@ -650,14 +677,17 @@ func copyKeyToUserSSH(srcDir, name string) error {
 		}
 		data, err := os.ReadFile(filepath.Join(srcDir, f.name))
 		if err != nil {
-			return err
+			return created, err
 		}
 		if err := os.WriteFile(dst, data, f.perm); err != nil {
-			return err
+			return created, err
 		}
+		created = append(created, f.name)
 	}
-	fmt.Fprintf(os.Stderr, "  ✓ copied to ~/.ssh/%s\n", name)
-	return nil
+	if len(created) > 0 {
+		fmt.Fprintf(os.Stderr, "  ✓ copied to ~/.ssh/%s\n", name)
+	}
+	return created, nil
 }
 
 // pickRegion shows the account's available regions as a menu and returns the

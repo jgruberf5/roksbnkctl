@@ -16,7 +16,7 @@
 >    [PRD 10](../docs/prd/10-PERF-TEST-MATRIX.md) (this ships its in-scope subset,
 >    h2load substituted for OSLO).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — shipped in v1.10.0 (2026-06-10)
 
 ---
 

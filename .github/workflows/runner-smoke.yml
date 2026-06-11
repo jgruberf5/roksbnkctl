@@ -1,0 +1,93 @@
+name: Runner image smoke
+
+# Builds the all-in-one runner image (PRD 15) and verifies it is a working
+# install target: roksbnkctl runs, every bundled CLI responds, terraform is
+# >= 1.10 (PRD 16's S3-lockfile floor), the docs toolchain (mdbook/pandoc) is
+# ABSENT, and workspace state persists across runs on a mounted volume.
+#
+# Does NOT push — publishing is tools-images.yml's job on tag/main. This runs
+# on PRs that touch the image or the binary's sources (path-filtered to avoid
+# a multi-minute build on unrelated PRs) and on manual dispatch.
+# Sprint 31 validator Issues 1-2.
+
+on:
+  pull_request:
+    paths:
+      - 'tools/docker/runner/Dockerfile'
+      - 'tools/docker/Makefile'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'embedded.go'
+      - 'terraform/**'
+      - '.github/workflows/runner-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build runner image (load, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./tools/docker/runner/Dockerfile
+          build-args: |
+            ROKSBNKCTL_VERSION=smoke
+            ROKSBNKCTL_COMMIT=${{ github.sha }}
+          load: true
+          tags: roksbnkctl-runner:smoke
+
+      - name: roksbnkctl runs (ENTRYPOINT is the tool)
+        run: docker run --rm roksbnkctl-runner:smoke version
+
+      - name: every bundled CLI responds
+        run: |
+          docker run --rm --entrypoint sh roksbnkctl-runner:smoke -c '
+            set -eux
+            terraform version
+            oc version --client
+            kubectl version --client
+            helm version
+            ibmcloud --version
+            iperf3 --version
+            h2load --version
+          '
+
+      - name: docs toolchain is ABSENT (use-time image only)
+        run: |
+          docker run --rm --entrypoint sh roksbnkctl-runner:smoke -c '
+            if command -v mdbook >/dev/null 2>&1 || command -v pandoc >/dev/null 2>&1; then
+              echo "ERROR: docs toolchain (mdbook/pandoc) leaked into the runner image"; exit 1
+            fi
+            echo "ok: no mdbook/pandoc"
+          '
+
+      - name: terraform is >= 1.10 (PRD 16 lockfile floor)
+        run: |
+          v=$(docker run --rm --entrypoint terraform roksbnkctl-runner:smoke version -json | jq -r .terraform_version)
+          echo "terraform $v"
+          min=$(printf '1.10.0\n%s\n' "$v" | sort -V | head -1)
+          [ "$min" = "1.10.0" ] || { echo "ERROR: terraform $v < 1.10"; exit 1; }
+
+      - name: report image size
+        run: |
+          bytes=$(docker image inspect roksbnkctl-runner:smoke --format '{{.Size}}')
+          awk -v b="$bytes" 'BEGIN { printf "runner image size: %.0f MB\n", b/1024/1024 }'
+
+      - name: workspace state persists across runs on a volume
+        run: |
+          set -eux
+          docker volume create bnk-smoke
+          # First run creates a workspace skeleton (no API key needed).
+          docker run --rm -v bnk-smoke:/work roksbnkctl-runner:smoke ws new smoke-ws
+          # A second, independent container sees it on the same volume.
+          out=$(docker run --rm -v bnk-smoke:/work roksbnkctl-runner:smoke ws list)
+          echo "$out"
+          echo "$out" | grep -q smoke-ws || { echo "ERROR: workspace did not persist on the volume"; exit 1; }
+          docker volume rm bnk-smoke

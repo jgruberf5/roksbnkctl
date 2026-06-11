@@ -136,6 +136,13 @@ roksbnkctl ws delete <name> --force
 
 If you `roksbnkctl up` against a registered cluster (one you didn't `cluster up` yourself), step 2 doesn't apply — the cluster wasn't yours to destroy. Just `bnk down` the trial and stop there, then optionally unregister by deleting `cluster-outputs.json`.
 
+> **SSH key cleanup.** If `init` generated a testing SSH key and you accepted the
+> prompt to copy it into `~/.ssh/`, `ws delete` removes those copied files too,
+> so a generated key doesn't outlive its workspace. It deletes **only** the files
+> `init` actually created (recorded in `resources.copied_ssh_key_files`) — a
+> pre-existing `~/.ssh` key with the same name is never touched. The confirmation
+> prompt names the files it will remove.
+
 ## `roksbnkctl cleanup` — recovering from a failed `down`
 
 `terraform destroy` is not always clean. A transient IBM Cloud API error, a resource stuck behind a finaliser, or a `down` you `Ctrl-C`'d partway can leave **orphaned cloud resources** that Terraform no longer tracks — and a re-run of `down` may not finish the job. The classic symptom is a follow-up `up` that fails with `… name is not unique` because a half-deleted security group or VPC is still there.
