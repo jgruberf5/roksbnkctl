@@ -64,6 +64,25 @@ func TestBackendOverrideHCL_S3(t *testing.T) {
 	}
 }
 
+// Secret hygiene: the rendered s3 backend HCL must carry NO credential
+// material — HMAC keys ride on AWS_* env, never in a file terraform writes
+// to .terraform/ or logs.
+func TestBackendOverrideHCL_S3_NoSecretsInHCL(t *testing.T) {
+	st := config.StateCfg{Backend: "s3", S3: &config.StateS3Cfg{
+		Endpoint: "https://e", Bucket: "b", Region: "r",
+		AccessKeySource: "MY_AK", SecretKeySource: "MY_SK",
+	}}
+	body, _, err := backendOverrideHCL(st, "ws", "/x/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"access_key", "secret_key", "AWS_ACCESS", "AWS_SECRET", "MY_AK", "MY_SK"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("rendered s3 HCL leaks credential reference %q:\n%s", banned, body)
+		}
+	}
+}
+
 func TestBackendOverrideHCL_S3_KeyPrefixAndPhases(t *testing.T) {
 	st := config.StateCfg{Backend: "s3", S3: &config.StateS3Cfg{
 		Endpoint: "https://e", Bucket: "b", Region: "r", KeyPrefix: "team-a",

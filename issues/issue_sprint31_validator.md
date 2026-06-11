@@ -5,7 +5,18 @@
 > Specs: [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Validator owns the CI workflow files.
 
-`Status`: in progress — **Issues 1–2 (PRD 15) done 2026-06-11**; Issues 3–4 (PRD 16 S3 backend) pending
+`Status`: **resolved — all validator issues done 2026-06-11** (PRD 15 runner smoke; PRD 16 S3 backend CI)
+
+> **Issues 3–4 done (2026-06-11).** `.github/workflows/state-backend-it.yml`
+> stands up MinIO + terraform 1.10.5 and runs the build-tagged
+> `internal/tf/backend_integration_test.go` (`IT_S3`): the real render path +
+> a round-trip (state lands at the per-phase key, no local tfstate, re-plan
+> reads remote) and a local→s3 migration. The **local-unchanged golden** and
+> **secret-hygiene** (no creds in the rendered HCL) guards are plain unit
+> tests in the normal CI run. Lock is config-asserted (`use_lockfile` in the
+> unit test) + terraform-native; a concurrency-contention test is deferred to
+> avoid CI flakiness. YAML + tagged build validated (no docker in the
+> authoring env).
 
 > **PRD 15 CI done (2026-06-11).** New `.github/workflows/runner-smoke.yml`
 > (path-filtered PR + dispatch): builds the runner image (load, no push) and
