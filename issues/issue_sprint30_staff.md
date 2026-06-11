@@ -5,7 +5,7 @@
 > [PRD 14](../docs/prd/14-REGISTRY-TARGETS.md). Design decisions (BLOCKING):
 > `issue_sprint30_architect.md`.
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — implemented + committed; release deferred to the combined Sprint 30+31 cut
 
 ### Locked decisions (integrator; confirm before dispatch)
 - `init` flags extend the existing Sprint 19 `--var-file` machinery
