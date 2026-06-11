@@ -4,7 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased
+## v1.11.1 — 2026-06-11
+
+A security patch on top of v1.11.0: a CI security sweep plus the dependency CVE fixes it surfaced. No functional changes.
 
 ### Security
 
