@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/jgruberf5/roksbnkctl/internal/bnkbom"
 )
@@ -301,4 +302,26 @@ func (e *Engine) Verify(ctx context.Context, bom *bnkbom.BOM) []Result {
 		}
 	}
 	return bad
+}
+
+// Delete removes the given artifacts from the target registry — by digest when
+// the artifact carries one (the reliable form for a registry manifest DELETE),
+// else by the push tag. It returns one Result per artifact (in order); a
+// per-artifact failure is carried in Result.Err so a partial delete is fully
+// reported (a registry that disallows deletes, or an artifact already gone,
+// surfaces there). Sequential — delete is light, and ordered output reads
+// cleanly.
+func (e *Engine) Delete(ctx context.Context, artifacts []bnkbom.Artifact) []Result {
+	opts := e.craneOpts(ctx)
+	results := make([]Result, 0, len(artifacts))
+	for _, a := range artifacts {
+		ref := sanitizeRef(e.Target.PushRef(a))
+		if a.Digest != "" {
+			if parsed, perr := name.ParseReference(ref); perr == nil {
+				ref = parsed.Context().Digest(a.Digest).String()
+			}
+		}
+		results = append(results, Result{Artifact: a, Digest: a.Digest, Err: crane.Delete(ref, opts...)})
+	}
+	return results
 }

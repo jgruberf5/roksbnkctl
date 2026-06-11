@@ -7,7 +7,7 @@
 > (`issue_sprint29_architect.md`). Spec: [PRD 11](../docs/prd/11-REGISTRY-MIRROR.md).
 > The gated-live air-gap verify (Issue 4) is the acceptance gate.
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — shipped in v1.10.0 (2026-06-10)
 
 ---
 

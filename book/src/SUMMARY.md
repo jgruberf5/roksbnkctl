@@ -14,6 +14,7 @@
 - [Doctor: checking your environment](./05-doctor.md)
 - [Workspaces](./06-workspaces.md)
 - [Quick start: from API key to deployed BNK](./07-quick-start.md)
+- [Unattended setup: file, URL, or environment](./07a-unattended-setup.md)
 
 # Part III — Cluster Lifecycle
 
@@ -22,11 +23,13 @@
 - [Registering an existing cluster](./09-registering-existing-cluster.md)
 - [Deploying BNK trials on top](./10-deploying-bnk-trials.md)
 - [Air-gapped install: mirroring BNK into the cluster registry](./10a-air-gapped-install.md)
+- [Registry targets: ICR and Artifactory](./10b-registry-targets.md)
 - [Tearing down](./11-tearing-down.md)
 
 # Part IV — Configuration
 
 - [Workspace config (config.yaml)](./12-workspace-config.md)
+- [Remote state (COS / S3)](./12a-remote-state.md)
 - [Terraform variables (terraform.tfvars)](./13-terraform-variables.md)
 - [Credentials and the resolver chain](./14-credentials-resolver.md)
 - [SSH targets](./15-ssh-targets.md)

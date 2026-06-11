@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -165,8 +167,22 @@ func runWSDelete(_ *cobra.Command, args []string) error {
 	}
 	wasCurrent := g.CurrentWorkspace == name
 
+	// Capture any ~/.ssh keys init copied for this workspace BEFORE the
+	// directory (and its config.yaml) is removed, so the confirmation can name
+	// them and we can delete them afterward. Best-effort: a workspace with no
+	// config or no copied key simply yields an empty list. The ~/.ssh files live
+	// outside the workspace dir, so they survive DeleteWorkspace.
+	var copiedSSH []string
+	if ws, lerr := config.LoadWorkspace(name); lerr == nil && ws.Resources != nil {
+		copiedSSH = ws.Resources.CopiedSSHKeyFiles
+	}
+
 	if !flagWSForce {
-		if !promptYesNo(fmt.Sprintf("Delete workspace %q?", name), false) {
+		prompt := fmt.Sprintf("Delete workspace %q?", name)
+		if len(copiedSSH) > 0 {
+			prompt = fmt.Sprintf("Delete workspace %q (also removes ~/.ssh/%s)?", name, strings.Join(copiedSSH, ", ~/.ssh/"))
+		}
+		if !promptYesNo(prompt, false) {
 			return errors.New("aborted")
 		}
 	}
@@ -179,6 +195,10 @@ func runWSDelete(_ *cobra.Command, args []string) error {
 	if err := config.DeleteAPIKeyFromKeychain(name); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: removing keychain entry for %q: %v\n", name, err)
 	}
+
+	// Remove the ~/.ssh files init recorded as copied for this workspace (only
+	// files it created — see ResourcesCfg.CopiedSSHKeyFiles).
+	removeCopiedSSHKeys(copiedSSH)
 
 	fmt.Fprintf(os.Stderr, "✓ Deleted workspace %q\n", name)
 
@@ -203,4 +223,30 @@ func runWSDelete(_ *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// removeCopiedSSHKeys deletes the ~/.ssh files `roksbnkctl init` recorded as
+// copied for a workspace (ResourcesCfg.CopiedSSHKeyFiles — only files init
+// itself created). Best-effort: a file the user already removed is not an
+// error; any other failure is a non-fatal warning so `ws delete` still
+// completes.
+func removeCopiedSSHKeys(basenames []string) {
+	if len(basenames) == 0 {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not locate ~/.ssh to clean up copied keys: %v\n", err)
+		return
+	}
+	for _, b := range basenames {
+		p := filepath.Join(home, ".ssh", b)
+		if err := os.Remove(p); err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "warning: removing %s: %v\n", p, err)
+			}
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "✓ removed ~/.ssh/%s\n", b)
+	}
 }
