@@ -4,7 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased
+## v1.11.0 — 2026-06-11
+
+Sprint 30 + 31 in one release, aimed at **running roksbnkctl unattended and self-contained**: provisioning a workspace from a committed template (no secrets in git), the air-gap mirror gaining **ICR + generic-OCI** targets, an **all-in-one runner image** (the binary + every tool it dispatches in one container), and a **COS/S3 remote state backend** with `state migrate` so a stateless runner / parallel CI keeps state outside the container, locked. All additive — the default state backend stays **local** and existing workspaces are unchanged; the one behaviour change is `registry replicate` now defaulting to `icr` (set `registry.target: openshift` to keep the old default).
 
 ### Added
 
