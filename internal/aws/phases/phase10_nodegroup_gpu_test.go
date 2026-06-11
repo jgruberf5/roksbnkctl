@@ -2,6 +2,7 @@ package phases
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
@@ -283,5 +284,63 @@ func TestPhase10NodeGroup_GPU_BNKSubnetUnchanged(t *testing.T) {
 	// BNK ng is pinned to 2a (data-path AZ) — should have exactly 1 subnet.
 	if len(bnkNG.Subnets) != 1 {
 		t.Errorf("BNK ng Subnets len = %d, want 1 (AZ-pinned to 2a)", len(bnkNG.Subnets))
+	}
+}
+
+// TestPhase10NodeGroup_GPU_DiskSizePropagated is the Fix 1 test (blocking defect).
+// Verifies that the GPU ng's DiskSize is passed to CreateNodegroupInput when
+// no launch template is used. The example sets diskSize: 100.
+func TestPhase10NodeGroup_GPU_DiskSizePropagated(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := gpuRigCluster()
+	// Set DiskSize explicitly to 100 on the GPU ng (matches the example).
+	cl.ClusterSpec.NodeGroups[1].DiskSize = 100
+	st := stateForGPURig(t)
+	eksMock := newMockEKS()
+
+	if err := Phase10NodeGroup(context.Background(), cl, st, clientsWithEKS(eksMock), false); err != nil {
+		t.Fatalf("Phase10NodeGroup: %v", err)
+	}
+
+	gpuNG := eksMock.nodegroups["ai-rig"]["ai-rig-ng-gpu"]
+	if gpuNG == nil {
+		t.Fatal("GPU ng not found")
+	}
+
+	// GPU ng must have DiskSize set (no launch template → EKS accepts it).
+	if gpuNG.DiskSize == nil {
+		t.Fatal("GPU ng DiskSize = nil, want non-nil (*int32 = 100)")
+	}
+	if *gpuNG.DiskSize != 100 {
+		t.Errorf("GPU ng DiskSize = %d, want 100", *gpuNG.DiskSize)
+	}
+
+	// BNK ng must NOT have DiskSize set (uses launch template; EKS rejects the combo).
+	bnkNG := eksMock.nodegroups["ai-rig"]["ai-rig-ng-bnk"]
+	if bnkNG == nil {
+		t.Fatal("BNK ng not found")
+	}
+	if bnkNG.DiskSize != nil {
+		t.Errorf("BNK ng DiskSize = %d, want nil (LT + DiskSize incompatible)", *bnkNG.DiskSize)
+	}
+}
+
+// TestPhase10NodeGroup_GPU_EmptyAZFilter_Errors verifies Fix 2:
+// when GPU ng.AZs is set but no public subnet matches (impossible AZ), the
+// outer loop returns an error rather than silently falling back to all subnets.
+func TestPhase10NodeGroup_GPU_EmptyAZFilter_Errors(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := gpuRigCluster()
+	// Pin to an AZ that has no subnet in the fixture (ap-southeast-2z = nonexistent).
+	cl.ClusterSpec.NodeGroups[1].AZs = []string{"ap-southeast-2z"}
+	st := stateForGPURig(t)
+	eksMock := newMockEKS()
+
+	err := Phase10NodeGroup(context.Background(), cl, st, clientsWithEKS(eksMock), false)
+	if err == nil {
+		t.Fatal("expected error when GPU ng AZ filter yields empty subnets, got nil")
+	}
+	if !strings.Contains(err.Error(), "no public subnets match") {
+		t.Errorf("error %q should mention 'no public subnets match'", err.Error())
 	}
 }

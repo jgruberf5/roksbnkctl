@@ -122,16 +122,29 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	st.Set("LT_ID", ltID)
 
 	for _, ng := range cl.ClusterSpec.NodeGroups {
-		// Per-nodegroup subnet selection:
-		// - GPU nodegroups: filter by ng.AZs if specified (independent of BNK AZ pin).
-		// - BNK nodegroups: use the BNK-pinned subnets (bnkSubnets).
+		// Per-nodegroup subnet selection (single authoritative location):
+		// - BNK nodegroups: use the BNK AZ-pinned subnets (bnkSubnets, already filtered).
+		// - GPU nodegroups: filter the full public subnet list to ng.AZs; error if empty
+		//   (prevents silent fallback to all AZs including denied ones like 2b).
 		ngSubnets := bnkSubnets
 		if ng.IsGPU() {
-			// GPU node groups always use the full public subnet list as the base;
-			// ng.AZs filtering (if any) is applied in ensureNodeGroup.
-			ngSubnets = publicSubnets
+			if len(ng.AZs) > 0 {
+				var filtered []string
+				for _, az := range ng.AZs {
+					f := filterSubnetsByAZ(publicSubnets, cl.Network.Subnets.Public, az)
+					filtered = append(filtered, f...)
+				}
+				if len(filtered) == 0 {
+					return fmt.Errorf("phase10: GPU node group %s: no public subnets match AZs %v", ng.Name, ng.AZs)
+				}
+				fmt.Fprintf(os.Stderr, "[phase 10] GPU node group %s: pinning to AZs=%v (subnets=%v)\n", ng.Name, ng.AZs, filtered)
+				ngSubnets = filtered
+			} else {
+				// No AZs declared: GPU ng uses all public subnets (EKS chooses).
+				ngSubnets = publicSubnets
+			}
 		}
-		if err := ensureNodeGroup(ctx, clients.EKS, name, clusterName, nodeRoleARN, ngSubnets, cl.Network.Subnets.Public, ltID, ng, cl.Tags, cl.Metadata.Labels, st); err != nil {
+		if err := ensureNodeGroup(ctx, clients.EKS, name, clusterName, nodeRoleARN, ngSubnets, ltID, ng, cl.Tags, cl.Metadata.Labels, st); err != nil {
 			return fmt.Errorf("phase10: node group %s: %w", ng.Name, err)
 		}
 	}
@@ -196,8 +209,7 @@ func ensureNodeGroup(
 	ctx context.Context,
 	eksc EKSAPI,
 	clusterDisplayName, clusterName, nodeRoleARN string,
-	publicSubnets []string,
-	specSubnets []intent.SubnetSpec,
+	ngSubnets []string,
 	ltID string,
 	ng intent.NodeGroupSpec,
 	extraTags map[string]string,
@@ -239,22 +251,6 @@ func ensureNodeGroup(
 		extraTags,
 		labels,
 	)
-
-	// Per-nodegroup AZ subnet filter for GPU node groups.
-	// GPU node groups declare ng.AZs explicitly; filter publicSubnets to those AZs.
-	// BNK node groups already received the correct bnkSubnets from the caller.
-	ngSubnets := publicSubnets
-	if ng.IsGPU() && len(ng.AZs) > 0 {
-		var filtered []string
-		for _, az := range ng.AZs {
-			f := filterSubnetsByAZ(publicSubnets, specSubnets, az)
-			filtered = append(filtered, f...)
-		}
-		if len(filtered) > 0 {
-			fmt.Fprintf(os.Stderr, "[phase 10] GPU node group %s: pinning to AZs=%v (subnets=%v)\n", ngName, ng.AZs, filtered)
-			ngSubnets = filtered
-		}
-	}
 
 	// Kubernetes node labels. K8s label keys can't contain ':' so use the
 	// awsbnkctl.io/ prefix (matching the namespace-label convention from
@@ -353,6 +349,16 @@ func ensureNodeGroup(
 			Id:      ptr(ltID),
 			Version: ptr(ltVersion),
 		}
+	} else {
+		// GPU node groups: no launch template, so EKS accepts DiskSize directly.
+		// DiskSize must be set here — it cannot be combined with a LaunchTemplate.
+		// The bounds-check above ensures the int32 cast is safe.
+		diskSize := int32(ng.DiskSize) // #nosec G115 -- bounded above
+		input.DiskSize = int32Ptr(diskSize)
+		// TODO(slice-2): GPU nodes skip the BNK launch template so they get the
+		// EKS-default IMDS hop limit (1), which blocks pod IMDS access. If slice-2
+		// vLLM needs IMDS (region/STS/S3), set MetadataOptions{HttpPutResponseHopLimit:2}
+		// on this CreateNodegroupInput directly (no UserData/LT needed) or use IRSA.
 	}
 	_, err = eksc.CreateNodegroup(ctx, input)
 	if err != nil {

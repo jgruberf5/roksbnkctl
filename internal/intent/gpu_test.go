@@ -431,6 +431,78 @@ func TestHasGPUNodeGroup_NilClusterSpec(t *testing.T) {
 	}
 }
 
+// TestGPUNodeGroup_InvalidTaintEffectRejected verifies Fix 3: a taint with an
+// unrecognized effect is rejected at load time by validateNodeGroups.
+func TestGPUNodeGroup_InvalidTaintEffectRejected(t *testing.T) {
+	bad := strings.ReplaceAll(baseGPURigYAML,
+		"          effect: NoSchedule",
+		"          effect: noschedule", // lowercase typo
+	)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", bad)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for taint effect 'noschedule', got nil")
+	}
+	if !strings.Contains(err.Error(), "noschedule") {
+		t.Errorf("error %q should mention the bad effect 'noschedule'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "NoSchedule") {
+		t.Errorf("error %q should mention the valid effect 'NoSchedule'", err.Error())
+	}
+}
+
+// TestGPUNodeGroup_InvalidCapacityTypeRejected verifies Fix 6: a CapacityType
+// value other than "on-demand"/"spot" is rejected at load time.
+func TestGPUNodeGroup_InvalidCapacityTypeRejected(t *testing.T) {
+	bad := strings.ReplaceAll(baseGPURigYAML,
+		"      capacityType: spot",
+		"      capacityType: Spot", // wrong case typo
+	)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", bad)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for capacityType 'Spot', got nil")
+	}
+	if !strings.Contains(err.Error(), "Spot") {
+		t.Errorf("error %q should mention the invalid value 'Spot'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "on-demand") {
+		t.Errorf("error %q should mention valid value 'on-demand'", err.Error())
+	}
+}
+
+// TestGPUNodeGroup_MixedCluster_BNKdSSMStillEnforced verifies Fix 5:
+// a mixed cluster (BNK ng at index 0 with desiredSize=2 + GPU ng at index 1)
+// is STILL rejected because the BNK ng violates desiredSize>=3.
+// This proves that `if ng.IsGPU() { continue }` in validatePattern does not
+// accidentally skip the BNK ng.
+//
+// Note: desiredSize=1 is used here instead of 1 because applyDefaults has a
+// second bump (NodeGroups[0].DesiredSize==1 → 3) to protect operators from
+// accidental single-node BNK deploys. desiredSize=2 is deliberately below
+// quorum AND above the auto-bump threshold, so validation rejects it.
+func TestGPUNodeGroup_MixedCluster_BNKdSSMStillEnforced(t *testing.T) {
+	// Set the BNK ng desiredSize to 2 (below dSSM quorum, above the auto-bump threshold).
+	bad := strings.ReplaceAll(baseGPURigYAML,
+		"      desiredSize: 3\n      minSize: 3\n      maxSize: 4",
+		"      desiredSize: 2\n      minSize: 2\n      maxSize: 3",
+	)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", bad)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected dSSM quorum error for BNK ng desiredSize=2 in mixed cluster, got nil")
+	}
+	if !strings.Contains(err.Error(), "desiredSize") {
+		t.Errorf("error %q should mention 'desiredSize'", err.Error())
+	}
+}
+
 // TestGPURig_ExampleLoads verifies that examples/ai-rig/cluster.yaml (Group 5)
 // loads cleanly and declares the expected GPU nodegroup shape.
 func TestGPURig_ExampleLoads(t *testing.T) {

@@ -917,6 +917,28 @@ func validateNodeGroups(c *Cluster) error {
 	region := c.Metadata.Region
 
 	for i, ng := range c.ClusterSpec.NodeGroups {
+		// Validate CapacityType if explicitly set.
+		if ng.CapacityType != "" && ng.CapacityType != "on-demand" && ng.CapacityType != "spot" {
+			return fmt.Errorf(
+				"cluster.nodeGroups[%d] (%s): capacityType %q is not valid (expected on-demand or spot)",
+				i, ng.Name, ng.CapacityType,
+			)
+		}
+
+		// Validate taint effects against the allowed EKS enum set.
+		for j, taint := range ng.Taints {
+			switch taint.Effect {
+			case "NoSchedule", "NoExecute", "PreferNoSchedule":
+				// valid
+			default:
+				return fmt.Errorf(
+					"cluster.nodeGroups[%d] (%s) taints[%d]: effect %q is not valid "+
+						"(expected NoSchedule, NoExecute, or PreferNoSchedule)",
+					i, ng.Name, j, taint.Effect,
+				)
+			}
+		}
+
 		if !ng.IsGPU() || len(ng.AZs) == 0 {
 			continue
 		}
