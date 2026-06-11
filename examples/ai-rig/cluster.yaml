@@ -1,0 +1,110 @@
+# cluster.yaml — AI rig: BNK load-balancer + GPU inference nodegroup (PRD-11 slice 1)
+#
+# Deploys two nodegroups:
+#   - NodeGroups[0] (bnk): the BNK TMM control nodegroup (3×m6i.4xlarge, on-demand,
+#       pinned to the data-path AZ). Role=bnk is injected automatically by defaults.
+#   - NodeGroups[1] (gpu): NVIDIA GPU inference nodegroup (1×g5.2xlarge, spot,
+#       pinned to ap-southeast-2a + ap-southeast-2c). g5 is NOT available in 2b
+#       — awsbnkctl validate will reject a 2b AZ entry with a clear error.
+#
+# The GPU nodegroup is tainted nvidia.com/gpu=present:NoSchedule so only workloads
+# that tolerate the taint (e.g. vLLM, slice 2) land on it. Phase 11c installs the
+# NVIDIA k8s-device-plugin DaemonSet (v0.17.1), which advertises nvidia.com/gpu
+# once the g5 node is ACTIVE.
+#
+# Spot reclaim note: g5 spot in ap-southeast-2 is generally stable; a reclaim drops
+# the node, the ASG re-launches in 2a or 2c, the device-plugin lands via nodeSelector,
+# and a vLLM pod reschedules after nvidia.com/gpu re-advertises (cold model reload,
+# ~minutes). Use capacityType: on-demand for guaranteed availability.
+#
+# Quick start:
+#   awsbnkctl validate examples/ai-rig/cluster.yaml
+#   awsbnkctl up --config examples/ai-rig/cluster.yaml --dry-run
+#   awsbnkctl up --config examples/ai-rig/cluster.yaml
+
+apiVersion: awsbnkctl/v1
+kind: Cluster
+
+metadata:
+  name: ai-rig
+  region: ap-southeast-2
+  labels:
+    purpose: bnk-ai-inference
+
+# external-only: BNK TMM gets one external (ingress) interface; GPU inference
+# pods reach the backend over the CNI. The BNK VIP is the slice-2 entry point.
+pattern: external-only
+
+network:
+  vpcCidr: 10.0.0.0/16
+
+  # g5 instances are available in ap-southeast-2a and ap-southeast-2c only.
+  # Do NOT add ap-southeast-2b — g5 capacity is absent there.
+  azs:
+    - ap-southeast-2a
+    - ap-southeast-2c
+
+  subnets:
+    public:
+      - cidr: 10.0.1.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.3.0/24
+        az: ap-southeast-2c
+    private:
+      - cidr: 10.0.11.0/24
+        az: ap-southeast-2a
+      - cidr: 10.0.13.0/24
+        az: ap-southeast-2c
+
+  dataPath:
+    external:
+      cidr: 10.0.10.0/24    # BNK_EXT — TMM ingress / client-side VLAN
+      az: ap-southeast-2a
+
+  natGateways: 1
+
+cluster:
+  kubernetesVersion: "1.30"
+  nodeGroups:
+    # Index 0: BNK TMM control nodegroup. role=bnk injected automatically.
+    # Three nodes for dSSM quorum (required by all BNK patterns).
+    - name: bnk
+      instanceType: m6i.4xlarge
+      desiredSize: 3
+      minSize: 3
+      maxSize: 4
+      diskSize: 50
+
+    # Index 1: GPU inference nodegroup. gpu: true → NVIDIA AMI + no BNK LT.
+    # g5.2xlarge: 1×NVIDIA A10G GPU, 8 vCPU, 32 GB RAM (adequate for 8B models).
+    # capacityType: spot — cost-optimised for a demo rig. Change to on-demand
+    # for guaranteed availability.
+    - name: gpu
+      gpu: true
+      instanceType: g5.2xlarge
+      capacityType: spot
+      desiredSize: 1
+      minSize: 1
+      maxSize: 2
+      diskSize: 100
+      # Pin to AZs with g5 capacity. ap-southeast-2b has no g5 — awsbnkctl
+      # validate will reject it with a clear error.
+      azs:
+        - ap-southeast-2a
+        - ap-southeast-2c
+      # Taint keeps non-GPU workloads off this nodegroup. vLLM pods (slice 2)
+      # must tolerate nvidia.com/gpu=present:NoSchedule to schedule here.
+      taints:
+        - key: nvidia.com/gpu
+          value: "present"
+          effect: NoSchedule
+
+# bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths
+# with your own files before running `up` (gitignored).
+bnk:
+  farArchive: ./cne_pull_64.json     # REPLACE with your F5 FAR pull credentials JSON
+  jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
+
+tags:
+  env: dev
+  purpose: ai-inference-rig
