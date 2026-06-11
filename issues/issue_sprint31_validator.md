@@ -5,7 +5,14 @@
 > Specs: [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Validator owns the CI workflow files.
 
-`Status`: open (draft — not yet dispatched)
+`Status`: in progress — **Issues 1–2 (PRD 15) done 2026-06-11**; Issues 3–4 (PRD 16 S3 backend) pending
+
+> **PRD 15 CI done (2026-06-11).** New `.github/workflows/runner-smoke.yml`
+> (path-filtered PR + dispatch): builds the runner image (load, no push) and
+> asserts roksbnkctl runs, every bundled CLI responds, terraform ≥ 1.10,
+> **mdbook/pandoc absent**, image size reported, and workspace state persists
+> across two container runs on a named volume (`ws new` → `ws list`). YAML
+> validated; the job itself runs in CI (no docker in the authoring env).
 
 ---
 
