@@ -6,6 +6,7 @@ name: Build tools images
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-iperf3
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-h2load
+#   - ghcr.io/jgruberf5/roksbnkctl-tools-runner   (the all-in-one runner; PRD 15)
 #   - ghcr.io/jgruberf5/roksbnkctl-tools-mdbook
 #
 # Triggered on tag pushes (e.g. v0.9-rc1), on push to `main` (publishes a
@@ -32,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [ibmcloud, iperf3, h2load, mdbook]
+        image: [ibmcloud, iperf3, h2load, runner, mdbook]
     steps:
       - uses: actions/checkout@v6
 

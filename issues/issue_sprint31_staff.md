@@ -5,7 +5,15 @@
 > [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Design decisions (BLOCKING): `issue_sprint31_architect.md`.
 
-`Status`: open (draft — not yet dispatched)
+`Status`: in progress — **Issue 1 (PRD 15 runner image) implemented 2026-06-11**; Issues 2–3 (PRD 16 S3 backend) pending
+
+> **Issue 1 done (2026-06-11).** `tools/docker/runner/Dockerfile` (multi-stage:
+> the reused Go-build stage + ibmcloud/terraform 1.10.5/helm/kubectl/oc/iperf3/
+> h2load on ubuntu:22.04, no mdbook/pandoc; uid 1000 + `/work` `ROKSBNKCTL_HOME`
+> volume; `ENTRYPOINT ["roksbnkctl"]`); `tools/docker/Makefile` `build-runner` +
+> `build-all`/`clean`; `runner` added to the `tools-images` CI matrix. Workflow
+> YAML + Makefile validated; the image build + smoke is the validator's Issue 1
+> (no docker available in the authoring env).
 
 ### Locked decisions (integrator; confirm before dispatch)
 - The runner reuses the `tools-ibmcloud` Dockerfile's Go-build stage verbatim

@@ -1,4 +1,4 @@
-.PHONY: build-ibmcloud build-iperf3 build-h2load build-mdbook build-all clean
+.PHONY: build-ibmcloud build-iperf3 build-h2load build-runner build-mdbook build-all clean
 
 IMG_PREFIX ?= ghcr.io/jgruberf5/roksbnkctl-tools
 TAG ?= dev
@@ -31,10 +31,21 @@ build-iperf3:
 build-h2load:
 	docker build -t $(IMG_PREFIX)-h2load:$(TAG) h2load/
 
+# The runner image's Stage 1 Go build needs the repo root as context (like
+# ibmcloud), so it takes the same -f/root-context + build-args form.
+build-runner:
+	docker build \
+	    -f $(REPO_ROOT)/tools/docker/runner/Dockerfile \
+	    --build-arg ROKSBNKCTL_VERSION=$(ROKSBNKCTL_VERSION) \
+	    --build-arg ROKSBNKCTL_COMMIT=$(ROKSBNKCTL_COMMIT) \
+	    --build-arg ROKSBNKCTL_BUILD_DATE=$(ROKSBNKCTL_BUILD_DATE) \
+	    -t $(IMG_PREFIX)-runner:$(TAG) \
+	    $(REPO_ROOT)
+
 build-mdbook:
 	docker build -t $(IMG_PREFIX)-mdbook:$(TAG) mdbook/
 
-build-all: build-ibmcloud build-iperf3 build-h2load build-mdbook
+build-all: build-ibmcloud build-iperf3 build-h2load build-runner build-mdbook
 
 clean:
-	docker image rm -f $(IMG_PREFIX)-ibmcloud:$(TAG) $(IMG_PREFIX)-iperf3:$(TAG) $(IMG_PREFIX)-h2load:$(TAG) $(IMG_PREFIX)-mdbook:$(TAG) || true
+	docker image rm -f $(IMG_PREFIX)-ibmcloud:$(TAG) $(IMG_PREFIX)-iperf3:$(TAG) $(IMG_PREFIX)-h2load:$(TAG) $(IMG_PREFIX)-runner:$(TAG) $(IMG_PREFIX)-mdbook:$(TAG) || true
