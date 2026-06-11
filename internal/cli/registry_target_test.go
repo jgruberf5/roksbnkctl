@@ -115,6 +115,25 @@ func TestRunRegistryTarget(t *testing.T) {
 	}
 }
 
+func TestRunRegistryDelete_NoMirror(t *testing.T) {
+	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
+	if err := config.SaveWorkspace("d", &config.Workspace{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetCurrent("d"); err != nil {
+		t.Fatal(err)
+	}
+	oldWS := flagWorkspace
+	flagWorkspace = ""
+	defer func() { flagWorkspace = oldWS }()
+
+	// No registry-mirror.json → "nothing to delete", returns nil before any
+	// target build (so a nil cobra.Command is safe here).
+	if err := runRegistryDelete(nil, nil); err != nil {
+		t.Fatalf("runRegistryDelete with no mirror: %v", err)
+	}
+}
+
 func TestBuildICRTarget_Errors(t *testing.T) {
 	// Unknown region + no icr_host → cannot derive a host (fails before any
 	// credential resolution).
