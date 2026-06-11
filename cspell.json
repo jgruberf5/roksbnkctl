@@ -619,7 +619,22 @@
     "netdev",
     "nombuf",
     "rxonly",
-    "txonly"
+    "txonly",
+    "nvidia",
+    "Nvidia",
+    "NVIDIA",
+    "nvcr",
+    "NVCR",
+    "capacityType",
+    "CapacityType",
+    "NoSchedule",
+    "PreferNoSchedule",
+    "NoExecute",
+    "nodeSelector",
+    "DaemonSets",
+    "daemonsets",
+    "g5xlarge",
+    "gpuInstanceAZDeny"
   ],
   "ignorePaths": [
     "go.sum",
