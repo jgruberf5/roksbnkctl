@@ -13,6 +13,7 @@ func TestOverrideFromEnv(t *testing.T) {
 		for _, e := range []string{
 			"IBMCLOUD_API_KEY", "ROKSBNKCTL_API_KEY_B64", "ROKSBNKCTL_PREFIX",
 			"ROKSBNKCTL_REGION", "ROKSBNKCTL_RESOURCE_GROUP", "ROKSBNKCTL_TESTING_SSH_KEY_NAME",
+			"ROKSBNKCTL_GENERIC_PASSWORD",
 		} {
 			t.Setenv(e, "")
 		}
@@ -58,6 +59,17 @@ func TestOverrideFromEnv(t *testing.T) {
 		}
 		if ws.Resources == nil || ws.Resources.TestingSSHKeyName != "k1" {
 			t.Fatalf("ssh key not applied: %+v", ws.Resources)
+		}
+	})
+
+	t.Run("generic registry password is base64-encoded into a nil Registry", func(t *testing.T) {
+		clearAll(t)
+		t.Setenv("ROKSBNKCTL_GENERIC_PASSWORD", "art-token")
+		ws := &Workspace{} // Registry is nil
+		OverrideFromEnv(ws)
+		want := base64.StdEncoding.EncodeToString([]byte("art-token"))
+		if ws.Registry == nil || ws.Registry.GenericPasswordB64 != want {
+			t.Fatalf("generic_password_b64 not applied: %+v", ws.Registry)
 		}
 	})
 

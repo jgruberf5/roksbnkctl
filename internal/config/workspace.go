@@ -212,9 +212,34 @@ type GatewayCfg struct {
 // pulls directly from FAR (far_repo_url). Additive + omitempty, so existing
 // config.yaml files load unchanged.
 type RegistryCfg struct {
-	// Target selects the mirror backend. "" / "openshift" → the cluster's own
-	// OpenShift internal image registry (the first-class air-gap target).
+	// Target selects the mirror backend: "openshift" (the air-gap OpenShift
+	// internal registry), "icr" (IBM Container Registry — the Sprint 30 DEFAULT
+	// when unset), or "generic" (any OCI registry — Artifactory / Harbor /
+	// registry:2). Empty resolves to "icr"; existing air-gap workspaces must set
+	// "openshift" explicitly.
 	Target string `yaml:"target,omitempty"`
+
+	// ICRHost overrides the IBM Container Registry host for target=icr (e.g.
+	// "de.icr.io"). Empty → derived from ibmcloud.region.
+	ICRHost string `yaml:"icr_host,omitempty"`
+	// ICRNamespace is the ICR namespace artifacts nest under for target=icr.
+	// Empty → the workspace prefix.
+	ICRNamespace string `yaml:"icr_namespace,omitempty"`
+
+	// GenericHost is the OCI registry host for target=generic (e.g.
+	// "artifactory.example.com").
+	GenericHost string `yaml:"generic_host,omitempty"`
+	// GenericRepoPrefix is the repository path artifacts nest under for
+	// target=generic (e.g. an Artifactory repo key). Empty → no prefix.
+	GenericRepoPrefix string `yaml:"generic_repo_prefix,omitempty"`
+	// GenericUsername / GenericPasswordB64 are the static basic-auth credential
+	// for target=generic (an Artifactory user + access token). The password is
+	// base64-encoded; like the other `_b64` fields this is OBFUSCATION, not
+	// encryption (it dodges rejectPlaintextSecrets) — chmod 600, never commit.
+	// Both empty → anonymous push/pull. Templatable from the environment via
+	// `init --override-from-env` (ROKSBNKCTL_GENERIC_PASSWORD).
+	GenericUsername    string `yaml:"generic_username,omitempty"`
+	GenericPasswordB64 string `yaml:"generic_password_b64,omitempty"`
 
 	// Namespace is the mirror project the artifacts land in. "" → "bnk-mirror".
 	Namespace string `yaml:"namespace,omitempty"`
