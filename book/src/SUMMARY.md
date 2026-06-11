@@ -29,6 +29,7 @@
 # Part IV — Configuration
 
 - [Workspace config (config.yaml)](./12-workspace-config.md)
+- [Remote state (COS / S3)](./12a-remote-state.md)
 - [Terraform variables (terraform.tfvars)](./13-terraform-variables.md)
 - [Credentials and the resolver chain](./14-credentials-resolver.md)
 - [SSH targets](./15-ssh-targets.md)
