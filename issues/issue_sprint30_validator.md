@@ -5,7 +5,7 @@
 > [PRD 13](../docs/prd/13-WORKSPACE-CONFIG-SEEDING.md),
 > [PRD 14](../docs/prd/14-REGISTRY-TARGETS.md).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — implemented + committed; release deferred to the combined Sprint 30+31 cut
 
 ---
 

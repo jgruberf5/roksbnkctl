@@ -5,7 +5,7 @@
 > [PRD 14](../docs/prd/14-REGISTRY-TARGETS.md). The book builds via the mdbook
 > tools image (`make book`, or `BOOK_BACKEND=docker`).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — implemented + committed; release deferred to the combined Sprint 30+31 cut
 
 ---
 

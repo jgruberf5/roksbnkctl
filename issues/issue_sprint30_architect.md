@@ -9,7 +9,30 @@
 > Specs: [PRD 13](../docs/prd/13-WORKSPACE-CONFIG-SEEDING.md) (issues 2–5),
 > [PRD 14](../docs/prd/14-REGISTRY-TARGETS.md) (issue 1).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved (defaults accepted 2026-06-10) — dispatched to staff
+
+## Resolutions (accepted 2026-06-10)
+
+- **Issue 1 / ICR default:** grandfather — a `config.yaml` with no
+  `registry.target` keeps **openshift** for workspaces that predate Sprint 30;
+  newly-initialized workspaces default **icr**. Ship a migration note. ICR auth =
+  the workspace IAM key (`iamapikey` + `api_key_b64`); namespace =
+  `registry.icr_namespace`, default derived from `prefix`. Verify the ROKS global
+  `*.icr.io` pull secret covers cluster pulls before adding a per-namespace one.
+- **Issue 2 / `--config-file`:** **non-interactive when complete** — a parsed
+  config with all required fields writes straight through; otherwise interview
+  only the missing required fields. `--config-file` + `--var-file` are
+  independent (config.yaml vs terraform.tfvars).
+- **Issue 3 / URL:** http+https allowed, **no auth in v1**, 10 MB cap, 30 s
+  timeout, one-shot (not cached).
+- **Issue 4 / env override:** `IBMCLOUD_API_KEY` = **raw** key (init
+  base64-encodes → `api_key_b64`); `ROKSBNKCTL_API_KEY_B64` = pre-encoded
+  escape hatch; **env wins** over the seeded file. Small fixed map (api key,
+  prefix, region, resource group, testing ssh key name) applied to the **default
+  target**.
+- **Issue 5 / `ws delete`:** record `resources.copied_ssh_key_name` only on an
+  accepted copy; `ws delete` removes exactly `~/.ssh/<name>{,.pub}`, mentioned in
+  the existing confirmation, no second prompt, silent skip if already gone.
 
 ---
 
