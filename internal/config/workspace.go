@@ -26,6 +26,7 @@ type Workspace struct {
 	TFSource TFSourceCfg          `yaml:"tf_source"`
 	COS      *COSCfg              `yaml:"cos,omitempty"`
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
+	State    StateCfg             `yaml:"state,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base
 	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
@@ -195,6 +196,30 @@ type BNKNetworkCfg struct {
 // terraform gateway module's BNK install-guide defaults. Rendered as gateway_*
 // tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a
 // toggle here.
+// StateCfg selects where terraform state lives (PRD 16). Backend "" or
+// "local" (the default) keeps per-phase local tfstate under the workspace
+// dir — byte-identical to pre-Sprint-31. "s3" stores each phase's state in
+// an S3-compatible bucket (IBM COS), so a stateless runner / parallel CI
+// needs no shared volume, with native lockfile locking (terraform >= 1.10).
+// Additive + omitempty — an absent `state:` block loads as the local default.
+type StateCfg struct {
+	Backend string      `yaml:"backend,omitempty"` // "" | "local" | "s3"
+	S3      *StateS3Cfg `yaml:"s3,omitempty"`
+}
+
+// StateS3Cfg configures the COS/S3 remote backend. The HMAC access/secret
+// keys are NOT stored here — *KeySource names the env var they come from
+// (env-first), and roksbnkctl injects them as AWS_* env to the terraform
+// child, never into the rendered HCL or the state object.
+type StateS3Cfg struct {
+	Endpoint        string `yaml:"endpoint"`                    // COS S3 endpoint URL
+	Bucket          string `yaml:"bucket"`                      // pre-provisioned bucket
+	Region          string `yaml:"region"`                      // COS location / region
+	KeyPrefix       string `yaml:"key_prefix,omitempty"`        // default: the workspace name
+	AccessKeySource string `yaml:"access_key_source,omitempty"` // env var name; default ROKSBNKCTL_COS_HMAC_ACCESS_KEY
+	SecretKeySource string `yaml:"secret_key_source,omitempty"` // env var name; default ROKSBNKCTL_COS_HMAC_SECRET_KEY
+}
+
 type GatewayCfg struct {
 	AppNamespace       string   `yaml:"app_namespace,omitempty"`
 	BackendService     string   `yaml:"backend_service,omitempty"`
