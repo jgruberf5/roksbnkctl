@@ -19,7 +19,7 @@
 > Full spec: [PRD 11](../docs/prd/11-REGISTRY-MIRROR.md). Design decisions:
 > `issue_sprint29_architect.md` (BLOCKING for Stages 3-4).
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — shipped in v1.10.0 (2026-06-10)
 
 ### Locked decisions (integrator; confirm before dispatch)
 - **Pluggable `RegistryTarget`**, OpenShift internal registry as impl #1 (ICR /
