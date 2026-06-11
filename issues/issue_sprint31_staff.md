@@ -5,7 +5,16 @@
 > [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Design decisions (BLOCKING): `issue_sprint31_architect.md`.
 
-`Status`: in progress — **Issue 1 (PRD 15 runner image) implemented 2026-06-11**; Issues 2–3 (PRD 16 S3 backend) pending
+`Status`: in progress — **Issue 1 (PRD 15) + Issue 2 (PRD 16 s3 rendering) done 2026-06-11**; Issue 3 (local→s3 migration) pending
+
+> **Issue 2 done (2026-06-11).** `config.StateCfg{Backend, S3}` added (absent →
+> local, byte-identical). `internal/tf/backend.go` branches the
+> `roksbnkctl_backend_override.tf` writer: local (unchanged) vs `backend "s3"`
+> with per-phase key `<prefix>/<ws>/<phase>/terraform.tfstate`, COS skip-flags,
+> and `use_lockfile`. `Open` does a terraform ≥1.10 preflight on s3 and injects
+> the COS HMAC keys as `AWS_*` env (env-first resolution; never in HCL/state).
+> Unit-tested (golden local, s3 render, per-phase keys, version floor, HMAC
+> resolution). A live COS round-trip is the validator's Issue 3.
 
 > **Issue 1 done (2026-06-11).** `tools/docker/runner/Dockerfile` (multi-stage:
 > the reused Go-build stage + ibmcloud/terraform 1.10.5/helm/kubectl/oc/iperf3/
