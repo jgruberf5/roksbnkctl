@@ -260,6 +260,24 @@ func RenderSriov(tmpl []byte, externalPCI, namespace, nadName string) ([]byte, e
 	})
 }
 
+// ─── NVIDIA device-plugin (GPU node groups) ────────────────────────────────────
+
+// NvidiaDevicePluginVars holds substitution variables for the NVIDIA device-plugin
+// DaemonSet template. Version is templated so the phase's const is the single
+// source of truth for the pinned image tag.
+type NvidiaDevicePluginVars struct {
+	// Version is the NVIDIA k8s-device-plugin image tag (e.g. "v0.17.1").
+	// Rendered as: nvcr.io/nvidia/k8s-device-plugin:{{ .Version }}.
+	Version string
+}
+
+// RenderNvidiaDevicePlugin renders the NVIDIA device-plugin DaemonSet template
+// with the given version tag. The template is upstream-verbatim with a
+// nodeSelector targeting awsbnkctl.io/gpu=true nodes only.
+func RenderNvidiaDevicePlugin(tmpl []byte, version string) ([]byte, error) {
+	return Render(tmpl, NvidiaDevicePluginVars{Version: version})
+}
+
 // ─── CNEInstance CR ────────────────────────────────────────────────────────
 
 // cneInstanceNamespace is the k8s namespace for CNEInstance and related resources.

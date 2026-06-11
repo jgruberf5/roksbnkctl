@@ -120,18 +120,21 @@ func (m *mockEKS) CreateNodegroup(_ context.Context, in *eks.CreateNodegroupInpu
 	status := ekstypes.NodegroupStatusActive // mock immediately ACTIVE
 
 	ng := &ekstypes.Nodegroup{
-		ClusterName:   in.ClusterName,
-		NodegroupName: in.NodegroupName,
-		NodegroupArn:  &arn,
-		Status:        status,
-		NodeRole:      in.NodeRole,
-		Subnets:       in.Subnets,
-		AmiType:       in.AmiType,
-		InstanceTypes: in.InstanceTypes,
-		ScalingConfig: in.ScalingConfig,
-		DiskSize:      in.DiskSize,
-		Labels:        in.Labels,
-		Tags:          in.Tags,
+		ClusterName:    in.ClusterName,
+		NodegroupName:  in.NodegroupName,
+		NodegroupArn:   &arn,
+		Status:         status,
+		NodeRole:       in.NodeRole,
+		Subnets:        in.Subnets,
+		AmiType:        in.AmiType,
+		InstanceTypes:  in.InstanceTypes,
+		ScalingConfig:  in.ScalingConfig,
+		DiskSize:       in.DiskSize,
+		Labels:         in.Labels,
+		Tags:           in.Tags,
+		CapacityType:   in.CapacityType,
+		Taints:         in.Taints,
+		LaunchTemplate: in.LaunchTemplate,
 	}
 	if m.nodegroups[clusterName] == nil {
 		m.nodegroups[clusterName] = make(map[string]*ekstypes.Nodegroup)
