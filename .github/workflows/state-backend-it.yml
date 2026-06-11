@@ -1,0 +1,67 @@
+name: S3 state backend (integration)
+
+# Exercises the COS/S3 remote state backend (PRD 16) end-to-end against a
+# MinIO (S3-compatible) server: the real render path + a terraform
+# round-trip (state lands at the per-phase key, re-plan reads remote) and a
+# local→s3 migration. Path-filtered so unrelated PRs don't pay for it.
+# Sprint 31 validator Issues 3-4. The local-unchanged golden + secret-hygiene
+# guards are plain unit tests in the normal CI run.
+
+on:
+  pull_request:
+    paths:
+      - 'internal/tf/**'
+      - 'internal/config/workspace.go'
+      - 'internal/cli/state.go'
+      - '.github/workflows/state-backend-it.yml'
+  workflow_dispatch:
+
+jobs:
+  s3-backend:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      ROKSBNKCTL_IT_S3_ENDPOINT: http://localhost:9000
+      ROKSBNKCTL_IT_S3_BUCKET: tfstate
+      ROKSBNKCTL_IT_S3_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # terraform >= 1.10 is required for the native S3 lockfile. wrapper off
+      # so the test's `exec terraform …` runs the real binary.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
+            minio/minio server /data
+          # Wait for the S3 endpoint to answer (MinIO returns 403 to an
+          # unauthenticated GET / — any HTTP response means it's up).
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "$ROKSBNKCTL_IT_S3_ENDPOINT/minio/health/ready"; then
+              echo "minio ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: Create the state bucket
+        run: |
+          aws --endpoint-url "$ROKSBNKCTL_IT_S3_ENDPOINT" --region "$ROKSBNKCTL_IT_S3_REGION" \
+            s3 mb "s3://$ROKSBNKCTL_IT_S3_BUCKET"
+
+      - name: Round-trip + migration tests
+        run: go test -tags integration -v -run IT_S3 ./internal/tf/...
+
+      - name: MinIO logs (on failure)
+        if: failure()
+        run: docker logs minio || true
