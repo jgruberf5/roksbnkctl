@@ -13,7 +13,35 @@
 >   - **PRD 15 — the all-in-one runner image** (`docs/prd/15-RUNNER-IMAGE.md`)
 >   - **PRD 16 — COS/S3 remote terraform state backend** (`docs/prd/16-REMOTE-STATE-BACKEND.md`)
 
-`Status`: open (draft — not yet dispatched)
+`Status`: resolved — PRD 15 + PRD 16 authored 2026-06-11; dispatched to staff / validator / tech-writer
+
+## Resolutions (decided 2026-06-11, in the PRDs)
+
+- **PRD 15 / runner contents:** multi-stage on `ubuntu:22.04`; stage 1 reuses the
+  `tools-ibmcloud` Go-build stage verbatim (no fork). Bundle the binary +
+  `ibmcloud`, `terraform` (**≥ 1.10**, load-bearing for PRD 16 locking), `helm`,
+  `kubectl`, `oc`, `iperf3`, `h2load`. **mdbook/pandoc/texlive excluded** (docs
+  image owns them). `ENTRYPOINT ["roksbnkctl"]`; uid 1000 + writable `$HOME`;
+  `/work` owned by 1000 with `ROKSBNKCTL_HOME=/work/.roksbnkctl` as the state
+  volume contract. `--backend local` is the documented in-container default
+  (auto-defaulting on an in-runner signal is an **open question**, deferred).
+- **PRD 15 / coexistence:** the runner supersedes `tools-ibmcloud` for *using*
+  roksbnkctl; the per-tool images stay for the docker/k8s *backend-dispatch* path
+  (incl. the k8s self-exec Job). They coexist.
+- **PRD 16 / locking:** native S3 lockfile (`use_lockfile`) — IBM COS has no
+  DynamoDB, so this is the only path; it requires **terraform ≥ 1.10**. Floor
+  stays `>= 1.5` for local; a **preflight error** fires if `state.backend: s3` is
+  selected on TF < 1.10. No DynamoDB, no extra infra.
+- **PRD 16 / keys + creds:** per-phase key `<prefix>/<workspace>/<phase>/
+  terraform.tfstate` in one bucket (the parallel BNK∥Testing `up` locks distinct
+  objects — safe). COS **HMAC** keys resolved via the `cred.Resolver` source
+  chain, injected as `AWS_*` env to the terraform child, **never** in HCL or
+  state. Default backend stays **local** (byte-identical to today).
+- **PRD 16 / ownership + migration:** the operator **pre-provisions** the COS
+  bucket + HMAC keys (their state store); roksbnkctl consumes them with an
+  actionable error if absent. `roksbnkctl state migrate` drives local → s3
+  (`init -migrate-state` per phase), idempotent, refuses to clobber an occupied
+  key. Reverse migration deferred.
 
 ---
 
