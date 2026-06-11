@@ -63,6 +63,58 @@ func TestBuildGenericTarget(t *testing.T) {
 	}
 }
 
+func TestRunRegistryTarget(t *testing.T) {
+	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
+	if err := config.SaveWorkspace("rt", &config.Workspace{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetCurrent("rt"); err != nil {
+		t.Fatal(err)
+	}
+	oldWS, oldStdin := flagWorkspace, flagRegistryPasswordStdin
+	flagWorkspace, flagRegistryPasswordStdin = "", false
+	defer func() { flagWorkspace, flagRegistryPasswordStdin = oldWS, oldStdin }()
+
+	steps := [][]string{
+		{"icr"},                       // set kind
+		{"icr_namespace", "bnk-test"}, // set fields
+		{"generic_host", "art.example.com"},
+		{"generic_password", "tok"},
+	}
+	for _, args := range steps {
+		if err := runRegistryTarget(nil, args); err != nil {
+			t.Fatalf("runRegistryTarget(%v): %v", args, err)
+		}
+	}
+
+	ws, err := config.LoadWorkspace("rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Registry == nil {
+		t.Fatal("registry block not created")
+	}
+	if ws.Registry.Target != "icr" {
+		t.Errorf("target = %q, want icr", ws.Registry.Target)
+	}
+	if ws.Registry.ICRNamespace != "bnk-test" {
+		t.Errorf("icr_namespace = %q", ws.Registry.ICRNamespace)
+	}
+	if ws.Registry.GenericHost != "art.example.com" {
+		t.Errorf("generic_host = %q", ws.Registry.GenericHost)
+	}
+	if want := base64.StdEncoding.EncodeToString([]byte("tok")); ws.Registry.GenericPasswordB64 != want {
+		t.Errorf("generic_password_b64 = %q, want %q", ws.Registry.GenericPasswordB64, want)
+	}
+
+	if err := runRegistryTarget(nil, []string{"icr_namespace"}); err == nil {
+		t.Error("a field with no value must error")
+	}
+	if err := runRegistryTarget(nil, []string{"bogus", "x"}); err == nil {
+		t.Error("an unknown field must error")
+	}
+}
+
 func TestBuildICRTarget_Errors(t *testing.T) {
 	// Unknown region + no icr_host → cannot derive a host (fails before any
 	// credential resolution).

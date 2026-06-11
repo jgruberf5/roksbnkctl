@@ -16,38 +16,44 @@ namespace (`<host>/<ns>/images/<name>`). The `openshift` target is the special
 case — its flat `<project>/<name>` registry splits push (route) from image-pull
 (in-cluster service).
 
-Select a target in the workspace config or per-run:
+## Configuring the target — `registry target`
 
-```yaml
-registry:
-  target: icr            # or generic, or openshift
-```
+Configure the mirror with the **`registry target`** command — no `config.yaml`
+editing required. With no arguments it prints the current target and fields;
+otherwise the first argument is a backend **kind** (`icr` / `generic` /
+`openshift`) or a **field** name followed by its value. Everything it sets is
+written to the workspace `config.yaml`.
 
 ```bash
-roksbnkctl registry replicate --target generic   # --target overrides the config
+roksbnkctl registry target                       # show the current target + fields
+roksbnkctl registry target icr                   # select a backend kind
+roksbnkctl registry target icr_namespace my-bnk  # set a field
+roksbnkctl registry replicate --target generic   # or override the backend for one run
 ```
+
+Recognized fields: `icr_host`, `icr_namespace`, `generic_host`,
+`generic_repo_prefix`, `generic_username`, `generic_password` (the last reads
+from stdin with `--password-stdin`).
 
 ## The default is now ICR
 
-> **Migration note.** As of this release, an empty `registry.target` resolves to
-> **`icr`**, not `openshift`. If you rely on the air-gap OpenShift internal
-> registry, set it explicitly:
+> **Migration note.** As of this release, an empty target resolves to **`icr`**,
+> not `openshift`. If you rely on the air-gap OpenShift internal registry, select
+> it explicitly once:
 >
-> ```yaml
-> registry:
->   target: openshift
+> ```bash
+> roksbnkctl registry target openshift
 > ```
 >
-> Existing workspaces that mirrored into the OpenShift registry must add this
-> line; otherwise `registry replicate` will target ICR.
+> Existing workspaces that mirrored into the OpenShift registry must run this;
+> otherwise `registry replicate` will target ICR.
 
 ### ICR configuration
 
-```yaml
-registry:
-  target: icr
-  icr_host: de.icr.io       # optional — derived from ibmcloud.region if omitted
-  icr_namespace: my-bnk     # optional — defaults to the workspace prefix
+```bash
+roksbnkctl registry target icr
+roksbnkctl registry target icr_namespace my-bnk   # optional — defaults to the workspace prefix
+roksbnkctl registry target icr_host de.icr.io     # optional — derived from ibmcloud.region
 ```
 
 - **Host** comes from `ibmcloud.region` (`eu-de` → `de.icr.io`, `eu-gb` →
@@ -72,26 +78,22 @@ flow for a private **JFrog Artifactory** OCI repository.
 pull on it. Note the registry host (e.g. `acme.jfrog.io`) and the repository
 key.
 
-**2 — Configure the workspace.** Set the generic target. Keep the token out of
-the committed config by supplying it from the environment (see
-[Unattended setup](./07a-unattended-setup.md)):
-
-```yaml
-registry:
-  target: generic
-  generic_host: acme.jfrog.io
-  generic_repo_prefix: bnk-mirror
-  generic_username: ci-bot
-  generic_password_b64: ""     # ← ROKSBNKCTL_GENERIC_PASSWORD (raw token, base64-encoded)
-```
+**2 — Configure the workspace.** Set the generic target with `registry target`,
+feeding the token via stdin so it never lands in your shell history or argv:
 
 ```bash
-export ROKSBNKCTL_GENERIC_PASSWORD="$ARTIFACTORY_TOKEN"
-roksbnkctl init -w prod --config-file config.yaml --override-from-env
+roksbnkctl registry target generic -w prod
+roksbnkctl registry target generic_host acme.jfrog.io -w prod
+roksbnkctl registry target generic_repo_prefix bnk-mirror -w prod
+roksbnkctl registry target generic_username ci-bot -w prod
+echo "$ARTIFACTORY_TOKEN" | roksbnkctl registry target generic_password --password-stdin -w prod
+
+roksbnkctl registry target -w prod   # confirm (the password shows as "(set)")
 ```
 
-(Or set `generic_password_b64` directly — it is the base64 of the raw token,
-obfuscation only; `chmod 600`, never commit.)
+For a fully unattended (CI) workspace you can instead supply the token through
+`ROKSBNKCTL_GENERIC_PASSWORD` at `init --override-from-env` time — see
+[Unattended setup](./07a-unattended-setup.md).
 
 **3 — Replicate.** Preview, then mirror the bill-of-materials into Artifactory:
 
