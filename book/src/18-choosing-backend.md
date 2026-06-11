@@ -20,6 +20,8 @@ If you're skimming, the cheat-sheet is:
 - **`k8s`** when the call's *network position* matters and the cluster is the right vantage point.
 - **`ssh:<target>`** when the call needs to originate from a specific external host (a customer bastion, an air-gapped bridge).
 
+> **Inside the all-in-one runner image, use `local`.** When you run roksbnkctl from the [runner container](./04-installation.md#path-c--run-from-the-all-in-one-container-image-no-install), every tool it dispatches is already on `PATH` in the image — so `local` is the right call and the `docker`/`k8s` backends (which fetch a tool from elsewhere) are redundant there (and `docker` would mean docker-in-docker). The decision tree below is for the **binary-on-host** case, where those backends earn their keep.
+
 The rest of this chapter is the longer version.
 
 ## Per-tool default backends

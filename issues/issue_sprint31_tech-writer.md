@@ -7,7 +7,15 @@
 > [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Architect frames the prose; staff ships the surface to document.
 
-`Status`: open (draft — not yet dispatched)
+`Status`: in progress — **Issues 1–2 (PRD 15) done 2026-06-11**; Issues 3–4 (PRD 16 remote-state docs) pending
+
+> **PRD 15 docs done (2026-06-11).** `book/src/04-installation.md` gains the
+> install-method matrix + **Path C — the all-in-one runner image** (pull/run,
+> the `/work` `ROKSBNKCTL_HOME` volume contract incl. the named-volume vs
+> bind-mount ownership caveat, `--backend local`, the mdbook/pandoc exclusion,
+> air-gap fit). `book/src/18-choosing-backend.md` notes `--backend local`
+> in-runner. Book build (mdbook docker image) not run in the authoring env —
+> verify HTML/PDF clean at integration.
 
 ---
 
