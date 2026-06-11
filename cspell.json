@@ -17,6 +17,7 @@
     "podman",
     "buildx",
     "ghcr",
+    "DynamoDB",
     "tcproute",
     "tcproutes",
     "httproute",

@@ -7,7 +7,14 @@
 > [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Architect frames the prose; staff ships the surface to document.
 
-`Status`: in progress — **Issues 1–2 (PRD 15) done 2026-06-11**; Issues 3–4 (PRD 16 remote-state docs) pending
+`Status`: **resolved — all tech-writer issues done 2026-06-11** (PRD 15 install/runner docs; PRD 16 remote-state chapter + reference)
+
+> **Issues 3–4 done (2026-06-11).** New `book/src/12a-remote-state.md` (the
+> `state:` block, HMAC creds, per-phase keys, terraform ≥ 1.10, the
+> single-writer lock caveat, `state migrate`, default-local) + `SUMMARY.md`
+> entry; the `state:` block added to `book/src/28-configuration-reference.md`.
+> Book build (mdbook docker image) not run in the authoring env — verify
+> HTML/PDF clean + cspell green at integration.
 
 > **PRD 15 docs done (2026-06-11).** `book/src/04-installation.md` gains the
 > install-method matrix + **Path C — the all-in-one runner image** (pull/run,
