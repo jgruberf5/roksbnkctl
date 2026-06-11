@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
@@ -48,6 +50,7 @@ own OpenShift internal registry — so an air-gapped cluster installs BNK from
 images it hosts itself.
 
 Commands:
+  roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what ` + "`replicate`" + ` would copy (BOM vs. mirror)
@@ -62,15 +65,16 @@ registry: block in the workspace config.`,
 
 // registry-group flag values.
 var (
-	flagRegistryJSON         bool
-	flagRegistryManifestVer  string
-	flagRegistryFARRepo      string
-	flagRegistrySAB64        string
-	flagRegistryIncludeDeps  bool
-	flagRegistryNoIncludeDep bool
-	flagRegistryKubeconfig   string
-	flagRegistryConcurrency  int
-	flagRegistryTarget       string
+	flagRegistryJSON          bool
+	flagRegistryManifestVer   string
+	flagRegistryFARRepo       string
+	flagRegistrySAB64         string
+	flagRegistryIncludeDeps   bool
+	flagRegistryNoIncludeDep  bool
+	flagRegistryKubeconfig    string
+	flagRegistryConcurrency   int
+	flagRegistryTarget        string
+	flagRegistryPasswordStdin bool
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -133,11 +137,12 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{registryReplicateCmd, registryVerifyCmd, registryPruneCmd} {
 		c.Flags().StringVar(&flagRegistryKubeconfig, "kubeconfig", "", "kubeconfig path (default: workspace/cluster default)")
-		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend (default: workspace registry.target, else "openshift")`)
+		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic|openshift (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
+	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 
-	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd)
+	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd)
 	rootCmd.AddCommand(registryCmd)
 }
 
@@ -412,6 +417,137 @@ func buildGenericTarget(ws *config.Workspace) (mirrorTarget, error) {
 		Namespace: reg.GenericRepoPrefix,
 		Auth:      auth,
 	}, nil
+}
+
+// ── registry target (CLI-driven mirror configuration) ───────────────────────
+
+var registryTargetCmd = &cobra.Command{
+	Use:   "target [icr|generic|openshift | <field> <value>]",
+	Short: "Show or set the registry mirror target and its fields",
+	Long: `Configure the registry replication target without hand-editing config.yaml.
+
+With no arguments, prints the current target + configured fields. Otherwise the
+first argument is either a backend KIND (sets registry.target) or a FIELD name
+(set with a following value):
+
+  Kinds:  icr | generic | openshift
+  Fields: icr_host  icr_namespace
+          generic_host  generic_repo_prefix  generic_username  generic_password
+
+Examples:
+  roksbnkctl registry target                          # show current config
+  roksbnkctl registry target icr                      # use IBM Container Registry
+  roksbnkctl registry target icr_namespace bnk-test
+  roksbnkctl registry target generic                  # use a generic OCI registry
+  roksbnkctl registry target generic_host art.example.com
+  roksbnkctl registry target generic_repo_prefix bnk
+  roksbnkctl registry target generic_username ci-bot
+  echo "$TOKEN" | roksbnkctl registry target generic_password --password-stdin`,
+	Args: cobra.MaximumNArgs(2),
+	RunE: runRegistryTarget,
+}
+
+// registryTargetKinds are the backend selectors `registry target <kind>` accepts.
+var registryTargetKinds = map[string]bool{"icr": true, "generic": true, "openshift": true}
+
+func runRegistryTarget(_ *cobra.Command, args []string) error {
+	name, ws, err := loadRegistryWorkspace()
+	if err != nil {
+		return err
+	}
+
+	// No arguments (and no stdin flag) → show the current config.
+	if len(args) == 0 && !flagRegistryPasswordStdin {
+		printRegistryTarget(ws)
+		return nil
+	}
+
+	if ws.Registry == nil {
+		ws.Registry = &config.RegistryCfg{}
+	}
+	reg := ws.Registry
+
+	// --password-stdin sets generic_password from stdin, keeping the token out
+	// of argv + shell history.
+	if flagRegistryPasswordStdin {
+		field := "generic_password"
+		if len(args) >= 1 {
+			field = args[0]
+		}
+		if field != "generic_password" {
+			return fmt.Errorf("--password-stdin only applies to generic_password")
+		}
+		raw, rerr := io.ReadAll(os.Stdin)
+		if rerr != nil {
+			return fmt.Errorf("reading password from stdin: %w", rerr)
+		}
+		raw = bytes.TrimRight(raw, "\r\n")
+		if len(raw) == 0 {
+			return fmt.Errorf("no password read from stdin")
+		}
+		reg.GenericPasswordB64 = base64.StdEncoding.EncodeToString(raw)
+		return saveRegistryTarget(name, ws, "generic_password")
+	}
+
+	first := args[0]
+	if registryTargetKinds[first] {
+		reg.Target = first
+		return saveRegistryTarget(name, ws, "target = "+first)
+	}
+
+	// Otherwise a field name, which needs a value.
+	if len(args) != 2 {
+		return fmt.Errorf("setting %q needs a value: roksbnkctl registry target %s <value>", first, first)
+	}
+	val := args[1]
+	switch first {
+	case "icr_host":
+		reg.ICRHost = val
+	case "icr_namespace":
+		reg.ICRNamespace = val
+	case "generic_host":
+		reg.GenericHost = val
+	case "generic_repo_prefix":
+		reg.GenericRepoPrefix = val
+	case "generic_username":
+		reg.GenericUsername = val
+	case "generic_password":
+		reg.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(val))
+	default:
+		return fmt.Errorf("unknown registry target arg %q\n  kinds:  icr|generic|openshift\n  fields: icr_host icr_namespace generic_host generic_repo_prefix generic_username generic_password", first)
+	}
+	return saveRegistryTarget(name, ws, first)
+}
+
+func saveRegistryTarget(name string, ws *config.Workspace, what string) error {
+	if err := config.SaveWorkspace(name, ws); err != nil {
+		return fmt.Errorf("saving workspace: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ registry %s\n", what)
+	return nil
+}
+
+// printRegistryTarget shows the effective target kind + the configured fields
+// (the generic password is redacted).
+func printRegistryTarget(ws *config.Workspace) {
+	fmt.Printf("target: %s\n", registryTargetKind(ws))
+	reg := ws.Registry
+	if reg == nil {
+		return
+	}
+	show := func(label, val string) {
+		if val != "" {
+			fmt.Printf("  %s: %s\n", label, val)
+		}
+	}
+	show("icr_host", reg.ICRHost)
+	show("icr_namespace", reg.ICRNamespace)
+	show("generic_host", reg.GenericHost)
+	show("generic_repo_prefix", reg.GenericRepoPrefix)
+	show("generic_username", reg.GenericUsername)
+	if reg.GenericPasswordB64 != "" {
+		fmt.Println("  generic_password: (set)")
+	}
 }
 
 func registryEngine(t mirror.Target, in registryBOMInputs) *mirror.Engine {

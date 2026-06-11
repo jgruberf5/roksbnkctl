@@ -12,6 +12,7 @@ The registry surface is CRUD-shaped, modeled on the IBM COS client:
 
 | Command | What it does |
 |---|---|
+| `roksbnkctl registry target` | Show or set the mirror target — icr / generic / openshift (see [Registry targets](./10b-registry-targets.md)) |
 | `roksbnkctl registry bom` | Print the bill-of-materials — every chart + image BNK needs |
 | `roksbnkctl registry replicate` | Mirror the BOM into the target registry |
 | `roksbnkctl registry list` | What's present in the target |
