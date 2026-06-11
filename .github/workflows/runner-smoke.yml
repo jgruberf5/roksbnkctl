@@ -27,6 +27,9 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload the image CVE SARIF
     steps:
       - uses: actions/checkout@v6
 
@@ -42,6 +45,20 @@ jobs:
             ROKSBNKCTL_COMMIT=${{ github.sha }}
           load: true
           tags: roksbnkctl-runner:smoke
+
+      # CVE scan of the actual built image (it bundles terraform/helm/kubectl/
+      # oc/ibmcloud on ubuntu — the most CVE-exposed of our images). SARIF →
+      # code scanning; --exit-code 0 so it reports without blocking the smoke.
+      - name: Trivy image scan (SARIF)
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy image --format sarif --output trivy-runner.sarif --exit-code 0 --ignore-unfixed roksbnkctl-runner:smoke
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-runner.sarif
+          category: trivy-runner-image
 
       - name: roksbnkctl runs (ENTRYPOINT is the tool)
         run: docker run --rm roksbnkctl-runner:smoke version
