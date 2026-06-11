@@ -117,3 +117,18 @@ The install pulls images and charts from `acme.jfrog.io/bnk-mirror`. The cluster
 must be able to reach Artifactory and present the same credentials (an image
 pull secret for the registry); see your Artifactory + cluster networking for the
 pull-secret wiring.
+
+## Removing a mirror
+
+To wipe everything you replicated and revert the install to pulling from FAR:
+
+```bash
+roksbnkctl registry delete -w prod          # confirms first; --force to skip
+```
+
+`registry delete` removes every artifact recorded in `registry-mirror.json` from
+the target (by digest) and clears the record. Artifacts that fail to delete are
+kept in the record so a re-run retries exactly those. For `icr` the API key needs
+**Manager** (delete) rights on the namespace; for `generic` the registry must
+have deletes enabled. (To remove only artifacts that are no longer in the current
+BOM, use `registry prune` instead.)

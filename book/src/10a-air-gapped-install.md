@@ -19,6 +19,7 @@ The registry surface is CRUD-shaped, modeled on the IBM COS client:
 | `roksbnkctl registry diff` | BOM vs. target — what's missing or stale |
 | `roksbnkctl registry verify` | Every BOM artifact present + digest-matched |
 | `roksbnkctl registry prune` | Remove mirrored artifacts no longer in the BOM |
+| `roksbnkctl registry delete` | Delete **all** replicated artifacts from the target + clear the record |
 
 ## The bill-of-materials
 

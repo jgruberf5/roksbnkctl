@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,7 @@ import (
 //	registry replicate  Copy the BOM into the mirror (needs a live cluster)
 //	registry verify     Confirm every BOM artifact is present + digest-matched
 //	registry prune      Remove mirrored artifacts no longer in the BOM
+//	registry delete     Delete ALL replicated artifacts from the target
 var registryCmd = &cobra.Command{
 	Use:   "registry",
 	Short: "Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)",
@@ -57,6 +59,7 @@ Commands:
   roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
+  roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
 ` + "`registry bom`" + ` works offline against the FAR manifest; the cluster-touching
 verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
@@ -75,6 +78,7 @@ var (
 	flagRegistryConcurrency   int
 	flagRegistryTarget        string
 	flagRegistryPasswordStdin bool
+	flagRegistryForce         bool
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -126,6 +130,21 @@ var registryPruneCmd = &cobra.Command{
 	RunE:  runRegistryPrune,
 }
 
+var registryDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete ALL replicated artifacts from the target registry",
+	Long: `Removes every artifact roksbnkctl replicated (recorded in registry-mirror.json)
+from the configured target, then clears the mirror record so the BNK install
+reverts to pulling from FAR. Destructive — pass --force to skip the confirmation.
+
+Deletion is by digest where recorded (the reliable form for a registry manifest
+DELETE). Artifacts that fail to delete are kept in the record so a re-run retries
+them. For target=icr the API key needs Manager (delete) rights on the namespace;
+for target=generic the registry must have deletes enabled.`,
+	Args: cobra.NoArgs,
+	RunE: runRegistryDelete,
+}
+
 func init() {
 	registryBOMCmd.Flags().BoolVar(&flagRegistryJSON, "json", false, "emit the BOM as JSON (overrides --output)")
 	for _, c := range []*cobra.Command{registryBOMCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd} {
@@ -135,14 +154,15 @@ func init() {
 		c.Flags().BoolVar(&flagRegistryIncludeDeps, "include-deps", false, "force-include the non-F5 dependency artifacts (cert-manager, node-labeler)")
 		c.Flags().BoolVar(&flagRegistryNoIncludeDep, "no-include-deps", false, "exclude the non-F5 dependency artifacts")
 	}
-	for _, c := range []*cobra.Command{registryReplicateCmd, registryVerifyCmd, registryPruneCmd} {
+	for _, c := range []*cobra.Command{registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryDeleteCmd} {
 		c.Flags().StringVar(&flagRegistryKubeconfig, "kubeconfig", "", "kubeconfig path (default: workspace/cluster default)")
 		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic|openshift (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
+	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
-	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd)
+	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd, registryDeleteCmd)
 	rootCmd.AddCommand(registryCmd)
 }
 
@@ -548,6 +568,74 @@ func printRegistryTarget(ws *config.Workspace) {
 	if reg.GenericPasswordB64 != "" {
 		fmt.Println("  generic_password: (set)")
 	}
+}
+
+// ── registry delete (wipe all replicated artifacts) ─────────────────────────
+
+func runRegistryDelete(cmd *cobra.Command, _ []string) error {
+	name, ws, err := loadRegistryWorkspace()
+	if err != nil {
+		return err
+	}
+	rec, err := config.ReadRegistryMirror(name)
+	if err != nil {
+		if errors.Is(err, config.ErrNoRegistryMirror) {
+			fmt.Fprintln(os.Stderr, "no mirror recorded — nothing to delete")
+			return nil
+		}
+		return err
+	}
+	if len(rec.Artifacts) == 0 {
+		fmt.Fprintln(os.Stderr, "mirror is empty — nothing to delete")
+		return nil
+	}
+	if !flagRegistryForce {
+		if !promptYesNo(fmt.Sprintf("Delete all %d replicated artifact(s) from the %s target (%s)?", len(rec.Artifacts), rec.Target, rec.ImageHost), false) {
+			return errors.New("aborted")
+		}
+	}
+	target, err := buildTarget(cmd.Context(), name, ws)
+	if err != nil {
+		return err
+	}
+	arts := make([]bnkbom.Artifact, len(rec.Artifacts))
+	for i, ma := range rec.Artifacts {
+		arts[i] = bnkbom.Artifact{Name: ma.Name, Tag: ma.Tag, Digest: ma.Digest}
+	}
+	results := registryEngine(target, resolveBOMInputs(ws)).Delete(cmd.Context(), arts)
+
+	var deleted, failed int
+	var remaining []config.MirrorArtifact
+	for i, r := range results {
+		if r.Err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "  FAIL %s:%s — %v\n", r.Artifact.Name, r.Artifact.Tag, r.Err)
+			remaining = append(remaining, rec.Artifacts[i])
+			continue
+		}
+		deleted++
+		if !flagQuiet {
+			fmt.Fprintf(os.Stderr, "  deleted %s:%s\n", r.Artifact.Name, r.Artifact.Tag)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "✓ deleted %d artifact(s)\n", deleted)
+
+	// Drop the record when the mirror is empty; otherwise keep the artifacts
+	// that failed so a re-run retries exactly those.
+	if len(remaining) == 0 {
+		if derr := config.DeleteRegistryMirror(name); derr != nil {
+			return derr
+		}
+	} else {
+		rec.Artifacts = remaining
+		if werr := config.WriteRegistryMirror(name, rec); werr != nil {
+			return werr
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("delete: %d artifact(s) could not be removed", failed)
+	}
+	return nil
 }
 
 func registryEngine(t mirror.Target, in registryBOMInputs) *mirror.Engine {

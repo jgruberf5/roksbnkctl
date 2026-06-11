@@ -96,3 +96,17 @@ func WriteRegistryMirror(workspace string, m *RegistryMirror) error {
 	}
 	return nil
 }
+
+// DeleteRegistryMirror removes the workspace's registry-mirror.json so the BNK
+// install reverts to pulling from FAR (the redirect is gated on the record's
+// presence). An absent file is not an error.
+func DeleteRegistryMirror(workspace string) error {
+	p, err := WorkspaceRegistryMirrorPath(workspace)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing %s: %w", p, err)
+	}
+	return nil
+}
