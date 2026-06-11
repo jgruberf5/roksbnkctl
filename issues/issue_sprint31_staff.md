@@ -5,7 +5,16 @@
 > [PRD 15](../docs/prd/15-RUNNER-IMAGE.md), [PRD 16](../docs/prd/16-REMOTE-STATE-BACKEND.md).
 > Design decisions (BLOCKING): `issue_sprint31_architect.md`.
 
-`Status`: in progress — **Issue 1 (PRD 15) + Issue 2 (PRD 16 s3 rendering) done 2026-06-11**; Issue 3 (local→s3 migration) pending
+`Status`: **resolved — all staff issues done 2026-06-11** (PRD 15 runner image; PRD 16 s3 backend + `state migrate`)
+
+> **Issue 3 done (2026-06-11).** `roksbnkctl state migrate` (`internal/cli/state.go`)
+> copies each deployed phase's local state into the configured s3 backend via
+> `terraform init -migrate-state -force-copy` (`tf.InitMigrate`, driven by exec
+> since the pinned terraform-exec has no MigrateState option). A per-phase
+> remote-key HEAD check (`tf.RemoteS3StateExists`, HMAC-authed IBM COS SDK)
+> refuses to overwrite an occupied key (`--force` overrides); local files are
+> left in place. Precondition + key/HMAC logic unit-tested; the live COS
+> round-trip is the validator's Issue 4.
 
 > **Issue 2 done (2026-06-11).** `config.StateCfg{Backend, S3}` added (absent →
 > local, byte-identical). `internal/tf/backend.go` branches the
