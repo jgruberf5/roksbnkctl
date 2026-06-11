@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Security
+
+- **Added a CI security sweep** and fixed the reachable vulnerabilities it found. New `security.yml` runs `govulncheck` (gated), `gitleaks` (gated), CodeQL, and Trivy (terraform IaC + deps → code scanning), plus a Trivy CVE scan of the runner image in `runner-smoke.yml` and a `dependabot.yml` (gomod + github-actions). The first `govulncheck` pass flagged 3 reachable module CVEs, now patched: **`golang.org/x/crypto` v0.51.0 → v0.52.0** (GO-2026-5013, reachable via the SSH client), **`github.com/moby/spdystream` v0.2.0 → v0.5.1** (GO-2026-4958, via k8s exec), and **`golang.org/x/net` v0.54.0 → v0.55.0** (GO-2026-5026). Remaining advisories are Go-stdlib toolchain fixes; the scan job runs on current stable Go.
+
 ## v1.11.0 — 2026-06-11
 
 Sprint 30 + 31 in one release, aimed at **running roksbnkctl unattended and self-contained**: provisioning a workspace from a committed template (no secrets in git), the air-gap mirror gaining **ICR + generic-OCI** targets, an **all-in-one runner image** (the binary + every tool it dispatches in one container), and a **COS/S3 remote state backend** with `state migrate` so a stateless runner / parallel CI keeps state outside the container, locked. All additive — the default state backend stays **local** and existing workspaces are unchanged; the one behaviour change is `registry replicate` now defaulting to `icr` (set `registry.target: openshift` to keep the old default).
