@@ -34,7 +34,7 @@ jobs:
 
       # terraform >= 1.10 is required for the native S3 lockfile. wrapper off
       # so the test's `exec terraform …` runs the real binary.
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
