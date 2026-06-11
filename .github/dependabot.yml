@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Go module dependencies (incl. the aws/IBM-COS SDK, terraform-exec,
+  # client-go, SSH libs) — security + version bumps as PRs.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns: ["*"]
+
+  # GitHub Actions used across the workflows (incl. the ones carrying
+  # packages:write / contents:write tokens) — keeps them current and flags
+  # vulnerable action versions.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
