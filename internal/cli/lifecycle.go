@@ -438,6 +438,15 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}); err != nil {
 		return err
 	}
+	// Phase 11c: NVIDIA device-plugin (GPU node groups only). Self-gates on
+	// HasGPUNodeGroup() — clean no-op for all existing non-GPU clusters.
+	// Runs here (after k8s clients attached + tmm-node-label) so GPU nodes
+	// are ACTIVE and the API server is reachable.
+	if err := stage(3, "nvidia-device-plugin", func() error {
+		return phases.Phase11cNvidiaDevicePlugin(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
 	if err := stage(3, "secondary-enis", func() error {
 		return phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun)
 	}); err != nil {
@@ -736,6 +745,10 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		{4, "k8s-foundation", func() error { return phases.Phase12K8sFoundationDown(ctx, cl, st, clients) }},
 		// STAGE 3 — Nodes · kubeconfig · ENIs · jumphost.
 		{3, "ebs-csi-hugepages", func() error { return phases.Phase11bEBSCSIHugepagesDown(ctx, cl, st, clients) }},
+		// Phase 11c down: NVIDIA device-plugin DaemonSet (GPU clusters only).
+		// Self-gates on HasGPUNodeGroup() — no-op for all existing non-GPU clusters.
+		// Runs before kubeconfig-down so the API server is still reachable.
+		{3, "nvidia-device-plugin", func() error { return phases.Phase11cNvidiaDevicePluginDown(ctx, cl, st, clients) }},
 		{3, "kubeconfig", func() error { return phases.Phase11KubeconfigDown(ctx, cl, st, clients) }},
 		{3, "irsa-oidc", func() error { return phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA) }},
 		{3, "iface-discovery", func() error { return phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients) }},
