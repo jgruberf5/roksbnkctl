@@ -773,3 +773,83 @@ func TestRenderLicenseCR_JWTInlinedVerbatim(t *testing.T) {
 		t.Errorf("JWT not inlined verbatim: %s", out)
 	}
 }
+
+// ─── NVIDIA device-plugin render tests ───────────────────────────────────────
+
+// TestRenderNvidiaDevicePlugin_InlineTemplate verifies version substitution,
+// nodeSelector, and toleration with an inline template.
+func TestRenderNvidiaDevicePlugin_InlineTemplate(t *testing.T) {
+	tmpl := []byte(`image: nvcr.io/nvidia/k8s-device-plugin:{{ .Version }}
+nodeSelector:
+  awsbnkctl.io/gpu: "true"
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+`)
+	out, err := RenderNvidiaDevicePlugin(tmpl, "v0.17.1")
+	if err != nil {
+		t.Fatalf("RenderNvidiaDevicePlugin: %v", err)
+	}
+	rendered := string(out)
+
+	checks := []string{
+		"nvcr.io/nvidia/k8s-device-plugin:v0.17.1", // version substituted
+		`awsbnkctl.io/gpu: "true"`,                 // GPU nodeSelector
+		"nvidia.com/gpu",                           // taint toleration key
+		"NoSchedule",                               // taint effect
+	}
+	for _, want := range checks {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered NVIDIA plugin missing %q:\n%s", want, rendered)
+		}
+	}
+	// Must NOT contain un-rendered template tokens.
+	if strings.Contains(rendered, "{{ .Version }}") {
+		t.Errorf("rendered output still contains template token {{ .Version }}:\n%s", rendered)
+	}
+}
+
+// TestRenderNvidiaDevicePlugin_EmbeddedTemplate verifies the real embedded
+// template renders correctly with the pinned version.
+func TestRenderNvidiaDevicePlugin_EmbeddedTemplate(t *testing.T) {
+	tmplBytes, err := manifests.FS.ReadFile("nvidia-device-plugin/nvidia-device-plugin-v0.17.1.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read embedded NVIDIA device-plugin template: %v", err)
+	}
+
+	const version = "v0.17.1"
+	out, err := RenderNvidiaDevicePlugin(tmplBytes, version)
+	if err != nil {
+		t.Fatalf("RenderNvidiaDevicePlugin (embedded): %v", err)
+	}
+	rendered := string(out)
+
+	// Image tag is substituted.
+	if !strings.Contains(rendered, "nvcr.io/nvidia/k8s-device-plugin:v0.17.1") {
+		t.Errorf("image tag not substituted; want nvcr.io/nvidia/k8s-device-plugin:v0.17.1:\n%s", rendered)
+	}
+	// nodeSelector targets GPU nodes only.
+	if !strings.Contains(rendered, `awsbnkctl.io/gpu: "true"`) {
+		t.Errorf("missing nodeSelector awsbnkctl.io/gpu=true:\n%s", rendered)
+	}
+	// Taint toleration present.
+	if !strings.Contains(rendered, "nvidia.com/gpu") {
+		t.Errorf("missing nvidia.com/gpu toleration key:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "NoSchedule") {
+		t.Errorf("missing NoSchedule toleration effect:\n%s", rendered)
+	}
+	// Namespace is kube-system.
+	if !strings.Contains(rendered, "namespace: kube-system") {
+		t.Errorf("missing namespace kube-system:\n%s", rendered)
+	}
+	// DaemonSet kind present.
+	if !strings.Contains(rendered, "kind: DaemonSet") {
+		t.Errorf("missing kind: DaemonSet:\n%s", rendered)
+	}
+	// No leftover template tokens.
+	if strings.Contains(rendered, "{{") || strings.Contains(rendered, "}}") {
+		t.Errorf("rendered output still contains template tokens:\n%s", rendered)
+	}
+}

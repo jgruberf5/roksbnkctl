@@ -95,22 +95,26 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		return fmt.Errorf("phase10: PUBLIC_SUBNETS not in state (run phase03 first)")
 	}
 
-	// For BNK patterns: pin the node group to the public subnet that shares an
-	// AZ with the external data-path subnet. EKS picks an AZ from the node
+	// For BNK patterns: pin the BNK node group to the public subnet that shares
+	// an AZ with the external data-path subnet. EKS picks an AZ from the node
 	// group's subnet set when launching the node; if we pass both AZs, EKS may
 	// land the node in the wrong AZ and Phase 17 ENI attach fails with
 	// "not in the same availability zone".
+	// GPU node groups are NOT subject to this AZ pin — they have their own
+	// per-nodegroup AZ filter applied in ensureNodeGroup.
+	bnkSubnets := publicSubnets
 	if cl.IsBNKPattern() && cl.Network.DataPath != nil {
 		targetAZ := cl.Network.DataPath.External.AZ
 		filtered := filterSubnetsByAZ(publicSubnets, cl.Network.Subnets.Public, targetAZ)
 		if len(filtered) == 0 {
 			return fmt.Errorf("phase10: no public subnet matches data-path AZ %q", targetAZ)
 		}
-		fmt.Fprintf(os.Stderr, "[phase 10] BNK pattern: pinning node group to AZ=%s (subnets=%v)\n", targetAZ, filtered)
-		publicSubnets = filtered
+		fmt.Fprintf(os.Stderr, "[phase 10] BNK pattern: pinning BNK node group to AZ=%s (subnets=%v)\n", targetAZ, filtered)
+		bnkSubnets = filtered
 	}
 
-	// Ensure the Launch Template exists.
+	// Ensure the BNK Launch Template exists. GPU node groups do NOT use this
+	// LT — they get the NVIDIA AMI's default user-data (no ENI udev rules needed).
 	ltID, err := ensureLaunchTemplate(ctx, clients.EC2, name, ltName, cl.Tags, cl.Metadata.Labels)
 	if err != nil {
 		return fmt.Errorf("phase10: launch template: %w", err)
@@ -118,7 +122,29 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	st.Set("LT_ID", ltID)
 
 	for _, ng := range cl.ClusterSpec.NodeGroups {
-		if err := ensureNodeGroup(ctx, clients.EKS, name, clusterName, nodeRoleARN, publicSubnets, ltID, ng, cl.Tags, cl.Metadata.Labels, st); err != nil {
+		// Per-nodegroup subnet selection (single authoritative location):
+		// - BNK nodegroups: use the BNK AZ-pinned subnets (bnkSubnets, already filtered).
+		// - GPU nodegroups: filter the full public subnet list to ng.AZs; error if empty
+		//   (prevents silent fallback to all AZs including denied ones like 2b).
+		ngSubnets := bnkSubnets
+		if ng.IsGPU() {
+			if len(ng.AZs) > 0 {
+				var filtered []string
+				for _, az := range ng.AZs {
+					f := filterSubnetsByAZ(publicSubnets, cl.Network.Subnets.Public, az)
+					filtered = append(filtered, f...)
+				}
+				if len(filtered) == 0 {
+					return fmt.Errorf("phase10: GPU node group %s: no public subnets match AZs %v", ng.Name, ng.AZs)
+				}
+				fmt.Fprintf(os.Stderr, "[phase 10] GPU node group %s: pinning to AZs=%v (subnets=%v)\n", ng.Name, ng.AZs, filtered)
+				ngSubnets = filtered
+			} else {
+				// No AZs declared: GPU ng uses all public subnets (EKS chooses).
+				ngSubnets = publicSubnets
+			}
+		}
+		if err := ensureNodeGroup(ctx, clients.EKS, name, clusterName, nodeRoleARN, ngSubnets, ltID, ng, cl.Tags, cl.Metadata.Labels, st); err != nil {
 			return fmt.Errorf("phase10: node group %s: %w", ng.Name, err)
 		}
 	}
@@ -183,7 +209,7 @@ func ensureNodeGroup(
 	ctx context.Context,
 	eksc EKSAPI,
 	clusterDisplayName, clusterName, nodeRoleARN string,
-	publicSubnets []string,
+	ngSubnets []string,
 	ltID string,
 	ng intent.NodeGroupSpec,
 	extraTags map[string]string,
@@ -237,6 +263,11 @@ func ensureNodeGroup(
 	for k, v := range ng.Labels {
 		k8sLabels[k] = v
 	}
+	// GPU node groups get the awsbnkctl.io/gpu label so the NVIDIA device-plugin
+	// DaemonSet's nodeSelector targets them specifically.
+	if ng.IsGPU() {
+		k8sLabels["awsbnkctl.io/gpu"] = "true"
+	}
 
 	// Bounds-check before int32 cast (DiskSize/DesiredSize/MinSize/MaxSize
 	// come from validated cluster.yaml; defaults are 50/1/1/2). EKS API
@@ -249,37 +280,87 @@ func ensureNodeGroup(
 	minSize := int32(ng.MinSize)         // #nosec G115 -- bounded above
 	maxSize := int32(ng.MaxSize)         // #nosec G115 -- bounded above
 
-	// Bind the node group to the Launch Template via id=$LT_ID,version=$Latest.
-	// DiskSize is NOT set when using a launch template (EKS rejects the combination).
-	//
-	// AmiType = AL2023_x86_64_STANDARD: predictable interface naming
-	// (device-index 0..3 → ens5..ens8). The downstream stack assumes this:
-	// Phase 17 attaches BNK_INT at device-index 2 (→ ens7) and BNK_EXT at
-	// device-index 3 (→ ens8); Phase 19 hard-codes those names in the
-	// cloud-network-mapping ConfigMap; Phase 20 NADs reference them too.
-	// AL2 names secondary ENIs eth1..ethN, which breaks Multus link-lookup.
-	// See docs/audits/slice-09-aws-gpu-setup-audit.md.3 and
-	// aws-gpu-setup/vars.env:92-95 for the source of the naming contract.
-	ltVersion := "$Latest"
-	_, err = eksc.CreateNodegroup(ctx, &eks.CreateNodegroupInput{
+	// Select AmiType per node group:
+	// - GPU node groups: AL2023_x86_64_NVIDIA (includes NVIDIA drivers).
+	// - BNK node groups: AL2023_x86_64_STANDARD (predictable ens5..ens8 naming).
+	//   The downstream stack assumes AL2023 Standard for BNK nodes:
+	//   Phase 17 attaches BNK_INT at device-index 2 (→ ens7) and BNK_EXT at
+	//   device-index 3 (→ ens8); Phase 19 hard-codes those names in the
+	//   cloud-network-mapping ConfigMap; Phase 20 NADs reference them too.
+	//   AL2 names secondary ENIs eth1..ethN, which breaks Multus link-lookup.
+	//   See docs/audits/slice-09-aws-gpu-setup-audit.md.3 and
+	//   aws-gpu-setup/vars.env:92-95 for the source of the naming contract.
+	amiType := ekstypes.AMITypesAl2023X8664Standard
+	if ng.IsGPU() {
+		amiType = ekstypes.AMITypesAl2023X8664Nvidia
+	}
+
+	// Select CapacityType (on-demand or spot).
+	capacityType := ekstypes.CapacityTypesOnDemand
+	if ng.CapacityType == "spot" {
+		capacityType = ekstypes.CapacityTypesSpot
+	}
+
+	// Convert intent taints to EKS taint format.
+	var eksTaints []ekstypes.Taint
+	for _, t := range ng.Taints {
+		taint := ekstypes.Taint{
+			Key:   ptr(t.Key),
+			Value: ptr(t.Value),
+		}
+		switch t.Effect {
+		case "NoSchedule":
+			taint.Effect = ekstypes.TaintEffectNoSchedule
+		case "NoExecute":
+			taint.Effect = ekstypes.TaintEffectNoExecute
+		case "PreferNoSchedule":
+			taint.Effect = ekstypes.TaintEffectPreferNoSchedule
+		}
+		eksTaints = append(eksTaints, taint)
+	}
+
+	// Build the CreateNodegroup input.
+	// MUST-CARRY GUARD (R6): GPU node groups do NOT receive the BNK launch template.
+	// That LT carries TMM host-device ENA-up udev rules + assumes the BNK ens5..ens8
+	// naming contract. GPU nodes use the NVIDIA AMI's default user-data instead.
+	// BNK node groups continue to use the launch template for ENA bring-up.
+	input := &eks.CreateNodegroupInput{
 		ClusterName:   ptr(clusterName),
 		NodegroupName: ptr(ngName),
 		NodeRole:      ptr(nodeRoleARN),
-		Subnets:       publicSubnets,
-		AmiType:       ekstypes.AMITypesAl2023X8664Standard,
+		Subnets:       ngSubnets,
+		AmiType:       amiType,
+		CapacityType:  capacityType,
 		InstanceTypes: []string{ng.InstanceType},
 		ScalingConfig: &ekstypes.NodegroupScalingConfig{
 			DesiredSize: int32Ptr(desiredSize),
 			MinSize:     int32Ptr(minSize),
 			MaxSize:     int32Ptr(maxSize),
 		},
-		LaunchTemplate: &ekstypes.LaunchTemplateSpecification{
-			Id:      ptr(ltID),
-			Version: ptr(ltVersion),
-		},
+		Taints: eksTaints,
 		Labels: k8sLabels,
 		Tags:   ngTags,
-	})
+	}
+	if !ng.IsGPU() {
+		// BNK node groups: bind to the launch template (ENA udev rules + IMDSv2 hop=2).
+		// DiskSize is NOT set when using a launch template (EKS rejects the combination).
+		ltVersion := "$Latest"
+		input.LaunchTemplate = &ekstypes.LaunchTemplateSpecification{
+			Id:      ptr(ltID),
+			Version: ptr(ltVersion),
+		}
+	} else {
+		// GPU node groups: no launch template, so EKS accepts DiskSize directly.
+		// DiskSize must be set here — it cannot be combined with a LaunchTemplate.
+		// The bounds-check above ensures the int32 cast is safe.
+		diskSize := int32(ng.DiskSize) // #nosec G115 -- bounded above
+		input.DiskSize = int32Ptr(diskSize)
+		// TODO(slice-2): GPU nodes skip the BNK launch template so they get the
+		// EKS-default IMDS hop limit (1), which blocks pod IMDS access. If slice-2
+		// vLLM needs IMDS (region/STS/S3), set MetadataOptions{HttpPutResponseHopLimit:2}
+		// on this CreateNodegroupInput directly (no UserData/LT needed) or use IRSA.
+	}
+	_, err = eksc.CreateNodegroup(ctx, input)
 	if err != nil {
 		return fmt.Errorf("CreateNodegroup %s: %w", ngName, err)
 	}
