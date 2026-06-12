@@ -63,3 +63,6 @@ docs/demo/
 /tools/ciwatch/ciwatch
 /tools/sprintwatch/sprintwatch
 /opencode.json
+
+# --- HuggingFace token (gated model auth; never commit) ---
+.hf_token

@@ -111,6 +111,7 @@ type mockEC2 struct {
 	createLTOut    *ec2.CreateLaunchTemplateOutput
 	createLTErr    error
 	createLTCalls  int
+	createLTInputs []*ec2.CreateLaunchTemplateInput
 	deleteLTCalls  int
 	deleteLTErr    error
 
@@ -385,15 +386,16 @@ func (m *mockEC2) DescribeLaunchTemplates(_ context.Context, _ *ec2.DescribeLaun
 	}
 	return m.describeLTsOut, m.describeLTsErr
 }
-func (m *mockEC2) CreateLaunchTemplate(_ context.Context, _ *ec2.CreateLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error) {
+func (m *mockEC2) CreateLaunchTemplate(_ context.Context, in *ec2.CreateLaunchTemplateInput, _ ...func(*ec2.Options)) (*ec2.CreateLaunchTemplateOutput, error) {
 	m.createLTCalls++
+	m.createLTInputs = append(m.createLTInputs, in)
 	if m.createLTErr != nil {
 		return nil, m.createLTErr
 	}
 	if m.createLTOut != nil {
 		return m.createLTOut, nil
 	}
-	id := "lt-mock-1"
+	id := fmt.Sprintf("lt-mock-%d", m.createLTCalls)
 	ver := int64(1)
 	return &ec2.CreateLaunchTemplateOutput{LaunchTemplate: &ec2types.LaunchTemplate{LaunchTemplateId: &id, LatestVersionNumber: &ver}}, nil
 }

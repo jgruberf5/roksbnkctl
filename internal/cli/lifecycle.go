@@ -447,6 +447,17 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}); err != nil {
 		return err
 	}
+	// SageMaker LMI endpoint (PRD-11 M4). Opt-in via ai.sagemaker.enabled. Runs
+	// after the GPU node group (which provides inference capacity) but is otherwise
+	// independent of the K8s control plane — SageMaker is a managed AWS service.
+	// Skipped entirely when not enabled (existing clusters byte-for-byte unchanged).
+	if cl.SageMakerEnabled() {
+		if err := stage(3, "sagemaker-lmi", func() error {
+			return phases.PhaseSageMakerUp(ctx, cl, st, clients, dryRun)
+		}); err != nil {
+			return err
+		}
+	}
 	if err := stage(3, "secondary-enis", func() error {
 		return phases.Phase17SecondaryENIs(ctx, cl, st, clients, dryRun)
 	}); err != nil {
@@ -749,6 +760,15 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		// Self-gates on HasGPUNodeGroup() — no-op for all existing non-GPU clusters.
 		// Runs before kubeconfig-down so the API server is still reachable.
 		{3, "nvidia-device-plugin", func() error { return phases.Phase11cNvidiaDevicePluginDown(ctx, cl, st, clients) }},
+		// SageMaker LMI endpoint down: delete Endpoint → EndpointConfig → Model.
+		// Gated on SageMakerEnabled() so it is a no-op for clusters that never had
+		// SageMaker enabled. Disposable-with-the-rig is the core invariant (PRD-11 M4).
+		{3, "sagemaker-lmi", func() error {
+			if !cl.SageMakerEnabled() {
+				return nil
+			}
+			return phases.PhaseSageMakerDown(ctx, cl, st, clients)
+		}},
 		{3, "kubeconfig", func() error { return phases.Phase11KubeconfigDown(ctx, cl, st, clients) }},
 		{3, "irsa-oidc", func() error { return phases.Phase18IrsaOidcDown(ctx, cl, st, clients, flagKeepIRSA) }},
 		{3, "iface-discovery", func() error { return phases.Phase17cIfaceDiscoveryDown(ctx, cl, st, clients) }},

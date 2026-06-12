@@ -216,6 +216,10 @@ func writeStatusDeployStateFromState(tw io.Writer, st *state.State) {
 	fmt.Fprintf(tw, "Jumphost:\t%s\n", orNotProvisioned(st.Get("JUMPHOST_INSTANCE_ID")))
 	fmt.Fprintf(tw, "BNK activation:\t%s\n", bnkActivationLine(st))
 	fmt.Fprintf(tw, "Forge:\t%s\n", forgeLine(st))
+	// SageMaker endpoint: only shown when provisioned (state key present).
+	if ep := st.Get("SAGEMAKER_ENDPOINT_NAME"); ep != "" {
+		fmt.Fprintf(tw, "SageMaker endpoint:\t%s\n", ep)
+	}
 	fmt.Fprintf(tw, "Last phase applied:\t%s\n", lastPhaseAppliedLine(st))
 }
 

@@ -76,19 +76,22 @@ cluster:
       diskSize: 50
 
     # Index 1: GPU inference nodegroup. gpu: true → NVIDIA AMI + no BNK LT.
-    # g5.2xlarge: 1×NVIDIA A10G GPU, 8 vCPU, 32 GB RAM (adequate for 8B models).
-    # capacityType: spot — cost-optimised for a demo rig. Change to on-demand
-    # for guaranteed availability.
+    # g5.xlarge: 1×NVIDIA A10G GPU (SAME 24GB A10G as g5.2xlarge — preserves the
+    # apples-to-apples A10G benchmark vs SageMaker ml.g5.2xlarge), 4 vCPU, 16 GB
+    # RAM. Chosen 2026-06-12 because g5.2xlarge hit InsufficientInstanceCapacity
+    # in BOTH ap-southeast-2a and 2c (capacity flipped between AZs ~every 20 min);
+    # g5.xlarge has the same GPU with better availability + lower cost (~$0.60/hr).
+    # capacityType: on-demand for guaranteed availability under capacity pressure.
     - name: gpu
       gpu: true
-      instanceType: g5.2xlarge
-      capacityType: spot
+      instanceType: g5.xlarge
+      capacityType: on-demand
       desiredSize: 1
       minSize: 1
       maxSize: 2
       diskSize: 100
-      # Pin to AZs with g5 capacity. ap-southeast-2b has no g5 — awsbnkctl
-      # validate will reject it with a clear error.
+      # Span both g5 AZs (2b has no g5 at all) so the ASG can take capacity in
+      # whichever AZ has it. Capacity in ap-southeast-2 was volatile on 2026-06-12.
       azs:
         - ap-southeast-2a
         - ap-southeast-2c
@@ -99,11 +102,34 @@ cluster:
           value: "present"
           effect: NoSchedule
 
+# ai: provisions the disposable SageMaker LMI (vLLM) endpoint for the managed
+# inference leg. On `up`, three AWS resources are created in order:
+#   SageMaker Model → EndpointConfig → Endpoint.
+# On `down`, they are deleted in reverse order so nothing bills between sessions.
+# Requires HF_TOKEN env var at up time for gated models (never hardcode the token).
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.2xlarge
+    scaleToZero: false
+
 # bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths
 # with your own files before running `up` (gitignored).
 bnk:
   farArchive: ./cne_pull_64.json     # REPLACE with your F5 FAR pull credentials JSON
   jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
+
+# testing: provisions the multi-ENI jumphost so forge-orchestrated aiperf
+# benchmarks have an in-network client. The jumphost (t3.small, AL2023) sits
+# in the first public subnet (10.0.1.0/24) for EICE management access, but
+# also gets a secondary ENI placed directly in the BNK_EXT data-path VLAN
+# (10.0.10.0/24). The curl probe uses `--interface <BNK_EXT_ENI_IP>` so
+# benchmark traffic enters TMM on the real data path (not via NAT/management).
+# This is how all existing demo scenarios reach the BNK VIP (10.0.10.100).
+testing:
+  jumphost:
+    enabled: true   # in-network aiperf client for forge benchmarks (reaches BNK VIP on external VLAN)
 
 tags:
   env: dev

@@ -7,6 +7,7 @@ import (
 
 	// Side-effect imports: register the real Green scenarios so Catalogue()
 	// returns a non-trivial set. These mirror the imports in internal/cli/scenarios.go.
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aiinferencee2e"
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aisemanticcache"
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aitokencounting"
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/egresssnat"

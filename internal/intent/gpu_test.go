@@ -270,11 +270,11 @@ func TestGPUNodeGroup_AZNotInNetworkAZsRejected(t *testing.T) {
 	}
 }
 
-// TestGPUNodeGroup_AZDenyEnvOverride verifies AWSBNKCTL_GPU_AZ_DENY override.
+// TestGPUNodeGroup_AZDenyEnvOverride verifies AWSBNKCTL_GPU_AZ_DENY adds new
+// denials on top of the static table.
 func TestGPUNodeGroup_AZDenyEnvOverride(t *testing.T) {
-	// Normally ap-southeast-2b is denied; override the deny list to empty for
-	// ap-southeast-2 so the cluster with 2b becomes valid.
-	badWithOverride := strings.ReplaceAll(
+	// Pin the GPU ng to 2a only (a normally-valid AZ).
+	withOnly2a := strings.ReplaceAll(
 		baseGPURigYAML,
 		`      azs:
         - ap-southeast-2a
@@ -282,12 +282,12 @@ func TestGPUNodeGroup_AZDenyEnvOverride(t *testing.T) {
 		`      azs:
         - ap-southeast-2a`,
 	)
-	// Use a different override entirely: deny 2a instead, so the cluster FAILS
-	// even though the static table doesn't deny 2a.
+	// Env override adds 2a to the deny list for ap-southeast-2, so the cluster
+	// should now be rejected even though the static table doesn't deny 2a.
 	t.Setenv("AWSBNKCTL_GPU_AZ_DENY", "ap-southeast-2:ap-southeast-2a")
 
 	dir := t.TempDir()
-	p := writeFile(t, dir, "cluster.yaml", badWithOverride)
+	p := writeFile(t, dir, "cluster.yaml", withOnly2a)
 
 	_, err := Load(p)
 	if err == nil {
@@ -295,6 +295,55 @@ func TestGPUNodeGroup_AZDenyEnvOverride(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ap-southeast-2a") {
 		t.Errorf("error %q should mention denied AZ ap-southeast-2a", err.Error())
+	}
+}
+
+// TestGPUNodeGroup_AZDenyEnvMerge is the F2 regression test: an env override
+// targeting a US region must NOT drop the static ap-southeast-2→2b entry.
+// Before the fix the env table replaced the static table, so setting a US gap
+// silently un-denied ap-southeast-2b; after the fix they are merged.
+func TestGPUNodeGroup_AZDenyEnvMerge(t *testing.T) {
+	// Cluster with GPU ng pinned to ap-southeast-2b (statically denied).
+	// Build a variant of baseGPURigYAML that pins to 2b, including the required
+	// network.azs and subnet additions so only the deny-table check fires.
+	bad := strings.ReplaceAll(
+		baseGPURigYAML,
+		`      azs:
+        - ap-southeast-2a
+        - ap-southeast-2c`,
+		`      azs:
+        - ap-southeast-2b`,
+	)
+	bad = strings.ReplaceAll(bad, "    - ap-southeast-2c\n", "    - ap-southeast-2c\n    - ap-southeast-2b\n")
+	bad = strings.ReplaceAll(bad,
+		`      - cidr: 10.0.3.0/24
+        az: ap-southeast-2c`,
+		`      - cidr: 10.0.3.0/24
+        az: ap-southeast-2c
+      - cidr: 10.0.5.0/24
+        az: ap-southeast-2b`,
+	)
+	bad = strings.ReplaceAll(bad,
+		`      - cidr: 10.0.13.0/24
+        az: ap-southeast-2c`,
+		`      - cidr: 10.0.13.0/24
+        az: ap-southeast-2c
+      - cidr: 10.0.15.0/24
+        az: ap-southeast-2b`,
+	)
+
+	// Set an env override for a US gap — this must NOT remove the Sydney 2b entry.
+	t.Setenv("AWSBNKCTL_GPU_AZ_DENY", "us-east-1:us-east-1d")
+
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", bad)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected ap-southeast-2b to still be denied even with an unrelated US env override")
+	}
+	if !strings.Contains(err.Error(), "ap-southeast-2b") {
+		t.Errorf("error %q should mention ap-southeast-2b (static deny not merged)", err.Error())
 	}
 }
 
@@ -399,17 +448,17 @@ func TestGPUInstanceAZDenyTable(t *testing.T) {
 }
 
 // TestGPUAZDenyEnvEmpty verifies that setting AWSBNKCTL_GPU_AZ_DENY to empty
-// string does not crash (parses to empty table, which causes fail-open behavior).
+// string does not crash. An empty env value is treated as "no env override":
+// the static deny table is used unchanged, so the cluster (2a + 2c, both good
+// AZs) remains valid (F3 comment fix).
 func TestGPUAZDenyEnvEmpty(t *testing.T) {
 	t.Setenv("AWSBNKCTL_GPU_AZ_DENY", "")
 
 	dir := t.TempDir()
 	p := writeFile(t, dir, "cluster.yaml", baseGPURigYAML)
 
-	// With empty override, validation uses the empty override table (fail-open).
-	// The cluster previously valid (2a + 2c are good AZs) stays valid.
+	// Empty env means the static table applies unchanged; 2a + 2c are not denied.
 	_, err := Load(p)
-	// Empty env means deny table is now empty (everything allowed).
 	if err != nil {
 		t.Fatalf("empty AWSBNKCTL_GPU_AZ_DENY should not cause errors: %v", err)
 	}
@@ -505,6 +554,12 @@ func TestGPUNodeGroup_MixedCluster_BNKdSSMStillEnforced(t *testing.T) {
 
 // TestGPURig_ExampleLoads verifies that examples/ai-rig/cluster.yaml (Group 5)
 // loads cleanly and declares the expected GPU nodegroup shape.
+//
+// Note: the example was updated on 2026-06-12 after the live run found that
+// ap-southeast-2a had no g5.2xlarge capacity (spot AND on-demand). The GPU ng
+// is now pinned to ap-southeast-2c only and uses on-demand for guaranteed
+// availability. The AZ-sweep (task gpu-az-capacity-fallback) will automate
+// the per-AZ fallback so operators no longer need to manually re-pin.
 func TestGPURig_ExampleLoads(t *testing.T) {
 	c, err := Load("../../examples/ai-rig/cluster.yaml")
 	if err != nil {
@@ -523,14 +578,16 @@ func TestGPURig_ExampleLoads(t *testing.T) {
 	if !gpu.IsGPU() {
 		t.Error("nodeGroups[1] (gpu) must be a GPU nodegroup (gpu: true)")
 	}
-	if gpu.CapacityType != "spot" {
-		t.Errorf("GPU ng capacityType = %q, want spot", gpu.CapacityType)
+	if gpu.InstanceType != "g5.xlarge" {
+		t.Errorf("GPU ng instanceType = %q, want g5.xlarge (2026-06-12: g5.xlarge has better availability than g5.2xlarge)", gpu.InstanceType)
 	}
-	if gpu.InstanceType != "g5.2xlarge" {
-		t.Errorf("GPU ng instanceType = %q, want g5.2xlarge", gpu.InstanceType)
+	// capacityType: on-demand (example was updated 2026-06-12 after capacity pressure).
+	if gpu.CapacityType != "on-demand" {
+		t.Errorf("GPU ng capacityType = %q, want on-demand (2026-06-12 update: on-demand for guaranteed availability)", gpu.CapacityType)
 	}
+	// AZs: both 2a and 2c so AZ-sweep can pick whichever has capacity.
 	if len(gpu.AZs) != 2 {
-		t.Errorf("GPU ng AZs len = %d, want 2 (ap-southeast-2a, ap-southeast-2c)", len(gpu.AZs))
+		t.Errorf("GPU ng AZs len = %d, want 2 (ap-southeast-2a, ap-southeast-2c — AZ-sweep spans both)", len(gpu.AZs))
 	}
 	if len(gpu.Taints) == 0 {
 		t.Error("GPU ng must declare taints (nvidia.com/gpu)")
@@ -603,6 +660,49 @@ func TestAllExamplesContinueToLoad(t *testing.T) {
 				t.Errorf("Load(%s): %v", path, err)
 			}
 		})
+	}
+}
+
+// TestNodeGroupSpec_OnDemandFallback verifies the new OnDemandFallback field:
+//   - Default (omitted) is false (opt-in only, no surprise cost).
+//   - Explicit true is preserved through Load.
+//   - The field is unknown-field-rejected when misspelled.
+func TestNodeGroupSpec_OnDemandFallback(t *testing.T) {
+	// Default: field absent → false.
+	defaultYAML := baseGPURigYAML // does not contain onDemandFallback
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", defaultYAML)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load default YAML: %v", err)
+	}
+	gpuNG := c.ClusterSpec.NodeGroups[1]
+	if gpuNG.OnDemandFallback {
+		t.Error("OnDemandFallback default = true, want false (must be opt-in)")
+	}
+
+	// Explicit true: field present + true → preserved.
+	withFallback := baseGPURigYAML + "      onDemandFallback: true\n"
+	p2 := writeFile(t, dir, "fallback.yaml", withFallback)
+	c2, err := Load(p2)
+	if err != nil {
+		t.Fatalf("Load with onDemandFallback=true: %v", err)
+	}
+	if !c2.ClusterSpec.NodeGroups[1].OnDemandFallback {
+		t.Error("OnDemandFallback = false after setting true in YAML")
+	}
+}
+
+// TestGPURig_ExampleLoads_OnDemandFallback verifies that the ai-rig example
+// (which does NOT set onDemandFallback) still loads cleanly and has the default false.
+func TestGPURig_ExampleLoads_OnDemandFallback(t *testing.T) {
+	c, err := Load("../../examples/ai-rig/cluster.yaml")
+	if err != nil {
+		t.Fatalf("Load examples/ai-rig/cluster.yaml: %v", err)
+	}
+	gpu := c.ClusterSpec.NodeGroups[1]
+	if gpu.OnDemandFallback {
+		t.Error("ai-rig example: OnDemandFallback = true, want false (not set in example)")
 	}
 }
 
