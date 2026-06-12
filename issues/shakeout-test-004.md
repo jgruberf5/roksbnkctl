@@ -119,3 +119,35 @@ pre-`up`:
    `cluster-outputs.json`, so it self-heals; only standalone `plan` chokes. Fix: drop
    the `live:plan` gate — go straight to `live:up` (the resumable, self-validating
    from-scratch path). No workspace edits needed.
+
+### Third live run — `up` GREEN; gateway product bug + harness over-reach
+
+`live:up` PASSED — a brand-new cluster (`d8m5mt3d…`, not the stale `d8kn8…`) + BNK +
+Testing deployed cleanly (~70 min). The cascade after that surfaced one real product
+bug and several harness over-reaches:
+
+1. **Product bug — F5SPKStaticRoute CIDR vs IP** (`terraform/modules/gateway/main.tf`).
+   `live:gateway` failed: `F5SPKStaticRoute … spec.destination: Invalid value
+   "10.241.0.0/24"` — the CRD wants a **bare IP** in `spec.destination` + the mask in
+   `spec.prefixLen`, but the module passed the whole client-subnet CIDR and hardcoded
+   `prefixLen = 32`. The PRD-12 CIDR-list client subnets exposed it. Fix: split the
+   CIDR — `destination = split("/", dest)[0]`, `prefixLen` = the CIDR's prefix.
+
+2. **Harness — probes hard-fail with no hosts.** `test connectivity`/`test dns`
+   failed `no hosts configured to probe` on a fresh workspace. Fix: new
+   `run_step_skippable` downgrades that expected outcome FAIL→SKIP.
+
+3. **Harness — reuse drivers over-reach.** `e2e-bnk-native` needs `WORKSPACE_KUBECTL`;
+   `e2e-airgap-mirror` needs a registry mirror already pushed to ICR (88/88 images
+   `DENIED`). They're specialized feature tests, not part of the vanilla lifecycle.
+   Fix: gate both behind `LIVE_REUSE=1` (off by default; the core lifecycle is
+   up → gateway → down).
+
+4. **Harness — teardown order.** `live:down` (and the safety trap) ran a bare
+   `roksbnkctl down`, which is **refused while the Gateway phase has resources**. The
+   cluster was left UP. Fix: teardown now runs `gateway down` THEN `down`. (The leaked
+   cluster from run #3 was torn down manually with that exact sequence.)
+
+Post-fix the core live sequence is `up → gateway → [probes/perf/reuse SKIP] → down`
+= 3 PASS / 4 SKIP / 0 FAIL. The gateway terraform fix is embedded in the binary, so
+the next run's Tier-0 `make build` picks it up.

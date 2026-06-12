@@ -41,14 +41,20 @@ locals {
     [for i, z in var.cneinstance_network_zones : {
       for j, dest in var.gateway_client_subnet_local :
       "static-route-local-z${i + 1}-${j + 1}" => {
-        destination = dest
+        # F5SPKStaticRoute.spec.destination is a BARE network IP (no /prefix);
+        # the mask lives in spec.prefixLen. The client subnets are CIDRs
+        # (e.g. "10.241.0.0/24"), so split: address → destination, prefix →
+        # prefixLen (defaulting to /32 if a bare host IP was supplied).
+        destination = split("/", dest)[0]
+        prefix_len  = length(split("/", dest)) > 1 ? tonumber(split("/", dest)[1]) : 32
         gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
       }
     }],
     [for i, z in var.cneinstance_network_zones : {
       for j, dest in var.gateway_client_subnet_remote :
       "static-route-remote-z${i + 1}-${j + 1}" => {
-        destination = dest
+        destination = split("/", dest)[0]
+        prefix_len  = length(split("/", dest)) > 1 ? tonumber(split("/", dest)[1]) : 32
         gateway     = cidrhost(z.ext_vlan_cidr, var.gateway_static_route_gw_host)
       }
     }],
@@ -232,7 +238,7 @@ resource "kubectl_manifest" "static_route" {
     metadata   = { name = each.key, namespace = var.flo_namespace }
     spec = {
       destination = each.value.destination
-      prefixLen   = 32
+      prefixLen   = each.value.prefix_len
       type        = "gateway"
       gateway     = each.value.gateway
     }
