@@ -71,3 +71,30 @@ skip and still fails loudly.
 - `bash -n` on all three drivers; `go vet -tags integration ./internal/cli/` clean.
 - Re-ran `./scripts/full-shakeout.sh test-004` to a clean summary (see
   `.shakeout/full-shakeout-test-004.log`).
+
+---
+
+## Follow-up — TIER L (opt-in live lifecycle)
+
+Added a gated live tier to `full-shakeout.sh` so a fresh workspace can be taken from
+zero to a full cloud test run and back (the gap analysis answer):
+
+```
+./scripts/full-shakeout.sh --live <ws>          # plan → up → gateway → probes → reuse → down
+IBMCLOUD_API_KEY=… …  --live --keep <ws>        # … but hold the cluster
+```
+
+- **Gated:** requires a workspace + `IBMCLOUD_API_KEY`, and runs ONLY after Tier 0 +
+  Tier 1 are green (refuses to spend on a broken tree). Off by default — the script's
+  zero-cost behavior is unchanged.
+- **Steps (each in the SUMMARY):** `live:plan` (apply-readiness gate) → `live:up`
+  (Cluster+BNK+Testing) → `live:gateway` → `live:test-connectivity` / `live:test-dns`
+  (workspace-scoped, uses the workspace kubeconfig) → `live:perf-matrix` (SKIP unless
+  `PERF_MATRIX_CMD` is set — `test throughput` is a v1.x stub) → `live:reuse-bnk-native`
+  / `live:airgap-mirror` (reuse drivers vs the standing cluster) → `live:down`.
+- **Teardown safety:** `up` arms an EXIT trap; a mid-run failure or Ctrl-C still tears
+  the workspace down (unless `--keep`), so a partial apply never leaks billable infra.
+- **Verified without spend:** `run_step -t/return-rc/stdin=/dev/null` unit-tested;
+  `run_live_tier` structurally tested with a stub binary across success / up-failure /
+  `--keep`; non-live `test-004` run still `PASS 16 FAIL 0`. The real live run is the
+  user's to launch (gated, billable).
