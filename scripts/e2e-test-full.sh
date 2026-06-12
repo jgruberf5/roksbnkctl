@@ -93,7 +93,10 @@ preflight() {
         exit 3
     fi
 
-    if [[ -z "${IBMCLOUD_API_KEY:-}" ]]; then
+    # A DRY_RUN walkthrough makes no cloud calls, so it needs no API key —
+    # don't abort when the key is absent (the shakeout dry-runs this against a
+    # rendered workspace tfvars, which deliberately omits ibmcloud_api_key).
+    if [[ "$DRY_RUN" != "1" && -z "${IBMCLOUD_API_KEY:-}" ]]; then
         # Each child driver re-runs its own IBMCLOUD_API_KEY-from-tfvars
         # fallback; mirror it here so a missing key surfaces in this
         # outer driver's preflight rather than four hours into a baseline

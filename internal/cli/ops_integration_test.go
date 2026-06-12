@@ -95,6 +95,10 @@ func TestIntegration_OpsInstall_ShowsRBACAndPod(t *testing.T) {
 	if err != nil && (strings.Contains(out, "unknown command") || strings.Contains(out, "unknown subcommand")) {
 		t.Skipf("ops verb not registered yet: %v\n%s", err, out)
 	}
+	if err != nil && clusterUnreachableSkip(out) {
+		t.Skipf("kubeconfig %s reached a real API server but it is unreachable "+
+			"(ops install needs a live API server) — %v\n%s", kc, err, out)
+	}
 	if err != nil {
 		t.Fatalf("ops install failed: %v\n%s", err, out)
 	}
