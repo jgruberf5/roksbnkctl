@@ -15,6 +15,11 @@ metadata:
     app: vllm
 spec:
   replicas: 1
+  # Recreate strategy: prevents RollingUpdate deadlock on single-GPU nodes.
+  # A rolling update would stall waiting for the new pod to schedule while the
+  # old pod still holds the only GPU. Recreate terminates the old pod first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: vllm
@@ -23,6 +28,11 @@ spec:
       labels:
         app: vllm
     spec:
+      # Prevent Kubernetes service-link env vars from shadowing vLLM's own
+      # VLLM_PORT env var. Without this, Kubernetes injects
+      # VLLM_PORT=tcp://<clusterIP>:80 (from the vllm Service), which vLLM
+      # interprets as a URI and raises ValueError on startup.
+      enableServiceLinks: false
       # Target GPU nodes: the GPU nodegroup is tainted nvidia.com/gpu=present:NoSchedule
       # and labelled awsbnkctl.io/gpu=true. Both nodeSelector and toleration are required.
       nodeSelector:
@@ -61,12 +71,14 @@ spec:
         resources:
           requests:
             nvidia.com/gpu: "1"
-            memory: 16Gi
-            cpu: "4"
+            # Sized to fit g5.xlarge allocatable (~3.92 CPU / ~14.4 GiB after
+            # kubelet/system/DaemonSet reservations). Verified live 2026-06-13.
+            memory: 8Gi
+            cpu: "2"
           limits:
             nvidia.com/gpu: "1"
-            memory: 24Gi
-            cpu: "8"
+            memory: 14Gi
+            cpu: 3500m
         readinessProbe:
           httpGet:
             path: /health

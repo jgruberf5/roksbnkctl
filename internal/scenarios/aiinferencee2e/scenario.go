@@ -161,6 +161,13 @@ func (s *scenario) Manifests(ctx *scenarios.Context) ([]string, error) {
 
 func (s *scenario) Apply(ctx *scenarios.Context) error {
 	ns := namespace(ctx)
+	// Ensure the namespace exists before creating any namespace-scoped resources
+	// (e.g. the hf-token Secret). The namespace manifest (01-namespace.yaml) is
+	// applied by ApplyManifests below, but that happens after the Secret creation
+	// call — so we pre-create it here idempotently.
+	if err := ensureNamespace(ctx, ns); err != nil {
+		return fmt.Errorf("ensuring namespace %s: %w", ns, err)
+	}
 	// Create the hf-token Secret from HF_TOKEN before applying the vLLM Deployment.
 	// This is skipped gracefully when HF_TOKEN is unset (offline / public-model path).
 	createFn := s.createHFTokenSecretFn
@@ -176,6 +183,24 @@ func (s *scenario) Apply(ctx *scenarios.Context) error {
 		fmt.Fprintf(ctx.Out, "[ai-inference-e2e] HF_TOKEN not set — skipping hf-token Secret creation (gated models will fail to pull)\n")
 	}
 	return scenarios.ApplyManifests(ctx, scnName)
+}
+
+// ensureNamespace creates the given namespace if it does not already exist.
+// It is a no-op when ctx.Clientset is nil (offline / unit-test path).
+func ensureNamespace(ctx *scenarios.Context, ns string) error {
+	if ctx.Clientset == nil {
+		return nil
+	}
+	obj := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ns,
+		},
+	}
+	_, err := ctx.Clientset.CoreV1().Namespaces().Create(ctx.Ctx, obj, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 // createHFTokenSecret is the real implementation: creates (or updates) a
