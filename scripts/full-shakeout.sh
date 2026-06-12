@@ -70,6 +70,7 @@ STEP_TIMEOUT=${STEP_TIMEOUT:-900}   # per-step wall cap (s); guards a hung dry-r
 LIVE=${LIVE:-0}                     # 1 = run TIER L (real lifecycle; SPENDS)
 KEEP=${KEEP:-0}                     # 1 = in --live, leave the cluster UP (skip live:down)
 LIVE_TIMEOUT=${LIVE_TIMEOUT:-5400}  # per-step wall cap for the live tier (90m; up is slow)
+LIVE_API_KEY=""                     # the live key, stashed out of the env (set at the gate)
 
 # ── CLI args: an optional workspace name (positional or -w/--workspace) ─
 # Workspace mode (see header). Without it, WS keeps its env/default value
@@ -114,6 +115,15 @@ if [[ "$LIVE" == "1" ]]; then
         live_err=1
     fi
     [[ $live_err -eq 0 ]] || exit 2
+
+    # Stash the key in a private var, then STRIP it from the environment so
+    # Tier 0/1 (the "no cloud, no key" local tiers) stay hermetic. An ambient
+    # IBMCLOUD_API_KEY makes some unit tests reach the real IBM Cloud API
+    # (e.g. init's resource-group verification → "test-rg not found"), which
+    # would false-fail the pre-live gate. The live tier re-injects the key
+    # into each step explicitly via env.
+    LIVE_API_KEY="$IBMCLOUD_API_KEY"
+    unset IBMCLOUD_API_KEY
 fi
 
 RUN_TS=$(date +%Y%m%d-%H%M%S)
@@ -272,7 +282,7 @@ live_safety_teardown() {
     local rb
     rb=$(locate_roksbnkctl) || return 0
     printf '\n%s[safety]%s tearing down workspace %s (interrupted before clean teardown)…\n' "$YEL" "$RST" "$WS" >&2
-    "$rb" -w "$WS" down --auto </dev/null >>"$RESULTS_DIR/live:down.log" 2>&1 || true
+    env IBMCLOUD_API_KEY="${LIVE_API_KEY:-}" "$rb" -w "$WS" down --auto </dev/null >>"$RESULTS_DIR/live:down.log" 2>&1 || true
     DOWN_DONE=1
 }
 
@@ -285,11 +295,14 @@ run_live_tier() {
     local rb
     rb=$(locate_roksbnkctl) || { skip_step "live:lifecycle" "no roksbnkctl binary on hand"; return; }
     info "binary → $rb   teardown → $([[ "$KEEP" == "1" ]] && echo 'KEEP (cluster left up)' || echo 'down --auto on exit')"
+    # The live key was stripped from the environment at the gate (so Tier 0/1
+    # stayed hermetic); re-inject it into each live step via this prefix.
+    local KENV=(env "IBMCLOUD_API_KEY=$LIVE_API_KEY")
     local abort=0
 
     # 1. plan — cheap apply-readiness gate; catches an incomplete workspace
     #    BEFORE any spend.
-    run_step -t "$LIVE_TIMEOUT" "live:plan" "$rb" -w "$WS" plan || true
+    run_step -t "$LIVE_TIMEOUT" "live:plan" "${KENV[@]}" "$rb" -w "$WS" plan || true
     if last_failed; then
         info "${RED}live:plan failed — workspace not apply-ready; NOT spending. Aborting Tier L.${RST}"
         abort=1
@@ -297,7 +310,7 @@ run_live_tier() {
 
     # 2. up — Cluster + BNK + Testing (the parallel up). Arms teardown.
     if [[ $abort -eq 0 ]]; then
-        run_step -t "$LIVE_TIMEOUT" "live:up" "$rb" -w "$WS" up --auto || true
+        run_step -t "$LIVE_TIMEOUT" "live:up" "${KENV[@]}" "$rb" -w "$WS" up --auto || true
         UP_DONE=1   # even a partial apply may have created billable infra
         if last_failed; then
             info "${RED}live:up failed — tearing down any partial infra.${RST}"
@@ -307,19 +320,19 @@ run_live_tier() {
 
     # 3. gateway + probes + reuse drivers — only if up succeeded.
     if [[ $abort -eq 0 ]]; then
-        run_step -t "$LIVE_TIMEOUT" "live:gateway" "$rb" -w "$WS" gateway up --auto || true
+        run_step -t "$LIVE_TIMEOUT" "live:gateway" "${KENV[@]}" "$rb" -w "$WS" gateway up --auto || true
         last_failed && info "${YEL}live:gateway failed — continuing to validation + teardown.${RST}"
 
         # Validation against the live cluster (workspace-scoped; uses the
         # workspace's own kubeconfig, not the ambient ~/.kube/config).
-        run_step "live:test-connectivity" "$rb" -w "$WS" test connectivity || true
-        run_step "live:test-dns"          "$rb" -w "$WS" test dns || true
+        run_step "live:test-connectivity" "${KENV[@]}" "$rb" -w "$WS" test connectivity || true
+        run_step "live:test-dns"          "${KENV[@]}" "$rb" -w "$WS" test dns || true
 
         # Perf matrix (iperf3 L4 + h2load L7): no one-shot command yet
         # (`test throughput` is a v1.x stub), so run an operator-supplied
         # PERF_MATRIX_CMD if given, else skip with a pointer.
         if [[ -n "${PERF_MATRIX_CMD:-}" ]]; then
-            run_step -t "$LIVE_TIMEOUT" "live:perf-matrix" bash -c "$PERF_MATRIX_CMD" || true
+            run_step -t "$LIVE_TIMEOUT" "live:perf-matrix" "${KENV[@]}" bash -c "$PERF_MATRIX_CMD" || true
         else
             skip_step "live:perf-matrix" "no one-shot perf cmd (test throughput is a v1.x stub) — set PERF_MATRIX_CMD=… to run iperf3/h2load"
         fi
@@ -327,11 +340,11 @@ run_live_tier() {
         # Reuse drivers against the standing cluster (live, not DRY_RUN).
         if [[ -x "$SCRIPT_DIR/e2e-bnk-native.sh" ]]; then
             run_step -t "$LIVE_TIMEOUT" "live:reuse-bnk-native" \
-                env IBMCLOUD_API_KEY="$IBMCLOUD_API_KEY" "$SCRIPT_DIR/e2e-bnk-native.sh" -w "$WS" || true
+                "${KENV[@]}" "$SCRIPT_DIR/e2e-bnk-native.sh" -w "$WS" || true
         fi
         if [[ -x "$SCRIPT_DIR/e2e-airgap-mirror.sh" ]]; then
             run_step -t "$LIVE_TIMEOUT" "live:airgap-mirror" \
-                env IBMCLOUD_API_KEY="$IBMCLOUD_API_KEY" "$SCRIPT_DIR/e2e-airgap-mirror.sh" "$WS" || true
+                "${KENV[@]}" "$SCRIPT_DIR/e2e-airgap-mirror.sh" "$WS" || true
         fi
     fi
 
@@ -340,7 +353,7 @@ run_live_tier() {
         if [[ "$KEEP" == "1" ]]; then
             skip_step "live:down" "--keep set — cluster left UP; tear down later: roksbnkctl -w $WS down --auto"
         else
-            run_step -t "$LIVE_TIMEOUT" "live:down" "$rb" -w "$WS" down --auto || true
+            run_step -t "$LIVE_TIMEOUT" "live:down" "${KENV[@]}" "$rb" -w "$WS" down --auto || true
             last_failed || DOWN_DONE=1
         fi
     fi
