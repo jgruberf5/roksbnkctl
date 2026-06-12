@@ -4,7 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased
+## v1.11.2 — 2026-06-12
+
+A maintenance patch: a leaner runner image and release binaries built with the latest stable Go (shipping the remaining Go-stdlib advisory fixes). No functional changes.
 
 ### Changed
 
