@@ -6,9 +6,9 @@
 // gpu: true and the nvidia.com/gpu=present:NoSchedule taint (PRD-11 S1).
 // The scenario targets GPU nodes via nodeSelector + toleration.
 //
-// HuggingFace auth: Llama-3-8B-Instruct is a gated model. Create a Secret
+// Llama-3-8B-Instruct is a gated HuggingFace model. Create a Secret
 // named "hf-token" in the scenario namespace with key "token" set to a valid
-// HF access token before running:
+// HF access credential before running:
 //
 //	kubectl -n awsbnkctl-scn-aiinference create secret generic hf-token \
 //	  --from-literal=token=<YOUR_HF_TOKEN>
