@@ -54,8 +54,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ARG TERRAFORM_VERSION=1.10.5
 
 # A non-root HOME (the CLIs write config there) + the /work state mount, created
-# before the installs so ibmcloud's plugin/config writes land under HOME.
-RUN install -d -m 0755 /home/runner /work
+# up front owned by uid 1000 / gid 0 and group-writable, so the image runs both
+# as a plain uid 1000 (kind / vanilla k8s) and under OpenShift's arbitrary-uid
+# SCC (which keeps gid 0). Creating them owned correctly here — and chowning
+# ibmcloud's files inside the install RUN below — avoids a late recursive
+# `chown -R` that would copy-on-write the whole tree into a duplicate layer.
+RUN install -d -m 0775 -o 1000 -g 0 /home/runner /work
 ENV HOME=/home/runner \
     IBMCLOUD_HOME=/home/runner
 
@@ -71,7 +75,12 @@ RUN apt-get update \
 RUN curl -fsSL https://clis.cloud.ibm.com/install/linux | sh \
  && ibmcloud --version \
  && ibmcloud config --check-version=false \
- && ibmcloud plugin install -f container-service
+ && ibmcloud plugin install -f container-service \
+ # Fix ownership of the .bluemix config/plugins this RUN created, IN THIS LAYER
+ # (not a later `chown -R`), so they're stored once at uid 1000 / gid 0 with
+ # group=user perms — no duplicate layer.
+ && chown -R 1000:0 /home/runner \
+ && chmod -R g=u /home/runner
 
 # terraform (pinned), kubectl + oc + helm (latest stable) — arch-aware so the
 # image builds on amd64 and arm64.
@@ -95,11 +104,10 @@ RUN set -eux; \
 # The roksbnkctl binary.
 COPY --from=roksbnkctl-build /out/roksbnkctl /usr/local/bin/roksbnkctl
 
-# Drop to uid 1000 with a group-writable HOME + /work, so the image runs both as
-# a plain uid 1000 (kind / vanilla k8s) and under OpenShift's arbitrary-uid SCC
-# (which keeps gid 0). roksbnkctl state + the terraform plugin cache land under
-# ROKSBNKCTL_HOME on the mounted /work volume.
-RUN chown -R 1000:0 /home/runner /work && chmod -R g=u /home/runner /work
+# Ownership/permissions for /home/runner and /work are already set above (the
+# install RUN created /work owned 1000:0 group-writable; the ibmcloud RUN
+# chowned its config in-layer). roksbnkctl state + the terraform plugin cache
+# land under ROKSBNKCTL_HOME on the mounted /work volume.
 ENV ROKSBNKCTL_HOME=/work/.roksbnkctl
 USER 1000
 WORKDIR /work
