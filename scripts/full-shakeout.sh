@@ -14,8 +14,8 @@
 #
 # Opt in to TIER L (--live) and it ALSO executes a full live lifecycle
 # against the named workspace — up (Cluster+BNK+Testing) → gateway up →
-# connectivity/DNS probes → reuse drivers → down — which DOES create and
-# destroy real, billable IBM Cloud infra. --live requires a workspace and
+# connectivity/DNS probes → down (+ opt-in reuse drivers) — which DOES create
+# and destroy real, billable IBM Cloud infra. --live requires a workspace and
 # IBMCLOUD_API_KEY, and runs only behind a green Tier 0 + Tier 1.
 #
 # Usage:
@@ -42,16 +42,20 @@
 # TIER L (--live / LIVE=1): runs ONLY after Tier 0 + Tier 1 are green (it
 # refuses to spend on a broken tree). Steps, each recorded in the summary:
 #   live:up → live:gateway → live:test-connectivity → live:test-dns →
-#   live:perf-matrix → live:reuse-* → live:down.
+#   live:perf-matrix → live:down  (+ opt-in live:reuse-* via LIVE_REUSE=1).
 # (No pre-`up` `plan` gate: `roksbnkctl plan` targets the BNK/trial phase,
 # which attaches to an EXISTING cluster, so it cannot pass before `up`
 # creates one. `up` is the resumable, self-healing from-scratch path and
 # validates inputs itself before the expensive cluster create.)
-# The perf matrix (iperf3 L4 + h2load L7) has no one-shot command yet
-# (`roksbnkctl test throughput` is a v1.x stub), so it is SKIPPED unless you
-# pass PERF_MATRIX_CMD="<your matrix command>". Teardown (live:down) always
-# runs on success; pass --keep / KEEP=1 to hold the cluster. An EXIT trap
-# tears down a partially-applied workspace if the run is interrupted.
+# The connectivity/DNS probes SKIP cleanly when the workspace has no hosts
+# configured. The perf matrix (iperf3 L4 + h2load L7) has no one-shot command
+# yet (`roksbnkctl test throughput` is a v1.x stub), so it is SKIPPED unless
+# you pass PERF_MATRIX_CMD="<cmd>". The specialized reuse drivers
+# (e2e-bnk-native, e2e-airgap-mirror) need extra setup and are OFF unless
+# LIVE_REUSE=1. Teardown (live:down) runs `gateway down` then `down` (a full
+# `down` is refused while the Gateway phase has resources); pass --keep /
+# KEEP=1 to hold the cluster. An EXIT trap tears down a partially-applied
+# workspace if the run is interrupted.
 #
 # Exit code: 0 only if every NON-SKIPPED step passed. A skipped step
 # (missing Docker, no kubeconfig) does not fail the run — it is reported
@@ -74,6 +78,7 @@ STEP_TIMEOUT=${STEP_TIMEOUT:-900}   # per-step wall cap (s); guards a hung dry-r
 LIVE=${LIVE:-0}                     # 1 = run TIER L (real lifecycle; SPENDS)
 KEEP=${KEEP:-0}                     # 1 = in --live, leave the cluster UP (skip live:down)
 LIVE_TIMEOUT=${LIVE_TIMEOUT:-5400}  # per-step wall cap for the live tier (90m; up is slow)
+LIVE_REUSE=${LIVE_REUSE:-0}         # 1 = also run the specialized reuse drivers (need extra setup)
 LIVE_API_KEY=""                     # the live key, stashed out of the env (set at the gate)
 
 # ── CLI args: an optional workspace name (positional or -w/--workspace) ─
@@ -250,6 +255,22 @@ last_failed() {
     [[ $n -gt 0 && "${RES_STATUS[$((n-1))]}" == "FAIL" ]]
 }
 
+# run_step_skippable <skip-regex> <name> <cmd...> — like run_step, but if the
+# step FAILS and its log matches <skip-regex>, downgrade the recorded FAIL to a
+# SKIP. For "expected prerequisite absent" outcomes (e.g. a probe with no hosts
+# configured on a fresh workspace) that should not fail the run.
+run_step_skippable() {
+    local re="$1"; shift
+    local name="$1"
+    run_step "$@"
+    if last_failed && grep -qiE "$re" "$RESULTS_DIR/${name}.log" 2>/dev/null; then
+        local n=$((${#RES_STATUS[@]} - 1))
+        RES_STATUS[$n]=SKIP
+        RES_NOTE[$n]="prerequisite absent (matched: $re)"
+        printf '  %s↳ downgraded FAIL → ⊘ SKIP%s (%s)\n' "$YEL" "$RST" "${RES_NOTE[$n]}"
+    fi
+}
+
 info "results + per-step logs → $RESULTS_DIR"
 if [[ "$WS_FROM_CLI" == "1" ]]; then
     rbhome="${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}"
@@ -286,7 +307,11 @@ live_safety_teardown() {
     local rb
     rb=$(locate_roksbnkctl) || return 0
     printf '\n%s[safety]%s tearing down workspace %s (interrupted before clean teardown)…\n' "$YEL" "$RST" "$WS" >&2
-    env IBMCLOUD_API_KEY="${LIVE_API_KEY:-}" "$rb" -w "$WS" down --auto </dev/null >>"$RESULTS_DIR/live:down.log" 2>&1 || true
+    # gateway down THEN down — a full `down` is refused while the Gateway phase
+    # has resources.
+    env IBMCLOUD_API_KEY="${LIVE_API_KEY:-}" bash -c \
+        '"$1" -w "$2" gateway down --auto; "$1" -w "$2" down --auto' _ "$rb" "$WS" \
+        </dev/null >>"$RESULTS_DIR/live:down.log" 2>&1 || true
     DOWN_DONE=1
 }
 
@@ -326,9 +351,11 @@ run_live_tier() {
         last_failed && info "${YEL}live:gateway failed — continuing to validation + teardown.${RST}"
 
         # Validation against the live cluster (workspace-scoped; uses the
-        # workspace's own kubeconfig, not the ambient ~/.kube/config).
-        run_step "live:test-connectivity" "${KENV[@]}" "$rb" -w "$WS" test connectivity || true
-        run_step "live:test-dns"          "${KENV[@]}" "$rb" -w "$WS" test dns || true
+        # workspace's own kubeconfig, not the ambient ~/.kube/config). These
+        # probe configured hosts; a fresh workspace has none, so a "no hosts
+        # configured" outcome is a clean SKIP, not a failure.
+        run_step_skippable 'no hosts configured' "live:test-connectivity" "${KENV[@]}" "$rb" -w "$WS" test connectivity
+        run_step_skippable 'no hosts configured' "live:test-dns"          "${KENV[@]}" "$rb" -w "$WS" test dns
 
         # Perf matrix (iperf3 L4 + h2load L7): no one-shot command yet
         # (`test throughput` is a v1.x stub), so run an operator-supplied
@@ -339,23 +366,35 @@ run_live_tier() {
             skip_step "live:perf-matrix" "no one-shot perf cmd (test throughput is a v1.x stub) — set PERF_MATRIX_CMD=… to run iperf3/h2load"
         fi
 
-        # Reuse drivers against the standing cluster (live, not DRY_RUN).
-        if [[ -x "$SCRIPT_DIR/e2e-bnk-native.sh" ]]; then
-            run_step -t "$LIVE_TIMEOUT" "live:reuse-bnk-native" \
-                "${KENV[@]}" "$SCRIPT_DIR/e2e-bnk-native.sh" -w "$WS" || true
-        fi
-        if [[ -x "$SCRIPT_DIR/e2e-airgap-mirror.sh" ]]; then
-            run_step -t "$LIVE_TIMEOUT" "live:airgap-mirror" \
-                "${KENV[@]}" "$SCRIPT_DIR/e2e-airgap-mirror.sh" "$WS" || true
+        # Specialized reuse drivers — OPT-IN (LIVE_REUSE=1). They need setup the
+        # vanilla lifecycle doesn't do: e2e-bnk-native wants WORKSPACE_KUBECTL
+        # pointed at an attached workspace; e2e-airgap-mirror needs a registry
+        # mirror already PUSHED to ICR. Off by default so the core lifecycle
+        # (up → gateway → down) can pass on a plain fresh workspace.
+        if [[ "$LIVE_REUSE" == "1" ]]; then
+            if [[ -x "$SCRIPT_DIR/e2e-bnk-native.sh" ]]; then
+                run_step -t "$LIVE_TIMEOUT" "live:reuse-bnk-native" \
+                    "${KENV[@]}" WORKSPACE_KUBECTL="$WS" "$SCRIPT_DIR/e2e-bnk-native.sh" -w "$WS" || true
+            fi
+            if [[ -x "$SCRIPT_DIR/e2e-airgap-mirror.sh" ]]; then
+                run_step -t "$LIVE_TIMEOUT" "live:airgap-mirror" \
+                    "${KENV[@]}" "$SCRIPT_DIR/e2e-airgap-mirror.sh" "$WS" || true
+            fi
+        else
+            skip_step "live:reuse" "specialized reuse drivers (bnk-native, airgap-mirror) need extra setup — set LIVE_REUSE=1 to run them"
         fi
     fi
 
-    # 3. teardown — always (if up created anything), unless --keep.
+    # 3. teardown — always (if up created anything), unless --keep. MUST be
+    #    `gateway down` THEN `down`: roksbnkctl refuses a full `down` while the
+    #    Gateway phase has resources (its CRs live in the BNK namespace and
+    #    would block the BNK teardown).
     if [[ "$UP_DONE" == "1" ]]; then
         if [[ "$KEEP" == "1" ]]; then
-            skip_step "live:down" "--keep set — cluster left UP; tear down later: roksbnkctl -w $WS down --auto"
+            skip_step "live:down" "--keep set — cluster left UP; tear down later: roksbnkctl -w $WS gateway down --auto && roksbnkctl -w $WS down --auto"
         else
-            run_step -t "$LIVE_TIMEOUT" "live:down" "${KENV[@]}" "$rb" -w "$WS" down --auto || true
+            run_step -t "$LIVE_TIMEOUT" "live:down" "${KENV[@]}" bash -c \
+                '"$1" -w "$2" gateway down --auto; "$1" -w "$2" down --auto' _ "$rb" "$WS" || true
             last_failed || DOWN_DONE=1
         fi
     fi
