@@ -13,10 +13,10 @@
 # the key and make no cloud calls.
 #
 # Opt in to TIER L (--live) and it ALSO executes a full live lifecycle
-# against the named workspace — plan → up (Cluster+BNK+Testing) → gateway
-# up → connectivity/DNS probes → reuse drivers → down — which DOES create
-# and destroy real, billable IBM Cloud infra. --live requires a workspace
-# and IBMCLOUD_API_KEY, and runs only behind a green Tier 0 + Tier 1.
+# against the named workspace — up (Cluster+BNK+Testing) → gateway up →
+# connectivity/DNS probes → reuse drivers → down — which DOES create and
+# destroy real, billable IBM Cloud infra. --live requires a workspace and
+# IBMCLOUD_API_KEY, and runs only behind a green Tier 0 + Tier 1.
 #
 # Usage:
 #   ./scripts/full-shakeout.sh [<workspace>]   # run Tier 0 + Tier 1, print Tier 2+3
@@ -41,8 +41,12 @@
 #
 # TIER L (--live / LIVE=1): runs ONLY after Tier 0 + Tier 1 are green (it
 # refuses to spend on a broken tree). Steps, each recorded in the summary:
-#   live:plan → live:up → live:gateway → live:test-connectivity →
-#   live:test-dns → live:perf-matrix → live:reuse-* → live:down.
+#   live:up → live:gateway → live:test-connectivity → live:test-dns →
+#   live:perf-matrix → live:reuse-* → live:down.
+# (No pre-`up` `plan` gate: `roksbnkctl plan` targets the BNK/trial phase,
+# which attaches to an EXISTING cluster, so it cannot pass before `up`
+# creates one. `up` is the resumable, self-healing from-scratch path and
+# validates inputs itself before the expensive cluster create.)
 # The perf matrix (iperf3 L4 + h2load L7) has no one-shot command yet
 # (`roksbnkctl test throughput` is a v1.x stub), so it is SKIPPED unless you
 # pass PERF_MATRIX_CMD="<your matrix command>". Teardown (live:down) always
@@ -300,25 +304,23 @@ run_live_tier() {
     local KENV=(env "IBMCLOUD_API_KEY=$LIVE_API_KEY")
     local abort=0
 
-    # 1. plan — cheap apply-readiness gate; catches an incomplete workspace
-    #    BEFORE any spend.
-    run_step -t "$LIVE_TIMEOUT" "live:plan" "${KENV[@]}" "$rb" -w "$WS" plan || true
+    # 1. up — Cluster + BNK + Testing (the parallel up). First spend + the
+    #    critical step. NO pre-`up` `plan` gate: `roksbnkctl plan` targets the
+    #    BNK/trial phase, which attaches to an EXISTING cluster (via the
+    #    generated bnk-phase-override.tfvars, create_roks_cluster=false), so it
+    #    cannot succeed before a cluster exists. `up` is the resumable,
+    #    self-healing path — it creates the cluster, regenerates the phase
+    #    handoff overrides from the fresh cluster-outputs.json, then deploys
+    #    BNK + Testing — and validates inputs before the expensive create.
+    #    Arms teardown (even a partial apply can leave billable infra).
+    run_step -t "$LIVE_TIMEOUT" "live:up" "${KENV[@]}" "$rb" -w "$WS" up --auto || true
+    UP_DONE=1
     if last_failed; then
-        info "${RED}live:plan failed — workspace not apply-ready; NOT spending. Aborting Tier L.${RST}"
+        info "${RED}live:up failed — tearing down any partial infra.${RST}"
         abort=1
     fi
 
-    # 2. up — Cluster + BNK + Testing (the parallel up). Arms teardown.
-    if [[ $abort -eq 0 ]]; then
-        run_step -t "$LIVE_TIMEOUT" "live:up" "${KENV[@]}" "$rb" -w "$WS" up --auto || true
-        UP_DONE=1   # even a partial apply may have created billable infra
-        if last_failed; then
-            info "${RED}live:up failed — tearing down any partial infra.${RST}"
-            abort=1
-        fi
-    fi
-
-    # 3. gateway + probes + reuse drivers — only if up succeeded.
+    # 2. gateway + probes + reuse drivers — only if up succeeded.
     if [[ $abort -eq 0 ]]; then
         run_step -t "$LIVE_TIMEOUT" "live:gateway" "${KENV[@]}" "$rb" -w "$WS" gateway up --auto || true
         last_failed && info "${YEL}live:gateway failed — continuing to validation + teardown.${RST}"
@@ -348,7 +350,7 @@ run_live_tier() {
         fi
     fi
 
-    # 4. teardown — always (if up created anything), unless --keep.
+    # 3. teardown — always (if up created anything), unless --keep.
     if [[ "$UP_DONE" == "1" ]]; then
         if [[ "$KEEP" == "1" ]]; then
             skip_step "live:down" "--keep set — cluster left UP; tear down later: roksbnkctl -w $WS down --auto"
