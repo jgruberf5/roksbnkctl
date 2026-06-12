@@ -6,6 +6,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Changed
+
+- **The `roksbnkctl-tools-runner` image is ~58 MB smaller.** A late `chown -R … && chmod -R … /home/runner` rewrote the ibmcloud plugin's files into a duplicate ~58 MB layer (copy-on-write). The `/home/runner` and `/work` dirs are now created owned by uid 1000 / gid 0 up front, and the ibmcloud config is chowned *inside* the install RUN (in-layer) — same runtime permissions, one fewer duplicate layer.
+
 ### Security
 
 - **Release binaries now build with the latest stable Go** (`release.yml`), not just the `go.mod` minimum (1.25.0), so they ship current Go-stdlib security fixes — the toolchain-level advisories `govulncheck` flagged (go1.26.3 → go1.26.4) that a module bump can't address. Takes effect from the next tagged release.
