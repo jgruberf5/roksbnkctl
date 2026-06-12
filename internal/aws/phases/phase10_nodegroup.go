@@ -141,8 +141,8 @@ func Phase10NodeGroup(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	if cl.HasGPUNodeGroup() {
 		var maxGPUDiskSize int32
 		for _, ng := range cl.ClusterSpec.NodeGroups {
-			if ng.IsGPU() && int32(ng.DiskSize) > maxGPUDiskSize { //nolint:gosec // bounded by earlier check
-				maxGPUDiskSize = int32(ng.DiskSize) //nolint:gosec // bounded by earlier check
+			if ng.IsGPU() && int32(ng.DiskSize) > maxGPUDiskSize { // #nosec G115 -- DiskSize is a small validated GB count, cannot overflow int32
+				maxGPUDiskSize = int32(ng.DiskSize) // #nosec G115 -- DiskSize is a small validated GB count, cannot overflow int32
 			}
 		}
 		gpuLTID, err = ensureGPULaunchTemplate(ctx, clients.EC2, name, gpuLTName, maxGPUDiskSize, cl.Tags, cl.Metadata.Labels)
