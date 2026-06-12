@@ -98,3 +98,24 @@ IBMCLOUD_API_KEY=… …  --live --keep <ws>        # … but hold the cluster
   `run_live_tier` structurally tested with a stub binary across success / up-failure /
   `--keep`; non-live `test-004` run still `PASS 16 FAIL 0`. The real live run is the
   user's to launch (gated, billable).
+
+### First live run — two harness bugs found + fixed (no spend)
+
+The first `--live test-004` run never spent a cent — both failures were caught
+pre-`up`:
+
+1. **Key leaked into Tier 0/1.** Exporting `IBMCLOUD_API_KEY` for the whole process
+   made two `init --var-file` unit tests hit the real IBM Cloud API
+   (`resource group "test-rg" not found`) → Tier 0 failed → the gate refused to spend
+   (working as designed). Fix: stash the key at the `--live` gate, `unset` it so
+   Tier 0/1 stay hermetic, and re-inject it into each live step via `env`.
+2. **`plan` is not a valid pre-`up` gate.** With Tier 0/1 green, the live tier then
+   failed at `live:plan` (404 on a torn-down cluster). Root cause: `roksbnkctl plan`
+   plans the **BNK/trial phase**, which attaches to an *existing* cluster
+   (`create_roks_cluster=false`, `roks_cluster_id_or_name` from the generated
+   `bnk-phase-override.tfvars`) — so it can NEVER succeed before `up` creates a
+   cluster. `test-004`'s state was empty but its generated handoff override still
+   pinned a deleted cluster id (`d8kn8…`). `up` regenerates that override from a fresh
+   `cluster-outputs.json`, so it self-heals; only standalone `plan` chokes. Fix: drop
+   the `live:plan` gate — go straight to `live:up` (the resumable, self-validating
+   from-scratch path). No workspace edits needed.
