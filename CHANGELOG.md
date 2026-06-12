@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Security
+
+- **Release binaries now build with the latest stable Go** (`release.yml`), not just the `go.mod` minimum (1.25.0), so they ship current Go-stdlib security fixes — the toolchain-level advisories `govulncheck` flagged (go1.26.3 → go1.26.4) that a module bump can't address. Takes effect from the next tagged release.
+
 ## v1.11.1 — 2026-06-11
 
 A security patch on top of v1.11.0: a CI security sweep plus the dependency CVE fixes it surfaced. No functional changes.
