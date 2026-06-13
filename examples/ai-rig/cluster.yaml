@@ -111,7 +111,10 @@ ai:
   sagemaker:
     enabled: true
     model: meta-llama/Meta-Llama-3-8B-Instruct
-    instanceType: ml.g5.2xlarge
+    # ml.g5.xlarge: same single A10G as the in-cluster g5.xlarge leg (apples-to-apples)
+    # and the type with SageMaker endpoint capacity + quota in ap-southeast-2 —
+    # ml.g5.2xlarge hit InsufficientInstanceCapacity for SageMaker on 2026-06-13.
+    instanceType: ml.g5.xlarge
     scaleToZero: false
 
 # bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths

@@ -8,6 +8,14 @@ import (
 	sagemaker_types "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
 )
 
+// mockDescribeEndpointResponse holds a scripted DescribeEndpoint response.
+// When the queue is non-empty, each DescribeEndpoint call consumes one entry
+// in order; once drained it falls back to the normal in-memory endpoints map.
+type mockDescribeEndpointResponse struct {
+	out *sagemaker.DescribeEndpointOutput
+	err error
+}
+
 // mockSageMaker is the test double for SageMakerAPI.
 // Records calls and drives idempotency / NotFound error injection.
 type mockSageMaker struct {
@@ -15,6 +23,11 @@ type mockSageMaker struct {
 	models       map[string]*sagemaker_types.ModelSummary
 	endpointCfgs map[string]*sagemaker.DescribeEndpointConfigOutput
 	endpoints    map[string]*sagemaker.DescribeEndpointOutput
+
+	// Scripted DescribeEndpoint response queue (consumed in order before
+	// falling back to the in-memory endpoints map). Add entries via
+	// enqueueDescribeEndpoint to drive stateful describe sequences in tests.
+	describeEndpointQueue []mockDescribeEndpointResponse
 
 	// Captured inputs for assertion in tests.
 	createModelInput          *sagemaker.CreateModelInput
@@ -28,6 +41,7 @@ type mockSageMaker struct {
 	deleteEndpointConfigCalls int
 	createEndpointCalls       int
 	deleteEndpointCalls       int
+	describeEndpointCalls     int
 }
 
 func newMockSageMaker() *mockSageMaker {
@@ -36,6 +50,14 @@ func newMockSageMaker() *mockSageMaker {
 		endpointCfgs: make(map[string]*sagemaker.DescribeEndpointConfigOutput),
 		endpoints:    make(map[string]*sagemaker.DescribeEndpointOutput),
 	}
+}
+
+// enqueueDescribeEndpoint appends a scripted DescribeEndpoint response.
+// Entries are consumed in FIFO order; once drained, calls fall through to the
+// in-memory endpoints map. Use this to simulate multi-step status sequences
+// (e.g. Failed → NotFound → Creating) without mutating the registry directly.
+func (m *mockSageMaker) enqueueDescribeEndpoint(out *sagemaker.DescribeEndpointOutput, err error) {
+	m.describeEndpointQueue = append(m.describeEndpointQueue, mockDescribeEndpointResponse{out: out, err: err})
 }
 
 func mkSageMakerNotFound(resource, name string) error {
@@ -115,6 +137,13 @@ func (m *mockSageMaker) CreateEndpoint(_ context.Context, in *sagemaker.CreateEn
 }
 
 func (m *mockSageMaker) DescribeEndpoint(_ context.Context, in *sagemaker.DescribeEndpointInput, _ ...func(*sagemaker.Options)) (*sagemaker.DescribeEndpointOutput, error) {
+	m.describeEndpointCalls++
+	// Consume from the scripted queue first (supports stateful test sequences).
+	if len(m.describeEndpointQueue) > 0 {
+		resp := m.describeEndpointQueue[0]
+		m.describeEndpointQueue = m.describeEndpointQueue[1:]
+		return resp.out, resp.err
+	}
 	name := *in.EndpointName
 	out, ok := m.endpoints[name]
 	if !ok {

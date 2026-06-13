@@ -9,12 +9,15 @@ import (
 )
 
 // AiperfConfig holds the parameters for a single aiperf benchmark run.
-// aiperf is assumed to be pre-installed on the jumphost (pip install aiperf).
+// aiperf is installed on the jumphost via python3.11 -m pip install aiperf.
 // All fields except Model and VIP have sensible defaults.
 type AiperfConfig struct {
-	// Model is the LLM model name (e.g. "meta-llama/Llama-3.1-8B-Instruct").
+	// Model is the LLM model name as served by the endpoint (e.g. "llama3").
 	Model string
-	// EndpointPath is the HTTP path (e.g. "/v1/chat/completions"). Default: "/v1/chat/completions".
+	// EndpointType is the aiperf --endpoint-type value. Default: "chat".
+	EndpointType string
+	// EndpointPath is the HTTP path (e.g. "/v1/chat/completions").
+	// Only passed as --custom-endpoint when non-default.
 	EndpointPath string
 	// Concurrency is the number of concurrent users. Default: 1.
 	Concurrency int
@@ -24,80 +27,133 @@ type AiperfConfig struct {
 	ISL int
 	// OSL is the output sequence length (tokens). Default: 128.
 	OSL int
-	// Streaming enables streaming mode (--stream). Default: false.
+	// Streaming enables streaming mode (--streaming). Default: false.
 	Streaming bool
-	// Timeout is the per-run total timeout passed to the runner. Default: 5 minutes.
+	// Tokenizer is the Hugging Face tokenizer repo used by aiperf for token
+	// counting. Required by aiperf 0.10.0.
+	// Default: "NousResearch/Meta-Llama-3-8B-Instruct" (ungated, no HF token).
+	Tokenizer string
+	// HostHeader is the HTTP Host header to inject (--header "Host:<value>").
+	// Required when the BNK HTTPRoute has a hostname match; without it every
+	// request returns 404.
+	HostHeader string
+	// Timeout is the per-run total timeout. Default: 5 minutes.
 	Timeout time.Duration
 }
 
-// AiperfResult is the Go representation of the aiperf JSON output we consume.
-// aiperf --output-format json emits a flat top-level object; we capture the
-// fields we forward to forge.  Unknown extra fields are silently ignored.
+// aiperfMetricDist is the distribution shape used for most aiperf 0.10.0 metrics.
+// Scalar metrics only use Avg.
+type aiperfMetricDist struct {
+	Unit  string  `json:"unit"`
+	Avg   float64 `json:"avg"`
+	P1    float64 `json:"p1"`
+	P5    float64 `json:"p5"`
+	P10   float64 `json:"p10"`
+	P25   float64 `json:"p25"`
+	P50   float64 `json:"p50"`
+	P75   float64 `json:"p75"`
+	P90   float64 `json:"p90"`
+	P95   float64 `json:"p95"`
+	P99   float64 `json:"p99"`
+	Min   float64 `json:"min"`
+	Max   float64 `json:"max"`
+	Std   float64 `json:"std"`
+	Count float64 `json:"count"`
+	Sum   float64 `json:"sum"`
+}
+
+// aiperfTelemetry is the nested telemetry summary inside the JSON output.
+type aiperfTelemetry struct {
+	Summary struct {
+		StartTime    string `json:"start_time"`
+		EndTime      string `json:"end_time"`
+		ErrorSummary []any  `json:"error_summary"`
+	} `json:"summary"`
+}
+
+// aiperfRawOutput is the full JSON schema of aiperf 0.10.0's
+// profile_export_aiperf.json. We decode all metrics we need, silently
+// ignoring the rest.
+type aiperfRawOutput struct {
+	SchemaVersion string `json:"schema_version"`
+	AiperfVersion string `json:"aiperf_version"`
+	BenchmarkID   string `json:"benchmark_id"`
+
+	RequestThroughput     aiperfMetricDist `json:"request_throughput"`
+	RequestLatency        aiperfMetricDist `json:"request_latency"`
+	RequestCount          aiperfMetricDist `json:"request_count"`
+	TimeToFirstToken      aiperfMetricDist `json:"time_to_first_token"`
+	InterTokenLatency     aiperfMetricDist `json:"inter_token_latency"`
+	OutputTokenThroughput aiperfMetricDist `json:"output_token_throughput"`
+	OutputSequenceLength  aiperfMetricDist `json:"output_sequence_length"`
+	InputSequenceLength   aiperfMetricDist `json:"input_sequence_length"`
+	TotalOutputTokens     aiperfMetricDist `json:"total_output_tokens"`
+	BenchmarkDuration     aiperfMetricDist `json:"benchmark_duration"`
+
+	StartTime    string `json:"start_time"`
+	EndTime      string `json:"end_time"`
+	WasCancelled bool   `json:"was_cancelled"`
+	ErrorSummary []any  `json:"error_summary"`
+
+	Telemetry aiperfTelemetry `json:"telemetry_data"`
+}
+
+// DistributionStats captures the per-percentile distribution for a metric.
+type DistributionStats struct {
+	Unit string  `json:"unit"`
+	Avg  float64 `json:"avg"`
+	P50  float64 `json:"p50"`
+	P90  float64 `json:"p90"`
+	P99  float64 `json:"p99"`
+	Min  float64 `json:"min"`
+	Max  float64 `json:"max"`
+}
+
+// AiperfResult is the Go representation of aiperf 0.10.0 benchmark output.
+// Fields map directly from profile_export_aiperf.json top-level metric objects.
 type AiperfResult struct {
-	// Identity — forwarded from config
+	// Identity — backfilled from config when absent in JSON
 	Model    string `json:"model"`
 	BaseURL  string `json:"base_url"`
 	Endpoint string `json:"endpoint"`
 
-	// Timing
-	RunStart        string  `json:"run_start"`
-	RunEnd          string  `json:"run_end"`
+	// Metadata
+	AiperfVersion string `json:"aiperf_version"`
+	SchemaVersion string `json:"schema_version"`
+	BenchmarkID   string `json:"benchmark_id"`
+	StartTime     string `json:"start_time"`
+	EndTime       string `json:"end_time"`
+	WasCancelled  bool   `json:"was_cancelled"`
+	ErrorSummary  []any  `json:"error_summary"`
+
+	// Request counts (derived)
+	TotalRequests int `json:"total_requests"`
+	Successful    int `json:"successful"`
+	Failed        int `json:"failed"`
+
+	// Duration
 	DurationSeconds float64 `json:"duration_seconds"`
 	DurationMinutes float64 `json:"duration_minutes"`
 
-	// Request counts
-	TotalRequests  int     `json:"total_requests"`
-	Successful     int     `json:"successful"`
-	Failed         int     `json:"failed"`
-	SuccessRatePct float64 `json:"success_rate_pct"`
-
-	// Token counts
-	TotalInputTokens  int     `json:"total_input_tokens"`
-	TotalOutputTokens int     `json:"total_output_tokens"`
-	AvgInputTokens    float64 `json:"avg_input_tokens"`
-	AvgOutputTokens   float64 `json:"avg_output_tokens"`
-
-	// Latency (aiperf nests these under a "latency" key)
-	Latency LatencyStats `json:"latency"`
-
 	// Throughput
-	Throughput ThroughputStats `json:"throughput"`
+	RequestThroughput     float64 `json:"request_throughput_rps"`      // requests/sec avg
+	OutputTokenThroughput float64 `json:"output_token_throughput_tps"` // tokens/sec avg
 
-	// Per-phase breakdown (forwarded verbatim)
-	Phases map[string]any `json:"phases"`
+	// Request latency distribution (ms)
+	RequestLatency DistributionStats `json:"request_latency"`
 
-	// Optional timeline (can be very large; forwarded as-is)
-	Timeline []any `json:"timeline,omitempty"`
-}
+	// Time-to-first-token distribution (ms)
+	TTFT DistributionStats `json:"ttft"`
 
-// LatencyStats mirrors aiperf's nested latency object.
-type LatencyStats struct {
-	P50  float64 `json:"p50"`
-	P95  float64 `json:"p95"`
-	P99  float64 `json:"p99"`
-	Mean float64 `json:"mean"`
-	Min  float64 `json:"min"`
-	Max  float64 `json:"max"`
+	// Inter-token latency distribution (ms)
+	ITL DistributionStats `json:"itl"`
 
-	// aiperf-specific token-level metrics (zero-valued when not available)
-	TTFT LatencyDistribution `json:"ttft,omitempty"`
-	ITL  LatencyDistribution `json:"itl,omitempty"`
-}
+	// Token length averages
+	AvgInputTokens  float64 `json:"avg_input_tokens"`
+	AvgOutputTokens float64 `json:"avg_output_tokens"`
 
-// LatencyDistribution is a named per-metric distribution inside aiperf latency.
-type LatencyDistribution struct {
-	Mean float64 `json:"mean"`
-	P50  float64 `json:"p50"`
-	P95  float64 `json:"p95"`
-	P99  float64 `json:"p99"`
-}
-
-// ThroughputStats mirrors aiperf's throughput object.
-type ThroughputStats struct {
-	OverallRPS float64 `json:"overall_rps"`
-	PeakRPS    float64 `json:"peak_rps"`
-	// Tokens per second across all users
-	TokensPerSec float64 `json:"tokens_per_sec"`
+	// Total tokens across all requests
+	TotalOutputTokens float64 `json:"total_output_tokens_sum"`
 }
 
 // sshExecFn is the injectable seam for running a remote command over
@@ -116,20 +172,24 @@ type AiperfRunOptions struct {
 	// RunLabel is a human-readable label stored in the result labels.
 	RunLabel string
 	// ResultID is a caller-supplied unique ID (UUID or timestamp string).
-	// When empty, aiperf generates its own; we read it back from the JSON.
+	// When empty, aiperf generates its own.
 	ResultID string
 }
 
-// buildAiperfCmd constructs the remote shell command that runs aiperf on the
-// jumphost and emits JSON to stdout. The VIP is taken from opts.ProbeOptions.VIP
-// and combined with cfg.EndpointPath to form the full base_url.
+// buildAiperfCmd constructs the remote shell command that:
+//  1. Removes any stale artifact dir
+//  2. Runs aiperf profile to write artifacts
+//  3. Cats the profile_export_aiperf.json to stdout
 //
-// aiperf prereq: the jumphost must have aiperf installed (pip install aiperf).
-// Install is NOT performed here — see RunAiperf docstring.
+// This is required because aiperf 0.10.0 writes output to files, NOT stdout.
+// The VIP is taken from opts.ProbeOptions.VIP.
+//
+// aiperf prereq: the jumphost must have aiperf 0.10.0+ installed via
+// python3.11 -m pip install aiperf. See EnsureAiperf.
 func buildAiperfCmd(opts AiperfRunOptions) string {
 	cfg := opts.Config
-	if cfg.EndpointPath == "" {
-		cfg.EndpointPath = "/v1/chat/completions"
+	if cfg.EndpointType == "" {
+		cfg.EndpointType = "chat"
 	}
 	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = 1
@@ -143,50 +203,71 @@ func buildAiperfCmd(opts AiperfRunOptions) string {
 	if cfg.OSL <= 0 {
 		cfg.OSL = 128
 	}
+	if cfg.Tokenizer == "" {
+		cfg.Tokenizer = "NousResearch/Meta-Llama-3-8B-Instruct"
+	}
 
 	vip := opts.ProbeOptions.VIP
-	// Use the external-VLAN source IP as the interface so traffic
-	// follows the real BNK data path (mirrors SSHCurlViaEICE behaviour).
-	srcIP := opts.ProbeOptions.SourceIP
 
-	// Build the aiperf command. We use --output-format json so we can
-	// parse the structured output back over SSH stdout.
+	// Unique artifact directory per run to avoid collisions.
+	dirSuffix := "run"
+	if opts.ResultID != "" {
+		// Sanitize resultID to be shell-safe (keep alphanumeric + dashes).
+		safe := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+				return r
+			}
+			return '-'
+		}, opts.ResultID)
+		dirSuffix = safe
+	}
+	artifactDir := fmt.Sprintf("/tmp/aiperf-%s", dirSuffix)
+
+	// Build the aiperf profile invocation.
 	args := []string{
-		"aiperf",
-		"--base-url", fmt.Sprintf("http://%s", vip),
-		"--model", shellSingleQuote(cfg.Model),
-		"--endpoint", shellSingleQuote(cfg.EndpointPath),
-		"--num-users", fmt.Sprintf("%d", cfg.Concurrency),
-		"--num-requests", fmt.Sprintf("%d", cfg.NumRequests),
-		"--input-len", fmt.Sprintf("%d", cfg.ISL),
-		"--output-len", fmt.Sprintf("%d", cfg.OSL),
-		"--output-format", "json",
-	}
-	if cfg.Streaming {
-		args = append(args, "--stream")
-	}
-	if srcIP != "" {
-		// bind the HTTP client to the BNK external ENI so traffic enters
-		// via the external VLAN (same pattern as --interface in curl).
-		args = append(args, "--interface", srcIP)
-	}
-	if opts.RunLabel != "" {
-		args = append(args, "--run-label", shellSingleQuote(opts.RunLabel))
+		"aiperf", "profile",
+		"-m", shellSingleQuote(cfg.Model),
+		"-u", shellSingleQuote(fmt.Sprintf("http://%s", vip)),
+		"--endpoint-type", shellSingleQuote(cfg.EndpointType),
+		"--concurrency", fmt.Sprintf("%d", cfg.Concurrency),
+		"--request-count", fmt.Sprintf("%d", cfg.NumRequests),
+		"--synthetic-input-tokens-mean", fmt.Sprintf("%d", cfg.ISL),
+		"--output-tokens-mean", fmt.Sprintf("%d", cfg.OSL),
+		"--tokenizer", shellSingleQuote(cfg.Tokenizer),
 	}
 
-	return strings.Join(args, " ")
+	if cfg.HostHeader != "" {
+		args = append(args, "--header", shellSingleQuote(fmt.Sprintf("Host:%s", cfg.HostHeader)))
+	}
+
+	if cfg.Streaming {
+		args = append(args, "--streaming")
+	}
+
+	args = append(args,
+		"--artifact-dir", shellSingleQuote(artifactDir),
+		"--ui", "none",
+	)
+
+	aiperfInvocation := strings.Join(args, " ")
+
+	// Compose the full remote command:
+	// 1. Remove stale artifact dir
+	// 2. Run aiperf (redirect its own stdout/stderr to /tmp to keep our stdout clean)
+	// 3. Cat the JSON artifact back to stdout for capture
+	return fmt.Sprintf(
+		"rm -rf %s; %s >/tmp/aiperf.stderr 2>&1; cat %s/profile_export_aiperf.json",
+		shellSingleQuote(artifactDir),
+		aiperfInvocation,
+		shellSingleQuote(artifactDir),
+	)
 }
 
 // RunAiperf mints an ephemeral EICE key, SSHes to the jumphost, runs
 // aiperf with the given configuration, and parses the JSON result.
 //
-// Prerequisites on the jumphost:
-//
-//	pip install aiperf
-//
-// The operator must install aiperf before calling RunAiperf — this function
-// does NOT install it (install is ~5 s; the caller decides when to do it).
-// To check or install aiperf call EnsureAiperf first.
+// Prerequisites on the jumphost: aiperf 0.10.0+ must be installed via
+// EnsureAiperf before calling RunAiperf.
 //
 // The aiperf command runs synchronously over the SSH session; the session
 // lifetime is bounded by opts.Config.Timeout (default 5 min).
@@ -224,12 +305,16 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 		return nil, fmt.Errorf("aiperf: parse output: %w (raw: %.500s)", err, stdout)
 	}
 
-	// Backfill identity fields from config when aiperf doesn't embed them.
+	// Backfill identity fields from config when not present in JSON.
 	if result.Model == "" {
 		result.Model = opts.Config.Model
 	}
 	if result.Endpoint == "" {
-		result.Endpoint = opts.Config.EndpointPath
+		ep := opts.Config.EndpointPath
+		if ep == "" {
+			ep = "/v1/chat/completions"
+		}
+		result.Endpoint = ep
 	}
 	if result.BaseURL == "" {
 		result.BaseURL = fmt.Sprintf("http://%s", opts.ProbeOptions.VIP)
@@ -238,9 +323,15 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 	return result, nil
 }
 
-// EnsureAiperf checks whether aiperf is available on the jumphost and installs
-// it via pip if not.  It is a guarded step — it only runs pip install when
-// `aiperf --version` returns a non-zero exit code.
+// EnsureAiperf checks whether aiperf >=0.10.0 is available on the jumphost
+// and installs it via python3.11 -m pip install aiperf when absent or outdated.
+//
+// AL2023 ships Python 3.9; aiperf requires >=3.10. We install python3.11 via
+// dnf (available on AL2023) and use it to pip install aiperf.
+// The console script lands at ~/.local/bin/aiperf which is on the ec2-user PATH.
+//
+// Guard: runs `aiperf --version` first; only installs if the version is
+// missing or is the 0.1.0 placeholder (the spurious PyPI package).
 func EnsureAiperf(ctx context.Context, probOpts ProbeOptions) error {
 	if probOpts.User == "" {
 		probOpts.User = "ec2-user"
@@ -254,24 +345,113 @@ func EnsureAiperf(ctx context.Context, probOpts ProbeOptions) error {
 
 	_ = pushSSHPublicKeyFn(ctx, probOpts.Region, probOpts.InstanceID, pubKeyPath)
 
-	checkCmd := "aiperf --version 2>/dev/null && echo ok || pip install --quiet aiperf && echo installed"
+	// Guarded install sequence:
+	// 1. Run `aiperf --version`; if it prints a version string containing
+	//    "0.10" or higher (NOT "0.1.0"), we're done.
+	// 2. Otherwise install python3.11 (AL2023 dnf) + pip install aiperf.
+	// 3. Re-verify; fail if still absent or placeholder.
+	//
+	// We detect the placeholder by checking for "0.1.0" in the version output.
+	checkCmd := `
+VER=$(aiperf --version 2>/dev/null || true)
+if echo "$VER" | grep -qv '^$' && ! echo "$VER" | grep -q '0\.1\.0'; then
+  echo "ok:$VER"
+else
+  sudo dnf install -y python3.11 >/dev/null 2>&1
+  python3.11 -m pip install --user aiperf >/dev/null 2>&1
+  VER2=$(aiperf --version 2>/dev/null || true)
+  if echo "$VER2" | grep -qv '^$' && ! echo "$VER2" | grep -q '0\.1\.0'; then
+    echo "installed:$VER2"
+  else
+    echo "FAILED:$VER2"
+    exit 1
+  fi
+fi`
+
 	out, err := aiperfSSHExecFn(ctx, probOpts.Region, probOpts.InstanceID, keyPath, checkCmd)
 	if err != nil {
 		return fmt.Errorf("ensure aiperf: install failed: %w (output: %s)", err, strings.TrimSpace(out))
 	}
+	out = strings.TrimSpace(out)
+	if strings.HasPrefix(out, "FAILED") {
+		return fmt.Errorf("ensure aiperf: aiperf not available or placeholder after install (output: %s)", out)
+	}
 	return nil
 }
 
-// parseAiperfJSON parses the JSON blob emitted by `aiperf --output-format json`.
-// The JSON may be preceded by progress / info lines — we scan for the first '{'.
+// parseAiperfJSON parses the JSON blob emitted by aiperf 0.10.0's
+// profile_export_aiperf.json artifact (captured via `cat`).
+// The JSON may be preceded by stray lines — we scan for the first '{'.
 func parseAiperfJSON(raw string) (*AiperfResult, error) {
 	start := strings.Index(raw, "{")
 	if start < 0 {
 		return nil, fmt.Errorf("no JSON object found in aiperf output")
 	}
-	var result AiperfResult
-	if err := json.Unmarshal([]byte(raw[start:]), &result); err != nil {
+
+	var raw0 aiperfRawOutput
+	if err := json.Unmarshal([]byte(raw[start:]), &raw0); err != nil {
 		return nil, err
 	}
-	return &result, nil
+
+	// Derive request counts from the data we have.
+	total := int(raw0.RequestCount.Avg)
+	failed := len(raw0.ErrorSummary)
+	successful := total - failed
+	if successful < 0 {
+		successful = 0
+	}
+
+	dur := raw0.BenchmarkDuration.Avg
+	result := &AiperfResult{
+		AiperfVersion: raw0.AiperfVersion,
+		SchemaVersion: raw0.SchemaVersion,
+		BenchmarkID:   raw0.BenchmarkID,
+		StartTime:     raw0.StartTime,
+		EndTime:       raw0.EndTime,
+		WasCancelled:  raw0.WasCancelled,
+		ErrorSummary:  raw0.ErrorSummary,
+
+		TotalRequests:   total,
+		Successful:      successful,
+		Failed:          failed,
+		DurationSeconds: dur,
+		DurationMinutes: dur / 60,
+
+		RequestThroughput:     raw0.RequestThroughput.Avg,
+		OutputTokenThroughput: raw0.OutputTokenThroughput.Avg,
+
+		RequestLatency: DistributionStats{
+			Unit: raw0.RequestLatency.Unit,
+			Avg:  raw0.RequestLatency.Avg,
+			P50:  raw0.RequestLatency.P50,
+			P90:  raw0.RequestLatency.P90,
+			P99:  raw0.RequestLatency.P99,
+			Min:  raw0.RequestLatency.Min,
+			Max:  raw0.RequestLatency.Max,
+		},
+		TTFT: DistributionStats{
+			Unit: raw0.TimeToFirstToken.Unit,
+			Avg:  raw0.TimeToFirstToken.Avg,
+			P50:  raw0.TimeToFirstToken.P50,
+			P90:  raw0.TimeToFirstToken.P90,
+			P99:  raw0.TimeToFirstToken.P99,
+			Min:  raw0.TimeToFirstToken.Min,
+			Max:  raw0.TimeToFirstToken.Max,
+		},
+		ITL: DistributionStats{
+			Unit: raw0.InterTokenLatency.Unit,
+			Avg:  raw0.InterTokenLatency.Avg,
+			P50:  raw0.InterTokenLatency.P50,
+			P90:  raw0.InterTokenLatency.P90,
+			P99:  raw0.InterTokenLatency.P99,
+			Min:  raw0.InterTokenLatency.Min,
+			Max:  raw0.InterTokenLatency.Max,
+		},
+
+		AvgInputTokens:    raw0.InputSequenceLength.Avg,
+		AvgOutputTokens:   raw0.OutputSequenceLength.Avg,
+		TotalOutputTokens: raw0.TotalOutputTokens.Avg,
+	}
+
+	return result, nil
 }

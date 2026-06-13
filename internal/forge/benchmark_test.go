@@ -19,37 +19,53 @@ import (
 
 func sampleAiperfResult() *jumphost.AiperfResult {
 	return &jumphost.AiperfResult{
-		Model:             "meta-llama/Llama-3.1-8B-Instruct",
-		BaseURL:           "http://10.0.10.100",
-		Endpoint:          "/v1/chat/completions",
-		RunStart:          "2026-06-12T10:00:00Z",
-		RunEnd:            "2026-06-12T10:01:30Z",
-		DurationSeconds:   90.0,
-		DurationMinutes:   1.5,
-		TotalRequests:     20,
-		Successful:        19,
-		Failed:            1,
-		SuccessRatePct:    95.0,
-		TotalInputTokens:  10240,
-		TotalOutputTokens: 2560,
+		Model:         "meta-llama/Llama-3.1-8B-Instruct",
+		BaseURL:       "http://10.0.10.100",
+		Endpoint:      "/v1/chat/completions",
+		AiperfVersion: "0.10.0",
+		SchemaVersion: "1.3",
+		BenchmarkID:   "f43cfc1c6cce",
+		StartTime:     "2026-06-12T10:00:00Z",
+		EndTime:       "2026-06-12T10:01:30Z",
+		WasCancelled:  false,
+		ErrorSummary:  []any{},
+
+		TotalRequests:   20,
+		Successful:      19,
+		Failed:          1,
+		DurationSeconds: 90.0,
+		DurationMinutes: 1.5,
+
+		RequestThroughput:     0.22,
+		OutputTokenThroughput: 28.4,
+
+		RequestLatency: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  500.0,
+			P50:  450.0,
+			P90:  980.0,
+			P99:  1200.0,
+			Min:  100.0,
+			Max:  1500.0,
+		},
+		TTFT: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  120.0,
+			P50:  110.0,
+			P90:  200.0,
+			P99:  250.0,
+		},
+		ITL: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  30.0,
+			P50:  30.0,
+			P90:  50.0,
+			P99:  60.0,
+		},
+
 		AvgInputTokens:    512.0,
 		AvgOutputTokens:   128.0,
-		Latency: jumphost.LatencyStats{
-			P50:  0.45,
-			P95:  0.98,
-			P99:  1.20,
-			Mean: 0.50,
-			Min:  0.10,
-			Max:  1.50,
-			TTFT: jumphost.LatencyDistribution{Mean: 0.12, P50: 0.11, P95: 0.20, P99: 0.25},
-			ITL:  jumphost.LatencyDistribution{Mean: 0.03, P50: 0.03, P95: 0.05, P99: 0.06},
-		},
-		Throughput: jumphost.ThroughputStats{
-			OverallRPS:   0.22,
-			PeakRPS:      0.30,
-			TokensPerSec: 28.4,
-		},
-		Phases: map[string]any{},
+		TotalOutputTokens: 2560.0,
 	}
 }
 
@@ -102,43 +118,64 @@ func TestMapAiperfResultToPayload_MetricFields(t *testing.T) {
 	if payload.SuccessRatePct != 95.0 {
 		t.Errorf("SuccessRatePct = %v, want 95.0", payload.SuccessRatePct)
 	}
-	if payload.TotalInputTokens != 10240 {
-		t.Errorf("TotalInputTokens = %d, want 10240", payload.TotalInputTokens)
-	}
-	if payload.TotalOutputTokens != 2560 {
-		t.Errorf("TotalOutputTokens = %d, want 2560", payload.TotalOutputTokens)
-	}
 	if payload.DurationSeconds != 90.0 {
 		t.Errorf("DurationSeconds = %v, want 90.0", payload.DurationSeconds)
+	}
+	// total_input_tokens derived from avg * count
+	if payload.TotalInputTokens != 10240 {
+		t.Errorf("TotalInputTokens = %d, want 10240 (512*20)", payload.TotalInputTokens)
+	}
+	// total_output_tokens from TotalOutputTokens field
+	if payload.TotalOutputTokens != 2560 {
+		t.Errorf("TotalOutputTokens = %d, want 2560", payload.TotalOutputTokens)
 	}
 }
 
 func TestMapAiperfResultToPayload_LatencyMap(t *testing.T) {
-	payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
+	result := sampleAiperfResult()
+	payload := forge.MapAiperfResultToPayload(result, forge.BenchmarkPushOptions{})
 
-	if p50, ok := payload.Latency["p50"].(float64); !ok || p50 != 0.45 {
-		t.Errorf("Latency[p50] = %v, want 0.45", payload.Latency["p50"])
+	// Latency values must be in SECONDS (aiperf ms / 1000) per forge contract.
+	wantP50 := result.RequestLatency.P50 / 1000.0 // 0.45
+	if p50, ok := payload.Latency["p50"].(float64); !ok || p50 != wantP50 {
+		t.Errorf("Latency[p50] = %v, want %v (seconds)", payload.Latency["p50"], wantP50)
 	}
-	if p99, ok := payload.Latency["p99"].(float64); !ok || p99 != 1.20 {
-		t.Errorf("Latency[p99] = %v, want 1.20", payload.Latency["p99"])
+	wantP99 := result.RequestLatency.P99 / 1000.0 // 1.2
+	if p99, ok := payload.Latency["p99"].(float64); !ok || p99 != wantP99 {
+		t.Errorf("Latency[p99] = %v, want %v (seconds)", payload.Latency["p99"], wantP99)
 	}
-	ttft, ok := payload.Latency["ttft"].(map[string]any)
-	if !ok {
-		t.Fatal("Latency[ttft] is not a map")
+	wantAvg := result.RequestLatency.Avg / 1000.0 // 0.5
+	if avg, ok := payload.Latency["avg"].(float64); !ok || avg != wantAvg {
+		t.Errorf("Latency[avg] = %v, want %v (seconds)", payload.Latency["avg"], wantAvg)
 	}
-	if mean, ok := ttft["mean"].(float64); !ok || mean != 0.12 {
-		t.Errorf("Latency.ttft.mean = %v, want 0.12", ttft["mean"])
+
+	// ttft and itl must NOT be nested under latency anymore — they live in aiperf_metrics.
+	if _, ok := payload.Latency["ttft"]; ok {
+		t.Error("Latency[ttft] must not be present; ttft belongs in aiperf_metrics")
+	}
+	if _, ok := payload.Latency["itl"]; ok {
+		t.Error("Latency[itl] must not be present; itl belongs in aiperf_metrics")
 	}
 }
 
 func TestMapAiperfResultToPayload_ThroughputMap(t *testing.T) {
-	payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
+	result := sampleAiperfResult()
+	payload := forge.MapAiperfResultToPayload(result, forge.BenchmarkPushOptions{})
 
-	if rps, ok := payload.Throughput["overall_rps"].(float64); !ok || rps != 0.22 {
-		t.Errorf("Throughput[overall_rps] = %v, want 0.22", payload.Throughput["overall_rps"])
+	if rps, ok := payload.Throughput["overall_rps"].(float64); !ok || rps != result.RequestThroughput {
+		t.Errorf("Throughput[overall_rps] = %v, want %v", payload.Throughput["overall_rps"], result.RequestThroughput)
 	}
-	if tps, ok := payload.Throughput["tokens_per_sec"].(float64); !ok || tps != 28.4 {
-		t.Errorf("Throughput[tokens_per_sec] = %v, want 28.4", payload.Throughput["tokens_per_sec"])
+	// peak_rps mirrors overall_rps (aiperf has no separate peak).
+	if peak, ok := payload.Throughput["peak_rps"].(float64); !ok || peak != result.RequestThroughput {
+		t.Errorf("Throughput[peak_rps] = %v, want %v", payload.Throughput["peak_rps"], result.RequestThroughput)
+	}
+	// gen_tokens_per_sec is the key forge denormalizes to tokens_per_sec column.
+	if tps, ok := payload.Throughput["gen_tokens_per_sec"].(float64); !ok || tps != result.OutputTokenThroughput {
+		t.Errorf("Throughput[gen_tokens_per_sec] = %v, want %v", payload.Throughput["gen_tokens_per_sec"], result.OutputTokenThroughput)
+	}
+	// backward-compat alias.
+	if tps, ok := payload.Throughput["tokens_per_sec"].(float64); !ok || tps != result.OutputTokenThroughput {
+		t.Errorf("Throughput[tokens_per_sec] = %v, want %v", payload.Throughput["tokens_per_sec"], result.OutputTokenThroughput)
 	}
 }
 
@@ -155,6 +192,113 @@ func TestMapAiperfResultToPayload_AgentFields(t *testing.T) {
 	if payload.AgentHostname == nil || *payload.AgentHostname != "10.0.11.50" {
 		t.Errorf("AgentHostname = %v, want %q", payload.AgentHostname, "10.0.11.50")
 	}
+}
+
+func TestMapAiperfResultToPayload_AiperfMetrics(t *testing.T) {
+	result := sampleAiperfResult()
+	payload := forge.MapAiperfResultToPayload(result, forge.BenchmarkPushOptions{})
+
+	am := payload.AiperfMetrics
+	if am == nil {
+		t.Fatal("AiperfMetrics must not be nil")
+	}
+
+	// ttft — raw ms values, not divided.
+	ttft, ok := am["ttft"].(map[string]any)
+	if !ok {
+		t.Fatal("aiperf_metrics[ttft] is not a map")
+	}
+	if avg, ok := ttft["avg"].(float64); !ok || avg != result.TTFT.Avg {
+		t.Errorf("aiperf_metrics.ttft.avg = %v, want %v", ttft["avg"], result.TTFT.Avg)
+	}
+	if p50, ok := ttft["p50"].(float64); !ok || p50 != result.TTFT.P50 {
+		t.Errorf("aiperf_metrics.ttft.p50 = %v, want %v", ttft["p50"], result.TTFT.P50)
+	}
+	if p99, ok := ttft["p99"].(float64); !ok || p99 != result.TTFT.P99 {
+		t.Errorf("aiperf_metrics.ttft.p99 = %v, want %v", ttft["p99"], result.TTFT.P99)
+	}
+
+	// itl — raw ms values.
+	itl, ok := am["itl"].(map[string]any)
+	if !ok {
+		t.Fatal("aiperf_metrics[itl] is not a map")
+	}
+	if avg, ok := itl["avg"].(float64); !ok || avg != result.ITL.Avg {
+		t.Errorf("aiperf_metrics.itl.avg = %v, want %v", itl["avg"], result.ITL.Avg)
+	}
+
+	// osl — scalar from AvgOutputTokens.
+	osl, ok := am["osl"].(map[string]any)
+	if !ok {
+		t.Fatal("aiperf_metrics[osl] is not a map")
+	}
+	if avg, ok := osl["avg"].(float64); !ok || avg != result.AvgOutputTokens {
+		t.Errorf("aiperf_metrics.osl.avg = %v, want %v", osl["avg"], result.AvgOutputTokens)
+	}
+
+	// isl — scalar from AvgInputTokens.
+	isl, ok := am["isl"].(map[string]any)
+	if !ok {
+		t.Fatal("aiperf_metrics[isl] is not a map")
+	}
+	if avg, ok := isl["avg"].(float64); !ok || avg != result.AvgInputTokens {
+		t.Errorf("aiperf_metrics.isl.avg = %v, want %v", isl["avg"], result.AvgInputTokens)
+	}
+}
+
+func TestMapAiperfResultToPayload_LinkageFields(t *testing.T) {
+	t.Run("config_id present when non-zero", func(t *testing.T) {
+		opts := forge.BenchmarkPushOptions{ConfigID: 99}
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), opts)
+		if payload.ConfigID == nil || *payload.ConfigID != 99 {
+			t.Errorf("ConfigID = %v, want pointer to 99", payload.ConfigID)
+		}
+	})
+	t.Run("config_id absent when zero", func(t *testing.T) {
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
+		if payload.ConfigID != nil {
+			t.Errorf("ConfigID = %v, want nil when opts.ConfigID == 0", payload.ConfigID)
+		}
+	})
+	t.Run("target_id present when non-zero", func(t *testing.T) {
+		opts := forge.BenchmarkPushOptions{TargetID: 7}
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), opts)
+		if payload.TargetID == nil || *payload.TargetID != 7 {
+			t.Errorf("TargetID = %v, want pointer to 7", payload.TargetID)
+		}
+	})
+	t.Run("target_id absent when zero", func(t *testing.T) {
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
+		if payload.TargetID != nil {
+			t.Errorf("TargetID = %v, want nil when opts.TargetID == 0", payload.TargetID)
+		}
+	})
+}
+
+func TestMapAiperfResultToPayload_LinkageJSON(t *testing.T) {
+	// Verify JSON serialization: config_id key present only when non-zero.
+	t.Run("config_id in JSON when set", func(t *testing.T) {
+		opts := forge.BenchmarkPushOptions{ConfigID: 42}
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), opts)
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if v, ok := m["config_id"].(float64); !ok || int(v) != 42 {
+			t.Errorf("JSON config_id = %v, want 42", m["config_id"])
+		}
+	})
+	t.Run("config_id absent from JSON when zero", func(t *testing.T) {
+		payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
+		b, _ := json.Marshal(payload)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if _, ok := m["config_id"]; ok {
+			t.Error("config_id must be absent from JSON when opts.ConfigID == 0")
+		}
+	})
 }
 
 func TestMapAiperfResultToPayload_NilResultIDGeneratesDefault(t *testing.T) {

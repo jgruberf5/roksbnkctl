@@ -346,6 +346,41 @@ func TestRunDemoCleanDown_SafeWithZeroUseCases(t *testing.T) {
 	}
 }
 
+// TestRegisterWithForgePostApply_RejectsEmptyName verifies that
+// registerWithForgePostApply returns an error when the intent has no cluster
+// name — i.e. it reads the name from cl.Metadata.Name rather than from a
+// workspace config. This is a lightweight guard for the bug where the legacy
+// workspace config name ("bnk-demo") was used instead of the intent's
+// metadata.name. Full AWS/forge integration isn't unit-testable without a
+// larger seam refactor, so we assert the early-exit path on bad input.
+func TestRegisterWithForgePostApply_RejectsEmptyName(t *testing.T) {
+	cl := &intent.Cluster{
+		Metadata: intent.Metadata{Name: "", Region: "ap-southeast-2"},
+	}
+	err := registerWithForgePostApply(context.Background(), cl)
+	if err == nil {
+		t.Fatal("registerWithForgePostApply with empty cluster name should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), "metadata.name") {
+		t.Errorf("error should mention metadata.name; got %q", err.Error())
+	}
+}
+
+// TestRegisterWithForgePostApply_RejectsEmptyRegion verifies the same early-exit
+// path for a missing region — also sourced from cl.Metadata.Region.
+func TestRegisterWithForgePostApply_RejectsEmptyRegion(t *testing.T) {
+	cl := &intent.Cluster{
+		Metadata: intent.Metadata{Name: "prod-cluster", Region: ""},
+	}
+	err := registerWithForgePostApply(context.Background(), cl)
+	if err == nil {
+		t.Fatal("registerWithForgePostApply with empty region should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), "metadata.region") {
+		t.Errorf("error should mention metadata.region; got %q", err.Error())
+	}
+}
+
 // TestConfirmDestroy guards the destroy confirmation gate: only an explicit
 // "destroy" line proceeds. Crucially, a closed/empty stdin (EOF — e.g.
 // `awsbnkctl down </dev/null` or a CI pipe) must ABORT, not fall through to a
