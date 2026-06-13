@@ -149,6 +149,12 @@ type Cluster struct {
 	// Admin password: NEVER stored in cluster.yaml. Supply via the
 	// AWSBNKCTL_BIGIP_PASSWORD environment variable at provisioning time.
 	BigIPVE *BigIPVESpec `yaml:"bigipVE,omitempty"`
+	// AI declares the opt-in AI inference block (PRD-11 M4+). When present and
+	// ai.sagemaker.enabled is true, awsbnkctl creates a disposable SageMaker LMI
+	// (v15 / vLLM) endpoint on up and deletes it on down so no AI infra bills
+	// between sessions. Omitting the block (or setting enabled: false) is the
+	// default — all existing cluster.yaml files are unaffected.
+	AI *AISpec `yaml:"ai,omitempty"`
 }
 
 // EndpointAccessSpec controls who can reach the EKS control-plane API endpoint.
@@ -208,6 +214,14 @@ type NodeGroupSpec struct {
 	// zones (e.g. ["ap-southeast-2a","ap-southeast-2c"] for g5). Empty = all
 	// public-subnet AZs. Independent of the BNK data-path AZ pin.
 	AZs []string `yaml:"azs,omitempty"`
+	// OnDemandFallback enables an automatic spot→on-demand retry sweep when
+	// capacityType is "spot" and ALL candidate AZs have exhausted spot capacity.
+	// Default false — no fallback means phase10 fails fast with a clear aggregated
+	// error listing every (AZ, spot) attempt, rather than silently switching
+	// purchasing options and incurring higher cost. Set true only when continuous
+	// availability is more important than cost predictability.
+	// Only meaningful for GPU node groups with capacityType: spot.
+	OnDemandFallback bool `yaml:"onDemandFallback,omitempty"`
 }
 
 // IsGPU reports whether this node group is an NVIDIA GPU inference node group.
@@ -776,6 +790,11 @@ func applyDefaults(c *Cluster) {
 		// Version intentionally left empty by default (newest AMI).
 	}
 
+	// ai.sagemaker defaults.
+	if c.AI != nil && c.AI.SageMaker != nil {
+		applySageMakerDefaults(c.AI.SageMaker)
+	}
+
 	// BNK patterns: auto-derive TMM SelfIPs as <subnet>.240 when not explicitly
 	// set. Matches aws-gpu-setup vars.env (TMM_EXT_SELFIP=10.0.10.240,
 	// TMM_INT_SELFIP=10.0.20.240). Per F5 Multi-AZ PDF p.9 these SelfIPs MUST be
@@ -878,6 +897,11 @@ func validate(c *Cluster) error {
 			return err
 		}
 	}
+	if c.AI != nil && c.AI.SageMaker != nil && c.AI.SageMaker.Enabled {
+		if err := validateSageMaker(c.AI.SageMaker); err != nil {
+			return err
+		}
+	}
 	if err := validateNodeGroups(c); err != nil {
 		return err
 	}
@@ -902,10 +926,21 @@ func validateNodeGroups(c *Cluster) error {
 		return nil
 	}
 
-	// Build the deny table: env override > static table.
+	// Build the deny table: env entries MERGE into the static table so a
+	// US-region override doesn't silently drop ap-southeast-2→2b and vice versa.
+	// Env entries add to / extend per-region lists; a region absent from env
+	// keeps its static deny entries (F2 fix).
 	denyTable := gpuInstanceAZDeny
 	if envVal := os.Getenv("AWSBNKCTL_GPU_AZ_DENY"); envVal != "" {
-		denyTable = parseGPUAZDenyEnv(envVal)
+		envTable := parseGPUAZDenyEnv(envVal)
+		merged := make(map[string][]string, len(gpuInstanceAZDeny)+len(envTable))
+		for r, azs := range gpuInstanceAZDeny {
+			merged[r] = append(merged[r], azs...)
+		}
+		for r, azs := range envTable {
+			merged[r] = append(merged[r], azs...)
+		}
+		denyTable = merged
 	}
 
 	// Build the cluster AZ set for membership checks.

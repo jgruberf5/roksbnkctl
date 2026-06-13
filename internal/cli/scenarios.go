@@ -23,6 +23,8 @@ import (
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aitokencounting"
 	// Side-effect import: registers ai-semantic-cache in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aisemanticcache"
+	// Side-effect import: registers ai-inference-e2e in init().
+	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/aiinferencee2e"
 	// Side-effect import: registers multi-vip in init().
 	_ "github.com/JLCode-tech/awsbnkctl/internal/scenarios/multivip"
 	// Side-effect import: registers egress-snat in init().

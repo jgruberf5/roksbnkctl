@@ -4,18 +4,30 @@
 // This feature is ANNOTATION-DRIVEN: there is no dedicated CR. Token
 // counting + per-user enforcement is configured entirely via the
 // `k8s.f5.com/ai-token-counting` annotation on the Gateway's
-// spec.infrastructure.annotations. Because the awsbnkctl EKS / host-device
-// cluster has no LLM backend to meter, this scenario is rated Amber: it
-// asserts the control plane only —
+// spec.infrastructure.annotations.
 //
-//   - the nginx backend becomes Available (so the HTTPRoute resolves),
-//   - the Gateway programs (Programmed=True),
-//   - the HTTPRoute is Accepted=True,
-//   - the k8s.f5.com/ai-token-counting annotation persists on the Gateway.
+// # Ratings
 //
-// It does NOT drive data-plane traffic and does NOT assert token metering /
-// rate-limit enforcement — that requires a real LLM backend the cluster
-// cannot provide.
+// The scenario has two operating modes:
+//
+//   - Amber (offline / no LLM backend): control-plane only — asserts
+//     Deployment Available, Gateway Programmed, HTTPRoute Accepted, and
+//     the annotation persists. Rating() returns Amber and no data-path
+//     probe is attempted.
+//
+//   - Green (live data-path via VerifyDeps.DataPathVerifyFn): when a
+//     real vLLM-compatible backend is reachable the caller provides a
+//     non-nil DataPathVerifyFn that drives traffic, asserts token
+//     metering + HTTP 503 on overload. Rating() still returns Amber for
+//     the registered singleton (safe default); the fn-pointer upgrades
+//     the runtime result to Green when every data-path assertion passes.
+//
+// # Why the static Rating() stays Amber
+//
+// Rating() is called before any cluster interaction (e.g. by `scenarios
+// list`). The cluster does not guarantee a real LLM backend is present,
+// so we cannot statically claim Green. The Result.Status reflects the
+// actual outcome once Verify runs.
 package aitokencounting
 
 import (
@@ -50,10 +62,31 @@ func init() { scenarios.Register(&scenario{}) }
 // VerifyDeps holds the function pointers used by Verify. The zero value routes
 // every call to the real package-level implementations. Tests swap individual
 // fields to a recording stub to assert call order without touching the cluster.
+//
+// DataPathVerifyFn is OPTIONAL (nil = offline mode):
+//
+//	When non-nil it is invoked after the control-plane assertions succeed.
+//	It must drive data-plane traffic through the VIP and return a slice of
+//	Assertion values that are appended to the result. A nil fn means the
+//	cluster cannot provide a real LLM backend and data-path checks are
+//	skipped (offline / Amber mode).
+//
+// Signature: func(ctx, sctx, vip) []scenarios.Assertion
 type VerifyDeps struct {
 	WaitDeploymentAvailableFn func(ctx context.Context, sctx *scenarios.Context, ns, name string, timeout time.Duration) error
 	WaitConditionFn           func(ctx context.Context, sctx *scenarios.Context, gvr schema.GroupVersionResource, ns, name, condType string, timeout time.Duration) error
 	WaitHTTPRouteConditionFn  func(ctx context.Context, sctx *scenarios.Context, ns, name, condType string, timeout time.Duration) error
+
+	// DataPathVerifyFn, when non-nil, runs live data-path checks against the
+	// running VIP: token-metering assertion + HTTP 503 overload probe. Returning
+	// a non-empty slice of all-OK assertions upgrades the run result to Green.
+	// When nil the scenario stays in Amber (control-plane only) mode.
+	DataPathVerifyFn func(ctx context.Context, sctx *scenarios.Context, vip string) []scenarios.Assertion
+
+	// GatewayAnnotationFn, when non-nil, overrides the default annotation
+	// read-back (which requires ctx.Dynamic). Tests inject a stub here.
+	// When nil, the real gatewayAnnotationPresent implementation is used.
+	GatewayAnnotationFn func(ctx *scenarios.Context, ns, name, key string) (bool, string)
 }
 
 func realVerifyDeps() VerifyDeps {
@@ -61,6 +94,12 @@ func realVerifyDeps() VerifyDeps {
 		WaitDeploymentAvailableFn: scenarios.WaitDeploymentAvailable,
 		WaitConditionFn:           scenarios.WaitCondition,
 		WaitHTTPRouteConditionFn:  scenarios.WaitHTTPRouteCondition,
+		// DataPathVerifyFn is intentionally nil: the awsbnkctl EKS / host-device
+		// cluster has no LLM backend. A caller that sets up a real vLLM backend
+		// (e.g. the AI-LB demo harness) should inject a concrete function here.
+		DataPathVerifyFn: nil,
+		// GatewayAnnotationFn nil → uses the real gatewayAnnotationPresent.
+		GatewayAnnotationFn: nil,
 	}
 }
 
@@ -88,16 +127,28 @@ Applies 5 templated manifests into the scenario namespace:
   annotation under spec.infrastructure.annotations), HTTPRoute
   (host=awsbnkctl-aitokens.local → nginx:80).
 
-Verify (control-plane only):
-  1. Wait nginx Deployment Available.
-  2. Wait Gateway scn-aitokens-gateway Programmed=True.
-  3. Wait HTTPRoute scn-aitokens-route Accepted=True.
-  4. Assert the Gateway still carries the k8s.f5.com/ai-token-counting
-     annotation (read-back).
+Verify — two modes:
 
-Rating Amber: enforcement/metering is NOT data-plane tested — the
-awsbnkctl EKS / host-device cluster has no LLM backend to meter. There
-is no curl probe.
+  Amber (default, no LLM backend):
+    1. Wait nginx Deployment Available.
+    2. Wait Gateway scn-aitokens-gateway Programmed=True.
+    3. Wait HTTPRoute scn-aitokens-route Accepted=True.
+    4. Assert the Gateway still carries the k8s.f5.com/ai-token-counting
+       annotation (read-back).
+
+  Green (when VerifyDeps.DataPathVerifyFn is injected — requires a real
+         vLLM-compatible backend reachable at the VIP):
+    Steps 1–4 above, then:
+    5. Drive synthetic traffic through the VIP and assert token-metering
+       response headers are present (x-token-usage or equivalent).
+    6. Drive synthetic overload and assert HTTP 503 + Retry-After is
+       returned under rate-limit enforcement.
+
+Rating() returns Amber for the registered singleton (safe static default
+for "scenarios list"). The result status reflects the actual runtime
+outcome: if all data-path assertions pass, the run result is "ok" (Green
+equivalent). See docs/demo/economics/ for fill-first/spill config and the
+503-overload demo scripts.
 
 Cleanup: delete the scenario namespace (idempotent).
 `)
@@ -153,14 +204,28 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		d = &real
 	}
 	ns := namespace(ctx)
-	res := scenarios.Result{
-		Details: "Amber: control-plane only — token metering / rate-limit enforcement is not data-plane tested (no LLM backend). No curl probe.",
-	}
 
-	// --- Control-plane assertions (no data-plane probe) ---
+	// Determine operating mode up-front so Details is accurate.
+	liveMode := d.DataPathVerifyFn != nil
+	modeDesc := "Amber: control-plane only — token metering / rate-limit enforcement is not data-plane tested (no LLM backend). No curl probe."
+	if liveMode {
+		modeDesc = "Green: control-plane + live data-path — token metering + HTTP 503 overload probe executed."
+	}
+	res := scenarios.Result{Details: modeDesc}
+
+	// --- Step 1: Control-plane assertions ---
+	// Order is load-bearing: all polled conditions must settle before any
+	// data-path probe is attempted. We track success of the three polled
+	// conditions separately (cpReady) so the annotation read-back (which
+	// requires a live Dynamic client) does not gate data-path in unit tests.
+
+	cpReady := true // set to false if any polled condition fails
 
 	// nginx Deployment Available (so the HTTPRoute can resolve its backend).
 	err := d.WaitDeploymentAvailableFn(ctx.Ctx, ctx, ns, "nginx", 3*time.Minute)
+	if err != nil {
+		cpReady = false
+	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "nginx Deployment Available",
 		OK:          err == nil,
@@ -169,6 +234,9 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 	// Gateway Programmed=True.
 	err = d.WaitConditionFn(ctx.Ctx, ctx, scenarios.GatewayGVR, ns, "scn-aitokens-gateway", "Programmed", 5*time.Minute)
+	if err != nil {
+		cpReady = false
+	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "Gateway scn-aitokens-gateway Programmed=True",
 		OK:          err == nil,
@@ -177,6 +245,9 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 	// HTTPRoute Accepted=True.
 	err = d.WaitHTTPRouteConditionFn(ctx.Ctx, ctx, ns, "scn-aitokens-route", "Accepted", 3*time.Minute)
+	if err != nil {
+		cpReady = false
+	}
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "HTTPRoute scn-aitokens-route Accepted=True",
 		OK:          err == nil,
@@ -185,19 +256,53 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 
 	// Annotation persists: read the Gateway back and confirm the
 	// k8s.f5.com/ai-token-counting annotation is present + non-empty.
-	annOK, annGot := s.gatewayAnnotationPresent(ctx, ns, "scn-aitokens-gateway", aiAnnotationKey)
+	// This assertion does NOT gate data-path; it can only be verified when
+	// ctx.Dynamic is non-nil (i.e. on a real cluster).
+	annotationFn := d.GatewayAnnotationFn
+	if annotationFn == nil {
+		annotationFn = s.gatewayAnnotationPresent
+	}
+	annOK, annGot := annotationFn(ctx, ns, "scn-aitokens-gateway", aiAnnotationKey)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "Gateway retains k8s.f5.com/ai-token-counting annotation",
 		OK:          annOK,
 		Got:         annGot,
 	})
 
+	// --- Step 2: Live data-path assertions (conditional) ---
+	// Only executed when DataPathVerifyFn is non-nil (i.e. a real vLLM-
+	// compatible backend is reachable at the VIP). The fn drives synthetic
+	// traffic, asserts token metering via response headers, and probes for
+	// HTTP 503 under overload. When the fn is nil we skip silently (Amber).
+	//
+	// Gate: the three polled control-plane conditions must have passed so
+	// traffic can reach the VIP. The annotation assertion does NOT gate this
+	// step — it can fail in unit tests where ctx.Dynamic is nil.
+	if liveMode && cpReady {
+		vip, _, _, probeErr := scenarios.BuildProbeParams(ctx)
+		if probeErr != nil {
+			res.Assertions = append(res.Assertions, scenarios.Assertion{
+				Description: "data-path probe setup",
+				OK:          false,
+				Got:         probeErr.Error(),
+			})
+		} else {
+			dpAssertions := d.DataPathVerifyFn(ctx.Ctx, ctx, vip)
+			res.Assertions = append(res.Assertions, dpAssertions...)
+		}
+	}
+
 	return scenarios.FinalizeResult(res)
 }
 
 // gatewayAnnotationPresent reads the Gateway via the dynamic client and reports
 // whether spec.infrastructure.annotations[key] exists and is non-empty.
+// Returns (false, "skipped: no dynamic client") when ctx.Dynamic is nil so
+// tests that stub out Kubernetes clients can call Verify without panicking.
 func (s *scenario) gatewayAnnotationPresent(ctx *scenarios.Context, ns, name, key string) (bool, string) {
+	if ctx.Dynamic == nil {
+		return false, "skipped: no dynamic client (unit-test mode)"
+	}
 	obj, err := ctx.Dynamic.Resource(scenarios.GatewayGVR).Namespace(ns).Get(ctx.Ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false, scenarios.ErrString(err)

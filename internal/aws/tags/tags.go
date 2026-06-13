@@ -68,6 +68,10 @@ const (
 	CompBigIPExtENI   = "bigip-ve-eni-ext"
 	CompBigIPIntENI   = "bigip-ve-eni-int"
 	CompBigIPMgmtSG   = "bigip-ve-sg-mgmt"
+
+	// SageMaker component constants (PRD-11 M4).
+	CompSageMakerEndpoint = "sagemaker-lmi-endpoint"
+	CompSageMakerExecRole = "sagemaker-execution-role"
 )
 
 // Required returns the four mandatory awsbnkctl tags for a resource.

@@ -1,0 +1,10 @@
+# gitleaks ignore list — reviewed false positives (fingerprint = commit:file:rule:line).
+# CI's security-audit scans the PR commit range, so a finding persists in the commit
+# that introduced it even after the working tree is fixed; ignore by fingerprint.
+#
+# A scenario.go doc comment tripped the generic-api-key rule on a public model name
+# (reworded in a later commit; not a credential).
+f76d8f0ba3553785cc730e84af96322dd449c5cb:internal/scenarios/aiinferencee2e/scenario.go:generic-api-key:9
+# Second fingerprint: an earlier revision of THIS file quoted that phrase in a comment,
+# so the same pattern is flagged in that commit's diff. Pure-fingerprint line, no trigger.
+d46c6e922bbd91401cc7ba70d932990c64ebb5ae:.gitleaksignore:generic-api-key:5
