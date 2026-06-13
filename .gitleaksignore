@@ -1,9 +1,7 @@
 # gitleaks ignore list — reviewed false positives (fingerprint = commit:file:rule:line).
-# CI's security-audit scans the PR commit range, so a finding stays flagged in the
-# commit that introduced it even after the working tree is fixed; ignore by fingerprint.
+# CI's security-audit scans the PR commit range, so a finding persists in the commit
+# that introduced it even after the working tree is fixed; ignore by fingerprint.
 #
-# scenario.go doc comment "HuggingFace auth: Llama-3-8B-Instruct is a gated model" —
-# the generic-api-key rule matched the model name after the "auth:" keyword. The current
-# tree was reworded (commit 66a7bbb) to drop "auth:", but the original wording persists in
-# commit f76d8f0's diff. Not a credential.
+# A scenario.go doc comment tripped the generic-api-key rule on a public model name
+# (reworded in a later commit; not a credential).
 f76d8f0ba3553785cc730e84af96322dd449c5cb:internal/scenarios/aiinferencee2e/scenario.go:generic-api-key:9
