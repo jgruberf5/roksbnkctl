@@ -54,6 +54,16 @@ const (
 	// so genuine errors still fail fast.
 	applyMaxAttempts = 5
 	applyRetryWait   = 90 * time.Second
+
+	// Teardown budget. terraform destroy is idempotent — a resource already
+	// gone is refreshed out of state on the next run — so when a destroy aborts
+	// on a transient IBM provider delete-race (e.g. "Public Gateway not found"
+	// because terraform's own parallel destroy removed it first), retrying lets
+	// one `down` finish tearing down the resources it hadn't reached yet,
+	// instead of leaking them. Shorter wait than apply: nothing needs to settle,
+	// we just need terraform to re-refresh and continue.
+	destroyMaxAttempts = 4
+	destroyRetryWait   = 30 * time.Second
 )
 
 // LifecycleInputs is the resolved-invocation context the cobra adapter
@@ -469,7 +479,10 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	if !pres.Any() {
+	// ClusterResidual covers a workspace whose cluster resource is already gone
+	// but whose network (VPC/TGW) lingers from a partially-failed teardown —
+	// `down` must still resume and finish it, not report "nothing to destroy".
+	if !pres.Any() && !pres.ClusterResidual {
 		return errors.New("nothing to destroy in this workspace")
 	}
 	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
@@ -489,7 +502,7 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if pres.Testing {
 		phases = append(phases, "testing jumphosts")
 	}
-	if pres.Cluster {
+	if pres.Cluster || pres.ClusterResidual {
 		phases = append(phases, "cluster (ROKS + transit gateway + registry COS)")
 	}
 	if !in.Auto {
@@ -526,7 +539,7 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 		}
 	}
 
-	if pres.Cluster {
+	if pres.Cluster || pres.ClusterResidual {
 		return in.RunClusterDown(ctx)
 	}
 	return nil
@@ -583,7 +596,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy")
-	return tfws.Destroy(ctx, varFiles...)
+	return destroyWithRetry(ctx, tfws, varFiles)
 }
 
 // ── exported helper seams (consumed by the cli cluster-phase adapter) ─
@@ -606,6 +619,13 @@ func WriteAndInit(ctx context.Context, tfws *tf.Workspace, ws *config.Workspace)
 // adapter. Behavior identical to the pre-move package-private helper.
 func ApplyWithRetry(ctx context.Context, tfws *tf.Workspace, varFiles []string) error {
 	return applyWithRetry(ctx, tfws, varFiles)
+}
+
+// DestroyWithRetry is the exported seam over destroyWithRetry (bounded
+// transient-failure retry around tfws.Destroy) for the cli cluster-phase
+// adapter's `cluster down`.
+func DestroyWithRetry(ctx context.Context, tfws *tf.Workspace, varFiles []string) error {
+	return destroyWithRetry(ctx, tfws, varFiles)
 }
 
 // TryAutoKubeconfig is the exported seam over tryAutoKubeconfig (the
@@ -984,6 +1004,67 @@ func applyWithRetry(ctx context.Context, tfws *tf.Workspace, varFiles []string) 
 		}
 	}
 	return err
+}
+
+// destroyWithRetry wraps tfws.Destroy with bounded retries on transient
+// failures — the shared looksTransient patterns PLUS the teardown-specific
+// provider delete-races in looksTransientDestroy. Safe because destroy is
+// idempotent: a resource already deleted is refreshed out of state on the
+// next attempt, so the retry RESUMES the teardown from where the partial
+// destroy stopped (e.g. continues on to the VPC after a public gateway that
+// vanished mid-destroy) rather than leaking the un-reached resources.
+func destroyWithRetry(ctx context.Context, tfws *tf.Workspace, varFiles []string) error {
+	var err error
+	for attempt := 1; attempt <= destroyMaxAttempts; attempt++ {
+		err = tfws.Destroy(ctx, varFiles...)
+		if err == nil {
+			return nil
+		}
+		if !looksTransient(err) && !looksTransientDestroy(err) {
+			return err
+		}
+		if attempt == destroyMaxAttempts {
+			fmt.Fprintf(os.Stderr, "\n✗ destroy still failing after %d attempts — giving up\n", destroyMaxAttempts)
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\n→ destroy attempt %d hit a transient-looking failure; waiting %s and retrying...\n",
+			attempt, destroyRetryWait)
+		select {
+		case <-time.After(destroyRetryWait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
+}
+
+// looksTransientDestroy adds teardown-specific retryable patterns on top of
+// looksTransient. The IBM provider surfaces a delete operation whose target is
+// ALREADY gone (typically because terraform's own parallel destroy removed it
+// first, or eventual-consistency lag) as "<Operation>WithContext failed: …
+// not found". On retry, terraform refreshes the missing resource out of state
+// and proceeds — so for DESTROY (never apply) these are safe to retry. The
+// "WithContext failed" + "not found" pairing keeps this narrow to real IBM
+// provider operation races, not arbitrary "not found" text.
+func looksTransientDestroy(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	if strings.Contains(s, "WithContext failed") && strings.Contains(s, "not found") {
+		return true
+	}
+	for _, pat := range []string{
+		"Public Gateway not found",
+		"Cannot delete VPC",        // children still detaching — settles on retry
+		"is still attached",        // subnet/gateway attachment lingering
+		"please retry the request", // generic IBM throttle/eventual-consistency hint
+	} {
+		if strings.Contains(s, pat) {
+			return true
+		}
+	}
+	return false
 }
 
 // terraformBackendSpec resolves the execution backend for terraform.

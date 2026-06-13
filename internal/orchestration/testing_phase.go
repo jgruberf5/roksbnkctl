@@ -222,7 +222,7 @@ func runTestingDown(ctx context.Context, in *LifecycleInputs, out *prefixWriter)
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy (testing phase)")
-	return tfws.Destroy(ctx, varFiles...)
+	return destroyWithRetry(ctx, tfws, varFiles)
 }
 
 // ── concurrent-stderr plumbing (architect §3b) ──────────────────────────
