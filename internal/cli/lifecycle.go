@@ -15,7 +15,6 @@ import (
 	awspkg "github.com/JLCode-tech/awsbnkctl/internal/aws"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/phases"
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/state"
-	"github.com/JLCode-tech/awsbnkctl/internal/config"
 	"github.com/JLCode-tech/awsbnkctl/internal/demo"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
@@ -175,31 +174,32 @@ func runUp(cmd *cobra.Command, _ []string) error {
 // register` — used by `awsbnkctl up --register-with-forge`. Pulled out
 // of runUp so the dry-run / live-apply branching stays readable, and
 // so it can be unit-tested independently of the lifecycle path.
-func registerWithForgePostApply(ctx context.Context) error {
-	cctx, err := requireWorkspace()
-	if err != nil {
-		return fmt.Errorf("forge register after apply: %w", err)
+//
+// cl is the already-loaded cluster intent (from runPhasedUp). Name and
+// region are taken directly from cl.Metadata so the correct cluster (the
+// one that was just provisioned) is registered — NOT the legacy workspace
+// config name which defaults to "bnk-demo" regardless of --config.
+func registerWithForgePostApply(ctx context.Context, cl *intent.Cluster) error {
+	clusterName := cl.Metadata.Name
+	if clusterName == "" {
+		return fmt.Errorf("forge register after apply: cluster metadata.name is empty")
 	}
-	wsDir, err := config.WorkspaceDir(cctx.WorkspaceName)
-	if err != nil {
-		return fmt.Errorf("forge register after apply: resolving workspace dir: %w", err)
+	region := cl.Metadata.Region
+	if region == "" {
+		return fmt.Errorf("forge register after apply: cluster metadata.region is empty")
 	}
 
-	clusterName := cctx.Workspace.Cluster.Name
-	if clusterName == "" {
-		return fmt.Errorf("forge register after apply: workspace cluster.name is empty")
-	}
-	region := cctx.Workspace.AWS.Region
-	if region == "" {
-		return fmt.Errorf("forge register after apply: workspace AWS.region is empty")
-	}
+	// linkDir: store forge_link.json alongside the rest of the cluster state
+	// (same directory resolveForgeTarget uses in intent mode).
+	linkDir := cl.StateDir()
 
 	// Generate the kubeconfig in-process via the EKS presigned-URL
 	// flow. Matches what `awsbnkctl forge register` does without a
-	// --kubeconfig override.
+	// --kubeconfig override. AWS_PROFILE from the environment is used
+	// (no workspace profile field to consult — the intent doesn't carry one).
 	clients, err := awspkg.NewClients(ctx, awspkg.Options{
 		Region:  region,
-		Profile: cctx.Workspace.AWS.Profile,
+		Profile: os.Getenv("AWS_PROFILE"),
 	})
 	if err != nil {
 		return fmt.Errorf("forge register after apply: aws clients: %w", err)
@@ -213,7 +213,13 @@ func registerWithForgePostApply(ctx context.Context) error {
 		return fmt.Errorf("forge register after apply: generate kubeconfig: %w", err)
 	}
 
-	fc := forge.NewClient("")
+	// Pick up the MCP URL from the intent if configured.
+	mcpURL := ""
+	if cl.Forge != nil && cl.Forge.MCPURL != "" {
+		mcpURL = cl.Forge.MCPURL
+	}
+
+	fc := forge.NewClient(mcpURL)
 	if !flagQuiet {
 		fmt.Fprintf(os.Stderr, "→ forge MCP: %s\n", fc.URL())
 	}
@@ -221,8 +227,8 @@ func registerWithForgePostApply(ctx context.Context) error {
 	regCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	res, err := forge.Register(regCtx, fc, forge.RegisterRequest{
-		WorkspaceName: cctx.WorkspaceName,
-		WorkspaceDir:  wsDir,
+		WorkspaceName: clusterName,
+		WorkspaceDir:  linkDir,
 		ClusterName:   clusterName,
 		Region:        region,
 		Kubeconfig:    []byte(yaml),
@@ -630,7 +636,7 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	// Dry-run skips because forge.Register needs a real EKS cluster to
 	// describe + generate a kubeconfig for — and there isn't one yet.
 	if flagRegisterWithForge && !dryRun {
-		return registerWithForgePostApply(ctx)
+		return registerWithForgePostApply(ctx, cl)
 	}
 	return nil
 }

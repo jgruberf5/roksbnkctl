@@ -314,3 +314,48 @@ func TestRunAiperf_BackfillsIdentityFromConfig(t *testing.T) {
 		t.Errorf("Endpoint = %q, want %q (backfill)", result.Endpoint, "/v1/chat/completions")
 	}
 }
+
+// TestEnsureAiperf_UsesPython3MPip verifies that the install command sent to
+// the jumphost uses "python3 -m pip install" and NOT a bare "pip install".
+// AL2023 has no standalone pip/pip3 binary on PATH — only python3 -m pip.
+func TestEnsureAiperf_UsesPython3MPip(t *testing.T) {
+	var capturedCmd string
+
+	origPrepare := *jumphost.PrepareEICEKeyFn
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		return "/fake/key", "/fake/key.pub", func() {}, nil
+	}
+	defer func() { *jumphost.PrepareEICEKeyFn = origPrepare }()
+
+	origPush := *jumphost.PushSSHPublicKeyFn
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, _ string) error { return nil }
+	defer func() { *jumphost.PushSSHPublicKeyFn = origPush }()
+
+	origExec := *jumphost.AiperfSSHExecFn
+	*jumphost.AiperfSSHExecFn = func(_ context.Context, _, _, _, cmd string) (string, error) {
+		capturedCmd = cmd
+		return "ok", nil
+	}
+	defer func() { *jumphost.AiperfSSHExecFn = origExec }()
+
+	err := jumphost.EnsureAiperf(context.Background(), jumphost.ProbeOptions{
+		Region:     "ap-southeast-2",
+		InstanceID: "i-0abc123",
+	})
+	if err != nil {
+		t.Fatalf("EnsureAiperf: unexpected error: %v", err)
+	}
+
+	// Must use python3 -m pip, not a bare pip.
+	if !strings.Contains(capturedCmd, "python3 -m pip install") {
+		t.Errorf("EnsureAiperf command must contain %q; got: %q", "python3 -m pip install", capturedCmd)
+	}
+	// Must NOT contain a bare "|| pip install" (the old AL2023-broken form).
+	if strings.Contains(capturedCmd, "|| pip install") {
+		t.Errorf("EnsureAiperf command must NOT contain bare %q; got: %q", "|| pip install", capturedCmd)
+	}
+	// Must bootstrap pip via ensurepip.
+	if !strings.Contains(capturedCmd, "python3 -m ensurepip") {
+		t.Errorf("EnsureAiperf command must contain %q; got: %q", "python3 -m ensurepip", capturedCmd)
+	}
+}

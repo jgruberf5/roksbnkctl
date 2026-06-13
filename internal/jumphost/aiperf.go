@@ -9,7 +9,7 @@ import (
 )
 
 // AiperfConfig holds the parameters for a single aiperf benchmark run.
-// aiperf is assumed to be pre-installed on the jumphost (pip install aiperf).
+// aiperf is assumed to be pre-installed on the jumphost (python3 -m pip install aiperf).
 // All fields except Model and VIP have sensible defaults.
 type AiperfConfig struct {
 	// Model is the LLM model name (e.g. "meta-llama/Llama-3.1-8B-Instruct").
@@ -124,7 +124,7 @@ type AiperfRunOptions struct {
 // jumphost and emits JSON to stdout. The VIP is taken from opts.ProbeOptions.VIP
 // and combined with cfg.EndpointPath to form the full base_url.
 //
-// aiperf prereq: the jumphost must have aiperf installed (pip install aiperf).
+// aiperf prereq: the jumphost must have aiperf installed (python3 -m pip install aiperf).
 // Install is NOT performed here — see RunAiperf docstring.
 func buildAiperfCmd(opts AiperfRunOptions) string {
 	cfg := opts.Config
@@ -182,7 +182,7 @@ func buildAiperfCmd(opts AiperfRunOptions) string {
 //
 // Prerequisites on the jumphost:
 //
-//	pip install aiperf
+//	python3 -m pip install aiperf
 //
 // The operator must install aiperf before calling RunAiperf — this function
 // does NOT install it (install is ~5 s; the caller decides when to do it).
@@ -254,7 +254,7 @@ func EnsureAiperf(ctx context.Context, probOpts ProbeOptions) error {
 
 	_ = pushSSHPublicKeyFn(ctx, probOpts.Region, probOpts.InstanceID, pubKeyPath)
 
-	checkCmd := "aiperf --version 2>/dev/null && echo ok || pip install --quiet aiperf && echo installed"
+	checkCmd := "aiperf --version 2>/dev/null && echo ok || (python3 -m ensurepip --upgrade >/dev/null 2>&1; python3 -m pip install --quiet aiperf && echo installed)"
 	out, err := aiperfSSHExecFn(ctx, probOpts.Region, probOpts.InstanceID, keyPath, checkCmd)
 	if err != nil {
 		return fmt.Errorf("ensure aiperf: install failed: %w (output: %s)", err, strings.TrimSpace(out))
