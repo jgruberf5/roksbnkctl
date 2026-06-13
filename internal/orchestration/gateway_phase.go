@@ -145,5 +145,5 @@ func RunGatewayDown(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy (gateway phase)")
-	return tfws.Destroy(ctx, varFiles...)
+	return destroyWithRetry(ctx, tfws, varFiles)
 }

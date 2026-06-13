@@ -216,7 +216,10 @@ should_run() {
 # ── preflight ───────────────────────────────────────────────────────
 preflight() {
     bold "preflight"
-    if [[ -z "${IBMCLOUD_API_KEY:-}" ]]; then
+    # A DRY_RUN walkthrough makes no cloud calls, so it needs no API key —
+    # don't abort when the key is absent (the shakeout dry-runs this against a
+    # rendered workspace tfvars, which deliberately omits ibmcloud_api_key).
+    if [[ "$DRY_RUN" != "1" && -z "${IBMCLOUD_API_KEY:-}" ]]; then
         local key
         key=$(grep -E '^ibmcloud_api_key' "$TFVARS" 2>/dev/null \
               | sed -E 's/.*"([^"]+)".*/\1/')

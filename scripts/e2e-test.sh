@@ -137,7 +137,10 @@ should_run() {
 # ── preflight ───────────────────────────────────────────────────────
 preflight() {
     bold "preflight"
-    if [[ -z "${IBMCLOUD_API_KEY:-}" ]]; then
+    # A DRY_RUN walkthrough makes no cloud calls, so it needs no API key —
+    # don't abort when the key is absent (the shakeout dry-runs this against a
+    # rendered workspace tfvars, which deliberately omits ibmcloud_api_key).
+    if [[ "$DRY_RUN" != "1" && -z "${IBMCLOUD_API_KEY:-}" ]]; then
         # Try to extract the key from the tfvars file. The lifecycle
         # commands also need it as TF_VAR_ibmcloud_api_key, but
         # roksbnkctl itself reads IBMCLOUD_API_KEY first.
