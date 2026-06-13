@@ -31,6 +31,11 @@ import (
 // To pin a different tag without a code change, set ai.sagemaker.imageUri in cluster.yaml.
 const lmiDefaultImageSuffix = "763104351884.dkr.ecr.%s.amazonaws.com/djl-inference:0.36.0-lmi25.0.0-cu130"
 
+// lmiServedModelName pins the LMI (DJL 0.36) served model name to "llama3" so
+// it matches the in-cluster vLLM served model id. This lets the forge benchmark
+// comparison target the same model name across both legs without configuration.
+const lmiServedModelName = "llama3"
+
 // PhaseSageMakerUp creates the SageMaker Model → EndpointConfig → Endpoint for
 // the configured LMI (vLLM) inference endpoint. Idempotent: DescribeModel /
 // DescribeEndpointConfig / DescribeEndpoint before each create; skips if
@@ -185,8 +190,9 @@ func ensureSageMakerModel(ctx context.Context, iamClient IAMAPI, sm SageMakerAPI
 	}
 
 	modelEnv := map[string]string{
-		"HF_MODEL_ID":   hfModelID,
-		"ROLLING_BATCH": "vllm",
+		"HF_MODEL_ID":              hfModelID,
+		"ROLLING_BATCH":            "vllm",
+		"OPTION_SERVED_MODEL_NAME": lmiServedModelName,
 	}
 	if hfToken != "" {
 		modelEnv["HF_TOKEN"] = hfToken
@@ -308,7 +314,17 @@ func ensureSageMakerEndpointConfig(ctx context.Context, sm SageMakerAPI, configN
 	return nil
 }
 
+// ensureSageMakerEndpoint creates or validates the named SageMaker endpoint.
+// When the endpoint is in Failed status (which can happen due to IAM trust-policy
+// propagation re-validation during async provisioning), it performs one bounded
+// auto-recovery: delete the Failed endpoint, wait for deletion, then recreate
+// from the same configName. If the endpoint is Failed again after that single
+// recovery attempt, it returns an error so a genuinely-broken config surfaces.
 func ensureSageMakerEndpoint(ctx context.Context, sm SageMakerAPI, endpointName, configName string, smTags []sagemaker_types.Tag) error {
+	return ensureSageMakerEndpointInner(ctx, sm, endpointName, configName, smTags, false)
+}
+
+func ensureSageMakerEndpointInner(ctx context.Context, sm SageMakerAPI, endpointName, configName string, smTags []sagemaker_types.Tag, recovered bool) error {
 	desc, err := sm.DescribeEndpoint(ctx, &sagemaker.DescribeEndpointInput{EndpointName: ptr(endpointName)})
 	if err == nil {
 		switch desc.EndpointStatus {
@@ -319,7 +335,26 @@ func ensureSageMakerEndpoint(ctx context.Context, sm SageMakerAPI, endpointName,
 			fmt.Fprintf(os.Stderr, "[sagemaker] endpoint %s is Creating (async, not waiting)\n", endpointName)
 			return nil
 		case sagemaker_types.EndpointStatusFailed:
-			return fmt.Errorf("endpoint %s is in Failed status — check SageMaker console", endpointName)
+			if recovered {
+				// A second Failed state after one recovery means the config itself
+				// is broken — surface the hard error rather than looping.
+				return fmt.Errorf("endpoint %s is in Failed status after auto-recovery — check SageMaker console", endpointName)
+			}
+			// First observed failure: attempt bounded delete+recreate recovery.
+			// SageMaker async provisioning re-validates the execution role trust
+			// policy; if trust hasn't propagated the endpoint lands in Failed.
+			// Deleting and recreating from the same (still-valid) endpoint-config
+			// is the proven manual recovery.
+			fmt.Fprintf(os.Stderr, "[sagemaker] endpoint %s is Failed — attempting auto-recovery (delete + recreate)\n", endpointName)
+			if _, delErr := sm.DeleteEndpoint(ctx, &sagemaker.DeleteEndpointInput{EndpointName: ptr(endpointName)}); delErr != nil {
+				return fmt.Errorf("auto-recover DeleteEndpoint %s: %w", endpointName, delErr)
+			}
+			// Wait for deletion to complete before recreating.
+			if waitErr := waitSageMakerEndpointDeleted(ctx, sm, endpointName, 3*time.Minute, 10*time.Second); waitErr != nil {
+				return fmt.Errorf("auto-recover wait-delete %s: %w", endpointName, waitErr)
+			}
+			// Fall through to create with recovered=true so a second failure hard-errors.
+			return ensureSageMakerEndpointInner(ctx, sm, endpointName, configName, smTags, true)
 		default:
 			fmt.Fprintf(os.Stderr, "[sagemaker] endpoint %s status=%s (not waiting)\n", endpointName, desc.EndpointStatus)
 			return nil
@@ -340,6 +375,27 @@ func ensureSageMakerEndpoint(ctx context.Context, sm SageMakerAPI, endpointName,
 	}
 	fmt.Fprintf(os.Stderr, "[sagemaker] endpoint %s create request sent (async creation, check console)\n", endpointName)
 	return nil
+}
+
+// waitSageMakerEndpointDeleted polls DescribeEndpoint until it returns NotFound
+// (deletion complete), up to the given timeout with the given poll interval.
+// Returns an error on timeout or context cancellation.
+func waitSageMakerEndpointDeleted(ctx context.Context, sm SageMakerAPI, endpointName string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := sm.DescribeEndpoint(ctx, &sagemaker.DescribeEndpointInput{EndpointName: ptr(endpointName)})
+		if err != nil && isSageMakerNotFound(err) {
+			return nil // deletion confirmed
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for endpoint %s to be deleted (timeout=%s)", endpointName, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
 }
 
 func deleteSageMakerEndpoint(ctx context.Context, sm SageMakerAPI, name string) error {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	sagemaker_types "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/awsmw"
@@ -469,5 +470,131 @@ func TestPhaseSageMakerUp_ExecutionRoleARNPassedToModel(t *testing.T) {
 	wantRoleName := cl.Metadata.Name + "-sagemaker-execution-role"
 	if !strings.Contains(*sm.createModelInput.ExecutionRoleArn, wantRoleName) {
 		t.Errorf("ExecutionRoleArn = %q, want it to contain %q", *sm.createModelInput.ExecutionRoleArn, wantRoleName)
+	}
+}
+
+// --- B2 tests ---
+
+// TestEnsureSageMakerModel_ServedModelName verifies that CreateModel carries
+// OPTION_SERVED_MODEL_NAME == lmiServedModelName so the LMI endpoint serves the
+// model under the same name as the in-cluster vLLM leg, enabling apples-to-apples
+// forge benchmark comparison.
+func TestEnsureSageMakerModel_ServedModelName(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := makeSageMakerCluster(false)
+	st := makeTestState(t)
+	sm := newMockSageMaker()
+	clients := makeSageMakerClients(sm, newMockIAM())
+
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("PhaseSageMakerUp: %v", err)
+	}
+
+	if sm.createModelInput == nil {
+		t.Fatal("createModelInput is nil — CreateModel was not called")
+	}
+	env := sm.createModelInput.PrimaryContainer.Environment
+	got, ok := env["OPTION_SERVED_MODEL_NAME"]
+	if !ok {
+		t.Fatal("OPTION_SERVED_MODEL_NAME not set in model environment")
+	}
+	if got != lmiServedModelName {
+		t.Errorf("OPTION_SERVED_MODEL_NAME = %q, want %q", got, lmiServedModelName)
+	}
+	if lmiServedModelName != "llama3" {
+		t.Errorf("lmiServedModelName const = %q, want \"llama3\"", lmiServedModelName)
+	}
+}
+
+// --- B1 tests ---
+
+// TestEnsureSageMakerEndpoint_FailedAutoRecovers verifies the IAM-propagation
+// auto-recovery path: when DescribeEndpoint returns Failed, ensureSageMakerEndpoint
+// must delete the endpoint, wait for NotFound, then recreate it — returning nil.
+//
+// Mock sequence for DescribeEndpoint:
+//  1. Returns Failed (first Describe, triggers recovery)
+//  2. Returns NotFound (deletion-wait poll — deletion complete)
+//  3. Returns Creating (final Describe after recreate — create path saw NotFound
+//     from the endpoint registry, then CreateEndpoint registered it as Creating)
+//
+// The mock's DeleteEndpoint removes from the registry, so the deletion-wait poll
+// naturally falls through to NotFound from the registry (no queue entry needed).
+func TestEnsureSageMakerEndpoint_FailedAutoRecovers(t *testing.T) {
+	awsmw.ResetForTest()
+	sm := newMockSageMaker()
+
+	endpointName := "test-ep"
+	configName := "test-cfg"
+
+	// Pre-register the endpoint as Failed in the registry.
+	sm.endpoints[endpointName] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(endpointName),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}
+
+	// Script the first Describe call to return Failed (consumed before registry).
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(endpointName),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}, nil)
+	// After delete the registry entry is gone, so the deletion-wait poll will
+	// naturally return NotFound from the registry (no additional queue needed).
+
+	err := ensureSageMakerEndpoint(context.Background(), sm, endpointName, configName, nil)
+	if err != nil {
+		t.Fatalf("ensureSageMakerEndpoint: expected nil (auto-recovery), got %v", err)
+	}
+
+	// Delete must have been called once (the recovery delete).
+	if sm.deleteEndpointCalls != 1 {
+		t.Errorf("deleteEndpointCalls = %d, want 1", sm.deleteEndpointCalls)
+	}
+	// Create must have been called once (the recreate).
+	if sm.createEndpointCalls != 1 {
+		t.Errorf("createEndpointCalls = %d, want 1", sm.createEndpointCalls)
+	}
+}
+
+// TestEnsureSageMakerEndpoint_FailedAfterRecovery verifies that when the endpoint
+// is still Failed after one recovery attempt, ensureSageMakerEndpoint returns a
+// hard error so a genuinely-broken config surfaces rather than looping.
+//
+// Scripted DescribeEndpoint queue:
+//  1. Failed (triggers first recovery delete+recreate)
+//  2. NotFound error (deletion-wait poll — confirms deletion complete)
+//  3. Failed (consumed by recovered=true inner call — triggers hard error)
+func TestEnsureSageMakerEndpoint_FailedAfterRecovery(t *testing.T) {
+	awsmw.ResetForTest()
+	sm := newMockSageMaker()
+
+	endpointName := "test-ep-bad"
+	configName := "test-cfg"
+
+	// Pre-register the endpoint so DeleteEndpoint succeeds (not NotFound).
+	sm.endpoints[endpointName] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(endpointName),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}
+
+	// Entry 1: first Describe → Failed → triggers recovery.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(endpointName),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}, nil)
+	// Entry 2: deletion-wait poll → NotFound error → deletion confirmed.
+	sm.enqueueDescribeEndpoint(nil, mkSageMakerNotFound("endpoint", endpointName))
+	// Entry 3: recovered=true inner Describe → Failed → hard error returned.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(endpointName),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}, nil)
+
+	err := ensureSageMakerEndpoint(context.Background(), sm, endpointName, configName, nil)
+	if err == nil {
+		t.Fatal("expected an error for persistently-Failed endpoint after recovery, got nil")
+	}
+	if !strings.Contains(err.Error(), "Failed") {
+		t.Errorf("error = %q, want it to mention Failed status", err.Error())
 	}
 }
