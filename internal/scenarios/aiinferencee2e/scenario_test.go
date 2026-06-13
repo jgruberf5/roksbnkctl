@@ -240,6 +240,135 @@ func TestVerifyOrder_DeploymentFails_ShortCircuits(t *testing.T) {
 	}
 }
 
+// TestVerifyPoll_EventuallySucceeds asserts that when the probe returns non-200
+// on the first K calls and then 200, the verify result records the HTTP-200
+// assertion as OK (the poll succeeded). ProbeTimeout/ProbeInterval are set to
+// tiny values so the test completes in milliseconds.
+func TestVerifyPoll_EventuallySucceeds(t *testing.T) {
+	dir := t.TempDir()
+	cl := makeCluster()
+
+	callCount := 0
+	deps := aiinferencee2e.VerifyDeps{
+		WaitDeploymentAvailableFn: func(_ context.Context, _ *scenarios.Context, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		WaitConditionFn: func(_ context.Context, _ *scenarios.Context, _ schema.GroupVersionResource, _, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		WaitHTTPRouteConditionFn: func(_ context.Context, _ *scenarios.Context, _, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		RunVLLMSSEProbeFn: func(_ context.Context, _ *scenarios.Context, _ string) (bool, bool, string) {
+			callCount++
+			if callCount < 3 {
+				// First two attempts fail.
+				return false, false, "HTTP 503 — vLLM not ready yet"
+			}
+			// Third attempt succeeds.
+			return true, true, "HTTP 200 — SSE data: found=true, [DONE] found=true"
+		},
+		// Tiny timeouts so the test runs in < 100 ms.
+		ProbeTimeout:  200 * time.Millisecond,
+		ProbeInterval: 10 * time.Millisecond,
+	}
+
+	s := aiinferencee2e.NewScenarioForTest(deps)
+
+	sctx := &scenarios.Context{
+		Ctx:          context.Background(),
+		Cluster:      cl,
+		Out:          io.Discard,
+		WorkspaceDir: dir,
+		Options:      map[string]string{},
+	}
+
+	result := s.Verify(sctx)
+
+	if result.Status != "ok" {
+		t.Errorf("status = %q, want ok; summary: %s", result.Status, result.Summary)
+	}
+	// Probe was called at least twice (transient failures) then once more for success.
+	if callCount < 3 {
+		t.Errorf("probe called %d times, expected at least 3 (2 failures + 1 success)", callCount)
+	}
+
+	var http200Assert *scenarios.Assertion
+	for i := range result.Assertions {
+		a := &result.Assertions[i]
+		if strings.Contains(a.Description, "HTTP 200") {
+			http200Assert = a
+		}
+	}
+	if http200Assert == nil {
+		t.Fatal("HTTP 200 assertion not found in result")
+	}
+	if !http200Assert.OK {
+		t.Errorf("HTTP 200 assertion = failed, want ok (poll should have succeeded on 3rd attempt)")
+	}
+}
+
+// TestVerifyPoll_NeverSucceeds asserts that when the probe always returns
+// non-200, the HTTP-200 assertion is recorded as not-OK after the bounded
+// poll, and the test completes quickly (ProbeTimeout is tiny).
+func TestVerifyPoll_NeverSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	cl := makeCluster()
+
+	callCount := 0
+	deps := aiinferencee2e.VerifyDeps{
+		WaitDeploymentAvailableFn: func(_ context.Context, _ *scenarios.Context, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		WaitConditionFn: func(_ context.Context, _ *scenarios.Context, _ schema.GroupVersionResource, _, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		WaitHTTPRouteConditionFn: func(_ context.Context, _ *scenarios.Context, _, _, _ string, _ time.Duration) error {
+			return nil
+		},
+		RunVLLMSSEProbeFn: func(_ context.Context, _ *scenarios.Context, _ string) (bool, bool, string) {
+			callCount++
+			return false, false, "HTTP 503 — vLLM never ready"
+		},
+		// Tiny timeouts so the test completes quickly.
+		ProbeTimeout:  50 * time.Millisecond,
+		ProbeInterval: 10 * time.Millisecond,
+	}
+
+	s := aiinferencee2e.NewScenarioForTest(deps)
+
+	sctx := &scenarios.Context{
+		Ctx:          context.Background(),
+		Cluster:      cl,
+		Out:          io.Discard,
+		WorkspaceDir: dir,
+		Options:      map[string]string{},
+	}
+
+	result := s.Verify(sctx)
+
+	if result.Status != "failed" {
+		t.Errorf("status = %q, want failed (probe always non-200)", result.Status)
+	}
+	if callCount == 0 {
+		t.Error("probe was never called")
+	}
+
+	var http200Assert *scenarios.Assertion
+	for i := range result.Assertions {
+		a := &result.Assertions[i]
+		if strings.Contains(a.Description, "HTTP 200") {
+			http200Assert = a
+		}
+	}
+	if http200Assert == nil {
+		t.Fatal("HTTP 200 assertion not found in result")
+	}
+	if http200Assert.OK {
+		t.Errorf("HTTP 200 assertion = ok, want failed (probe never returned 200)")
+	}
+}
+
 // TestVerifyOrder_SSEFails_HTTP200OK asserts the individual SSE and HTTP200
 // assertions are distinct: HTTP200 can pass while SSE framing fails.
 func TestVerifyOrder_SSEFails_HTTP200OK(t *testing.T) {

@@ -18,11 +18,14 @@
 //
 // Verify order (stubbable via VerifyDeps for offline tests):
 //
-//  1. Wait vLLM Deployment Available (GPU model load takes several minutes).
+//  1. Wait vLLM Deployment Available (GPU model load takes several minutes;
+//     up to 20 min to absorb a liveness restart during cold model load).
 //  2. Wait Gateway scn-aiinference-gateway Programmed=True.
 //  3. Wait HTTPRoute scn-aiinference-route Accepted=True.
 //  4. Live HTTP probe via jumphost: POST /v1/chat/completions with stream=true,
 //     assert HTTP 200 + SSE framing (data: prefix + [DONE] terminator).
+//     The probe is retried for up to 5 minutes (15 s between attempts) so that
+//     a just-becoming-ready vLLM HTTP server does not cause a spurious failure.
 //
 // Rating Green: all four steps exercise real data-plane traffic when live.
 // Steps 1-3 are stubbable for offline unit tests.
@@ -69,7 +72,14 @@ type VerifyDeps struct {
 	// RunVLLMSSEProbeFn issues a single streaming POST /v1/chat/completions via
 	// the jumphost and returns (HTTP 200 ok, SSE framing ok, detail). The live
 	// implementation uses jumphost.RunStagingCommands; tests inject a stub.
+	// pollVLLMSSEProbe calls this repeatedly until http200==true or the deadline.
 	RunVLLMSSEProbeFn func(ctx context.Context, sctx *scenarios.Context, vip string) (http200 bool, sseOK bool, detail string)
+
+	// ProbeTimeout and ProbeInterval control the outer retry loop in
+	// pollVLLMSSEProbe. Zero values fall back to production defaults
+	// (5 min / 15 s). Tests set small values to keep suite fast.
+	ProbeTimeout  time.Duration
+	ProbeInterval time.Duration
 }
 
 func realVerifyDeps() VerifyDeps {
@@ -108,11 +118,12 @@ HuggingFace auth: create a Secret named "hf-token" with key "token" before
 running if the model is gated. The Secret is optional in the Deployment.
 
 Verify order:
-  1. Wait vLLM Deployment Available (GPU model load -- up to 15 min).
+  1. Wait vLLM Deployment Available (GPU model load -- up to 20 min).
   2. Wait Gateway scn-aiinference-gateway Programmed=True.
   3. Wait HTTPRoute scn-aiinference-route Accepted=True.
   4. POST /v1/chat/completions (stream=true) via jumphost curl through the VIP;
      assert HTTP 200 + SSE framing (data: chunks + [DONE] terminator).
+     Retried for up to 5 min (15 s between attempts) for cold-start resilience.
 
 Rating Green: steps 1-3 are stubbable; step 4 exercises the real data path.
 
@@ -248,8 +259,9 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 		Details: "Green: full data-plane — vLLM must be running on a GPU node and reachable through the BNK VIP.",
 	}
 
-	// 1. vLLM Deployment Available (GPU model load can take several minutes).
-	err := d.WaitDeploymentAvailableFn(ctx.Ctx, ctx, ns, "vllm", 15*time.Minute)
+	// 1. vLLM Deployment Available (GPU model load can take several minutes;
+	//    allow 20 min to absorb a liveness restart during cold model load).
+	err := d.WaitDeploymentAvailableFn(ctx.Ctx, ctx, ns, "vllm", 20*time.Minute)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "vLLM Deployment Available",
 		OK:          err == nil,
@@ -277,8 +289,10 @@ func (s *scenario) Verify(ctx *scenarios.Context) scenarios.Result {
 	})
 
 	// 4. Live SSE probe: POST /v1/chat/completions (stream=true) through VIP.
+	// Retry until HTTP 200 or the deadline — vLLM's HTTP server may not be
+	// serving immediately after the Deployment reports Available.
 	vip := vipFromCtx(ctx)
-	http200, sseOK, detail := d.RunVLLMSSEProbeFn(ctx.Ctx, ctx, vip)
+	http200, sseOK, detail := pollVLLMSSEProbe(ctx.Ctx, ctx, d, vip)
 	res.Assertions = append(res.Assertions, scenarios.Assertion{
 		Description: "POST /v1/chat/completions returns HTTP 200",
 		OK:          http200,
@@ -363,6 +377,45 @@ func buildManifestVars(ctx *scenarios.Context) (manifestVars, error) {
 	// Use .108 to avoid colliding with other scenarios' pools.
 	v.VIP = withLastOctet(vip, strconv.Itoa(108))
 	return v, nil
+}
+
+// pollVLLMSSEProbe retries d.RunVLLMSSEProbeFn until http200 is true or the
+// deadline elapses. It returns the last attempt's values so the caller always
+// gets a meaningful detail string regardless of whether the poll succeeded.
+//
+// Production defaults: 5 min total, 15 s between attempts.
+// Tests override via d.ProbeTimeout / d.ProbeInterval.
+func pollVLLMSSEProbe(ctx context.Context, sctx *scenarios.Context, d *VerifyDeps, vip string) (http200 bool, sseOK bool, detail string) {
+	timeout := d.ProbeTimeout
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+	interval := d.ProbeInterval
+	if interval == 0 {
+		interval = 15 * time.Second
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		http200, sseOK, detail = d.RunVLLMSSEProbeFn(ctx, sctx, vip)
+		if http200 {
+			return http200, sseOK, detail
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			// Deadline elapsed — return last attempt's values.
+			return http200, sseOK, detail
+		}
+		sleep := interval
+		if sleep > remaining {
+			sleep = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return http200, sseOK, detail
+		case <-time.After(sleep):
+		}
+	}
 }
 
 // runVLLMSSEProbe issues a single streaming POST /v1/chat/completions via the
