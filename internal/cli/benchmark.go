@@ -19,6 +19,10 @@ package cli
 //     --model meta-llama/Llama-3.1-8B-Instruct \
 //     --forge-rest-url http://localhost:8000 \
 //     --run-label nightly-ci
+//
+// Multi-scenario example:
+//   awsbnkctl forge benchmark ... --scenarios latency,throughput
+//   awsbnkctl forge benchmark ... --scenarios all
 
 import (
 	"context"
@@ -34,25 +38,27 @@ import (
 )
 
 var (
-	flagBenchRegion      string
-	flagBenchInstanceID  string
-	flagBenchSourceIP    string
-	flagBenchVIP         string
-	flagBenchModel       string
-	flagBenchEndpoint    string
-	flagBenchConcurrency int
-	flagBenchNumRequests int
-	flagBenchISL         int
-	flagBenchOSL         int
-	flagBenchStreaming   bool
-	flagBenchRunLabel    string
-	flagBenchProxy       string
-	flagBenchForgeURL    string
-	flagBenchForgeUser   string
-	flagBenchForgePass   string
-	flagBenchEnsure      bool
-	flagBenchResultID    string
-	flagBenchTimeout     time.Duration
+	flagBenchRegion               string
+	flagBenchInstanceID           string
+	flagBenchSourceIP             string
+	flagBenchVIP                  string
+	flagBenchModel                string
+	flagBenchEndpoint             string
+	flagBenchConcurrency          int
+	flagBenchNumRequests          int
+	flagBenchISL                  int
+	flagBenchOSL                  int
+	flagBenchStreaming            bool
+	flagBenchRunLabel             string
+	flagBenchProxy                string
+	flagBenchForgeURL             string
+	flagBenchForgeUser            string
+	flagBenchForgePass            string
+	flagBenchEnsure               bool
+	flagBenchResultID             string
+	flagBenchTimeout              time.Duration
+	flagBenchScenarios            string
+	flagBenchRegisterAccessMethod bool
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -68,7 +74,13 @@ Prerequisites on the jumphost:
 
 The jumphost is reached via EC2 Instance Connect (EICE) — the operator's
 IAM principal must have ec2-instance-connect:SendSSHPublicKey permission and
-the aws CLI must be on PATH.`,
+the aws CLI must be on PATH.
+
+Use --scenarios to run multiple named presets in sequence:
+  --scenarios latency,throughput   run two presets
+  --scenarios all                  run all four built-in presets
+
+Available presets: latency, throughput, long-context, streaming`,
 	RunE: runForgeBenchmark,
 }
 
@@ -92,6 +104,12 @@ func init() {
 	f.DurationVar(&flagBenchTimeout, "timeout", 5*time.Minute, "maximum time for the aiperf run")
 	f.BoolVar(&flagBenchEnsure, "ensure-aiperf", false, "install aiperf on the jumphost before running (pip install aiperf)")
 
+	// Multi-scenario mode
+	f.StringVar(&flagBenchScenarios, "scenarios", "",
+		`comma-separated preset names to run in sequence, or "all" for all presets.
+Presets: latency, throughput, long-context, streaming.
+When set, per-explicit flags (--concurrency/--num-requests/--isl/--osl/--stream) are ignored.`)
+
 	// Labeling
 	f.StringVar(&flagBenchRunLabel, "run-label", "", "human-readable label for this run (stored in forge)")
 	f.StringVar(&flagBenchProxy, "proxy", "f5-bnk", "proxy label forwarded to forge (e.g. f5-bnk, envoy)")
@@ -102,9 +120,20 @@ func init() {
 	f.StringVar(&flagBenchForgeUser, "forge-user", "", "forge username (default: admin)")
 	f.StringVar(&flagBenchForgePass, "forge-pass", "", "forge password (default: changeme)")
 
+	// Access-method registration
+	f.BoolVar(&flagBenchRegisterAccessMethod, "register-access-method", true,
+		"register the jumphost as a forge SSH access-method record before running (best-effort, non-fatal)")
+
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
 }
+
+// runAiperfFn is the injectable seam for RunAiperf — allows CLI tests to stub
+// out the real SSH call without replacing the jumphost package's internal seam.
+var runAiperfFn = jumphost.RunAiperf
+
+// pushBenchmarkResultFn is the injectable seam for PushBenchmarkResult.
+var pushBenchmarkResultFn = forge.PushBenchmarkResult
 
 func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 	// Validate required flags.
@@ -127,7 +156,37 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		User:       "ec2-user",
 	}
 
-	// Step 1: optionally ensure aiperf is installed.
+	forgeCreds := forge.RestCreds{
+		Username: flagBenchForgeUser,
+		Password: flagBenchForgePass,
+	}
+
+	// Step 0: optionally register jumphost as forge SSH access-method.
+	accessMethodName := fmt.Sprintf("awsbnkctl-jumphost-%s", flagBenchInstanceID)
+	if flagBenchRegisterAccessMethod {
+		fmt.Fprintln(os.Stderr, "→ Registering jumphost as forge SSH access-method (record-only / EICE)")
+		amResp, amErr := forge.RegisterJumphostAccessMethod(cmd.Context(), forge.AccessMethodOptions{
+			RestURL:    flagBenchForgeURL,
+			Creds:      forgeCreds,
+			Name:       accessMethodName,
+			Host:       flagBenchInstanceID,
+			Region:     flagBenchRegion,
+			InstanceID: flagBenchInstanceID,
+		})
+		if amErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ forge access-method registration failed (non-fatal): %v\n", amErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ forge access-method registered: id=%d name=%s\n", amResp.ID, amResp.Name)
+		}
+	}
+
+	// Parse --scenarios flag.
+	presets, err := resolveBenchmarkScenarios(flagBenchScenarios)
+	if err != nil {
+		return err
+	}
+
+	// Step 1: optionally ensure aiperf is installed (once, regardless of scenario count).
 	if flagBenchEnsure {
 		fmt.Fprintln(os.Stderr, "→ Ensuring aiperf is installed on jumphost")
 		ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
@@ -138,6 +197,18 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "✓ aiperf ready")
 	}
 
+	// ── Multi-scenario mode ──────────────────────────────────────────────────
+	if len(presets) > 0 {
+		return runBenchmarkScenarios(cmd, probOpts, forgeCreds, accessMethodName, presets)
+	}
+
+	// ── Single-run mode (original behaviour, unchanged) ──────────────────────
+	return runBenchmarkSingle(cmd, probOpts, forgeCreds, accessMethodName)
+}
+
+// runBenchmarkSingle executes one benchmark run from the explicit CLI flags.
+// This is the original three-step flow: RunAiperf → PushBenchmarkResult.
+func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, creds forge.RestCreds, agentName string) error {
 	// Step 2: run aiperf.
 	fmt.Fprintf(os.Stderr, "→ Running aiperf (concurrency=%d requests=%d) against %s\n",
 		flagBenchConcurrency, flagBenchNumRequests, flagBenchVIP)
@@ -158,7 +229,7 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		ResultID: flagBenchResultID,
 	}
 
-	result, err := jumphost.RunAiperf(cmd.Context(), runOpts)
+	result, err := runAiperfFn(cmd.Context(), runOpts)
 	if err != nil {
 		return fmt.Errorf("aiperf run: %w", err)
 	}
@@ -169,15 +240,12 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "→ Pushing result to forge at %s\n", flagBenchForgeURL)
 
 	pushOpts := forge.BenchmarkPushOptions{
-		RestURL: flagBenchForgeURL,
-		Creds: forge.RestCreds{
-			Username: flagBenchForgeUser,
-			Password: flagBenchForgePass,
-		},
+		RestURL:       flagBenchForgeURL,
+		Creds:         creds,
 		ResultID:      flagBenchResultID,
 		RunLabel:      flagBenchRunLabel,
 		Proxy:         flagBenchProxy,
-		AgentName:     "awsbnkctl-jumphost",
+		AgentName:     agentName,
 		AgentHostname: flagBenchInstanceID,
 		AiperfConfig: map[string]any{
 			"model":        flagBenchModel,
@@ -190,7 +258,7 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		},
 	}
 
-	forgeResp, err := forge.PushBenchmarkResult(cmd.Context(), result, pushOpts)
+	forgeResp, err := pushBenchmarkResultFn(cmd.Context(), result, pushOpts)
 	if err != nil {
 		return fmt.Errorf("forge push: %w", err)
 	}
@@ -226,4 +294,143 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		result.SuccessRatePct,
 	)
 	return nil
+}
+
+// scenarioOutcome records the result of a single preset run.
+type scenarioOutcome struct {
+	Preset   string
+	RunID    int
+	ResultID string
+	Status   string
+	Err      error
+}
+
+// runBenchmarkScenarios runs each preset in sequence, collecting outcomes.
+// One preset failing does NOT abort the others. A summary table is printed
+// at the end. Each preset is optionally registered as a forge BenchmarkConfig.
+func runBenchmarkScenarios(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	presets []benchmarkPreset,
+) error {
+	outcomes := make([]scenarioOutcome, 0, len(presets))
+
+	for _, preset := range presets {
+		outcome := runOnePreset(cmd, probOpts, creds, agentName, preset)
+		outcomes = append(outcomes, outcome)
+	}
+
+	// Print summary table.
+	fmt.Println()
+	fmt.Printf("%-16s  %-10s  %-8s  %s\n", "PRESET", "STATUS", "RUN_ID", "NOTE")
+	fmt.Printf("%-16s  %-10s  %-8s  %s\n", "------", "------", "------", "----")
+	for _, o := range outcomes {
+		note := ""
+		if o.Err != nil {
+			note = o.Err.Error()
+			if len(note) > 60 {
+				note = note[:57] + "..."
+			}
+		}
+		fmt.Printf("%-16s  %-10s  %-8d  %s\n", o.Preset, o.Status, o.RunID, note)
+	}
+
+	// Return an error only if ALL presets failed.
+	allFailed := true
+	for _, o := range outcomes {
+		if o.Err == nil {
+			allFailed = false
+			break
+		}
+	}
+	if allFailed && len(outcomes) > 0 {
+		return fmt.Errorf("all %d preset(s) failed", len(outcomes))
+	}
+	return nil
+}
+
+// runOnePreset executes a single preset: optionally registers the config,
+// runs aiperf, and pushes the result to forge.
+func runOnePreset(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	preset benchmarkPreset,
+) scenarioOutcome {
+	label := presetRunLabel(flagBenchRunLabel, preset.Name)
+	fmt.Fprintf(os.Stderr, "\n── preset: %s (%s) label=%s ──\n", preset.Name, preset.Description, label)
+
+	// Best-effort: register the preset as a forge BenchmarkConfig.
+	configJSON := map[string]any{
+		"url":           fmt.Sprintf("http://%s", flagBenchVIP),
+		"model":         flagBenchModel,
+		"endpoint":      flagBenchEndpoint,
+		"concurrency":   preset.Config.Concurrency,
+		"request_count": preset.Config.NumRequests,
+		"isl":           preset.Config.ISL,
+		"osl":           preset.Config.OSL,
+		"streaming":     preset.Config.Streaming,
+	}
+	cfgResp, cfgErr := forge.RegisterBenchmarkConfig(cmd.Context(), forge.BenchmarkConfigOptions{
+		RestURL:     flagBenchForgeURL,
+		Creds:       creds,
+		Name:        fmt.Sprintf("awsbnkctl-%s", preset.Name),
+		Description: preset.Description,
+		ConfigJSON:  configJSON,
+	})
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
+	}
+
+	// Build AiperfRunOptions from the preset, inheriting shared flags.
+	cfg := preset.Config
+	cfg.Model = flagBenchModel
+	cfg.EndpointPath = flagBenchEndpoint
+	cfg.Timeout = flagBenchTimeout
+
+	runOpts := jumphost.AiperfRunOptions{
+		ProbeOptions: probOpts,
+		Config:       cfg,
+		RunLabel:     label,
+	}
+
+	fmt.Fprintf(os.Stderr, "→ Running aiperf (concurrency=%d requests=%d isl=%d osl=%d stream=%v)\n",
+		cfg.Concurrency, cfg.NumRequests, cfg.ISL, cfg.OSL, cfg.Streaming)
+
+	result, err := runAiperfFn(cmd.Context(), runOpts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ preset %s aiperf failed: %v\n", preset.Name, err)
+		return scenarioOutcome{Preset: preset.Name, Status: "FAILED", Err: err}
+	}
+	fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs)\n",
+		result.Successful, result.TotalRequests, result.DurationSeconds)
+
+	pushOpts := forge.BenchmarkPushOptions{
+		RestURL:       flagBenchForgeURL,
+		Creds:         creds,
+		RunLabel:      label,
+		Proxy:         flagBenchProxy,
+		AgentName:     agentName,
+		AgentHostname: flagBenchInstanceID,
+		AiperfConfig:  configJSON,
+	}
+
+	forgeResp, pushErr := pushBenchmarkResultFn(cmd.Context(), result, pushOpts)
+	if pushErr != nil {
+		fmt.Fprintf(os.Stderr, "✗ preset %s forge push failed: %v\n", preset.Name, pushErr)
+		return scenarioOutcome{Preset: preset.Name, Status: "PUSH_FAILED", Err: pushErr}
+	}
+	fmt.Fprintf(os.Stderr, "✓ pushed: run_id=%d status=%s\n", forgeResp.RunID, forgeResp.Status)
+
+	return scenarioOutcome{
+		Preset:   preset.Name,
+		RunID:    forgeResp.RunID,
+		ResultID: result.BaseURL, // carry forward for json output if needed
+		Status:   "OK",
+	}
 }

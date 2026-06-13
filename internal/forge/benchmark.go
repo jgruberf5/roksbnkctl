@@ -239,6 +239,67 @@ func PushBenchmarkResult(ctx context.Context, result *jumphost.AiperfResult, opt
 	return resp, nil
 }
 
+// BenchmarkConfigEndpoint is the forge REST path for saved RunConfig presets.
+const BenchmarkConfigEndpoint = "/api/benchmarks/configs"
+
+// BenchmarkConfigOptions carries the data for registering a preset with forge.
+type BenchmarkConfigOptions struct {
+	// RestURL is the forge REST base URL.
+	RestURL string
+	// Creds are the forge REST login credentials.
+	Creds RestCreds
+	// Name is the preset name as stored in forge (e.g. "awsbnkctl-latency").
+	Name string
+	// Description is a short human-readable label.
+	Description string
+	// ConfigJSON is the RunConfig payload forwarded verbatim to forge.
+	ConfigJSON map[string]any
+}
+
+// BenchmarkConfigResponse is the subset of forge's BenchmarkConfigResponse
+// fields that callers need.
+type BenchmarkConfigResponse struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Tool string `json:"tool"`
+}
+
+// RegisterBenchmarkConfig POSTs a RunConfig preset to forge's
+// /api/benchmarks/configs endpoint.
+//
+// Best-effort: callers should log on error rather than aborting the run.
+// Uses the same benchmarkHTTPDoFn transport seam as PushBenchmarkResult.
+func RegisterBenchmarkConfig(ctx context.Context, opts BenchmarkConfigOptions) (BenchmarkConfigResponse, error) {
+	if opts.RestURL == "" {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge.RegisterBenchmarkConfig: RestURL is required")
+	}
+	if opts.Name == "" {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge.RegisterBenchmarkConfig: Name is required")
+	}
+
+	base := strings.TrimRight(opts.RestURL, "/")
+
+	token, err := bmkRestLogin(ctx, base, opts.Creds.restUsername(), opts.Creds.restPassword())
+	if err != nil {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: login: %w", err)
+	}
+
+	body := map[string]any{
+		"name":        opts.Name,
+		"tool":        "aiperf",
+		"config_json": opts.ConfigJSON,
+	}
+	if opts.Description != "" {
+		body["description"] = opts.Description
+	}
+
+	var resp BenchmarkConfigResponse
+	if err := bmkRestPost(ctx, base+BenchmarkConfigEndpoint, token, body, &resp); err != nil {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: %w", err)
+	}
+	return resp, nil
+}
+
 // bmkRestLogin logs in over REST using the injectable benchmarkHTTPDoFn.
 func bmkRestLogin(ctx context.Context, base, username, password string) (string, error) {
 	body := map[string]string{"username": username, "password": password}
@@ -258,22 +319,63 @@ func bmkRestLogin(ctx context.Context, base, username, password string) (string,
 // decodes the response into out. Uses benchmarkHTTPDoFn so tests can inject
 // a mock transport without touching http.DefaultClient.
 func bmkRestPost(ctx context.Context, url, token string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshal request body: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req, err := newBmkRequest(ctx, http.MethodPost, url, token, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	return doBmkRequest(req, url, out)
+}
+
+// bmkRestGet GETs url with an optional bearer token and decodes the JSON
+// response into out. Uses the same benchmarkHTTPDoFn seam as bmkRestPost.
+func bmkRestGet(ctx context.Context, url, token string, out any) error {
+	req, err := newBmkRequest(ctx, http.MethodGet, url, token, nil)
+	if err != nil {
+		return err
+	}
+	return doBmkRequest(req, url, out)
+}
+
+// bmkRestPut PUTs JSON body to url with an optional bearer token and decodes
+// the response into out. Uses the same benchmarkHTTPDoFn seam.
+func bmkRestPut(ctx context.Context, url, token string, body, out any) error {
+	req, err := newBmkRequest(ctx, http.MethodPut, url, token, body)
+	if err != nil {
+		return err
+	}
+	return doBmkRequest(req, url, out)
+}
+
+// newBmkRequest builds an *http.Request with JSON body (when body != nil) and
+// Authorization header. Shared by bmkRestPost / bmkRestGet / bmkRestPut.
+func newBmkRequest(ctx context.Context, method, url, token string, body any) (*http.Request, error) {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request body: %w", err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	return req, nil
+}
 
+// doBmkRequest executes req via benchmarkHTTPDoFn, checks for HTTP errors, and
+// decodes the JSON response into out (when out != nil and body is non-empty).
+func doBmkRequest(req *http.Request, url string, out any) error {
 	resp, err := benchmarkHTTPDoFn(req)
 	if err != nil {
-		return fmt.Errorf("http POST %s: %w", url, err)
+		return fmt.Errorf("http %s %s: %w", req.Method, url, err)
 	}
 	defer resp.Body.Close()
 	respBytes, _ := io.ReadAll(resp.Body)
