@@ -400,7 +400,9 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%s state exists in this workspace; run %s first (or `roksbnkctl down` to tear down all phases)",
 			strings.Join(present, " and "), strings.Join(verbs, " and "))
 	}
-	if !pres.Cluster {
+	// Resumable: proceed if the cluster resource is present OR the phase has
+	// residual managed resources (network left by a partially-failed destroy).
+	if !pres.Cluster && !pres.ClusterResidual {
 		return errors.New("nothing to destroy in this workspace")
 	}
 
@@ -440,7 +442,7 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	}
 	varFiles = append(append([]string{}, appliedVF...), varFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform destroy (cluster phase)")
-	if err := tfws.Destroy(ctx, varFiles...); err != nil {
+	if err := orchestration.DestroyWithRetry(ctx, tfws, varFiles); err != nil {
 		return err
 	}
 	if err := config.DeleteClusterOutputs(cctx.WorkspaceName); err != nil {

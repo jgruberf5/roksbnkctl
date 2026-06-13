@@ -67,7 +67,7 @@ func TestDetectPresence_Table(t *testing.T) {
 		{
 			name:           "cluster only (cluster up, no BNK/Testing yet)",
 			clusterFixture: "tfstate_cluster_only.json",
-			want:           Presence{Cluster: true},
+			want:           Presence{Cluster: true, ClusterResidual: true},
 		},
 		{
 			name:       "BNK only (registered cluster + bnk up; cluster identity in cluster-outputs.json)",
@@ -83,20 +83,20 @@ func TestDetectPresence_Table(t *testing.T) {
 			name:           "cluster + BNK (cluster up + bnk up; no jumphosts yet)",
 			clusterFixture: "tfstate_cluster_only.json",
 			bnkFixture:     "tfstate_split.json",
-			want:           Presence{Cluster: true, BNK: true},
+			want:           Presence{Cluster: true, BNK: true, ClusterResidual: true},
 		},
 		{
 			name:           "cluster + testing (cluster up + testing up; no BNK yet)",
 			clusterFixture: "tfstate_cluster_only.json",
 			testingFixture: "tfstate_testing.json",
-			want:           Presence{Cluster: true, Testing: true},
+			want:           Presence{Cluster: true, Testing: true, ClusterResidual: true},
 		},
 		{
 			name:           "all three present (the new steady state)",
 			clusterFixture: "tfstate_cluster_only.json",
 			bnkFixture:     "tfstate_split.json",
 			testingFixture: "tfstate_testing.json",
-			want:           Presence{Cluster: true, BNK: true, Testing: true},
+			want:           Presence{Cluster: true, BNK: true, Testing: true, ClusterResidual: true},
 		},
 		{
 			// Sprint 22 regression, retargeted: a post-up BNK state carries
@@ -115,7 +115,10 @@ func TestDetectPresence_Table(t *testing.T) {
 			// resources) must NOT false-positive as Cluster.
 			name:           "state-cluster/ with only DATA-source cluster reads → Cluster false (no false-positive)",
 			clusterFixture: "tfstate_split_data_in_trial.json",
-			want:           Presence{},
+			// Cluster stays false (no managed ibm_container_vpc_cluster), but the
+			// fixture carries managed resources, so ClusterResidual is true — the
+			// down paths would (correctly) try to clean them up.
+			want: Presence{ClusterResidual: true},
 		},
 		{
 			name:           "empty state files on every phase (applied then fully destroyed)",

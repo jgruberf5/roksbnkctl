@@ -53,6 +53,10 @@ func TestIntegration_KubectlPassthrough_ReachesCluster(t *testing.T) {
 		t.Fatalf("REGRESSION: kubectl passthrough fell back to localhost:8080 "+
 			"(no usable kubeconfig reached the wrapped tool)\n%s", out)
 	}
+	if err != nil && clusterUnreachableSkip(out) {
+		t.Skipf("kubeconfig %s reached a real API server but it is unreachable "+
+			"(precondition: a reachable cluster) — %v\n%s", kc, err, out)
+	}
 	if err != nil {
 		t.Fatalf("roksbnkctl kubectl version failed: %v\n%s", err, out)
 	}
@@ -79,6 +83,10 @@ func TestIntegration_KubectlPassthrough_GetNodes(t *testing.T) {
 	}
 	if strings.Contains(out, "localhost:8080") {
 		t.Fatalf("REGRESSION: localhost:8080 fallback\n%s", out)
+	}
+	if err != nil && clusterUnreachableSkip(out) {
+		t.Skipf("kubeconfig %s reached a real API server but it is unreachable "+
+			"(precondition: a reachable cluster) — %v\n%s", kc, err, out)
 	}
 	if err != nil {
 		t.Fatalf("get nodes failed: %v\n%s", err, out)
@@ -113,6 +121,44 @@ func skipUnconfiguredPassthrough(t *testing.T, err error, out string) bool {
 			"passthrough prerequisite absent (kind-only env); "+
 			"the live `up → --on jumphost kubectl` verify covers this leg: %v", err)
 		return true
+	}
+	return false
+}
+
+// clusterUnreachableSkip reports whether out shows the command resolved a
+// REAL kubeconfig and reached a genuine API-server address, but that server
+// was unreachable (cluster torn down / firewalled / not yet up). That is a
+// missing PRECONDITION — "a reachable cluster" — not a wiring regression, so
+// these opportunistic live-cluster checks skip rather than fail (same
+// "skip when the prerequisite is absent" precedent as skipUnconfiguredPassthrough).
+//
+// The localhost:8080 no-config fallback is deliberately EXCLUDED: a refusal
+// there means the passthrough never got a kubeconfig — a real regression the
+// callers still assert loudly.
+func clusterUnreachableSkip(out string) bool {
+	if strings.Contains(out, "localhost:8080") || strings.Contains(out, "127.0.0.1:8080") {
+		return false
+	}
+	for _, sig := range []string{
+		// Go/client-go dial errors (the `ops` path surfaces these).
+		"connection refused",
+		"i/o timeout",
+		"no route to host",
+		"network is unreachable",
+		"no such host",
+		"TLS handshake timeout",
+		"connection reset by peer",
+		// kubectl's human-phrased equivalents (the `kubectl` passthrough
+		// surfaces these): "The connection to the server <host:port> was
+		// refused…" and "Unable to connect to the server: …". The
+		// localhost:8080 exclusion above still fires first for the no-config
+		// fallback, so a real wiring regression is never swallowed here.
+		"was refused",
+		"Unable to connect to the server",
+	} {
+		if strings.Contains(out, sig) {
+			return true
+		}
 	}
 	return false
 }
