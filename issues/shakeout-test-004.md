@@ -151,3 +151,28 @@ bug and several harness over-reaches:
 Post-fix the core live sequence is `up → gateway → [probes/perf/reuse SKIP] → down`
 = 3 PASS / 4 SKIP / 0 FAIL. The gateway terraform fix is embedded in the binary, so
 the next run's Tier-0 `make build` picks it up.
+
+### Teardown hardening + the GREEN run
+
+A later run got `up` + `gateway` green but `live:down` tripped on a transient IBM
+provider delete-race (`DeletePublicGatewayWithContext failed: Public Gateway not
+found`) that aborted the cluster destroy before the VPC and leaked it — and
+`roksbnkctl down` couldn't recover (its presence check reported the cluster phase
+absent once the cluster resource was gone). Fixed in `roksbnkctl` itself (commit
+`e8ebe12`):
+
+- **`destroyWithRetry`** wraps all four phase destroys (apply-side counterpart),
+  with `looksTransientDestroy` matching the IBM "<Op>WithContext failed: … not
+  found" delete-race. terraform destroy is idempotent, so the retry refreshes the
+  vanished resource out of state and finishes the teardown in one `down`.
+- **`Presence.ClusterResidual`** — true when state-cluster/ holds any managed
+  resource even if the cluster itself is gone; `down`/`cluster down` consult it so
+  a re-run RESUMES instead of reporting "nothing to destroy".
+
+**RESULT — `full-shakeout.sh --live test-004` is GREEN end-to-end** (run #10,
+2026-06-13): Tier 0 + Tier 1 all pass, then `live:up` ✓ → `live:gateway` ✓ →
+probes/perf/reuse ⊘ SKIP → `live:down` ✓, **`PASS 19 / FAIL 0 / SKIP 4`, exit 0**,
+and the account verified clean afterward (no leak). The intervening failures were
+all transient infra (a teardown delete-race — now ridden through by the retry; a
+one-off dead jumphost VSI that hung `up` for a run), not code defects. Every code
+fix is validated against a live cluster.
