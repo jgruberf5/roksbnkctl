@@ -112,9 +112,16 @@ func RegisterJumphostAccessMethod(ctx context.Context, opts AccessMethodOptions)
 		return created, nil
 	}
 
-	// 409 = name conflict — fall back to list-and-update (mirror rest.go pattern).
+	// 409 or 400-with-"already exists" body = name conflict — fall back to
+	// list-and-update (mirror rest.go pattern; some forge versions return 400
+	// instead of 409 on duplicate name).
 	var herr *restHTTPErr
-	if !errors.As(err, &herr) || herr.StatusCode != http.StatusConflict {
+	if !errors.As(err, &herr) {
+		return AccessMethodResponse{}, fmt.Errorf("forge access-method: create: %w", err)
+	}
+	isConflict := herr.StatusCode == http.StatusConflict ||
+		(herr.StatusCode == http.StatusBadRequest && strings.Contains(herr.Body, "already exists"))
+	if !isConflict {
 		return AccessMethodResponse{}, fmt.Errorf("forge access-method: create: %w", err)
 	}
 

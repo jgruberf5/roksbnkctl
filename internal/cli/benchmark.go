@@ -49,6 +49,8 @@ var (
 	flagBenchISL                  int
 	flagBenchOSL                  int
 	flagBenchStreaming            bool
+	flagBenchTokenizer            string
+	flagBenchHostHeader           string
 	flagBenchRunLabel             string
 	flagBenchProxy                string
 	flagBenchForgeURL             string
@@ -101,8 +103,12 @@ func init() {
 	f.IntVar(&flagBenchISL, "isl", 512, "input sequence length (tokens)")
 	f.IntVar(&flagBenchOSL, "osl", 128, "output sequence length (tokens)")
 	f.BoolVar(&flagBenchStreaming, "stream", false, "enable streaming mode")
+	f.StringVar(&flagBenchTokenizer, "tokenizer", "NousResearch/Meta-Llama-3-8B-Instruct",
+		"Hugging Face tokenizer repo for aiperf token counting (required by aiperf 0.10.0)")
+	f.StringVar(&flagBenchHostHeader, "host-header", "",
+		"HTTP Host header to inject (--header Host:<value>); required when the BNK HTTPRoute has a hostname match")
 	f.DurationVar(&flagBenchTimeout, "timeout", 5*time.Minute, "maximum time for the aiperf run")
-	f.BoolVar(&flagBenchEnsure, "ensure-aiperf", false, "install aiperf on the jumphost before running (pip install aiperf)")
+	f.BoolVar(&flagBenchEnsure, "ensure-aiperf", false, "install aiperf on the jumphost before running (python3.11 -m pip install aiperf)")
 
 	// Multi-scenario mode
 	f.StringVar(&flagBenchScenarios, "scenarios", "",
@@ -223,6 +229,8 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 			ISL:          flagBenchISL,
 			OSL:          flagBenchOSL,
 			Streaming:    flagBenchStreaming,
+			Tokenizer:    flagBenchTokenizer,
+			HostHeader:   flagBenchHostHeader,
 			Timeout:      flagBenchTimeout,
 		},
 		RunLabel: flagBenchRunLabel,
@@ -233,8 +241,8 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 	if err != nil {
 		return fmt.Errorf("aiperf run: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d requests succeeded (%.1fs)\n",
-		result.Successful, result.TotalRequests, result.DurationSeconds)
+	fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d requests succeeded (%.1fs rps=%.3f)\n",
+		result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
 
 	// Step 3: push to forge.
 	fmt.Fprintf(os.Stderr, "→ Pushing result to forge at %s\n", flagBenchForgeURL)
@@ -277,21 +285,27 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 			"vip":      flagBenchVIP,
 			"requests": result.TotalRequests,
 			"success":  result.Successful,
-			"p50_s":    result.Latency.P50,
-			"p99_s":    result.Latency.P99,
-			"tps":      result.Throughput.TokensPerSec,
+			"p50_ms":   result.RequestLatency.P50,
+			"p99_ms":   result.RequestLatency.P99,
+			"rps":      result.RequestThroughput,
+			"tps":      result.OutputTokenThroughput,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(summary)
 	}
 
-	fmt.Printf("benchmark run_id=%d p50=%.3fs p99=%.3fs tps=%.1f success_rate=%.1f%%\n",
+	successRatePct := 0.0
+	if result.TotalRequests > 0 {
+		successRatePct = float64(result.Successful) / float64(result.TotalRequests) * 100.0
+	}
+	fmt.Printf("benchmark run_id=%d p50=%.1fms p99=%.1fms rps=%.3f tps=%.1f success_rate=%.1f%%\n",
 		forgeResp.RunID,
-		result.Latency.P50,
-		result.Latency.P99,
-		result.Throughput.TokensPerSec,
-		result.SuccessRatePct,
+		result.RequestLatency.P50,
+		result.RequestLatency.P99,
+		result.RequestThroughput,
+		result.OutputTokenThroughput,
+		successRatePct,
 	)
 	return nil
 }
@@ -391,6 +405,8 @@ func runOnePreset(
 	cfg := preset.Config
 	cfg.Model = flagBenchModel
 	cfg.EndpointPath = flagBenchEndpoint
+	cfg.Tokenizer = flagBenchTokenizer
+	cfg.HostHeader = flagBenchHostHeader
 	cfg.Timeout = flagBenchTimeout
 
 	runOpts := jumphost.AiperfRunOptions{
@@ -407,8 +423,8 @@ func runOnePreset(
 		fmt.Fprintf(os.Stderr, "✗ preset %s aiperf failed: %v\n", preset.Name, err)
 		return scenarioOutcome{Preset: preset.Name, Status: "FAILED", Err: err}
 	}
-	fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs)\n",
-		result.Successful, result.TotalRequests, result.DurationSeconds)
+	fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs rps=%.3f)\n",
+		result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
 
 	pushOpts := forge.BenchmarkPushOptions{
 		RestURL:       flagBenchForgeURL,

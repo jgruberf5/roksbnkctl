@@ -19,37 +19,53 @@ import (
 
 func sampleAiperfResult() *jumphost.AiperfResult {
 	return &jumphost.AiperfResult{
-		Model:             "meta-llama/Llama-3.1-8B-Instruct",
-		BaseURL:           "http://10.0.10.100",
-		Endpoint:          "/v1/chat/completions",
-		RunStart:          "2026-06-12T10:00:00Z",
-		RunEnd:            "2026-06-12T10:01:30Z",
-		DurationSeconds:   90.0,
-		DurationMinutes:   1.5,
-		TotalRequests:     20,
-		Successful:        19,
-		Failed:            1,
-		SuccessRatePct:    95.0,
-		TotalInputTokens:  10240,
-		TotalOutputTokens: 2560,
+		Model:         "meta-llama/Llama-3.1-8B-Instruct",
+		BaseURL:       "http://10.0.10.100",
+		Endpoint:      "/v1/chat/completions",
+		AiperfVersion: "0.10.0",
+		SchemaVersion: "1.3",
+		BenchmarkID:   "f43cfc1c6cce",
+		StartTime:     "2026-06-12T10:00:00Z",
+		EndTime:       "2026-06-12T10:01:30Z",
+		WasCancelled:  false,
+		ErrorSummary:  []any{},
+
+		TotalRequests:   20,
+		Successful:      19,
+		Failed:          1,
+		DurationSeconds: 90.0,
+		DurationMinutes: 1.5,
+
+		RequestThroughput:     0.22,
+		OutputTokenThroughput: 28.4,
+
+		RequestLatency: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  500.0,
+			P50:  450.0,
+			P90:  980.0,
+			P99:  1200.0,
+			Min:  100.0,
+			Max:  1500.0,
+		},
+		TTFT: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  120.0,
+			P50:  110.0,
+			P90:  200.0,
+			P99:  250.0,
+		},
+		ITL: jumphost.DistributionStats{
+			Unit: "ms",
+			Avg:  30.0,
+			P50:  30.0,
+			P90:  50.0,
+			P99:  60.0,
+		},
+
 		AvgInputTokens:    512.0,
 		AvgOutputTokens:   128.0,
-		Latency: jumphost.LatencyStats{
-			P50:  0.45,
-			P95:  0.98,
-			P99:  1.20,
-			Mean: 0.50,
-			Min:  0.10,
-			Max:  1.50,
-			TTFT: jumphost.LatencyDistribution{Mean: 0.12, P50: 0.11, P95: 0.20, P99: 0.25},
-			ITL:  jumphost.LatencyDistribution{Mean: 0.03, P50: 0.03, P95: 0.05, P99: 0.06},
-		},
-		Throughput: jumphost.ThroughputStats{
-			OverallRPS:   0.22,
-			PeakRPS:      0.30,
-			TokensPerSec: 28.4,
-		},
-		Phases: map[string]any{},
+		TotalOutputTokens: 2560.0,
 	}
 }
 
@@ -102,32 +118,44 @@ func TestMapAiperfResultToPayload_MetricFields(t *testing.T) {
 	if payload.SuccessRatePct != 95.0 {
 		t.Errorf("SuccessRatePct = %v, want 95.0", payload.SuccessRatePct)
 	}
-	if payload.TotalInputTokens != 10240 {
-		t.Errorf("TotalInputTokens = %d, want 10240", payload.TotalInputTokens)
-	}
-	if payload.TotalOutputTokens != 2560 {
-		t.Errorf("TotalOutputTokens = %d, want 2560", payload.TotalOutputTokens)
-	}
 	if payload.DurationSeconds != 90.0 {
 		t.Errorf("DurationSeconds = %v, want 90.0", payload.DurationSeconds)
+	}
+	// total_input_tokens derived from avg * count
+	if payload.TotalInputTokens != 10240 {
+		t.Errorf("TotalInputTokens = %d, want 10240 (512*20)", payload.TotalInputTokens)
+	}
+	// total_output_tokens from TotalOutputTokens field
+	if payload.TotalOutputTokens != 2560 {
+		t.Errorf("TotalOutputTokens = %d, want 2560", payload.TotalOutputTokens)
 	}
 }
 
 func TestMapAiperfResultToPayload_LatencyMap(t *testing.T) {
 	payload := forge.MapAiperfResultToPayload(sampleAiperfResult(), forge.BenchmarkPushOptions{})
 
-	if p50, ok := payload.Latency["p50"].(float64); !ok || p50 != 0.45 {
-		t.Errorf("Latency[p50] = %v, want 0.45", payload.Latency["p50"])
+	if p50, ok := payload.Latency["p50"].(float64); !ok || p50 != 450.0 {
+		t.Errorf("Latency[p50] = %v, want 450.0", payload.Latency["p50"])
 	}
-	if p99, ok := payload.Latency["p99"].(float64); !ok || p99 != 1.20 {
-		t.Errorf("Latency[p99] = %v, want 1.20", payload.Latency["p99"])
+	if p99, ok := payload.Latency["p99"].(float64); !ok || p99 != 1200.0 {
+		t.Errorf("Latency[p99] = %v, want 1200.0", payload.Latency["p99"])
 	}
 	ttft, ok := payload.Latency["ttft"].(map[string]any)
 	if !ok {
 		t.Fatal("Latency[ttft] is not a map")
 	}
-	if mean, ok := ttft["mean"].(float64); !ok || mean != 0.12 {
-		t.Errorf("Latency.ttft.mean = %v, want 0.12", ttft["mean"])
+	if avg, ok := ttft["avg"].(float64); !ok || avg != 120.0 {
+		t.Errorf("Latency.ttft.avg = %v, want 120.0", ttft["avg"])
+	}
+	if p50, ok := ttft["p50"].(float64); !ok || p50 != 110.0 {
+		t.Errorf("Latency.ttft.p50 = %v, want 110.0", ttft["p50"])
+	}
+	itl, ok := payload.Latency["itl"].(map[string]any)
+	if !ok {
+		t.Fatal("Latency[itl] is not a map")
+	}
+	if avg, ok := itl["avg"].(float64); !ok || avg != 30.0 {
+		t.Errorf("Latency.itl.avg = %v, want 30.0", itl["avg"])
 	}
 }
 

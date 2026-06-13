@@ -106,16 +106,18 @@ var benchmarkHTTPDoFn func(*http.Request) (*http.Response, error) = http.Default
 // MapAiperfResultToPayload converts an AiperfResult + options into the
 // BenchmarkResultPayload that forge's POST /api/benchmarks/results expects.
 //
-// Field mapping (aiperf → forge schema):
+// Field mapping (aiperf 0.10.0 → forge schema):
 //
-//	result.Model          → labels["model"]
-//	result.BaseURL        → labels["base_url"]
-//	result.Endpoint       → labels["endpoint"]
-//	opts.Proxy            → labels["proxy"]   (default: "f5-bnk")
-//	opts.RunLabel         → labels["run_label"]
-//	result.Latency.*      → payload.Latency (as dict)
-//	result.Throughput.*   → payload.Throughput (as dict)
-//	result.Phases         → payload.Phases
+//	result.Model                  → labels["model"]
+//	result.BaseURL                → labels["base_url"]
+//	result.Endpoint               → labels["endpoint"]
+//	opts.Proxy                    → labels["proxy"]   (default: "f5-bnk")
+//	opts.RunLabel                 → labels["run_label"]
+//	result.RequestLatency.*       → payload.Latency["request_latency"]
+//	result.TTFT.*                 → payload.Latency["ttft"]
+//	result.ITL.*                  → payload.Latency["itl"]
+//	result.RequestThroughput      → payload.Throughput["overall_rps"]
+//	result.OutputTokenThroughput  → payload.Throughput["tokens_per_sec"]
 func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushOptions) BenchmarkResultPayload {
 	proxy := opts.Proxy
 	if proxy == "" {
@@ -139,61 +141,64 @@ func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushO
 		cfg = map[string]any{}
 	}
 
-	// Map latency struct → dict for the schema's `latency: dict` field.
+	// Map aiperf 0.10.0 DistributionStats → dict for the schema's latency field.
 	latency := map[string]any{
-		"p50":  result.Latency.P50,
-		"p95":  result.Latency.P95,
-		"p99":  result.Latency.P99,
-		"mean": result.Latency.Mean,
-		"min":  result.Latency.Min,
-		"max":  result.Latency.Max,
+		"p50": result.RequestLatency.P50,
+		"p90": result.RequestLatency.P90,
+		"p99": result.RequestLatency.P99,
+		"avg": result.RequestLatency.Avg,
+		"min": result.RequestLatency.Min,
+		"max": result.RequestLatency.Max,
 		"ttft": map[string]any{
-			"mean": result.Latency.TTFT.Mean,
-			"p50":  result.Latency.TTFT.P50,
-			"p95":  result.Latency.TTFT.P95,
-			"p99":  result.Latency.TTFT.P99,
+			"avg": result.TTFT.Avg,
+			"p50": result.TTFT.P50,
+			"p90": result.TTFT.P90,
+			"p99": result.TTFT.P99,
 		},
 		"itl": map[string]any{
-			"mean": result.Latency.ITL.Mean,
-			"p50":  result.Latency.ITL.P50,
-			"p95":  result.Latency.ITL.P95,
-			"p99":  result.Latency.ITL.P99,
+			"avg": result.ITL.Avg,
+			"p50": result.ITL.P50,
+			"p90": result.ITL.P90,
+			"p99": result.ITL.P99,
 		},
 	}
 
 	throughput := map[string]any{
-		"overall_rps":    result.Throughput.OverallRPS,
-		"peak_rps":       result.Throughput.PeakRPS,
-		"tokens_per_sec": result.Throughput.TokensPerSec,
+		"overall_rps":    result.RequestThroughput,
+		"tokens_per_sec": result.OutputTokenThroughput,
 	}
 
-	phases := result.Phases
-	if phases == nil {
-		phases = map[string]any{}
+	// Compute success_rate_pct from counts.
+	successRatePct := 0.0
+	if result.TotalRequests > 0 {
+		successRatePct = float64(result.Successful) / float64(result.TotalRequests) * 100.0
 	}
+
+	// total_input_tokens / total_output_tokens as integers for schema compat.
+	totalInputTokens := int(result.AvgInputTokens * float64(result.TotalRequests))
+	totalOutputTokens := int(result.TotalOutputTokens)
 
 	payload := BenchmarkResultPayload{
 		ResultID:          resultID,
 		ResultVersion:     "1.0",
 		Labels:            labels,
 		Tags:              map[string]string{},
-		RunStart:          result.RunStart,
-		RunEnd:            result.RunEnd,
+		RunStart:          result.StartTime,
+		RunEnd:            result.EndTime,
 		DurationSeconds:   result.DurationSeconds,
 		DurationMinutes:   result.DurationMinutes,
 		Config:            cfg,
 		TotalRequests:     result.TotalRequests,
 		Successful:        result.Successful,
 		Failed:            result.Failed,
-		SuccessRatePct:    result.SuccessRatePct,
-		TotalInputTokens:  result.TotalInputTokens,
-		TotalOutputTokens: result.TotalOutputTokens,
+		SuccessRatePct:    successRatePct,
+		TotalInputTokens:  totalInputTokens,
+		TotalOutputTokens: totalOutputTokens,
 		AvgInputTokens:    result.AvgInputTokens,
 		AvgOutputTokens:   result.AvgOutputTokens,
 		Latency:           latency,
 		Throughput:        throughput,
-		Phases:            phases,
-		Timeline:          result.Timeline,
+		Phases:            map[string]any{},
 	}
 
 	if opts.AgentName != "" {
