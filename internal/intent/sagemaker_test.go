@@ -249,8 +249,8 @@ func TestSageMaker_AIRigExampleEnabled(t *testing.T) {
 	if sm.Model != "meta-llama/Meta-Llama-3-8B-Instruct" {
 		t.Errorf("ai-rig model = %q, want meta-llama/Meta-Llama-3-8B-Instruct", sm.Model)
 	}
-	if sm.InstanceType != "ml.g5.2xlarge" {
-		t.Errorf("ai-rig instanceType = %q, want ml.g5.2xlarge", sm.InstanceType)
+	if sm.InstanceType != "ml.g5.xlarge" {
+		t.Errorf("ai-rig instanceType = %q, want ml.g5.xlarge", sm.InstanceType)
 	}
 	if sm.ScaleToZero {
 		t.Error("ai-rig scaleToZero = true, want false")

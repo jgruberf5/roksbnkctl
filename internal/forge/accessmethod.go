@@ -26,7 +26,7 @@ import (
 )
 
 // SSHCredentialEndpoint is the forge REST path for SSH credential CRUD.
-const SSHCredentialEndpoint = "/api/ssh-credentials"
+const SSHCredentialEndpoint = "/api/ssh-credentials" // #nosec G101 — REST URL path, not a credential
 
 // AccessMethodOptions carries all caller-supplied data for registering the
 // jumphost as a forge SSH access-method record.
