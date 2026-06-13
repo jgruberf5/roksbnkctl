@@ -131,10 +131,19 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 // calls, same contract as DetectShape. See
 // issues/issue_sprint28_architect.md §2c.
 type Presence struct {
-	Cluster bool // state-cluster/ has managed resources (the ROKS cluster)
+	Cluster bool // state-cluster/ has a managed ibm_container_vpc_cluster (the ROKS cluster itself)
 	BNK     bool // state/ has managed BNK resources
 	Testing bool // state-testing/ has managed resources (the jumphosts)
 	Gateway bool // state-gateway/ has managed resources (the data-plane config)
+
+	// ClusterResidual is true when state-cluster/ holds ANY managed resource,
+	// even if the ibm_container_vpc_cluster itself is gone. A partial cluster
+	// teardown (e.g. terraform destroy aborts on a transient provider race
+	// after the cluster resource was destroyed but before the VPC/TGW) leaves
+	// Cluster=false but ClusterResidual=true. The down paths consult it so a
+	// re-run can RESUME and finish destroying the leftover network instead of
+	// reporting "nothing to destroy" and orphaning it.
+	ClusterResidual bool
 }
 
 // Any reports whether at least one phase has resources — i.e. the
@@ -178,6 +187,14 @@ func DetectPresence(workspace string) (Presence, error) {
 		return p, err
 	}
 	p.Cluster = clusterHasCluster
+
+	// ClusterResidual — ANY managed resource in state-cluster/ (network left
+	// behind by a partially-failed teardown, even if the cluster itself is gone).
+	clusterHasAny, err := tfstateHasResources(clusterState)
+	if err != nil {
+		return p, err
+	}
+	p.ClusterResidual = clusterHasAny
 
 	// BNK — any managed resource in state/.
 	bnkHas, err := tfstateHasResources(bnkState)
