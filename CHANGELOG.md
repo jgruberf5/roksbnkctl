@@ -4,6 +4,20 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.11.3 — 2026-06-13
+
+A reliability patch with two live-validated fixes — gateway static routes and teardown — plus a workspace-aware `full-shakeout.sh --live` harness that exercises a real cluster lifecycle end-to-end. No config changes; existing workspaces are unaffected.
+
+### Fixed
+
+- **Gateway `up` failed for CIDR client subnets.** `module.gateway` set `F5SPKStaticRoute.spec.destination` to the whole client-subnet CIDR (e.g. `10.241.0.0/24`) and hardcoded `prefixLen = 32`, but the CRD wants a **bare network IP** in `spec.destination` with the mask in `spec.prefixLen` — so `gateway up` was rejected (`spec.destination: Invalid value`) whenever a `gateway_client_subnet_{local,remote}` entry carried a prefix (the common case since the per-AZ CIDR-list support). The module now splits the CIDR: `destination` = the network address, `prefixLen` = the CIDR's prefix (defaulting to `/32` for a bare host IP).
+- **`roksbnkctl down` could leak a VPC on a transient teardown race, and couldn't resume.** A `terraform destroy` that hit an IBM-provider delete-race — `DeletePublicGatewayWithContext failed: … not found`, the gateway already removed by terraform's own parallel destroy — aborted the cluster-phase teardown **before the VPC**, leaking it; and a re-run reported "nothing to destroy" once the cluster resource was gone. Teardown now **retries** transient destroy failures (`destroyWithRetry` — idempotent, so the retry refreshes the vanished resource out of state and finishes), and `down` / `cluster down` **resume** past a gone cluster resource (a new `ClusterResidual` presence signal) instead of orphaning the leftover network.
+- **Live-cluster integration tests hard-failed against a torn-down cluster** instead of skipping. `make test-integration`'s kubectl-passthrough / ops checks now `clusterUnreachableSkip` on connection-level errors to a *real* (non-`localhost:8080`) API server — a missing precondition, not a regression; the `localhost:8080` no-config regression guard is preserved.
+
+### Added
+
+- **`full-shakeout.sh` workspace mode + opt-in live tier.** Pass an initialized workspace name (`./scripts/full-shakeout.sh <ws>`) to target that workspace's own rendered inputs instead of a loose `./terraform.tfvars`. A gated `--live` tier (TIER L) then runs a full cloud lifecycle against it — `up` → `gateway up` → connectivity/DNS probes → `down` — only behind a green Tier 0 + Tier 1, with a teardown safety-trap so a partial apply never leaks. Off by default; never spends without `--live` + `IBMCLOUD_API_KEY`. Internal test tooling — no change to the shipped CLI surface.
+
 ## v1.11.2 — 2026-06-12
 
 A maintenance patch: a leaner runner image and release binaries built with the latest stable Go (shipping the remaining Go-stdlib advisory fixes). No functional changes.
