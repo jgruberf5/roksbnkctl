@@ -435,6 +435,10 @@ func runOnePreset(
 		AgentHostname: flagBenchInstanceID,
 		AiperfConfig:  configJSON,
 	}
+	// Thread the registered config ID so the result links to its forge config.
+	if cfgErr == nil {
+		pushOpts.ConfigID = cfgResp.ID
+	}
 
 	forgeResp, pushErr := pushBenchmarkResultFn(cmd.Context(), result, pushOpts)
 	if pushErr != nil {

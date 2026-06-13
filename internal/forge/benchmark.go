@@ -54,8 +54,9 @@ type BenchmarkResultPayload struct {
 	AvgOutputTokens   float64 `json:"avg_output_tokens"`
 
 	// Aggregates
-	Latency    map[string]any `json:"latency"`
-	Throughput map[string]any `json:"throughput"`
+	Latency       map[string]any `json:"latency"`
+	Throughput    map[string]any `json:"throughput"`
+	AiperfMetrics map[string]any `json:"aiperf_metrics,omitempty"`
 
 	// Per-phase breakdown
 	Phases map[string]any `json:"phases"`
@@ -66,16 +67,23 @@ type BenchmarkResultPayload struct {
 	// Agent metadata
 	AgentName     *string `json:"agent_name,omitempty"`
 	AgentHostname *string `json:"agent_hostname,omitempty"`
+
+	// Linkage — optional forge foreign keys (omitted when zero/nil).
+	TargetID          *int `json:"target_id,omitempty"`
+	ConfigID          *int `json:"config_id,omitempty"`
+	ProxyDeploymentID *int `json:"proxy_deployment_id,omitempty"`
 }
 
 // BenchmarkPushResponse is the shape forge returns on success.
 // Matches BenchmarkResultPushResponse in the Python schema.
 type BenchmarkPushResponse struct {
-	ID     int    `json:"id"`
-	RunID  int    `json:"run_id"`
-	Proxy  string `json:"proxy"`
-	Model  string `json:"model"`
-	Status string `json:"status"`
+	ID       int    `json:"id"`
+	RunID    int    `json:"run_id"`
+	Proxy    string `json:"proxy"`
+	Model    string `json:"model"`
+	Status   string `json:"status"`
+	TargetID *int   `json:"target_id,omitempty"`
+	ConfigID *int   `json:"config_id,omitempty"`
 }
 
 // BenchmarkPushOptions carries all caller-supplied metadata for a push.
@@ -96,6 +104,12 @@ type BenchmarkPushOptions struct {
 	AgentHostname string
 	// AiperfConfig carries the benchmark config used (forwarded verbatim to forge).
 	AiperfConfig map[string]any
+	// TargetID links the result to a forge Target record (0 = unset, omitted).
+	TargetID int
+	// ConfigID links the result to a forge BenchmarkConfig record (0 = unset, omitted).
+	ConfigID int
+	// ProxyDeploymentID links the result to a forge ProxyDeployment record (0 = unset, omitted).
+	ProxyDeploymentID int
 }
 
 // benchmarkHTTPDoFn is the injectable HTTP transport seam used by
@@ -113,11 +127,16 @@ var benchmarkHTTPDoFn func(*http.Request) (*http.Response, error) = http.Default
 //	result.Endpoint               → labels["endpoint"]
 //	opts.Proxy                    → labels["proxy"]   (default: "f5-bnk")
 //	opts.RunLabel                 → labels["run_label"]
-//	result.RequestLatency.*       → payload.Latency["request_latency"]
-//	result.TTFT.*                 → payload.Latency["ttft"]
-//	result.ITL.*                  → payload.Latency["itl"]
-//	result.RequestThroughput      → payload.Throughput["overall_rps"]
-//	result.OutputTokenThroughput  → payload.Throughput["tokens_per_sec"]
+//	result.RequestLatency.* / 1000 → payload.Latency (SECONDS — forge contract)
+//	result.RequestThroughput      → payload.Throughput["overall_rps"] and ["peak_rps"]
+//	result.OutputTokenThroughput  → payload.Throughput["gen_tokens_per_sec"]
+//	result.TTFT.*                 → payload.AiperfMetrics["ttft"] (raw ms)
+//	result.ITL.*                  → payload.AiperfMetrics["itl"]  (raw ms)
+//	result.AvgOutputTokens        → payload.AiperfMetrics["osl"]["avg"]
+//	result.AvgInputTokens         → payload.AiperfMetrics["isl"]["avg"]
+//	opts.ConfigID (non-zero)      → payload.ConfigID pointer
+//	opts.TargetID (non-zero)      → payload.TargetID pointer
+//	opts.ProxyDeploymentID (n-z)  → payload.ProxyDeploymentID pointer
 func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushOptions) BenchmarkResultPayload {
 	proxy := opts.Proxy
 	if proxy == "" {
@@ -141,31 +160,45 @@ func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushO
 		cfg = map[string]any{}
 	}
 
-	// Map aiperf 0.10.0 DistributionStats → dict for the schema's latency field.
+	// Map aiperf 0.10.0 DistributionStats → latency dict (SECONDS).
+	// aiperf reports latency in milliseconds; forge's contract divides by 1000.
 	latency := map[string]any{
-		"p50": result.RequestLatency.P50,
-		"p90": result.RequestLatency.P90,
-		"p99": result.RequestLatency.P99,
-		"avg": result.RequestLatency.Avg,
-		"min": result.RequestLatency.Min,
-		"max": result.RequestLatency.Max,
-		"ttft": map[string]any{
-			"avg": result.TTFT.Avg,
-			"p50": result.TTFT.P50,
-			"p90": result.TTFT.P90,
-			"p99": result.TTFT.P99,
-		},
-		"itl": map[string]any{
-			"avg": result.ITL.Avg,
-			"p50": result.ITL.P50,
-			"p90": result.ITL.P90,
-			"p99": result.ITL.P99,
-		},
+		"min": result.RequestLatency.Min / 1000.0,
+		"p50": result.RequestLatency.P50 / 1000.0,
+		"p90": result.RequestLatency.P90 / 1000.0,
+		"p99": result.RequestLatency.P99 / 1000.0,
+		"avg": result.RequestLatency.Avg / 1000.0,
+		"max": result.RequestLatency.Max / 1000.0,
 	}
 
+	// throughput keys match forge's complete_run_with_aiperf_result contract.
+	// gen_tokens_per_sec is the key forge denormalizes to tokens_per_sec column.
+	// peak_rps mirrors overall_rps (aiperf has no separate peak).
 	throughput := map[string]any{
-		"overall_rps":    result.RequestThroughput,
+		"overall_rps":        result.RequestThroughput,
+		"peak_rps":           result.RequestThroughput,
+		"gen_tokens_per_sec": result.OutputTokenThroughput,
+		// backward-compat alias kept so any existing consumers are not broken.
 		"tokens_per_sec": result.OutputTokenThroughput,
+	}
+
+	// aiperf_metrics carries the raw (ms / scalar) values that forge's compare
+	// view reads via result_json["aiperf_metrics"][k]["avg"].
+	distMap := func(d jumphost.DistributionStats) map[string]any {
+		return map[string]any{
+			"avg": d.Avg,
+			"p50": d.P50,
+			"p90": d.P90,
+			"p99": d.P99,
+			"min": d.Min,
+			"max": d.Max,
+		}
+	}
+	aiperfMetrics := map[string]any{
+		"ttft": distMap(result.TTFT),
+		"itl":  distMap(result.ITL),
+		"osl":  map[string]any{"avg": result.AvgOutputTokens},
+		"isl":  map[string]any{"avg": result.AvgInputTokens},
 	}
 
 	// Compute success_rate_pct from counts.
@@ -198,6 +231,7 @@ func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushO
 		AvgOutputTokens:   result.AvgOutputTokens,
 		Latency:           latency,
 		Throughput:        throughput,
+		AiperfMetrics:     aiperfMetrics,
 		Phases:            map[string]any{},
 	}
 
@@ -208,6 +242,18 @@ func MapAiperfResultToPayload(result *jumphost.AiperfResult, opts BenchmarkPushO
 	if opts.AgentHostname != "" {
 		h := opts.AgentHostname
 		payload.AgentHostname = &h
+	}
+	if opts.ConfigID != 0 {
+		id := opts.ConfigID
+		payload.ConfigID = &id
+	}
+	if opts.TargetID != 0 {
+		id := opts.TargetID
+		payload.TargetID = &id
+	}
+	if opts.ProxyDeploymentID != 0 {
+		id := opts.ProxyDeploymentID
+		payload.ProxyDeploymentID = &id
 	}
 
 	return payload
