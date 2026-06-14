@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	sagemaker_types "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
 
@@ -15,6 +16,39 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/aws/tags"
 	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 )
+
+// smIAMPropagationWaitFn is the injectable seam for the SageMaker execution-role
+// IAM propagation wait. In production it performs a bounded sleep so SageMaker
+// can assume the freshly-created role; in tests it is replaced with a no-op to
+// avoid real sleeps while still asserting the wait fires (or is skipped).
+//
+// The wait is triggered only when the execution role was freshly created on this
+// up run. When the role already existed (idempotent re-run) this function is NOT
+// called, keeping re-runs fast.
+var smIAMPropagationWaitFn = func(ctx context.Context) error {
+	// IAM roles propagate eventually. SageMaker re-validates the execution role
+	// trust policy asynchronously at endpoint provisioning time — not at
+	// CreateModel time. A freshly-created role that passes CreateModel can still
+	// cause the endpoint to land in Failed state ~60s later with
+	// "execution role ARN is invalid / cannot be assumed".
+	//
+	// Strategy: a bounded linear sleep (3 × 20 s = 60 s max) with context
+	// cancellation support. Matches the propagation SLA observed in practice
+	// (role assumable within 10-30 s; 60 s is conservative). Mirrors the backoff
+	// already used by Phase07/Phase18 IAM propagation handling.
+	const attempts = 3
+	const interval = 20 * time.Second
+	fmt.Fprintf(os.Stderr, "[sagemaker] execution role freshly created — waiting for IAM propagation (%d × %s)\n", attempts, interval)
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+		fmt.Fprintf(os.Stderr, "[sagemaker] IAM propagation wait %d/%d complete\n", i+1, attempts)
+	}
+	return nil
+}
 
 // lmiDefaultImageSuffix is the DJL-Serving Large Model Inference container image default.
 // Serving engine IS vLLM (LMI v25 = DJL 0.36.0 / djl-lmi, vLLM 0.20.1).
@@ -92,6 +126,15 @@ func PhaseSageMakerUp(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		cl.Tags,
 		cl.Metadata.Labels,
 	)
+
+	// Detect role existence BEFORE ensureRole so we know whether the role is
+	// freshly created (and therefore needs an IAM-propagation wait) or already
+	// existed (idempotent re-run — skip the wait to stay fast). We cannot change
+	// ensureRole's (string, error) signature because it is shared across many
+	// callers; a cheap GetRole here is the least-invasive detection approach.
+	_, roleExistsErr := clients.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: ptr(execRoleName)})
+	rolePreExisted := (roleExistsErr == nil)
+
 	execRoleARN, err := ensureRole(ctx, clients.IAM, execRoleName, "sagemaker.amazonaws.com",
 		[]string{"arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"},
 		"",
@@ -101,6 +144,23 @@ func PhaseSageMakerUp(ctx context.Context, cl *intent.Cluster, st *state.State, 
 		return fmt.Errorf("sagemaker up: execution role: %w", err)
 	}
 	st.Set("SAGEMAKER_EXEC_ROLE_NAME", execRoleName)
+
+	// Proactive IAM propagation wait: SageMaker re-validates the execution role
+	// trust policy LAZILY at endpoint provisioning time (not at CreateModel time).
+	// A freshly-created role can pass CreateModel yet cause the endpoint to land
+	// in Failed state ~30-60 s later with "execution role ARN is invalid / cannot
+	// be assumed". Waiting here — before CreateModel/CreateEndpoint — ensures the
+	// role is assumable by the time SageMaker spins up the endpoint.
+	//
+	// Skip on idempotent re-runs (role already existed) so consecutive up calls
+	// do not incur a 60 s penalty. smIAMPropagationWaitFn is injected in tests
+	// to assert the wait fires on fresh-create and is skipped on re-runs without
+	// actually sleeping.
+	if !rolePreExisted {
+		if waitErr := smIAMPropagationWaitFn(ctx); waitErr != nil {
+			return fmt.Errorf("sagemaker up: IAM propagation wait: %w", waitErr)
+		}
+	}
 
 	// 1. Ensure Model.
 	if err := ensureSageMakerModel(ctx, clients.IAM, clients.SageMaker, modelName, imageURI, sm.Model, execRoleARN, smTags); err != nil {

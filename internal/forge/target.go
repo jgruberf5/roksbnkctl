@@ -131,14 +131,27 @@ func RegisterBenchmarkTarget(ctx context.Context, opts BenchmarkTargetOptions) (
 	return existing, nil
 }
 
+// benchmarkTargetListResponse is the wrapper object returned by
+// GET /api/benchmarks/targets (backend/routes/benchmarks.py:317,
+// response_model=BenchmarkTargetListResponse).
+// Shape: {"targets":[...],"total":N}
+type benchmarkTargetListResponse struct {
+	Targets []BenchmarkTargetResponse `json:"targets"`
+	Total   int                       `json:"total"`
+}
+
 // benchmarkTargetFindByName GETs /api/benchmarks/targets and returns the record
 // whose name matches exactly.
+//
+// Forge returns a JSON object {"targets":[...],"total":N}, NOT a bare array.
+// (GET /api/benchmarks/proxies IS a bare array — only this endpoint uses the
+// list-response wrapper.)
 func benchmarkTargetFindByName(ctx context.Context, base, token, name string) (BenchmarkTargetResponse, error) {
-	var list []BenchmarkTargetResponse
-	if err := bmkRestGet(ctx, base+BenchmarkTargetEndpoint, token, &list); err != nil {
+	var resp benchmarkTargetListResponse
+	if err := bmkRestGet(ctx, base+BenchmarkTargetEndpoint, token, &resp); err != nil {
 		return BenchmarkTargetResponse{}, fmt.Errorf("list benchmark targets: %w", err)
 	}
-	for _, r := range list {
+	for _, r := range resp.Targets {
 		if r.Name == name {
 			return r, nil
 		}

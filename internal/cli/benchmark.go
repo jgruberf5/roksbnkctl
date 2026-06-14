@@ -178,6 +178,10 @@ AWS SG ingress rule for this path is out of scope (WS-E).`)
 // out the real SSH call without replacing the jumphost package's internal seam.
 var runAiperfFn = jumphost.RunAiperf
 
+// checkServedModelFn is the injectable seam for CheckServedModel — allows CLI
+// tests to stub out the EICE/SSH preflight without network access.
+var checkServedModelFn = jumphost.CheckServedModel
+
 // pushBenchmarkResultFn is the injectable seam for PushBenchmarkResult.
 // Kept for backward-compat; primary push path is now pushRawAiperfResultFn.
 var pushBenchmarkResultFn = forge.PushBenchmarkResult
@@ -338,6 +342,21 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("ensure aiperf: %w", err)
 		}
 		fmt.Fprintln(os.Stderr, "✓ aiperf ready")
+	}
+
+	// Step 1b: preflight — verify that --model is actually served by the endpoint.
+	// This catches the common footgun where vLLM's --served-model-name differs from
+	// the HF repo path (e.g. "llama3" vs "meta-llama/Meta-Llama-3-8B-Instruct").
+	// Non-fatal on transport errors; fatal when the preflight succeeds but the model
+	// is absent (avoids a silent all-failed aiperf run).
+	//
+	// In proxy shootout mode each front-end may have a different VIP — the preflight
+	// is skipped here and run per-front-end in runShootoutFrontEnd instead.
+	if flagBenchProxies == "" && flagBenchDirectPodIP == "" {
+		fmt.Fprintf(os.Stderr, "→ Preflight: checking that model %q is served at %s\n", flagBenchModel, flagBenchVIP)
+		if pfErr := checkServedModelFn(cmd.Context(), probOpts, flagBenchModel); pfErr != nil {
+			return fmt.Errorf("served-model preflight: %w", pfErr)
+		}
 	}
 
 	// ── Proxy shootout mode (WS-D1) ─────────────────────────────────────────
@@ -1118,6 +1137,18 @@ func runShootoutFrontEnd(
 	presets []benchmarkPreset,
 ) shootoutOutcome {
 	base := shootoutOutcome{ProxyType: proxyType, ProxyDeploymentID: graph.proxyDeploymentID}
+
+	// Per-front-end served-model preflight.  Each front-end may target a
+	// different VIP (e.g. nodeport direct-pod-ip), so we preflight here with
+	// the effective per-front-end probOpts (which already has VIP set by the
+	// caller for direct-pod-ip front-ends).
+	fmt.Fprintf(os.Stderr, "→ Preflight: checking model %q at vip=%s (front-end=%s)\n",
+		flagBenchModel, probOpts.VIP, proxyType)
+	if pfErr := checkServedModelFn(cmd.Context(), probOpts, flagBenchModel); pfErr != nil {
+		base.Status = "PREFLIGHT_FAILED"
+		base.Err = fmt.Errorf("served-model preflight: %w", pfErr)
+		return base
+	}
 
 	switch {
 	case flagBenchScenario != "":
