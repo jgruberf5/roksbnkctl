@@ -37,6 +37,7 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/jumphost"
+	"github.com/JLCode-tech/awsbnkctl/internal/k8s"
 )
 
 // discoverProxiesFn is the injectable seam for forge.DiscoverProxies.
@@ -44,6 +45,12 @@ var discoverProxiesFn = forge.DiscoverProxies
 
 // listProxyDeploymentsFn is the injectable seam for forge.ListProxyDeployments.
 var listProxyDeploymentsFn = forge.ListProxyDeployments
+
+// envoyNodePortEndpointFn is the injectable seam for k8s.EnvoyNodePortEndpoint.
+// Tests stub this to avoid requiring a live cluster for envoy front-end resolution.
+var envoyNodePortEndpointFn = func(ctx context.Context, kubeconfigPath, namespace, gatewayName string, listenerPort int32) (string, int32, error) {
+	return k8s.EnvoyNodePortEndpoint(ctx, kubeconfigPath, namespace, gatewayName, listenerPort)
+}
 
 var (
 	flagBenchRegion               string
@@ -73,6 +80,7 @@ var (
 	flagBenchScenario             string // --scenario <key>: native forge scenario (WS-C1)
 	flagBenchProxies              string // --proxies <csv>: shootout front-end list (WS-D1)
 	flagBenchDirectPodIP          string // --direct-pod-ip <ip>: direct nodeport baseline (WS-D1)
+	flagBenchConfig               string // --config/-f <cluster.yaml>: kubeconfig source for envoy lookup (WS-E2)
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -169,6 +177,11 @@ front-end. When empty, single/scenario/preset mode runs unchanged.`)
 When set, adds a 'nodeport' front-end that benchmarks aiperf against the
 pod IP instead of the BNK VIP. Distinct from any VIP nodeport in --proxies.
 AWS SG ingress rule for this path is out of scope (WS-E).`)
+	f.StringVarP(&flagBenchConfig, "config", "f", "",
+		`path to cluster.yaml (intent file); used to resolve the kubeconfig for
+cluster lookups required by the envoy front-end (resolves nodeIP + nodePort
+from the Envoy data-plane NodePort Service in perf-proxies). Required when
+--proxies includes 'envoy'.`)
 
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
@@ -950,10 +963,13 @@ func runNativeScenario(
 type shootoutFrontEnd struct {
 	// ProxyType is the forge canonical proxy type label (e.g. "envoy", "f5-bnk").
 	ProxyType string
-	// VIP overrides flagBenchVIP when non-empty (used by --direct-pod-ip).
+	// VIP overrides flagBenchVIP when non-empty (used by --direct-pod-ip and envoy NodePort).
 	VIP string
 	// ProxyDeploymentID is the resolved forge id (0 = unlinked).
 	ProxyDeploymentID int
+	// ResolveErr is set when endpoint resolution failed for this front-end.
+	// runProxyShootout marks the leg RESOLVE_FAILED and continues other front-ends.
+	ResolveErr error
 }
 
 // shootoutOutcome records the aggregated result for one front-end.
@@ -973,9 +989,15 @@ type shootoutOutcome struct {
 // forge proxy type (e.g. a typo). Valid-but-undiscovered types (cluster has
 // no running proxy of that kind) still proceed as unlinked front-ends.
 //
+// For the "envoy" proxy type: resolves the NodePort endpoint via
+// envoyNodePortEndpointFn and sets VIP to "<nodeIP>:<nodePort>". On failure
+// the front-end is returned with ResolveErr set — the caller marks it
+// RESOLVE_FAILED and continues other front-ends. kubeconfigPath is the
+// kubeconfig resolved from --config/-f (empty = use default).
+//
 // The direct-pod-ip nodeport front-end is always appended last and is kept
 // distinct from any VIP nodeport in --proxies.
-func resolveShootoutFrontEnds(ctx context.Context, creds forge.RestCreds, targetID int) ([]shootoutFrontEnd, error) {
+func resolveShootoutFrontEnds(ctx context.Context, creds forge.RestCreds, targetID int, kubeconfigPath string) ([]shootoutFrontEnd, error) {
 	var frontEnds []shootoutFrontEnd
 
 	// Parse --proxies CSV.
@@ -1015,13 +1037,62 @@ func resolveShootoutFrontEnds(ctx context.Context, creds forge.RestCreds, target
 		}
 	}
 
+	// When envoy is in the proxy list and --config/-f is empty, the NodePort
+	// endpoint lookup will fail (no kubeconfig → BuildClientset error). Surface
+	// a clear hint once up front so the operator knows the fix before the leg
+	// is marked RESOLVE_FAILED. The shootout still continues other front-ends.
+	if kubeconfigPath == "" {
+		for _, pt := range proxyTypes {
+			if pt == "envoy" {
+				fmt.Fprintln(os.Stderr, "⚠ envoy front-end requires --config/-f <cluster.yaml> to resolve the Envoy NodePort endpoint; the envoy leg will be marked RESOLVE_FAILED without it")
+				break
+			}
+		}
+	}
+
 	// Build VIP front-ends.
 	for _, pt := range proxyTypes {
 		id := forge.ResolveProxyDeploymentID(knownProxies, pt)
-		frontEnds = append(frontEnds, shootoutFrontEnd{
+		fe := shootoutFrontEnd{
 			ProxyType:         pt,
 			ProxyDeploymentID: id,
-		})
+		}
+
+		// Envoy front-end: resolve the NodePort endpoint from the cluster.
+		// The Envoy data-plane Service in perf-proxies is a NodePort — forge's
+		// recorded proxy_url carries the listener port (10080), not the nodePort.
+		// Use label-based discovery (gateway name may be truncated/hashed).
+		// Fail-closed: on error set ResolveErr so the caller marks this leg
+		// RESOLVE_FAILED. NEVER leave VIP="" for envoy (that silently benchmarks
+		// the BNK VIP).
+		if pt == "envoy" {
+			// Hard guard: an empty kubeconfigPath would cause BuildClientset to
+			// fall back to $KUBECONFIG/~/.kube/config (the HOST kubeconfig),
+			// which could silently query the wrong cluster. Fail-closed here so
+			// the leg is marked RESOLVE_FAILED rather than benchmarking the
+			// wrong cluster. The up-front warning above already told the operator
+			// what to fix; this ensures the code path never executes.
+			if kubeconfigPath == "" {
+				fe.ResolveErr = fmt.Errorf("envoy front-end requires --config/-f <cluster.yaml>: no kubeconfig resolved (pass --config to resolve the cluster kubeconfig)")
+				fmt.Fprintf(os.Stderr, "✗ %v\n", fe.ResolveErr)
+			} else {
+				nodeIP, nodePort, resolveErr := envoyNodePortEndpointFn(
+					ctx, kubeconfigPath,
+					"perf-proxies",
+					"", // empty → broad label match (single envoy deploy in ns)
+					10080,
+				)
+				if resolveErr != nil {
+					fe.ResolveErr = fmt.Errorf("envoy NodePort endpoint resolution failed: %w", resolveErr)
+					fmt.Fprintf(os.Stderr, "⚠ %v\n", fe.ResolveErr)
+				} else {
+					fe.VIP = fmt.Sprintf("%s:%d", nodeIP, nodePort)
+					fmt.Fprintf(os.Stderr, "✓ envoy endpoint resolved: %s\n", fe.VIP)
+				}
+			}
+		}
+
+		frontEnds = append(frontEnds, fe)
 	}
 
 	// Append direct-pod-ip nodeport front-end (always last, always distinct).
@@ -1054,7 +1125,13 @@ func runProxyShootout(
 	graph forgeGraph,
 	presets []benchmarkPreset,
 ) error {
-	frontEnds, err := resolveShootoutFrontEnds(cmd.Context(), creds, graph.targetID)
+	// Resolve kubeconfig from --config/-f for cluster lookups (envoy NodePort).
+	kubeconfigPath, err := resolveKubeconfigFromConfig(flagBenchConfig)
+	if err != nil {
+		return fmt.Errorf("--config: %w", err)
+	}
+
+	frontEnds, err := resolveShootoutFrontEnds(cmd.Context(), creds, graph.targetID, kubeconfigPath)
 	if err != nil {
 		return err
 	}
@@ -1067,11 +1144,23 @@ func runProxyShootout(
 	outcomes := make([]shootoutOutcome, 0, len(frontEnds))
 
 	for _, fe := range frontEnds {
+		// Fail-closed: a front-end whose endpoint resolution failed is marked
+		// RESOLVE_FAILED immediately — never runs, never touches the default VIP.
+		if fe.ResolveErr != nil {
+			outcomes = append(outcomes, shootoutOutcome{
+				ProxyType:         fe.ProxyType,
+				ProxyDeploymentID: fe.ProxyDeploymentID,
+				Status:            "RESOLVE_FAILED",
+				Err:               fe.ResolveErr,
+			})
+			continue
+		}
+
 		// Copy graph with the per-front-end proxy id; never mutate globals.
 		g := graph
 		g.proxyDeploymentID = fe.ProxyDeploymentID
 
-		// When the front-end has a specific VIP (direct-pod-ip), temporarily
+		// When the front-end has a specific VIP (direct-pod-ip or envoy NodePort),
 		// override the probe VIP for this front-end's runs.
 		feProbeOpts := probOpts
 		if fe.VIP != "" {

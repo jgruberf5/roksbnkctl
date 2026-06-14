@@ -124,7 +124,7 @@ bnk:
   jwt: ./license.jwt                 # REPLACE with your F5 subscription JWT
 
 # testing: provisions the multi-ENI jumphost so forge-orchestrated aiperf
-# benchmarks have an in-network client. The jumphost (t3.small, AL2023) sits
+# benchmarks have an in-network client. The jumphost (c6i.2xlarge, AL2023) sits
 # in the first public subnet (10.0.1.0/24) for EICE management access, but
 # also gets a secondary ENI placed directly in the BNK_EXT data-path VLAN
 # (10.0.10.0/24). The curl probe uses `--interface <BNK_EXT_ENI_IP>` so
@@ -133,6 +133,12 @@ bnk:
 testing:
   jumphost:
     enabled: true   # in-network aiperf client for forge benchmarks (reaches BNK VIP on external VLAN)
+    # c6i.2xlarge (8 vCPU, non-burstable): credible-load generator for the
+    # baseline scenario sweep (concurrency 50-200). t3.small is burstable
+    # (CPU-credit throttling → non-reproducible numbers) and too small — the
+    # load generator would become the bottleneck. Also retires the
+    # ensure-aiperf OOM/throttle during pip install.
+    instanceType: c6i.2xlarge
 
 tags:
   env: dev
