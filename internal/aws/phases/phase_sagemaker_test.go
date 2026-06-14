@@ -556,6 +556,84 @@ func TestEnsureSageMakerEndpoint_FailedAutoRecovers(t *testing.T) {
 	}
 }
 
+// --- Bug 4 proactive IAM propagation wait tests ---
+
+// TestPhaseSageMakerUp_FreshRole_WaitsForPropagation verifies that when the
+// SageMaker execution role is freshly created on this up run, PhaseSageMakerUp
+// calls smIAMPropagationWaitFn before CreateModel/CreateEndpoint. The test
+// injects a no-op wait so no real sleep occurs, but records that the wait fired.
+func TestPhaseSageMakerUp_FreshRole_WaitsForPropagation(t *testing.T) {
+	awsmw.ResetForTest()
+
+	waitCalled := false
+	old := smIAMPropagationWaitFn
+	smIAMPropagationWaitFn = func(_ context.Context) error {
+		waitCalled = true
+		return nil
+	}
+	defer func() { smIAMPropagationWaitFn = old }()
+
+	cl := makeSageMakerCluster(false)
+	st := makeTestState(t)
+	sm := newMockSageMaker()
+	iamMock := newMockIAM() // empty — role does not exist yet (fresh create)
+	clients := makeSageMakerClients(sm, iamMock)
+
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("PhaseSageMakerUp: %v", err)
+	}
+
+	if !waitCalled {
+		t.Error("smIAMPropagationWaitFn was NOT called on a fresh role create — IAM propagation race unaddressed")
+	}
+	// CreateModel must still have been called (wait → proceed, not abort).
+	if sm.createModelCalls != 1 {
+		t.Errorf("createModelCalls = %d, want 1 (model created after wait)", sm.createModelCalls)
+	}
+}
+
+// TestPhaseSageMakerUp_ExistingRole_SkipsWait verifies that when the SageMaker
+// execution role already existed before up was called (idempotent re-run),
+// PhaseSageMakerUp does NOT call smIAMPropagationWaitFn — keeping re-runs fast.
+func TestPhaseSageMakerUp_ExistingRole_SkipsWait(t *testing.T) {
+	awsmw.ResetForTest()
+
+	waitCalled := false
+	old := smIAMPropagationWaitFn
+	smIAMPropagationWaitFn = func(_ context.Context) error {
+		waitCalled = true
+		return nil
+	}
+	defer func() { smIAMPropagationWaitFn = old }()
+
+	cl := makeSageMakerCluster(false)
+	st := makeTestState(t)
+	sm := newMockSageMaker()
+	iamMock := newMockIAM()
+	clients := makeSageMakerClients(sm, iamMock)
+
+	// First run creates the role and all resources.
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("first up: %v", err)
+	}
+
+	// Advance endpoint to InService so the second run finds everything healthy.
+	endpointName := st.Get("SAGEMAKER_ENDPOINT_NAME")
+	sm.endpoints[endpointName].EndpointStatus = sagemaker_types.EndpointStatusInService
+
+	// Reset the wait sentinel before the second run.
+	waitCalled = false
+
+	// Second run — role already exists; wait must NOT fire.
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("second up: %v", err)
+	}
+
+	if waitCalled {
+		t.Error("smIAMPropagationWaitFn was called on an idempotent re-run — adds unnecessary latency")
+	}
+}
+
 // TestEnsureSageMakerEndpoint_FailedAfterRecovery verifies that when the endpoint
 // is still Failed after one recovery attempt, ensureSageMakerEndpoint returns a
 // hard error so a genuinely-broken config surfaces rather than looping.
