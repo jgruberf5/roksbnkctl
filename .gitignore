@@ -66,3 +66,4 @@ docs/demo/
 
 # --- HuggingFace token (gated model auth; never commit) ---
 .hf_token
+docs/adr/

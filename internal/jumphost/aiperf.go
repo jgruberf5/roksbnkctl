@@ -27,6 +27,26 @@ type AiperfConfig struct {
 	ISL int
 	// OSL is the output sequence length (tokens). Default: 128.
 	OSL int
+	// ISLStddev is the stddev for synthetic input token length (--synthetic-input-tokens-stddev).
+	// Zero means omit the flag (aiperf defaults apply).
+	ISLStddev int
+	// SeqDist is the sequence-distribution string passed via --seq-dist.
+	// When non-empty, --synthetic-input-tokens-mean and --output-tokens-mean are
+	// OMITTED (seq-dist drives both input and output length). ISL and OSL are
+	// ignored by buildAiperfCmd when SeqDist is set.
+	SeqDist string
+	// PrefixPromptLength is the prefix prompt length (--prefix-prompt-length).
+	// Zero means omit the flag.
+	PrefixPromptLength int
+	// NumPrefixPrompts is the number of prefix prompts (--num-prefix-prompts).
+	// Zero means omit the flag.
+	NumPrefixPrompts int
+	// ExtraInputs is a list of "key:value" strings forwarded as repeated
+	// --extra-inputs flags. Empty means omit.
+	ExtraInputs []string
+	// VariantLabel is a metadata field carried for per-child run labeling.
+	// It is NOT an aiperf flag and is not emitted in the command.
+	VariantLabel string
 	// Streaming enables streaming mode (--streaming). Default: false.
 	Streaming bool
 	// Tokenizer is the Hugging Face tokenizer repo used by aiperf for token
@@ -39,6 +59,33 @@ type AiperfConfig struct {
 	HostHeader string
 	// Timeout is the per-run total timeout. Default: 5 minutes.
 	Timeout time.Duration
+
+	// ── Trace-driven (mooncake) fields ──────────────────────────────────────
+	// TraceURL is the URL of the JSONL trace file to download on the jumphost.
+	// When non-empty, buildAiperfCmd emits the mooncake shell pipeline instead
+	// of the synthetic path. Must be http:// or https:// (SSRF guard).
+	TraceURL string
+	// TraceDilation is the time-dilation factor: each record's numeric
+	// timestamp is divided by this value (< 1 ⇒ slower arrivals).
+	// Default 0.80 when TraceURL is set and TraceDilation is zero.
+	TraceDilation float64
+	// CustomDatasetType maps to aiperf --custom-dataset-type (e.g. "mooncake_trace").
+	CustomDatasetType string
+	// FixedSchedule sets the bool flag --fixed-schedule.
+	FixedSchedule bool
+	// WorkersMax maps to aiperf --workers-max.
+	WorkersMax int
+	// RandomSeed maps to aiperf --random-seed.
+	RandomSeed int
+	// RequestTimeoutSeconds maps to aiperf --request-timeout-seconds.
+	RequestTimeoutSeconds int
+	// ProfileExportLevel maps to aiperf --profile-export-level (e.g. "summary").
+	ProfileExportLevel string
+	// RecordProcessors maps to aiperf --record-processors.
+	RecordProcessors int
+	// Goodput maps to aiperf --goodput (space-joined string, e.g.
+	// "time_to_first_token:5000 inter_token_latency:100").
+	Goodput string
 }
 
 // aiperfMetricDist is the distribution shape used for most aiperf 0.10.0 metrics.
@@ -117,6 +164,13 @@ type AiperfResult struct {
 	BaseURL  string `json:"base_url"`
 	Endpoint string `json:"endpoint"`
 
+	// RawJSON is the verbatim profile_export_aiperf.json content captured from
+	// the remote `cat` command.  It preserves all aiperf fields (http-timing,
+	// telemetry, full percentile distributions) beyond what the typed fields
+	// above carry.  Set alongside the parsed fields in RunAiperf; empty when
+	// constructed directly (e.g. in tests that build AiperfResult by hand).
+	RawJSON string `json:"-"`
+
 	// Metadata
 	AiperfVersion string `json:"aiperf_version"`
 	SchemaVersion string `json:"schema_version"`
@@ -176,6 +230,181 @@ type AiperfRunOptions struct {
 	ResultID string
 }
 
+// validateTraceURL returns an error when traceURL has a scheme other than
+// http or https. This mirrors forge_agent's TRACE_ALLOWED_SCHEMES allowlist
+// and prevents SSRF via file://, ftp://, etc.
+func validateTraceURL(traceURL string) error {
+	if traceURL == "" {
+		return fmt.Errorf("trace_url must not be empty")
+	}
+	// Simple prefix check — avoids importing net/url for a two-case guard.
+	if strings.HasPrefix(traceURL, "https://") || strings.HasPrefix(traceURL, "http://") {
+		return nil
+	}
+	// Extract the scheme (up to "://") for the error message.
+	scheme := traceURL
+	if i := strings.Index(traceURL, "://"); i >= 0 {
+		scheme = traceURL[:i]
+	} else if i := strings.Index(traceURL, ":"); i >= 0 {
+		scheme = traceURL[:i]
+	}
+	return fmt.Errorf("trace_url scheme %q not allowed; permitted: http, https", scheme)
+}
+
+// dilateTimestamp divides a float64 timestamp by the dilation factor.
+// This is the pure Go equivalent of forge_agent's _dilate_trace inner
+// transform: record["timestamp"] = ts / dilation. A dilation < 1 (e.g. 0.80)
+// increases each timestamp (ts / 0.80 = ts * 1.25), stretching inter-arrival
+// gaps so requests replay SLOWER — matching the canonical f5-epp harness.
+//
+// This function is factored out of the embedded shell snippet so it can be
+// unit-tested directly (the shell python3.11 -c snippet mirrors this logic).
+func dilateTimestamp(ts, dilation float64) float64 {
+	return ts / dilation
+}
+
+// buildMooncakeCmd constructs the trace-driven remote shell pipeline for the
+// mooncake scenario. The pipeline, in order:
+//  1. ulimit -n 65536 (best-effort — non-fatal if the hard limit is lower)
+//  2. export AIPERF_HTTP_CONNECTION_LIMIT=<workersMax>
+//  3. curl -fsSL <traceURL> -o /tmp/aiperf-<id>-raw.jsonl
+//  4. python3.11 -c '...' dilation step: divide each record's numeric
+//     "timestamp" by dilation, pass through non-numeric/blank lines
+//  5. aiperf profile with --input-file, --custom-dataset-type, --fixed-schedule,
+//     and all other scalar flags from the config
+//  6. cat the newest profile_export_aiperf.json found under output-artifact-dir
+//     (mirrors forge_agent's _find_result_json glob)
+func buildMooncakeCmd(opts AiperfRunOptions) (string, error) {
+	cfg := opts.Config
+
+	if err := validateTraceURL(cfg.TraceURL); err != nil {
+		return "", err
+	}
+
+	dilation := cfg.TraceDilation
+	if dilation == 0 {
+		dilation = 0.80
+	}
+
+	// Unique working paths per run.
+	dirSuffix := "run"
+	if opts.ResultID != "" {
+		safe := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+				return r
+			}
+			return '-'
+		}, opts.ResultID)
+		dirSuffix = safe
+	}
+	rawFile := fmt.Sprintf("/tmp/aiperf-%s-raw.jsonl", dirSuffix)
+	dilatedFile := fmt.Sprintf("/tmp/aiperf-%s-dilated.jsonl", dirSuffix)
+	artifactDir := fmt.Sprintf("/tmp/aiperf-%s-artifacts", dirSuffix)
+
+	workersMax := cfg.WorkersMax
+	if workersMax <= 0 {
+		workersMax = 200
+	}
+
+	// Defaults for required aiperf flags.
+	if cfg.Tokenizer == "" {
+		cfg.Tokenizer = "NousResearch/Meta-Llama-3-8B-Instruct"
+	}
+	if cfg.EndpointType == "" {
+		cfg.EndpointType = "chat"
+	}
+
+	vip := opts.ProbeOptions.VIP
+
+	// ── Python dilation inline script ────────────────────────────────────────
+	// Mirrors forge_agent._dilate_trace exactly:
+	//   for each non-blank line, parse JSON, if timestamp is numeric divide by
+	//   dilation, write back. Pass through records without a numeric timestamp.
+	dilationScript := fmt.Sprintf(
+		"import json,sys\n"+
+			"d=%g\n"+
+			"[sys.stdout.write(json.dumps({**r,'timestamp':r['timestamp']/d})+chr(10)) "+
+			"if isinstance(r.get('timestamp'),(int,float)) else "+
+			"sys.stdout.write(json.dumps(r)+chr(10)) "+
+			"for l in sys.stdin if l.strip() "+
+			"for r in [json.loads(l)]]",
+		dilation,
+	)
+
+	// Build the aiperf profile invocation (trace path: --input-file + --output-artifact-dir).
+	args := []string{
+		"aiperf", "profile",
+		"-m", shellSingleQuote(cfg.Model),
+		"-u", shellSingleQuote(fmt.Sprintf("http://%s", vip)),
+		"--endpoint-type", shellSingleQuote(cfg.EndpointType),
+		"--tokenizer", shellSingleQuote(cfg.Tokenizer),
+		"--input-file", shellSingleQuote(dilatedFile),
+		"--custom-dataset-type", shellSingleQuote(cfg.CustomDatasetType),
+	}
+
+	if cfg.FixedSchedule {
+		args = append(args, "--fixed-schedule")
+	}
+
+	if cfg.WorkersMax > 0 {
+		args = append(args, "--workers-max", fmt.Sprintf("%d", cfg.WorkersMax))
+	}
+	if cfg.RandomSeed != 0 {
+		args = append(args, "--random-seed", fmt.Sprintf("%d", cfg.RandomSeed))
+	}
+	if cfg.RequestTimeoutSeconds > 0 {
+		args = append(args, "--request-timeout-seconds", fmt.Sprintf("%d", cfg.RequestTimeoutSeconds))
+	}
+	if cfg.ProfileExportLevel != "" {
+		args = append(args, "--profile-export-level", shellSingleQuote(cfg.ProfileExportLevel))
+	}
+	if cfg.RecordProcessors > 0 {
+		args = append(args, "--record-processors", fmt.Sprintf("%d", cfg.RecordProcessors))
+	}
+	if cfg.Goodput != "" {
+		args = append(args, "--goodput", shellSingleQuote(cfg.Goodput))
+	}
+
+	if cfg.Streaming {
+		args = append(args, "--streaming")
+	}
+
+	if cfg.HostHeader != "" {
+		args = append(args, "--header", shellSingleQuote(fmt.Sprintf("Host:%s", cfg.HostHeader)))
+	}
+
+	args = append(args,
+		"--output-artifact-dir", shellSingleQuote(artifactDir),
+		"--ui", "none",
+	)
+
+	aiperfInvocation := strings.Join(args, " ")
+
+	// Compose the full remote pipeline:
+	//   ulimit (best-effort) → env → download → dilate → aiperf → cat newest JSON
+	//
+	// The cat uses ls -t to find the newest profile_export_aiperf.json under
+	// any subdir of artifactDir, mirroring forge_agent's _find_result_json glob.
+	cmd := fmt.Sprintf(
+		"ulimit -n 65536 2>/dev/null || true; "+
+			"export AIPERF_HTTP_CONNECTION_LIMIT=%d; "+
+			"curl -fsSL %s -o %s; "+
+			"python3.11 -c %s < %s > %s; "+
+			"%s >/tmp/aiperf.stderr 2>&1; "+
+			`cat "$(ls -t %s/*/profile_export_aiperf.json 2>/dev/null | head -1)"`,
+		workersMax,
+		shellSingleQuote(cfg.TraceURL),
+		shellSingleQuote(rawFile),
+		shellSingleQuote(dilationScript),
+		shellSingleQuote(rawFile),
+		shellSingleQuote(dilatedFile),
+		aiperfInvocation,
+		shellSingleQuote(artifactDir),
+	)
+
+	return cmd, nil
+}
+
 // buildAiperfCmd constructs the remote shell command that:
 //  1. Removes any stale artifact dir
 //  2. Runs aiperf profile to write artifacts
@@ -184,9 +413,24 @@ type AiperfRunOptions struct {
 // This is required because aiperf 0.10.0 writes output to files, NOT stdout.
 // The VIP is taken from opts.ProbeOptions.VIP.
 //
+// When cfg.TraceURL is set (mooncake trace path), dispatches to buildMooncakeCmd
+// which emits the download+dilation+aiperf pipeline. Panics are not possible
+// since buildMooncakeCmd only errors on bad URL schemes, which are validated before
+// RunAiperf is called.
+//
 // aiperf prereq: the jumphost must have aiperf 0.10.0+ installed via
 // python3.11 -m pip install aiperf. See EnsureAiperf.
 func buildAiperfCmd(opts AiperfRunOptions) string {
+	// Dispatch to the trace-driven path when TraceURL is set.
+	if opts.Config.TraceURL != "" {
+		cmd, err := buildMooncakeCmd(opts)
+		if err != nil {
+			// Caller should have validated before calling; surface as a detectable string.
+			return fmt.Sprintf("echo 'buildAiperfCmd error: %s'; exit 1", err)
+		}
+		return cmd
+	}
+
 	cfg := opts.Config
 	if cfg.EndpointType == "" {
 		cfg.EndpointType = "chat"
@@ -231,10 +475,36 @@ func buildAiperfCmd(opts AiperfRunOptions) string {
 		"--endpoint-type", shellSingleQuote(cfg.EndpointType),
 		"--concurrency", fmt.Sprintf("%d", cfg.Concurrency),
 		"--request-count", fmt.Sprintf("%d", cfg.NumRequests),
-		"--synthetic-input-tokens-mean", fmt.Sprintf("%d", cfg.ISL),
-		"--output-tokens-mean", fmt.Sprintf("%d", cfg.OSL),
-		"--tokenizer", shellSingleQuote(cfg.Tokenizer),
 	}
+
+	// When SeqDist is set, emit --seq-dist and omit the ISL/OSL mean flags
+	// (seq-dist drives both input and output length).
+	if cfg.SeqDist != "" {
+		args = append(args, "--seq-dist", shellSingleQuote(cfg.SeqDist))
+	} else {
+		args = append(args,
+			"--synthetic-input-tokens-mean", fmt.Sprintf("%d", cfg.ISL),
+			"--output-tokens-mean", fmt.Sprintf("%d", cfg.OSL),
+		)
+	}
+
+	if cfg.ISLStddev > 0 {
+		args = append(args, "--synthetic-input-tokens-stddev", fmt.Sprintf("%d", cfg.ISLStddev))
+	}
+
+	if cfg.PrefixPromptLength > 0 {
+		args = append(args, "--prefix-prompt-length", fmt.Sprintf("%d", cfg.PrefixPromptLength))
+	}
+
+	if cfg.NumPrefixPrompts > 0 {
+		args = append(args, "--num-prefix-prompts", fmt.Sprintf("%d", cfg.NumPrefixPrompts))
+	}
+
+	for _, ei := range cfg.ExtraInputs {
+		args = append(args, "--extra-inputs", shellSingleQuote(ei))
+	}
+
+	args = append(args, "--tokenizer", shellSingleQuote(cfg.Tokenizer))
 
 	if cfg.HostHeader != "" {
 		args = append(args, "--header", shellSingleQuote(fmt.Sprintf("Host:%s", cfg.HostHeader)))
@@ -279,6 +549,13 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 		opts.ProbeOptions.User = "ec2-user"
 	}
 
+	// Validate trace URL scheme before doing any network operations.
+	if opts.Config.TraceURL != "" {
+		if err := validateTraceURL(opts.Config.TraceURL); err != nil {
+			return nil, fmt.Errorf("aiperf: %w", err)
+		}
+	}
+
 	keyPath, pubKeyPath, cleanup, err := prepareEICEKeyFn(ctx, opts.ProbeOptions.Region, opts.ProbeOptions.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("aiperf: prepare EICE key: %w", err)
@@ -305,6 +582,15 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 		return nil, fmt.Errorf("aiperf: parse output: %w (raw: %.500s)", err, stdout)
 	}
 
+	// Capture the raw JSON for callers that need the full aiperf output
+	// (e.g. forge's /api/benchmarks/results/aiperf rich-ingest endpoint).
+	// Trim leading noise lines so RawJSON always starts at '{'.
+	if start := strings.Index(stdout, "{"); start >= 0 {
+		result.RawJSON = stdout[start:]
+	} else {
+		result.RawJSON = stdout
+	}
+
 	// Backfill identity fields from config when not present in JSON.
 	if result.Model == "" {
 		result.Model = opts.Config.Model
@@ -328,6 +614,9 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 //
 // AL2023 ships Python 3.9; aiperf requires >=3.10. We install python3.11 via
 // dnf (available on AL2023) and use it to pip install aiperf.
+// Note: on AL2023, `dnf install python3.11` does NOT include pip — we also
+// install python3.11-pip explicitly, and fall back to `ensurepip --user`
+// in case the package name differs across AL2023 minor versions.
 // The console script lands at ~/.local/bin/aiperf which is on the ec2-user PATH.
 //
 // Guard: runs `aiperf --version` first; only installs if the version is
@@ -357,13 +646,15 @@ VER=$(aiperf --version 2>/dev/null || true)
 if echo "$VER" | grep -qv '^$' && ! echo "$VER" | grep -q '0\.1\.0'; then
   echo "ok:$VER"
 else
-  sudo dnf install -y python3.11 >/dev/null 2>&1
-  python3.11 -m pip install --user aiperf >/dev/null 2>&1
+  sudo dnf install -y python3.11 python3.11-pip >/dev/null 2>&1
+  python3.11 -m ensurepip --user >/dev/null 2>&1 || true
+  python3.11 -m pip install --user aiperf >/tmp/aiperf_install.log 2>&1
   VER2=$(aiperf --version 2>/dev/null || true)
   if echo "$VER2" | grep -qv '^$' && ! echo "$VER2" | grep -q '0\.1\.0'; then
     echo "installed:$VER2"
   else
     echo "FAILED:$VER2"
+    tail -3 /tmp/aiperf_install.log 2>/dev/null
     exit 1
   fi
 fi`

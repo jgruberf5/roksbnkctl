@@ -6,3 +6,12 @@ var AiperfSSHExecFn = &aiperfSSHExecFn
 
 // BuildAiperfCmd exposes buildAiperfCmd for command-construction tests.
 var BuildAiperfCmd = buildAiperfCmd
+
+// BuildMooncakeCmd exposes buildMooncakeCmd for unit tests.
+var BuildMooncakeCmd = buildMooncakeCmd
+
+// ValidateTraceURL exposes validateTraceURL for unit tests.
+var ValidateTraceURL = validateTraceURL
+
+// DilateTimestamp exposes dilateTimestamp for unit tests.
+var DilateTimestamp = dilateTimestamp

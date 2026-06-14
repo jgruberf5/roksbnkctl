@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,13 @@ import (
 // BenchmarkPushEndpoint is the forge REST path for result ingestion.
 // Matches POST /api/benchmarks/results in the Python schema.
 const BenchmarkPushEndpoint = "/api/benchmarks/results"
+
+// BenchmarkRawAiperfEndpoint is the forge REST path for rich raw aiperf ingest.
+// Body = verbatim profile_export_aiperf.json bytes (bare JSON).
+// Query params: proxy, model, url, agent_name, run_label,
+// target_id, config_id, proxy_deployment_id, dataset_name.
+// Forge performs the canonical transform; no Go-side field mapping needed.
+const BenchmarkRawAiperfEndpoint = "/api/benchmarks/results/aiperf"
 
 // BenchmarkResultPayload is the Go representation of forge's
 // BenchmarkResultPush schema. Field names match the Python pydantic model
@@ -290,6 +298,121 @@ func PushBenchmarkResult(ctx context.Context, result *jumphost.AiperfResult, opt
 	return resp, nil
 }
 
+// RawAiperfPushOptions carries all parameters for the raw-JSON aiperf push path.
+// All string fields become URL query parameters on the POST; integer IDs are
+// omitted from the query string when zero.
+type RawAiperfPushOptions struct {
+	// RestURL is the forge REST base URL (e.g. "http://localhost:8000").
+	RestURL string
+	// Creds are the forge REST login credentials.
+	Creds RestCreds
+	// RawJSON is the verbatim content of profile_export_aiperf.json.
+	// Must be a valid JSON object (starts with '{').
+	RawJSON []byte
+	// Proxy label forwarded as ?proxy=. Default: "f5-bnk".
+	Proxy string
+	// Model name forwarded as ?model=.
+	Model string
+	// URL (LLM base URL) forwarded as ?url=.
+	URL string
+	// AgentName forwarded as ?agent_name=.
+	AgentName string
+	// RunLabel forwarded as ?run_label=.
+	RunLabel string
+	// DatasetName forwarded as ?dataset_name=.
+	DatasetName string
+	// TargetID forwarded as ?target_id= when non-zero.
+	TargetID int
+	// ConfigID forwarded as ?config_id= when non-zero.
+	ConfigID int
+	// ProxyDeploymentID forwarded as ?proxy_deployment_id= when non-zero.
+	ProxyDeploymentID int
+}
+
+// RawAiperfPushResponse is the shape forge returns on success from
+// POST /api/benchmarks/results/aiperf.
+type RawAiperfPushResponse struct {
+	ID       int    `json:"id"`
+	RunID    int    `json:"run_id"`
+	Proxy    string `json:"proxy"`
+	Model    string `json:"model"`
+	Status   string `json:"status"`
+	TargetID *int   `json:"target_id,omitempty"`
+	ConfigID *int   `json:"config_id,omitempty"`
+}
+
+// PushRawAiperfResult posts the raw profile_export_aiperf.json bytes to forge's
+// rich ingest endpoint (POST /api/benchmarks/results/aiperf).  Forge performs
+// the canonical transform — no field mapping happens on the Go side.
+//
+// Query parameters are derived from opts; zero-valued integer IDs are omitted.
+// Uses the same benchmarkHTTPDoFn transport seam as PushBenchmarkResult.
+func PushRawAiperfResult(ctx context.Context, opts RawAiperfPushOptions) (RawAiperfPushResponse, error) {
+	if opts.RestURL == "" {
+		return RawAiperfPushResponse{}, fmt.Errorf("forge.PushRawAiperfResult: RestURL is required")
+	}
+	if len(opts.RawJSON) == 0 {
+		return RawAiperfPushResponse{}, fmt.Errorf("forge.PushRawAiperfResult: RawJSON is required")
+	}
+
+	base := strings.TrimRight(opts.RestURL, "/")
+
+	token, err := bmkRestLogin(ctx, base, opts.Creds.restUsername(), opts.Creds.restPassword())
+	if err != nil {
+		return RawAiperfPushResponse{}, fmt.Errorf("forge raw aiperf push: login: %w", err)
+	}
+
+	proxy := opts.Proxy
+	if proxy == "" {
+		proxy = "f5-bnk"
+	}
+
+	// Build the request manually: body is raw JSON bytes (not re-marshalled),
+	// and query parameters carry the metadata that forge uses to link the run.
+	rawURL := base + BenchmarkRawAiperfEndpoint
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(string(opts.RawJSON)))
+	if err != nil {
+		return RawAiperfPushResponse{}, fmt.Errorf("forge raw aiperf push: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	q := req.URL.Query()
+	q.Set("proxy", proxy)
+	if opts.Model != "" {
+		q.Set("model", opts.Model)
+	}
+	if opts.URL != "" {
+		q.Set("url", opts.URL)
+	}
+	if opts.AgentName != "" {
+		q.Set("agent_name", opts.AgentName)
+	}
+	if opts.RunLabel != "" {
+		q.Set("run_label", opts.RunLabel)
+	}
+	if opts.DatasetName != "" {
+		q.Set("dataset_name", opts.DatasetName)
+	}
+	if opts.TargetID != 0 {
+		q.Set("target_id", fmt.Sprintf("%d", opts.TargetID))
+	}
+	if opts.ConfigID != 0 {
+		q.Set("config_id", fmt.Sprintf("%d", opts.ConfigID))
+	}
+	if opts.ProxyDeploymentID != 0 {
+		q.Set("proxy_deployment_id", fmt.Sprintf("%d", opts.ProxyDeploymentID))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	var resp RawAiperfPushResponse
+	if err := doBmkRequest(req, rawURL, &resp); err != nil {
+		return RawAiperfPushResponse{}, fmt.Errorf("forge raw aiperf push: %w", err)
+	}
+	return resp, nil
+}
+
 // BenchmarkConfigEndpoint is the forge REST path for saved RunConfig presets.
 const BenchmarkConfigEndpoint = "/api/benchmarks/configs"
 
@@ -318,6 +441,8 @@ type BenchmarkConfigResponse struct {
 // RegisterBenchmarkConfig POSTs a RunConfig preset to forge's
 // /api/benchmarks/configs endpoint.
 //
+// Idempotent: on name conflict (409 or 400-with-"already exists"), falls back
+// to GET /api/benchmarks/configs and returns the existing record by name match.
 // Best-effort: callers should log on error rather than aborting the run.
 // Uses the same benchmarkHTTPDoFn transport seam as PushBenchmarkResult.
 func RegisterBenchmarkConfig(ctx context.Context, opts BenchmarkConfigOptions) (BenchmarkConfigResponse, error) {
@@ -345,10 +470,43 @@ func RegisterBenchmarkConfig(ctx context.Context, opts BenchmarkConfigOptions) (
 	}
 
 	var resp BenchmarkConfigResponse
-	if err := bmkRestPost(ctx, base+BenchmarkConfigEndpoint, token, body, &resp); err != nil {
-		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: %w", err)
+	postErr := bmkRestPost(ctx, base+BenchmarkConfigEndpoint, token, body, &resp)
+	if postErr == nil {
+		return resp, nil
 	}
-	return resp, nil
+
+	// 409 or 400-with-"already exists": name conflict — fall back to list-and-match
+	// (mirrors the accessmethod.go and rest.go upsert pattern).
+	var herr *restHTTPErr
+	if !errors.As(postErr, &herr) {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: %w", postErr)
+	}
+	isConflict := herr.StatusCode == http.StatusConflict ||
+		(herr.StatusCode == http.StatusBadRequest && strings.Contains(herr.Body, "already exists"))
+	if !isConflict {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: %w", postErr)
+	}
+
+	existing, lookupErr := benchmarkConfigFindByName(ctx, base, token, opts.Name)
+	if lookupErr != nil {
+		return BenchmarkConfigResponse{}, fmt.Errorf("forge benchmark config: conflict + list failed: %w (original: %v)", lookupErr, postErr)
+	}
+	return existing, nil
+}
+
+// benchmarkConfigFindByName GETs /api/benchmarks/configs and returns the record
+// whose name matches exactly.
+func benchmarkConfigFindByName(ctx context.Context, base, token, name string) (BenchmarkConfigResponse, error) {
+	var list []BenchmarkConfigResponse
+	if err := bmkRestGet(ctx, base+BenchmarkConfigEndpoint, token, &list); err != nil {
+		return BenchmarkConfigResponse{}, fmt.Errorf("list benchmark configs: %w", err)
+	}
+	for _, r := range list {
+		if r.Name == name {
+			return r, nil
+		}
+	}
+	return BenchmarkConfigResponse{}, fmt.Errorf("benchmark config %q not found in forge", name)
 }
 
 // bmkRestLogin logs in over REST using the injectable benchmarkHTTPDoFn.

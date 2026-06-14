@@ -288,6 +288,72 @@ func Phase09ForgeRegisterDown(ctx context.Context, cl *intent.Cluster, st *state
 	return nil
 }
 
+// Phase09bBenchmarkDown deletes forge benchmark artifacts (BenchmarkTarget,
+// ProxyDeployments, BenchmarkAgent, BenchmarkConfigs) that awsbnkctl created
+// for this cluster. Runs BEFORE Phase09ForgeRegisterDown so targets can be
+// looked up via the still-valid forge cluster ID.
+//
+// Soft-fail: any forge error logs a warning and returns nil — teardown of paid
+// AWS infra always proceeds. Run/result rows are never deleted (forge nulls
+// their FKs via SET NULL).
+func Phase09bBenchmarkDown(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients) error {
+	awsmw.CheckAuthOrDie(clients.Profile)
+
+	// Resolve the forge cluster ID from state (written by Phase09ForgeRegister).
+	clusterIDStr := st.Get("FORGE_CLUSTER_ID")
+	if clusterIDStr == "" {
+		// No cluster ID — nothing to clean up or forge was never registered.
+		fmt.Fprintln(os.Stderr, "[phase 09b] forge benchmark cleanup: no FORGE_CLUSTER_ID in state, skipping")
+		return nil
+	}
+	clusterID := 0
+	if _, err := fmt.Sscanf(clusterIDStr, "%d", &clusterID); err != nil || clusterID <= 0 {
+		fmt.Fprintf(os.Stderr, "[phase 09b] forge benchmark cleanup: invalid FORGE_CLUSTER_ID %q, skipping\n", clusterIDStr)
+		return nil
+	}
+
+	// Resolve forge REST URL and credentials.
+	forgeURL := intent.DefaultForgeRESTURL
+	var restCreds forge.RestCreds
+	if cl.Forge != nil {
+		forgeURL = cl.Forge.ResolveURL()
+		forgeUsername := cl.Forge.ResolveUsername()
+		forgePassword, usingDefaultPwd := cl.Forge.ResolvePassword()
+		if usingDefaultPwd {
+			fmt.Fprintln(os.Stderr, "[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment")
+		}
+		restCreds = forge.RestCreds{Username: forgeUsername, Password: forgePassword}
+	} else {
+		// No forge block in cluster.yaml — try env-only credentials.
+		forgePassword, usingDefaultPwd := (*intent.ForgeSpec)(nil).ResolvePassword()
+		if usingDefaultPwd {
+			fmt.Fprintln(os.Stderr, "[forge] using default password; set AWSBNKCTL_FORGE_PASSWORD or forge.password for your deployment")
+		}
+		restCreds = forge.RestCreds{
+			Username: (*intent.ForgeSpec)(nil).ResolveUsername(),
+			Password: forgePassword,
+		}
+	}
+
+	// Resolve the jumphost instance ID — used to build the exact record name
+	// "awsbnkctl-jumphost-<instanceID>" for agent and SSH-credential deletion.
+	// Written to state by Phase17bJumphostUp. Empty = jumphost never created;
+	// DeleteClusterBenchmarkArtifacts skips steps 3+4 in that case.
+	jumphostInstanceID := st.Get("JUMPHOST_INSTANCE_ID")
+	if jumphostInstanceID == "" {
+		fmt.Fprintln(os.Stderr, "[phase 09b] JUMPHOST_INSTANCE_ID not in state — skipping agent + ssh-credential deletion")
+	}
+
+	fmt.Fprintf(os.Stderr, "[phase 09b] forge benchmark cleanup: deleting artifacts for cluster_id=%d\n", clusterID)
+	if err := forge.DeleteClusterBenchmarkArtifacts(ctx, forgeURL, restCreds, clusterID, jumphostInstanceID); err != nil {
+		// Soft-fail: log but do not block down.
+		fmt.Fprintf(os.Stderr, "[phase 09b] warning: forge benchmark cleanup partial failure (%v) — continue teardown\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "[phase 09b] forge benchmark cleanup: done")
+	}
+	return nil
+}
+
 // tryForgeRegister attempts MCP-first registration with REST fallback on
 // catalog-gap errors. Returns the RegisterResult on success.
 func tryForgeRegister(ctx context.Context, c *forge.Client, restURL string, req forge.RegisterRequest, creds forge.RestCreds) (forge.RegisterResult, error) {

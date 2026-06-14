@@ -422,8 +422,11 @@ func TestRunAiperf_BackfillsIdentityFromConfig(t *testing.T) {
 }
 
 // TestEnsureAiperf_UsesPython311 verifies that the install command uses
-// python3.11 (NOT python3 -m pip) and installs via dnf + python3.11 -m pip.
+// python3.11 (NOT python3 -m pip) and installs via dnf + python3.11-pip +
+// ensurepip fallback + python3.11 -m pip.
 // AL2023 ships Python 3.9 which can't run aiperf; python3.11 is available via dnf.
+// AL2023's python3.11 package does NOT bundle pip — python3.11-pip must be
+// installed explicitly (with ensurepip as a belt-and-suspenders fallback).
 func TestEnsureAiperf_UsesPython311(t *testing.T) {
 	var capturedCmd string
 
@@ -460,12 +463,515 @@ func TestEnsureAiperf_UsesPython311(t *testing.T) {
 	if !strings.Contains(capturedCmd, "python3.11 -m pip install") {
 		t.Errorf("EnsureAiperf command must contain %q; got: %q", "python3.11 -m pip install", capturedCmd)
 	}
-	// Must use dnf to install python3.11.
+	// Must use dnf to install python3.11 AND python3.11-pip (AL2023 omits pip from base package).
 	if !strings.Contains(capturedCmd, "dnf install") {
 		t.Errorf("EnsureAiperf command must use dnf install for python3.11; got: %q", capturedCmd)
+	}
+	if !strings.Contains(capturedCmd, "python3.11-pip") {
+		t.Errorf("EnsureAiperf command must install python3.11-pip (AL2023 python3.11 omits pip); got: %q", capturedCmd)
+	}
+	// Must include ensurepip fallback for belt-and-suspenders pip availability.
+	if !strings.Contains(capturedCmd, "ensurepip") {
+		t.Errorf("EnsureAiperf command must include ensurepip fallback; got: %q", capturedCmd)
 	}
 	// Must check for placeholder 0.1.0.
 	if !strings.Contains(capturedCmd, "0\\.1\\.0") && !strings.Contains(capturedCmd, "0.1.0") {
 		t.Errorf("EnsureAiperf must guard against 0.1.0 placeholder; got: %q", capturedCmd)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AiperfResult.RawJSON — verify RunAiperf populates the raw JSON field
+// ---------------------------------------------------------------------------
+
+// TestRunAiperf_RawJSONPopulated verifies that RunAiperf sets RawJSON on the
+// returned result to the verbatim JSON content (trimmed to start at '{').
+func TestRunAiperf_RawJSONPopulated(t *testing.T) {
+	origPrepare := *jumphost.PrepareEICEKeyFn
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		return "/k", "/k.pub", func() {}, nil
+	}
+	defer func() { *jumphost.PrepareEICEKeyFn = origPrepare }()
+
+	origPush := *jumphost.PushSSHPublicKeyFn
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, _ string) error { return nil }
+	defer func() { *jumphost.PushSSHPublicKeyFn = origPush }()
+
+	origExec := *jumphost.AiperfSSHExecFn
+	*jumphost.AiperfSSHExecFn = func(_ context.Context, _, _, _, _ string) (string, error) {
+		// Prepend stale lines that precede the JSON — RunAiperf must trim them.
+		return "noise line\nanother noise\n" + minimalAiperfJSON[strings.Index(minimalAiperfJSON, "{"):], nil
+	}
+	defer func() { *jumphost.AiperfSSHExecFn = origExec }()
+
+	result, err := jumphost.RunAiperf(context.Background(), jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{Region: "r", InstanceID: "i", VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	})
+	if err != nil {
+		t.Fatalf("RunAiperf: %v", err)
+	}
+	if result.RawJSON == "" {
+		t.Fatal("RawJSON must not be empty after RunAiperf")
+	}
+	if !strings.HasPrefix(result.RawJSON, "{") {
+		t.Errorf("RawJSON must start at '{', got prefix %q", result.RawJSON[:min(30, len(result.RawJSON))])
+	}
+	// Spot-check a known key from the fixture.
+	if !strings.Contains(result.RawJSON, `"schema_version"`) {
+		t.Error("RawJSON missing 'schema_version' key from fixture")
+	}
+	if !strings.Contains(result.RawJSON, `"benchmark_id"`) {
+		t.Error("RawJSON missing 'benchmark_id' key from fixture")
+	}
+}
+
+// TestRunAiperf_RawJSONWithNoNoise verifies RawJSON when stdout starts
+// directly with '{' (no leading noise lines).
+func TestRunAiperf_RawJSONWithNoNoise(t *testing.T) {
+	origPrepare := *jumphost.PrepareEICEKeyFn
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		return "/k", "/k.pub", func() {}, nil
+	}
+	defer func() { *jumphost.PrepareEICEKeyFn = origPrepare }()
+
+	origPush := *jumphost.PushSSHPublicKeyFn
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, _ string) error { return nil }
+	defer func() { *jumphost.PushSSHPublicKeyFn = origPush }()
+
+	// Pure JSON — no noise prefix.
+	pureJSON := minimalAiperfJSON[strings.Index(minimalAiperfJSON, "{"):]
+
+	origExec := *jumphost.AiperfSSHExecFn
+	*jumphost.AiperfSSHExecFn = func(_ context.Context, _, _, _, _ string) (string, error) {
+		return pureJSON, nil
+	}
+	defer func() { *jumphost.AiperfSSHExecFn = origExec }()
+
+	result, err := jumphost.RunAiperf(context.Background(), jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{Region: "r", InstanceID: "i", VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	})
+	if err != nil {
+		t.Fatalf("RunAiperf: %v", err)
+	}
+	if result.RawJSON != pureJSON {
+		t.Errorf("RawJSON mismatch: got len=%d, want len=%d", len(result.RawJSON), len(pureJSON))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// New AiperfConfig fields — flag emission and byte-compat regression guard
+// ---------------------------------------------------------------------------
+
+// TestBuildAiperfCmd_ByteCompat_ZeroNewFields asserts that when all new
+// AiperfConfig fields (ISLStddev, SeqDist, PrefixPromptLength, NumPrefixPrompts,
+// ExtraInputs, VariantLabel) are zero/empty, the command output is byte-identical
+// to the output produced before the new fields were added.
+//
+// This is the regression guard: existing runs must be unaffected.
+func TestBuildAiperfCmd_ByteCompat_ZeroNewFields(t *testing.T) {
+	baseOpts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:       "llama3",
+			Concurrency: 4,
+			NumRequests: 100,
+			ISL:         512,
+			OSL:         128,
+			Streaming:   true,
+			Tokenizer:   "NousResearch/Meta-Llama-3-8B-Instruct",
+		},
+	}
+
+	// Explicit zero values for new fields — should be identical to above.
+	newFieldsOpts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:              "llama3",
+			Concurrency:        4,
+			NumRequests:        100,
+			ISL:                512,
+			OSL:                128,
+			ISLStddev:          0,
+			SeqDist:            "",
+			PrefixPromptLength: 0,
+			NumPrefixPrompts:   0,
+			ExtraInputs:        nil,
+			VariantLabel:       "",
+			Streaming:          true,
+			Tokenizer:          "NousResearch/Meta-Llama-3-8B-Instruct",
+		},
+	}
+
+	const wantCmd = "rm -rf '/tmp/aiperf-run'; aiperf profile -m 'llama3' -u 'http://10.0.10.100' --endpoint-type 'chat' --concurrency 4 --request-count 100 --synthetic-input-tokens-mean 512 --output-tokens-mean 128 --tokenizer 'NousResearch/Meta-Llama-3-8B-Instruct' --streaming --artifact-dir '/tmp/aiperf-run' --ui none >/tmp/aiperf.stderr 2>&1; cat '/tmp/aiperf-run'/profile_export_aiperf.json"
+
+	cmdBase := jumphost.BuildAiperfCmd(baseOpts)
+	cmdNew := jumphost.BuildAiperfCmd(newFieldsOpts)
+
+	// Golden-literal assertion: catches flag reorders or additions that would
+	// affect both in-test structs identically and slip through the struct-equality check.
+	if cmdBase != wantCmd {
+		t.Errorf("byte-compat regression: BuildAiperfCmd output diverged from pinned golden\ngot:  %q\nwant: %q", cmdBase, wantCmd)
+	}
+
+	if cmdBase != cmdNew {
+		t.Errorf("byte-compat regression: new zero fields changed command output\ngot:  %q\nwant: %q", cmdNew, cmdBase)
+	}
+
+	// Additionally assert that no new flags appear in the base output.
+	for _, flag := range []string{"--synthetic-input-tokens-stddev", "--seq-dist", "--prefix-prompt-length", "--num-prefix-prompts", "--extra-inputs"} {
+		if strings.Contains(cmdBase, flag) {
+			t.Errorf("regression: %q should not appear when new fields are zero; cmd=%q", flag, cmdBase)
+		}
+	}
+}
+
+// TestBuildAiperfCmd_ISLStddev asserts --synthetic-input-tokens-stddev is emitted
+// when ISLStddev > 0.
+func TestBuildAiperfCmd_ISLStddev(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:     "llama3",
+			ISL:       500,
+			OSL:       128,
+			ISLStddev: 50,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--synthetic-input-tokens-stddev 50") {
+		t.Errorf("missing --synthetic-input-tokens-stddev 50; cmd=%q", cmd)
+	}
+	// Must still emit ISL/OSL mean when SeqDist is empty.
+	if !strings.Contains(cmd, "--synthetic-input-tokens-mean") {
+		t.Errorf("missing --synthetic-input-tokens-mean when SeqDist empty; cmd=%q", cmd)
+	}
+}
+
+// TestBuildAiperfCmd_SeqDist_OmitsISLOSL asserts that when SeqDist is set:
+//   - --seq-dist is emitted
+//   - --synthetic-input-tokens-mean is OMITTED
+//   - --output-tokens-mean is OMITTED
+func TestBuildAiperfCmd_SeqDist_OmitsISLOSL(t *testing.T) {
+	const seqDist = "300|100,64|16:70;4000|500,256|64:30"
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:   "llama3",
+			ISL:     500, // must be ignored
+			OSL:     128, // must be ignored
+			SeqDist: seqDist,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+
+	if !strings.Contains(cmd, "--seq-dist") {
+		t.Errorf("missing --seq-dist; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, seqDist) {
+		t.Errorf("seq-dist value not in command; cmd=%q", cmd)
+	}
+	if strings.Contains(cmd, "--synthetic-input-tokens-mean") {
+		t.Errorf("--synthetic-input-tokens-mean must be omitted when SeqDist set; cmd=%q", cmd)
+	}
+	if strings.Contains(cmd, "--output-tokens-mean") {
+		t.Errorf("--output-tokens-mean must be omitted when SeqDist set; cmd=%q", cmd)
+	}
+}
+
+// TestBuildAiperfCmd_PrefixFlags asserts --prefix-prompt-length and --num-prefix-prompts
+// are emitted when non-zero, and omitted when zero.
+func TestBuildAiperfCmd_PrefixFlags(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:              "llama3",
+			PrefixPromptLength: 4000,
+			NumPrefixPrompts:   20,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--prefix-prompt-length 4000") {
+		t.Errorf("missing --prefix-prompt-length 4000; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "--num-prefix-prompts 20") {
+		t.Errorf("missing --num-prefix-prompts 20; cmd=%q", cmd)
+	}
+
+	// Zero values must be omitted.
+	optsZero := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	}
+	cmdZero := jumphost.BuildAiperfCmd(optsZero)
+	if strings.Contains(cmdZero, "--prefix-prompt-length") {
+		t.Errorf("--prefix-prompt-length must be omitted when 0; cmd=%q", cmdZero)
+	}
+	if strings.Contains(cmdZero, "--num-prefix-prompts") {
+		t.Errorf("--num-prefix-prompts must be omitted when 0; cmd=%q", cmdZero)
+	}
+}
+
+// TestBuildAiperfCmd_ExtraInputs asserts repeated --extra-inputs flags are emitted.
+func TestBuildAiperfCmd_ExtraInputs(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:       "llama3",
+			ExtraInputs: []string{"ignore_eos:true", "temperature:0.0"},
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--extra-inputs") {
+		t.Errorf("missing --extra-inputs flag; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "ignore_eos:true") {
+		t.Errorf("missing ignore_eos:true in extra-inputs; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "temperature:0.0") {
+		t.Errorf("missing temperature:0.0 in extra-inputs; cmd=%q", cmd)
+	}
+
+	// When nil, must not appear.
+	optsNone := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	}
+	cmdNone := jumphost.BuildAiperfCmd(optsNone)
+	if strings.Contains(cmdNone, "--extra-inputs") {
+		t.Errorf("--extra-inputs must not appear when ExtraInputs is nil; cmd=%q", cmdNone)
+	}
+}
+
+// TestBuildAiperfCmd_VariantLabel_NotInCmd asserts that VariantLabel (a metadata
+// field) is NOT emitted as an aiperf flag.
+func TestBuildAiperfCmd_VariantLabel_NotInCmd(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:        "llama3",
+			VariantLabel: "c150-isl5000",
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if strings.Contains(cmd, "VariantLabel") || strings.Contains(cmd, "variant-label") || strings.Contains(cmd, "c150-isl5000") {
+		t.Errorf("VariantLabel must NOT be emitted as an aiperf flag; cmd=%q", cmd)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validateTraceURL — SSRF guard
+// ---------------------------------------------------------------------------
+
+func TestValidateTraceURL_AllowedSchemes(t *testing.T) {
+	cases := []string{
+		"https://raw.githubusercontent.com/kvcache-ai/Mooncake/main/trace.jsonl",
+		"http://10.0.0.1:8080/trace.jsonl",
+	}
+	for _, url := range cases {
+		if err := jumphost.ValidateTraceURL(url); err != nil {
+			t.Errorf("ValidateTraceURL(%q) = %v, want nil", url, err)
+		}
+	}
+}
+
+func TestValidateTraceURL_BlockedSchemes(t *testing.T) {
+	cases := []string{
+		"file:///etc/passwd",
+		"ftp://example.com/trace.jsonl",
+		"gopher://example.com/trace.jsonl",
+		"data:application/json,{}",
+		"/local/path/trace.jsonl",
+		"",
+	}
+	for _, url := range cases {
+		if err := jumphost.ValidateTraceURL(url); err == nil {
+			t.Errorf("ValidateTraceURL(%q) = nil, want error", url)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// dilateTimestamp — dilation math
+// ---------------------------------------------------------------------------
+
+func TestDilateTimestamp_Numeric(t *testing.T) {
+	// ts / 0.80 = ts * 1.25 (stretches inter-arrival gaps → slower arrivals)
+	got := jumphost.DilateTimestamp(80.0, 0.80)
+	want := 100.0
+	if got != want {
+		t.Errorf("DilateTimestamp(80, 0.80) = %v, want %v", got, want)
+	}
+}
+
+func TestDilateTimestamp_Zero(t *testing.T) {
+	got := jumphost.DilateTimestamp(0, 0.80)
+	if got != 0 {
+		t.Errorf("DilateTimestamp(0, 0.80) = %v, want 0", got)
+	}
+}
+
+func TestDilateTimestamp_LargeFactor(t *testing.T) {
+	// ts / 2.0 = ts * 0.5 (compresses gaps → faster arrivals)
+	got := jumphost.DilateTimestamp(100.0, 2.0)
+	want := 50.0
+	if got != want {
+		t.Errorf("DilateTimestamp(100, 2.0) = %v, want %v", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildMooncakeCmd — command construction
+// ---------------------------------------------------------------------------
+
+const mooncakeTraceURL = "https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/toolagent_trace.jsonl"
+
+func mooncakeOpts() jumphost.AiperfRunOptions {
+	return jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:                 "llama3",
+			Tokenizer:             "NousResearch/Meta-Llama-3-8B-Instruct",
+			TraceURL:              mooncakeTraceURL,
+			TraceDilation:         0.80,
+			CustomDatasetType:     "mooncake_trace",
+			FixedSchedule:         true,
+			WorkersMax:            200,
+			RandomSeed:            42,
+			RequestTimeoutSeconds: 1000,
+			ProfileExportLevel:    "summary",
+			RecordProcessors:      8,
+			Goodput:               "time_to_first_token:5000 inter_token_latency:100",
+			Streaming:             true,
+		},
+	}
+}
+
+func TestBuildMooncakeCmd_AllCanonicalFlags(t *testing.T) {
+	cmd, err := jumphost.BuildMooncakeCmd(mooncakeOpts())
+	if err != nil {
+		t.Fatalf("BuildMooncakeCmd: %v", err)
+	}
+
+	mustContain := []string{
+		"ulimit -n 65536",
+		"AIPERF_HTTP_CONNECTION_LIMIT=200",
+		"curl -fsSL",
+		mooncakeTraceURL,
+		"python3.11 -c",
+		"aiperf profile",
+		"-m", "llama3",
+		"-u", "http://10.0.10.100",
+		"--tokenizer", "NousResearch/Meta-Llama-3-8B-Instruct",
+		"--input-file",
+		"--custom-dataset-type", "mooncake_trace",
+		"--fixed-schedule",
+		"--workers-max", "200",
+		"--random-seed", "42",
+		"--request-timeout-seconds", "1000",
+		"--profile-export-level", "summary",
+		"--record-processors", "8",
+		"--goodput", "time_to_first_token:5000 inter_token_latency:100",
+		"--streaming",
+		"--output-artifact-dir",
+		"--ui", "none",
+		"profile_export_aiperf.json",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("BuildMooncakeCmd missing %q; cmd=%q", want, cmd)
+		}
+	}
+}
+
+func TestBuildMooncakeCmd_NoDilationInRequest(t *testing.T) {
+	// Verify dilation=0.80 is embedded in the python script (divides by 0.8)
+	cmd, err := jumphost.BuildMooncakeCmd(mooncakeOpts())
+	if err != nil {
+		t.Fatalf("BuildMooncakeCmd: %v", err)
+	}
+	// The python inline script must reference the dilation factor.
+	if !strings.Contains(cmd, "0.8") {
+		t.Errorf("BuildMooncakeCmd python script must reference dilation 0.8; cmd=%q", cmd)
+	}
+	// Must not use --artifact-dir (mooncake uses --output-artifact-dir).
+	if strings.Contains(cmd, " --artifact-dir ") {
+		t.Errorf("BuildMooncakeCmd must NOT use --artifact-dir (trace uses --output-artifact-dir); cmd=%q", cmd)
+	}
+}
+
+func TestBuildMooncakeCmd_SSRFReject(t *testing.T) {
+	opts := mooncakeOpts()
+	opts.Config.TraceURL = "file:///etc/passwd"
+	_, err := jumphost.BuildMooncakeCmd(opts)
+	if err == nil {
+		t.Error("BuildMooncakeCmd must reject file:// TraceURL; got nil error")
+	}
+}
+
+func TestBuildMooncakeCmd_DefaultDilation(t *testing.T) {
+	// TraceDilation=0 should default to 0.80.
+	opts := mooncakeOpts()
+	opts.Config.TraceDilation = 0
+	cmd, err := jumphost.BuildMooncakeCmd(opts)
+	if err != nil {
+		t.Fatalf("BuildMooncakeCmd: %v", err)
+	}
+	if !strings.Contains(cmd, "0.8") {
+		t.Errorf("BuildMooncakeCmd with TraceDilation=0 should default to 0.8; cmd=%q", cmd)
+	}
+}
+
+// TestBuildAiperfCmd_ByteCompat_MooncakeZeroFields asserts that zero mooncake
+// fields do NOT change the synthetic command output (guard the byte-compat test).
+func TestBuildAiperfCmd_ByteCompat_MooncakeZeroFields(t *testing.T) {
+	// Same as TestBuildAiperfCmd_ByteCompat_ZeroNewFields but also includes
+	// the new mooncake fields at zero. Command must be identical to the golden.
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:       "llama3",
+			Concurrency: 4,
+			NumRequests: 100,
+			ISL:         512,
+			OSL:         128,
+			Streaming:   true,
+			Tokenizer:   "NousResearch/Meta-Llama-3-8B-Instruct",
+			// Mooncake fields all zero/empty/false
+			TraceURL:              "",
+			TraceDilation:         0,
+			CustomDatasetType:     "",
+			FixedSchedule:         false,
+			WorkersMax:            0,
+			RandomSeed:            0,
+			RequestTimeoutSeconds: 0,
+			ProfileExportLevel:    "",
+			RecordProcessors:      0,
+			Goodput:               "",
+		},
+	}
+
+	const wantCmd = "rm -rf '/tmp/aiperf-run'; aiperf profile -m 'llama3' -u 'http://10.0.10.100' --endpoint-type 'chat' --concurrency 4 --request-count 100 --synthetic-input-tokens-mean 512 --output-tokens-mean 128 --tokenizer 'NousResearch/Meta-Llama-3-8B-Instruct' --streaming --artifact-dir '/tmp/aiperf-run' --ui none >/tmp/aiperf.stderr 2>&1; cat '/tmp/aiperf-run'/profile_export_aiperf.json"
+
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if cmd != wantCmd {
+		t.Errorf("byte-compat regression with mooncake zero fields:\ngot:  %q\nwant: %q", cmd, wantCmd)
+	}
+}
+
+// TestBuildAiperfCmd_MooncakeDispatch verifies that BuildAiperfCmd dispatches
+// to the mooncake path when TraceURL is set (returns a pipeline, not synthetic).
+func TestBuildAiperfCmd_MooncakeDispatch(t *testing.T) {
+	cmd := jumphost.BuildAiperfCmd(mooncakeOpts())
+	// Mooncake path emits curl and python3.11, not rm -rf.
+	if strings.Contains(cmd, "rm -rf") {
+		t.Errorf("mooncake dispatch should NOT produce rm -rf (synthetic path); cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "curl -fsSL") {
+		t.Errorf("mooncake dispatch must produce curl -fsSL; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "python3.11 -c") {
+		t.Errorf("mooncake dispatch must produce python3.11 -c; cmd=%q", cmd)
 	}
 }
