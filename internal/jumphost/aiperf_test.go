@@ -422,8 +422,11 @@ func TestRunAiperf_BackfillsIdentityFromConfig(t *testing.T) {
 }
 
 // TestEnsureAiperf_UsesPython311 verifies that the install command uses
-// python3.11 (NOT python3 -m pip) and installs via dnf + python3.11 -m pip.
+// python3.11 (NOT python3 -m pip) and installs via dnf + python3.11-pip +
+// ensurepip fallback + python3.11 -m pip.
 // AL2023 ships Python 3.9 which can't run aiperf; python3.11 is available via dnf.
+// AL2023's python3.11 package does NOT bundle pip — python3.11-pip must be
+// installed explicitly (with ensurepip as a belt-and-suspenders fallback).
 func TestEnsureAiperf_UsesPython311(t *testing.T) {
 	var capturedCmd string
 
@@ -460,12 +463,99 @@ func TestEnsureAiperf_UsesPython311(t *testing.T) {
 	if !strings.Contains(capturedCmd, "python3.11 -m pip install") {
 		t.Errorf("EnsureAiperf command must contain %q; got: %q", "python3.11 -m pip install", capturedCmd)
 	}
-	// Must use dnf to install python3.11.
+	// Must use dnf to install python3.11 AND python3.11-pip (AL2023 omits pip from base package).
 	if !strings.Contains(capturedCmd, "dnf install") {
 		t.Errorf("EnsureAiperf command must use dnf install for python3.11; got: %q", capturedCmd)
+	}
+	if !strings.Contains(capturedCmd, "python3.11-pip") {
+		t.Errorf("EnsureAiperf command must install python3.11-pip (AL2023 python3.11 omits pip); got: %q", capturedCmd)
+	}
+	// Must include ensurepip fallback for belt-and-suspenders pip availability.
+	if !strings.Contains(capturedCmd, "ensurepip") {
+		t.Errorf("EnsureAiperf command must include ensurepip fallback; got: %q", capturedCmd)
 	}
 	// Must check for placeholder 0.1.0.
 	if !strings.Contains(capturedCmd, "0\\.1\\.0") && !strings.Contains(capturedCmd, "0.1.0") {
 		t.Errorf("EnsureAiperf must guard against 0.1.0 placeholder; got: %q", capturedCmd)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AiperfResult.RawJSON — verify RunAiperf populates the raw JSON field
+// ---------------------------------------------------------------------------
+
+// TestRunAiperf_RawJSONPopulated verifies that RunAiperf sets RawJSON on the
+// returned result to the verbatim JSON content (trimmed to start at '{').
+func TestRunAiperf_RawJSONPopulated(t *testing.T) {
+	origPrepare := *jumphost.PrepareEICEKeyFn
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		return "/k", "/k.pub", func() {}, nil
+	}
+	defer func() { *jumphost.PrepareEICEKeyFn = origPrepare }()
+
+	origPush := *jumphost.PushSSHPublicKeyFn
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, _ string) error { return nil }
+	defer func() { *jumphost.PushSSHPublicKeyFn = origPush }()
+
+	origExec := *jumphost.AiperfSSHExecFn
+	*jumphost.AiperfSSHExecFn = func(_ context.Context, _, _, _, _ string) (string, error) {
+		// Prepend stale lines that precede the JSON — RunAiperf must trim them.
+		return "noise line\nanother noise\n" + minimalAiperfJSON[strings.Index(minimalAiperfJSON, "{"):], nil
+	}
+	defer func() { *jumphost.AiperfSSHExecFn = origExec }()
+
+	result, err := jumphost.RunAiperf(context.Background(), jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{Region: "r", InstanceID: "i", VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	})
+	if err != nil {
+		t.Fatalf("RunAiperf: %v", err)
+	}
+	if result.RawJSON == "" {
+		t.Fatal("RawJSON must not be empty after RunAiperf")
+	}
+	if !strings.HasPrefix(result.RawJSON, "{") {
+		t.Errorf("RawJSON must start at '{', got prefix %q", result.RawJSON[:min(30, len(result.RawJSON))])
+	}
+	// Spot-check a known key from the fixture.
+	if !strings.Contains(result.RawJSON, `"schema_version"`) {
+		t.Error("RawJSON missing 'schema_version' key from fixture")
+	}
+	if !strings.Contains(result.RawJSON, `"benchmark_id"`) {
+		t.Error("RawJSON missing 'benchmark_id' key from fixture")
+	}
+}
+
+// TestRunAiperf_RawJSONWithNoNoise verifies RawJSON when stdout starts
+// directly with '{' (no leading noise lines).
+func TestRunAiperf_RawJSONWithNoNoise(t *testing.T) {
+	origPrepare := *jumphost.PrepareEICEKeyFn
+	*jumphost.PrepareEICEKeyFn = func(_ context.Context, _, _ string) (string, string, func(), error) {
+		return "/k", "/k.pub", func() {}, nil
+	}
+	defer func() { *jumphost.PrepareEICEKeyFn = origPrepare }()
+
+	origPush := *jumphost.PushSSHPublicKeyFn
+	*jumphost.PushSSHPublicKeyFn = func(_ context.Context, _, _, _ string) error { return nil }
+	defer func() { *jumphost.PushSSHPublicKeyFn = origPush }()
+
+	// Pure JSON — no noise prefix.
+	pureJSON := minimalAiperfJSON[strings.Index(minimalAiperfJSON, "{"):]
+
+	origExec := *jumphost.AiperfSSHExecFn
+	*jumphost.AiperfSSHExecFn = func(_ context.Context, _, _, _, _ string) (string, error) {
+		return pureJSON, nil
+	}
+	defer func() { *jumphost.AiperfSSHExecFn = origExec }()
+
+	result, err := jumphost.RunAiperf(context.Background(), jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{Region: "r", InstanceID: "i", VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	})
+	if err != nil {
+		t.Fatalf("RunAiperf: %v", err)
+	}
+	if result.RawJSON != pureJSON {
+		t.Errorf("RawJSON mismatch: got len=%d, want len=%d", len(result.RawJSON), len(pureJSON))
 	}
 }

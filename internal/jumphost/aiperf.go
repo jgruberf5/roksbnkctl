@@ -117,6 +117,13 @@ type AiperfResult struct {
 	BaseURL  string `json:"base_url"`
 	Endpoint string `json:"endpoint"`
 
+	// RawJSON is the verbatim profile_export_aiperf.json content captured from
+	// the remote `cat` command.  It preserves all aiperf fields (http-timing,
+	// telemetry, full percentile distributions) beyond what the typed fields
+	// above carry.  Set alongside the parsed fields in RunAiperf; empty when
+	// constructed directly (e.g. in tests that build AiperfResult by hand).
+	RawJSON string `json:"-"`
+
 	// Metadata
 	AiperfVersion string `json:"aiperf_version"`
 	SchemaVersion string `json:"schema_version"`
@@ -305,6 +312,15 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 		return nil, fmt.Errorf("aiperf: parse output: %w (raw: %.500s)", err, stdout)
 	}
 
+	// Capture the raw JSON for callers that need the full aiperf output
+	// (e.g. forge's /api/benchmarks/results/aiperf rich-ingest endpoint).
+	// Trim leading noise lines so RawJSON always starts at '{'.
+	if start := strings.Index(stdout, "{"); start >= 0 {
+		result.RawJSON = stdout[start:]
+	} else {
+		result.RawJSON = stdout
+	}
+
 	// Backfill identity fields from config when not present in JSON.
 	if result.Model == "" {
 		result.Model = opts.Config.Model
@@ -328,6 +344,9 @@ func RunAiperf(ctx context.Context, opts AiperfRunOptions) (*AiperfResult, error
 //
 // AL2023 ships Python 3.9; aiperf requires >=3.10. We install python3.11 via
 // dnf (available on AL2023) and use it to pip install aiperf.
+// Note: on AL2023, `dnf install python3.11` does NOT include pip — we also
+// install python3.11-pip explicitly, and fall back to `ensurepip --user`
+// in case the package name differs across AL2023 minor versions.
 // The console script lands at ~/.local/bin/aiperf which is on the ec2-user PATH.
 //
 // Guard: runs `aiperf --version` first; only installs if the version is
@@ -357,13 +376,15 @@ VER=$(aiperf --version 2>/dev/null || true)
 if echo "$VER" | grep -qv '^$' && ! echo "$VER" | grep -q '0\.1\.0'; then
   echo "ok:$VER"
 else
-  sudo dnf install -y python3.11 >/dev/null 2>&1
-  python3.11 -m pip install --user aiperf >/dev/null 2>&1
+  sudo dnf install -y python3.11 python3.11-pip >/dev/null 2>&1
+  python3.11 -m ensurepip --user >/dev/null 2>&1 || true
+  python3.11 -m pip install --user aiperf >/tmp/aiperf_install.log 2>&1
   VER2=$(aiperf --version 2>/dev/null || true)
   if echo "$VER2" | grep -qv '^$' && ! echo "$VER2" | grep -q '0\.1\.0'; then
     echo "installed:$VER2"
   else
     echo "FAILED:$VER2"
+    tail -3 /tmp/aiperf_install.log 2>/dev/null
     exit 1
   fi
 fi`
