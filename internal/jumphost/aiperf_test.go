@@ -559,3 +559,203 @@ func TestRunAiperf_RawJSONWithNoNoise(t *testing.T) {
 		t.Errorf("RawJSON mismatch: got len=%d, want len=%d", len(result.RawJSON), len(pureJSON))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// New AiperfConfig fields — flag emission and byte-compat regression guard
+// ---------------------------------------------------------------------------
+
+// TestBuildAiperfCmd_ByteCompat_ZeroNewFields asserts that when all new
+// AiperfConfig fields (ISLStddev, SeqDist, PrefixPromptLength, NumPrefixPrompts,
+// ExtraInputs, VariantLabel) are zero/empty, the command output is byte-identical
+// to the output produced before the new fields were added.
+//
+// This is the regression guard: existing runs must be unaffected.
+func TestBuildAiperfCmd_ByteCompat_ZeroNewFields(t *testing.T) {
+	baseOpts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:       "llama3",
+			Concurrency: 4,
+			NumRequests: 100,
+			ISL:         512,
+			OSL:         128,
+			Streaming:   true,
+			Tokenizer:   "NousResearch/Meta-Llama-3-8B-Instruct",
+		},
+	}
+
+	// Explicit zero values for new fields — should be identical to above.
+	newFieldsOpts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:              "llama3",
+			Concurrency:        4,
+			NumRequests:        100,
+			ISL:                512,
+			OSL:                128,
+			ISLStddev:          0,
+			SeqDist:            "",
+			PrefixPromptLength: 0,
+			NumPrefixPrompts:   0,
+			ExtraInputs:        nil,
+			VariantLabel:       "",
+			Streaming:          true,
+			Tokenizer:          "NousResearch/Meta-Llama-3-8B-Instruct",
+		},
+	}
+
+	const wantCmd = "rm -rf '/tmp/aiperf-run'; aiperf profile -m 'llama3' -u 'http://10.0.10.100' --endpoint-type 'chat' --concurrency 4 --request-count 100 --synthetic-input-tokens-mean 512 --output-tokens-mean 128 --tokenizer 'NousResearch/Meta-Llama-3-8B-Instruct' --streaming --artifact-dir '/tmp/aiperf-run' --ui none >/tmp/aiperf.stderr 2>&1; cat '/tmp/aiperf-run'/profile_export_aiperf.json"
+
+	cmdBase := jumphost.BuildAiperfCmd(baseOpts)
+	cmdNew := jumphost.BuildAiperfCmd(newFieldsOpts)
+
+	// Golden-literal assertion: catches flag reorders or additions that would
+	// affect both in-test structs identically and slip through the struct-equality check.
+	if cmdBase != wantCmd {
+		t.Errorf("byte-compat regression: BuildAiperfCmd output diverged from pinned golden\ngot:  %q\nwant: %q", cmdBase, wantCmd)
+	}
+
+	if cmdBase != cmdNew {
+		t.Errorf("byte-compat regression: new zero fields changed command output\ngot:  %q\nwant: %q", cmdNew, cmdBase)
+	}
+
+	// Additionally assert that no new flags appear in the base output.
+	for _, flag := range []string{"--synthetic-input-tokens-stddev", "--seq-dist", "--prefix-prompt-length", "--num-prefix-prompts", "--extra-inputs"} {
+		if strings.Contains(cmdBase, flag) {
+			t.Errorf("regression: %q should not appear when new fields are zero; cmd=%q", flag, cmdBase)
+		}
+	}
+}
+
+// TestBuildAiperfCmd_ISLStddev asserts --synthetic-input-tokens-stddev is emitted
+// when ISLStddev > 0.
+func TestBuildAiperfCmd_ISLStddev(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:     "llama3",
+			ISL:       500,
+			OSL:       128,
+			ISLStddev: 50,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--synthetic-input-tokens-stddev 50") {
+		t.Errorf("missing --synthetic-input-tokens-stddev 50; cmd=%q", cmd)
+	}
+	// Must still emit ISL/OSL mean when SeqDist is empty.
+	if !strings.Contains(cmd, "--synthetic-input-tokens-mean") {
+		t.Errorf("missing --synthetic-input-tokens-mean when SeqDist empty; cmd=%q", cmd)
+	}
+}
+
+// TestBuildAiperfCmd_SeqDist_OmitsISLOSL asserts that when SeqDist is set:
+//   - --seq-dist is emitted
+//   - --synthetic-input-tokens-mean is OMITTED
+//   - --output-tokens-mean is OMITTED
+func TestBuildAiperfCmd_SeqDist_OmitsISLOSL(t *testing.T) {
+	const seqDist = "300|100,64|16:70;4000|500,256|64:30"
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:   "llama3",
+			ISL:     500, // must be ignored
+			OSL:     128, // must be ignored
+			SeqDist: seqDist,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+
+	if !strings.Contains(cmd, "--seq-dist") {
+		t.Errorf("missing --seq-dist; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, seqDist) {
+		t.Errorf("seq-dist value not in command; cmd=%q", cmd)
+	}
+	if strings.Contains(cmd, "--synthetic-input-tokens-mean") {
+		t.Errorf("--synthetic-input-tokens-mean must be omitted when SeqDist set; cmd=%q", cmd)
+	}
+	if strings.Contains(cmd, "--output-tokens-mean") {
+		t.Errorf("--output-tokens-mean must be omitted when SeqDist set; cmd=%q", cmd)
+	}
+}
+
+// TestBuildAiperfCmd_PrefixFlags asserts --prefix-prompt-length and --num-prefix-prompts
+// are emitted when non-zero, and omitted when zero.
+func TestBuildAiperfCmd_PrefixFlags(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:              "llama3",
+			PrefixPromptLength: 4000,
+			NumPrefixPrompts:   20,
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--prefix-prompt-length 4000") {
+		t.Errorf("missing --prefix-prompt-length 4000; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "--num-prefix-prompts 20") {
+		t.Errorf("missing --num-prefix-prompts 20; cmd=%q", cmd)
+	}
+
+	// Zero values must be omitted.
+	optsZero := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	}
+	cmdZero := jumphost.BuildAiperfCmd(optsZero)
+	if strings.Contains(cmdZero, "--prefix-prompt-length") {
+		t.Errorf("--prefix-prompt-length must be omitted when 0; cmd=%q", cmdZero)
+	}
+	if strings.Contains(cmdZero, "--num-prefix-prompts") {
+		t.Errorf("--num-prefix-prompts must be omitted when 0; cmd=%q", cmdZero)
+	}
+}
+
+// TestBuildAiperfCmd_ExtraInputs asserts repeated --extra-inputs flags are emitted.
+func TestBuildAiperfCmd_ExtraInputs(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:       "llama3",
+			ExtraInputs: []string{"ignore_eos:true", "temperature:0.0"},
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if !strings.Contains(cmd, "--extra-inputs") {
+		t.Errorf("missing --extra-inputs flag; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "ignore_eos:true") {
+		t.Errorf("missing ignore_eos:true in extra-inputs; cmd=%q", cmd)
+	}
+	if !strings.Contains(cmd, "temperature:0.0") {
+		t.Errorf("missing temperature:0.0 in extra-inputs; cmd=%q", cmd)
+	}
+
+	// When nil, must not appear.
+	optsNone := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config:       jumphost.AiperfConfig{Model: "llama3"},
+	}
+	cmdNone := jumphost.BuildAiperfCmd(optsNone)
+	if strings.Contains(cmdNone, "--extra-inputs") {
+		t.Errorf("--extra-inputs must not appear when ExtraInputs is nil; cmd=%q", cmdNone)
+	}
+}
+
+// TestBuildAiperfCmd_VariantLabel_NotInCmd asserts that VariantLabel (a metadata
+// field) is NOT emitted as an aiperf flag.
+func TestBuildAiperfCmd_VariantLabel_NotInCmd(t *testing.T) {
+	opts := jumphost.AiperfRunOptions{
+		ProbeOptions: jumphost.ProbeOptions{VIP: "10.0.10.100"},
+		Config: jumphost.AiperfConfig{
+			Model:        "llama3",
+			VariantLabel: "c150-isl5000",
+		},
+	}
+	cmd := jumphost.BuildAiperfCmd(opts)
+	if strings.Contains(cmd, "VariantLabel") || strings.Contains(cmd, "variant-label") || strings.Contains(cmd, "c150-isl5000") {
+		t.Errorf("VariantLabel must NOT be emitted as an aiperf flag; cmd=%q", cmd)
+	}
+}

@@ -63,6 +63,7 @@ var (
 	flagBenchScenarios            string
 	flagBenchRegisterAccessMethod bool
 	flagBenchWorkspace            string // workspace name for forge_link.json cluster_id resolution
+	flagBenchScenario             string // --scenario <key>: native forge scenario (WS-C1)
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -112,11 +113,20 @@ func init() {
 	f.DurationVar(&flagBenchTimeout, "timeout", 5*time.Minute, "maximum time for the aiperf run")
 	f.BoolVar(&flagBenchEnsure, "ensure-aiperf", false, "install aiperf on the jumphost before running (python3.11 -m pip install aiperf)")
 
-	// Multi-scenario mode
+	// Multi-scenario mode (legacy smoke presets)
 	f.StringVar(&flagBenchScenarios, "scenarios", "",
 		`comma-separated preset names to run in sequence, or "all" for all presets.
 Presets: latency, throughput, long-context, streaming.
 When set, per-explicit flags (--concurrency/--num-requests/--isl/--osl/--stream) are ignored.`)
+
+	// Native forge scenario (WS-C1): expands into N linked child runs.
+	// Mutually exclusive with --scenarios.
+	f.StringVar(&flagBenchScenario, "scenario", "",
+		`native forge scenario key to run (e.g. baseline, high-concurrency, prefix-cache).
+Expands into N ordered child aiperf runs (concurrency sweep and/or phases).
+Mutually exclusive with --scenarios.
+Available keys: baseline, high-concurrency, mixed-workload, multi-turn,
+  prefix-cache, bimodal, sustained-load, burst-recovery.`)
 
 	// Labeling
 	f.StringVar(&flagBenchRunLabel, "run-label", "", "human-readable label for this run (stored in forge)")
@@ -247,6 +257,11 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--model is required")
 	}
 
+	// --scenario and --scenarios are mutually exclusive.
+	if flagBenchScenario != "" && flagBenchScenarios != "" {
+		return fmt.Errorf("--scenario and --scenarios are mutually exclusive; use one or the other")
+	}
+
 	probOpts := jumphost.ProbeOptions{
 		Region:     flagBenchRegion,
 		InstanceID: flagBenchInstanceID,
@@ -300,7 +315,12 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "✓ aiperf ready")
 	}
 
-	// ── Multi-scenario mode ──────────────────────────────────────────────────
+	// ── Native forge scenario mode (WS-C1) ──────────────────────────────────
+	if flagBenchScenario != "" {
+		return runNativeScenario(cmd, probOpts, forgeCreds, accessMethodName, graph, flagBenchScenario)
+	}
+
+	// ── Legacy smoke-preset mode ─────────────────────────────────────────────
 	if len(presets) > 0 {
 		return runBenchmarkScenarios(cmd, probOpts, forgeCreds, accessMethodName, graph, presets)
 	}
@@ -559,23 +579,53 @@ func runOnePreset(
 		result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
 
 	// Primary push path: raw JSON to the rich-ingest endpoint.
+	runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, label, presetConfigID, graph.targetID, "", configJSON)
+	if pushErr != nil {
+		fmt.Fprintf(os.Stderr, "✗ preset %s forge push failed: %v\n", preset.Name, pushErr)
+		return scenarioOutcome{Preset: preset.Name, Status: "PUSH_FAILED", Err: pushErr}
+	}
+	return scenarioOutcome{
+		Preset:   preset.Name,
+		RunID:    runID,
+		ResultID: result.BaseURL,
+		Status:   "OK",
+	}
+}
+
+// pushAiperfResult is the shared raw-push + structured-fallback helper used by
+// runOnePreset and runNativeScenario. It returns the forge run_id on success.
+//
+// datasetName is optional — when non-empty it is forwarded as DatasetName on
+// the raw push (used by the native scenario path to stamp <scenario key>).
+// fallbackConfig is the map forwarded to the structured push path as AiperfConfig.
+func pushAiperfResult(
+	cmd *cobra.Command,
+	result *jumphost.AiperfResult,
+	creds forge.RestCreds,
+	agentName, label string,
+	configID, targetID int,
+	datasetName string,
+	fallbackConfig map[string]any,
+) (int, error) {
 	rawPushOpts := forge.RawAiperfPushOptions{
-		RestURL:   flagBenchForgeURL,
-		Creds:     creds,
-		RawJSON:   []byte(result.RawJSON),
-		Proxy:     flagBenchProxy,
-		Model:     flagBenchModel,
-		URL:       fmt.Sprintf("http://%s", flagBenchVIP),
-		AgentName: agentName,
-		RunLabel:  label,
-		TargetID:  graph.targetID,
-		ConfigID:  presetConfigID,
+		RestURL:     flagBenchForgeURL,
+		Creds:       creds,
+		RawJSON:     []byte(result.RawJSON),
+		Proxy:       flagBenchProxy,
+		Model:       flagBenchModel,
+		URL:         fmt.Sprintf("http://%s", flagBenchVIP),
+		AgentName:   agentName,
+		RunLabel:    label,
+		TargetID:    targetID,
+		ConfigID:    configID,
+		DatasetName: datasetName,
 	}
 
 	rawResp, pushErr := pushRawAiperfResultFn(cmd.Context(), rawPushOpts)
 	if pushErr != nil {
-		// Fall back to structured push.
-		fmt.Fprintf(os.Stderr, "⚠ preset %s raw push failed (%v); falling back to structured push\n", preset.Name, pushErr)
+		// Fall back to structured push so a missing/old forge endpoint does not
+		// abort a successful benchmark run.
+		fmt.Fprintf(os.Stderr, "⚠ raw push failed (%v); falling back to structured push\n", pushErr)
 		pushOpts := forge.BenchmarkPushOptions{
 			RestURL:       flagBenchForgeURL,
 			Creds:         creds,
@@ -583,29 +633,174 @@ func runOnePreset(
 			Proxy:         flagBenchProxy,
 			AgentName:     agentName,
 			AgentHostname: flagBenchInstanceID,
-			TargetID:      graph.targetID,
-			ConfigID:      presetConfigID,
-			AiperfConfig:  configJSON,
+			TargetID:      targetID,
+			ConfigID:      configID,
+			AiperfConfig:  fallbackConfig,
 		}
 		structResp, structErr := pushBenchmarkResultFn(cmd.Context(), result, pushOpts)
 		if structErr != nil {
-			fmt.Fprintf(os.Stderr, "✗ preset %s forge push failed (raw+structured): raw=%v structured=%v\n", preset.Name, pushErr, structErr)
-			return scenarioOutcome{Preset: preset.Name, Status: "PUSH_FAILED", Err: structErr}
+			return 0, fmt.Errorf("raw+structured both failed: raw=%v structured=%w", pushErr, structErr)
 		}
 		fmt.Fprintf(os.Stderr, "✓ pushed (structured fallback): run_id=%d status=%s\n", structResp.RunID, structResp.Status)
-		return scenarioOutcome{
-			Preset:   preset.Name,
-			RunID:    structResp.RunID,
-			ResultID: result.BaseURL,
-			Status:   "OK",
-		}
+		return structResp.RunID, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ pushed (raw): run_id=%d status=%s\n", rawResp.RunID, rawResp.Status)
-	return scenarioOutcome{
-		Preset:   preset.Name,
-		RunID:    rawResp.RunID,
-		ResultID: result.BaseURL,
-		Status:   "OK",
+	return rawResp.RunID, nil
+}
+
+// nativeScenarioOutcome records the result of a single child run within a
+// native forge scenario.
+type nativeScenarioOutcome struct {
+	VariantLabel string
+	RunID        int
+	Status       string
+	Err          error
+}
+
+// runNativeScenario expands a forge-native scenario key into its child runs,
+// executes each as a separate aiperf invocation, and pushes every child to
+// forge via the raw /aiperf path with DatasetName=<scenarioKey>.
+//
+// One child failing does NOT abort the rest. A summary table is printed at the
+// end. Returns an error only when all children fail.
+func runNativeScenario(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	scenarioKey string,
+) error {
+	// Base config carries the CLI-supplied identity/tokenizer/host-header/timeout.
+	baseCfg := jumphost.AiperfConfig{
+		Model:        flagBenchModel,
+		EndpointPath: flagBenchEndpoint,
+		Tokenizer:    flagBenchTokenizer,
+		HostHeader:   flagBenchHostHeader,
+		Timeout:      flagBenchTimeout,
 	}
+
+	children, err := expandForgeScenario(scenarioKey, baseCfg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "→ native scenario %q: %d child run(s)\n", scenarioKey, len(children))
+
+	// Look up the scenario's human-readable description for the forge config record.
+	var scenarioDescription string
+	if forgeScn, ok := forgeScenarioByKey(scenarioKey); ok {
+		scenarioDescription = forgeScn.Description
+	}
+
+	// Register one BenchmarkConfig for the whole scenario (idempotent).
+	scenarioConfigJSON := forgeScenarioConfigJSON(scenarioKey, flagBenchModel, flagBenchVIP)
+	scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", scenarioKey)
+	cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
+		RestURL:     flagBenchForgeURL,
+		Creds:       creds,
+		Name:        scenarioConfigName,
+		Description: scenarioDescription,
+		ConfigJSON:  scenarioConfigJSON,
+	})
+	scenarioConfigID := graph.configID // inherit from graph (0 if unset)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
+		scenarioConfigID = cfgResp.ID
+	}
+
+	outcomes := make([]nativeScenarioOutcome, 0, len(children))
+
+	for _, child := range children {
+		// Run label: <base>-<scenarioKey>-<variantLabel>
+		label := presetRunLabel(flagBenchRunLabel, scenarioKey+"-"+child.VariantLabel)
+		fmt.Fprintf(os.Stderr, "\n── child: %s label=%s ──\n", child.VariantLabel, label)
+
+		cfg := child.Config
+		// Log distinguishing fields for this child.
+		if cfg.SeqDist != "" {
+			fmt.Fprintf(os.Stderr, "→ Running aiperf (concurrency=%d requests=%d seq-dist=%q stream=%v)\n",
+				cfg.Concurrency, cfg.NumRequests, cfg.SeqDist, cfg.Streaming)
+		} else {
+			fmt.Fprintf(os.Stderr, "→ Running aiperf (concurrency=%d requests=%d isl=%d osl=%d stream=%v)\n",
+				cfg.Concurrency, cfg.NumRequests, cfg.ISL, cfg.OSL, cfg.Streaming)
+		}
+
+		runOpts := jumphost.AiperfRunOptions{
+			ProbeOptions: probOpts,
+			Config:       cfg,
+			RunLabel:     label,
+		}
+
+		result, aiperfErr := runAiperfFn(cmd.Context(), runOpts)
+		if aiperfErr != nil {
+			fmt.Fprintf(os.Stderr, "✗ child %s aiperf failed: %v\n", child.VariantLabel, aiperfErr)
+			outcomes = append(outcomes, nativeScenarioOutcome{
+				VariantLabel: child.VariantLabel,
+				Status:       "FAILED",
+				Err:          aiperfErr,
+			})
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs rps=%.3f)\n",
+			result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
+
+		fallbackCfg := map[string]any{
+			"scenario_key":  scenarioKey,
+			"variant_label": child.VariantLabel,
+			"url":           fmt.Sprintf("http://%s", flagBenchVIP),
+			"model":         flagBenchModel,
+			"concurrency":   cfg.Concurrency,
+			"request_count": cfg.NumRequests,
+			"streaming":     cfg.Streaming,
+		}
+
+		runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, label, scenarioConfigID, graph.targetID, scenarioKey, fallbackCfg)
+		if pushErr != nil {
+			fmt.Fprintf(os.Stderr, "✗ child %s push failed: %v\n", child.VariantLabel, pushErr)
+			outcomes = append(outcomes, nativeScenarioOutcome{
+				VariantLabel: child.VariantLabel,
+				Status:       "PUSH_FAILED",
+				Err:          pushErr,
+			})
+			continue
+		}
+		outcomes = append(outcomes, nativeScenarioOutcome{
+			VariantLabel: child.VariantLabel,
+			RunID:        runID,
+			Status:       "OK",
+		})
+	}
+
+	// Summary table.
+	fmt.Println()
+	fmt.Printf("scenario: %s\n", scenarioKey)
+	fmt.Printf("%-30s  %-10s  %-8s  %s\n", "VARIANT", "STATUS", "RUN_ID", "NOTE")
+	fmt.Printf("%-30s  %-10s  %-8s  %s\n", "-------", "------", "------", "----")
+	for _, o := range outcomes {
+		note := ""
+		if o.Err != nil {
+			note = o.Err.Error()
+			if len(note) > 50 {
+				note = note[:47] + "..."
+			}
+		}
+		fmt.Printf("%-30s  %-10s  %-8d  %s\n", o.VariantLabel, o.Status, o.RunID, note)
+	}
+
+	// Fail only when all children failed.
+	allFailed := true
+	for _, o := range outcomes {
+		if o.Err == nil {
+			allFailed = false
+			break
+		}
+	}
+	if allFailed && len(outcomes) > 0 {
+		return fmt.Errorf("all %d child run(s) failed for scenario %q", len(outcomes), scenarioKey)
+	}
+	return nil
 }

@@ -27,6 +27,26 @@ type AiperfConfig struct {
 	ISL int
 	// OSL is the output sequence length (tokens). Default: 128.
 	OSL int
+	// ISLStddev is the stddev for synthetic input token length (--synthetic-input-tokens-stddev).
+	// Zero means omit the flag (aiperf defaults apply).
+	ISLStddev int
+	// SeqDist is the sequence-distribution string passed via --seq-dist.
+	// When non-empty, --synthetic-input-tokens-mean and --output-tokens-mean are
+	// OMITTED (seq-dist drives both input and output length). ISL and OSL are
+	// ignored by buildAiperfCmd when SeqDist is set.
+	SeqDist string
+	// PrefixPromptLength is the prefix prompt length (--prefix-prompt-length).
+	// Zero means omit the flag.
+	PrefixPromptLength int
+	// NumPrefixPrompts is the number of prefix prompts (--num-prefix-prompts).
+	// Zero means omit the flag.
+	NumPrefixPrompts int
+	// ExtraInputs is a list of "key:value" strings forwarded as repeated
+	// --extra-inputs flags. Empty means omit.
+	ExtraInputs []string
+	// VariantLabel is a metadata field carried for per-child run labeling.
+	// It is NOT an aiperf flag and is not emitted in the command.
+	VariantLabel string
 	// Streaming enables streaming mode (--streaming). Default: false.
 	Streaming bool
 	// Tokenizer is the Hugging Face tokenizer repo used by aiperf for token
@@ -238,10 +258,36 @@ func buildAiperfCmd(opts AiperfRunOptions) string {
 		"--endpoint-type", shellSingleQuote(cfg.EndpointType),
 		"--concurrency", fmt.Sprintf("%d", cfg.Concurrency),
 		"--request-count", fmt.Sprintf("%d", cfg.NumRequests),
-		"--synthetic-input-tokens-mean", fmt.Sprintf("%d", cfg.ISL),
-		"--output-tokens-mean", fmt.Sprintf("%d", cfg.OSL),
-		"--tokenizer", shellSingleQuote(cfg.Tokenizer),
 	}
+
+	// When SeqDist is set, emit --seq-dist and omit the ISL/OSL mean flags
+	// (seq-dist drives both input and output length).
+	if cfg.SeqDist != "" {
+		args = append(args, "--seq-dist", shellSingleQuote(cfg.SeqDist))
+	} else {
+		args = append(args,
+			"--synthetic-input-tokens-mean", fmt.Sprintf("%d", cfg.ISL),
+			"--output-tokens-mean", fmt.Sprintf("%d", cfg.OSL),
+		)
+	}
+
+	if cfg.ISLStddev > 0 {
+		args = append(args, "--synthetic-input-tokens-stddev", fmt.Sprintf("%d", cfg.ISLStddev))
+	}
+
+	if cfg.PrefixPromptLength > 0 {
+		args = append(args, "--prefix-prompt-length", fmt.Sprintf("%d", cfg.PrefixPromptLength))
+	}
+
+	if cfg.NumPrefixPrompts > 0 {
+		args = append(args, "--num-prefix-prompts", fmt.Sprintf("%d", cfg.NumPrefixPrompts))
+	}
+
+	for _, ei := range cfg.ExtraInputs {
+		args = append(args, "--extra-inputs", shellSingleQuote(ei))
+	}
+
+	args = append(args, "--tokenizer", shellSingleQuote(cfg.Tokenizer))
 
 	if cfg.HostHeader != "" {
 		args = append(args, "--header", shellSingleQuote(fmt.Sprintf("Host:%s", cfg.HostHeader)))
