@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -121,12 +122,14 @@ When set, per-explicit flags (--concurrency/--num-requests/--isl/--osl/--stream)
 
 	// Native forge scenario (WS-C1): expands into N linked child runs.
 	// Mutually exclusive with --scenarios.
-	f.StringVar(&flagBenchScenario, "scenario", "",
-		`native forge scenario key to run (e.g. baseline, high-concurrency, prefix-cache).
-Expands into N ordered child aiperf runs (concurrency sweep and/or phases).
-Mutually exclusive with --scenarios.
-Available keys: baseline, high-concurrency, mixed-workload, multi-turn,
-  prefix-cache, bimodal, sustained-load, burst-recovery.`)
+	scenarioUsage := fmt.Sprintf(
+		"native forge scenario key to run (e.g. baseline, high-concurrency, prefix-cache).\n"+
+			"Expands into N ordered child aiperf runs (concurrency sweep and/or phases).\n"+
+			"Mutually exclusive with --scenarios.\n"+
+			"Available keys: %s.",
+		strings.Join(forgeScenarioKeys(), ", "),
+	)
+	f.StringVar(&flagBenchScenario, "scenario", "", scenarioUsage)
 
 	// Labeling
 	f.StringVar(&flagBenchRunLabel, "run-label", "", "human-readable label for this run (stored in forge)")
@@ -758,7 +761,19 @@ func runNativeScenario(
 			"streaming":     cfg.Streaming,
 		}
 
-		runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, label, scenarioConfigID, graph.targetID, scenarioKey, fallbackCfg)
+		// For mooncake: stamp DatasetName=mooncake-toolagent and add a
+		// tokenizer_substituted marker to the run label so forge shows that the
+		// Qwen3-32B trace shape was replayed against the llama3 tokenizer.
+		datasetName := scenarioKey
+		pushLabel := label
+		if scenarioKey == "mooncake" {
+			datasetName = "mooncake-toolagent"
+			if !strings.Contains(pushLabel, "tokenizer_substituted") {
+				pushLabel = pushLabel + "+tokenizer_substituted"
+			}
+		}
+
+		runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, pushLabel, scenarioConfigID, graph.targetID, datasetName, fallbackCfg)
 		if pushErr != nil {
 			fmt.Fprintf(os.Stderr, "✗ child %s push failed: %v\n", child.VariantLabel, pushErr)
 			outcomes = append(outcomes, nativeScenarioOutcome{

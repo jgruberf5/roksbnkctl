@@ -13,8 +13,8 @@ package cli
 // identical workloads.
 //
 // mooncake (WS-C2: trace download + 0.80 time-dilation + tokenizer substitution)
-// is OUT OF SCOPE for this task. Its registry shape is stubbed so WS-C2 can slot
-// in later; it is rejected by expandForgeScenario with a clear error.
+// is implemented. expandForgeScenario allows the "mooncake" key and applies
+// the llama3 model + tokenizer override; the shell pipeline is in buildMooncakeCmd.
 //
 // Reference source:
 //   bnk-forge-v2/backend/services/benchmark_scenarios.py
@@ -307,13 +307,41 @@ func burstRecoveryVariants() []forgeScenarioChild {
 	return out
 }
 
-// mooncakeVariants is stubbed: WS-C2 (trace download + 0.80 time-dilation +
-// tokenizer substitution) is out of scope for WS-C1. The registry entry shape
-// is preserved so WS-C2 can wire in execution without changing the registry.
-// expandForgeScenario rejects this key with a clear error.
+// mooncakeTraceURL is the canonical URL for the Mooncake toolagent trace.
+// Mirror of benchmark_scenarios.py MOONCAKE_TRACE_URL.
+const mooncakeTraceURL = "https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/traces/toolagent_trace.jsonl"
+
+// mooncakeDilation is the time-dilation factor for the Mooncake trace.
+// ts / 0.80 stretches inter-arrival gaps → requests replay slower.
+// Mirror of benchmark_scenarios.py MOONCAKE_DILATION.
+const mooncakeDilation = 0.80
+
+// mooncakeVariants returns the single open-loop trace child for the Mooncake
+// scenario. Mirror of benchmark_scenarios.py _mooncake_variants().
+//
+// Model is set to the Qwen3-32B origin model (registry default); expandForgeScenario
+// overrides it to the llama3 rig model + tokenizer before returning to the caller.
 func mooncakeVariants() []forgeScenarioChild {
-	// TODO(WS-C2): implement trace-replay path (download, dilation=0.80, Qwen3-32B tokenizer).
-	return nil
+	return []forgeScenarioChild{
+		{
+			VariantLabel: "trace",
+			Config: jumphost.AiperfConfig{
+				// Model is the Qwen3-32B origin; overridden to llama3 in expandForgeScenario.
+				Model:                 "Qwen/Qwen3-32B",
+				Streaming:             true,
+				TraceURL:              mooncakeTraceURL,
+				TraceDilation:         mooncakeDilation,
+				CustomDatasetType:     "mooncake_trace",
+				FixedSchedule:         true,
+				WorkersMax:            200,
+				RandomSeed:            42,
+				RequestTimeoutSeconds: 1000,
+				ProfileExportLevel:    "summary",
+				RecordProcessors:      8,
+				Goodput:               "time_to_first_token:5000 inter_token_latency:100",
+			},
+		},
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -390,11 +418,21 @@ var forgeScenarioRegistry = []forgeScenario{
 	{
 		Key:           "mooncake",
 		Name:          "Mooncake Trace (production)",
-		Description:   "Open-loop, trace-driven Qwen3-32B run with 0.80x time-dilation. No concurrency sweep. (WS-C2 — not yet supported.)",
+		Description:   "Open-loop, trace-driven Qwen3-32B run replayed against llama3 rig with 0.80x time-dilation. No concurrency sweep.",
 		Tags:          []string{"trace", "production"},
 		TraceDriven:   true,
 		buildVariants: mooncakeVariants,
 	},
+}
+
+// forgeScenarioKeys returns the ordered list of keys for every scenario in the
+// registry. Used to build help text and error messages so they never go stale.
+func forgeScenarioKeys() []string {
+	keys := make([]string, 0, len(forgeScenarioRegistry))
+	for _, s := range forgeScenarioRegistry {
+		keys = append(keys, s.Key)
+	}
+	return keys
 }
 
 // forgeScenarioByKey looks up a scenario by its key.
@@ -407,28 +445,31 @@ func forgeScenarioByKey(key string) (forgeScenario, bool) {
 	return forgeScenario{}, false
 }
 
+// mooncakeLlamaModel is the llama3 rig model used for mooncake runs.
+// The trace was generated against Qwen3-32B; we replay it against the llama3
+// rig and stamp tokenizer_substituted provenance on the push.
+const mooncakeLlamaModel = "llama3"
+
+// mooncakeLlamaTokenizer is the tokenizer override for mooncake runs.
+// forge_agent's expand_scenario only overrides model; ADR-0001 requires
+// overriding the tokenizer too since the rig serves Llama-3-8B.
+const mooncakeLlamaTokenizer = "NousResearch/Meta-Llama-3-8B-Instruct"
+
 // expandForgeScenario expands a scenario key into its ordered list of child
 // aiperf configs. The base AiperfConfig fields (Model, Tokenizer, HostHeader,
 // Timeout, EndpointPath) are merged into each child AFTER the scenario's own
 // base_flags and variant overrides — this matches expand_scenario's semantics
 // where the caller's model/endpoint injection wins over scenario defaults.
 //
-// Returns an error when:
-//   - the key is unknown
-//   - the key is "mooncake" (trace scenarios are WS-C2; not yet supported)
+// For the mooncake key, model and tokenizer are ALWAYS overridden to the llama3
+// rig values (mooncakeLlamaModel + mooncakeLlamaTokenizer), regardless of base.
+// Callers receive a single child with VariantLabel="trace".
+//
+// Returns an error when the key is unknown.
 func expandForgeScenario(key string, base jumphost.AiperfConfig) ([]forgeScenarioChild, error) {
 	scenario, ok := forgeScenarioByKey(key)
 	if !ok {
-		valid := make([]string, 0, len(forgeScenarioRegistry))
-		for _, s := range forgeScenarioRegistry {
-			if !s.TraceDriven {
-				valid = append(valid, s.Key)
-			}
-		}
-		return nil, fmt.Errorf("unknown --scenario %q; valid keys: %v", key, valid)
-	}
-	if scenario.TraceDriven {
-		return nil, fmt.Errorf("--scenario %q: trace scenarios are WS-C2; not yet supported", key)
+		return nil, fmt.Errorf("unknown --scenario %q; valid keys: %v", key, forgeScenarioKeys())
 	}
 
 	children := scenario.buildVariants()
@@ -439,13 +480,21 @@ func expandForgeScenario(key string, base jumphost.AiperfConfig) ([]forgeScenari
 	for i := range children {
 		cfg := &children[i].Config
 
-		// Caller-supplied identity fields override scenario defaults.
-		if base.Model != "" {
-			cfg.Model = base.Model
+		// Mooncake always gets llama3 model + tokenizer override (ADR-0001):
+		// the trace shape is Qwen3-32B but the rig serves Llama-3-8B.
+		if scenario.Key == "mooncake" {
+			cfg.Model = mooncakeLlamaModel
+			cfg.Tokenizer = mooncakeLlamaTokenizer
+		} else {
+			// Caller-supplied identity fields override scenario defaults.
+			if base.Model != "" {
+				cfg.Model = base.Model
+			}
+			if base.Tokenizer != "" {
+				cfg.Tokenizer = base.Tokenizer
+			}
 		}
-		if base.Tokenizer != "" {
-			cfg.Tokenizer = base.Tokenizer
-		}
+
 		if base.HostHeader != "" {
 			cfg.HostHeader = base.HostHeader
 		}

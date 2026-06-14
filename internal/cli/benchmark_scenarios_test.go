@@ -44,10 +44,97 @@ func TestExpandForgeScenario_UnknownKey(t *testing.T) {
 	}
 }
 
-func TestExpandForgeScenario_MooncakeRejected(t *testing.T) {
-	_, err := expandForgeScenario("mooncake", defaultBaseCfg())
-	if err == nil {
-		t.Error("expected error for mooncake (WS-C2), got nil")
+// ---------------------------------------------------------------------------
+// mooncake — trace-driven scenario (WS-C2)
+// ---------------------------------------------------------------------------
+
+func TestExpandForgeScenario_Mooncake_SingleChild(t *testing.T) {
+	children, err := expandForgeScenario("mooncake", defaultBaseCfg())
+	if err != nil {
+		t.Fatalf("expandForgeScenario(mooncake): %v", err)
+	}
+	if len(children) != 1 {
+		t.Fatalf("mooncake: expected 1 child, got %d", len(children))
+	}
+	ch := children[0]
+	if ch.VariantLabel != "trace" {
+		t.Errorf("VariantLabel = %q, want %q", ch.VariantLabel, "trace")
+	}
+}
+
+func TestExpandForgeScenario_Mooncake_ModelTokenizerOverride(t *testing.T) {
+	// expandForgeScenario must always override model=llama3 and
+	// tokenizer=NousResearch/Meta-Llama-3-8B-Instruct for mooncake,
+	// regardless of what the base config carries.
+	base := jumphost.AiperfConfig{
+		Model:     "some-other-model",
+		Tokenizer: "some-other-tokenizer",
+	}
+	children, err := expandForgeScenario("mooncake", base)
+	if err != nil {
+		t.Fatalf("expandForgeScenario(mooncake): %v", err)
+	}
+	ch := children[0]
+	if ch.Config.Model != mooncakeLlamaModel {
+		t.Errorf("Model = %q, want %q (llama3 rig override)", ch.Config.Model, mooncakeLlamaModel)
+	}
+	if ch.Config.Tokenizer != mooncakeLlamaTokenizer {
+		t.Errorf("Tokenizer = %q, want %q", ch.Config.Tokenizer, mooncakeLlamaTokenizer)
+	}
+}
+
+func TestExpandForgeScenario_Mooncake_FlagValues(t *testing.T) {
+	// Assert all mooncake registry values match benchmark_scenarios.py _mooncake_variants().
+	children, err := expandForgeScenario("mooncake", defaultBaseCfg())
+	if err != nil {
+		t.Fatalf("expandForgeScenario(mooncake): %v", err)
+	}
+	cfg := children[0].Config
+
+	if cfg.TraceURL != mooncakeTraceURL {
+		t.Errorf("TraceURL = %q, want %q", cfg.TraceURL, mooncakeTraceURL)
+	}
+	if cfg.TraceDilation != mooncakeDilation {
+		t.Errorf("TraceDilation = %v, want %v", cfg.TraceDilation, mooncakeDilation)
+	}
+	if cfg.CustomDatasetType != "mooncake_trace" {
+		t.Errorf("CustomDatasetType = %q, want %q", cfg.CustomDatasetType, "mooncake_trace")
+	}
+	if !cfg.FixedSchedule {
+		t.Errorf("FixedSchedule = false, want true")
+	}
+	if cfg.WorkersMax != 200 {
+		t.Errorf("WorkersMax = %d, want 200", cfg.WorkersMax)
+	}
+	if cfg.RandomSeed != 42 {
+		t.Errorf("RandomSeed = %d, want 42", cfg.RandomSeed)
+	}
+	if cfg.RequestTimeoutSeconds != 1000 {
+		t.Errorf("RequestTimeoutSeconds = %d, want 1000", cfg.RequestTimeoutSeconds)
+	}
+	if cfg.ProfileExportLevel != "summary" {
+		t.Errorf("ProfileExportLevel = %q, want %q", cfg.ProfileExportLevel, "summary")
+	}
+	if cfg.RecordProcessors != 8 {
+		t.Errorf("RecordProcessors = %d, want 8", cfg.RecordProcessors)
+	}
+	if cfg.Goodput != "time_to_first_token:5000 inter_token_latency:100" {
+		t.Errorf("Goodput = %q, want %q", cfg.Goodput, "time_to_first_token:5000 inter_token_latency:100")
+	}
+	if !cfg.Streaming {
+		t.Errorf("Streaming = false, want true (mooncake base)")
+	}
+}
+
+func TestExpandForgeScenario_Mooncake_HostHeaderPropagated(t *testing.T) {
+	// HostHeader from base should still reach mooncake children.
+	base := jumphost.AiperfConfig{HostHeader: "test.local"}
+	children, err := expandForgeScenario("mooncake", base)
+	if err != nil {
+		t.Fatalf("expandForgeScenario(mooncake): %v", err)
+	}
+	if children[0].Config.HostHeader != "test.local" {
+		t.Errorf("HostHeader = %q, want %q", children[0].Config.HostHeader, "test.local")
 	}
 }
 
@@ -70,6 +157,7 @@ func TestScenario_ChildCounts(t *testing.T) {
 		{"bimodal", 4},          // DEFAULT_SWEEP
 		{"sustained-load", 5},   // sweep {50,100,150,200,250}
 		{"burst-recovery", 10},  // 5 rounds × 2 (burst+probe)
+		{"mooncake", 1},         // single trace variant
 	}
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {
