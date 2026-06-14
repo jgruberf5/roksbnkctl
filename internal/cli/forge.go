@@ -78,8 +78,9 @@ var forgeCleanupCmd = &cobra.Command{
 	Use:   "cleanup",
 	Short: "Delete all awsbnkctl benchmark artifacts from forge for a workspace (full purge)",
 	Long: `forge cleanup is the explicit full-purge counterpart to the automatic
-down-path cleanup. Where 'awsbnkctl down' deletes only cluster-scoped records
-(targets + their proxy deployments), this command also deletes:
+down-path cleanup. Where 'awsbnkctl down' deletes cluster-scoped records
+(targets + their proxy deployments) and the exact-name BenchmarkAgent + SSH
+access-method, this command also deletes:
 
   • BenchmarkAgent records whose name starts with "awsbnkctl-"
   • BenchmarkConfig records whose name starts with "awsbnkctl-"

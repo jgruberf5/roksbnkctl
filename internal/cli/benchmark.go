@@ -39,6 +39,12 @@ import (
 	"github.com/JLCode-tech/awsbnkctl/internal/jumphost"
 )
 
+// discoverProxiesFn is the injectable seam for forge.DiscoverProxies.
+var discoverProxiesFn = forge.DiscoverProxies
+
+// listProxyDeploymentsFn is the injectable seam for forge.ListProxyDeployments.
+var listProxyDeploymentsFn = forge.ListProxyDeployments
+
 var (
 	flagBenchRegion               string
 	flagBenchInstanceID           string
@@ -65,6 +71,8 @@ var (
 	flagBenchRegisterAccessMethod bool
 	flagBenchWorkspace            string // workspace name for forge_link.json cluster_id resolution
 	flagBenchScenario             string // --scenario <key>: native forge scenario (WS-C1)
+	flagBenchProxies              string // --proxies <csv>: shootout front-end list (WS-D1)
+	flagBenchDirectPodIP          string // --direct-pod-ip <ip>: direct nodeport baseline (WS-D1)
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -149,6 +157,19 @@ When set, per-explicit flags (--concurrency/--num-requests/--isl/--osl/--stream)
 	f.StringVar(&flagBenchWorkspace, "workspace", "",
 		"workspace name (e.g. ai-rig) used to read forge_link.json for cluster_id when registering a BenchmarkTarget (best-effort, non-fatal when absent)")
 
+	// Proxy shootout (WS-D1)
+	f.StringVar(&flagBenchProxies, "proxies", "",
+		`comma-separated list of forge proxy types to include in a shootout
+(e.g. --proxies nodeport,envoy,haproxy,f5-bnk).
+Valid types: envoy, nginx, haproxy, f5-bnk, nodeport.
+When set, the chosen --scenario (or single-run flags) is run once per
+front-end. When empty, single/scenario/preset mode runs unchanged.`)
+	f.StringVar(&flagBenchDirectPodIP, "direct-pod-ip", "",
+		`IP of the vLLM pod for a nodeport direct-baseline run (WS-D1).
+When set, adds a 'nodeport' front-end that benchmarks aiperf against the
+pod IP instead of the BNK VIP. Distinct from any VIP nodeport in --proxies.
+AWS SG ingress rule for this path is out of scope (WS-E).`)
+
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
 }
@@ -176,9 +197,10 @@ var registerBenchmarkConfigFn = forge.RegisterBenchmarkConfig
 // forgeGraph holds the resolved forge object IDs for linking runs.
 // All fields are optional — zero means unset and will be omitted from pushes.
 type forgeGraph struct {
-	agentID  int // BenchmarkAgent.id (resolved from agent name)
-	targetID int // BenchmarkTarget.id
-	configID int // BenchmarkConfig.id (preset-specific, set per-run)
+	agentID           int // BenchmarkAgent.id (resolved from agent name)
+	targetID          int // BenchmarkTarget.id
+	configID          int // BenchmarkConfig.id (preset-specific, set per-run)
+	proxyDeploymentID int // ProxyDeployment.id (set per-front-end in shootout mode)
 }
 
 // resolveForgeGraph registers the agent + target (best-effort, non-fatal) and
@@ -318,6 +340,11 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "✓ aiperf ready")
 	}
 
+	// ── Proxy shootout mode (WS-D1) ─────────────────────────────────────────
+	if flagBenchProxies != "" || flagBenchDirectPodIP != "" {
+		return runProxyShootout(cmd, probOpts, forgeCreds, accessMethodName, graph, presets)
+	}
+
 	// ── Native forge scenario mode (WS-C1) ──────────────────────────────────
 	if flagBenchScenario != "" {
 		return runNativeScenario(cmd, probOpts, forgeCreds, accessMethodName, graph, flagBenchScenario)
@@ -378,7 +405,7 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 		RunLabel:          flagBenchRunLabel,
 		TargetID:          graph.targetID,
 		ConfigID:          graph.configID,
-		ProxyDeploymentID: 0,
+		ProxyDeploymentID: graph.proxyDeploymentID,
 	}
 
 	rawResp, rawErr := pushRawAiperfResultFn(cmd.Context(), rawPushOpts)
@@ -387,15 +414,16 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 		// doesn't abort a successful benchmark run.
 		fmt.Fprintf(os.Stderr, "⚠ raw aiperf push failed (%v); falling back to structured push\n", rawErr)
 		pushOpts := forge.BenchmarkPushOptions{
-			RestURL:       flagBenchForgeURL,
-			Creds:         creds,
-			ResultID:      flagBenchResultID,
-			RunLabel:      flagBenchRunLabel,
-			Proxy:         flagBenchProxy,
-			AgentName:     agentName,
-			AgentHostname: flagBenchInstanceID,
-			TargetID:      graph.targetID,
-			ConfigID:      graph.configID,
+			RestURL:           flagBenchForgeURL,
+			Creds:             creds,
+			ResultID:          flagBenchResultID,
+			RunLabel:          flagBenchRunLabel,
+			Proxy:             flagBenchProxy,
+			AgentName:         agentName,
+			AgentHostname:     flagBenchInstanceID,
+			TargetID:          graph.targetID,
+			ConfigID:          graph.configID,
+			ProxyDeploymentID: graph.proxyDeploymentID,
 			AiperfConfig: map[string]any{
 				"model":        flagBenchModel,
 				"endpoint":     flagBenchEndpoint,
@@ -470,6 +498,31 @@ type scenarioOutcome struct {
 	Err      error
 }
 
+// runBenchmarkScenariosCollect runs each preset in sequence and returns the
+// raw outcomes without printing a summary. One preset failing does NOT abort
+// the others. Used by runBenchmarkScenarios (prints its own summary) and by
+// runProxyShootout (aggregates across front-ends).
+//
+// proxy is the front-end label forwarded to forge (defaults to flagBenchProxy
+// when empty). vip is the effective LLM host (defaults to flagBenchVIP when
+// empty). Both are threaded through to runOnePreset → pushAiperfResult.
+func runBenchmarkScenariosCollect(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	presets []benchmarkPreset,
+	proxy, vip string,
+) []scenarioOutcome {
+	outcomes := make([]scenarioOutcome, 0, len(presets))
+	for _, preset := range presets {
+		outcome := runOnePreset(cmd, probOpts, creds, agentName, graph, preset, proxy, vip)
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes
+}
+
 // runBenchmarkScenarios runs each preset in sequence, collecting outcomes.
 // One preset failing does NOT abort the others. A summary table is printed
 // at the end. Each preset is optionally registered as a forge BenchmarkConfig.
@@ -481,12 +534,8 @@ func runBenchmarkScenarios(
 	graph forgeGraph,
 	presets []benchmarkPreset,
 ) error {
-	outcomes := make([]scenarioOutcome, 0, len(presets))
-
-	for _, preset := range presets {
-		outcome := runOnePreset(cmd, probOpts, creds, agentName, graph, preset)
-		outcomes = append(outcomes, outcome)
-	}
+	// Non-shootout path: proxy and vip default to globals (empty strings).
+	outcomes := runBenchmarkScenariosCollect(cmd, probOpts, creds, agentName, graph, presets, "", "")
 
 	// Print summary table.
 	fmt.Println()
@@ -519,6 +568,11 @@ func runBenchmarkScenarios(
 
 // runOnePreset executes a single preset: optionally registers the config,
 // runs aiperf, and pushes the result to forge via the raw-JSON ingest path.
+//
+// proxy is the front-end label forwarded to forge (defaults to flagBenchProxy
+// when empty). vip is the effective LLM host (defaults to flagBenchVIP when
+// empty). Both are forwarded to pushAiperfResult so forge records the correct
+// metadata for each front-end in a shootout.
 func runOnePreset(
 	cmd *cobra.Command,
 	probOpts jumphost.ProbeOptions,
@@ -526,13 +580,20 @@ func runOnePreset(
 	agentName string,
 	graph forgeGraph,
 	preset benchmarkPreset,
+	proxy, vip string,
 ) scenarioOutcome {
 	label := presetRunLabel(flagBenchRunLabel, preset.Name)
 	fmt.Fprintf(os.Stderr, "\n── preset: %s (%s) label=%s ──\n", preset.Name, preset.Description, label)
 
+	// Effective VIP for config registration metadata (falls back to flagBenchVIP).
+	effectiveVIP := vip
+	if effectiveVIP == "" {
+		effectiveVIP = flagBenchVIP
+	}
+
 	// Best-effort: register the preset as a forge BenchmarkConfig (idempotent).
 	configJSON := map[string]any{
-		"url":           fmt.Sprintf("http://%s", flagBenchVIP),
+		"url":           fmt.Sprintf("http://%s", effectiveVIP),
 		"model":         flagBenchModel,
 		"endpoint":      flagBenchEndpoint,
 		"concurrency":   preset.Config.Concurrency,
@@ -582,7 +643,8 @@ func runOnePreset(
 		result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
 
 	// Primary push path: raw JSON to the rich-ingest endpoint.
-	runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, label, presetConfigID, graph.targetID, "", configJSON)
+	// Pass proxy and vip so forge records the correct front-end label and URL.
+	runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, label, presetConfigID, graph.targetID, graph.proxyDeploymentID, proxy, vip, "", configJSON)
 	if pushErr != nil {
 		fmt.Fprintf(os.Stderr, "✗ preset %s forge push failed: %v\n", preset.Name, pushErr)
 		return scenarioOutcome{Preset: preset.Name, Status: "PUSH_FAILED", Err: pushErr}
@@ -598,6 +660,9 @@ func runOnePreset(
 // pushAiperfResult is the shared raw-push + structured-fallback helper used by
 // runOnePreset and runNativeScenario. It returns the forge run_id on success.
 //
+// proxyDeploymentID is stamped on both push paths (0 = unlinked / omitted).
+// proxy is the label forwarded to forge (defaults to flagBenchProxy when empty).
+// vip is the LLM base URL host; when empty flagBenchVIP is used.
 // datasetName is optional — when non-empty it is forwarded as DatasetName on
 // the raw push (used by the native scenario path to stamp <scenario key>).
 // fallbackConfig is the map forwarded to the structured push path as AiperfConfig.
@@ -606,22 +671,33 @@ func pushAiperfResult(
 	result *jumphost.AiperfResult,
 	creds forge.RestCreds,
 	agentName, label string,
-	configID, targetID int,
+	configID, targetID, proxyDeploymentID int,
+	proxy, vip string,
 	datasetName string,
 	fallbackConfig map[string]any,
 ) (int, error) {
+	effectiveProxy := proxy
+	if effectiveProxy == "" {
+		effectiveProxy = flagBenchProxy
+	}
+	effectiveVIP := vip
+	if effectiveVIP == "" {
+		effectiveVIP = flagBenchVIP
+	}
+
 	rawPushOpts := forge.RawAiperfPushOptions{
-		RestURL:     flagBenchForgeURL,
-		Creds:       creds,
-		RawJSON:     []byte(result.RawJSON),
-		Proxy:       flagBenchProxy,
-		Model:       flagBenchModel,
-		URL:         fmt.Sprintf("http://%s", flagBenchVIP),
-		AgentName:   agentName,
-		RunLabel:    label,
-		TargetID:    targetID,
-		ConfigID:    configID,
-		DatasetName: datasetName,
+		RestURL:           flagBenchForgeURL,
+		Creds:             creds,
+		RawJSON:           []byte(result.RawJSON),
+		Proxy:             effectiveProxy,
+		Model:             flagBenchModel,
+		URL:               fmt.Sprintf("http://%s", effectiveVIP),
+		AgentName:         agentName,
+		RunLabel:          label,
+		TargetID:          targetID,
+		ConfigID:          configID,
+		ProxyDeploymentID: proxyDeploymentID,
+		DatasetName:       datasetName,
 	}
 
 	rawResp, pushErr := pushRawAiperfResultFn(cmd.Context(), rawPushOpts)
@@ -630,15 +706,16 @@ func pushAiperfResult(
 		// abort a successful benchmark run.
 		fmt.Fprintf(os.Stderr, "⚠ raw push failed (%v); falling back to structured push\n", pushErr)
 		pushOpts := forge.BenchmarkPushOptions{
-			RestURL:       flagBenchForgeURL,
-			Creds:         creds,
-			RunLabel:      label,
-			Proxy:         flagBenchProxy,
-			AgentName:     agentName,
-			AgentHostname: flagBenchInstanceID,
-			TargetID:      targetID,
-			ConfigID:      configID,
-			AiperfConfig:  fallbackConfig,
+			RestURL:           flagBenchForgeURL,
+			Creds:             creds,
+			RunLabel:          label,
+			Proxy:             effectiveProxy,
+			AgentName:         agentName,
+			AgentHostname:     flagBenchInstanceID,
+			TargetID:          targetID,
+			ConfigID:          configID,
+			ProxyDeploymentID: proxyDeploymentID,
+			AiperfConfig:      fallbackConfig,
 		}
 		structResp, structErr := pushBenchmarkResultFn(cmd.Context(), result, pushOpts)
 		if structErr != nil {
@@ -661,21 +738,25 @@ type nativeScenarioOutcome struct {
 	Err          error
 }
 
-// runNativeScenario expands a forge-native scenario key into its child runs,
-// executes each as a separate aiperf invocation, and pushes every child to
-// forge via the raw /aiperf path with DatasetName=<scenarioKey>.
+// runNativeScenarioCollect expands a forge-native scenario key into its child
+// runs, executes each, and returns the raw outcomes without printing a summary.
+// Used by runNativeScenario (prints its own summary) and runProxyShootout
+// (aggregates across front-ends).
 //
-// One child failing does NOT abort the rest. A summary table is printed at the
-// end. Returns an error only when all children fail.
-func runNativeScenario(
+// proxy is the front-end label forwarded to forge (defaults to flagBenchProxy
+// when empty). vip is the effective LLM host (defaults to flagBenchVIP when
+// empty). Both are forwarded to pushAiperfResult so forge records the correct
+// metadata for each front-end in a shootout.
+func runNativeScenarioCollect(
 	cmd *cobra.Command,
 	probOpts jumphost.ProbeOptions,
 	creds forge.RestCreds,
 	agentName string,
 	graph forgeGraph,
 	scenarioKey string,
-) error {
-	// Base config carries the CLI-supplied identity/tokenizer/host-header/timeout.
+	scenarioConfigID int,
+	proxy, vip string,
+) ([]nativeScenarioOutcome, error) {
 	baseCfg := jumphost.AiperfConfig{
 		Model:        flagBenchModel,
 		EndpointPath: flagBenchEndpoint,
@@ -686,44 +767,18 @@ func runNativeScenario(
 
 	children, err := expandForgeScenario(scenarioKey, baseCfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	fmt.Fprintf(os.Stderr, "→ native scenario %q: %d child run(s)\n", scenarioKey, len(children))
 
-	// Look up the scenario's human-readable description for the forge config record.
-	var scenarioDescription string
-	if forgeScn, ok := forgeScenarioByKey(scenarioKey); ok {
-		scenarioDescription = forgeScn.Description
-	}
-
-	// Register one BenchmarkConfig for the whole scenario (idempotent).
-	scenarioConfigJSON := forgeScenarioConfigJSON(scenarioKey, flagBenchModel, flagBenchVIP)
-	scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", scenarioKey)
-	cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
-		RestURL:     flagBenchForgeURL,
-		Creds:       creds,
-		Name:        scenarioConfigName,
-		Description: scenarioDescription,
-		ConfigJSON:  scenarioConfigJSON,
-	})
-	scenarioConfigID := graph.configID // inherit from graph (0 if unset)
-	if cfgErr != nil {
-		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
-	} else {
-		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
-		scenarioConfigID = cfgResp.ID
-	}
-
 	outcomes := make([]nativeScenarioOutcome, 0, len(children))
 
 	for _, child := range children {
-		// Run label: <base>-<scenarioKey>-<variantLabel>
 		label := presetRunLabel(flagBenchRunLabel, scenarioKey+"-"+child.VariantLabel)
 		fmt.Fprintf(os.Stderr, "\n── child: %s label=%s ──\n", child.VariantLabel, label)
 
 		cfg := child.Config
-		// Log distinguishing fields for this child.
 		if cfg.SeqDist != "" {
 			fmt.Fprintf(os.Stderr, "→ Running aiperf (concurrency=%d requests=%d seq-dist=%q stream=%v)\n",
 				cfg.Concurrency, cfg.NumRequests, cfg.SeqDist, cfg.Streaming)
@@ -751,19 +806,22 @@ func runNativeScenario(
 		fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs rps=%.3f)\n",
 			result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
 
+		// Effective VIP for fallback config metadata (falls back to flagBenchVIP).
+		effectiveVIP := vip
+		if effectiveVIP == "" {
+			effectiveVIP = flagBenchVIP
+		}
+
 		fallbackCfg := map[string]any{
 			"scenario_key":  scenarioKey,
 			"variant_label": child.VariantLabel,
-			"url":           fmt.Sprintf("http://%s", flagBenchVIP),
+			"url":           fmt.Sprintf("http://%s", effectiveVIP),
 			"model":         flagBenchModel,
 			"concurrency":   cfg.Concurrency,
 			"request_count": cfg.NumRequests,
 			"streaming":     cfg.Streaming,
 		}
 
-		// For mooncake: stamp DatasetName=mooncake-toolagent and add a
-		// tokenizer_substituted marker to the run label so forge shows that the
-		// Qwen3-32B trace shape was replayed against the llama3 tokenizer.
 		datasetName := scenarioKey
 		pushLabel := label
 		if scenarioKey == "mooncake" {
@@ -773,7 +831,8 @@ func runNativeScenario(
 			}
 		}
 
-		runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, pushLabel, scenarioConfigID, graph.targetID, datasetName, fallbackCfg)
+		// Pass proxy and vip so forge records the correct front-end label and URL.
+		runID, pushErr := pushAiperfResult(cmd, result, creds, agentName, pushLabel, scenarioConfigID, graph.targetID, graph.proxyDeploymentID, proxy, vip, datasetName, fallbackCfg)
 		if pushErr != nil {
 			fmt.Fprintf(os.Stderr, "✗ child %s push failed: %v\n", child.VariantLabel, pushErr)
 			outcomes = append(outcomes, nativeScenarioOutcome{
@@ -788,6 +847,52 @@ func runNativeScenario(
 			RunID:        runID,
 			Status:       "OK",
 		})
+	}
+	return outcomes, nil
+}
+
+// runNativeScenario expands a forge-native scenario key into its child runs,
+// executes each as a separate aiperf invocation, and pushes every child to
+// forge via the raw /aiperf path with DatasetName=<scenarioKey>.
+//
+// One child failing does NOT abort the rest. A summary table is printed at the
+// end. Returns an error only when all children fail.
+func runNativeScenario(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	scenarioKey string,
+) error {
+	// Look up the scenario's human-readable description for the forge config record.
+	var scenarioDescription string
+	if forgeScn, ok := forgeScenarioByKey(scenarioKey); ok {
+		scenarioDescription = forgeScn.Description
+	}
+
+	// Register one BenchmarkConfig for the whole scenario (idempotent).
+	scenarioConfigJSON := forgeScenarioConfigJSON(scenarioKey, flagBenchModel, flagBenchVIP)
+	scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", scenarioKey)
+	cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
+		RestURL:     flagBenchForgeURL,
+		Creds:       creds,
+		Name:        scenarioConfigName,
+		Description: scenarioDescription,
+		ConfigJSON:  scenarioConfigJSON,
+	})
+	scenarioConfigID := graph.configID // inherit from graph (0 if unset)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
+		scenarioConfigID = cfgResp.ID
+	}
+
+	// Non-shootout path: proxy and vip default to globals (empty strings).
+	outcomes, err := runNativeScenarioCollect(cmd, probOpts, creds, agentName, graph, scenarioKey, scenarioConfigID, "", "")
+	if err != nil {
+		return err
 	}
 
 	// Summary table.
@@ -818,4 +923,333 @@ func runNativeScenario(
 		return fmt.Errorf("all %d child run(s) failed for scenario %q", len(outcomes), scenarioKey)
 	}
 	return nil
+}
+
+// ── Proxy shootout (WS-D1) ──────────────────────────────────────────────────
+
+// shootoutFrontEnd describes one front-end in a proxy shootout.
+type shootoutFrontEnd struct {
+	// ProxyType is the forge canonical proxy type label (e.g. "envoy", "f5-bnk").
+	ProxyType string
+	// VIP overrides flagBenchVIP when non-empty (used by --direct-pod-ip).
+	VIP string
+	// ProxyDeploymentID is the resolved forge id (0 = unlinked).
+	ProxyDeploymentID int
+}
+
+// shootoutOutcome records the aggregated result for one front-end.
+type shootoutOutcome struct {
+	ProxyType         string
+	ProxyDeploymentID int
+	RunIDs            []int
+	Status            string
+	Err               error
+}
+
+// resolveShootoutFrontEnds builds the ordered list of front-ends from the
+// --proxies CSV flag and --direct-pod-ip. It runs discover + list against
+// forge to resolve ProxyDeploymentIDs (best-effort; 0 when unavailable).
+//
+// Returns an error immediately when any --proxies entry is not a recognised
+// forge proxy type (e.g. a typo). Valid-but-undiscovered types (cluster has
+// no running proxy of that kind) still proceed as unlinked front-ends.
+//
+// The direct-pod-ip nodeport front-end is always appended last and is kept
+// distinct from any VIP nodeport in --proxies.
+func resolveShootoutFrontEnds(ctx context.Context, creds forge.RestCreds, targetID int) ([]shootoutFrontEnd, error) {
+	var frontEnds []shootoutFrontEnd
+
+	// Parse --proxies CSV.
+	var proxyTypes []string
+	for _, raw := range strings.Split(flagBenchProxies, ",") {
+		t := strings.TrimSpace(raw)
+		if t != "" {
+			proxyTypes = append(proxyTypes, t)
+		}
+	}
+
+	// Fail fast on unknown proxy type names (typo guard).
+	for _, pt := range proxyTypes {
+		if !forge.IsValidProxyType(pt) {
+			return nil, fmt.Errorf("--proxies: unknown proxy type %q; valid types: envoy, f5-bnk, haproxy, nginx, nodeport", pt)
+		}
+	}
+
+	// Best-effort: discover + list proxies from forge when we have a target.
+	// Run when either --proxies is non-empty OR --direct-pod-ip is set so that
+	// a nodeport-only direct-pod-ip run can still resolve its ProxyDeploymentID.
+	var knownProxies []forge.ProxyDeployment
+	if targetID != 0 && (len(proxyTypes) > 0 || flagBenchDirectPodIP != "") {
+		discOpts := forge.ProxyDiscoverOptions{
+			RestURL:  flagBenchForgeURL,
+			Creds:    creds,
+			TargetID: targetID,
+		}
+		if _, discErr := discoverProxiesFn(ctx, discOpts); discErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ forge discover-proxies failed (non-fatal, running unlinked): %v\n", discErr)
+		}
+		listed, listErr := listProxyDeploymentsFn(ctx, discOpts)
+		if listErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ forge list-proxies failed (non-fatal, running unlinked): %v\n", listErr)
+		} else {
+			knownProxies = listed
+		}
+	}
+
+	// Build VIP front-ends.
+	for _, pt := range proxyTypes {
+		id := forge.ResolveProxyDeploymentID(knownProxies, pt)
+		frontEnds = append(frontEnds, shootoutFrontEnd{
+			ProxyType:         pt,
+			ProxyDeploymentID: id,
+		})
+	}
+
+	// Append direct-pod-ip nodeport front-end (always last, always distinct).
+	if flagBenchDirectPodIP != "" {
+		// Resolve the proxy_deployment_id for "nodeport" from the same list
+		// (best-effort; may be different from any VIP nodeport front-end above,
+		// or the same id if there is only one nodeport record).
+		id := forge.ResolveProxyDeploymentID(knownProxies, "nodeport")
+		frontEnds = append(frontEnds, shootoutFrontEnd{
+			ProxyType:         "nodeport",
+			VIP:               flagBenchDirectPodIP,
+			ProxyDeploymentID: id,
+		})
+	}
+
+	return frontEnds, nil
+}
+
+// runProxyShootout orchestrates the proxy shootout: runs the chosen
+// --scenario (or presets / single-run) once per front-end, stamping
+// the per-front-end proxy_deployment_id on every push, then prints a
+// summary table with real run_ids from each front-end.
+//
+// One front-end failing does NOT abort the others (mirrors runBenchmarkScenarios).
+func runProxyShootout(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	presets []benchmarkPreset,
+) error {
+	frontEnds, err := resolveShootoutFrontEnds(cmd.Context(), creds, graph.targetID)
+	if err != nil {
+		return err
+	}
+	if len(frontEnds) == 0 {
+		return fmt.Errorf("--proxies is empty and --direct-pod-ip is not set; nothing to shoot out")
+	}
+
+	fmt.Fprintf(os.Stderr, "→ proxy shootout: %d front-end(s)\n", len(frontEnds))
+
+	outcomes := make([]shootoutOutcome, 0, len(frontEnds))
+
+	for _, fe := range frontEnds {
+		// Copy graph with the per-front-end proxy id; never mutate globals.
+		g := graph
+		g.proxyDeploymentID = fe.ProxyDeploymentID
+
+		// When the front-end has a specific VIP (direct-pod-ip), temporarily
+		// override the probe VIP for this front-end's runs.
+		feProbeOpts := probOpts
+		if fe.VIP != "" {
+			feProbeOpts.VIP = fe.VIP
+		}
+
+		linked := "unlinked"
+		if fe.ProxyDeploymentID != 0 {
+			linked = fmt.Sprintf("id=%d", fe.ProxyDeploymentID)
+		}
+		fmt.Fprintf(os.Stderr, "\n══ front-end: %s (%s) vip=%s ══\n",
+			fe.ProxyType, linked, feProbeOpts.VIP)
+
+		oc := runShootoutFrontEnd(cmd, feProbeOpts, creds, agentName, g, fe.ProxyType, fe.VIP, presets)
+		outcomes = append(outcomes, oc)
+	}
+
+	// Outer summary table.
+	fmt.Println()
+	fmt.Printf("proxy shootout summary\n")
+	fmt.Printf("%-14s  %-12s  %-8s  %-8s  %s\n", "PROXY", "PROXY_DEP_ID", "STATUS", "RUN_IDS", "NOTE")
+	fmt.Printf("%-14s  %-12s  %-8s  %-8s  %s\n", "-----", "------------", "------", "-------", "----")
+	for _, o := range outcomes {
+		depID := "unlinked"
+		if o.ProxyDeploymentID != 0 {
+			depID = fmt.Sprintf("%d", o.ProxyDeploymentID)
+		}
+		runIDs := formatRunIDs(o.RunIDs)
+		note := ""
+		if o.Err != nil {
+			note = o.Err.Error()
+			if len(note) > 50 {
+				note = note[:47] + "..."
+			}
+		}
+		fmt.Printf("%-14s  %-12s  %-8s  %-8s  %s\n", o.ProxyType, depID, o.Status, runIDs, note)
+	}
+
+	// Fail only when all front-ends failed.
+	allFailed := true
+	for _, o := range outcomes {
+		if o.Err == nil {
+			allFailed = false
+			break
+		}
+	}
+	if allFailed && len(outcomes) > 0 {
+		return fmt.Errorf("all %d front-end(s) failed in proxy shootout", len(outcomes))
+	}
+	return nil
+}
+
+// runShootoutFrontEnd runs one front-end's workload (native scenario, presets,
+// or single run) and returns a shootoutOutcome with the collected run_ids.
+// The proxy label and VIP are taken from proxyType and vip (not from globals).
+func runShootoutFrontEnd(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	proxyType, vip string,
+	presets []benchmarkPreset,
+) shootoutOutcome {
+	base := shootoutOutcome{ProxyType: proxyType, ProxyDeploymentID: graph.proxyDeploymentID}
+
+	switch {
+	case flagBenchScenario != "":
+		// Native scenario mode: register config, collect child outcomes.
+		var scenarioDescription string
+		if forgeScn, ok := forgeScenarioByKey(flagBenchScenario); ok {
+			scenarioDescription = forgeScn.Description
+		}
+		scenarioConfigJSON := forgeScenarioConfigJSON(flagBenchScenario, flagBenchModel, flagBenchVIP)
+		scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", flagBenchScenario)
+		cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
+			RestURL:     flagBenchForgeURL,
+			Creds:       creds,
+			Name:        scenarioConfigName,
+			Description: scenarioDescription,
+			ConfigJSON:  scenarioConfigJSON,
+		})
+		scenarioConfigID := graph.configID
+		if cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
+			scenarioConfigID = cfgResp.ID
+		}
+		g := graph
+		g.configID = scenarioConfigID
+		// Pass proxyType and vip so forge records correct per-front-end metadata.
+		children, collectErr := runNativeScenarioCollect(cmd, probOpts, creds, agentName, g, flagBenchScenario, scenarioConfigID, proxyType, vip)
+		if collectErr != nil {
+			base.Status = "FAILED"
+			base.Err = collectErr
+			return base
+		}
+		var runIDs []int
+		allFailed := true
+		for _, ch := range children {
+			if ch.Err == nil {
+				allFailed = false
+				if ch.RunID != 0 {
+					runIDs = append(runIDs, ch.RunID)
+				}
+			}
+		}
+		base.RunIDs = runIDs
+		if allFailed && len(children) > 0 {
+			base.Status = "FAILED"
+			base.Err = fmt.Errorf("all %d child run(s) failed", len(children))
+		} else {
+			base.Status = "OK"
+		}
+		return base
+
+	case len(presets) > 0:
+		// Preset mode: collect per-preset outcomes.
+		// Pass proxyType and vip so forge records correct per-front-end metadata.
+		presOutcomes := runBenchmarkScenariosCollect(cmd, probOpts, creds, agentName, graph, presets, proxyType, vip)
+		var runIDs []int
+		allFailed := true
+		for _, o := range presOutcomes {
+			if o.Err == nil {
+				allFailed = false
+				if o.RunID != 0 {
+					runIDs = append(runIDs, o.RunID)
+				}
+			}
+		}
+		base.RunIDs = runIDs
+		if allFailed && len(presOutcomes) > 0 {
+			base.Status = "FAILED"
+			base.Err = fmt.Errorf("all %d preset(s) failed", len(presOutcomes))
+		} else {
+			base.Status = "OK"
+		}
+		return base
+
+	default:
+		// Single-run mode: run aiperf and push.
+		effectiveVIP := vip
+		if effectiveVIP == "" {
+			effectiveVIP = flagBenchVIP
+		}
+		runOpts := jumphost.AiperfRunOptions{
+			ProbeOptions: probOpts,
+			Config: jumphost.AiperfConfig{
+				Model:        flagBenchModel,
+				EndpointPath: flagBenchEndpoint,
+				Concurrency:  flagBenchConcurrency,
+				NumRequests:  flagBenchNumRequests,
+				ISL:          flagBenchISL,
+				OSL:          flagBenchOSL,
+				Streaming:    flagBenchStreaming,
+				Tokenizer:    flagBenchTokenizer,
+				HostHeader:   flagBenchHostHeader,
+				Timeout:      flagBenchTimeout,
+			},
+			RunLabel: flagBenchRunLabel,
+			ResultID: flagBenchResultID,
+		}
+		result, aiperfErr := runAiperfFn(cmd.Context(), runOpts)
+		if aiperfErr != nil {
+			base.Status = "FAILED"
+			base.Err = aiperfErr
+			return base
+		}
+		fmt.Fprintf(os.Stderr, "✓ aiperf done: %d/%d succeeded (%.1fs rps=%.3f)\n",
+			result.Successful, result.TotalRequests, result.DurationSeconds, result.RequestThroughput)
+		runID, pushErr := pushAiperfResult(
+			cmd, result, creds, agentName, flagBenchRunLabel,
+			graph.configID, graph.targetID, graph.proxyDeploymentID,
+			proxyType, effectiveVIP,
+			"", nil,
+		)
+		if pushErr != nil {
+			base.Status = "PUSH_FAILED"
+			base.Err = pushErr
+			return base
+		}
+		base.RunIDs = []int{runID}
+		base.Status = "OK"
+		return base
+	}
+}
+
+// formatRunIDs formats a slice of run ids for display (e.g. "42,43,44").
+// Returns "-" when the slice is empty.
+func formatRunIDs(ids []int) string {
+	if len(ids) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("%d", id)
+	}
+	return strings.Join(parts, ",")
 }
