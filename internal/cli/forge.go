@@ -17,13 +17,18 @@ import (
 )
 
 var (
-	flagForgeMCPURL    string
-	flagForgeProject   string
-	flagForgeScan      bool
-	flagForgePurge     bool
-	flagForgeKubeconf  string
-	flagForgeClusterNm string
-	flagForgeConfig    string
+	flagForgeMCPURL      string
+	flagForgeProject     string
+	flagForgeScan        bool
+	flagForgePurge       bool
+	flagForgeKubeconf    string
+	flagForgeClusterNm   string
+	flagForgeConfig      string
+	flagForgeCleanupWS   string // --workspace for `forge cleanup`
+	flagForgeCleanupDry  bool   // --dry-run for `forge cleanup`
+	flagForgeCleanupURL  string // --forge-rest-url for `forge cleanup`
+	flagForgeCleanupUser string // --forge-user for `forge cleanup`
+	flagForgeCleanupPass string // --forge-pass for `forge cleanup`
 )
 
 var forgeCmd = &cobra.Command{
@@ -69,6 +74,76 @@ local forge_link.json. Pass --purge to also delete the forge project
 	RunE: runForgeUnregister,
 }
 
+var forgeCleanupCmd = &cobra.Command{
+	Use:   "cleanup",
+	Short: "Delete all awsbnkctl benchmark artifacts from forge for a workspace (full purge)",
+	Long: `forge cleanup is the explicit full-purge counterpart to the automatic
+down-path cleanup. Where 'awsbnkctl down' deletes only cluster-scoped records
+(targets + their proxy deployments), this command also deletes:
+
+  • BenchmarkAgent records whose name starts with "awsbnkctl-"
+  • BenchmarkConfig records whose name starts with "awsbnkctl-"
+
+Configs and agents carry no cluster identity and are shared/reusable across
+clusters, so deleting them is an intentional operator action rather than an
+automatic side-effect of 'down'.
+
+Run/result rows are never deleted — forge nulls their FKs via SET NULL so all
+historical data is preserved.
+
+All operations are idempotent (404 = already gone = success).
+
+Example:
+  awsbnkctl forge cleanup --workspace ai-rig
+  awsbnkctl forge cleanup --workspace ai-rig --dry-run`,
+	RunE: runForgeCleanup,
+}
+
+func runForgeCleanup(cmd *cobra.Command, _ []string) error {
+	if flagForgeCleanupWS == "" {
+		return fmt.Errorf("--workspace is required: name the workspace whose artifacts should be purged (e.g. ai-rig)")
+	}
+
+	// Resolve cluster_id from forge_link.json in the workspace state dir.
+	wsDir := fmt.Sprintf(".awsbnkctl/%s", flagForgeCleanupWS)
+	link, err := forge.ReadLink(wsDir)
+	if err != nil {
+		return fmt.Errorf("forge cleanup: could not read forge_link.json for workspace %q: %w\n(hint: ensure the workspace has been registered with forge, or run 'awsbnkctl forge register')", flagForgeCleanupWS, err)
+	}
+	if link.ClusterID <= 0 {
+		return fmt.Errorf("forge cleanup: forge_link.json for workspace %q has no cluster_id (status=%q) — workspace may not be fully registered", flagForgeCleanupWS, link.Status)
+	}
+
+	restURL := flagForgeCleanupURL
+	creds := forge.RestCreds{
+		Username: flagForgeCleanupUser,
+		Password: flagForgeCleanupPass,
+	}
+
+	fmt.Fprintf(os.Stderr, "→ forge cleanup: workspace=%s cluster_id=%d forge=%s\n",
+		flagForgeCleanupWS, link.ClusterID, restURL)
+
+	if flagForgeCleanupDry {
+		fmt.Fprintf(os.Stderr, "  dry-run: would delete:\n")
+		fmt.Fprintf(os.Stderr, "    • targets with cluster_id=%d (and their proxy deployments)\n", link.ClusterID)
+		fmt.Fprintf(os.Stderr, "    • BenchmarkAgent records with name prefix \"awsbnkctl-\"\n")
+		fmt.Fprintf(os.Stderr, "    • BenchmarkConfig records with name prefix \"awsbnkctl-\"\n")
+		fmt.Fprintf(os.Stderr, "  (run without --dry-run to apply)\n")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+	defer cancel()
+
+	if err := forge.DeleteAllClusterBenchmarkArtifacts(ctx, restURL, creds, link.ClusterID); err != nil {
+		return fmt.Errorf("forge cleanup: %w", err)
+	}
+
+	fmt.Printf("✓ forge cleanup complete: workspace=%s cluster_id=%d\n", flagForgeCleanupWS, link.ClusterID)
+	fmt.Printf("  run/result rows preserved (FK nulled by forge)\n")
+	return nil
+}
+
 func init() {
 	forgeCmd.PersistentFlags().StringVar(&flagForgeMCPURL, "forge-mcp-url", "",
 		"forge MCP endpoint (default $AWSBNKCTL_FORGE_MCP_URL, fallback "+forge.DefaultMCPURL+")")
@@ -87,7 +162,18 @@ func init() {
 	forgeUnregisterCmd.Flags().BoolVar(&flagForgePurge, "purge", false,
 		"also delete the forge project (default: cluster only; project preserved)")
 
-	forgeCmd.AddCommand(forgeRegisterCmd, forgeStatusCmd, forgeUnregisterCmd)
+	forgeCleanupCmd.Flags().StringVar(&flagForgeCleanupWS, "workspace", "",
+		"workspace name (e.g. ai-rig); reads .awsbnkctl/<workspace>/forge_link.json for cluster_id [required]")
+	forgeCleanupCmd.Flags().BoolVar(&flagForgeCleanupDry, "dry-run", false,
+		"print what would be deleted without issuing any DELETE requests")
+	forgeCleanupCmd.Flags().StringVar(&flagForgeCleanupURL, "forge-rest-url", "http://localhost:8000",
+		"forge REST base URL")
+	forgeCleanupCmd.Flags().StringVar(&flagForgeCleanupUser, "forge-user", "",
+		"forge username (default: admin)")
+	forgeCleanupCmd.Flags().StringVar(&flagForgeCleanupPass, "forge-pass", "",
+		"forge password (default: changeme)")
+
+	forgeCmd.AddCommand(forgeRegisterCmd, forgeStatusCmd, forgeUnregisterCmd, forgeCleanupCmd)
 	rootCmd.AddCommand(forgeCmd)
 }
 

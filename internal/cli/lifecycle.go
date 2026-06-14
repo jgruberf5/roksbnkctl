@@ -790,6 +790,7 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 		{3, "tmm-node-label", func() error { return phases.Phase16TMMNodeLabelDown(ctx, cl, st, clients) }},
 		{3, "node-group", func() error { return phases.Phase10NodeGroupDown(ctx, cl, st, clients) }},
 		// STAGE 2 — EKS control plane.
+		{2, "forge-benchmark-cleanup", func() error { return phases.Phase09bBenchmarkDown(ctx, cl, st, clients) }},
 		{2, "forge-unregister", func() error { return phases.Phase09ForgeRegisterDown(ctx, cl, st, clients, flagKeepForgeLink) }},
 		{2, "vpc-cni-prefix", func() error { return phases.Phase08bVPCCNIPrefixDown(ctx, cl, st, clients) }},
 		{2, "eks-cluster", func() error { return phases.Phase08EKSClusterDown(ctx, cl, st, clients) }},
