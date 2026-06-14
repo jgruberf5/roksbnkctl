@@ -97,11 +97,16 @@ func (s *objectGraphServer) handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case r.Method == http.MethodGet && r.URL.Path == forge.BenchmarkTargetEndpoint:
+		// Forge returns a list-response object, NOT a bare array:
+		// {"targets":[...],"total":N} per backend/routes/benchmarks.py:317.
 		list := s.existingTargets
 		if list == nil {
 			list = []map[string]any{}
 		}
-		_ = json.NewEncoder(w).Encode(list)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"targets": list,
+			"total":   len(list),
+		})
 
 	// BenchmarkConfig
 	case r.Method == http.MethodPost && r.URL.Path == forge.BenchmarkConfigEndpoint:
@@ -218,6 +223,62 @@ func TestRegisterBenchmarkAgent_409UpsertPath(t *testing.T) {
 	}
 }
 
+// TestRegisterBenchmarkAgent_CapabilitiesIsDict asserts that RegisterBenchmarkAgent
+// marshals the Capabilities field as a JSON object {"engines":[...]} rather than a
+// bare array.  Forge's BenchmarkAgentRegister.capabilities is typed as dict
+// (backend/schemas/benchmarks.py:209); a bare array causes HTTP 422.
+func TestRegisterBenchmarkAgent_CapabilitiesIsDict(t *testing.T) {
+	srv := newObjectGraphServer(0) // 201 on POST
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+
+	origDo := *forge.BenchmarkHTTPDoFn
+	*forge.BenchmarkHTTPDoFn = ts.Client().Do
+	defer func() { *forge.BenchmarkHTTPDoFn = origDo }()
+
+	_, err := forge.RegisterBenchmarkAgent(context.Background(), forge.BenchmarkAgentOptions{
+		RestURL:      ts.URL,
+		Name:         "agent-caps-test",
+		Hostname:     "i-caps",
+		Capabilities: []string{"aiperf"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterBenchmarkAgent: %v", err)
+	}
+
+	raw := srv.capturedPosts[forge.BenchmarkAgentEndpoint]
+	if len(raw) == 0 {
+		t.Fatal("no body captured for POST to agent endpoint")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+
+	// capabilities must be a JSON object (map), not an array.
+	caps, ok := body["capabilities"]
+	if !ok {
+		t.Fatal("capabilities key missing from POST body")
+	}
+	capsMap, isMap := caps.(map[string]any)
+	if !isMap {
+		t.Fatalf("capabilities = %T, want map (dict); got %v", caps, caps)
+	}
+	// Must contain an "engines" key with the list value.
+	engines, ok := capsMap["engines"]
+	if !ok {
+		t.Fatal(`capabilities["engines"] key missing`)
+	}
+	enginesList, isList := engines.([]any)
+	if !isList || len(enginesList) == 0 {
+		t.Fatalf(`capabilities["engines"] = %v, want non-empty list`, engines)
+	}
+	if enginesList[0] != "aiperf" {
+		t.Errorf(`capabilities["engines"][0] = %v, want "aiperf"`, enginesList[0])
+	}
+}
+
 func TestRegisterBenchmarkAgent_MissingRestURL(t *testing.T) {
 	_, err := forge.RegisterBenchmarkAgent(context.Background(), forge.BenchmarkAgentOptions{Name: "x"})
 	if err == nil {
@@ -305,6 +366,40 @@ func TestRegisterBenchmarkTarget_409UpsertPath(t *testing.T) {
 	}
 	if resp.ID != 33 {
 		t.Errorf("upsert ID = %d, want 33", resp.ID)
+	}
+}
+
+// TestRegisterBenchmarkTarget_ListResponseObjectShape verifies that
+// benchmarkTargetFindByName decodes the {"targets":[...],"total":N} object
+// correctly. Forge's GET /api/benchmarks/targets returns a list-response object
+// (backend/routes/benchmarks.py:317), NOT a bare array — the prior bare-array
+// decode silently produced an empty list, so the 409 fallback never resolved the
+// existing target.
+func TestRegisterBenchmarkTarget_ListResponseObjectShape(t *testing.T) {
+	srv := newObjectGraphServer(http.StatusConflict)
+	// existingTargets is served as {"targets":[...],"total":N} by the handler.
+	srv.existingTargets = []map[string]any{
+		{"id": float64(99), "name": "awsbnkctl-ai-rig-llama3", "cluster_id": float64(5)},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handler))
+	defer ts.Close()
+
+	origDo := *forge.BenchmarkHTTPDoFn
+	*forge.BenchmarkHTTPDoFn = ts.Client().Do
+	defer func() { *forge.BenchmarkHTTPDoFn = origDo }()
+
+	resp, err := forge.RegisterBenchmarkTarget(context.Background(), forge.BenchmarkTargetOptions{
+		RestURL:   ts.URL,
+		Name:      "awsbnkctl-ai-rig-llama3",
+		ClusterID: 5,
+	})
+	if err != nil {
+		t.Fatalf("409 conflict + list-response decode: %v", err)
+	}
+	// ID 99 comes from the list-response object; 0 would indicate the old
+	// bare-array decode silently returned an empty list (bug not fixed).
+	if resp.ID != 99 {
+		t.Errorf("resolved target ID = %d, want 99 (bare-array decode would return 0)", resp.ID)
 	}
 }
 

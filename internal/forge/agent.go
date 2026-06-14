@@ -78,7 +78,10 @@ func RegisterBenchmarkAgent(ctx context.Context, opts BenchmarkAgentOptions) (Be
 		body["tags"] = opts.Tags
 	}
 	if len(opts.Capabilities) > 0 {
-		body["capabilities"] = opts.Capabilities
+		// Forge's BenchmarkAgentRegister.capabilities is a dict, not a list.
+		// Shape: {"engines": [...]} per backend/schemas/benchmarks.py:209.
+		// Sending a bare []string causes HTTP 422 ("Input should be a valid dictionary").
+		body["capabilities"] = map[string]any{"engines": opts.Capabilities}
 	}
 
 	var created BenchmarkAgentResponse
