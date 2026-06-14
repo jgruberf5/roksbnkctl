@@ -15,3 +15,6 @@ var ValidateTraceURL = validateTraceURL
 
 // DilateTimestamp exposes dilateTimestamp for unit tests.
 var DilateTimestamp = dilateTimestamp
+
+// BuildModelsQueryCmd exposes buildModelsQueryCmd for unit tests.
+var BuildModelsQueryCmd = buildModelsQueryCmd
