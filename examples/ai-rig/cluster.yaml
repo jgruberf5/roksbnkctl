@@ -102,6 +102,15 @@ cluster:
           value: "present"
           effect: NoSchedule
 
+# addons: opt-in cluster add-ons. The AWS Load Balancer Controller (Phase 14b)
+# is REQUIRED for the Envoy-vs-BNK proxy shootout (PRD-11): forge deploys the
+# Envoy proxy as a Service that the controller exposes on an INTERNAL data-path
+# NLB, which the benchmark's external_url resolver reads for the non-BNK leg.
+# Without this the envoy arm fails-closed (no NLB → no front-end to benchmark).
+addons:
+  lbController:
+    enabled: true
+
 # ai: provisions the disposable SageMaker LMI (vLLM) endpoint for the managed
 # inference leg. On `up`, three AWS resources are created in order:
 #   SageMaker Model → EndpointConfig → Endpoint.

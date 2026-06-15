@@ -520,7 +520,7 @@ func forgeScenarioConfigJSON(key string, model, vip string) map[string]any {
 		"scenario_key":  key,
 		"scenario_name": s.Name,
 		"model":         model,
-		"url":           fmt.Sprintf("http://%s", vip),
+		"url":           llmBaseURL(vip),
 		"description":   s.Description,
 		"tags":          s.Tags,
 	}

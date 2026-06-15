@@ -76,6 +76,7 @@ var (
 	flagBenchConfig               string // --config/-f <cluster.yaml>: kubeconfig source for cluster lookups (e.g. bnk resync)
 	flagBenchUpstreamService      string // --upstream-service: k8s Service the proxy fronts (for NLB opt-in tag)
 	flagBenchUpstreamPort         string // --upstream-port: Service port (for NLB opt-in tag)
+	flagBenchUpstreamNamespace    string // --upstream-namespace: Service namespace (for NLB opt-in tag)
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -183,6 +184,8 @@ endpoints are now read from forge's external_url field).`)
 		"k8s Service the proxy fronts (sets tags[upstream_service] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
 	f.StringVar(&flagBenchUpstreamPort, "upstream-port", "80",
 		"upstream Service port (sets tags[upstream_port] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
+	f.StringVar(&flagBenchUpstreamNamespace, "upstream-namespace", "",
+		"k8s namespace of the upstream Service the proxy fronts (sets tags[upstream_namespace] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
 
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
@@ -234,19 +237,26 @@ func hasNonBNKProxy(csv string) bool {
 	return false
 }
 
-// nlbOptInTags returns the three opt-in internal-NLB tags required by forge
+// nlbOptInTags returns the opt-in internal-NLB tags required by forge
 // PR #325 when the run is a non-BNK proxy shootout; nil otherwise.
 // Tags are forwarded to the forge BenchmarkTarget so forge exposes the proxy
-// front-end via an internal AWS NLB (Slice-3 contract).
-func nlbOptInTags(proxiesCSV, upstreamService, upstreamPort string) map[string]string {
+// front-end via an internal AWS NLB (Slice-3 contract). upstream_namespace is
+// included only when upstreamNamespace is non-empty.
+func nlbOptInTags(proxiesCSV, upstreamService, upstreamPort, upstreamNamespace string) map[string]string {
 	if !hasNonBNKProxy(proxiesCSV) {
 		return nil
 	}
-	return map[string]string{
+	tags := map[string]string{
 		"proxy_expose":     "internal-nlb",
 		"upstream_service": upstreamService,
 		"upstream_port":    upstreamPort,
 	}
+	// Only emit upstream_namespace when set, so unset-flag behavior keeps the
+	// map byte-identical to the prior three-key contract.
+	if upstreamNamespace != "" {
+		tags["upstream_namespace"] = upstreamNamespace
+	}
+	return tags
 }
 
 // resolveForgeGraph registers the agent + target (best-effort, non-fatal) and
@@ -298,9 +308,9 @@ func resolveForgeGraph(ctx context.Context, creds forge.RestCreds, agentName str
 		Creds:      creds,
 		Name:       targetName,
 		ClusterID:  clusterID,
-		LLMBaseURL: fmt.Sprintf("http://%s", flagBenchVIP),
+		LLMBaseURL: llmBaseURL(flagBenchVIP),
 		LLMModel:   flagBenchModel,
-		Tags:       nlbOptInTags(flagBenchProxies, flagBenchUpstreamService, flagBenchUpstreamPort),
+		Tags:       nlbOptInTags(flagBenchProxies, flagBenchUpstreamService, flagBenchUpstreamPort, flagBenchUpstreamNamespace),
 	})
 	if targetErr != nil {
 		if errors.Is(targetErr, forge.ErrTargetNoClusterID) {
@@ -462,7 +472,7 @@ func runBenchmarkSingle(cmd *cobra.Command, probOpts jumphost.ProbeOptions, cred
 		RawJSON:           []byte(result.RawJSON),
 		Proxy:             flagBenchProxy,
 		Model:             flagBenchModel,
-		URL:               fmt.Sprintf("http://%s", flagBenchVIP),
+		URL:               llmBaseURL(flagBenchVIP),
 		AgentName:         agentName,
 		RunLabel:          flagBenchRunLabel,
 		TargetID:          graph.targetID,
@@ -655,7 +665,7 @@ func runOnePreset(
 
 	// Best-effort: register the preset as a forge BenchmarkConfig (idempotent).
 	configJSON := map[string]any{
-		"url":           fmt.Sprintf("http://%s", effectiveVIP),
+		"url":           llmBaseURL(effectiveVIP),
 		"model":         flagBenchModel,
 		"endpoint":      flagBenchEndpoint,
 		"concurrency":   preset.Config.Concurrency,
@@ -753,7 +763,7 @@ func pushAiperfResult(
 		RawJSON:           []byte(result.RawJSON),
 		Proxy:             effectiveProxy,
 		Model:             flagBenchModel,
-		URL:               fmt.Sprintf("http://%s", effectiveVIP),
+		URL:               llmBaseURL(effectiveVIP),
 		AgentName:         agentName,
 		RunLabel:          label,
 		TargetID:          targetID,
@@ -877,7 +887,7 @@ func runNativeScenarioCollect(
 		fallbackCfg := map[string]any{
 			"scenario_key":  scenarioKey,
 			"variant_label": child.VariantLabel,
-			"url":           fmt.Sprintf("http://%s", effectiveVIP),
+			"url":           llmBaseURL(effectiveVIP),
 			"model":         flagBenchModel,
 			"concurrency":   cfg.Concurrency,
 			"request_count": cfg.NumRequests,
@@ -1366,6 +1376,19 @@ func runShootoutFrontEnd(
 		base.Status = "OK"
 		return base
 	}
+}
+
+// llmBaseURL returns the LLM base URL for a front-end host. When host already
+// carries an http:// or https:// scheme (case-insensitive) it is returned
+// unchanged; otherwise "http://" is prepended. This tolerates forge's
+// external_url, which for non-BNK front-ends may already include a scheme
+// (e.g. "http://10.0.10.247:10080") and would otherwise yield "http://http://…".
+func llmBaseURL(host string) string {
+	lower := strings.ToLower(host)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return host
+	}
+	return "http://" + host
 }
 
 // formatRunIDs formats a slice of run ids for display (e.g. "42,43,44").
