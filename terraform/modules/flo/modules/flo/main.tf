@@ -1455,13 +1455,27 @@ resource "kubectl_manifest" "nad_macvlan" {
 # --- Charts: FLO + CIS (wait = true → real rollout readiness) ---------------
 
 locals {
-  # OCI chart-pull credentials. Off the mirror: repo.f5.com with the FAR
-  # _json_key_base64 service account. Under the air-gap mirror the chart comes
-  # from the OpenShift registry route, which REJECTS the FAR creds ("unable to
-  # validate token") — authenticate with the cluster's OpenShift token instead
-  # (the registry validates the token and ignores the username).
-  chart_pull_username = var.use_registry_mirror ? "unused" : "_json_key_base64"
-  chart_pull_password = var.use_registry_mirror ? var.kube_token : local.far_service_account_b64
+  # OCI chart-pull credentials, by registry backend:
+  #   - Off the mirror: repo.f5.com (FAR) with the _json_key_base64 service
+  #     account.
+  #   - Under an ICR mirror (registry target=icr, host *.icr.io — the Sprint 30
+  #     default): IBM Container Registry only accepts `iamapikey` + an IBM Cloud
+  #     API key. It REJECTS a bearer token with "The requested authentication
+  #     method is not supported", so the OpenShift-token path below cannot be
+  #     reused here — authenticate with the workspace API key instead.
+  #   - Under the OpenShift in-cluster registry route: the route validates the
+  #     cluster's OpenShift token and ignores the username (the FAR creds are
+  #     rejected with "unable to validate token").
+  is_icr_mirror = var.use_registry_mirror && can(regex("(^|[.])icr[.]io(/|$)", local.far_chart_hostname))
+
+  chart_pull_username = (
+    !var.use_registry_mirror ? "_json_key_base64" :
+    local.is_icr_mirror ? "iamapikey" : "unused"
+  )
+  chart_pull_password = (
+    !var.use_registry_mirror ? local.far_service_account_b64 :
+    local.is_icr_mirror ? var.ibmcloud_api_key : var.kube_token
+  )
 }
 
 resource "helm_release" "flo" {
