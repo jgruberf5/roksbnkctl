@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>awsbnkctl — Demos, Scenarios &amp; Benchmarks Guide</title>
+<style>
+  /* Reset & base */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: #1a1a2e;
+    background: #f7f8fc;
+  }
+
+  /* Header band */
+  .site-header {
+    background: linear-gradient(135deg, #0d2b5e 0%, #1a4a8a 60%, #1565c0 100%);
+    color: #fff;
+    padding: 2.5rem 1.5rem 2rem;
+    text-align: center;
+  }
+  .site-header h1 {
+    font-size: 1.9rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+  .site-header .subtitle {
+    font-size: 0.95rem;
+    color: #b8d4f8;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  /* Layout */
+  .page-wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 1.25rem 4rem;
+  }
+
+  /* TOC */
+  .toc {
+    background: #fff;
+    border: 1px solid #d6e0f0;
+    border-radius: 6px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.75rem 0 2rem;
+  }
+  .toc h2 {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #0d2b5e;
+    margin-bottom: 0.75rem;
+  }
+  .toc ol {
+    padding-left: 1.25rem;
+    columns: 2;
+    column-gap: 2rem;
+  }
+  .toc li { margin-bottom: 0.3rem; break-inside: avoid; }
+  .toc a { color: #1565c0; text-decoration: none; font-size: 0.9rem; }
+  .toc a:hover { text-decoration: underline; }
+  @media (max-width: 600px) { .toc ol { columns: 1; } }
+
+  /* Sections */
+  section { margin-top: 3rem; }
+  section h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #0d2b5e;
+    border-bottom: 2px solid #d6e0f0;
+    padding-bottom: 0.45rem;
+    margin-bottom: 1.1rem;
+  }
+  section h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #1a3a6e;
+    margin: 1.4rem 0 0.6rem;
+  }
+  section h4 {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #2c4e80;
+    margin: 1.1rem 0 0.45rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  p { margin-bottom: 0.85rem; }
+  ul, ol { padding-left: 1.4rem; margin-bottom: 0.85rem; }
+  li { margin-bottom: 0.25rem; }
+
+  /* Code / pre */
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.84em;
+    background: #edf1f9;
+    border: 1px solid #cdd8ef;
+    border-radius: 3px;
+    padding: 0.1em 0.35em;
+    color: #1a1a2e;
+  }
+  pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.83em;
+    background: #0d1b3e;
+    color: #c8d8f8;
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    margin: 0.85rem 0 1rem;
+    line-height: 1.55;
+    white-space: pre;
+  }
+  pre.ascii-art {
+    background: #f0f4fb;
+    color: #1a2a4e;
+    border: 1px solid #cdd8ef;
+    font-size: 0.85em;
+    line-height: 1.6;
+  }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin: 0.85rem 0 1.25rem; border-radius: 6px; border: 1px solid #d0daf0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  thead th {
+    background: #1a4a8a;
+    color: #fff;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+  tbody tr:nth-child(even) td { background: #f0f5ff; }
+  tbody tr:nth-child(odd) td { background: #fff; }
+  tbody tr:hover td { background: #e3ecff; }
+  td { padding: 0.55rem 0.85rem; vertical-align: top; border-bottom: 1px solid #dde6f5; }
+  td code { background: #e8eef8; border-color: #c0cce0; }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 0.15em 0.55em;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .badge-green { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+  .badge-amber { background: #fff3cd; color: #7d4e00; border: 1px solid #fcd34d; }
+  .badge-show  { background: #e0e7ff; color: #3730a3; border: 1px solid #a5b4fc; }
+  .badge-bench { background: #fce7f3; color: #9d174d; border: 1px solid #f9a8d4; }
+  .badge-ai    { background: #d1fae5; color: #065f46; border: 1px solid #34d399; }
+  .badge-exp   { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+
+  /* Callout / note boxes */
+  .callout {
+    border-left: 4px solid #1565c0;
+    background: #eef4ff;
+    border-radius: 0 6px 6px 0;
+    padding: 0.85rem 1.1rem;
+    margin: 1rem 0 1.25rem;
+    font-size: 0.9rem;
+  }
+  .callout.warning {
+    border-left-color: #d97706;
+    background: #fffbeb;
+  }
+  .callout.limit {
+    border-left-color: #b91c1c;
+    background: #fef2f2;
+  }
+  .callout strong { color: #0d2b5e; }
+  .callout.warning strong { color: #92400e; }
+  .callout.limit strong { color: #7f1d1d; }
+  .callout ul { margin: 0.4rem 0 0; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* Steps list */
+  ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.steps > li {
+    counter-increment: step;
+    display: flex;
+    gap: 0.85rem;
+    margin-bottom: 1.1rem;
+    align-items: flex-start;
+  }
+  ol.steps > li::before {
+    content: counter(step);
+    flex-shrink: 0;
+    width: 1.75rem;
+    height: 1.75rem;
+    background: #1565c0;
+    color: #fff;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.05rem;
+  }
+  ol.steps > li .step-body { flex: 1; }
+  ol.steps > li .step-body p { margin-bottom: 0.4rem; }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin-top: 4rem;
+    padding: 1.5rem 1rem;
+    border-top: 1px solid #d6e0f0;
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <h1>awsbnkctl &mdash; Demos, Scenarios &amp; Benchmarks Guide</h1>
+  <p class="subtitle">A complete reference for standing up a BNK-on-EKS environment and running every protocol walkthrough, capability scenario, and AI inference benchmark the tool ships.</p>
+</header>
+
+<div class="page-wrap">
+
+  <!-- TOC -->
+  <nav class="toc" aria-label="Table of contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#intro">Introduction &amp; Mental Model</a></li>
+      <li><a href="#workflow">Workflow: Stand Up an Environment</a></li>
+      <li><a href="#configs">Choosing a cluster.yaml</a></li>
+      <li><a href="#families">Three Families of Things to Run</a></li>
+      <li><a href="#demo">awsbnkctl demo (Protocol Show-and-Tell)</a></li>
+      <li><a href="#scenarios">awsbnkctl scenarios (Capability / Validation)</a></li>
+      <li><a href="#benchmark">awsbnkctl forge benchmark (AI Load Testing)</a></li>
+      <li><a href="#teardown">Tear Down &amp; Up Flags Reference</a></li>
+      <li><a href="#quickref">Quick Reference</a></li>
+    </ol>
+  </nav>
+
+  <!-- Section 0: Intro -->
+  <section id="intro">
+    <h2>Introduction &amp; Mental Model</h2>
+    <p>
+      <strong>awsbnkctl</strong> provisions an F5 BNK (BIG-IP Next for Kubernetes) data path on AWS EKS from a
+      single <code>cluster.yaml</code>, then lets you run protocol walkthroughs, capability scenarios, and AI
+      inference benchmarks on top. The tool handles the full lifecycle: VPC plumbing, EKS nodegroups, BNK
+      activation, forge registration, and controlled tear-down &mdash; so you can focus on what BNK can do,
+      not how to get it running.
+    </p>
+    <pre class="ascii-art">cluster.yaml  ──(awsbnkctl up -f)──►  live BNK cluster  ──►  run demos / scenarios / benchmarks
+ (the blueprint)                       (the data path)        (what you show / measure)</pre>
+  </section>
+
+  <!-- Section 1: Workflow -->
+  <section id="workflow">
+    <h2>1. Workflow: Stand Up an Environment</h2>
+    <p>Follow these steps for any environment. The commands below use the <code>examples/demo/cluster.yaml</code> canonical demo config as the reference.</p>
+
+    <ol class="steps">
+      <li>
+        <div class="step-body">
+          <p><strong>Authenticate to AWS</strong></p>
+          <pre>aws sso login --profile &lt;your-profile&gt;
+aws sts get-caller-identity</pre>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Provide F5 supply-chain files</strong></p>
+          <p>The <code>bnk:</code> block in <code>cluster.yaml</code> references a far-archive and a JWT that are gitignored / local. Place them on disk before running. For AI runs, the Hugging Face token is read inline rather than from a dotenv file:</p>
+          <pre>HF_TOKEN=$(cat .hf_token)</pre>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Validate the config</strong> &mdash; no AWS calls made</p>
+          <pre>awsbnkctl validate examples/demo/cluster.yaml</pre>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Dry-run the plan</strong> &mdash; AWS credentials required, no mutations</p>
+          <pre>awsbnkctl up --config examples/demo/cluster.yaml --dry-run</pre>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Provision</strong> &mdash; <code>--config</code> has shorthand <code>-f</code></p>
+          <pre>awsbnkctl up --config examples/demo/cluster.yaml</pre>
+          <p>Full AI-rig invocation with credentials inline:</p>
+          <pre>HF_TOKEN=$(cat .hf_token) AWS_PROFILE=&lt;profile&gt; ./awsbnkctl up -f examples/ai-rig/cluster.yaml</pre>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Run demos, scenarios, or benchmarks</strong> &mdash; see Sections 4&ndash;6 below.</p>
+        </div>
+      </li>
+      <li>
+        <div class="step-body">
+          <p><strong>Tear down</strong></p>
+          <pre>awsbnkctl down --config examples/demo/cluster.yaml --yes</pre>
+        </div>
+      </li>
+    </ol>
+
+    <div class="callout">
+      <strong>Resumability:</strong> State is written to <code>.awsbnkctl/&lt;cluster-name&gt;/state.env</code> after every successful phase. A mid-run failure is safe to resume by re-running <code>up</code> with the same config.
+    </div>
+    <div class="callout warning">
+      <strong>Kubeconfig isolation:</strong> The admin kubeconfig is fetched to
+      <code>.awsbnkctl/&lt;cluster-name&gt;/kubeconfig</code>. Always set
+      <code>KUBECONFIG=.awsbnkctl/&lt;cluster-name&gt;/kubeconfig</code> before running kubectl-style commands.
+      <strong>Important:</strong> <code>awsbnkctl k get</code> without <code>-f</code>/<code>--config</code>
+      uses your <em>host</em> kubeconfig, not the cluster kubeconfig &mdash; this can produce misleading output
+      if you have another cluster active on the host.
+    </div>
+  </section>
+
+  <!-- Section 2: Configs -->
+  <section id="configs">
+    <h2>2. Choosing a cluster.yaml</h2>
+    <p>
+      The <code>pattern:</code> field in <code>cluster.yaml</code> selects the BNK interface topology.
+      Valid values are:
+    </p>
+    <ul>
+      <li><strong>external-only</strong> &mdash; single external (ingress) interface, CNI backend.</li>
+      <li><strong>dual-interface</strong> &mdash; external + internal TMM interface, CNI backend. The legacy alias <code>host-device</code> is normalized to this at load. Requires <code>network.dataPath</code> external and internal subnets and a nodegroup of &ge;3 nodes.</li>
+      <li><strong>sriov-external</strong> &mdash; single external interface via SR-IOV / vfio-pci (experimental).</li>
+    </ul>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Cluster Name</th>
+            <th>Pattern</th>
+            <th>Default VIP</th>
+            <th>Best For</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>examples/demo/cluster.yaml</code></td>
+            <td><code>bnk-demo</code></td>
+            <td>host-device (dual-interface)</td>
+            <td><code>10.0.10.100</code></td>
+            <td>All-rounder. Full external+internal TMM, demo mode (24h TTL), forge link. Best for protocol show-and-tell.</td>
+          </tr>
+          <tr>
+            <td><code>examples/ai-rig/cluster.yaml</code></td>
+            <td><code>ai-rig</code></td>
+            <td>external-only</td>
+            <td><code>10.0.10.100</code></td>
+            <td>Benchmarking. GPU nodegroup (g5.xlarge) + SageMaker/vLLM (LMI). The AI inference + proxy-shootout rig.</td>
+          </tr>
+          <tr>
+            <td><code>examples/external-only/cluster.yaml</code></td>
+            <td><code>bnk-extonly</code></td>
+            <td>external-only</td>
+            <td><code>10.0.10.100</code></td>
+            <td>Ingress-only, simplest and cheapest, no internal TMM subnet.</td>
+          </tr>
+          <tr>
+            <td><code>examples/full-cluster/cluster.yaml</code></td>
+            <td><code>full-cluster</code></td>
+            <td>host-device</td>
+            <td><code>10.0.10.100</code></td>
+            <td>Complete reference config, external + internal, full BNK stack.</td>
+          </tr>
+          <tr>
+            <td><code>examples/sriov-external/cluster.yaml</code></td>
+            <td><code>bnk-sriov</code></td>
+            <td>sriov-external</td>
+            <td><code>10.0.10.100</code></td>
+            <td><span class="badge badge-exp">Experimental</span> DPDK / vfio variant; ENA bound to vfio-pci via a node-prep DaemonSet.</td>
+          </tr>
+          <tr>
+            <td><code>examples/tracer/cluster.yaml</code></td>
+            <td><code>tracer</code></td>
+            <td>network-only</td>
+            <td>(n/a)</td>
+            <td>Tracer-bullet: minimal VPC plumbing only &mdash; no EKS, no IAM, no BNK. Smoke test.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong><code>metadata.name</code> is load-bearing.</strong> It becomes the
+      <code>awsbnkctl:cluster=&lt;name&gt;</code> tag on every AWS resource and the directory name under
+      <code>.awsbnkctl/</code>. <code>metadata.region</code> must be set explicitly &mdash; there is no
+      default region.
+    </div>
+  </section>
+
+  <!-- Section 3: Families -->
+  <section id="families">
+    <h2>3. Three Families of Things to Run</h2>
+    <p>After <code>up</code> completes, there are three top-level command families:</p>
+    <ul>
+      <li>
+        <span class="badge badge-show">Show &amp; Tell</span>
+        <strong><code>awsbnkctl demo &hellip;</code></strong> &mdash; curated protocol walkthroughs
+        (<code>internal/demo/</code>).
+      </li>
+      <li>
+        <span class="badge badge-show">Validation</span>
+        <strong><code>awsbnkctl scenarios &hellip;</code></strong> &mdash; capability / validation scenarios
+        with Green / Amber readiness ratings (<code>internal/scenarios/</code>).
+      </li>
+      <li>
+        <span class="badge badge-bench">Benchmark</span>
+        <strong><code>awsbnkctl forge benchmark &hellip;</code></strong> &mdash; aiperf load tests and the
+        Envoy-vs-BNK proxy shootout.
+      </li>
+    </ul>
+    <p>Each demo and scenario owns a dedicated VIP so they never collide with each other.</p>
+  </section>
+
+  <!-- Section 4: demo -->
+  <section id="demo">
+    <h2>4. <code>awsbnkctl demo</code> &mdash; Protocol Show-and-Tell</h2>
+    <p>Subcommands: <code>awsbnkctl demo list</code>, <code>awsbnkctl demo run &lt;name&gt;</code>, <code>awsbnkctl demo clean &lt;name&gt;</code>.</p>
+
+    <h3>Flags: <code>demo run</code></h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>--config</code>, <code>-f</code></td><td>string</td><td><code>""</code></td><td>Path to cluster.yaml (required)</td></tr>
+          <tr><td><code>--dry-run</code></td><td>bool</td><td><code>false</code></td><td>Render manifests only; do not apply or verify</td></tr>
+          <tr><td><code>--all</code></td><td>bool</td><td><code>false</code></td><td>Run every registered demo use-case in topo-sorted order</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Flags: <code>demo clean</code></h3>
+    <p><code>--config</code>/<code>-f</code> (required) and <code>--all</code> (invoke Cleanup for every registered demo use-case).</p>
+
+    <h3>Example</h3>
+    <pre>KUBECONFIG=.awsbnkctl/bnk-demo/kubeconfig awsbnkctl demo run http2 -f examples/demo/cluster.yaml</pre>
+
+    <h3>Demo Use-Cases</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Rating</th><th>What It Shows</th><th>VIP</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>http2</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>True HTTP/2 (h2c) end-to-end through TMM, both legs (backend <code>appProtocol kubernetes.io/h2c</code>). Asserts body contains <code>"HTTP/2.0"</code>.</td>
+            <td><code>10.0.10.111</code></td>
+          </tr>
+          <tr>
+            <td><code>diameter</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>Diameter (RFC 6733) CER&rarr;CEA over L4/TCP (port 3868); asserts Result-Code 2001 DIAMETER_SUCCESS.</td>
+            <td><code>10.0.10.110</code></td>
+          </tr>
+          <tr>
+            <td><code>bigip-cis</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>Contrast model: an external F5 BIG-IP VE + in-cluster CIS (k8s-bigip-ctlr) watching a VirtualServer CRD. Requires <code>bigipVE.enabled</code> in cluster.yaml and <code>AWSBNKCTL_BIGIP_PASSWORD</code> env var.</td>
+            <td><code>10.0.10.120</code></td>
+          </tr>
+          <tr>
+            <td><code>ingress-migration</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>ingress-nginx + HAProxy ingress + BNK Gateway side-by-side fronting one shared backend &mdash; proves BNK as an Ingress replacement.</td>
+            <td><code>10.0.10.113</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Section 5: scenarios -->
+  <section id="scenarios">
+    <h2>5. <code>awsbnkctl scenarios</code> &mdash; Capability / Validation</h2>
+    <p>Subcommands: <code>awsbnkctl scenarios list</code>, <code>awsbnkctl scenarios run &lt;name&gt;</code>, <code>awsbnkctl scenarios clean &lt;name&gt;</code>.</p>
+
+    <h3>Flags: <code>scenarios run</code></h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>--config</code>, <code>-f</code></td><td>string</td><td><code>""</code></td><td>Path to cluster.yaml (required)</td></tr>
+          <tr><td><code>--vip</code></td><td>string</td><td><code>""</code></td><td>Gateway VIP to use (default: derived from cluster.yaml)</td></tr>
+          <tr><td><code>--dry-run</code></td><td>bool</td><td><code>false</code></td><td>Render manifests only; do not apply or verify</td></tr>
+          <tr><td><code>--all</code></td><td>bool</td><td><code>false</code></td><td>Run every registered scenario in topo-sorted order</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Flags: <code>scenarios clean</code></h3>
+    <p><code>--config</code>/<code>-f</code> (required).</p>
+
+    <h3>Rating Key</h3>
+    <p>
+      <span class="badge badge-green">Green</span> &mdash; data-path proven end-to-end.&nbsp;&nbsp;
+      <span class="badge badge-amber">Amber</span> &mdash; control-plane proven; data-path needs a live
+      backend / live validation (may auto-upgrade to Green at runtime if data-path assertions pass).
+    </p>
+
+    <h3>Scenarios</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Rating</th><th>What It Proves</th><th>VIP</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>http-routing-e2e</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>Baseline L7 HTTP via Gateway API HTTPRoute; asserts 5/5 curls return HTTP 200.</td>
+            <td><code>10.0.10.100</code></td>
+          </tr>
+          <tr>
+            <td><code>http-traffic-split</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>70/30 weighted split across two nginx backends; asserts both backends are seen.</td>
+            <td><code>10.0.10.101</code></td>
+          </tr>
+          <tr>
+            <td><code>external-resource-pool</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>Load-balance to an off-cluster IP via a selectorless Service + EndpointSlice (how-to #10).</td>
+            <td><code>10.0.10.102</code></td>
+          </tr>
+          <tr>
+            <td><code>proxy-protocol-l4</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>L4/TCP route + PROXY-protocol iRule (F5BigCneIrule) preserves real client IP.</td>
+            <td><code>10.0.10.103</code></td>
+          </tr>
+          <tr>
+            <td><code>ai-token-counting</code></td>
+            <td><span class="badge badge-amber">Amber</span></td>
+            <td>AI token-counting annotation + optional 503 overload enforcement (how-to #6).</td>
+            <td><code>10.0.10.104</code></td>
+          </tr>
+          <tr>
+            <td><code>ai-semantic-cache</code></td>
+            <td><span class="badge badge-amber">Amber</span></td>
+            <td>AI semantic model-cache annotations; optional cache-HIT latency-drop assertion (how-to #7).</td>
+            <td><code>10.0.10.105</code></td>
+          </tr>
+          <tr>
+            <td><code>ai-inference-e2e</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td><span class="badge badge-ai">AI</span> Deploys vLLM Llama-3-8B-Instruct on a GPU nodegroup; streams SSE <code>/v1/chat/completions</code> through the VIP. Requires a GPU nodegroup; model load can take up to 20 minutes.</td>
+            <td><code>10.0.10.100</code></td>
+          </tr>
+          <tr>
+            <td><code>multi-vip</code></td>
+            <td><span class="badge badge-green">Green</span></td>
+            <td>Multiple VIPs from one F5BnkGateway pool RANGE (chassis model); each VIP serves its own backend.</td>
+            <td><code>10.0.10.106&ndash;10.0.10.107</code></td>
+          </tr>
+          <tr>
+            <td><code>egress-snat</code></td>
+            <td><span class="badge badge-amber">Amber</span></td>
+            <td>Pod egress via TMM with AUTOMAP SNAT (F5SPKEgress, pseudo-CNI VXLAN); control-plane proven, data-path deferred to live validation.</td>
+            <td>(internal)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Section 6: benchmark -->
+  <section id="benchmark">
+    <h2>6. <code>awsbnkctl forge benchmark</code> &mdash; AI Load Testing &amp; Proxy Shootout</h2>
+    <p>
+      Runs <code>aiperf</code> against the BNK Gateway VIP <strong>from the jumphost</strong> (the only host
+      with in-network access to the external VLAN), then pushes structured results to forge
+      (<code>POST /api/benchmarks/results</code>). The jumphost is reached via EC2 Instance Connect (EICE)
+      &mdash; your IAM principal needs <code>ec2-instance-connect:SendSSHPublicKey</code> and the
+      <code>aws</code> CLI on <code>PATH</code>. One-time on the jumphost:
+      <code>pip install aiperf</code> (or pass <code>--ensure-aiperf</code>).
+    </p>
+
+    <h3>Four Run Modes</h3>
+    <ol>
+      <li><strong>Single-run</strong> &mdash; explicit <code>--concurrency</code> / <code>--num-requests</code> / <code>--isl</code> / <code>--osl</code> / <code>--stream</code>.</li>
+      <li><strong>Preset mode</strong> &mdash; <code>--scenarios latency,throughput</code> (or <code>all</code>); presets: <code>latency</code>, <code>throughput</code>, <code>long-context</code>, <code>streaming</code>. Per-explicit flags are ignored when set.</li>
+      <li><strong>Native forge scenario</strong> &mdash; <code>--scenario baseline</code> expands into N ordered child aiperf runs; mutually exclusive with <code>--scenarios</code>.</li>
+      <li><strong>Proxy shootout</strong> &mdash; <code>--proxies envoy,f5-bnk,&hellip;</code> runs the chosen scenario once per front-end for an apples-to-apples comparison.</li>
+    </ol>
+
+    <h3>Flag Reference</h3>
+
+    <h4>Jumphost Identity</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--region</code></td><td><code>""</code></td><td>AWS region (e.g. <code>ap-southeast-2</code>) [required]</td></tr>
+          <tr><td><code>--instance-id</code></td><td><code>""</code></td><td>Jumphost EC2 instance ID [required]</td></tr>
+          <tr><td><code>--source-ip</code></td><td><code>""</code></td><td>Jumphost BNK external ENI IP (used as aiperf <code>--interface</code> so traffic enters the data path)</td></tr>
+          <tr><td><code>--vip</code></td><td><code>""</code></td><td>BNK Gateway VIP to benchmark (e.g. <code>10.0.10.100</code>) [required]</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Benchmark Config</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--model</code></td><td><code>""</code></td><td>LLM model name (e.g. <code>meta-llama/Llama-3.1-8B-Instruct</code>) [required]</td></tr>
+          <tr><td><code>--endpoint</code></td><td><code>/v1/chat/completions</code></td><td>API endpoint path</td></tr>
+          <tr><td><code>--concurrency</code></td><td><code>1</code></td><td>Number of concurrent users</td></tr>
+          <tr><td><code>--num-requests</code></td><td><code>10</code></td><td>Total number of requests</td></tr>
+          <tr><td><code>--isl</code></td><td><code>512</code></td><td>Input sequence length (tokens)</td></tr>
+          <tr><td><code>--osl</code></td><td><code>128</code></td><td>Output sequence length (tokens)</td></tr>
+          <tr><td><code>--stream</code></td><td><code>true</code></td><td>Enable streaming mode (required for TTFT/ITL metrics)</td></tr>
+          <tr><td><code>--tokenizer</code></td><td><code>NousResearch/Meta-Llama-3-8B-Instruct</code></td><td>Hugging Face tokenizer repo for aiperf token counting</td></tr>
+          <tr><td><code>--host-header</code></td><td><code>""</code></td><td>HTTP Host header to inject (<code>--header Host:&lt;value&gt;</code>); required when the BNK HTTPRoute has a hostname match</td></tr>
+          <tr><td><code>--timeout</code></td><td><code>5m</code></td><td>Maximum time for the aiperf run</td></tr>
+          <tr><td><code>--ensure-aiperf</code></td><td><code>false</code></td><td>Install aiperf on the jumphost before running (<code>python3.11 -m pip install aiperf</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Scenario / Preset Selection</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--scenarios</code></td><td><code>""</code></td><td>Comma-separated preset names to run in sequence, or <code>all</code>. Presets: <code>latency</code>, <code>throughput</code>, <code>long-context</code>, <code>streaming</code>. Per-explicit flags are ignored when set.</td></tr>
+          <tr><td><code>--scenario</code></td><td><code>""</code></td><td>Native forge scenario key (expands into N ordered child runs; mutually exclusive with <code>--scenarios</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Labeling</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--run-label</code></td><td><code>""</code></td><td>Human-readable label for this run (stored in forge)</td></tr>
+          <tr><td><code>--proxy</code></td><td><code>f5-bnk</code></td><td>Proxy label forwarded to forge (e.g. <code>f5-bnk</code>, <code>envoy</code>)</td></tr>
+          <tr><td><code>--result-id</code></td><td><code>""</code></td><td>Result UUID (auto-generated when empty)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Forge REST Target</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--forge-rest-url</code></td><td><code>http://localhost:8000</code></td><td>Forge REST base URL</td></tr>
+          <tr><td><code>--forge-user</code></td><td><code>""</code> (default admin)</td><td>Forge username</td></tr>
+          <tr><td><code>--forge-pass</code></td><td><code>""</code> (default changeme)</td><td>Forge password</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Registration &amp; Linkage</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--register-access-method</code></td><td><code>true</code></td><td>Register the jumphost as a forge SSH access-method record before running (best-effort, non-fatal)</td></tr>
+          <tr><td><code>--workspace</code></td><td><code>""</code></td><td>Workspace name (e.g. <code>ai-rig</code>) used to read <code>forge_link.json</code> for cluster_id when registering a BenchmarkTarget (best-effort, non-fatal)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Proxy Shootout</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--proxies</code></td><td><code>""</code></td><td>Comma-separated forge proxy types to include in a shootout. Valid types: <code>envoy</code>, <code>nginx</code>, <code>haproxy</code>, <code>f5-bnk</code>, <code>nodeport</code>. When set, the chosen <code>--scenario</code> (or single-run flags) runs once per front-end.</td></tr>
+          <tr><td><code>--direct-pod-ip</code></td><td><code>""</code></td><td>IP of the vLLM pod for a &lsquo;nodeport&rsquo; direct-baseline run (benchmarks aiperf against the pod IP instead of the BNK VIP; distinct from any VIP nodeport in <code>--proxies</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Upstream (NLB Opt-in Tags)</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--upstream-service</code></td><td><code>vllm</code></td><td>Kubernetes Service the proxy fronts</td></tr>
+          <tr><td><code>--upstream-port</code></td><td><code>80</code></td><td>Service port</td></tr>
+          <tr><td><code>--upstream-namespace</code></td><td><code>""</code></td><td>Service namespace</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Config</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--config</code>, <code>-f</code></td><td><code>""</code></td><td>Path to cluster.yaml; resolves the kubeconfig for cluster lookups. Accepted but no longer required for <code>--proxies</code> (proxy endpoints are read from forge&rsquo;s <code>external_url</code> field).</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Native Forge Scenario Keys</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Key</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>baseline</code></td><td>ISL 500 / OSL 128, concurrency sweep {50, 100, 150, 200}, rc=max(c&times;5, 20).</td></tr>
+          <tr><td><code>high-concurrency</code></td><td>Large prompts (ISL 5000&ndash;10000) / OSL 128, no prefix sharing; (concurrency, ISL) pairs (150,5000) (200,7000) (250,9000) (300,10000), rc=c&times;5.</td></tr>
+          <tr><td><code>mixed-workload</code></td><td>Warmup + short + long phases per concurrency; long phase uses prefix prompts.</td></tr>
+          <tr><td><code>multi-turn</code></td><td>Turn 1 no-prefix, turns 2&ndash;4 with growing prefix-prompt-length (500 / 1000 / 1500).</td></tr>
+          <tr><td><code>prefix-cache</code></td><td>80% shared prefix on large prompts / OSL 128, 20 prefix prompts, prefix-prompt-length 4000&ndash;8000; (concurrency, ISL) pairs (150,5000) (200,7000) (250,9000) (300,10000).</td></tr>
+          <tr><td><code>bimodal</code></td><td>Two-mode seq-dist (short 70% / long 30%), rc=max(c&times;5, 20), sweep.</td></tr>
+          <tr><td><code>sustained-load</code></td><td>ISL 1500&plusmn;300 / OSL 128, rc=c&times;10, sweep {50, 100, 150, 200, 250}.</td></tr>
+          <tr><td><code>burst-recovery</code></td><td>5 rounds of burst (c=200) + probe (c=25) phases.</td></tr>
+          <tr><td><code>mooncake</code></td><td>Open-loop, trace-driven Qwen3-32B run replayed against a llama3 rig with 0.80&times; time-dilation. No concurrency sweep.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Worked Example: Proxy Shootout</h3>
+    <pre>awsbnkctl forge benchmark \
+  --region ap-southeast-2 --instance-id &lt;jumphost-id&gt; --vip 10.0.10.100 \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --host-header awsbnkctl-aiinference.local \
+  --scenario baseline \
+  --proxies envoy,f5-bnk \
+  -f examples/ai-rig/cluster.yaml</pre>
+    <p>On success, one JSON line per run is emitted containing <code>run_id</code>, <code>proxy</code>, <code>model</code>, <code>status</code>, and p50/p99 latency, RPS, and TPS.</p>
+
+    <div class="callout limit">
+      <strong>Known limitation &mdash; proxy auto-deploy:</strong> Today the benchmark discovers proxy
+      front-ends but does not auto-deploy them. An operator must create the proxy in forge (e.g.
+      <code>POST .../proxies</code>) before an Envoy shootout run. Building auto-deploy into the CLI is the
+      remaining gap to a true single-command shootout.
+    </div>
+  </section>
+
+  <!-- Section 7: Teardown & flags -->
+  <section id="teardown">
+    <h2>7. Tear Down &amp; Flag Reference</h2>
+    <p>
+      <code>awsbnkctl down --config &lt;file&gt; --yes</code> deletes the AWS infrastructure and forge
+      artifacts (target + proxies + agent), but saved benchmark <em>runs</em> are preserved in forge.
+    </p>
+
+    <h3><code>down</code> Flags</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--config</code>, <code>-f</code></td><td>string</td><td><code>""</code></td><td>Path to cluster.yaml (required)</td></tr>
+          <tr><td><code>--yes</code></td><td>bool</td><td><code>false</code></td><td>Skip the interactive destroy confirmation (required with <code>--config</code>)</td></tr>
+          <tr><td><code>--auto</code></td><td>bool</td><td><code>false</code></td><td>Skip the destroy confirmation</td></tr>
+          <tr><td><code>--dry-run</code></td><td>bool</td><td><code>false</code></td><td>Print what would be destroyed, make no AWS mutations</td></tr>
+          <tr><td><code>--keep-forge-link</code></td><td>bool</td><td><code>false</code></td><td>Preserve <code>forge-link.json</code> on down (skips forge unregister)</td></tr>
+          <tr><td><code>--keep-irsa</code></td><td>bool</td><td><code>false</code></td><td>Retain the OIDC provider and IRSA role on down (kept for reuse across cluster iterations)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><code>up</code> Flags</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--config</code>, <code>-f</code></td><td>string</td><td><code>""</code></td><td>Path to cluster.yaml (required)</td></tr>
+          <tr><td><code>--dry-run</code></td><td>bool</td><td><code>false</code></td><td>Print the phased plan and exit 0 with no AWS mutations</td></tr>
+          <tr><td><code>--auto</code></td><td>bool</td><td><code>false</code></td><td>Skip the confirmation prompt before apply</td></tr>
+          <tr><td><code>--demo</code></td><td>bool</td><td><code>false</code></td><td>Provision the same cluster marked as a demo (writes DEMO_MODE; requires <code>testing.jumphost.enabled</code>)</td></tr>
+          <tr><td><code>--register-with-forge</code></td><td>bool</td><td><code>false</code></td><td>After a successful apply, register the EKS cluster with bnk-forge over MCP</td></tr>
+          <tr><td><code>--no-kubeconfig</code></td><td>bool</td><td><code>false</code></td><td>Skip the post-apply admin kubeconfig fetch</td></tr>
+          <tr><td><code>--skip-activation-poll</code></td><td>bool</td><td><code>false</code></td><td>Skip the 20-minute CNEInstance + License activation poll</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Section 8: Quick reference -->
+  <section id="quickref">
+    <h2>8. Quick Reference</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Family</th><th>Command</th><th>Count</th><th>Source</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Stand up / tear down</td>
+            <td><code>awsbnkctl up / down -f cluster.yaml</code></td>
+            <td>6 example configs</td>
+            <td><code>examples/</code></td>
+          </tr>
+          <tr>
+            <td>Protocol show-and-tell</td>
+            <td><code>awsbnkctl demo list | run | clean</code></td>
+            <td>4</td>
+            <td><code>internal/demo/</code></td>
+          </tr>
+          <tr>
+            <td>Capability scenarios</td>
+            <td><code>awsbnkctl scenarios list | run | clean</code></td>
+            <td>9</td>
+            <td><code>internal/scenarios/</code></td>
+          </tr>
+          <tr>
+            <td>AI benchmarks / proxy shootout</td>
+            <td><code>awsbnkctl forge benchmark</code></td>
+            <td>9 scenario keys + 4 presets</td>
+            <td><code>internal/cli/benchmark.go</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div><!-- /.page-wrap -->
+
+<footer>
+  Generated documentation for the <strong>awsbnkctl</strong> project &mdash; F5 BNK on AWS EKS.
+  For the latest information, refer to the source repository.
+</footer>
+
+</body>
+</html>
