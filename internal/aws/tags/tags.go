@@ -72,6 +72,10 @@ const (
 	// SageMaker component constants (PRD-11 M4).
 	CompSageMakerEndpoint = "sagemaker-lmi-endpoint"
 	CompSageMakerExecRole = "sagemaker-execution-role"
+
+	// AWS Load Balancer Controller component constants (Phase 14b).
+	CompLBControllerPolicy   = "lb-controller-iam-policy"
+	CompLBControllerIRSARole = "lb-controller-irsa-role"
 )
 
 // Required returns the four mandatory awsbnkctl tags for a resource.

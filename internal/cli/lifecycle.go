@@ -523,6 +523,14 @@ func runPhasedUp(ctx context.Context, configPath string, dryRun bool, skipActiva
 	}); err != nil {
 		return err
 	}
+	// Phase 14b: AWS Load Balancer Controller (opt-in, default OFF).
+	// Installs the controller via HTTPS eks-charts Helm repo + IRSA + subnet tags.
+	// Required for internal NLB support in the data-path subnet (bake-off / forge proxies).
+	if err := stage(4, "lb-controller", func() error {
+		return phases.Phase14bLBController(ctx, cl, st, clients, dryRun)
+	}); err != nil {
+		return err
+	}
 	if err := stage(4, "otel-certs", func() error {
 		return phases.Phase15OTELCerts(ctx, cl, st, clients, dryRun)
 	}); err != nil {
@@ -748,6 +756,9 @@ func runPhasedDown(ctx context.Context, configPath string, yes bool, dryRun bool
 	steps := []downStep{
 		// STAGE 4 — BNK supply chain · activation (reverse of up order).
 		{4, "otel-certs", func() error { return phases.Phase15OTELCertsDown(ctx, cl, st, clients) }},
+		// Phase 14b down: AWS Load Balancer Controller teardown (opt-in; no-op when never installed).
+		// Runs before flo-helm-down and before irsa-oidc-down so the role is gone before its OIDC provider.
+		{4, "lb-controller", func() error { return phases.Phase14bLBControllerDown(ctx, cl, st, clients) }},
 		{4, "activation-poll", func() error { return phases.Phase25ActivationPollDown(ctx, cl, st, clients) }},
 		{4, "pod-manager-heal", func() error { return phases.Phase24cPodManagerHealDown(ctx, cl, st, clients) }},
 		{4, "dssm-overlay", func() error { return phases.Phase24bDSSMInsecureOverlayDown(ctx, cl, st, clients) }},
@@ -844,6 +855,12 @@ func printDownPlan(w io.Writer, cl *intent.Cluster, st *state.State, keepIRSA, k
 		{label: "IRSA ServiceAccount", key: "CNE_SA_NAME"},
 		{label: "internal NAD", key: "INTERNAL_NAD"},
 		{label: "external NAD", key: "EXTERNAL_NAD"},
+		// LBC resources — present only when addons.lbController.enabled=true.
+		// Phase14bLBControllerDown: NLB Services deprovisioned, helm uninstalled,
+		// BNK_EXT_SUBNET tags removed, IAM policy detached+deleted, IRSA role deleted.
+		{label: "LBC helm release + NLBs", key: "LB_CONTROLLER_RELEASE_NAME"},
+		{label: "LBC IAM policy", key: "LB_CONTROLLER_POLICY_ARN"},
+		{label: "LBC IRSA role", key: "LB_CONTROLLER_IAM_ROLE_ARN"},
 		{label: "FLO helm release", key: "FLO_RELEASE_NAME"},
 		{label: "EBS CSI addon", key: "EBS_CSI_ADDON_STATUS"},
 		{label: "kubeconfig (local file)", key: "KUBECONFIG_PATH"},

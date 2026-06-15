@@ -231,6 +231,9 @@ func (m *mockEC2) ReleaseAddress(_ context.Context, _ *ec2.ReleaseAddressInput, 
 func (m *mockEC2) CreateTags(_ context.Context, _ *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	return &ec2.CreateTagsOutput{}, nil
 }
+func (m *mockEC2) DeleteTags(_ context.Context, _ *ec2.DeleteTagsInput, _ ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error) {
+	return &ec2.DeleteTagsOutput{}, nil
+}
 
 func (m *mockEC2) DescribeRouteTables(_ context.Context, _ *ec2.DescribeRouteTablesInput, _ ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error) {
 	if m.describeRTBsOut == nil {

@@ -11,11 +11,12 @@
 //	sriov-external/        — variant manifests for sriov-external pattern (vfio/DPDK dataplane)
 //	nvidia-device-plugin/  — NVIDIA k8s-device-plugin v0.17.1 DaemonSet (GPU node groups)
 //	envoy-gateway/         — EnvoyProxy CRD (v1.7.1) + pre-seed manifests for NodePort shootout
+//	addons/lb-controller/  — AWS Load Balancer Controller IAM policy (v2.8.1, customer-managed)
 package manifests
 
 import "embed"
 
 // FS is the embedded manifest filesystem.
 //
-//go:embed all:cert-manager all:multus all:shared all:host-device all:sriov-external all:nvidia-device-plugin all:envoy-gateway
+//go:embed all:cert-manager all:multus all:shared all:host-device all:sriov-external all:nvidia-device-plugin all:envoy-gateway all:addons
 var FS embed.FS

@@ -353,6 +353,10 @@ type AddonsSpec struct {
 	// Flo configures the F5 Lifecycle Operator installation. When absent,
 	// FLO is installed with the pinned chart version.
 	Flo *FloSpec `yaml:"flo,omitempty"`
+	// LBController configures the AWS Load Balancer Controller installation.
+	// When absent (nil), the controller is NOT installed (opt-in; default OFF).
+	// Set enabled: true to install the AWS LB Controller for internal NLB support.
+	LBController *LBControllerSpec `yaml:"lbController,omitempty"`
 }
 
 // TestingSpec holds optional test-infrastructure configuration (slice 12+).
@@ -466,6 +470,47 @@ func (f *FloSpec) FLOVersion() string {
 		return DefaultFLOVersion
 	}
 	return f.Version
+}
+
+// LBControllerSpec configures the AWS Load Balancer Controller Helm install in Phase 14b.
+// Default: disabled (nil receiver or absent block means the controller is NOT installed).
+// This is the INVERSE of FloSpec/FloEnabled which defaults ON for backward-compat.
+type LBControllerSpec struct {
+	// EnabledFlag is the master switch. Default false (nil or absent block = disabled).
+	// Set true via "enabled: true" in cluster.yaml to install the AWS LB Controller.
+	// Note: the yaml tag is "enabled" for a clean cluster.yaml interface.
+	EnabledFlag *bool `yaml:"enabled,omitempty"`
+	// Version overrides the default pinned chart version.
+	// Omit to use DefaultLBControllerVersion.
+	Version string `yaml:"version,omitempty"`
+}
+
+// DefaultLBControllerVersion is the pinned AWS Load Balancer Controller Helm chart version.
+// Chart 1.8.1 installs controller app v2.8.1. IAM policy vendored from
+// https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.8.1/docs/install/iam_policy.json
+const DefaultLBControllerVersion = "1.8.1"
+
+// Enabled returns true when the AWS Load Balancer Controller should be installed.
+// A nil receiver (absent addons.lbController block) returns FALSE — this is the
+// INVERSE of FloEnabled which returns true for nil (backward-compat default-on).
+// Phase 14b is opt-in: existing clusters without an lbController block are unaffected.
+func (l *LBControllerSpec) Enabled() bool {
+	if l == nil {
+		return false
+	}
+	if l.EnabledFlag == nil {
+		return false
+	}
+	return *l.EnabledFlag
+}
+
+// LBControllerVersion returns the chart version to install. Falls back to the
+// pinned default when not overridden.
+func (l *LBControllerSpec) LBControllerVersion() string {
+	if l == nil || l.Version == "" {
+		return DefaultLBControllerVersion
+	}
+	return l.Version
 }
 
 // BNK interface patterns. A pattern fixes two orthogonal axes of the TMM data

@@ -17,6 +17,7 @@ type mockIAM struct {
 	attachedPolicies map[string]map[string]bool           // role name → set of attached policy ARNs
 	inlinePolicies   map[string][]string                  // role name → slice of inline policy names
 	oidcProviders    map[string]string                    // oidc provider ARN → url
+	managedPolicies  map[string]*iamtypes.Policy          // policy ARN → policy
 
 	// Per-method call counts.
 	createRoleCalls               int
@@ -30,6 +31,8 @@ type mockIAM struct {
 	deleteRolePolicyCalls         int
 	createOIDCCalls               int
 	deleteOIDCCalls               int
+	createPolicyCalls             int
+	deletePolicyCalls             int
 
 	// Configurable errors.
 	createRoleErr               error
@@ -38,6 +41,8 @@ type mockIAM struct {
 	addRoleToInstanceProfileErr error
 	getOIDCErr                  error
 	createOIDCErr               error
+	createPolicyErr             error
+	getPolicyErr                error
 }
 
 func newMockIAM() *mockIAM {
@@ -47,6 +52,7 @@ func newMockIAM() *mockIAM {
 		attachedPolicies: make(map[string]map[string]bool),
 		inlinePolicies:   make(map[string][]string),
 		oidcProviders:    make(map[string]string),
+		managedPolicies:  make(map[string]*iamtypes.Policy),
 	}
 }
 
@@ -286,4 +292,47 @@ func (m *mockIAM) DeleteOpenIDConnectProvider(_ context.Context, in *iam.DeleteO
 
 func (m *mockIAM) TagOpenIDConnectProvider(_ context.Context, _ *iam.TagOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.TagOpenIDConnectProviderOutput, error) {
 	return &iam.TagOpenIDConnectProviderOutput{}, nil
+}
+
+// Customer-managed policy stubs (Phase 14b — AWS Load Balancer Controller IRSA).
+
+func (m *mockIAM) CreatePolicy(_ context.Context, in *iam.CreatePolicyInput, _ ...func(*iam.Options)) (*iam.CreatePolicyOutput, error) {
+	m.createPolicyCalls++
+	if m.createPolicyErr != nil {
+		return nil, m.createPolicyErr
+	}
+	name := ""
+	if in.PolicyName != nil {
+		name = *in.PolicyName
+	}
+	arn := "arn:aws:iam::111122223333:policy/" + name
+	policy := &iamtypes.Policy{PolicyName: &name, Arn: &arn}
+	m.managedPolicies[arn] = policy
+	return &iam.CreatePolicyOutput{Policy: policy}, nil
+}
+
+func (m *mockIAM) GetPolicy(_ context.Context, in *iam.GetPolicyInput, _ ...func(*iam.Options)) (*iam.GetPolicyOutput, error) {
+	if m.getPolicyErr != nil {
+		return nil, m.getPolicyErr
+	}
+	arn := ""
+	if in.PolicyArn != nil {
+		arn = *in.PolicyArn
+	}
+	policy, ok := m.managedPolicies[arn]
+	if !ok {
+		msg := fmt.Sprintf("policy not found: %s", arn)
+		return nil, &iamtypes.NoSuchEntityException{Message: &msg}
+	}
+	return &iam.GetPolicyOutput{Policy: policy}, nil
+}
+
+func (m *mockIAM) DeletePolicy(_ context.Context, in *iam.DeletePolicyInput, _ ...func(*iam.Options)) (*iam.DeletePolicyOutput, error) {
+	m.deletePolicyCalls++
+	arn := ""
+	if in.PolicyArn != nil {
+		arn = *in.PolicyArn
+	}
+	delete(m.managedPolicies, arn)
+	return &iam.DeletePolicyOutput{}, nil
 }
