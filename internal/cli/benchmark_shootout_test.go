@@ -6,7 +6,9 @@ package cli
 //   - formatRunIDs: pure helper
 //   - resolveShootoutFrontEnds: front-end list building from --proxies CSV
 //     and --direct-pod-ip
-//   - resolveShootoutFrontEnds: envoy NodePort VIP resolution (WS-E2)
+//   - resolveShootoutFrontEnds: external_url → VIP for non-f5-bnk proxy types
+//   - resolveShootoutFrontEnds: empty external_url → RESOLVE_FAILED (fail-closed)
+//   - resolveShootoutFrontEnds: f5-bnk VIP unchanged (uses global --vip)
 //   - runShootoutFrontEnd: single-run mode stamps proxyDeploymentID correctly
 //   - No global mutation: shootout builds per-front-end forgeGraph copy, never
 //     mutates flagBenchProxy / flagBenchVIP globals
@@ -15,7 +17,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -24,7 +25,6 @@ import (
 
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
 	"github.com/JLCode-tech/awsbnkctl/internal/jumphost"
-	"github.com/JLCode-tech/awsbnkctl/internal/k8s"
 )
 
 // ---------------------------------------------------------------------------
@@ -99,14 +99,16 @@ func shootoutTestSetup(
 }
 
 func TestResolveShootoutFrontEnds_FromCSV(t *testing.T) {
+	// envoy and haproxy are non-f5-bnk: they need external_url set to get a VIP.
+	// Use non-empty external_url so the legs resolve successfully.
 	deps := []forge.ProxyDeployment{
-		{ID: 10, ProxyType: "envoy"},
-		{ID: 11, ProxyType: "haproxy"},
+		{ID: 10, ProxyType: "envoy", ExternalURL: "10.0.1.55:31234"},
+		{ID: 11, ProxyType: "haproxy", ExternalURL: "10.0.1.55:31235"},
 	}
 	cleanup := shootoutTestSetup(t, "envoy,haproxy", "", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 42, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 42)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -128,7 +130,7 @@ func TestResolveShootoutFrontEnds_DirectPodIPAdded(t *testing.T) {
 	cleanup := shootoutTestSetup(t, "f5-bnk", "10.0.10.200", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -148,24 +150,25 @@ func TestResolveShootoutFrontEnds_DirectPodIPAdded(t *testing.T) {
 func TestResolveShootoutFrontEnds_DirectPodIPDistinctFromVIPNodeport(t *testing.T) {
 	// When --proxies includes nodeport AND --direct-pod-ip is set, the list must
 	// have TWO nodeport entries (VIP nodeport + direct-pod-ip nodeport), not one.
+	// nodeport is a non-f5-bnk type: it needs external_url for the VIP leg.
 	deps := []forge.ProxyDeployment{
-		{ID: 7, ProxyType: "nodeport"},
+		{ID: 7, ProxyType: "nodeport", ExternalURL: "10.0.1.55:30080"},
 	}
 	cleanup := shootoutTestSetup(t, "nodeport", "10.0.10.200", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
 	if len(fes) != 2 {
 		t.Fatalf("len(frontEnds) = %d, want 2 (VIP nodeport + direct-pod-ip nodeport)", len(fes))
 	}
-	// First: VIP nodeport (VIP empty, uses flagBenchVIP).
-	if fes[0].ProxyType != "nodeport" || fes[0].VIP != "" {
-		t.Errorf("frontEnds[0] = %+v, want nodeport with empty VIP", fes[0])
+	// First: VIP nodeport from --proxies (VIP from external_url).
+	if fes[0].ProxyType != "nodeport" || fes[0].VIP != "10.0.1.55:30080" {
+		t.Errorf("frontEnds[0] = %+v, want nodeport with VIP=10.0.1.55:30080 (from external_url)", fes[0])
 	}
-	// Last: direct-pod-ip nodeport (VIP set).
+	// Last: direct-pod-ip nodeport appended last with its own VIP.
 	if fes[1].ProxyType != "nodeport" || fes[1].VIP != "10.0.10.200" {
 		t.Errorf("frontEnds[1] = %+v, want nodeport with VIP=10.0.10.200", fes[1])
 	}
@@ -180,7 +183,7 @@ func TestResolveShootoutFrontEnds_UnlinkedWhenNoTargetID(t *testing.T) {
 		return nil, fmt.Errorf("should not be called")
 	}
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0 /* no targetID */, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0 /* no targetID */)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -200,7 +203,7 @@ func TestResolveShootoutFrontEnds_UnknownType_ReturnsError(t *testing.T) {
 	cleanup := shootoutTestSetup(t, "envoy,envooy", "", nil)
 	defer cleanup()
 
-	_, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0, "")
+	_, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0)
 	if err == nil {
 		t.Fatalf("expected error for unknown proxy type %q, got nil", "envooy")
 	}
@@ -210,11 +213,12 @@ func TestResolveShootoutFrontEnds_UnknownType_ReturnsError(t *testing.T) {
 }
 
 func TestResolveShootoutFrontEnds_ValidNodeportProceeds(t *testing.T) {
-	// "nodeport" is valid; when targetID=0 it runs unlinked, no error.
+	// "nodeport" is valid; when targetID=0 it runs unlinked and RESOLVE_FAILED
+	// (no external_url known), but resolveShootoutFrontEnds itself returns nil error.
 	cleanup := shootoutTestSetup(t, "nodeport", "", nil)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 0)
 	if err != nil {
 		t.Fatalf("expected no error for valid type %q, got: %v", "nodeport", err)
 	}
@@ -402,10 +406,10 @@ func TestComposition_ProxiesAndScenario_StampsPerFrontEnd(t *testing.T) {
 	flagBenchForgeURL = "http://localhost:9999"
 	flagBenchEndpoint = "/v1/chat/completions"
 
-	// Stub discover: returns two known proxies.
+	// Stub discover: returns two known proxies with external_url set so resolution succeeds.
 	knownProxies := []forge.ProxyDeployment{
-		{ID: 10, ProxyType: "envoy"},
-		{ID: 11, ProxyType: "haproxy"},
+		{ID: 10, ProxyType: "envoy", ExternalURL: "10.0.1.55:31234"},
+		{ID: 11, ProxyType: "haproxy", ExternalURL: "10.0.1.55:31235"},
 	}
 	discoverProxiesFn = func(_ context.Context, _ forge.ProxyDiscoverOptions) (forge.ProxyDiscoveryResult, error) {
 		return forge.ProxyDiscoveryResult{DiscoveredCount: 2}, nil
@@ -437,7 +441,7 @@ func TestComposition_ProxiesAndScenario_StampsPerFrontEnd(t *testing.T) {
 
 	// Resolve front-ends (uses the stubs above).
 	graph := forgeGraph{targetID: 5}
-	frontEnds, resolveErr := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, graph.targetID, "")
+	frontEnds, resolveErr := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, graph.targetID)
 	if resolveErr != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", resolveErr)
 	}
@@ -571,44 +575,19 @@ func TestPushAiperfResult_ThreadsProxyDeploymentID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Envoy front-end resolution (WS-E2): VIP set, fail-closed, f5-bnk unchanged
+// external_url → VIP resolution: set, fail-closed, f5-bnk unchanged
 // ---------------------------------------------------------------------------
 
-// envoyShootoutTestSetup extends shootoutTestSetup with envoyNodePortEndpointFn stubbing.
-func envoyShootoutTestSetup(
-	t *testing.T,
-	proxiesCSV string,
-	proxyDeployments []forge.ProxyDeployment,
-	envoyStub func(ctx context.Context, kubeconfig, ns, gw string, port int32) (string, int32, error),
-) func() {
-	t.Helper()
-
-	cleanup := shootoutTestSetup(t, proxiesCSV, "", proxyDeployments)
-
-	origEnvoyFn := envoyNodePortEndpointFn
-	envoyNodePortEndpointFn = envoyStub
-
-	return func() {
-		cleanup()
-		envoyNodePortEndpointFn = origEnvoyFn
-	}
-}
-
-func TestResolveShootoutFrontEnds_EnvoyResolved_VIPSet(t *testing.T) {
-	// When envoy endpoint lookup succeeds, the front-end VIP must be set to
-	// "<nodeIP>:<nodePort>" and ResolveErr must be nil.
-	// A non-empty kubeconfigPath is required to pass the empty-kubeconfig guard.
+func TestResolveShootoutFrontEnds_ExternalURL_VIPSet(t *testing.T) {
+	// When a non-f5-bnk proxy has a populated external_url, the front-end VIP
+	// must be set to that value and ResolveErr must be nil.
 	deps := []forge.ProxyDeployment{
-		{ID: 20, ProxyType: "envoy"},
+		{ID: 20, ProxyType: "envoy", ExternalURL: "10.0.1.55:31234"},
 	}
-	cleanup := envoyShootoutTestSetup(t, "envoy", deps,
-		func(_ context.Context, _, _, _ string, _ int32) (string, int32, error) {
-			return "10.0.1.55", 31234, nil
-		},
-	)
+	cleanup := shootoutTestSetup(t, "envoy", "", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "/fake/kubeconfig")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -630,22 +609,18 @@ func TestResolveShootoutFrontEnds_EnvoyResolved_VIPSet(t *testing.T) {
 	}
 }
 
-func TestResolveShootoutFrontEnds_EnvoyNotReady_ResolveErrSet(t *testing.T) {
-	// When envoy endpoint lookup fails (ErrEnvoyNotReady), the front-end MUST have
-	// ResolveErr set and VIP MUST be empty — never the BNK VIP, never "".
-	// A non-empty kubeconfigPath is required to pass the empty-kubeconfig guard
-	// and reach the actual envoyNodePortEndpointFn stub.
+func TestResolveShootoutFrontEnds_EmptyExternalURL_FailClosed(t *testing.T) {
+	// When a non-f5-bnk proxy has an empty external_url (discovery not yet
+	// populated), the front-end MUST have ResolveErr set and VIP MUST be empty.
+	// NEVER silently fall back to the global --vip (that is the original
+	// "silent BNK bake-off" bug we are fixing).
 	deps := []forge.ProxyDeployment{
-		{ID: 20, ProxyType: "envoy"},
+		{ID: 20, ProxyType: "envoy", ExternalURL: ""},
 	}
-	cleanup := envoyShootoutTestSetup(t, "envoy", deps,
-		func(_ context.Context, _, _, _ string, _ int32) (string, int32, error) {
-			return "", 0, fmt.Errorf("test: %w", k8s.ErrEnvoyNotReady)
-		},
-	)
+	cleanup := shootoutTestSetup(t, "envoy", "", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "/fake/kubeconfig")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -653,41 +628,25 @@ func TestResolveShootoutFrontEnds_EnvoyNotReady_ResolveErrSet(t *testing.T) {
 		t.Fatalf("len(frontEnds) = %d, want 1", len(fes))
 	}
 	fe := fes[0]
+	// VIP MUST be empty — never the BNK VIP, never a fallback.
 	if fe.VIP != "" {
-		t.Errorf("VIP = %q, want empty (must NOT fall back to BNK VIP)", fe.VIP)
+		t.Errorf("VIP = %q, want empty (must NOT fall back to BNK VIP when external_url is empty)", fe.VIP)
 	}
+	// ResolveErr MUST be set so runProxyShootout marks the leg RESOLVE_FAILED.
 	if fe.ResolveErr == nil {
-		t.Fatal("ResolveErr is nil, want non-nil error")
-	}
-	if !errors.Is(fe.ResolveErr, k8s.ErrEnvoyNotReady) {
-		t.Errorf("ResolveErr does not wrap ErrEnvoyNotReady: %v", fe.ResolveErr)
+		t.Fatal("ResolveErr is nil; expected fail-closed error when external_url is empty")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Fix 1: envoy + empty kubeconfigPath → fail-closed (HOST-KUBECONFIG TRAP)
-// ---------------------------------------------------------------------------
-
-func TestResolveShootoutFrontEnds_EnvoyEmptyKubeconfig_FailClosed(t *testing.T) {
-	// When kubeconfigPath == "" and proxies includes "envoy", the code must NOT
-	// call envoyNodePortEndpointFn (which would fall through to BuildClientset("")
-	// and query the host kubeconfig). Instead the front-end must have ResolveErr
-	// set and VIP must be empty.
-	deps := []forge.ProxyDeployment{
-		{ID: 20, ProxyType: "envoy"},
-	}
-
-	envoyFnCalled := false
-	cleanup := envoyShootoutTestSetup(t, "envoy", deps,
-		func(_ context.Context, _, _, _ string, _ int32) (string, int32, error) {
-			envoyFnCalled = true
-			return "10.0.1.55", 31234, nil // would succeed if called
-		},
-	)
+func TestResolveShootoutFrontEnds_NoDeployment_FailClosed(t *testing.T) {
+	// When a non-f5-bnk proxy has no ProxyDeployment in forge at all (discover
+	// returned nothing for this type), the front-end MUST have ResolveErr set
+	// and VIP MUST be empty — not the global --vip.
+	deps := []forge.ProxyDeployment{} // no envoy entry
+	cleanup := shootoutTestSetup(t, "envoy", "", deps)
 	defer cleanup()
 
-	// Pass empty kubeconfigPath — the key invariant under test.
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "" /* empty kubeconfig */)
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -695,37 +654,24 @@ func TestResolveShootoutFrontEnds_EnvoyEmptyKubeconfig_FailClosed(t *testing.T) 
 		t.Fatalf("len(frontEnds) = %d, want 1", len(fes))
 	}
 	fe := fes[0]
-
-	// MUST have ResolveErr set — not nil, not a soft warning.
-	if fe.ResolveErr == nil {
-		t.Fatal("ResolveErr is nil; expected fail-closed error for envoy + empty kubeconfigPath")
-	}
-	// VIP MUST be empty — never the BNK VIP, never the envoy endpoint.
 	if fe.VIP != "" {
-		t.Errorf("VIP = %q, want empty (must NOT be set when kubeconfigPath is empty)", fe.VIP)
+		t.Errorf("VIP = %q, want empty (must NOT fall back to BNK VIP when no deployment found)", fe.VIP)
 	}
-	// envoyNodePortEndpointFn MUST NOT have been called.
-	if envoyFnCalled {
-		t.Error("envoyNodePortEndpointFn was called with empty kubeconfigPath (host-kubeconfig trap must be prevented)")
+	if fe.ResolveErr == nil {
+		t.Fatal("ResolveErr is nil; expected fail-closed error when no ProxyDeployment found")
 	}
 }
 
 func TestResolveShootoutFrontEnds_F5BNK_VIPUnchanged(t *testing.T) {
-	// f5-bnk front-end must have VIP="" (falls back to flagBenchVIP in runProxyShootout).
-	// The envoyNodePortEndpointFn must NOT be called for f5-bnk.
+	// f5-bnk front-end must have VIP="" (falls back to flagBenchVIP in runProxyShootout)
+	// and ResolveErr must be nil — f5-bnk has no proxy Service by design.
 	deps := []forge.ProxyDeployment{
 		{ID: 30, ProxyType: "f5-bnk"},
 	}
-	envoyFnCalled := false
-	cleanup := envoyShootoutTestSetup(t, "f5-bnk", deps,
-		func(_ context.Context, _, _, _ string, _ int32) (string, int32, error) {
-			envoyFnCalled = true
-			return "", 0, nil
-		},
-	)
+	cleanup := shootoutTestSetup(t, "f5-bnk", "", deps)
 	defer cleanup()
 
-	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5, "")
+	fes, err := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, 5)
 	if err != nil {
 		t.Fatalf("resolveShootoutFrontEnds: %v", err)
 	}
@@ -737,12 +683,9 @@ func TestResolveShootoutFrontEnds_F5BNK_VIPUnchanged(t *testing.T) {
 		t.Errorf("ProxyType = %q, want %q", fe.ProxyType, "f5-bnk")
 	}
 	if fe.VIP != "" {
-		t.Errorf("VIP = %q, want empty (f5-bnk uses flagBenchVIP)", fe.VIP)
+		t.Errorf("VIP = %q, want empty (f5-bnk uses global --vip, no external_url needed)", fe.VIP)
 	}
 	if fe.ResolveErr != nil {
-		t.Errorf("ResolveErr = %v, want nil", fe.ResolveErr)
-	}
-	if envoyFnCalled {
-		t.Error("envoyNodePortEndpointFn was called for f5-bnk front-end (must NOT be)")
+		t.Errorf("ResolveErr = %v, want nil (f5-bnk skips external_url resolution)", fe.ResolveErr)
 	}
 }

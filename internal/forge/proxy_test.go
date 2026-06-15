@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
@@ -337,5 +338,130 @@ func TestProxyShootout_DiscoverThenListResolve_WithData(t *testing.T) {
 	// nodeport not in list → 0
 	if id := forge.ResolveProxyDeploymentID(list, "nodeport"); id != 0 {
 		t.Errorf("nodeport id = %d, want 0 (not discovered)", id)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ProxyDeployment decode: proxy_url + external_url fields
+// ---------------------------------------------------------------------------
+
+func TestProxyDeployment_Decode_ProxyURLAndExternalURL(t *testing.T) {
+	// Verify that GET /proxies JSON with proxy_url + external_url decodes correctly.
+	srv := &proxyServer{
+		deployments: []forge.ProxyDeployment{
+			{
+				ID: 7, TargetID: 42, ProxyType: "envoy", Status: "discovered",
+				ProxyURL:    "http://envoy-svc.perf-proxies.svc.cluster.local:10080",
+				ExternalURL: "10.0.1.55:31234",
+			},
+			{
+				ID: 8, TargetID: 42, ProxyType: "f5-bnk", Status: "ready",
+				ProxyURL:    "",
+				ExternalURL: "",
+			},
+		},
+	}
+	url, cleanup := newProxyTestServer(t, srv)
+	defer cleanup()
+
+	list, err := forge.ListProxyDeployments(context.Background(), forge.ProxyDiscoverOptions{
+		RestURL:  url,
+		TargetID: 42,
+	})
+	if err != nil {
+		t.Fatalf("ListProxyDeployments: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 deployments, got %d", len(list))
+	}
+
+	envoy := list[0]
+	if envoy.ProxyURL != "http://envoy-svc.perf-proxies.svc.cluster.local:10080" {
+		t.Errorf("envoy ProxyURL = %q, want in-cluster DNS", envoy.ProxyURL)
+	}
+	if envoy.ExternalURL != "10.0.1.55:31234" {
+		t.Errorf("envoy ExternalURL = %q, want 10.0.1.55:31234", envoy.ExternalURL)
+	}
+
+	f5bnk := list[1]
+	if f5bnk.ExternalURL != "" {
+		t.Errorf("f5-bnk ExternalURL = %q, want empty (appliance, no Service)", f5bnk.ExternalURL)
+	}
+}
+
+func TestProxyDeployment_Decode_NullFields(t *testing.T) {
+	// Verify that JSON null for proxy_url / external_url decodes to "" (not error).
+	// The test server encodes the struct via json.NewEncoder; to test null we use
+	// a raw JSON payload instead.
+	raw := `[{"id":5,"target_id":42,"proxy_type":"nginx","status":"discovered","proxy_url":null,"external_url":null}]`
+
+	var list []forge.ProxyDeployment
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&list); err != nil {
+		t.Fatalf("Decode with null fields: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(list))
+	}
+	if list[0].ProxyURL != "" {
+		t.Errorf("ProxyURL = %q, want empty string for JSON null", list[0].ProxyURL)
+	}
+	if list[0].ExternalURL != "" {
+		t.Errorf("ExternalURL = %q, want empty string for JSON null", list[0].ExternalURL)
+	}
+}
+
+func TestProxyDeployment_Decode_AbsentFields(t *testing.T) {
+	// Verify that a JSON payload without proxy_url / external_url keys decodes to "".
+	raw := `[{"id":6,"target_id":42,"proxy_type":"haproxy","status":"discovered"}]`
+
+	var list []forge.ProxyDeployment
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&list); err != nil {
+		t.Fatalf("Decode with absent fields: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(list))
+	}
+	if list[0].ProxyURL != "" {
+		t.Errorf("ProxyURL = %q, want empty string for absent key", list[0].ProxyURL)
+	}
+	if list[0].ExternalURL != "" {
+		t.Errorf("ExternalURL = %q, want empty string for absent key", list[0].ExternalURL)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FindProxyDeployment — pure helper
+// ---------------------------------------------------------------------------
+
+func TestFindProxyDeployment_MatchByType(t *testing.T) {
+	proxies := []forge.ProxyDeployment{
+		{ID: 10, ProxyType: "envoy", ExternalURL: "10.0.1.55:31234"},
+		{ID: 11, ProxyType: "haproxy", ExternalURL: "10.0.1.55:31235"},
+		{ID: 12, ProxyType: "f5-bnk"},
+	}
+
+	dep := forge.FindProxyDeployment(proxies, "envoy")
+	if dep == nil {
+		t.Fatal("FindProxyDeployment(envoy) = nil, want non-nil")
+	}
+	if dep.ID != 10 || dep.ExternalURL != "10.0.1.55:31234" {
+		t.Errorf("FindProxyDeployment(envoy) = %+v, want id=10 ExternalURL=10.0.1.55:31234", dep)
+	}
+}
+
+func TestFindProxyDeployment_MissReturnsNil(t *testing.T) {
+	proxies := []forge.ProxyDeployment{
+		{ID: 10, ProxyType: "envoy"},
+	}
+	dep := forge.FindProxyDeployment(proxies, "nginx")
+	if dep != nil {
+		t.Errorf("FindProxyDeployment(nginx) = %+v, want nil", dep)
+	}
+}
+
+func TestFindProxyDeployment_NilSliceReturnsNil(t *testing.T) {
+	dep := forge.FindProxyDeployment(nil, "envoy")
+	if dep != nil {
+		t.Errorf("FindProxyDeployment(nil, envoy) = %+v, want nil", dep)
 	}
 }

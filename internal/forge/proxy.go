@@ -70,12 +70,29 @@ type ProxyDiscoveryResult struct {
 }
 
 // ProxyDeployment is a single record from GET /proxies.
-// Fields id, target_id, proxy_type, status are the ones callers need.
+// proxy_url is the in-cluster DNS address (unreachable from the jumphost).
+// external_url is the NodePort/LB URL for external agents (jumphost-reachable);
+// populated by forge discovery from the Service's LoadBalancer ingress or NodePort.
+// Both fields decode JSON null or absent as "" (plain string is null-safe for JSON).
 type ProxyDeployment struct {
-	ID        int    `json:"id"`
-	TargetID  int    `json:"target_id"`
-	ProxyType string `json:"proxy_type"`
-	Status    string `json:"status"`
+	ID          int    `json:"id"`
+	TargetID    int    `json:"target_id"`
+	ProxyType   string `json:"proxy_type"`
+	Status      string `json:"status"`
+	ProxyURL    string `json:"proxy_url"`
+	ExternalURL string `json:"external_url"`
+}
+
+// FindProxyDeployment returns a pointer to the ProxyDeployment whose proxy_type
+// matches proxyType (case-sensitive, forge canonical form).
+// Returns nil when no match is found.
+func FindProxyDeployment(proxies []ProxyDeployment, proxyType string) *ProxyDeployment {
+	for i := range proxies {
+		if proxies[i].ProxyType == proxyType {
+			return &proxies[i]
+		}
+	}
+	return nil
 }
 
 // DiscoverProxies calls POST /api/benchmarks/targets/{target_id}/discover-proxies.
