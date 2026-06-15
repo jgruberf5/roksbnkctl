@@ -51,21 +51,21 @@ func TestHasNonBNKProxy(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNlbOptInTags_NoProxies_NilTags(t *testing.T) {
-	got := nlbOptInTags("", "vllm", "80")
+	got := nlbOptInTags("", "vllm", "80", "")
 	if got != nil {
 		t.Errorf("nlbOptInTags(\"\", ...) = %v, want nil", got)
 	}
 }
 
 func TestNlbOptInTags_BNKOnly_NilTags(t *testing.T) {
-	got := nlbOptInTags("f5-bnk", "vllm", "80")
+	got := nlbOptInTags("f5-bnk", "vllm", "80", "")
 	if got != nil {
 		t.Errorf("nlbOptInTags(\"f5-bnk\", ...) = %v, want nil", got)
 	}
 }
 
 func TestNlbOptInTags_NonBNK_AllThreeTags(t *testing.T) {
-	got := nlbOptInTags("envoy,f5-bnk", "vllm", "80")
+	got := nlbOptInTags("envoy,f5-bnk", "vllm", "80", "")
 	if got == nil {
 		t.Fatal("nlbOptInTags(\"envoy,f5-bnk\", ...) = nil, want map with three keys")
 	}
@@ -78,10 +78,17 @@ func TestNlbOptInTags_NonBNK_AllThreeTags(t *testing.T) {
 	if got["upstream_port"] != "80" {
 		t.Errorf("upstream_port = %q, want \"80\"", got["upstream_port"])
 	}
+	// Empty namespace → the tag must be absent (three keys only).
+	if _, ok := got["upstream_namespace"]; ok {
+		t.Errorf("upstream_namespace present with empty namespace; want absent (got %v)", got)
+	}
+	if len(got) != 3 {
+		t.Errorf("len(tags) = %d, want 3; got %v", len(got), got)
+	}
 }
 
 func TestNlbOptInTags_CustomUpstream_Reflected(t *testing.T) {
-	got := nlbOptInTags("envoy", "inference-svc", "8080")
+	got := nlbOptInTags("envoy", "inference-svc", "8080", "")
 	if got == nil {
 		t.Fatal("nlbOptInTags(\"envoy\", ...) = nil, want map")
 	}
@@ -90,6 +97,46 @@ func TestNlbOptInTags_CustomUpstream_Reflected(t *testing.T) {
 	}
 	if got["upstream_port"] != "8080" {
 		t.Errorf("upstream_port = %q, want \"8080\"", got["upstream_port"])
+	}
+}
+
+func TestNlbOptInTags_UpstreamNamespace(t *testing.T) {
+	// Present when set.
+	got := nlbOptInTags("envoy", "vllm", "80", "ai-rig")
+	if got == nil {
+		t.Fatal("nlbOptInTags(\"envoy\", ..., \"ai-rig\") = nil, want map")
+	}
+	if got["upstream_namespace"] != "ai-rig" {
+		t.Errorf("upstream_namespace = %q, want \"ai-rig\"", got["upstream_namespace"])
+	}
+	if len(got) != 4 {
+		t.Errorf("len(tags) = %d, want 4; got %v", len(got), got)
+	}
+
+	// Absent when empty.
+	gotEmpty := nlbOptInTags("envoy", "vllm", "80", "")
+	if _, ok := gotEmpty["upstream_namespace"]; ok {
+		t.Errorf("upstream_namespace present with empty namespace; want absent (got %v)", gotEmpty)
+	}
+}
+
+func TestLLMBaseURL(t *testing.T) {
+	cases := []struct {
+		host string
+		want string
+	}{
+		{"10.0.10.100", "http://10.0.10.100"},
+		{"10.0.10.100:8000", "http://10.0.10.100:8000"},
+		{"http://10.0.10.247:10080", "http://10.0.10.247:10080"},
+		{"https://example.com", "https://example.com"},
+		{"HTTP://x", "HTTP://x"},
+		{"HTTPS://x", "HTTPS://x"},
+		{"HtTp://x", "HtTp://x"},
+	}
+	for _, tc := range cases {
+		if got := llmBaseURL(tc.host); got != tc.want {
+			t.Errorf("llmBaseURL(%q) = %q, want %q", tc.host, got, tc.want)
+		}
 	}
 }
 
@@ -103,11 +150,12 @@ func TestNlbOptInTags_CustomUpstream_Reflected(t *testing.T) {
 
 func TestResolveForgeGraph_NLBTags(t *testing.T) {
 	cases := []struct {
-		name            string
-		proxiesCSV      string
-		upstreamService string
-		upstreamPort    string
-		wantTags        map[string]string // nil means expect nil (not empty map)
+		name              string
+		proxiesCSV        string
+		upstreamService   string
+		upstreamPort      string
+		upstreamNamespace string
+		wantTags          map[string]string // nil means expect nil (not empty map)
 	}{
 		{
 			name:            "(a) no --proxies → nil Tags",
@@ -145,6 +193,19 @@ func TestResolveForgeGraph_NLBTags(t *testing.T) {
 				"upstream_port":    "8080",
 			},
 		},
+		{
+			name:              "(e) upstream-namespace set → fourth tag present",
+			proxiesCSV:        "envoy",
+			upstreamService:   "vllm",
+			upstreamPort:      "80",
+			upstreamNamespace: "ai-rig",
+			wantTags: map[string]string{
+				"proxy_expose":       "internal-nlb",
+				"upstream_service":   "vllm",
+				"upstream_port":      "80",
+				"upstream_namespace": "ai-rig",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -153,6 +214,7 @@ func TestResolveForgeGraph_NLBTags(t *testing.T) {
 			origProxies := flagBenchProxies
 			origUpstreamService := flagBenchUpstreamService
 			origUpstreamPort := flagBenchUpstreamPort
+			origUpstreamNamespace := flagBenchUpstreamNamespace
 			origForgeURL := flagBenchForgeURL
 			origWorkspace := flagBenchWorkspace
 			origVIP := flagBenchVIP
@@ -164,6 +226,7 @@ func TestResolveForgeGraph_NLBTags(t *testing.T) {
 				flagBenchProxies = origProxies
 				flagBenchUpstreamService = origUpstreamService
 				flagBenchUpstreamPort = origUpstreamPort
+				flagBenchUpstreamNamespace = origUpstreamNamespace
 				flagBenchForgeURL = origForgeURL
 				flagBenchWorkspace = origWorkspace
 				flagBenchVIP = origVIP
@@ -177,6 +240,7 @@ func TestResolveForgeGraph_NLBTags(t *testing.T) {
 			flagBenchProxies = tc.proxiesCSV
 			flagBenchUpstreamService = tc.upstreamService
 			flagBenchUpstreamPort = tc.upstreamPort
+			flagBenchUpstreamNamespace = tc.upstreamNamespace
 			flagBenchForgeURL = "http://localhost:9999"
 			flagBenchWorkspace = "test-ws"
 			flagBenchVIP = "10.0.10.100"
