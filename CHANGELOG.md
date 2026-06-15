@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.11.4 — 2026-06-15
+
+A one-line auth fix: the BNK install now pulls the FLO chart correctly from an ICR-backed air-gap mirror.
+
+### Fixed
+
+- **BNK install failed to pull the FLO chart from an ICR air-gap mirror.** With `registry.target: icr` (the Sprint 30 default), the FLO OCI chart pull authenticated with the cluster's **OpenShift bearer token** — but IBM Container Registry **rejects** a bearer token (`"The requested authentication method is not supported"`); it requires `iamapikey` + an IBM Cloud API key. The on-mirror credential branch had assumed the OpenShift in-cluster registry route. `module.flo` now routes chart-pull credentials by backend: FAR (`_json_key_base64`) off-mirror, **`iamapikey` + the workspace API key for an `*.icr.io` mirror**, and the OpenShift token for the in-cluster registry route.
+
 ## v1.11.3 — 2026-06-13
 
 A reliability patch with two live-validated fixes — gateway static routes and teardown — plus a workspace-aware `full-shakeout.sh --live` harness that exercises a real cluster lifecycle end-to-end. No config changes; existing workspaces are unaffected.
