@@ -74,6 +74,8 @@ var (
 	flagBenchProxies              string // --proxies <csv>: shootout front-end list (WS-D1)
 	flagBenchDirectPodIP          string // --direct-pod-ip <ip>: direct nodeport baseline (WS-D1)
 	flagBenchConfig               string // --config/-f <cluster.yaml>: kubeconfig source for cluster lookups (e.g. bnk resync)
+	flagBenchUpstreamService      string // --upstream-service: k8s Service the proxy fronts (for NLB opt-in tag)
+	flagBenchUpstreamPort         string // --upstream-port: Service port (for NLB opt-in tag)
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -175,6 +177,13 @@ AWS SG ingress rule for this path is out of scope (WS-E).`)
 cluster lookups. Accepted but no longer required for --proxies (proxy
 endpoints are now read from forge's external_url field).`)
 
+	// NLB opt-in tags (Slice 4): forwarded to the forge BenchmarkTarget when
+	// a non-BNK proxy is included in --proxies (triggers data-path NLB exposure).
+	f.StringVar(&flagBenchUpstreamService, "upstream-service", "vllm",
+		"k8s Service the proxy fronts (sets tags[upstream_service] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
+	f.StringVar(&flagBenchUpstreamPort, "upstream-port", "80",
+		"upstream Service port (sets tags[upstream_port] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
+
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
 }
@@ -210,6 +219,34 @@ type forgeGraph struct {
 	targetID          int // BenchmarkTarget.id
 	configID          int // BenchmarkConfig.id (preset-specific, set per-run)
 	proxyDeploymentID int // ProxyDeployment.id (set per-front-end in shootout mode)
+}
+
+// hasNonBNKProxy reports whether the comma-separated proxy CSV contains at
+// least one entry that is not "f5-bnk". Blank entries are ignored.
+// Returns false when csv is empty.
+func hasNonBNKProxy(csv string) bool {
+	for _, raw := range strings.Split(csv, ",") {
+		t := strings.TrimSpace(raw)
+		if t != "" && t != "f5-bnk" {
+			return true
+		}
+	}
+	return false
+}
+
+// nlbOptInTags returns the three opt-in internal-NLB tags required by forge
+// PR #325 when the run is a non-BNK proxy shootout; nil otherwise.
+// Tags are forwarded to the forge BenchmarkTarget so forge exposes the proxy
+// front-end via an internal AWS NLB (Slice-3 contract).
+func nlbOptInTags(proxiesCSV, upstreamService, upstreamPort string) map[string]string {
+	if !hasNonBNKProxy(proxiesCSV) {
+		return nil
+	}
+	return map[string]string{
+		"proxy_expose":     "internal-nlb",
+		"upstream_service": upstreamService,
+		"upstream_port":    upstreamPort,
+	}
 }
 
 // resolveForgeGraph registers the agent + target (best-effort, non-fatal) and
@@ -263,6 +300,7 @@ func resolveForgeGraph(ctx context.Context, creds forge.RestCreds, agentName str
 		ClusterID:  clusterID,
 		LLMBaseURL: fmt.Sprintf("http://%s", flagBenchVIP),
 		LLMModel:   flagBenchModel,
+		Tags:       nlbOptInTags(flagBenchProxies, flagBenchUpstreamService, flagBenchUpstreamPort),
 	})
 	if targetErr != nil {
 		if errors.Is(targetErr, forge.ErrTargetNoClusterID) {
