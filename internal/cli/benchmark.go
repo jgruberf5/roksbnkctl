@@ -134,9 +134,12 @@ When set, per-explicit flags (--concurrency/--num-requests/--isl/--osl/--stream)
 
 	// Native forge scenario (WS-C1): expands into N linked child runs.
 	// Mutually exclusive with --scenarios.
+	// Accepts an ordered comma-list of keys (e.g. baseline,mooncake) to run in
+	// sequence; a pluggable reset seam fires between consecutive scenarios.
 	scenarioUsage := fmt.Sprintf(
-		"native forge scenario key to run (e.g. baseline, high-concurrency, prefix-cache).\n"+
-			"Expands into N ordered child aiperf runs (concurrency sweep and/or phases).\n"+
+		"ordered comma-list of native forge scenario keys to run (e.g. baseline,mooncake).\n"+
+			"Each key expands into N ordered child aiperf runs (concurrency sweep and/or phases).\n"+
+			"For multiple keys the reset seam fires between consecutive scenarios.\n"+
 			"Mutually exclusive with --scenarios.\n"+
 			"Available keys: %s.",
 		strings.Join(forgeScenarioKeys(), ", "),
@@ -214,6 +217,58 @@ var registerBenchmarkTargetFn = forge.RegisterBenchmarkTarget
 
 // registerBenchmarkConfigFn is the injectable seam for RegisterBenchmarkConfig.
 var registerBenchmarkConfigFn = forge.RegisterBenchmarkConfig
+
+// resetCacheError is a sentinel error type returned by runScenarioSequence when
+// the reset seam fails between two consecutive scenario keys. Callers use
+// errors.As to distinguish reset failures from other sequence errors without
+// relying on message-string matching.
+type resetCacheError struct {
+	PrevKey string
+	NextKey string
+	cause   error
+}
+
+func (e *resetCacheError) Error() string {
+	return fmt.Sprintf("cache reset between %q and %q failed: %v", e.PrevKey, e.NextKey, e.cause)
+}
+
+func (e *resetCacheError) Unwrap() error { return e.cause }
+
+// resetCacheArgs is the argument struct for resetCacheHookFn.
+// Using a struct (not bare scalars) allows Task B to add fields (e.g.
+// SageMaker endpoint name) without changing any call site or test.
+type resetCacheArgs struct {
+	PrevKey   string
+	NextKey   string
+	ProbeOpts jumphost.ProbeOptions // Region, InstanceID, VIP — per-front-end in shootout
+	Proxy     string                // front-end label ("f5-bnk"/"envoy"/…); "" in single-scenario path
+}
+
+// resetCacheHookFn is the injectable seam invoked between consecutive scenario
+// keys in runScenarioSequence. Default is a no-op (Task B will implement the
+// real SageMaker cache reset). Fail-closed: a non-nil error aborts the
+// remaining scenarios for the current leg.
+var resetCacheHookFn = func(_ context.Context, _ resetCacheArgs) error { return nil }
+
+// parseScenarioKeys splits a raw --scenario value on commas, trims whitespace
+// per entry, and returns the ordered list of keys. Returns an error when:
+//   - raw is empty or whitespace-only
+//   - any entry is empty after trimming (leading/trailing/double commas)
+func parseScenarioKeys(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("--scenario: value must not be empty")
+	}
+	parts := strings.Split(raw, ",")
+	keys := make([]string, 0, len(parts))
+	for i, p := range parts {
+		k := strings.TrimSpace(p)
+		if k == "" {
+			return nil, fmt.Errorf("--scenario: empty entry at position %d (check for leading/trailing/double commas)", i+1)
+		}
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
 
 // forgeGraph holds the resolved forge object IDs for linking runs.
 // All fields are optional — zero means unset and will be omitted from pushes.
@@ -342,6 +397,30 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 	// --scenario and --scenarios are mutually exclusive.
 	if flagBenchScenario != "" && flagBenchScenarios != "" {
 		return fmt.Errorf("--scenario and --scenarios are mutually exclusive; use one or the other")
+	}
+
+	// Parse and validate --scenario keys up front — before any network operation
+	// (forge registration, aiperf, etc.) so unknown keys fail fast with no partial run.
+	if flagBenchScenario != "" {
+		keys, parseErr := parseScenarioKeys(flagBenchScenario)
+		if parseErr != nil {
+			return parseErr
+		}
+		baseCfg := jumphost.AiperfConfig{
+			Model:        flagBenchModel,
+			EndpointPath: flagBenchEndpoint,
+			Tokenizer:    flagBenchTokenizer,
+			HostHeader:   flagBenchHostHeader,
+			Timeout:      flagBenchTimeout,
+		}
+		for _, k := range keys {
+			if _, ok := forgeScenarioByKey(k); !ok {
+				return fmt.Errorf("--scenario: unknown key %q; valid keys: %s", k, strings.Join(forgeScenarioKeys(), ", "))
+			}
+			if _, err := expandForgeScenario(k, baseCfg); err != nil {
+				return fmt.Errorf("--scenario: key %q: %w", k, err)
+			}
+		}
 	}
 
 	probOpts := jumphost.ProbeOptions{
@@ -923,76 +1002,174 @@ func runNativeScenarioCollect(
 	return outcomes, nil
 }
 
-// runNativeScenario expands a forge-native scenario key into its child runs,
-// executes each as a separate aiperf invocation, and pushes every child to
-// forge via the raw /aiperf path with DatasetName=<scenarioKey>.
+// registerScenarioConfig registers one BenchmarkConfig for a scenario key and
+// returns the effective configID (graph.configID when registration fails or the
+// returned ID on success). Verbatim copy of the registration block from both
+// runNativeScenario and runShootoutFrontEnd — extracted so the byte-identical
+// stderr output is produced from a single place.
+func registerScenarioConfig(
+	ctx context.Context,
+	creds forge.RestCreds,
+	graph forgeGraph,
+	key string,
+) int {
+	var description string
+	if s, ok := forgeScenarioByKey(key); ok {
+		description = s.Description
+	}
+	configJSON := forgeScenarioConfigJSON(key, flagBenchModel, flagBenchVIP)
+	configName := fmt.Sprintf("awsbnkctl-scenario-%s", key)
+	cfgResp, cfgErr := registerBenchmarkConfigFn(ctx, forge.BenchmarkConfigOptions{
+		RestURL:     flagBenchForgeURL,
+		Creds:       creds,
+		Name:        configName,
+		Description: description,
+		ConfigJSON:  configJSON,
+	})
+	configID := graph.configID // inherit from graph (0 if unset)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
+		configID = cfgResp.ID
+	}
+	return configID
+}
+
+// runScenarioSequence runs an ordered list of scenario keys in sequence,
+// invoking resetCacheHookFn strictly between consecutive keys (never before
+// the first, never after the last). It returns the collected outcomes and
+// prints NOTHING — summary rendering is left to the callers.
 //
-// One child failing does NOT abort the rest. A summary table is printed at the
-// end. Returns an error only when all children fail.
+// proxy is the front-end label (empty string in the single-scenario path).
+// vip is the effective LLM host (empty string → callers fall back to
+// flagBenchVIP inside runNativeScenarioCollect → pushAiperfResult).
+func runScenarioSequence(
+	cmd *cobra.Command,
+	probOpts jumphost.ProbeOptions,
+	creds forge.RestCreds,
+	agentName string,
+	graph forgeGraph,
+	keys []string,
+	proxy, vip string,
+) ([]nativeScenarioOutcome, error) {
+	var allOutcomes []nativeScenarioOutcome
+	for i, key := range keys {
+		// Fire reset seam between consecutive scenarios (never before first).
+		if i > 0 {
+			prev := keys[i-1]
+			if resetErr := resetCacheHookFn(cmd.Context(), resetCacheArgs{
+				PrevKey:   prev,
+				NextKey:   key,
+				ProbeOpts: probOpts,
+				Proxy:     proxy,
+			}); resetErr != nil {
+				return allOutcomes, &resetCacheError{PrevKey: prev, NextKey: key, cause: resetErr}
+			}
+		}
+
+		configID := registerScenarioConfig(cmd.Context(), creds, graph, key)
+		g := graph
+		g.configID = configID
+
+		outcomes, err := runNativeScenarioCollect(cmd, probOpts, creds, agentName, g, key, configID, proxy, vip)
+		if err != nil {
+			return allOutcomes, err
+		}
+		allOutcomes = append(allOutcomes, outcomes...)
+	}
+	return allOutcomes, nil
+}
+
+// runNativeScenario parses --scenario as an ordered comma-list of keys, validates
+// all keys up front, then runs them in sequence via runScenarioSequence (which
+// fires the reset seam between consecutive keys). A per-key summary table is
+// printed after all keys complete. Returns an error only when all children of all
+// keys failed, or when any key is unknown, or when the reset seam fails.
 func runNativeScenario(
 	cmd *cobra.Command,
 	probOpts jumphost.ProbeOptions,
 	creds forge.RestCreds,
 	agentName string,
 	graph forgeGraph,
-	scenarioKey string,
+	rawScenario string,
 ) error {
-	// Look up the scenario's human-readable description for the forge config record.
-	var scenarioDescription string
-	if forgeScn, ok := forgeScenarioByKey(scenarioKey); ok {
-		scenarioDescription = forgeScn.Description
+	// Parse and validate all keys before any run starts (fail-fast, no partial run).
+	keys, parseErr := parseScenarioKeys(rawScenario)
+	if parseErr != nil {
+		return parseErr
 	}
-
-	// Register one BenchmarkConfig for the whole scenario (idempotent).
-	scenarioConfigJSON := forgeScenarioConfigJSON(scenarioKey, flagBenchModel, flagBenchVIP)
-	scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", scenarioKey)
-	cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
-		RestURL:     flagBenchForgeURL,
-		Creds:       creds,
-		Name:        scenarioConfigName,
-		Description: scenarioDescription,
-		ConfigJSON:  scenarioConfigJSON,
-	})
-	scenarioConfigID := graph.configID // inherit from graph (0 if unset)
-	if cfgErr != nil {
-		fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
-	} else {
-		fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
-		scenarioConfigID = cfgResp.ID
+	baseCfg := jumphost.AiperfConfig{
+		Model:        flagBenchModel,
+		EndpointPath: flagBenchEndpoint,
+		Tokenizer:    flagBenchTokenizer,
+		HostHeader:   flagBenchHostHeader,
+		Timeout:      flagBenchTimeout,
 	}
-
-	// Non-shootout path: proxy and vip default to globals (empty strings).
-	outcomes, err := runNativeScenarioCollect(cmd, probOpts, creds, agentName, graph, scenarioKey, scenarioConfigID, "", "")
-	if err != nil {
-		return err
-	}
-
-	// Summary table.
-	fmt.Println()
-	fmt.Printf("scenario: %s\n", scenarioKey)
-	fmt.Printf("%-30s  %-10s  %-8s  %s\n", "VARIANT", "STATUS", "RUN_ID", "NOTE")
-	fmt.Printf("%-30s  %-10s  %-8s  %s\n", "-------", "------", "------", "----")
-	for _, o := range outcomes {
-		note := ""
-		if o.Err != nil {
-			note = o.Err.Error()
-			if len(note) > 50 {
-				note = note[:47] + "..."
-			}
+	for _, k := range keys {
+		if _, ok := forgeScenarioByKey(k); !ok {
+			return fmt.Errorf("--scenario: unknown key %q; valid keys: %s", k, strings.Join(forgeScenarioKeys(), ", "))
 		}
-		fmt.Printf("%-30s  %-10s  %-8d  %s\n", o.VariantLabel, o.Status, o.RunID, note)
+		// Defense-in-depth: also verify expandForgeScenario resolves without error.
+		if _, err := expandForgeScenario(k, baseCfg); err != nil {
+			return fmt.Errorf("--scenario: key %q: %w", k, err)
+		}
 	}
 
-	// Fail only when all children failed.
+	// Run the full sequence. Non-shootout path: proxy and vip are empty strings.
+	allOutcomes, seqErr := runScenarioSequence(cmd, probOpts, creds, agentName, graph, keys, "", "")
+
+	// Print per-key summary tables using child counts from expand (already
+	// validated above, so re-expansion is purely in-memory bookkeeping).
+	offset := 0
+	for _, k := range keys {
+		children, _ := expandForgeScenario(k, baseCfg) // error already checked above
+		n := len(children)
+		end := offset + n
+		if end > len(allOutcomes) {
+			end = len(allOutcomes)
+		}
+		keyOutcomes := allOutcomes[offset:end]
+		offset = end
+
+		// Skip printing a table for keys that never ran (e.g. scenario after a
+		// reset failure). Their absence in the output is cleaner than an empty
+		// header with no rows.
+		if len(keyOutcomes) == 0 {
+			continue
+		}
+
+		fmt.Println()
+		fmt.Printf("scenario: %s\n", k)
+		fmt.Printf("%-30s  %-10s  %-8s  %s\n", "VARIANT", "STATUS", "RUN_ID", "NOTE")
+		fmt.Printf("%-30s  %-10s  %-8s  %s\n", "-------", "------", "------", "----")
+		for _, o := range keyOutcomes {
+			note := ""
+			if o.Err != nil {
+				note = o.Err.Error()
+				if len(note) > 50 {
+					note = note[:47] + "..."
+				}
+			}
+			fmt.Printf("%-30s  %-10s  %-8d  %s\n", o.VariantLabel, o.Status, o.RunID, note)
+		}
+	}
+
+	// Propagate a reset-seam error (already-run keys have been printed above).
+	if seqErr != nil {
+		return seqErr
+	}
+
+	// Fail only when all children across all keys failed.
 	allFailed := true
-	for _, o := range outcomes {
+	for _, o := range allOutcomes {
 		if o.Err == nil {
 			allFailed = false
 			break
 		}
 	}
-	if allFailed && len(outcomes) > 0 {
-		return fmt.Errorf("all %d child run(s) failed for scenario %q", len(outcomes), scenarioKey)
+	if allFailed && len(allOutcomes) > 0 {
+		return fmt.Errorf("all %d child run(s) failed across %d scenario(s)", len(allOutcomes), len(keys))
 	}
 	return nil
 }
@@ -1258,34 +1435,30 @@ func runShootoutFrontEnd(
 
 	switch {
 	case flagBenchScenario != "":
-		// Native scenario mode: register config, collect child outcomes.
-		var scenarioDescription string
-		if forgeScn, ok := forgeScenarioByKey(flagBenchScenario); ok {
-			scenarioDescription = forgeScn.Description
-		}
-		scenarioConfigJSON := forgeScenarioConfigJSON(flagBenchScenario, flagBenchModel, flagBenchVIP)
-		scenarioConfigName := fmt.Sprintf("awsbnkctl-scenario-%s", flagBenchScenario)
-		cfgResp, cfgErr := registerBenchmarkConfigFn(cmd.Context(), forge.BenchmarkConfigOptions{
-			RestURL:     flagBenchForgeURL,
-			Creds:       creds,
-			Name:        scenarioConfigName,
-			Description: scenarioDescription,
-			ConfigJSON:  scenarioConfigJSON,
-		})
-		scenarioConfigID := graph.configID
-		if cfgErr != nil {
-			fmt.Fprintf(os.Stderr, "⚠ forge config registration failed (non-fatal): %v\n", cfgErr)
-		} else {
-			fmt.Fprintf(os.Stderr, "✓ forge config registered: id=%d name=%s\n", cfgResp.ID, cfgResp.Name)
-			scenarioConfigID = cfgResp.ID
-		}
-		g := graph
-		g.configID = scenarioConfigID
-		// Pass proxyType and vip so forge records correct per-front-end metadata.
-		children, collectErr := runNativeScenarioCollect(cmd, probOpts, creds, agentName, g, flagBenchScenario, scenarioConfigID, proxyType, vip)
-		if collectErr != nil {
+		// Native scenario mode: parse keys (already validated in runForgeBenchmark
+		// via runNativeScenario; defensive parse here for the shootout path which
+		// calls runShootoutFrontEnd directly).
+		keys, parseErr := parseScenarioKeys(flagBenchScenario)
+		if parseErr != nil {
 			base.Status = "FAILED"
-			base.Err = collectErr
+			base.Err = parseErr
+			return base
+		}
+		// Run all scenario keys in sequence via the shared helper.
+		// Pass proxyType and vip so forge records correct per-front-end metadata.
+		// resetCacheHookFn fires between keys inside runScenarioSequence.
+		children, seqErr := runScenarioSequence(cmd, probOpts, creds, agentName, graph, keys, proxyType, vip)
+		if seqErr != nil {
+			// Check whether this is a cache-reset failure — surface as RESET_FAILED
+			// so other front-ends still run (mirrors FAILED / RESOLVE_FAILED pattern).
+			var rce *resetCacheError
+			if errors.As(seqErr, &rce) {
+				base.Status = "RESET_FAILED"
+				base.Err = seqErr
+				return base
+			}
+			base.Status = "FAILED"
+			base.Err = seqErr
 			return base
 		}
 		var runIDs []int
