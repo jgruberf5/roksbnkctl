@@ -35,7 +35,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/JLCode-tech/awsbnkctl/internal/aws/phases"
 	"github.com/JLCode-tech/awsbnkctl/internal/forge"
+	"github.com/JLCode-tech/awsbnkctl/internal/intent"
 	"github.com/JLCode-tech/awsbnkctl/internal/jumphost"
 )
 
@@ -77,6 +79,7 @@ var (
 	flagBenchUpstreamService      string // --upstream-service: k8s Service the proxy fronts (for NLB opt-in tag)
 	flagBenchUpstreamPort         string // --upstream-port: Service port (for NLB opt-in tag)
 	flagBenchUpstreamNamespace    string // --upstream-namespace: Service namespace (for NLB opt-in tag)
+	flagBenchResetCache           bool   // --reset-cache: cold-redeploy SageMaker endpoint between scenarios
 )
 
 var forgeBenchmarkCmd = &cobra.Command{
@@ -189,6 +192,15 @@ endpoints are now read from forge's external_url field).`)
 		"upstream Service port (sets tags[upstream_port] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
 	f.StringVar(&flagBenchUpstreamNamespace, "upstream-namespace", "",
 		"k8s namespace of the upstream Service the proxy fronts (sets tags[upstream_namespace] on the forge BenchmarkTarget when --proxies includes a non-BNK proxy)")
+
+	// SageMaker cache reset between scenarios (Task B, PRD-11 adaptive harness).
+	f.BoolVar(&flagBenchResetCache, "reset-cache", false,
+		`cold-redeploy the SageMaker endpoint between consecutive --scenario keys to
+guarantee a fresh KV+prefix cache before mooncake-style scenarios.
+Requires -f/--config (cluster.yaml) with ai.sagemaker.enabled=true.
+Adds ~5-15 min per scenario boundary (full SageMaker instance restart).
+Has no effect when --scenario has only one key.
+Caution: a redeploy failure mid-flight may leave the endpoint deleted or in Failed state, requiring a re-up to recover.`)
 
 	// Wire under `awsbnkctl forge`
 	forgeCmd.AddCommand(forgeBenchmarkCmd)
@@ -434,6 +446,44 @@ func runForgeBenchmark(cmd *cobra.Command, _ []string) error {
 	forgeCreds := forge.RestCreds{
 		Username: flagBenchForgeUser,
 		Password: flagBenchForgePass,
+	}
+
+	// Step 0: wire --reset-cache if requested.
+	// When set: load cluster intent, validate SageMaker is enabled, build an AWS
+	// SageMaker client, and replace the default no-op resetCacheHookFn with a
+	// real cold-redeploy closure. Fails fast before any network/forge call so a
+	// misconfigured reset is surfaced immediately.
+	if flagBenchResetCache {
+		if flagBenchConfig == "" {
+			return fmt.Errorf("--reset-cache requires -f/--config <cluster.yaml>")
+		}
+		cl, loadErr := intent.Load(flagBenchConfig)
+		if loadErr != nil {
+			return fmt.Errorf("--reset-cache: loading cluster config %q: %w", flagBenchConfig, loadErr)
+		}
+		if !cl.SageMakerEnabled() {
+			return fmt.Errorf("--reset-cache: ai.sagemaker.enabled is false in %q — no SageMaker endpoint to reset", flagBenchConfig)
+		}
+		if flagBenchRegion != cl.Metadata.Region {
+			return fmt.Errorf("--reset-cache: --region %q does not match cluster %q region %q in %q",
+				flagBenchRegion, cl.Metadata.Name, cl.Metadata.Region, flagBenchConfig)
+		}
+		smClients, clientErr := phases.NewClients(cmd.Context(), flagBenchRegion, "")
+		if clientErr != nil {
+			return fmt.Errorf("--reset-cache: building AWS clients: %w", clientErr)
+		}
+		smEndpoint := cl.Metadata.Name + "-lmi"
+		resetCacheHookFn = func(ctx context.Context, args resetCacheArgs) error {
+			fmt.Fprintf(os.Stderr, "↻ cache reset: redeploying SageMaker endpoint %s between %q and %q (proxy=%s)\n",
+				smEndpoint, args.PrevKey, args.NextKey, args.Proxy)
+			start := time.Now()
+			resetErr := phases.RedeploySageMakerEndpointCold(ctx, smClients.SageMaker, smEndpoint)
+			if resetErr != nil {
+				return fmt.Errorf("SageMaker cold redeploy %s: %w", smEndpoint, resetErr)
+			}
+			fmt.Fprintf(os.Stderr, "↻ cache reset: endpoint %s InService after %s\n", smEndpoint, time.Since(start).Round(time.Second))
+			return nil
+		}
 	}
 
 	// Step 0a: optionally register jumphost as forge SSH access-method.

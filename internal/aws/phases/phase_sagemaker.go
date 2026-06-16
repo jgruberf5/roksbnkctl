@@ -437,6 +437,103 @@ func ensureSageMakerEndpointInner(ctx context.Context, sm SageMakerAPI, endpoint
 	return nil
 }
 
+// RedeploySageMakerEndpointCold performs a cold redeploy of the named SageMaker
+// endpoint: delete → wait-deleted → recreate from the same EndpointConfig →
+// wait-InService. This guarantees a fresh container start (empty vLLM KV+prefix
+// cache) because the instance is fully terminated before the new one starts.
+//
+// The EndpointConfigName is captured via DescribeEndpoint before deletion so the
+// same config is used for recreation — the caller does not need to know or supply
+// the config name. Tags are nil on recreate (cosmetic; name-based discovery still
+// works).
+//
+// Use this to reset the LMI/vLLM cache between benchmark scenarios (e.g. between
+// a baseline run and a mooncake run that must see a cold prefill cache).
+//
+// The endpoint NAME is unchanged across the redeploy (forge target URL stays stable).
+func RedeploySageMakerEndpointCold(ctx context.Context, sm SageMakerAPI, endpointName string) error {
+	// 1. Describe — capture the live EndpointConfigName before deletion.
+	desc, err := sm.DescribeEndpoint(ctx, &sagemaker.DescribeEndpointInput{EndpointName: ptr(endpointName)})
+	if err != nil {
+		return fmt.Errorf("cold redeploy %s: DescribeEndpoint: %w", endpointName, err)
+	}
+	configName := ""
+	if desc.EndpointConfigName != nil {
+		configName = *desc.EndpointConfigName
+	}
+	if configName == "" {
+		return fmt.Errorf("cold redeploy %s: EndpointConfigName is empty in DescribeEndpoint response", endpointName)
+	}
+	fmt.Fprintf(os.Stderr, "[sagemaker] cold redeploy %s: captured config=%s, deleting endpoint\n", endpointName, configName)
+
+	// 2. Delete.
+	if _, delErr := sm.DeleteEndpoint(ctx, &sagemaker.DeleteEndpointInput{EndpointName: ptr(endpointName)}); delErr != nil {
+		return fmt.Errorf("cold redeploy %s: DeleteEndpoint: %w", endpointName, delErr)
+	}
+
+	// 3. Wait for deletion.
+	if waitErr := waitSageMakerEndpointDeleted(ctx, sm, endpointName, 5*time.Minute, 10*time.Second); waitErr != nil {
+		return fmt.Errorf("cold redeploy %s: wait-deleted: %w", endpointName, waitErr)
+	}
+	fmt.Fprintf(os.Stderr, "[sagemaker] cold redeploy %s: endpoint deleted, recreating\n", endpointName)
+
+	// 4. Recreate from the same config. Tags are nil on recreate — cosmetic omission
+	// noted in the work log; name-based discovery still works.
+	if _, createErr := sm.CreateEndpoint(ctx, &sagemaker.CreateEndpointInput{
+		EndpointName:       ptr(endpointName),
+		EndpointConfigName: ptr(configName),
+	}); createErr != nil {
+		return fmt.Errorf("cold redeploy %s: CreateEndpoint: %w", endpointName, createErr)
+	}
+
+	// 5. Wait for InService.
+	fmt.Fprintf(os.Stderr, "[sagemaker] cold redeploy %s: waiting for InService (timeout=20m)\n", endpointName)
+	if waitErr := waitSageMakerEndpointInService(ctx, sm, endpointName, 20*time.Minute, 15*time.Second); waitErr != nil {
+		return fmt.Errorf("cold redeploy %s: wait-InService: %w", endpointName, waitErr)
+	}
+	fmt.Fprintf(os.Stderr, "[sagemaker] cold redeploy %s: endpoint InService\n", endpointName)
+	return nil
+}
+
+// waitSageMakerEndpointInService polls DescribeEndpoint until the endpoint
+// reaches InService status, up to the given timeout with the given poll interval.
+//
+// Status handling (LOCKED by Architect):
+//   - InService  → return nil immediately.
+//   - Creating, Updating, SystemUpdating → keep polling (transient states).
+//   - Failed, RollingBack, OutOfService, UpdateRollbackFailed, Deleting →
+//     return an error immediately (terminal-bad; no point waiting out the timeout).
+//   - Timeout / context cancellation → return a wrapped error.
+func waitSageMakerEndpointInService(ctx context.Context, sm SageMakerAPI, endpointName string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		desc, err := sm.DescribeEndpoint(ctx, &sagemaker.DescribeEndpointInput{EndpointName: ptr(endpointName)})
+		if err != nil {
+			return fmt.Errorf("wait InService %s: DescribeEndpoint: %w", endpointName, err)
+		}
+		switch desc.EndpointStatus {
+		case sagemaker_types.EndpointStatusInService:
+			return nil
+		case sagemaker_types.EndpointStatusCreating,
+			sagemaker_types.EndpointStatusUpdating,
+			sagemaker_types.EndpointStatusSystemUpdating:
+			// Transient — keep polling.
+		default:
+			// Terminal-bad states: Failed, RollingBack, OutOfService,
+			// UpdateRollbackFailed, Deleting. Error immediately.
+			return fmt.Errorf("wait InService %s: terminal status %s — cannot reach InService", endpointName, desc.EndpointStatus)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for endpoint %s to reach InService (timeout=%s, last status=%s)", endpointName, timeout, desc.EndpointStatus)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
 // waitSageMakerEndpointDeleted polls DescribeEndpoint until it returns NotFound
 // (deletion complete), up to the given timeout with the given poll interval.
 // Returns an error on timeout or context cancellation.

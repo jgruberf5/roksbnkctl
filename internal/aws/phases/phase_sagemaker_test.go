@@ -2,8 +2,10 @@ package phases
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	sagemaker_types "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
@@ -674,5 +676,289 @@ func TestEnsureSageMakerEndpoint_FailedAfterRecovery(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Failed") {
 		t.Errorf("error = %q, want it to mention Failed status", err.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// waitSageMakerEndpointInService tests
+// ---------------------------------------------------------------------------
+
+// TestWaitSageMakerEndpointInService_CreatingThenInService drives the mock
+// through Creating → InService and asserts the waiter returns nil.
+//
+// Queue: Creating (poll 1) → InService (poll 2).
+func TestWaitSageMakerEndpointInService_CreatingThenInService(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep"
+
+	// Poll 1 → Creating.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusCreating,
+	}, nil)
+	// Poll 2 → InService.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusInService,
+	}, nil)
+
+	err := waitSageMakerEndpointInService(context.Background(), sm, ep, 30*time.Second, 1*time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitSageMakerEndpointInService: expected nil, got %v", err)
+	}
+}
+
+// TestWaitSageMakerEndpointInService_Timeout asserts that an endpoint that
+// never leaves Creating eventually causes a timeout error.
+func TestWaitSageMakerEndpointInService_Timeout(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep-timeout"
+
+	// Pre-register so DescribeEndpoint always returns Creating (queue exhausted
+	// → falls through to in-memory registry).
+	sm.endpoints[ep] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusCreating,
+	}
+
+	err := waitSageMakerEndpointInService(context.Background(), sm, ep, 10*time.Millisecond, 1*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want it to mention timed out", err.Error())
+	}
+}
+
+// TestWaitSageMakerEndpointInService_TerminalBad asserts that a terminal-bad
+// status (Failed) causes an immediate error without waiting out the timeout.
+func TestWaitSageMakerEndpointInService_TerminalBad(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep-failed"
+
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}, nil)
+
+	// Use a long timeout — the error should arrive long before it expires.
+	err := waitSageMakerEndpointInService(context.Background(), sm, ep, 10*time.Minute, 1*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for terminal-bad Failed status, got nil")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("error = %q, want 'terminal status'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Failed") {
+		t.Errorf("error = %q, want it to mention Failed", err.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedeploySageMakerEndpointCold tests
+// ---------------------------------------------------------------------------
+
+// TestRedeploySageMakerEndpointCold_HappyPath drives the mock through the
+// full cold-redeploy sequence and asserts the correct call order and counts.
+//
+// Queue:
+//  1. DescribeEndpoint → InService (captures configName = "test-ep-config")
+//  2. waitSageMakerEndpointDeleted poll → NotFound (deletion confirmed)
+//  3. waitSageMakerEndpointInService poll → InService (no sleep: first poll returns InService)
+//
+// The test does NOT drive Creating → InService for the InService waiter to avoid
+// the 15 s poll interval hardcoded in RedeploySageMakerEndpointCold. The
+// Creating → InService transition is tested independently by
+// TestWaitSageMakerEndpointInService_CreatingThenInService.
+func TestRedeploySageMakerEndpointCold_HappyPath(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep"
+	configName := "test-ep-config"
+
+	// Pre-register so DeleteEndpoint finds the endpoint.
+	sm.endpoints[ep] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}
+
+	// Entry 1: initial DescribeEndpoint → InService with configName.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}, nil)
+	// Entry 2: deletion-wait poll → NotFound (deletion confirmed).
+	sm.enqueueDescribeEndpoint(nil, mkSageMakerNotFound("endpoint", ep))
+	// Entry 3: waitInService poll → InService immediately (no inter-poll sleep).
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusInService,
+	}, nil)
+
+	err := RedeploySageMakerEndpointCold(context.Background(), sm, ep)
+	if err != nil {
+		t.Fatalf("RedeploySageMakerEndpointCold: %v", err)
+	}
+
+	// DeleteEndpoint must have been called exactly once.
+	if sm.deleteEndpointCalls != 1 {
+		t.Errorf("deleteEndpointCalls = %d, want 1", sm.deleteEndpointCalls)
+	}
+	// CreateEndpoint must have been called exactly once.
+	if sm.createEndpointCalls != 1 {
+		t.Errorf("createEndpointCalls = %d, want 1", sm.createEndpointCalls)
+	}
+	// Endpoint NAME must be unchanged (forge target URL stays stable).
+	if sm.createEndpointInput == nil {
+		t.Fatal("createEndpointInput is nil")
+	}
+	if sm.createEndpointInput.EndpointName == nil || *sm.createEndpointInput.EndpointName != ep {
+		t.Errorf("CreateEndpoint EndpointName = %v, want %q", sm.createEndpointInput.EndpointName, ep)
+	}
+	// EndpointConfigName must match the one captured from DescribeEndpoint
+	// (not a hardcoded convention — proved by using a distinct name here).
+	if sm.createEndpointInput.EndpointConfigName == nil || *sm.createEndpointInput.EndpointConfigName != configName {
+		t.Errorf("CreateEndpoint EndpointConfigName = %v, want %q", sm.createEndpointInput.EndpointConfigName, configName)
+	}
+}
+
+// TestRedeploySageMakerEndpointCold_WaitInServiceTerminalBad asserts that when
+// the wait-InService waiter sees a terminal-bad status (Failed) after CreateEndpoint,
+// the error propagates from RedeploySageMakerEndpointCold with "wait-InService".
+//
+// Queue:
+//  1. initial Describe → InService (captures configName)
+//  2. deletion-wait poll → NotFound (deletion confirmed)
+//  3. waitInService poll → Failed (terminal-bad → immediate error)
+func TestRedeploySageMakerEndpointCold_WaitInServiceTerminalBad(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep-is-fail"
+	configName := "test-ep-is-fail-config"
+
+	// Pre-register so DeleteEndpoint finds and removes the endpoint.
+	sm.endpoints[ep] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}
+
+	// Entry 1: initial Describe → InService.
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}, nil)
+	// Entry 2: deletion-wait poll → NotFound (deletion confirmed).
+	sm.enqueueDescribeEndpoint(nil, mkSageMakerNotFound("endpoint", ep))
+	// Entry 3: waitInService poll → Failed (terminal-bad, immediate error).
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:   ptr(ep),
+		EndpointStatus: sagemaker_types.EndpointStatusFailed,
+	}, nil)
+
+	err := RedeploySageMakerEndpointCold(context.Background(), sm, ep)
+	if err == nil {
+		t.Fatal("expected error when wait-InService hits terminal-bad status, got nil")
+	}
+	if !strings.Contains(err.Error(), "wait-InService") {
+		t.Errorf("error = %q, want 'wait-InService'", err.Error())
+	}
+}
+
+// TestRedeploySageMakerEndpointCold_WaitInServiceTimeout asserts that an
+// InService-wait timeout propagates through RedeploySageMakerEndpointCold as a
+// wrapped error containing "wait-InService".
+//
+// RedeploySageMakerEndpointCold calls waitSageMakerEndpointInService with a
+// hardcoded 20m timeout and 15s interval — neither is injectable without
+// changing the production signature. To exercise the timeout path without
+// waiting real time, we pass a context whose deadline expires in 1ms.
+// waitSageMakerEndpointInService selects on ctx.Done() during the inter-poll
+// sleep and returns ctx.Err() (context.DeadlineExceeded) when the context
+// expires, which RedeploySageMakerEndpointCold wraps as "wait-InService: ...".
+//
+// Queue:
+//  1. initial DescribeEndpoint → InService (captures configName)
+//  2. deletion-wait poll → NotFound (deletion confirmed)
+//  3. (queue exhausted) — CreateEndpoint registers endpoint as Creating in the
+//     registry; the InService waiter reads registry on each poll → Creating
+//     → ctx deadline fires during the inter-poll sleep → returns deadline error.
+func TestRedeploySageMakerEndpointCold_WaitInServiceTimeout(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep-is-timeout"
+	configName := "test-ep-is-timeout-config"
+
+	// Pre-register so DeleteEndpoint finds and removes the endpoint.
+	sm.endpoints[ep] = &sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}
+
+	// Entry 1: initial Describe → InService (captures configName).
+	sm.enqueueDescribeEndpoint(&sagemaker.DescribeEndpointOutput{
+		EndpointName:       ptr(ep),
+		EndpointConfigName: ptr(configName),
+		EndpointStatus:     sagemaker_types.EndpointStatusInService,
+	}, nil)
+	// Entry 2: deletion-wait poll → NotFound (deletion confirmed).
+	sm.enqueueDescribeEndpoint(nil, mkSageMakerNotFound("endpoint", ep))
+	// After CreateEndpoint the mock registers ep as Creating in the registry.
+	// The InService waiter polls the registry on every call (queue is now empty)
+	// and keeps seeing Creating. The context deadline fires during the 15s
+	// inter-poll sleep, cutting the wait short and returning ctx.Err().
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	err := RedeploySageMakerEndpointCold(ctx, sm, ep)
+	if err == nil {
+		t.Fatal("expected error from InService timeout through RedeploySageMakerEndpointCold, got nil")
+	}
+	// The error must be wrapped by the wait-InService stage — confirming the
+	// timeout propagates through the full function (not swallowed or short-circuited).
+	if !strings.Contains(err.Error(), "wait-InService") {
+		t.Errorf("error = %q, want it to contain 'wait-InService'", err.Error())
+	}
+	// delete and create must still have fired (the timeout occurs in the post-create wait,
+	// not in the delete/create steps themselves).
+	if sm.deleteEndpointCalls != 1 {
+		t.Errorf("deleteEndpointCalls = %d, want 1", sm.deleteEndpointCalls)
+	}
+	if sm.createEndpointCalls != 1 {
+		t.Errorf("createEndpointCalls = %d, want 1", sm.createEndpointCalls)
+	}
+}
+
+// TestRedeploySageMakerEndpointCold_DescribeEndpointError asserts that a
+// non-NotFound API error from the initial DescribeEndpoint call propagates
+// through RedeploySageMakerEndpointCold as a wrapped error containing
+// "DescribeEndpoint", and that DeleteEndpoint and CreateEndpoint are never
+// called (fail-closed: no mutation when the initial capture step errors).
+func TestRedeploySageMakerEndpointCold_DescribeEndpointError(t *testing.T) {
+	sm := newMockSageMaker()
+	ep := "test-ep-api-err"
+
+	// Enqueue a non-NotFound API error (e.g. AccessDeniedException) for the
+	// initial DescribeEndpoint call.
+	apiErr := fmt.Errorf("AccessDeniedException: User is not authorized to perform: sagemaker:DescribeEndpoint")
+	sm.enqueueDescribeEndpoint(nil, apiErr)
+
+	err := RedeploySageMakerEndpointCold(context.Background(), sm, ep)
+	if err == nil {
+		t.Fatal("expected error from DescribeEndpoint API failure, got nil")
+	}
+	// The error must be wrapped with "DescribeEndpoint" — the exact wrapping
+	// applied by RedeploySageMakerEndpointCold: "cold redeploy %s: DescribeEndpoint: %w".
+	if !strings.Contains(err.Error(), "DescribeEndpoint") {
+		t.Errorf("error = %q, want it to contain 'DescribeEndpoint'", err.Error())
+	}
+	// Fail-closed: must not proceed to delete or create.
+	if sm.deleteEndpointCalls != 0 {
+		t.Errorf("deleteEndpointCalls = %d, want 0 (must not delete when initial Describe fails)", sm.deleteEndpointCalls)
+	}
+	if sm.createEndpointCalls != 0 {
+		t.Errorf("createEndpointCalls = %d, want 0 (must not create when initial Describe fails)", sm.createEndpointCalls)
 	}
 }

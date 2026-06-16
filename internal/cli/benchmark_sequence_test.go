@@ -434,6 +434,118 @@ func TestResetSeam_ErrorType_ErrorsAs(t *testing.T) {
 // Shootout path: reset error → RESET_FAILED on affected leg, others continue
 // ---------------------------------------------------------------------------
 
+// TestResetCacheHookFn_FailingRealStyleHook_PropagatesSinglePath verifies that
+// when resetCacheHookFn is replaced with a failing "real-style" hook (the kind
+// Task B wires in when --reset-cache is set), the error:
+//   - propagates from runScenarioSequence as a *resetCacheError (errors.As)
+//   - aborts mooncake before it runs (fail-closed)
+//
+// This test exercises the Task-A fail-closed seam with a Task-B-style hook body.
+func TestResetCacheHookFn_FailingRealStyleHook_PropagatesSinglePath(t *testing.T) {
+	cleanup := sequenceTestSetup(t)
+	defer cleanup()
+
+	// Simulate a real-style hook that returns a wrapped SageMaker error.
+	smErr := fmt.Errorf("SageMaker cold redeploy test-rig-lmi: cold redeploy test-rig-lmi: CreateEndpoint: ServiceUnavailableException")
+	resetCacheHookFn = func(_ context.Context, _ resetCacheArgs) error {
+		return smErr
+	}
+
+	aiperfCalls := 0
+	runAiperfFn = func(_ context.Context, _ jumphost.AiperfRunOptions) (*jumphost.AiperfResult, error) {
+		aiperfCalls++
+		return stubAiperfResult(), nil
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	graph := forgeGraph{}
+	_, err := runScenarioSequence(cmd, jumphost.ProbeOptions{VIP: flagBenchVIP}, forge.RestCreds{}, "agent", graph,
+		[]string{"baseline", "mooncake"}, "", "")
+
+	if err == nil {
+		t.Fatal("expected error from real-style reset hook, got nil")
+	}
+	// Must be detectable as *resetCacheError via errors.As (contract for RESET_FAILED).
+	var rce *resetCacheError
+	if !errors.As(err, &rce) {
+		t.Fatalf("errors.As(*resetCacheError) = false; err = %v", err)
+	}
+	if rce.PrevKey != "baseline" || rce.NextKey != "mooncake" {
+		t.Errorf("resetCacheError{PrevKey=%q, NextKey=%q}, want {baseline, mooncake}", rce.PrevKey, rce.NextKey)
+	}
+	// baseline has 4 children — mooncake must NOT have started.
+	if aiperfCalls != 4 {
+		t.Errorf("aiperf called %d times, want 4 (baseline only; mooncake blocked by reset)", aiperfCalls)
+	}
+}
+
+// TestResetCacheHookFn_FailingRealStyleHook_ShootoutResetFailed verifies that a
+// Task-B-style failing hook causes RESET_FAILED on the affected shootout leg.
+func TestResetCacheHookFn_FailingRealStyleHook_ShootoutResetFailed(t *testing.T) {
+	cleanup := sequenceTestSetup(t)
+	defer cleanup()
+
+	origScenario := flagBenchScenario
+	origCheckServedModel := checkServedModelFn
+	origProxies := flagBenchProxies
+	origDirectPodIP := flagBenchDirectPodIP
+	origDiscover := discoverProxiesFn
+	origList := listProxyDeploymentsFn
+	defer func() {
+		flagBenchScenario = origScenario
+		checkServedModelFn = origCheckServedModel
+		flagBenchProxies = origProxies
+		flagBenchDirectPodIP = origDirectPodIP
+		discoverProxiesFn = origDiscover
+		listProxyDeploymentsFn = origList
+	}()
+
+	flagBenchScenario = "baseline,mooncake"
+	flagBenchProxies = "f5-bnk"
+	flagBenchDirectPodIP = ""
+
+	checkServedModelFn = func(_ context.Context, _ jumphost.ProbeOptions, _ string) error {
+		return nil
+	}
+	discoverProxiesFn = func(_ context.Context, _ forge.ProxyDiscoverOptions) (forge.ProxyDiscoveryResult, error) {
+		return forge.ProxyDiscoveryResult{DiscoveredCount: 1}, nil
+	}
+	listProxyDeploymentsFn = func(_ context.Context, _ forge.ProxyDiscoverOptions) ([]forge.ProxyDeployment, error) {
+		return []forge.ProxyDeployment{{ID: 10, ProxyType: "f5-bnk"}}, nil
+	}
+
+	// Real-style hook that always fails (simulates a SageMaker API error).
+	smErr := fmt.Errorf("SageMaker cold redeploy test-rig-lmi: DescribeEndpoint: endpoint not found")
+	resetCacheHookFn = func(_ context.Context, _ resetCacheArgs) error {
+		return smErr
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	graph := forgeGraph{targetID: 5}
+
+	frontEnds, resolveErr := resolveShootoutFrontEnds(context.Background(), forge.RestCreds{}, graph.targetID)
+	if resolveErr != nil {
+		t.Fatalf("resolveShootoutFrontEnds: %v", resolveErr)
+	}
+	if len(frontEnds) != 1 {
+		t.Fatalf("expected 1 front-end, got %d", len(frontEnds))
+	}
+
+	g := graph
+	g.proxyDeploymentID = frontEnds[0].ProxyDeploymentID
+	oc := runShootoutFrontEnd(cmd, jumphost.ProbeOptions{VIP: flagBenchVIP}, forge.RestCreds{}, "agent", g, frontEnds[0].ProxyType, frontEnds[0].VIP, nil)
+
+	if oc.Status != "RESET_FAILED" {
+		t.Errorf("shootout leg Status = %q, want RESET_FAILED (err=%v)", oc.Status, oc.Err)
+	}
+	if oc.Err == nil {
+		t.Error("shootout leg Err should be set for RESET_FAILED")
+	}
+}
+
 func TestShootoutResetFailed_OneLegDoesNotAbortOthers(t *testing.T) {
 	// When the reset seam fails for one front-end (e.g. f5-bnk), the shootout
 	// must mark that leg RESET_FAILED and still run the other front-end.
