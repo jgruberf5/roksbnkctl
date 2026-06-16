@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,19 @@ const lmiDefaultImageSuffix = "763104351884.dkr.ecr.%s.amazonaws.com/djl-inferen
 // lmiServedModelName pins the LMI (DJL 0.36) served model name to "llama3" so
 // it matches the in-cluster vLLM served model id. This lets the forge benchmark
 // comparison target the same model name across both legs without configuration.
+// Even for large models (e.g. Qwen-32B) the served name stays "llama3" so the
+// harness --model llama3 flag works without reconfiguration.
 const lmiServedModelName = "llama3"
+
+// optTensorParallelDegree is the LMI v25 / vLLM env-var for tensor-parallel degree.
+// Set when ai.sagemaker.tensorParallelSize > 0. Defined as a const so a future
+// AWS env-var rename is a one-line edit.
+const optTensorParallelDegree = "OPTION_TENSOR_PARALLEL_DEGREE"
+
+// optMaxModelLen is the LMI v25 / vLLM env-var for maximum model context length.
+// Set when ai.sagemaker.maxModelLen > 0. Defined as a const alongside
+// optTensorParallelDegree for the same rename-safety reason.
+const optMaxModelLen = "OPTION_MAX_MODEL_LEN"
 
 // PhaseSageMakerUp creates the SageMaker Model → EndpointConfig → Endpoint for
 // the configured LMI (vLLM) inference endpoint. Idempotent: DescribeModel /
@@ -163,7 +176,7 @@ func PhaseSageMakerUp(ctx context.Context, cl *intent.Cluster, st *state.State, 
 	}
 
 	// 1. Ensure Model.
-	if err := ensureSageMakerModel(ctx, clients.IAM, clients.SageMaker, modelName, imageURI, sm.Model, execRoleARN, smTags); err != nil {
+	if err := ensureSageMakerModel(ctx, clients.IAM, clients.SageMaker, modelName, imageURI, sm.Model, execRoleARN, smTags, sm.TensorParallelSize, sm.MaxModelLen); err != nil {
 		return fmt.Errorf("sagemaker up: model: %w", err)
 	}
 	st.Set("SAGEMAKER_MODEL_NAME", modelName)
@@ -233,7 +246,7 @@ func isGatedModel(modelID string) bool {
 	return len(modelID) >= 10 && modelID[:10] == "meta-llama"
 }
 
-func ensureSageMakerModel(ctx context.Context, iamClient IAMAPI, sm SageMakerAPI, modelName, imageURI, hfModelID, execRoleARN string, smTags []sagemaker_types.Tag) error {
+func ensureSageMakerModel(ctx context.Context, iamClient IAMAPI, sm SageMakerAPI, modelName, imageURI, hfModelID, execRoleARN string, smTags []sagemaker_types.Tag, tensorParallelSize, maxModelLen int) error {
 	_, err := sm.DescribeModel(ctx, &sagemaker.DescribeModelInput{ModelName: ptr(modelName)})
 	if err == nil {
 		fmt.Fprintf(os.Stderr, "[sagemaker] model %s already exists, skipping\n", modelName)
@@ -256,6 +269,15 @@ func ensureSageMakerModel(ctx context.Context, iamClient IAMAPI, sm SageMakerAPI
 	}
 	if hfToken != "" {
 		modelEnv["HF_TOKEN"] = hfToken
+	}
+	// Conditionally add tensor-parallel and max-model-len env vars.
+	// Zero value = unset: the keys are NOT added, keeping the env byte-identical
+	// to the existing 8B path. Non-zero values are emitted as string integers.
+	if tensorParallelSize > 0 {
+		modelEnv[optTensorParallelDegree] = strconv.Itoa(tensorParallelSize)
+	}
+	if maxModelLen > 0 {
+		modelEnv[optMaxModelLen] = strconv.Itoa(maxModelLen)
 	}
 
 	input := &sagemaker.CreateModelInput{

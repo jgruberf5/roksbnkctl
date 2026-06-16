@@ -256,3 +256,190 @@ func TestSageMaker_AIRigExampleEnabled(t *testing.T) {
 		t.Error("ai-rig scaleToZero = true, want false")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GPU-sizing preflight tests (TensorParallelSize / MaxModelLen)
+// ---------------------------------------------------------------------------
+
+// TestSageMaker_TPUnset_G5Xlarge verifies that the default 8B config on
+// ml.g5.xlarge (the live example instance) passes with tensorParallelSize unset.
+// G1 non-regression: the GPU-sizing rule must NOT engage when TP is zero.
+func TestSageMaker_TPUnset_G5Xlarge(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.xlarge
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err != nil {
+		t.Fatalf("ml.g5.xlarge with TP unset should pass, got: %v", err)
+	}
+}
+
+// TestSageMaker_TPUnset_G5_2Xlarge verifies that the field default ml.g5.2xlarge
+// (1 GPU) passes with tensorParallelSize unset. G1 non-regression.
+func TestSageMaker_TPUnset_G5_2Xlarge(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.2xlarge
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err != nil {
+		t.Fatalf("ml.g5.2xlarge with TP unset should pass, got: %v", err)
+	}
+}
+
+// TestSageMaker_TP4_G5_2Xlarge_Rejected verifies that ml.g5.2xlarge (1 GPU) +
+// tensorParallelSize: 4 is rejected by the GPU-sizing preflight.
+func TestSageMaker_TP4_G5_2Xlarge_Rejected(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.2xlarge
+    tensorParallelSize: 4
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("ml.g5.2xlarge + tensorParallelSize=4 should fail (1 GPU < 4), got nil")
+	}
+	if !strings.Contains(err.Error(), "tensorParallelSize") {
+		t.Errorf("error %q should mention tensorParallelSize", err.Error())
+	}
+	if !strings.Contains(err.Error(), "ml.g5.2xlarge") {
+		t.Errorf("error %q should name the instance ml.g5.2xlarge", err.Error())
+	}
+}
+
+// TestSageMaker_TP40_Rejected verifies that tensorParallelSize > 8 is rejected
+// (no g5/g6 SKU has more than 8 GPUs).
+func TestSageMaker_TP40_Rejected(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.48xlarge
+    tensorParallelSize: 40
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("tensorParallelSize=40 should fail (>8), got nil")
+	}
+	if !strings.Contains(err.Error(), "tensorParallelSize") {
+		t.Errorf("error %q should mention tensorParallelSize", err.Error())
+	}
+}
+
+// TestSageMaker_TPNegative_Rejected verifies that tensorParallelSize < 0 is rejected.
+func TestSageMaker_TPNegative_Rejected(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.xlarge
+    tensorParallelSize: -1
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("tensorParallelSize=-1 should fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "tensorParallelSize") {
+		t.Errorf("error %q should mention tensorParallelSize", err.Error())
+	}
+}
+
+// TestSageMaker_MaxModelLenNegative_Rejected verifies that maxModelLen < 0 is rejected.
+func TestSageMaker_MaxModelLenNegative_Rejected(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.g5.xlarge
+    maxModelLen: -100
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("maxModelLen=-100 should fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "maxModelLen") {
+		t.Errorf("error %q should mention maxModelLen", err.Error())
+	}
+}
+
+// TestSageMaker_UnknownInstance_TPSet_FailOpen verifies that an unknown instance
+// type (not in smInstanceGPUCount) with tensorParallelSize set passes validation.
+// This is the fail-open contract: unknown instances skip the GPU check entirely.
+func TestSageMaker_UnknownInstance_TPSet_FailOpen(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: meta-llama/Meta-Llama-3-8B-Instruct
+    instanceType: ml.p5.48xlarge
+    tensorParallelSize: 4
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	_, err := Load(p)
+	if err != nil {
+		t.Fatalf("unknown instance type ml.p5.48xlarge with TP=4 should pass (fail-open), got: %v", err)
+	}
+}
+
+// TestSageMaker_Qwen32B_G5_12xlarge_Passes verifies that the canonical Qwen-32B
+// example config (ml.g5.12xlarge + tensorParallelSize: 4 + maxModelLen: 8192) passes
+// validation. ml.g5.12xlarge has 4 GPUs; TP=4 == 4 → at the limit, passes.
+func TestSageMaker_Qwen32B_G5_12xlarge_Passes(t *testing.T) {
+	yaml := sageMakerYAML(`
+ai:
+  sagemaker:
+    enabled: true
+    model: Qwen/Qwen2.5-32B-Instruct
+    instanceType: ml.g5.12xlarge
+    tensorParallelSize: 4
+    maxModelLen: 8192
+    scaleToZero: false
+`)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cluster.yaml", yaml)
+
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Qwen-32B example config should pass validation, got: %v", err)
+	}
+	sm := c.AI.SageMaker
+	if sm.TensorParallelSize != 4 {
+		t.Errorf("TensorParallelSize = %d, want 4", sm.TensorParallelSize)
+	}
+	if sm.MaxModelLen != 8192 {
+		t.Errorf("MaxModelLen = %d, want 8192", sm.MaxModelLen)
+	}
+}

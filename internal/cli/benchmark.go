@@ -123,7 +123,9 @@ func init() {
 	f.IntVar(&flagBenchOSL, "osl", 128, "output sequence length (tokens)")
 	f.BoolVar(&flagBenchStreaming, "stream", true, "enable streaming mode (default true — required for TTFT/ITL metrics)")
 	f.StringVar(&flagBenchTokenizer, "tokenizer", "NousResearch/Meta-Llama-3-8B-Instruct",
-		"Hugging Face tokenizer repo for aiperf token counting (required by aiperf 0.10.0)")
+		"Hugging Face tokenizer repo for aiperf token counting (required by aiperf 0.10.0). "+
+			"Override for non-Llama endpoints (e.g. --tokenizer Qwen/Qwen2.5-32B-Instruct for a Qwen endpoint). "+
+			"The served model name (--model) is independent of the tokenizer — it stays 'llama3' even for Qwen.")
 	f.StringVar(&flagBenchHostHeader, "host-header", "",
 		"HTTP Host header to inject (--header Host:<value>); required when the BNK HTTPRoute has a hostname match")
 	f.DurationVar(&flagBenchTimeout, "timeout", 5*time.Minute, "maximum time for the aiperf run")

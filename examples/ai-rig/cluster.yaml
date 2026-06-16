@@ -125,6 +125,23 @@ ai:
     # ml.g5.2xlarge hit InsufficientInstanceCapacity for SageMaker on 2026-06-13.
     instanceType: ml.g5.xlarge
     scaleToZero: false
+    # --- Qwen-32B stretch target (opt-in, uncomment to enable) ---
+    # Replaces the 8B Llama config above with Qwen-32B on 4×A10G (96 GiB total).
+    # ml.g5.12xlarge: 4 NVIDIA A10G GPUs (4×24 GiB = 96 GiB), $16.32/hr on-demand.
+    # tensorParallelSize: 4 splits the model across all 4 GPUs (matches GPU count → passes preflight).
+    # maxModelLen: 8192 caps the KV cache to reduce GPU memory pressure for the 32B weights.
+    # OPTION_SERVED_MODEL_NAME stays "llama3" so --model llama3 works unchanged.
+    # Benchmark with: --tokenizer Qwen/Qwen2.5-32B-Instruct (served name stays --model llama3)
+    #
+    # BEFORE uncommenting: comment out the active `model:` and `instanceType:` lines
+    # above (duplicate YAML keys are silently ignored and will use the wrong values).
+    #
+    # enabled: true
+    # model: Qwen/Qwen2.5-32B-Instruct
+    # instanceType: ml.g5.12xlarge
+    # tensorParallelSize: 4
+    # maxModelLen: 8192
+    # scaleToZero: false
 
 # bnk: F5 supply-chain credentials, required by Phase 12. Replace both paths
 # with your own files before running `up` (gitignored).

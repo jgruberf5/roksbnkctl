@@ -931,6 +931,108 @@ func TestRedeploySageMakerEndpointCold_WaitInServiceTimeout(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// TensorParallelSize / MaxModelLen env threading tests
+// ---------------------------------------------------------------------------
+
+// TestPhaseSageMakerUp_ModelEnvVarsUnset_ByteIdentical verifies that when
+// TensorParallelSize and MaxModelLen are both zero (unset), the model environment
+// is byte-identical to the existing 8B path: only HF_MODEL_ID, ROLLING_BATCH,
+// and OPTION_SERVED_MODEL_NAME are present. No OPTION_TENSOR_PARALLEL_DEGREE or
+// OPTION_MAX_MODEL_LEN keys must appear.
+func TestPhaseSageMakerUp_ModelEnvVarsUnset_ByteIdentical(t *testing.T) {
+	awsmw.ResetForTest()
+	// Suppress any ambient HF_TOKEN so it cannot add a 4th key and make the
+	// key-count assertion flaky in a developer's shell environment.
+	t.Setenv("HF_TOKEN", "")
+	cl := makeSageMakerCluster(false) // TP and MML are zero (unset)
+	st := makeTestState(t)
+	sm := newMockSageMaker()
+	clients := makeSageMakerClients(sm, newMockIAM())
+
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("PhaseSageMakerUp: %v", err)
+	}
+
+	if sm.createModelInput == nil {
+		t.Fatal("createModelInput is nil")
+	}
+	env := sm.createModelInput.PrimaryContainer.Environment
+
+	// Exact key count: HF_MODEL_ID + ROLLING_BATCH + OPTION_SERVED_MODEL_NAME.
+	// HF_TOKEN is absent (empty env var → not added); TP and MML are unset (zero).
+	if got := len(env); got != 3 {
+		t.Errorf("unset case: expected exactly 3 env keys, got %d: %v", got, env)
+	}
+
+	// Required keys must be present with correct values.
+	if env["HF_MODEL_ID"] == "" {
+		t.Error("HF_MODEL_ID must be set")
+	}
+	if env["ROLLING_BATCH"] != "vllm" {
+		t.Errorf("ROLLING_BATCH = %q, want vllm", env["ROLLING_BATCH"])
+	}
+	if env["OPTION_SERVED_MODEL_NAME"] != lmiServedModelName {
+		t.Errorf("OPTION_SERVED_MODEL_NAME = %q, want %q", env["OPTION_SERVED_MODEL_NAME"], lmiServedModelName)
+	}
+
+	// TP and MML keys must NOT appear when unset (byte-identity contract).
+	if _, ok := env[optTensorParallelDegree]; ok {
+		t.Errorf("%s must NOT be set when TensorParallelSize=0, got %q", optTensorParallelDegree, env[optTensorParallelDegree])
+	}
+	if _, ok := env[optMaxModelLen]; ok {
+		t.Errorf("%s must NOT be set when MaxModelLen=0, got %q", optMaxModelLen, env[optMaxModelLen])
+	}
+}
+
+// TestPhaseSageMakerUp_ModelEnvVarsSet_TPAndMML verifies that when
+// TensorParallelSize and MaxModelLen are non-zero, the model environment carries
+// the correct LMI env keys with the configured values as string integers.
+func TestPhaseSageMakerUp_ModelEnvVarsSet_TPAndMML(t *testing.T) {
+	awsmw.ResetForTest()
+	// Suppress any ambient HF_TOKEN so it cannot add a 6th key and make the
+	// key-count assertion flaky in a developer's shell environment.
+	t.Setenv("HF_TOKEN", "")
+	cl := makeSageMakerCluster(false)
+	cl.AI.SageMaker.TensorParallelSize = 4
+	cl.AI.SageMaker.MaxModelLen = 8192
+	st := makeTestState(t)
+	sm := newMockSageMaker()
+	clients := makeSageMakerClients(sm, newMockIAM())
+
+	if err := PhaseSageMakerUp(context.Background(), cl, st, clients, false); err != nil {
+		t.Fatalf("PhaseSageMakerUp with TP=4 MML=8192: %v", err)
+	}
+
+	if sm.createModelInput == nil {
+		t.Fatal("createModelInput is nil")
+	}
+	env := sm.createModelInput.PrimaryContainer.Environment
+
+	// Exact key count: 3 base keys + OPTION_TENSOR_PARALLEL_DEGREE + OPTION_MAX_MODEL_LEN.
+	// HF_TOKEN is absent (empty env var → not added).
+	if got := len(env); got != 5 {
+		t.Errorf("set case (TP=4, MML=8192): expected exactly 5 env keys, got %d: %v", got, env)
+	}
+
+	// TP key must be present with value "4".
+	if got := env[optTensorParallelDegree]; got != "4" {
+		t.Errorf("%s = %q, want \"4\"", optTensorParallelDegree, got)
+	}
+	// MML key must be present with value "8192".
+	if got := env[optMaxModelLen]; got != "8192" {
+		t.Errorf("%s = %q, want \"8192\"", optMaxModelLen, got)
+	}
+
+	// Existing keys must still be correct (no regression).
+	if env["OPTION_SERVED_MODEL_NAME"] != lmiServedModelName {
+		t.Errorf("OPTION_SERVED_MODEL_NAME = %q, want %q", env["OPTION_SERVED_MODEL_NAME"], lmiServedModelName)
+	}
+	if env["ROLLING_BATCH"] != "vllm" {
+		t.Errorf("ROLLING_BATCH = %q, want vllm", env["ROLLING_BATCH"])
+	}
+}
+
 // TestRedeploySageMakerEndpointCold_DescribeEndpointError asserts that a
 // non-NotFound API error from the initial DescribeEndpoint call propagates
 // through RedeploySageMakerEndpointCold as a wrapped error containing
