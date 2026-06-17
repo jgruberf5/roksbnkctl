@@ -59,18 +59,28 @@ const (
 func Phase11bEBSCSIHugepages(ctx context.Context, cl *intent.Cluster, st *state.State, clients *Clients, dryRun bool) error {
 	awsmw.CheckAuthOrDie(clients.Profile)
 	name := cl.Metadata.Name
-	scName := cl.Bnk.StorageClassName // "gp2" by default (aws-gpu-setup parity)
-	fmt.Fprintf(os.Stderr, "[phase 11b] EBS CSI addon + hugepages-ds: cluster=%s sc=%s\n", name, scName)
 
+	// On dry-run, cl.Bnk is optional. Use defaults (matching applyDefaults) for logging/state.
 	if dryRun {
+		scName := "gp2"    // default storage class (aws-gpu-setup parity)
+		hugepages := "4Gi" // default TMM hugepages (matching applyDefaults)
+		if cl.Bnk != nil {
+			scName = cl.Bnk.StorageClassName
+			hugepages = cl.Bnk.TmmHugepages
+		}
+		fmt.Fprintf(os.Stderr, "[phase 11b] EBS CSI addon + hugepages-ds: cluster=%s sc=%s\n", name, scName)
 		fmt.Fprintln(os.Stderr, "[phase 11b] dry-run: would install aws-ebs-csi-driver EKS addon (managed)")
 		fmt.Fprintln(os.Stderr, "[phase 11b] dry-run: would apply hugepages-setup DaemonSet in kube-system")
-		fmt.Fprintf(os.Stderr, "[phase 11b] dry-run: would wait for TMM node hugepages-2Mi >= %s\n", cl.Bnk.TmmHugepages)
+		fmt.Fprintf(os.Stderr, "[phase 11b] dry-run: would wait for TMM node hugepages-2Mi >= %s\n", hugepages)
 		st.Set("EBS_CSI_ADDON_STATUS", "dry-run-ACTIVE")
 		st.Set("GP3_STORAGE_CLASS", scName)
 		st.Set("HUGEPAGES_DS_INSTALLED_AT", "dry-run")
 		return nil
 	}
+
+	// Non-dry-run: cl.Bnk must be present (validated earlier in phase flow, e.g., by applyDefaults).
+	scName := cl.Bnk.StorageClassName // "gp2" by default (aws-gpu-setup parity)
+	fmt.Fprintf(os.Stderr, "[phase 11b] EBS CSI addon + hugepages-ds: cluster=%s sc=%s\n", name, scName)
 
 	if clients.K8s == nil || clients.Dynamic == nil {
 		return fmt.Errorf("phase11b: k8s clients nil — Phase 11 must run first")

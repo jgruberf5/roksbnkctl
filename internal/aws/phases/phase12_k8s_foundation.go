@@ -90,7 +90,29 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 12] k8s foundation: cluster=%s\n", name)
 
-	// Validate bnk: block is present (required for phase 12+).
+	// Dry-run: allowed without bnk: block (infra-only planning).
+	// Live: required for supply-chain secrets.
+	if dryRun && cl.Bnk == nil {
+		vars := render.CertChainVarsFromCluster(cl)
+		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: bnk: block absent, skipping BNK k8s foundation (supply-chain secrets, cert-manager, certs)\n")
+		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would create namespaces: %s\n", strings.Join(bnkNamespaces, ", "))
+		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would create FAR/license secrets (skipped; no bnk: block)\n")
+		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would apply cert-manager v%s\n", intent.EmbeddedCertManagerVersion)
+		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would apply BNK cert chain (issuer=%s, ca=%s)\n",
+			vars.SelfSignedIssuer, vars.CACertName)
+		st.Set("BNK_NAMESPACES_CREATED", "dry-run-"+strings.Join(bnkNamespaces, ","))
+		st.Set("BNK_FAR_SECRET_NAME", "dry-run-"+farSecretName)
+		st.Set("BNK_LICENSE_JWT_SECRET", "dry-run-"+licenseSecretName)
+		st.Set("CERT_MANAGER_VERSION", "dry-run-"+intent.EmbeddedCertManagerVersion)
+		st.Set("BNK_SELFSIGNED_ISSUER", "dry-run-"+vars.SelfSignedIssuer)
+		st.Set("BNK_CA_CERT_NAME", "dry-run-"+vars.CACertName)
+		st.Set("BNK_CA_SECRET_NAME", "dry-run-"+vars.CASecretName)
+		st.Set("BNK_CA_ISSUER", "dry-run-"+vars.CAIssuer)
+		st.Set("MULTUS_VERSION", multusVersion)
+		return nil
+	}
+
+	// Live path: validate bnk: block is present.
 	if cl.Bnk == nil {
 		return fmt.Errorf("phase12: cluster.yaml must include a 'bnk:' block (see slice-05 docs)")
 	}
@@ -100,26 +122,16 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		return err
 	}
 
-	// Read FAR archive + JWT files (surfaces ENOENT at dry-run time too).
-	farData, err := os.ReadFile(farPath) // #nosec G304 -- path is operator-supplied via cluster.yaml bnk.farArchive
-	if err != nil {
-		return fmt.Errorf("phase12: reading FAR archive %s: %w", farPath, err)
-	}
-	if len(farData) == 0 {
-		return fmt.Errorf("phase12: FAR archive %s is empty", farPath)
-	}
-
-	jwtData, err := os.ReadFile(jwtPath) // #nosec G304 -- path is operator-supplied via cluster.yaml bnk.jwt
-	if err != nil {
-		return fmt.Errorf("phase12: reading JWT %s: %w", jwtPath, err)
-	}
-	if len(jwtData) == 0 {
-		return fmt.Errorf("phase12: JWT file %s is empty", jwtPath)
-	}
-
 	vars := render.CertChainVarsFromCluster(cl)
 
+	// Dry-run with Bnk block provided: validate files are accessible (via os.Stat), plan without reading content.
 	if dryRun {
+		if _, err := os.Stat(farPath); err != nil {
+			return fmt.Errorf("phase12: dry-run: FAR archive %s not accessible: %w", farPath, err)
+		}
+		if _, err := os.Stat(jwtPath); err != nil {
+			return fmt.Errorf("phase12: dry-run: JWT %s not accessible: %w", jwtPath, err)
+		}
 		fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would create namespaces: %s\n", strings.Join(bnkNamespaces, ", "))
 		for _, ns := range farSecretNamespaces {
 			fmt.Fprintf(os.Stderr, "[phase 12] dry-run: would create secret %s/%s (dockerconfigjson)\n", ns, farSecretName)
@@ -136,7 +148,25 @@ func Phase12K8sFoundation(ctx context.Context, cl *intent.Cluster, st *state.Sta
 		st.Set("BNK_CA_CERT_NAME", "dry-run-"+vars.CACertName)
 		st.Set("BNK_CA_SECRET_NAME", "dry-run-"+vars.CASecretName)
 		st.Set("BNK_CA_ISSUER", "dry-run-"+vars.CAIssuer)
+		st.Set("MULTUS_VERSION", multusVersion)
 		return nil
+	}
+
+	// Live path: read FAR archive + JWT files.
+	farData, err := os.ReadFile(farPath) // #nosec G304 -- path is operator-supplied via cluster.yaml bnk.farArchive
+	if err != nil {
+		return fmt.Errorf("phase12: reading FAR archive %s: %w", farPath, err)
+	}
+	if len(farData) == 0 {
+		return fmt.Errorf("phase12: FAR archive %s is empty", farPath)
+	}
+
+	jwtData, err := os.ReadFile(jwtPath) // #nosec G304 -- path is operator-supplied via cluster.yaml bnk.jwt
+	if err != nil {
+		return fmt.Errorf("phase12: reading JWT %s: %w", jwtPath, err)
+	}
+	if len(jwtData) == 0 {
+		return fmt.Errorf("phase12: JWT file %s is empty", jwtPath)
 	}
 
 	if clients.K8s == nil {

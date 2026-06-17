@@ -182,9 +182,9 @@ func TestPhase12_DryRun_SetsPlaceholdersNoK8sCalls(t *testing.T) {
 	}
 }
 
-// ─── Test 2: Missing bnk: block → clear error ─────────────────────────────────
+// ─── Test 2: Dry-run with nil bnk: block → succeeds, sets placeholders ────────
 
-func TestPhase12_MissingBnkBlock_ReturnsError(t *testing.T) {
+func TestPhase12_DryRun_NilBnkBlock_Succeeds(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
 	cl := sydTracerCluster() // no Bnk field
@@ -192,46 +192,89 @@ func TestPhase12_MissingBnkBlock_ReturnsError(t *testing.T) {
 	clients := p12ClientsDryRun()
 
 	err := Phase12K8sFoundation(context.Background(), cl, st, clients, true)
+	if err != nil {
+		t.Fatalf("Phase12K8sFoundation dry-run with nil Bnk should not error: %v", err)
+	}
+
+	// Should have set state keys with dry-run placeholders.
+	if st.Get("BNK_NAMESPACES_CREATED") == "" {
+		t.Error("dry-run nil Bnk: state[BNK_NAMESPACES_CREATED] should be set")
+	}
+	if !strings.HasPrefix(st.Get("BNK_NAMESPACES_CREATED"), "dry-run-") {
+		t.Errorf("dry-run nil Bnk: state[BNK_NAMESPACES_CREATED] = %q, want 'dry-run-' prefix", st.Get("BNK_NAMESPACES_CREATED"))
+	}
+}
+
+// ─── Test 2b: Live path with nil bnk: block → returns error ─────────────────
+
+func TestPhase12_LivePath_MissingBnkBlock_ReturnsError(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := sydTracerCluster() // no Bnk field
+	st, _ := state.Load(dir)
+	clients := p12ClientsFake()
+
+	err := Phase12K8sFoundation(context.Background(), cl, st, clients, false) // dryRun=false
 	if err == nil {
-		t.Fatal("expected error for missing bnk: block, got nil")
+		t.Fatal("expected error for missing bnk: block in live path, got nil")
 	}
 	if !strings.Contains(err.Error(), "bnk:") {
 		t.Errorf("error message should mention 'bnk:': %v", err)
 	}
 }
 
-// ─── Test 3: FAR archive file not found → clear error at phase entry ──────────
+// ─── Test 3: Dry-run with Bnk but nonexistent files → os.Stat error ───────────
 
-func TestPhase12_FARArchiveNotFound_ReturnsError(t *testing.T) {
+func TestPhase12_DryRun_BnkProvidedButFilesNotFound_ReturnsError(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	cl := p12Cluster(t, "/nonexistent/far.json", "/nonexistent/license.jwt")
+	st, _ := state.Load(dir)
+	clients := p12ClientsDryRun()
+
+	// Dry-run with Bnk block provided: Phase12 validates file accessibility via os.Stat
+	// (not reading content). Nonexistent files → os.Stat error.
+	err := Phase12K8sFoundation(context.Background(), cl, st, clients, true)
+	if err == nil {
+		t.Fatal("expected error for nonexistent files in dry-run with Bnk provided")
+	}
+	if !strings.Contains(err.Error(), "dry-run") || !strings.Contains(err.Error(), "FAR archive") || !strings.Contains(err.Error(), "not accessible") {
+		t.Errorf("error should mention 'dry-run', 'FAR archive', and 'not accessible': %v", err)
+	}
+}
+
+// ─── Test 3b: Live path with FAR archive file not found → error ────────────────
+
+func TestPhase12_LivePath_FARArchiveNotFound_ReturnsError(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
 	jwtPath := writeTempFile(t, dir, "license.jwt", "jwt-token")
 	cl := p12Cluster(t, "/nonexistent/far.json", jwtPath)
 	st, _ := state.Load(dir)
-	clients := p12ClientsDryRun()
+	clients := p12ClientsFake()
 
-	err := Phase12K8sFoundation(context.Background(), cl, st, clients, true)
+	err := Phase12K8sFoundation(context.Background(), cl, st, clients, false) // dryRun=false
 	if err == nil {
-		t.Fatal("expected error for missing FAR archive, got nil")
+		t.Fatal("expected error for missing FAR archive in live path, got nil")
 	}
 	if !strings.Contains(err.Error(), "FAR archive") {
 		t.Errorf("error message should mention 'FAR archive': %v", err)
 	}
 }
 
-// ─── Test 4: JWT file not found → clear error at phase entry ─────────────────
+// ─── Test 4: Live path with JWT file not found → error ────────────────────────
 
-func TestPhase12_JWTNotFound_ReturnsError(t *testing.T) {
+func TestPhase12_LivePath_JWTNotFound_ReturnsError(t *testing.T) {
 	awsmw.ResetForTest()
 	dir := t.TempDir()
 	farPath := writeTempFile(t, dir, "far.json", `{"auths":{}}`)
 	cl := p12Cluster(t, farPath, "/nonexistent/license.jwt")
 	st, _ := state.Load(dir)
-	clients := p12ClientsDryRun()
+	clients := p12ClientsFake()
 
-	err := Phase12K8sFoundation(context.Background(), cl, st, clients, true)
+	err := Phase12K8sFoundation(context.Background(), cl, st, clients, false) // dryRun=false
 	if err == nil {
-		t.Fatal("expected error for missing JWT file, got nil")
+		t.Fatal("expected error for missing JWT file in live path, got nil")
 	}
 	if !strings.Contains(err.Error(), "JWT") {
 		t.Errorf("error message should mention 'JWT': %v", err)

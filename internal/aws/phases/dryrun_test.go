@@ -609,3 +609,116 @@ func TestDryRun_Phase25ActivationPoll_SkipPoll(t *testing.T) {
 		t.Fatalf("Phase25 skip-poll: %v", err)
 	}
 }
+
+// TestDryRun_Phase12K8sFoundation_NoBnk verifies that Phase12 in dry-run mode
+// with no bnk: block (infra-only planning) succeeds without file reads.
+func TestDryRun_Phase12K8sFoundation_NoBnk(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	cl := sydTracerCluster()
+	cl.Bnk = nil // No bnk: block — infra-only dry-run
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase12K8sFoundation(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase12 dry-run with nil Bnk: %v", err)
+	}
+
+	// Verify state keys are set with dry-run placeholders.
+	if st.Get("BNK_NAMESPACES_CREATED") == "" {
+		t.Error("dry-run: BNK_NAMESPACES_CREATED not set (phase 12 should set placeholder)")
+	}
+	if st.Get("CERT_MANAGER_VERSION") == "" {
+		t.Error("dry-run: CERT_MANAGER_VERSION not set (phase 12 should set placeholder)")
+	}
+	if st.Get("BNK_FAR_SECRET_NAME") == "" {
+		t.Error("dry-run: BNK_FAR_SECRET_NAME not set (phase 12 should set placeholder)")
+	}
+}
+
+// TestDryRun_Phase14FLOHelm_NoBnk verifies that Phase14 in dry-run mode
+// with no bnk: block (FLO plan only) succeeds without file reads.
+func TestDryRun_Phase14FLOHelm_NoBnk(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	cl := sydTracerCluster()
+	cl.Bnk = nil // No bnk: block — FLO dry-run plan only
+	enabled := true
+	cl.Addons = &intent.AddonsSpec{
+		Flo: &intent.FloSpec{Enabled: &enabled},
+	}
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase14FLOHelm(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase14 dry-run with nil Bnk: %v", err)
+	}
+
+	// Verify state keys are set with dry-run placeholders.
+	if st.Get("FLO_RELEASE_NAME") != floReleaseName {
+		t.Errorf("dry-run: FLO_RELEASE_NAME = %q, want %q", st.Get("FLO_RELEASE_NAME"), floReleaseName)
+	}
+	if st.Get("FLO_NAMESPACE") != "dry-run" {
+		t.Errorf("dry-run: FLO_NAMESPACE = %q, want dry-run", st.Get("FLO_NAMESPACE"))
+	}
+}
+
+// TestDryRun_Phase14FLOHelm_FLODisabled verifies that Phase14 in dry-run mode
+// with FLO disabled skips the phase regardless of bnk: block.
+func TestDryRun_Phase14FLOHelm_FLODisabled(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+
+	cl := sydTracerCluster()
+	cl.Bnk = nil
+	disabled := false
+	cl.Addons = &intent.AddonsSpec{
+		Flo: &intent.FloSpec{Enabled: &disabled},
+	}
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase14FLOHelm(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase14 dry-run with FLO disabled: %v", err)
+	}
+
+	// State should not be set (phase skipped).
+	if st.Get("FLO_RELEASE_NAME") != "" {
+		t.Errorf("dry-run: FLO_RELEASE_NAME should not be set when FLO disabled, got %q", st.Get("FLO_RELEASE_NAME"))
+	}
+}
+
+// TestDryRun_Phase22CNEInstance_NoBnk verifies that Phase22 in dry-run mode
+// with no bnk: block succeeds (uses default deployment size).
+func TestDryRun_Phase22CNEInstance_NoBnk(t *testing.T) {
+	awsmw.ResetForTest()
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+
+	cl := hostDeviceCluster()
+	cl.Bnk = nil // No bnk: block — dry-run should use defaults
+	clients := &Clients{Profile: "test"}
+
+	if err := Phase22CNEInstance(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("Phase22 dry-run with nil Bnk: %v", err)
+	}
+
+	wantCRName := cl.Metadata.Name + "-bnk"
+	if st.Get("CNEINSTANCE_NAME") != wantCRName {
+		t.Errorf("CNEINSTANCE_NAME = %q, want %q", st.Get("CNEINSTANCE_NAME"), wantCRName)
+	}
+	if st.Get("CNEINSTANCE_APPLIED_AT") != "dry-run" {
+		t.Errorf("CNEINSTANCE_APPLIED_AT = %q, want dry-run", st.Get("CNEINSTANCE_APPLIED_AT"))
+	}
+}
