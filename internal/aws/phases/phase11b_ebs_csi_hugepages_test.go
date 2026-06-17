@@ -53,6 +53,36 @@ func TestPhase11bEBSCSIHugepages_DryRun(t *testing.T) {
 	}
 }
 
+// TestPhase11bEBSCSIHugepages_DryRun_NilBnk confirms that dry-run with nil Bnk
+// (as in forge's minimal external-only config) does not panic and uses defaults
+// for SC and hugepages values in logging/state.
+func TestPhase11bEBSCSIHugepages_DryRun_NilBnk(t *testing.T) {
+	cl := hostDeviceCluster()
+	cl.Bnk = nil // Simulate forge's dry-run with no BnkSpec
+	dir := t.TempDir()
+	st, err := state.Load(dir)
+	if err != nil {
+		t.Fatalf("state.Load: %v", err)
+	}
+	clients := &Clients{
+		Profile: "test",
+		EKS:     newMockEKS(),
+	}
+
+	// Must not panic.
+	if err := Phase11bEBSCSIHugepages(context.Background(), cl, st, clients, true); err != nil {
+		t.Fatalf("dry-run with nil Bnk: %v", err)
+	}
+
+	// Should use defaults for logging/state.
+	if got := st.Get("EBS_CSI_ADDON_STATUS"); !strings.HasPrefix(got, "dry-run") {
+		t.Errorf("EBS_CSI_ADDON_STATUS: got %q, want dry-run prefix", got)
+	}
+	if got := st.Get("GP3_STORAGE_CLASS"); got != "gp2" {
+		t.Errorf("GP3_STORAGE_CLASS (nil Bnk default): got %q, want %q", got, "gp2")
+	}
+}
+
 // TestPhase11bEBSCSIHugepages_DryRun_HugepagesOverride confirms that an
 // operator-overridden TmmHugepages (non-default 8Gi) flows through to the
 // dry-run log path without breaking the BnkSpec read.

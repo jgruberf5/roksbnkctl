@@ -566,3 +566,110 @@ func TestPhase14_ValuesTemplate_Substitution(t *testing.T) {
 		t.Errorf("rendered values missing cluster name %q:\n%s", cl.Metadata.Name, rendered)
 	}
 }
+
+// ─── Test 11: Dry-run with nil Bnk (FLO disabled) ──────────────────────────────
+
+func TestPhase14_DryRun_NilBnk_FloDisabled_Skips(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := sydTracerCluster() // no Bnk field
+	// Disable FLO
+	if cl.Addons == nil {
+		cl.Addons = &intent.AddonsSpec{}
+	}
+	falseVal := false
+	cl.Addons.Flo = &intent.FloSpec{Enabled: &falseVal}
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	clients := &Clients{Profile: "test"}
+
+	err := Phase14FLOHelm(context.Background(), cl, st, clients, true)
+	if err != nil {
+		t.Fatalf("Phase14FLOHelm dry-run with nil Bnk and FLO disabled: %v", err)
+	}
+	// Should not have set FLO state because FLO is disabled (returns early at FloEnabled check).
+	if st.Get("FLO_RELEASE_NAME") != "" {
+		t.Errorf("FLO_RELEASE_NAME should be empty when FLO disabled, got %q", st.Get("FLO_RELEASE_NAME"))
+	}
+}
+
+// ─── Test 12: Dry-run with nil Bnk (FLO enabled) ────────────────────────────────
+
+func TestPhase14_DryRun_NilBnk_FloEnabled_Succeeds(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := sydTracerCluster() // no Bnk field
+	// Enable FLO (should be default but explicit for clarity)
+	if cl.Addons == nil {
+		cl.Addons = &intent.AddonsSpec{}
+	}
+	trueVal := true
+	cl.Addons.Flo = &intent.FloSpec{Enabled: &trueVal}
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	clients := &Clients{Profile: "test"}
+
+	err := Phase14FLOHelm(context.Background(), cl, st, clients, true)
+	if err != nil {
+		t.Fatalf("Phase14FLOHelm dry-run with nil Bnk and FLO enabled should not error: %v", err)
+	}
+
+	// Should have set state with dry-run placeholder.
+	if st.Get("FLO_RELEASE_NAME") != floReleaseName {
+		t.Errorf("FLO_RELEASE_NAME = %q, want %q", st.Get("FLO_RELEASE_NAME"), floReleaseName)
+	}
+	if st.Get("FLO_NAMESPACE") != "dry-run" {
+		t.Errorf("FLO_NAMESPACE = %q, want dry-run", st.Get("FLO_NAMESPACE"))
+	}
+}
+
+// ─── Test 13: Dry-run with Bnk but nonexistent files → error ─────────────────────
+
+func TestPhase14_DryRun_BnkProvidedButFilesNotFound_ReturnsError(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := sydTracerCluster()
+	// Set Bnk with nonexistent file paths.
+	cl.Bnk = &intent.BnkSpec{
+		FARArchive: "/nonexistent/far.json",
+		JWT:        "/nonexistent/license.jwt",
+	}
+	if cl.Addons == nil {
+		cl.Addons = &intent.AddonsSpec{}
+	}
+	trueVal := true
+	cl.Addons.Flo = &intent.FloSpec{Enabled: &trueVal}
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	clients := &Clients{Profile: "test"}
+
+	// Dry-run with Bnk provided: validates file paths via os.Stat.
+	// Nonexistent files → error.
+	err := Phase14FLOHelm(context.Background(), cl, st, clients, true)
+	if err == nil {
+		t.Fatal("expected error for nonexistent files in dry-run with Bnk provided")
+	}
+	if !strings.Contains(err.Error(), "FAR archive") && !strings.Contains(err.Error(), "JWT") {
+		t.Errorf("error should mention FAR or JWT: %v", err)
+	}
+}
+
+// ─── Test 14: Live path with nil Bnk → error ───────────────────────────────────
+
+func TestPhase14_LivePath_NilBnk_FloEnabled_ReturnsError(t *testing.T) {
+	awsmw.ResetForTest()
+	cl := sydTracerCluster() // no Bnk field
+	if cl.Addons == nil {
+		cl.Addons = &intent.AddonsSpec{}
+	}
+	trueVal := true
+	cl.Addons.Flo = &intent.FloSpec{Enabled: &trueVal}
+	dir := t.TempDir()
+	st, _ := state.Load(dir)
+	clients := &Clients{Profile: "test"}
+
+	err := Phase14FLOHelm(context.Background(), cl, st, clients, false) // dryRun=false (live path)
+	if err == nil {
+		t.Fatal("expected error for nil Bnk in live path, got nil")
+	}
+	if !strings.Contains(err.Error(), "bnk:") {
+		t.Errorf("error should mention 'bnk:': %v", err)
+	}
+}

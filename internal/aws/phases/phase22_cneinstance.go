@@ -56,9 +56,16 @@ func Phase22CNEInstance(ctx context.Context, cl *intent.Cluster, st *state.State
 	fmt.Fprintf(os.Stderr, "[phase 22] CNEInstance: cluster=%s cr=%s\n", name, crName)
 
 	if dryRun {
+		deploySize := ""
+		if cl.Bnk != nil {
+			deploySize = cl.Bnk.DeploymentSize
+		}
+		if deploySize == "" {
+			deploySize = "Small" // default if not specified
+		}
 		fmt.Fprintf(os.Stderr,
 			"[phase 22] dry-run: would apply CNEInstance %s in %s with deploymentSize=%s\n",
-			crName, InstanceNamespace, cl.Bnk.DeploymentSize)
+			crName, InstanceNamespace, deploySize)
 		st.Set("CNEINSTANCE_NAME", crName)
 		st.Set("CNEINSTANCE_APPLIED_AT", "dry-run")
 		st.Set("CNEINSTANCE_RECONCILE_STARTED_AT", "dry-run")

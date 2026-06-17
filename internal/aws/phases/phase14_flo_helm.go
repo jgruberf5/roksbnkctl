@@ -148,11 +148,6 @@ func Phase14FLOHelm(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	name := cl.Metadata.Name
 	fmt.Fprintf(os.Stderr, "[phase 14] FLO Helm install: cluster=%s\n", name)
 
-	// Validate bnk: block.
-	if cl.Bnk == nil {
-		return fmt.Errorf("phase14: cluster.yaml must include a 'bnk:' block (required for FLO install)")
-	}
-
 	// Check FLO enabled.
 	var floSpec *intent.FloSpec
 	if cl.Addons != nil {
@@ -166,12 +161,51 @@ func Phase14FLOHelm(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	floVersion := floSpec.FLOVersion()
 	caIssuer := name + "-ca-cluster-issuer"
 
+	// Dry-run: allowed without bnk: block (FLO helm install plan only).
+	// If dryRun && cl.Bnk == nil, skip all file reads and return early.
+	if dryRun && cl.Bnk == nil {
+		fmt.Fprintf(os.Stderr, "[phase 14] dry-run: bnk: block absent, would helm install %s %s in %s (no license JWT material)\n",
+			floReleaseName, floVersion, floNamespace)
+		st.Set("FLO_RELEASE_NAME", floReleaseName)
+		st.Set("FLO_VERSION", floVersion)
+		st.Set("FLO_NAMESPACE", "dry-run")
+		st.Set("FLO_INSTALLED_AT", "dry-run")
+		return nil
+	}
+
+	if dryRun {
+		// dryRun && cl.Bnk != nil: bnk: block is provided, validate files exist but don't read full content.
+		farPath, jwtPath, err := resolveBnkFilePaths(cl)
+		if err != nil {
+			return fmt.Errorf("phase14: %w", err)
+		}
+		// Validate files exist (dry-run should not require full content reads).
+		if _, err := os.Stat(farPath); err != nil {
+			return fmt.Errorf("phase14: dry-run: FAR archive %s not accessible: %w", farPath, err)
+		}
+		if _, err := os.Stat(jwtPath); err != nil {
+			return fmt.Errorf("phase14: dry-run: JWT %s not accessible: %w", jwtPath, err)
+		}
+		fmt.Fprintf(os.Stderr, "[phase 14] dry-run: would helm install %s %s in %s (ca-issuer=%s, with license JWT)\n",
+			floReleaseName, floVersion, floNamespace, caIssuer)
+		st.Set("FLO_RELEASE_NAME", floReleaseName)
+		st.Set("FLO_VERSION", floVersion)
+		st.Set("FLO_NAMESPACE", "dry-run")
+		st.Set("FLO_INSTALLED_AT", "dry-run")
+		return nil
+	}
+
+	// Live path: validate bnk: block is present.
+	if cl.Bnk == nil {
+		return fmt.Errorf("phase14: cluster.yaml must include a 'bnk:' block (required for FLO install)")
+	}
+
 	farPath, jwtPath, err := resolveBnkFilePaths(cl)
 	if err != nil {
 		return fmt.Errorf("phase14: %w", err)
 	}
 
-	// Read FAR + JWT (surface ENOENT even in dry-run).
+	// Read FAR + JWT.
 	farData, err := os.ReadFile(farPath) // #nosec G304 -- operator-supplied path via cluster.yaml
 	if err != nil {
 		return fmt.Errorf("phase14: reading FAR archive %s: %w", farPath, err)
@@ -201,17 +235,6 @@ func Phase14FLOHelm(ctx context.Context, cl *intent.Cluster, st *state.State, cl
 	var valuesMap map[string]interface{}
 	if err := yaml.Unmarshal(renderedVals, &valuesMap); err != nil {
 		return fmt.Errorf("phase14: parsing rendered flo-values as YAML: %w", err)
-	}
-
-	if dryRun {
-		fmt.Fprintf(os.Stderr, "[phase 14] dry-run: would helm install %s %s in %s (ca-issuer=%s)\n",
-			floReleaseName, floVersion, floNamespace, caIssuer)
-		fmt.Fprintln(os.Stderr, "[phase 14] dry-run: would check existing releases (skipped in dry-run)")
-		st.Set("FLO_RELEASE_NAME", floReleaseName)
-		st.Set("FLO_VERSION", floVersion)
-		st.Set("FLO_NAMESPACE", "dry-run")
-		st.Set("FLO_INSTALLED_AT", "dry-run")
-		return nil
 	}
 
 	if clients.K8s == nil {
