@@ -58,7 +58,23 @@ var phaseOutputOwnership = map[string][]string{
 		"testing_tgw_jumphost_subnet_cidr",
 		"testing_cluster_jumphost_subnet_cidrs",
 	},
-	"gateway": {},
+	"gateway": {
+		"gateway_enabled",
+		"gateway_app_namespace",
+		"gateway_flo_namespace",
+		"gateway_name",
+		"gateway_class_name",
+		"gateway_bnkgateway_name",
+		"gateway_route_name",
+		"gateway_backend",
+		"gateway_listener_networks",
+		"gateway_egress_mode",
+		"gateway_snatpool_name",
+		"gateway_snat_addresses",
+		"gateway_egress_cr_names",
+		"gateway_vxlan_port",
+		"gateway_static_routes",
+	},
 }
 
 // phaseStateDirs is the read order for the aggregate: each phase's owned outputs

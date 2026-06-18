@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -162,4 +165,20 @@ func BuildDynamicClient(kubeconfigPath string) (dynamic.Interface, error) {
 		return nil, fmt.Errorf("creating dynamic client: %w", err)
 	}
 	return dc, nil
+}
+
+// BuildRESTMapper returns a discovery-backed RESTMapper that resolves a
+// GroupKind (+ optional version) to its GroupVersionResource — so callers can
+// query arbitrary CRDs (Gateway-API, F5SPK CRs) by Kind without hardcoding
+// plurals. Paired with BuildDynamicClient for unstructured CR reads.
+func BuildRESTMapper(kubeconfigPath string) (meta.RESTMapper, error) {
+	cfg, err := BuildRESTConfig(kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating discovery client: %w", err)
+	}
+	return restmapper.NewDeferredDiscoveryRESTMapper(memCacheClient{disc}), nil
 }

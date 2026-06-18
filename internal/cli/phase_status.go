@@ -13,7 +13,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
@@ -233,6 +237,137 @@ func dialSSHPort(ctx context.Context, ip string) string {
 	return "reachable"
 }
 
+// gatewayProbe reads the live Gateway-API + F5 CRs the gateway phase created and
+// reports what terraform state cannot: the controller-assigned Gateway address
+// and CR readiness conditions. Best-effort — returns notes, never errors.
+func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[string]string {
+	gwName := outString(outs, "gateway_name")
+	if gwName == "" {
+		return map[string]string{"gateway": "(not deployed)"}
+	}
+	kcPath := k8s.DefaultKubeconfigPath()
+	if kcPath == "" {
+		return map[string]string{"gateway": "(no kubeconfig)"}
+	}
+	dyn, err := k8s.BuildDynamicClient(kcPath)
+	if err != nil {
+		return map[string]string{"gateway": fmt.Sprintf("(unreachable: %v)", err)}
+	}
+	mapper, err := k8s.BuildRESTMapper(kcPath)
+	if err != nil {
+		return map[string]string{"gateway": fmt.Sprintf("(unreachable: %v)", err)}
+	}
+	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	res := map[string]string{}
+
+	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", outString(outs, "gateway_app_namespace"), gwName)
+	if err != nil {
+		res["gateway"] = fmt.Sprintf("(error: %v)", err)
+	} else {
+		if addr := crGatewayAddress(gw); addr != "" {
+			res["gateway_address"] = addr
+		}
+		res["gateway"] = crConditionSummary(gw, "Programmed")
+	}
+
+	if bnkGwName := outString(outs, "gateway_bnkgateway_name"); bnkGwName != "" {
+		bg, err := getCR(tctx, dyn, mapper, "k8s.f5net.com", "F5BnkGateway", outString(outs, "gateway_flo_namespace"), bnkGwName)
+		if err != nil {
+			res["f5bnkgateway"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["f5bnkgateway"] = crBestEffortState(bg)
+		}
+	}
+	return res
+}
+
+// outString returns a string-typed, non-empty terraform output, else "".
+func outString(outs map[string]config.StateOutput, key string) string {
+	if o, ok := outs[key]; ok {
+		if s, _ := o.Value.(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// getCR fetches a single CR by GroupKind (preferred version) + name, resolving
+// the plural via the discovery RESTMapper so no plural is hardcoded.
+func getCR(ctx context.Context, dyn dynamic.Interface, mapper meta.RESTMapper, group, kind, ns, name string) (*unstructured.Unstructured, error) {
+	mapping, err := mapper.RESTMapping(schema.GroupKind{Group: group, Kind: kind})
+	if err != nil {
+		return nil, err
+	}
+	ri := dyn.Resource(mapping.Resource)
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		return ri.Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	}
+	return ri.Get(ctx, name, metav1.GetOptions{})
+}
+
+// crGatewayAddress returns the first controller-assigned status.addresses[].value.
+func crGatewayAddress(u *unstructured.Unstructured) string {
+	addrs, found, _ := unstructured.NestedSlice(u.Object, "status", "addresses")
+	if !found {
+		return ""
+	}
+	for _, a := range addrs {
+		if m, ok := a.(map[string]any); ok {
+			if v, _ := m["value"].(string); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// crConditionSummary reports "<type>=<status> (<reason>)" for the named status
+// condition, or a fallback when it isn't present yet.
+func crConditionSummary(u *unstructured.Unstructured, condType string) string {
+	conds, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if !found {
+		return "present (no conditions yet)"
+	}
+	for _, c := range conds {
+		m, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := m["type"].(string); t == condType {
+			st, _ := m["status"].(string)
+			if reason, _ := m["reason"].(string); reason != "" {
+				return fmt.Sprintf("%s=%s (%s)", condType, st, reason)
+			}
+			return fmt.Sprintf("%s=%s", condType, st)
+		}
+	}
+	return "present (" + condType + " pending)"
+}
+
+// crBestEffortState summarizes a CR that may not use Gateway-API conditions:
+// a Ready/Programmed/Accepted condition if any, then status.state, else "present".
+func crBestEffortState(u *unstructured.Unstructured) string {
+	conds, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if found {
+		for _, want := range []string{"Ready", "Programmed", "Accepted"} {
+			for _, c := range conds {
+				if m, ok := c.(map[string]any); ok {
+					if ct, _ := m["type"].(string); ct == want {
+						st, _ := m["status"].(string)
+						return fmt.Sprintf("%s=%s", want, st)
+					}
+				}
+			}
+		}
+	}
+	if s, found, _ := unstructured.NestedString(u.Object, "status", "state"); found && s != "" {
+		return s
+	}
+	return "present"
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 var clusterStatusCmd = &cobra.Command{
@@ -276,12 +411,12 @@ var testingStatusCmd = &cobra.Command{
 
 var gatewayStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Runtime status of the Gateway phase (listeners + app namespace)",
+	Short: "Runtime status of the Gateway phase (CR readiness + assigned address)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return runPhaseStatus(cmd, "gateway", config.WorkspaceGatewayStateDir,
-			[]string{"gateway_enabled", "gateway_listener_networks", "gateway_app_namespace"},
-			nil)
+			[]string{"gateway_enabled", "gateway_name", "gateway_bnkgateway_name", "gateway_app_namespace", "gateway_listener_networks", "gateway_egress_mode"},
+			gatewayProbe)
 	},
 }
 

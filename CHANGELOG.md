@@ -11,6 +11,8 @@ Declarative-input cleanup and a phase-output fix: `init example` now prints an a
 ### Added
 
 - **`roksbnkctl output` — the merged outputs across all phases.** The union of every phase's own outputs, each read from its owning phase's state, so values are the populated ones and never conflict. Pairs with the now-scoped per-phase commands; `roksbnkctl output <name>` returns one value from whichever phase owns it.
+- **The gateway phase now emits outputs.** `gateway output` surfaces the gateway's managed attributes — app + FLO namespaces; the `Gateway` / `F5BnkGateway` / `GatewayClass` / `HTTPRoute` names; per-zone listener networks (VIP ranges); egress mode with the `F5SPKSnatpool` / `F5SPKEgress` CR names and per-zone SNAT addresses; the `F5SPKStaticRoute` set; and the VXLAN port. (Previously the gateway phase promoted no root outputs.) Needs a `gateway up` re-apply to populate an existing workspace.
+- **`gateway status` probes the live CRs.** Beyond the configured outputs, it reports what terraform state can't: the controller-assigned `Gateway` address and the `Programmed` / readiness conditions on the `Gateway` + `F5BnkGateway` CRs. Best-effort, and resolves CRD plurals via cluster discovery (a new `k8s.BuildRESTMapper`), so no plural is hardcoded.
 
 ### Changed
 

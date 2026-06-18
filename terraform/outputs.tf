@@ -119,3 +119,83 @@ output "testing_cluster_jumphost_subnet_cidrs" {
   description = "Per-zone subnet CIDRs of the cluster jumphosts, keyed by zone (empty when testing_create_cluster_jumphosts = false)"
   value       = try(module.testing.testing_cluster_jumphost_subnet_cidrs, {})
 }
+
+
+# ============================================================
+# gateway (empty/placeholder unless the gateway phase is deployed)
+# ============================================================
+
+output "gateway_enabled" {
+  description = "Whether the Gateway phase applied its resources"
+  value       = module.gateway.gateway_enabled
+}
+
+output "gateway_app_namespace" {
+  description = "Namespace of the Gateway + HTTPRoute"
+  value       = module.gateway.gateway_app_namespace
+}
+
+output "gateway_flo_namespace" {
+  description = "Namespace of the F5BnkGateway + F5SPK CRs"
+  value       = module.gateway.gateway_flo_namespace
+}
+
+output "gateway_name" {
+  description = "Name of the Gateway (gateway.networking.k8s.io) CR"
+  value       = module.gateway.gateway_name
+}
+
+output "gateway_class_name" {
+  description = "Name of the GatewayClass"
+  value       = module.gateway.gateway_class_name
+}
+
+output "gateway_bnkgateway_name" {
+  description = "Name of the F5BnkGateway (k8s.f5net.com) CR"
+  value       = module.gateway.gateway_bnkgateway_name
+}
+
+output "gateway_route_name" {
+  description = "Name of the HTTPRoute"
+  value       = module.gateway.gateway_route_name
+}
+
+output "gateway_backend" {
+  description = "Backend the HTTPRoute targets (service:port)"
+  value       = module.gateway.gateway_backend
+}
+
+output "gateway_listener_networks" {
+  description = "Per-zone F5BnkGateway listener networks (name + VIP range + zone)"
+  value       = module.gateway.gateway_listener_networks
+}
+
+output "gateway_egress_mode" {
+  description = "Egress mode: snatpool | automap | both"
+  value       = module.gateway.gateway_egress_mode
+}
+
+output "gateway_snatpool_name" {
+  description = "Name of the F5SPKSnatpool (empty unless egress includes snatpool)"
+  value       = module.gateway.gateway_snatpool_name
+}
+
+output "gateway_snat_addresses" {
+  description = "Per-zone SNAT addresses"
+  value       = module.gateway.gateway_snat_addresses
+}
+
+output "gateway_egress_cr_names" {
+  description = "Names of the F5SPKEgress CRs applied"
+  value       = module.gateway.gateway_egress_cr_names
+}
+
+output "gateway_vxlan_port" {
+  description = "VXLAN tunnel port used by the egress CRs"
+  value       = module.gateway.gateway_vxlan_port
+}
+
+output "gateway_static_routes" {
+  description = "F5SPKStaticRoute set: name => { destination, prefix_len, gateway }"
+  value       = module.gateway.gateway_static_routes
+}

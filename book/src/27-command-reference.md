@@ -736,7 +736,7 @@ roksbnkctl gateway output [name] [flags]
 
 ### `roksbnkctl gateway status`
 
-Runtime status of the Gateway phase (listeners + app namespace)
+Runtime status of the Gateway phase (CR readiness + assigned address)
 
 ```
 roksbnkctl gateway status [flags]
