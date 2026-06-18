@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
+            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c85ebb11.js"></script>
+        <script src="toc-4d89dd13.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1310,11 +1310,11 @@ phase’s managed attributes.</p>
 <p>Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)</p>
 <p>Manage the air-gap registry mirror: replicate every chart + image a BNK
 install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
-the F5 Artifact Repository (repo.f5.com) into a private target — the cluster’s
-own OpenShift internal registry — so an air-gapped cluster installs BNK from
-images it hosts itself.</p>
+the F5 Artifact Repository (repo.f5.com) into a private target — IBM Container
+Registry (ICR) or a generic OCI registry (Artifactory / Harbor / Quay) — so an
+air-gapped cluster installs BNK from a registry it controls.</p>
 <p>Commands:
-roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
+roksbnkctl registry target     Show or set the mirror target (icr|generic)
 roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
@@ -1368,8 +1368,7 @@ for target=generic the registry must have deletes enabled.</p>
 </thead>
 <tbody>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1411,11 +1410,10 @@ for target=generic the registry must have deletes enabled.</p>
 <tbody>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1424,9 +1422,9 @@ for target=generic the registry must have deletes enabled.</p>
 <p>Copy the BOM into the mirror (needs a live cluster)</p>
 <pre><code>roksbnkctl registry replicate [flags]
 </code></pre>
-<p>Prepares the target registry (enables the route, mints a push token, binds
-pull RBAC), then copies every BOM artifact into it, idempotently. Records the
-result in registry-mirror.json so the BNK install can be redirected to the mirror.</p>
+<p>Prepares the target registry (auth + repository namespace), then copies every
+BOM artifact into it, idempotently. Records the result in registry-mirror.json so
+the BNK install can be redirected to the mirror.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1437,24 +1435,23 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 <tr><td><code>--concurrency</code></td><td><code>int</code></td><td><code>0</code></td><td>parallel copy workers (default: 4)</td></tr>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
 <h3 id="roksbnkctl-registry-target"><a class="header" href="#roksbnkctl-registry-target"><code>roksbnkctl registry target</code></a></h3>
 <p>Show or set the registry mirror target and its fields</p>
-<pre><code>roksbnkctl registry target [icr|generic|openshift | &lt;field&gt; &lt;value&gt;] [flags]
+<pre><code>roksbnkctl registry target [icr|generic | &lt;field&gt; &lt;value&gt;] [flags]
 </code></pre>
 <p>Configure the registry replication target without hand-editing config.yaml.</p>
 <p>With no arguments, prints the current target + configured fields. Otherwise the
 first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):</p>
-<p>Kinds:  icr | generic | openshift
+<p>Kinds:  icr | generic
 Fields: icr_host  icr_namespace
 generic_host  generic_repo_prefix  generic_username  generic_password</p>
 <p>Examples:
@@ -1491,11 +1488,10 @@ echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdi
 <tbody>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>

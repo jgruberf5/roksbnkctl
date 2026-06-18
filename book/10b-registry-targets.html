@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
+            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c85ebb11.js"></script>
+        <script src="toc-4d89dd13.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,9 +178,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="registry-targets-icr-and-a-private-artifactory"><a class="header" href="#registry-targets-icr-and-a-private-artifactory">Registry targets: ICR and a private Artifactory</a></h1>
-<p>The <a href="./10a-air-gapped-install.html">air-gapped install</a> chapter mirrors BNK into
-the cluster’s <strong>own OpenShift internal registry</strong>. That is one of three targets
-<code>roksbnkctl registry replicate</code> can populate:</p>
+<p>The <a href="./10a-air-gapped-install.html">air-gapped install</a> chapter mirrors BNK into a
+private registry you control. There are two targets <code>roksbnkctl registry replicate</code> can populate:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -188,22 +187,19 @@ the cluster’s <strong>own OpenShift internal registry</strong>. That is one of
 </thead>
 <tbody>
 <tr><td><code>icr</code> <em>(default)</em></td><td>IBM Container Registry</td><td><code>&lt;region&gt;.icr.io/&lt;namespace&gt;</code></td></tr>
-<tr><td><code>generic</code></td><td>Any OCI registry — Artifactory, Harbor, <code>registry:2</code></td><td><code>&lt;host&gt;/&lt;repo-prefix&gt;</code></td></tr>
-<tr><td><code>openshift</code></td><td>The cluster’s internal registry (air-gap)</td><td>route + in-cluster service</td></tr>
+<tr><td><code>generic</code></td><td>Any OCI registry — Artifactory, Harbor, Quay, <code>registry:2</code></td><td><code>&lt;host&gt;/&lt;repo-prefix&gt;</code></td></tr>
 </tbody>
 </table>
 </div>
-<p><code>icr</code> and <code>generic</code> are ordinary OCI registries: push, image-pull, and
-chart-pull all use the <strong>same host</strong>, with the FAR category nested under a
-namespace (<code>&lt;host&gt;/&lt;ns&gt;/images/&lt;name&gt;</code>). The <code>openshift</code> target is the special
-case — its flat <code>&lt;project&gt;/&lt;name&gt;</code> registry splits push (route) from image-pull
-(in-cluster service).</p>
+<p>Both are ordinary OCI registries: push, image-pull, and chart-pull all use the
+<strong>same host</strong>, with the FAR category nested under a namespace
+(<code>&lt;host&gt;/&lt;ns&gt;/images/&lt;name&gt;</code>).</p>
 <h2 id="configuring-the-target--registry-target"><a class="header" href="#configuring-the-target--registry-target">Configuring the target — <code>registry target</code></a></h2>
 <p>Configure the mirror with the <strong><code>registry target</code></strong> command — no <code>config.yaml</code>
 editing required. With no arguments it prints the current target and fields;
-otherwise the first argument is a backend <strong>kind</strong> (<code>icr</code> / <code>generic</code> /
-<code>openshift</code>) or a <strong>field</strong> name followed by its value. Everything it sets is
-written to the workspace <code>config.yaml</code>.</p>
+otherwise the first argument is a backend <strong>kind</strong> (<code>icr</code> / <code>generic</code>) or a
+<strong>field</strong> name followed by its value. Everything it sets is written to the
+workspace <code>config.yaml</code>.</p>
 <pre><code class="language-bash">roksbnkctl registry target                       # show the current target + fields
 roksbnkctl registry target icr                   # select a backend kind
 roksbnkctl registry target icr_namespace my-bnk  # set a field
@@ -212,15 +208,16 @@ roksbnkctl registry replicate --target generic   # or override the backend for o
 <p>Recognized fields: <code>icr_host</code>, <code>icr_namespace</code>, <code>generic_host</code>,
 <code>generic_repo_prefix</code>, <code>generic_username</code>, <code>generic_password</code> (the last reads
 from stdin with <code>--password-stdin</code>).</p>
-<h2 id="the-default-is-now-icr"><a class="header" href="#the-default-is-now-icr">The default is now ICR</a></h2>
+<h2 id="the-default-is-icr"><a class="header" href="#the-default-is-icr">The default is ICR</a></h2>
+<p>An empty <code>registry.target</code> resolves to <strong><code>icr</code></strong>. Set <code>generic</code> explicitly to
+mirror into an OCI-compliant registry such as Artifactory.</p>
 <blockquote>
-<p><strong>Migration note.</strong> As of this release, an empty target resolves to <strong><code>icr</code></strong>,
-not <code>openshift</code>. If you rely on the air-gap OpenShift internal registry, select
-it explicitly once:</p>
-<pre><code class="language-bash">roksbnkctl registry target openshift
-</code></pre>
-<p>Existing workspaces that mirrored into the OpenShift registry must run this;
-otherwise <code>registry replicate</code> will target ICR.</p>
+<p><strong>The OpenShift internal registry was removed as a target.</strong> Earlier releases
+supported an <code>openshift</code> target that mirrored into the cluster’s own internal
+registry; it has been removed in favor of ICR and OCI-compliant registries. A
+workspace still carrying <code>registry.target: openshift</code> now errors —
+<code>unsupported registry target "openshift" (expected icr or generic)</code> — switch it
+with <code>roksbnkctl registry target icr</code> (or <code>generic</code>).</p>
 </blockquote>
 <h3 id="icr-configuration"><a class="header" href="#icr-configuration">ICR configuration</a></h3>
 <pre><code class="language-bash">roksbnkctl registry target icr

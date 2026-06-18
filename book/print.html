@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
+            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c85ebb11.js"></script>
+        <script src="toc-4d89dd13.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -602,7 +602,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 <p>Every tool roksbnkctl dispatches is already on <code>PATH</code> in the image, so the docker/k8s execution backends (whose whole job is to fetch a tool from <em>elsewhere</em>) aren’t needed here — runs are local, with no docker-in-docker. <a href="#choosing-a-backend-per-tool">Chapter 18 — Choosing a backend</a> covers when the other backends matter (the binary-on-host case).</p>
 <h3 id="whats-not-in-it"><a class="header" href="#whats-not-in-it">What’s not in it</a></h3>
 <p>The runner is a <em>use</em> image, not a docs/dev-build image — the book toolchain (mdbook, pandoc, texlive) is deliberately excluded to keep it lean. Build the book with the separate <code>roksbnkctl-tools-mdbook</code> image (see <a href="#building-from-source">Chapter 31 — Building from source</a>).</p>
-<p>Because it’s one self-contained artefact, the runner is also the natural thing to mirror behind a firewall for an air-gapped install — pair it with the registry mirror (<a href="#air-gapped-install-mirroring-bnk-into-the-cluster-registry">Chapter 10a — Air-gapped install</a>).</p>
+<p>Because it’s one self-contained artefact, the runner is also the natural thing to mirror behind a firewall for an air-gapped install — pair it with the registry mirror (<a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a — Air-gapped install</a>).</p>
 <h2 id="the-install-subcommand"><a class="header" href="#the-install-subcommand">The <code>install</code> subcommand</a></h2>
 <pre><code class="language-bash">roksbnkctl install [--dir PATH] [--force]
 </code></pre>
@@ -2661,14 +2661,19 @@ resource "kubectl_manifest" "license" {
 <li><a href="#troubleshooting-1">Chapter 26 — Troubleshooting</a> — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="air-gapped-install-mirroring-bnk-into-the-cluster-registry"><a class="header" href="#air-gapped-install-mirroring-bnk-into-the-cluster-registry">Air-gapped install: mirroring BNK into the cluster registry</a></h1>
+<h1 id="air-gapped-install-mirroring-bnk-into-a-private-registry"><a class="header" href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Air-gapped install: mirroring BNK into a private registry</a></h1>
 <p>Some ROKS environments forbid pulling install resources from external repositories
 at deploy time. For these, <code>roksbnkctl</code> can <strong>replicate every artifact BNK needs</strong>
 — the F5 charts and images, plus the non-F5 dependencies — from the F5 Artifact
-Repository (FAR, <code>repo.f5.com</code>) into the cluster’s <strong>own OpenShift internal
-registry</strong>, and then install BNK entirely from there. With the mirror in place, the
-cluster needs no egress to <code>repo.f5.com</code>, <code>quay.io</code>, <code>docker.io</code>, or
-<code>charts.jetstack.io</code> to bring up BNK.</p>
+Repository (FAR, <code>repo.f5.com</code>) into a <strong>private registry you control</strong>, and then
+install BNK entirely from there. With the mirror in place, the cluster needs no
+egress to <code>repo.f5.com</code>, <code>quay.io</code>, <code>docker.io</code>, or <code>charts.jetstack.io</code> to bring
+up BNK.</p>
+<p>The mirror target is a registry you own — <strong>IBM Container Registry (ICR)</strong>, the
+default, or a <strong>generic OCI-compliant registry</strong> (Artifactory, Harbor, Quay,
+<code>registry:2</code>). Choosing and configuring the target is its own chapter,
+<a href="#registry-targets-icr-and-a-private-artifactory">Registry targets: ICR and Artifactory</a>; this chapter
+is the air-gap flow itself.</p>
 <p>The registry surface is CRUD-shaped, modeled on the IBM COS client:</p>
 <div class="table-wrapper">
 <table>
@@ -2676,7 +2681,7 @@ cluster needs no egress to <code>repo.f5.com</code>, <code>quay.io</code>, <code
 <tr><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr><td><code>roksbnkctl registry target</code></td><td>Show or set the mirror target — icr / generic / openshift (see <a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a>)</td></tr>
+<tr><td><code>roksbnkctl registry target</code></td><td>Show or set the mirror target — <code>icr</code> / <code>generic</code> (see <a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a>)</td></tr>
 <tr><td><code>roksbnkctl registry bom</code></td><td>Print the bill-of-materials — every chart + image BNK needs</td></tr>
 <tr><td><code>roksbnkctl registry replicate</code></td><td>Mirror the BOM into the target registry</td></tr>
 <tr><td><code>roksbnkctl registry list</code></td><td>What’s present in the target</td></tr>
@@ -2705,48 +2710,47 @@ images  docker.io/bitnami/kubectl                  &lt;tag&gt;
 81 F5 artifacts + 6 dependency artifacts
 </code></pre>
 <h2 id="the-walk-through"><a class="header" href="#the-walk-through">The walk-through</a></h2>
-<pre><code class="language-console">$ roksbnkctl cluster up                              # the durable cluster
-$ roksbnkctl registry replicate --target openshift   # mirror the BOM (one-time per BNK version)
-$ roksbnkctl registry verify                          # confirm completeness
-$ roksbnkctl bnk up                                   # installs from the internal registry
+<pre><code class="language-console">$ roksbnkctl cluster up               # the durable cluster
+$ roksbnkctl registry target icr      # choose the target (icr is the default)
+$ roksbnkctl registry replicate       # mirror the BOM (one-time per BNK version)
+$ roksbnkctl registry verify          # confirm completeness
+$ roksbnkctl bnk up                   # installs from the mirror
 </code></pre>
 <p><code>registry replicate</code> runs <strong>after</strong> the Cluster phase and <strong>before</strong> BNK. It is a
 deliberate, occasional supply-chain step — it is <strong>not</strong> part of the composite
-<code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). It copies each artifact
+<code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). With no <code>--target</code>, it
+uses the workspace’s <code>registry.target</code> (default <code>icr</code>). It copies each artifact
 registry-to-registry by digest, idempotently — re-running it only moves what
 changed (e.g. after a BNK version bump, <code>registry diff</code> shows exactly the changed
 artifacts).</p>
-<p>Once the mirror is populated, the BNK phase reads it and redirects the install: the
-container images resolve from the cluster’s internal registry, and BNK comes up
-with no external pulls. The Stage acceptance is exactly this, with egress to the
-external registries blocked.</p>
-<h2 id="how-it-works-the-registrys-two-faces"><a class="header" href="#how-it-works-the-registrys-two-faces">How it works: the registry’s two faces</a></h2>
-<p>The OpenShift internal registry is reachable two ways, and <code>roksbnkctl</code> uses both:</p>
+<h2 id="how-the-install-reads-the-mirror"><a class="header" href="#how-the-install-reads-the-mirror">How the install reads the mirror</a></h2>
+<p><code>registry replicate</code> records what it copied — and where — in
+<code>registry-mirror.json</code>. The BNK phase reads that record and <strong>redirects the
+install</strong> to the target: every chart and image resolves from your private
+registry instead of FAR, so BNK comes up with no external pulls. The air-gap
+acceptance is exactly this, with egress to the external registries blocked.</p>
+<p>The target’s own pull credential is wired in for you:</p>
 <ul>
-<li><strong>Charts</strong> are pulled by the in-process helm provider on the <code>roksbnkctl</code> host,
-over the registry’s external <strong>route</strong> (<code>oci://&lt;route&gt;/&lt;ns&gt;/charts/…</code>).</li>
-<li><strong>Images</strong> are pulled by the cluster’s pods over the in-cluster <strong>service</strong>
-(<code>image-registry.openshift-image-registry.svc:5000/&lt;ns&gt;/images/…</code>), authorized by
-a <code>system:image-puller</code> role binding — <strong>no image pull secret</strong>.</li>
+<li><strong>ICR</strong> — the cluster authenticates to <code>*.icr.io</code> with <code>iamapikey</code> + the
+workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.</li>
+<li><strong>Generic OCI</strong> — the cluster pulls with the basic-auth credential you set
+(<code>registry target generic_username</code> / <code>generic_password</code>), or anonymously for a
+read-open registry.</li>
 </ul>
-<p><code>registry replicate</code> bootstraps this for you: it enables the registry’s default
-route, creates a mirror project, mints a push credential, and binds the pull RBAC.</p>
+<p>The per-target host, namespace/repository, and credential specifics — including
+the ICR namespace and a full Artifactory walkthrough — are in
+<a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a>.</p>
 <blockquote>
-<p><strong>Custom ingress certificate.</strong> The host pulls charts over the route, trusting the
-cluster’s <code>*.apps</code> ingress certificate. ROKS apps domains carry a publicly-trusted
-cert by default. If your cluster uses a custom or self-signed ingress cert, add its
-CA to the host’s trust store before <code>registry replicate</code>.</p>
+<p><strong>TLS trust.</strong> Charts and images are pulled over the target’s HTTPS endpoint.
+ICR and a public Artifactory carry publicly-trusted certificates. If your
+registry uses a custom or self-signed cert, add its CA to the trust store on the
+host running <code>registry replicate</code> (and on the cluster, for the image pulls)
+before you replicate.</p>
 </blockquote>
-<h2 id="other-targets"><a class="header" href="#other-targets">Other targets</a></h2>
-<p>The OpenShift internal registry is the first-class target. The mirror is built
-against a pluggable <code>RegistryTarget</code>, so IBM Container Registry (<code>icr.io</code>) and a
-generic private OCI registry (Harbor / Artifactory / Quay) are natural follow-on
-targets — <code>--target</code> selects which.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="registry-targets-icr-and-a-private-artifactory"><a class="header" href="#registry-targets-icr-and-a-private-artifactory">Registry targets: ICR and a private Artifactory</a></h1>
-<p>The <a href="#air-gapped-install-mirroring-bnk-into-the-cluster-registry">air-gapped install</a> chapter mirrors BNK into
-the cluster’s <strong>own OpenShift internal registry</strong>. That is one of three targets
-<code>roksbnkctl registry replicate</code> can populate:</p>
+<p>The <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">air-gapped install</a> chapter mirrors BNK into a
+private registry you control. There are two targets <code>roksbnkctl registry replicate</code> can populate:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2754,22 +2758,19 @@ the cluster’s <strong>own OpenShift internal registry</strong>. That is one of
 </thead>
 <tbody>
 <tr><td><code>icr</code> <em>(default)</em></td><td>IBM Container Registry</td><td><code>&lt;region&gt;.icr.io/&lt;namespace&gt;</code></td></tr>
-<tr><td><code>generic</code></td><td>Any OCI registry — Artifactory, Harbor, <code>registry:2</code></td><td><code>&lt;host&gt;/&lt;repo-prefix&gt;</code></td></tr>
-<tr><td><code>openshift</code></td><td>The cluster’s internal registry (air-gap)</td><td>route + in-cluster service</td></tr>
+<tr><td><code>generic</code></td><td>Any OCI registry — Artifactory, Harbor, Quay, <code>registry:2</code></td><td><code>&lt;host&gt;/&lt;repo-prefix&gt;</code></td></tr>
 </tbody>
 </table>
 </div>
-<p><code>icr</code> and <code>generic</code> are ordinary OCI registries: push, image-pull, and
-chart-pull all use the <strong>same host</strong>, with the FAR category nested under a
-namespace (<code>&lt;host&gt;/&lt;ns&gt;/images/&lt;name&gt;</code>). The <code>openshift</code> target is the special
-case — its flat <code>&lt;project&gt;/&lt;name&gt;</code> registry splits push (route) from image-pull
-(in-cluster service).</p>
+<p>Both are ordinary OCI registries: push, image-pull, and chart-pull all use the
+<strong>same host</strong>, with the FAR category nested under a namespace
+(<code>&lt;host&gt;/&lt;ns&gt;/images/&lt;name&gt;</code>).</p>
 <h2 id="configuring-the-target--registry-target"><a class="header" href="#configuring-the-target--registry-target">Configuring the target — <code>registry target</code></a></h2>
 <p>Configure the mirror with the <strong><code>registry target</code></strong> command — no <code>config.yaml</code>
 editing required. With no arguments it prints the current target and fields;
-otherwise the first argument is a backend <strong>kind</strong> (<code>icr</code> / <code>generic</code> /
-<code>openshift</code>) or a <strong>field</strong> name followed by its value. Everything it sets is
-written to the workspace <code>config.yaml</code>.</p>
+otherwise the first argument is a backend <strong>kind</strong> (<code>icr</code> / <code>generic</code>) or a
+<strong>field</strong> name followed by its value. Everything it sets is written to the
+workspace <code>config.yaml</code>.</p>
 <pre><code class="language-bash">roksbnkctl registry target                       # show the current target + fields
 roksbnkctl registry target icr                   # select a backend kind
 roksbnkctl registry target icr_namespace my-bnk  # set a field
@@ -2778,15 +2779,16 @@ roksbnkctl registry replicate --target generic   # or override the backend for o
 <p>Recognized fields: <code>icr_host</code>, <code>icr_namespace</code>, <code>generic_host</code>,
 <code>generic_repo_prefix</code>, <code>generic_username</code>, <code>generic_password</code> (the last reads
 from stdin with <code>--password-stdin</code>).</p>
-<h2 id="the-default-is-now-icr"><a class="header" href="#the-default-is-now-icr">The default is now ICR</a></h2>
+<h2 id="the-default-is-icr"><a class="header" href="#the-default-is-icr">The default is ICR</a></h2>
+<p>An empty <code>registry.target</code> resolves to <strong><code>icr</code></strong>. Set <code>generic</code> explicitly to
+mirror into an OCI-compliant registry such as Artifactory.</p>
 <blockquote>
-<p><strong>Migration note.</strong> As of this release, an empty target resolves to <strong><code>icr</code></strong>,
-not <code>openshift</code>. If you rely on the air-gap OpenShift internal registry, select
-it explicitly once:</p>
-<pre><code class="language-bash">roksbnkctl registry target openshift
-</code></pre>
-<p>Existing workspaces that mirrored into the OpenShift registry must run this;
-otherwise <code>registry replicate</code> will target ICR.</p>
+<p><strong>The OpenShift internal registry was removed as a target.</strong> Earlier releases
+supported an <code>openshift</code> target that mirrored into the cluster’s own internal
+registry; it has been removed in favor of ICR and OCI-compliant registries. A
+workspace still carrying <code>registry.target: openshift</code> now errors —
+<code>unsupported registry target "openshift" (expected icr or generic)</code> — switch it
+with <code>roksbnkctl registry target icr</code> (or <code>generic</code>).</p>
 </blockquote>
 <h3 id="icr-configuration"><a class="header" href="#icr-configuration">ICR configuration</a></h3>
 <pre><code class="language-bash">roksbnkctl registry target icr
@@ -9408,11 +9410,11 @@ phase’s managed attributes.</p>
 <p>Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)</p>
 <p>Manage the air-gap registry mirror: replicate every chart + image a BNK
 install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
-the F5 Artifact Repository (repo.f5.com) into a private target — the cluster’s
-own OpenShift internal registry — so an air-gapped cluster installs BNK from
-images it hosts itself.</p>
+the F5 Artifact Repository (repo.f5.com) into a private target — IBM Container
+Registry (ICR) or a generic OCI registry (Artifactory / Harbor / Quay) — so an
+air-gapped cluster installs BNK from a registry it controls.</p>
 <p>Commands:
-roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
+roksbnkctl registry target     Show or set the mirror target (icr|generic)
 roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
@@ -9466,8 +9468,7 @@ for target=generic the registry must have deletes enabled.</p>
 </thead>
 <tbody>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -9509,11 +9510,10 @@ for target=generic the registry must have deletes enabled.</p>
 <tbody>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -9522,9 +9522,9 @@ for target=generic the registry must have deletes enabled.</p>
 <p>Copy the BOM into the mirror (needs a live cluster)</p>
 <pre><code>roksbnkctl registry replicate [flags]
 </code></pre>
-<p>Prepares the target registry (enables the route, mints a push token, binds
-pull RBAC), then copies every BOM artifact into it, idempotently. Records the
-result in registry-mirror.json so the BNK install can be redirected to the mirror.</p>
+<p>Prepares the target registry (auth + repository namespace), then copies every
+BOM artifact into it, idempotently. Records the result in registry-mirror.json so
+the BNK install can be redirected to the mirror.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -9535,24 +9535,23 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 <tr><td><code>--concurrency</code></td><td><code>int</code></td><td><code>0</code></td><td>parallel copy workers (default: 4)</td></tr>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
 <h3 id="roksbnkctl-registry-target"><a class="header" href="#roksbnkctl-registry-target"><code>roksbnkctl registry target</code></a></h3>
 <p>Show or set the registry mirror target and its fields</p>
-<pre><code>roksbnkctl registry target [icr|generic|openshift | &lt;field&gt; &lt;value&gt;] [flags]
+<pre><code>roksbnkctl registry target [icr|generic | &lt;field&gt; &lt;value&gt;] [flags]
 </code></pre>
 <p>Configure the registry replication target without hand-editing config.yaml.</p>
 <p>With no arguments, prints the current target + configured fields. Otherwise the
 first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):</p>
-<p>Kinds:  icr | generic | openshift
+<p>Kinds:  icr | generic
 Fields: icr_host  icr_namespace
 generic_host  generic_repo_prefix  generic_username  generic_password</p>
 <p>Examples:
@@ -9589,11 +9588,10 @@ echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdi
 <tbody>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
-<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
