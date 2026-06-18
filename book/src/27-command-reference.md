@@ -31,6 +31,27 @@ These flags apply to every command. They are declared on the root command and in
 | `--verbose` / `-v` | `bool` | `false` | verbose output |
 | `--workspace` / `-w` | `string` | — | workspace name (default: current; first run creates 'default') |
 
+## `roksbnkctl apikey`
+
+Print the workspace's resolved IBM Cloud API key to stdout (a secret)
+
+Resolve the workspace's IBM Cloud API key via the standard chain and print it
+to stdout — the scripting seam for driving the ibmcloud CLI off a workspace:
+
+  ibmcloud login --apikey "$(roksbnkctl -w `<ws>` apikey)"
+
+Resolution order (the same roksbnkctl itself uses):
+  1. environment — IBMCLOUD_API_KEY / IC_API_KEY / TF_VAR_* (including any
+     loaded from $PWD/.env, which roksbnkctl reads at startup)
+  2. OS keychain  (service "roksbnkctl", account "`<workspace>`/ibmcloud_api_key")
+  3. workspace config.yaml — ibmcloud.api_key_b64 (base64-decoded)
+
+Non-interactive: it never prompts — if no key is found it exits non-zero with an
+actionable error.
+
+WARNING: this writes the credential to stdout. Pipe or redirect it; never echo it
+into logs or CI output.
+
 ## `roksbnkctl apply`
 
 Apply Terraform without re-prompting (assumes config.yaml exists)

@@ -14,9 +14,9 @@
 #
 # Requires: ibmcloud CLI + the `vpc-infrastructure` (is) plugin, jq, roksbnkctl.
 # Auth: reuses an existing `ibmcloud login` if present; otherwise logs in with
-# the WORKSPACE's own IBM Cloud credential, resolved like roksbnkctl: $PWD/.env,
-# then config.yaml api_key_b64, then the OS keychain. No IBMCLOUD_API_KEY needs to
-# be exported (it's honored as an override if set).
+# the WORKSPACE's own IBM Cloud credential, obtained via `roksbnkctl apikey`
+# (which resolves env / $PWD/.env / OS keychain / config.yaml api_key_b64). No
+# IBMCLOUD_API_KEY needs to be exported (it's honored as an override if set).
 # Inputs come from ~/.roksbnkctl/<workspace>/cluster-outputs.json (region,
 # resource group, VPC, subnets) — so `roksbnkctl cluster up` must have run.
 #
@@ -97,14 +97,19 @@ VPC=$(jq -r '.vpc_id' "$OUTPUTS")
 ZONE="${REGION}-1"   # AZ1
 [[ -n "$REGION" && -n "$VPC" && -n "$RG" ]] || { echo "cluster-outputs.json is missing region/vpc/resource_group_id" >&2; exit 1; }
 
-# resolve_apikey resolves the workspace's IBM Cloud API key the way roksbnkctl
-# does — so no IBMCLOUD_API_KEY needs to be exported. Order:
-#   1. IBMCLOUD_API_KEY already in the env (explicit override)
-#   2. $PWD/.env  — roksbnkctl loads it at startup (godotenv); the key is
-#      commonly kept there. We read the key out without executing the file.
-#   3. workspace config.yaml  ibmcloud.api_key_b64  (base64-decoded)
-#   4. OS keychain  (service=roksbnkctl, account=<ws>/ibmcloud_api_key) best-effort
+# resolve_apikey gets the workspace's IBM Cloud API key. It delegates to
+# roksbnkctl's own resolver (`roksbnkctl apikey`), which handles every source
+# uniformly — env / $PWD/.env / OS keychain / config.yaml api_key_b64. If that
+# command isn't present (older roksbnkctl) it falls back to resolving the same
+# sources in-script:
+#   1. IBMCLOUD_API_KEY already in the env
+#   2. $PWD/.env (read without executing the file)
+#   3. workspace config.yaml ibmcloud.api_key_b64 (base64-decoded)
+#   4. OS keychain (service=roksbnkctl, account=<ws>/ibmcloud_api_key) best-effort
 resolve_apikey() {
+  local k
+  if k=$(roksbnkctl -w "$WS" apikey 2>/dev/null) && [[ -n "$k" ]]; then printf '%s' "$k"; return 0; fi
+
   if [[ -n "${IBMCLOUD_API_KEY:-}" ]]; then printf '%s' "$IBMCLOUD_API_KEY"; return 0; fi
 
   if [[ -f .env ]]; then
