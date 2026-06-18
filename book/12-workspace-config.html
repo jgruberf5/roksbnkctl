@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -503,7 +503,7 @@ cos:             # optional COS supply-chain config
 </code></pre>
 <p>Later layers override earlier. Concretely: <code>config.yaml</code>’s <code>cluster.workers_per_zone: 2</code> writes <code>roks_workers_per_zone = 2</code> into the generated tfvars. If you then pass <code>--var-file ./bigger.tfvars</code> containing <code>roks_workers_per_zone = 5</code>, terraform sees <code>5</code>. The <code>config.yaml</code> value didn’t get re-applied; <code>--var-file</code> wins.</p>
 <p>The <code>terraform.tfvars.user</code> middle layer is for when you want a workspace-local override that survives across runs without modifying <code>config.yaml</code> — it’s typically used for fields the YAML schema doesn’t model (rare; the schema covers the common knobs). <a href="./13-terraform-variables.html">Chapter 13</a> goes deep on this.</p>
-<p>If you already have a complete <code>./terraform.tfvars</code> (your own, or from a colleague’s hand-off) and want this workspace to always use it without re-passing <code>--var-file</code> on every command, run <code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code>. That seeds <code>config.yaml</code> from the file <strong>and</strong> drops a verbatim copy at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (mode <code>0600</code>, sibling to <code>config.yaml</code>), so subsequent <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> against bare <code>-w &lt;ws&gt;</code> pick it up automatically — for both the trial and cluster phases. The full walkthrough is in <a href="./06-workspaces.html#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</p>
+<p>If you want a workspace to always apply a raw <code>terraform.tfvars</code> without re-passing <code>--var-file</code> on every phase command, drop it verbatim at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (mode <code>0600</code>, sibling to <code>config.yaml</code>); subsequent <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> against bare <code>-w &lt;ws&gt;</code> pick it up automatically for both phases. To seed the workspace’s <code>config.yaml</code> itself from a file, use <code>roksbnkctl init -w &lt;ws&gt; --config-file ./config.yaml</code> — see <a href="./06-workspaces.html#skip-the-interview-init---config-file">Chapter 6 §“Skip the interview: <code>init --config-file</code>”</a>.</p>
 <p>The <code>IBMCLOUD_API_KEY</code> is the one exception that <strong>never</strong> goes through tfvars on disk. It’s passed as a <code>TF_VAR_ibmcloud_api_key</code> env var on the terraform invocation. <code>--var-file</code> cannot supply the API key — the resolver chain in <a href="./14-credentials-resolver.html">Chapter 14</a> is the only path.</p>
 <h2 id="editing-by-hand-vs-helpers"><a class="header" href="#editing-by-hand-vs-helpers">Editing by hand vs helpers</a></h2>
 <p>Several commands manage subsets of <code>config.yaml</code> so you don’t have to:</p>
@@ -516,6 +516,11 @@ cos:             # optional COS supply-chain config
 <tr><td>Whole file (interactive)</td><td><code>roksbnkctl init</code></td></tr>
 <tr><td><code>tf_source:</code> only</td><td><code>roksbnkctl init --upgrade-tf</code></td></tr>
 <tr><td><code>targets:</code> block</td><td><code>roksbnkctl targets add/remove</code></td></tr>
+<tr><td><code>registry:</code> block</td><td><code>roksbnkctl registry target …</code></td></tr>
+<tr><td><code>test.connectivity.extra_hosts</code></td><td><code>roksbnkctl test hosts add/remove/clear</code></td></tr>
+<tr><td><code>state:</code> block (local ↔ COS/S3)</td><td><code>roksbnkctl state local</code> / <code>state s3 …</code> / <code>state show</code></td></tr>
+<tr><td><code>exec:</code> block (per-tool backend)</td><td><code>roksbnkctl backend set/unset/show</code></td></tr>
+<tr><td><code>bnkforge:</code> block</td><td><code>roksbnkctl bnkforge enable/disable/status</code></td></tr>
 <tr><td><code>ibmcloud.api_key_b64</code></td><td><code>roksbnkctl init</code> (after entering the key, it offers to save)</td></tr>
 </tbody>
 </table>
@@ -594,7 +599,7 @@ resources:
 tf_source:
   type: embedded
 </code></pre>
-<p>That’s the minimum a prefix-driven workspace writes. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. A workspace created <strong>without</strong> a prefix (e.g. an old config, or <code>init --var-file</code>) omits both <code>prefix:</code> and <code>resources:</code> and renders the legacy sparse <code>terraform.tfvars</code>. The API key can also be supplied non-interactively from your password manager’s CLI by setting <code>IBMCLOUD_API_KEY</code> in the environment of the <code>init</code> invocation:</p>
+<p>That’s the minimum a prefix-driven workspace writes. Everything else (<code>bnk:</code>, <code>test:</code>, <code>targets:</code>, <code>exec:</code>, <code>cos:</code>) is empty and falls through to defaults. A workspace created <strong>without</strong> a prefix (e.g. an old config) omits both <code>prefix:</code> and <code>resources:</code> and renders the legacy sparse <code>terraform.tfvars</code>. The API key can also be supplied non-interactively from your password manager’s CLI by setting <code>IBMCLOUD_API_KEY</code> in the environment of the <code>init</code> invocation:</p>
 <p><code>op</code> here is the <a href="https://developer.1password.com/docs/cli/">1Password CLI</a>; the <code>op://...</code> URI is its secret-reference scheme. Any password-manager CLI that prints a secret to stdout works the same way — Bitwarden (<code>bw</code>), gopass, <code>aws secretsmanager get-secret-value</code>, Doppler, etc. — the only thing roksbnkctl cares about is that <code>IBMCLOUD_API_KEY</code> is set in the environment when <code>init</code> runs.</p>
 <pre><code class="language-bash"># Alternative: pre-set IBMCLOUD_API_KEY so init resolves it from env rather than prompting
 IBMCLOUD_API_KEY=$(op read 'op://Private/IBM Cloud/api-key') roksbnkctl init -w dev
@@ -641,7 +646,7 @@ $ roksbnkctl doctor -w dev
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="13-terraform-variables.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="12a-remote-state.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -655,7 +660,7 @@ $ roksbnkctl doctor -w dev
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="13-terraform-variables.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="12a-remote-state.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

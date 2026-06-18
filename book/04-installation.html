@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,8 +178,22 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
-<p>This chapter gets a <code>roksbnkctl</code> binary onto your machine and verifies it works. Two install paths are covered: build-from-source (native Go, the canonical path until release artefacts ship) and build-with-Docker (no host Go required).</p>
+<p>This chapter gets <code>roksbnkctl</code> onto your machine and verifies it works. Three install paths are covered: build-from-source (native Go), build-with-Docker (no host Go required), and the <strong>all-in-one container image</strong> (no install at all — run roksbnkctl and every tool it needs from one container).</p>
 <p>Pre-built binaries are attached to every <a href="https://github.com/jgruberf5/roksbnkctl/releases">GitHub Release</a> (Linux, macOS, Windows × amd64, arm64). The book also ships as an offline PDF (<code>roksbnkctl-book-&lt;tag&gt;.pdf</code>) on the same release page. A Homebrew tap is on the v1.x roadmap; until then macOS users grab the binary from the release page or build from source.</p>
+<h3 id="choosing-an-install-method"><a class="header" href="#choosing-an-install-method">Choosing an install method</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>You get</th><th>Host needs</th><th>Best for</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>A — native build / release binary</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Go 1.25+ (build) or nothing (release binary); the runtime tools you use (<a href="#installing-prerequisites">above</a>)</td><td>a developer laptop</td></tr>
+<tr><td><strong>B — Docker build</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Docker only (for the build)</td><td>a host without Go; CI that wants a binary artefact</td></tr>
+<tr><td><strong>C — runner container</strong></td><td>a container with roksbnkctl <strong>+ every tool</strong></td><td>Docker/Podman + a volume for state</td><td>CI runners, fleet provisioning, air-gapped sites</td></tr>
+</tbody>
+</table>
+</div>
+<p>Methods A and B put a binary on <code>PATH</code> and assume the runtime tools are installed too. Method C (<a href="#path-c--run-from-the-all-in-one-container-image-no-install">Path C below</a>) is self-contained: nothing on the host but a container runtime and a place to keep state.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
@@ -327,6 +341,26 @@ docker run --rm -v "$PWD:/work" -w /work \
   golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 </code></pre>
 <p>Each binary is statically linked (Alpine + <code>CGO_ENABLED=0</code> is the cross-compile default) so the produced file has no runtime library dependencies.</p>
+<h2 id="path-c--run-from-the-all-in-one-container-image-no-install"><a class="header" href="#path-c--run-from-the-all-in-one-container-image-no-install">Path C — run from the all-in-one container image (no install)</a></h2>
+<p>If you’d rather not put a binary and its tools on the host at all — CI runners, fleet provisioning, air-gapped sites — use the <strong>runner image</strong>. It carries <code>roksbnkctl</code> plus every tool it dispatches (<code>terraform</code>, <code>helm</code>, <code>kubectl</code>, <code>oc</code>, <code>ibmcloud</code>, <code>iperf3</code>, <code>h2load</code>), so one <code>docker run</code> is a complete roksbnkctl with nothing on the host:</p>
+<pre><code class="language-bash">docker run --rm \
+  -v bnk-state:/work \
+  -e IBMCLOUD_API_KEY="$IBMCLOUD_API_KEY" \
+  ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest version
+</code></pre>
+<p><code>podman run</code> works identically. The image’s <code>ENTRYPOINT</code> is <code>roksbnkctl</code>, so everything after the image name is roksbnkctl’s own arguments (<code>version</code>, <code>up</code>, <code>test matrix --dry-run</code>, …). Tags: <code>:latest</code> and a per-release <code>:vX.Y.Z</code> are published to GHCR on each release; <code>:dev</code> tracks <code>main</code>.</p>
+<h3 id="state-lives-in-a-volume-not-the-image"><a class="header" href="#state-lives-in-a-volume-not-the-image">State lives in a volume, not the image</a></h3>
+<p>roksbnkctl keeps its workspaces — <code>config.yaml</code>, terraform state, kubeconfigs, keys — under <code>ROKSBNKCTL_HOME</code>, which the image sets to <code>/work/.roksbnkctl</code>. <strong>The image itself is stateless</strong>; mount durable storage at <code>/work</code> or every run starts empty:</p>
+<ul>
+<li><strong>A named volume (recommended)</strong> — <code>-v bnk-state:/work</code>. Docker seeds a fresh named volume from the image’s <code>/work</code>, which is owned by the image’s <code>uid 1000</code>, so it’s writable out of the box.</li>
+<li><strong>A host bind-mount</strong> — <code>-v "$PWD/bnk-state:/work"</code> — carries the <em>host</em> directory’s ownership, which may not be writable by <code>uid 1000</code>. Pre-create it writable (<code>mkdir -p bnk-state &amp;&amp; chmod 0777 bnk-state</code>, or <code>chown</code> it to <code>1000</code>), or add <code>--user "$(id -u):$(id -g)"</code>. This is the usual docker bind-mount caveat, not a roksbnkctl quirk.</li>
+</ul>
+<p>For a <em>truly</em> stateless runner — no volume at all — a COS/S3 remote state backend is the planned answer (PRD 16); until it lands, mount a volume.</p>
+<h3 id="use---backend-local-inside-the-runner"><a class="header" href="#use---backend-local-inside-the-runner">Use <code>--backend local</code> inside the runner</a></h3>
+<p>Every tool roksbnkctl dispatches is already on <code>PATH</code> in the image, so the docker/k8s execution backends (whose whole job is to fetch a tool from <em>elsewhere</em>) aren’t needed here — runs are local, with no docker-in-docker. <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend</a> covers when the other backends matter (the binary-on-host case).</p>
+<h3 id="whats-not-in-it"><a class="header" href="#whats-not-in-it">What’s not in it</a></h3>
+<p>The runner is a <em>use</em> image, not a docs/dev-build image — the book toolchain (mdbook, pandoc, texlive) is deliberately excluded to keep it lean. Build the book with the separate <code>roksbnkctl-tools-mdbook</code> image (see <a href="./31-building-from-source.html">Chapter 31 — Building from source</a>).</p>
+<p>Because it’s one self-contained artefact, the runner is also the natural thing to mirror behind a firewall for an air-gapped install — pair it with the registry mirror (<a href="./10a-air-gapped-install.html">Chapter 10a — Air-gapped install</a>).</p>
 <h2 id="the-install-subcommand"><a class="header" href="#the-install-subcommand">The <code>install</code> subcommand</a></h2>
 <pre><code class="language-bash">roksbnkctl install [--dir PATH] [--force]
 </code></pre>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -291,33 +291,15 @@ roksbnkctl ws use prod
 roksbnkctl ws list
 </code></pre>
 <p><code>roksbnkctl init -w &lt;name&gt;</code> is the one-shot path that creates the directory <strong>and</strong> populates <code>config.yaml</code> interactively — and selects it. Everything else (<code>ws new</code>, <code>ws use</code>, <code>ws delete</code>) is the deconstructed form for users who want finer-grained control. The <code>init</code> interview itself (which now lists your account’s regions and existing clusters) is covered in <a href="./07-quick-start.html#step-2--roksbnkctl-init">Chapter 7 — Quick start</a>.</p>
-<h2 id="skip-the-interview-init---var-file"><a class="header" href="#skip-the-interview-init---var-file">Skip the interview: <code>init --var-file</code></a></h2>
-<p>If you already have a <code>terraform.tfvars</code> in hand — from a prior run, a colleague’s hand-off, or <code>cp terraform.tfvars.example terraform.tfvars &amp;&amp; $EDITOR terraform.tfvars</code> — you don’t need to retype its values into the interactive prompts. Pass the file to <code>init</code> and the interview is short-circuited for every field the file already answers:</p>
-<pre><code class="language-bash">roksbnkctl init -w myws --var-file ./terraform.tfvars
+<h2 id="skip-the-interview-init---config-file"><a class="header" href="#skip-the-interview-init---config-file">Skip the interview: <code>init --config-file</code></a></h2>
+<p><code>config.yaml</code> is the single declarative input, so if you already have one — from a prior workspace, a colleague’s hand-off, or <code>roksbnkctl init example &gt; config.yaml</code> followed by an edit — seed the workspace from it and skip the prompts entirely:</p>
+<pre><code class="language-bash">roksbnkctl init example &gt; config.yaml      # annotated template, every axis documented
+$EDITOR config.yaml
+roksbnkctl init -w myws --config-file ./config.yaml
 </code></pre>
-<p>What that one command persists:</p>
-<ul>
-<li><strong><code>~/.roksbnkctl/myws/config.yaml</code></strong> — seeded from the tfvars’ values for the fields the interview asks about (<code>ibmcloud_cluster_region</code>, <code>openshift_cluster_name</code>, <code>openshift_cluster_version</code>, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn’t carry still prompt (or fall back to defaults), so a partial <code>terraform.tfvars</code> is fine. Since <code>v1.8.0</code>, <code>init --var-file</code> also sets a sanitized <code>prefix</code> (derived from the workspace name or the file’s <code>openshift_cluster_name</code>) and a default all-create <code>resources:</code> block non-interactively, so the generated base is collision-safe — and your var-file still overrides any generated name via the layering below. The prefix-driven naming concept is <a href="./13-terraform-variables.html#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</li>
-<li><strong><code>~/.roksbnkctl/myws/terraform.tfvars.user</code></strong> — a verbatim copy of your var-file at the workspace root (sibling to <code>config.yaml</code>), mode <code>0600</code>. This is the workspace-persistent override the lifecycle auto-layers on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> the trial and the cluster phases. One file serves both — internally, <code>tf.Workspace.UserTFVarsPath()</code> resolves to <code>&lt;workspace-dir&gt;/terraform.tfvars.user</code> regardless of which phase opened the workspace.</li>
-</ul>
-<h3 id="why-it-matters-subsequent-commands-just-work-on-bare--w-ws"><a class="header" href="#why-it-matters-subsequent-commands-just-work-on-bare--w-ws">Why it matters: subsequent commands Just Work on bare <code>-w &lt;ws&gt;</code></a></h3>
-<p>Once <code>init --var-file</code> has dropped the workspace-root <code>terraform.tfvars.user</code>, you can run the rest of the lifecycle without re-passing the var-file:</p>
-<pre><code class="language-bash">roksbnkctl up    -w myws --auto    # var-file already on disk; no flag needed
-roksbnkctl plan  -w myws
-roksbnkctl apply -w myws --auto
-roksbnkctl down  -w myws --auto    # bare -w; no "No value for required variable" error
-</code></pre>
-<p>This closes the UX gap where a fresh workspace’s first <code>up --var-file &lt;path&gt;</code> was followed later by a bare <code>down -w &lt;ws&gt;</code> that errored out because the var-file was nowhere on disk for the destroy. With <code>init --var-file</code>, the file is on disk from the moment the workspace exists.</p>
-<p>Passing <code>--var-file &lt;path&gt;</code> on a later command still wins — the precedence chain is unchanged: rendered <code>terraform.tfvars</code> → <code>terraform.tfvars.user</code> (this section’s deliverable) → caller’s <code>--var-file</code> flags → phase overrides. To swap credentials or knobs for a single invocation, pass <code>--var-file ./alt.tfvars</code> on that one call; the persisted <code>terraform.tfvars.user</code> is untouched.</p>
-<h3 id="secrets-on-disk"><a class="header" href="#secrets-on-disk">Secrets on disk</a></h3>
-<p>The operator’s <code>ibmcloud_api_key</code> from <code>./terraform.tfvars</code> lands at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>, mode <code>0600</code>. This is the same security posture as the repo-root <code>./terraform.tfvars</code> you copied from — just relocated under the workspace dir. The standard tfvars guidance applies (see <a href="./13-terraform-variables.html#the-ibmcloud_api_key-exception">Chapter 13 §“The <code>IBMCLOUD_API_KEY</code> exception”</a>): if you’d prefer not to have the key on disk at all, omit <code>ibmcloud_api_key</code> from <code>./terraform.tfvars</code> before running <code>init --var-file</code>, and let the <a href="./14-credentials-resolver.html">cred resolver</a> supply it from env / keychain / <code>~/.bluemix/api_key</code> at apply time. The persisted <code>terraform.tfvars.user</code> then carries every other knob but no credential.</p>
-<h3 id="diagnostics"><a class="header" href="#diagnostics">Diagnostics</a></h3>
-<p>If <code>roksbnkctl down -w &lt;ws&gt;</code> (no <code>--var-file</code> flag) errors with <code>No value for required variable …</code>, you’re in one of two states:</p>
-<ol>
-<li><strong>The workspace was <code>init</code>-ed without <code>--var-file</code>.</strong> No <code>terraform.tfvars.user</code> was dropped, so the lifecycle has nothing to layer in for the required variable. Re-run <code>roksbnkctl init -w &lt;ws&gt; --var-file &lt;path&gt;</code> to seed the workspace-root copy and retry the <code>down</code>.</li>
-<li><strong>The <code>terraform.tfvars.user</code> was removed.</strong> Either by hand, by a <code>ws delete --force</code> that took the dir out from under you, or by an out-of-band cleanup. Re-run <code>roksbnkctl init -w &lt;ws&gt; --var-file &lt;path&gt;</code> to re-drop it, or pass <code>--var-file &lt;path&gt;</code> on the <code>down</code> for a one-shot fix.</li>
-</ol>
-<p>The fastest verification that the file is in the right place: <code>ls -l ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>. It should exist at mode <code>0600</code>. (Earlier development drafts of this feature wrote two copies into <code>state/</code> and <code>state-cluster/</code>; the shipped design uses one file at the workspace root that serves both phases — if you have stale copies in those state dirs from an early build, they’re harmless and can be removed.)</p>
+<p>This writes <code>~/.roksbnkctl/myws/config.yaml</code> directly — unknown fields are <strong>rejected</strong>, not silently dropped — and is fully non-interactive when the file is complete (<code>ibmcloud.region</code>, <code>ibmcloud.resource_group</code>, <code>prefix</code>, <code>tf_source.type</code>). The API key is <strong>not</strong> required in the file; it resolves from the environment / keychain at run time (see <a href="./14-credentials-resolver.html">Credentials</a>). A local path <strong>or</strong> an <code>http(s)</code> URL is accepted, and <code>--config-file</code> composes with <code>--override-from-env</code> to inject secrets from the environment — the full unattended / CI patterns (including <code>--non-interactive</code>, which builds <code>config.yaml</code> from <code>ROKSBNKCTL_*</code> env alone) are in <a href="./07a-unattended-setup.html">Chapter 7a — Unattended setup</a>.</p>
+<h3 id="raw-terraform-variable-overrides"><a class="header" href="#raw-terraform-variable-overrides">Raw terraform-variable overrides</a></h3>
+<p>For the rare case where you need to override a raw terraform variable the <code>config.yaml</code> schema doesn’t surface, drop a <code>terraform.tfvars.user</code> at the workspace root (<code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>, mode <code>0600</code>) — the lifecycle auto-layers it on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> phases — or pass <code>--var-file &lt;path&gt;</code> on a phase command (<code>cluster up</code>, <code>bnk up</code>, …) for a one-shot. The precedence chain is: rendered <code>terraform.tfvars</code> → <code>terraform.tfvars.user</code> → a phase command’s <code>--var-file</code> flags → phase overrides. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a>. (<code>init</code> itself no longer seeds from a tfvars file — <code>config.yaml</code> is the seed surface.)</p>
 <h2 id="the-full-command-tree"><a class="header" href="#the-full-command-tree">The full command tree</a></h2>
 <pre><code class="language-bash">roksbnkctl workspaces ...     # canonical name
 roksbnkctl ws ...              # alias

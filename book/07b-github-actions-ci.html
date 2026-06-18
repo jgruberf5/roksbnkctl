@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Connectivity testing - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>GitHub Actions CI as an example - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,237 +177,157 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="connectivity-testing"><a class="header" href="#connectivity-testing">Connectivity testing</a></h1>
-<p><code>roksbnkctl test connectivity</code> answers one question: <em>can my workspace reach the HTTP/HTTPS endpoints I care about right now?</em></p>
-<p>It’s the simplest of the three test suites — no cluster fixtures, no remote vantage, no JSON parsing harness. Each configured URL gets one HTTP <code>GET</code>, the suite reports pass/fail, and the runner exits <code>0</code> if every probe passed.</p>
-<p>Use it as the first sanity check after <code>roksbnkctl up</code>, as a CI smoke step against a known-good fixture set, or as the “is it me or is it the network” baseline before reaching for <code>curl -v</code> or <code>openssl s_client</code>.</p>
-<h2 id="what-the-connectivity-suite-does"><a class="header" href="#what-the-connectivity-suite-does">What the connectivity suite does</a></h2>
-<p>For each configured URL the runner:</p>
-<ol>
-<li>Adds an <code>https://</code> scheme if you didn’t write one.</li>
-<li>Issues a single <code>GET</code> with a 10-second timeout and the user-agent <code>roksbnkctl/test</code>.</li>
-<li>Records the HTTP status code, the wall-clock duration, and (for HTTPS) the negotiated TLS version.</li>
-<li>Marks the probe <strong>pass</strong> if the status code is in <code>[200, 400)</code> (any 2xx or 3xx); <strong>fail</strong> for anything else, any TLS error, any DNS error, any timeout.</li>
-<li>Aggregates the per-URL results into a suite result; the suite passes only when every URL passed.</li>
-</ol>
-<p>That’s it. No retries, no expected-body matching, no configurable status assertions, no L4 reachability — those are deliberate non-goals (see <a href="#when-connectivity-is-the-wrong-tool">§ When connectivity is the wrong tool</a> below).</p>
-<h2 id="configuring-extra_hosts"><a class="header" href="#configuring-extra_hosts">Configuring <code>extra_hosts</code></a></h2>
-<p>The list of URLs to probe lives in your workspace config under <code>test.connectivity.extra_hosts</code>:</p>
-<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
-test:
-  connectivity:
-    extra_hosts:
-      - https://my-bnk-cis-controller.example.com
-      - https://bigip-next-admin.example.com:8443
-      - https://gslb.example.com
-      - my-bare-host.example.com    # scheme defaults to https://
+                        <h1 id="github-actions-ci-as-an-example"><a class="header" href="#github-actions-ci-as-an-example">GitHub Actions CI as an example</a></h1>
+<p>roksbnkctl is built to be driven from a pipeline: <strong>config is the input, the
+environment supplies the values, and one image carries every tool.</strong> This chapter
+is a worked GitHub Actions example — a single cluster, then a fleet — using the
+<a href="./07a-unattended-setup.html">unattended / <code>--non-interactive</code></a> flow and the
+<a href="./04-installation.html#path-c--run-from-the-all-in-one-container-image-no-install">all-in-one runner image</a>.</p>
+<p>The whole model in one breath: <strong>GitHub secrets → <code>ROKSBNKCTL_*</code> env →
+<code>init --non-interactive</code> builds <code>config.yaml</code> → <code>up</code> reconciles it.</strong> No API key
+in the repo, no hand-edited config, no interactive prompts.</p>
+<h2 id="the-runner-image-as-a-job-container"><a class="header" href="#the-runner-image-as-a-job-container">The runner image as a job container</a></h2>
+<p>Run the job <em>in</em> <code>roksbnkctl-tools-runner</code> — it has <code>roksbnkctl</code> plus terraform,
+helm, kubectl, oc, and the IBM Cloud CLI on <code>PATH</code>, so the workflow needs nothing
+installed:</p>
+<pre><code class="language-yaml">jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest
+    steps:
+      - run: roksbnkctl version
 </code></pre>
-<p>The schema is intentionally minimal — <code>extra_hosts</code> is a <code>[]string</code> of URLs (or bare hostnames; <code>https://</code> is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.</p>
-<p>You don’t have to hand-edit the YAML to populate this list — <code>roksbnkctl test hosts {list,add,remove,clear}</code> reads and writes the same slice. See <a href="#managing-test-hosts-via-the-cli">§ Managing test hosts via the CLI</a> below.</p>
-<p>There’s no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than “does HTTP work” — a particular status code, a custom header, a body match — <code>curl</code> is the right tool, not <code>roksbnkctl test connectivity</code>. A richer per-host schema is queued for v1.x; the v1.0 surface holds the YAML simple on purpose.</p>
-<p><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> covers the full <code>test:</code> block; this chapter expands the <code>connectivity</code> slice.</p>
-<h3 id="what-extra_hosts-typically-holds"><a class="header" href="#what-extra_hosts-typically-holds">What <code>extra_hosts</code> typically holds</a></h3>
-<p>Three classes of URL show up most often in a real workspace:</p>
+<h2 id="ephemeral-runners-need-remote-state"><a class="header" href="#ephemeral-runners-need-remote-state">Ephemeral runners need remote state</a></h2>
+<p>A GitHub-hosted runner is thrown away after the job, so a later <strong>teardown</strong> run
+can’t see the terraform state from the <strong>deploy</strong> run. Put the state in COS so it
+survives across runs (and across runners) — see <a href="./12a-remote-state.html">Remote state</a>:</p>
+<pre><code class="language-yaml">state: { backend: s3 }   # in config.yaml; HMAC keys come from env (below)
+</code></pre>
+<p>Supply the bucket via config and the HMAC keys via env
+(<code>ROKSBNKCTL_COS_HMAC_ACCESS_KEY</code> / <code>_SECRET_KEY</code>).</p>
+<h2 id="a-single-cluster-workflow"><a class="header" href="#a-single-cluster-workflow">A single-cluster workflow</a></h2>
+<pre><code class="language-yaml">name: Deploy BNK
+on:
+  workflow_dispatch:
+    inputs:
+      region:  { description: IBM Cloud region, default: eu-de }
+      prefix:  { description: Resource prefix,  default: ci }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
+    env:
+      # secrets → the credential + cluster identity
+      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:              ${{ inputs.region }}
+      ROKSBNKCTL_RESOURCE_GROUP:      default
+      ROKSBNKCTL_PREFIX:              ${{ inputs.prefix }}
+      ROKSBNKCTL_CLUSTER_NAME:        ${{ inputs.prefix }}-roks
+      ROKSBNKCTL_CLUSTER_CREATE:      "true"
+      # adopt shared infrastructure (reuse is config — no extra commands)
+      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
+      # remote state so teardown works from a fresh runner
+      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
+      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
+    steps:
+      - name: Seed config.yaml from the environment
+        run: roksbnkctl -w ci init --non-interactive
+
+      - name: Deploy (cluster + BNK + testing, per config)
+        run: roksbnkctl -w ci up --auto
+
+      - name: Publish cluster outputs
+        run: |
+          roksbnkctl -w ci cluster output --json | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "roks_cluster_id=$(roksbnkctl -w ci cluster output roks_cluster_id)" &gt;&gt; "$GITHUB_OUTPUT"
+</code></pre>
+<p><code>init --non-interactive</code> logs which fields it pulled from the environment (never
+the values), then <code>up</code> brings up the cluster (create <em>or</em> attach, per
+<code>cluster.create</code>) and <strong>BNK ∥ Testing</strong> — exactly the phases the config enables.
+Add <code>roksbnkctl -w ci gateway up --auto</code> if the deployment includes the gateway
+phase.</p>
+<h2 id="a-fleet-deploy-many-clusters-with-a-matrix"><a class="header" href="#a-fleet-deploy-many-clusters-with-a-matrix">A fleet: deploy many clusters with a matrix</a></h2>
+<p>The thing that makes this a <em>CI</em> tool is that the same env-driven flow scales to a
+fleet — one workspace per cluster, varied by the matrix, all sharing one TGW:</p>
+<pre><code class="language-yaml">name: Deploy fleet
+on: { workflow_dispatch: {} }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
+    strategy:
+      fail-fast: false
+      matrix:
+        cluster:
+          - { ws: eu,  region: eu-de,   prefix: acme-eu }
+          - { ws: us,  region: us-south, prefix: acme-us }
+          - { ws: jp,  region: jp-tok,   prefix: acme-jp }
+    env:
+      IBMCLOUD_API_KEY:                ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_RESOURCE_GROUP:       default
+      ROKSBNKCTL_CLUSTER_CREATE:       "true"
+      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
+      ROKSBNKCTL_COS_HMAC_ACCESS_KEY:  ${{ secrets.COS_HMAC_ACCESS_KEY }}
+      ROKSBNKCTL_COS_HMAC_SECRET_KEY:  ${{ secrets.COS_HMAC_SECRET_KEY }}
+    steps:
+      - env:
+          ROKSBNKCTL_REGION:       ${{ matrix.cluster.region }}
+          ROKSBNKCTL_PREFIX:       ${{ matrix.cluster.prefix }}
+          ROKSBNKCTL_CLUSTER_NAME: ${{ matrix.cluster.prefix }}-roks
+        run: |
+          roksbnkctl -w ${{ matrix.cluster.ws }} init --non-interactive
+          roksbnkctl -w ${{ matrix.cluster.ws }} up --auto
+</code></pre>
+<p>Each matrix leg is one cluster; reuse-by-name (<code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code>)
+lets them share one network fabric. To dictate per-AZ addressing or attach a BIG-IP
+for CIS, add the matching env vars (<code>ROKSBNKCTL_ZONE&lt;n&gt;_*</code>, <code>ROKSBNKCTL_BIGIP_*</code>) —
+the full set is in <a href="./07a-unattended-setup.html#-override-from-env">Unattended setup</a>.</p>
+<h2 id="teardown"><a class="header" href="#teardown">Teardown</a></h2>
+<p>A separate manually-triggered (or PR-close) workflow tears a workspace down. Because
+the state lives in COS, it runs cleanly on a fresh runner:</p>
+<pre><code class="language-yaml">name: Teardown
+on: { workflow_dispatch: { inputs: { ws: { required: true } } } }
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
+    env:
+      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
+      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
+    steps:
+      - run: roksbnkctl -w ${{ inputs.ws }} down --auto
+</code></pre>
+<p>(An <em>attached</em> existing cluster — <code>ROKSBNKCTL_CLUSTER_CREATE=false</code> — is not
+destroyed; <code>down</code> tears down only what roksbnkctl created.)</p>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>
-<li><strong>The BNK CIS controller</strong> — confirms the data-plane front-end is reachable and is returning a sane status code.</li>
-<li><strong>The F5 BIG-IP Next admin endpoint</strong> — confirms the management plane is reachable from your seat (often <code>:8443</code> rather than <code>:443</code>).</li>
-<li><strong>The GSLB VIP that fronts the application</strong> — confirms the routed name actually serves a 2xx; pair with <a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a> for the GSLB-aware DNS-side validation.</li>
-</ul>
-<p>What doesn’t belong in <code>extra_hosts</code>: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than “got a 2xx or 3xx”. Those are <code>curl</code> jobs, not connectivity-suite jobs.</p>
-<h2 id="managing-test-hosts-via-the-cli"><a class="header" href="#managing-test-hosts-via-the-cli">Managing test hosts via the CLI</a></h2>
-<p>The YAML in <a href="#configuring-extra_hosts">§ Configuring <code>extra_hosts</code></a> is the persistent backing store, but you don’t have to hand-edit <code>config.yaml</code> to populate it. <code>roksbnkctl test hosts</code> mirrors the <code>roksbnkctl targets</code> ergonomic (see <a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a>) and gives you four subcommands that read and write the <code>test.connectivity.extra_hosts</code> slice directly:</p>
-<pre><code>roksbnkctl test hosts list                       # print current extra_hosts, one per line
-roksbnkctl test hosts add &lt;url&gt; [&lt;url&gt;...]       # append; idempotent (no-op if already present)
-roksbnkctl test hosts remove &lt;url&gt; [&lt;url&gt;...]    # remove; tolerant of absent (no error)
-roksbnkctl test hosts clear                      # remove ALL (confirmation prompt, --auto skip)
-</code></pre>
-<p>All four route through the same workspace marshaller <code>targets add</code> uses, so a <code>test hosts add</code> write lands in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> under <code>test.connectivity.extra_hosts</code> — operators who already know the YAML field see the connection. Run <code>cat ~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> after any mutation to confirm.</p>
-<p>Argv discipline matches the rest of the v1.7.x surface: <code>list</code> and <code>clear</code> take <code>cobra.NoArgs</code> (a stray positional is rejected at parse time, not silently consumed); <code>add</code> and <code>remove</code> take <code>cobra.MinimumNArgs(1)</code>. A typo like <code>roksbnkctl test hosts list extra</code> fails before any RunE runs.</p>
-<h3 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h3>
-<p>Start from an empty workspace, add a URL, list, then run the connectivity probe — the exact sequence an operator hits the first time the <code>no hosts configured to probe; add via roksbnkctl test hosts add &lt;url&gt;</code> error fires from <code>roksbnkctl test connectivity</code> or no-flag <code>roksbnkctl test dns</code>:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts list
-$ echo $?
-0
-
-$ roksbnkctl test hosts add https://docs.f5.com
-added https://docs.f5.com
-
-$ roksbnkctl test hosts add https://docs.f5.com
-already present: https://docs.f5.com
-
-$ roksbnkctl test hosts list
-https://docs.f5.com
-
-$ roksbnkctl test connectivity
-running connectivity ...
-  PASS  https://docs.f5.com  200 OK in 187ms
-connectivity PASS (1/1 passed)
-</code></pre>
-<blockquote>
-<p><strong>Note:</strong> the byte-for-byte output above is illustrative — it reflects the surface the Sprint 24 CLI ships and is what tech-writer’s drift sweep will re-capture against the built binary before the <code>v1.7.1</code> cut. The shape is stable (<code>list</code> empty → zero bytes + exit 0; <code>add</code> against already-present → “already present:” log + exit 0); minor wording deltas in the log lines may surface in the GREEN-verdict re-capture.</p>
-</blockquote>
-<p><code>--output json</code> is supported on <code>list</code> for scripted callers — empty list emits <code>[]</code>, populated list emits a JSON array preserving insertion order:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts list -o json
-["https://docs.f5.com","https://bigip-next-admin.example.com:8443"]
-</code></pre>
-<h3 id="clear"><a class="header" href="#clear"><code>clear</code></a></h3>
-<p><code>clear</code> requires confirmation (defaults to No) because it wipes the entire slice — the same pattern <code>roksbnkctl down</code> and <code>roksbnkctl cluster down</code> use, not the per-target <code>targets remove</code> pattern:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts clear
-This will remove ALL configured test hosts (2 entries). Continue? [y/N]: y
-cleared 2 entries
-
-$ roksbnkctl test hosts clear --auto
-cleared 0 entries
-</code></pre>
-<p><code>--auto</code> skips the prompt for automation contexts. Mirrors the <code>--auto</code> semantics elsewhere in the binary.</p>
-<h3 id="scope-of-the-cli"><a class="header" href="#scope-of-the-cli">Scope of the CLI</a></h3>
-<p>The CLI manages <strong>only</strong> <code>test.connectivity.extra_hosts</code> — the slice shared by <code>roksbnkctl test connectivity</code> and no-flag <code>roksbnkctl test dns</code>. The <code>test.dns.{default_target,resolvers}</code> and <code>test.throughput.*</code> fields have working flag-driven equivalents (<code>--target</code>, <code>--server</code>, <code>--duration</code>, …) and aren’t covered by <code>test hosts</code>; populate those by hand-editing <code>config.yaml</code> for now. A broader <code>test config</code> surface is a candidate for a future sprint.</p>
-<p>YAML-comment preservation through the marshaller is best-effort and depends on the workspace round-trip — if you keep hand-written comments in <code>config.yaml</code>, prefer the YAML path for additions that need to land alongside specific comments; use the CLI for the routine add/remove/list/clear flow.</p>
-<h2 id="the---insecure-flag"><a class="header" href="#the---insecure-flag">The <code>--insecure</code> flag</a></h2>
-<p>Self-signed certs are common in pre-production BNK deployments — the F5 BIG-IP Next admin endpoint, the CIS controller, an internal GSLB VIP that hasn’t yet been re-fronted with a public CA cert. By default Go’s TLS stack rejects them and the probe fails with <code>x509: certificate signed by unknown authority</code>.</p>
-<p>Pass <code>--insecure</code> to skip certificate verification for the run:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity --insecure
-</code></pre>
-<p>What <code>--insecure</code> does:</p>
-<ul>
-<li>Sets <code>tls.Config.InsecureSkipVerify = true</code> on the HTTP client used by the connectivity suite.</li>
-<li>Applies for the duration of one invocation only.</li>
-<li>Affects every URL probed in that run.</li>
-</ul>
-<p>What <code>--insecure</code> does <strong>not</strong> do:</p>
-<ul>
-<li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
-<li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
-<li>It is not persisted. Setting it in one invocation does not affect the next.</li>
-<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v1.0 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
-</ul>
-<p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
-<h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
-<p>Default output is human-readable on stderr; pass <code>-o json</code> for machine-readable on stdout.</p>
-<h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
-<pre><code class="language-bash">$ roksbnkctl test connectivity
-running connectivity ...
-  PASS  https://my-bnk-cis-controller.example.com  200 OK in 142ms
-  PASS  https://bigip-next-admin.example.com:8443  302 Found in 88ms
-  FAIL  https://gslb.example.com                   Get "...": dial tcp: i/o timeout
-connectivity FAIL (2/3 passed)
-$ echo $?
-1
-</code></pre>
-<p>A 3xx redirect counts as pass — the runner doesn’t follow redirects, but the redirect itself is a successful HTTP response, which is what the suite measures. If you specifically need the final 200 after a redirect chain, <code>curl -L</code> is the tool.</p>
-<h3 id="json"><a class="header" href="#json">JSON</a></h3>
-<pre><code class="language-bash">$ roksbnkctl test connectivity -o json
-</code></pre>
-<pre><code class="language-json">{
-  "schema": "roksbnkctl.v1",
-  "command": "test",
-  "suite": "connectivity",
-  "timestamp": "2026-05-10T14:32:01.123Z",
-  "duration_ms": 235,
-  "overall": "fail",
-  "results": [
-    {
-      "suite": "connectivity",
-      "name": "https://my-bnk-cis-controller.example.com",
-      "status": "pass",
-      "detail": "200 OK in 142ms",
-      "duration_ms": 142,
-      "extra": { "status_code": 200, "tls_version": "TLS 1.3" }
-    },
-    {
-      "suite": "connectivity",
-      "name": "https://gslb.example.com",
-      "status": "fail",
-      "detail": "Get \"https://gslb.example.com\": dial tcp: i/o timeout",
-      "duration_ms": 10003
-    }
-  ]
-}
-</code></pre>
-<p>Exit code follows the same rules as the human-readable form: <code>0</code> on <code>overall: pass</code>, <code>1</code> on <code>overall: fail</code>. CI runners can branch on the exit code; richer assertions (e.g., “I tolerate one fail out of five”) need to consume the JSON.</p>
-<h2 id="running-connectivity-inside-roksbnkctl-test-all"><a class="header" href="#running-connectivity-inside-roksbnkctl-test-all">Running connectivity inside <code>roksbnkctl test all</code></a></h2>
-<p>Connectivity is one of the suites the bare <code>roksbnkctl test</code> (or <code>roksbnkctl test all</code>) command dispatches. The runner walks every configured suite, prints per-suite summaries on stderr, and exits non-zero if any suite failed:</p>
-<pre><code class="language-bash">$ roksbnkctl test
-running connectivity ...
-  PASS  https://bnk-cis.dev-tor.example.com  200 OK in 174ms
-running dns ...
-  PASS  bnk-cis.dev-tor.example.com  resolved 1 address(es)
-connectivity PASS (1/1 passed)
-dns          PASS (1/1 passed)
-
-PASS overall (2/2 suites passed)
-</code></pre>
-<p>In <code>-o json</code> mode, <code>roksbnkctl test all</code> emits an <code>all</code>-shape envelope with one <code>suites[]</code> entry per suite. CI assertions can pin to either the suite-level overall or to a specific probe’s status:</p>
-<pre><code class="language-bash">roksbnkctl test all -o json | jq -e '.suites[] | select(.suite=="connectivity") | .overall == "pass"'
-</code></pre>
-<p>The bare <code>roksbnkctl test</code> defaults to the <code>all</code> suite. To run connectivity in isolation:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity            # explicit suite
-roksbnkctl test connectivity --insecure # session-wide TLS skip
-</code></pre>
-<h2 id="exit-codes-and-ci-integration"><a class="header" href="#exit-codes-and-ci-integration">Exit codes and CI integration</a></h2>
-<pre><code>exit 0  →  every probe passed (every URL returned 2xx or 3xx)
-exit 1  →  any probe failed (non-2xx/3xx, TLS error, DNS error, timeout)
-</code></pre>
-<p>There’s no third “infra error” exit code from the connectivity suite specifically — the suite is straight Go HTTP, no external tooling, no backend dispatch. If <code>roksbnkctl test connectivity</code> exits non-zero, the cause is in the response from one of your configured URLs.</p>
-<p>For a CI step that tolerates a known-flaky endpoint while still failing on the others, consume the JSON instead of relying on the exit code:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity -o json \
-  | jq -e '[.results[] | select(.name | test("flaky-staging.example") | not) | .status] | all(. == "pass")'
-</code></pre>
-<h2 id="worked-example-probing-a-bnk-deployment"><a class="header" href="#worked-example-probing-a-bnk-deployment">Worked example: probing a BNK deployment</a></h2>
-<p>A typical post-<code>up</code> config for a BNK trial — cover the data-plane VIP, the admin endpoint, and the GSLB front:</p>
-<pre><code class="language-yaml"># ~/.roksbnkctl/dev-tor/config.yaml
-test:
-  connectivity:
-    extra_hosts:
-      - https://bnk-cis.dev-tor.bnkfun.example.com         # BNK CIS controller (data plane)
-      - https://bigip-next-admin.dev-tor.bnkfun.example.com:8443  # F5 BIG-IP Next admin
-      - https://gslb-vip.dev-tor.bnkfun.example.com        # the GSLB front
-</code></pre>
-<p>Then:</p>
-<pre><code class="language-bash">$ roksbnkctl test connectivity --insecure
-running connectivity ...
-  PASS  https://bnk-cis.dev-tor.bnkfun.example.com               200 OK in 174ms
-  PASS  https://bigip-next-admin.dev-tor.bnkfun.example.com:8443 302 Found in 91ms
-  PASS  https://gslb-vip.dev-tor.bnkfun.example.com              200 OK in 211ms
-connectivity PASS (3/3 passed)
-</code></pre>
-<p><code>--insecure</code> is needed here because BNK’s admin endpoint and the GSLB VIP are fronted by a self-signed cert in dev. Once the trial moves to a production cert chain, drop the flag — the strict path is what you want for staging and prod.</p>
-<h2 id="when-connectivity-is-the-wrong-tool"><a class="header" href="#when-connectivity-is-the-wrong-tool">When connectivity is the wrong tool</a></h2>
-<p><code>roksbnkctl test connectivity</code> is “does HTTP work”. For anything finer-grained, reach for the right tool:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Scenario</th><th>Use this instead</th></tr>
-</thead>
-<tbody>
-<tr><td>You want to see the full TLS handshake, the cert chain, the SNI resolution, the negotiated cipher</td><td><code>openssl s_client -connect host:port -servername host</code></td></tr>
-<tr><td>You want headers, redirect-following, body matching, a specific status assertion</td><td><code>curl -v -L --fail-with-body &lt;url&gt;</code></td></tr>
-<tr><td>You want to confirm L4 reachability on a specific port, no HTTP layer</td><td><code>nc -vz host port</code> (or <code>bash -c 'echo &gt; /dev/tcp/host/port'</code>)</td></tr>
-<tr><td>You want to confirm DNS resolution from a specific resolver, especially across vantages for GSLB</td><td><a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a></td></tr>
-<tr><td>You want to see what answer a name returns from inside the cluster vs from your laptop</td><td><a href="./21-dns-testing-gslb.html#the---gslb-compare-workflow"><code>roksbnkctl test dns --gslb-compare</code></a></td></tr>
-<tr><td>You want to measure bandwidth between two endpoints</td><td><a href="./22-throughput-testing.html"><code>roksbnkctl test throughput</code></a></td></tr>
-</tbody>
-</table>
-</div>
-<p>The connectivity suite is intentionally a thin probe. When the answer to “is it broken” is “yes” and you need to know why, the suite has done its job — it’s flagged the URL — and the next step is one of the tools above.</p>
-<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
-<ul>
-<li><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
-<li><a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a> — the <code>roksbnkctl targets</code> ergonomic precedent that <code>roksbnkctl test hosts</code> mirrors.</li>
-<li><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> — when “the URL fails” actually means “the name doesn’t resolve from this vantage”.</li>
-<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
-<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.</li>
+<li><strong>Pin the image by digest</strong> in production CI (<code>...-runner@sha256:…</code>), not
+<code>:latest</code>, so a run can’t silently change toolchains.</li>
+<li><strong>Secrets never reach the repo or the logs</strong> — they enter as job env from GitHub
+Secrets, and <code>init</code> redacts which fields it applied.</li>
+<li><strong>This is the same contract bnk-forge uses.</strong> The bnk-forge container step <em>is</em> a
+GitHub-Action-style invocation of this image with these env vars; this chapter is
+the do-it-yourself version of <a href="./24a-bnk-forge-registration.html">Registering with BNK Forge</a>.</li>
+<li><strong>Every phase has <code>status</code> + <code>output</code>.</strong> <code>roksbnkctl &lt;phase&gt; status [--json]</code> and <code>&lt;phase&gt; output [name]</code> (scoped to that phase’s own attributes) are CI stage gates; <code>roksbnkctl output</code> merges them all — e.g. <code>roksbnkctl testing output testing_tgw_jumphost_ip</code>.</li>
+<li><strong>Where this is heading.</strong> <code>up</code> already reconciles cluster + BNK + Testing from
+config; folding <code>gateway</code> in (so a single <code>up</code> is the whole deployment) plus
+<code>output -o json</code> / <code>validate</code> are the next step — see
+<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/17-DECLARATIVE-CLI.md">PRD 17 — Declarative CLI</a>.</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="19-in-cluster-ops-pod.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="07a-unattended-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="21-dns-testing-gslb.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="08-cluster-phase.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -417,11 +337,11 @@ connectivity PASS (3/3 passed)
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="19-in-cluster-ops-pod.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="07a-unattended-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="21-dns-testing-gslb.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="08-cluster-phase.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

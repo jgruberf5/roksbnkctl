@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -225,6 +225,27 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-backend"><a class="header" href="#roksbnkctl-backend"><code>roksbnkctl backend</code></a></h2>
+<p>Configure the per-tool execution backend default (writes config.yaml for you)</p>
+<p>Set or inspect the per-tool execution-backend default — the exec: block — from
+the CLI, instead of hand-editing config.yaml.</p>
+<p>show              effective backend for each tool, and where it came from
+set <code>&lt;tool&gt;</code> <code>&lt;be&gt;</code>   persist exec.<code>&lt;tool&gt;</code>.backend (be: local | docker | k8s | ssh:<code>&lt;target&gt;</code>)
+unset <code>&lt;tool&gt;</code>      remove the override; the tool reverts to its built-in default</p>
+<p>The per-invocation <code>--backend</code> flag still wins over whatever is persisted here.</p>
+<h3 id="roksbnkctl-backend-set"><a class="header" href="#roksbnkctl-backend-set"><code>roksbnkctl backend set</code></a></h3>
+<p>Persist a per-tool execution-backend default</p>
+<pre><code>roksbnkctl backend set &lt;tool&gt; &lt;backend&gt;
+</code></pre>
+<p>← back to <a href="#roksbnkctl-backend"><code>roksbnkctl backend</code></a></p>
+<h3 id="roksbnkctl-backend-show"><a class="header" href="#roksbnkctl-backend-show"><code>roksbnkctl backend show</code></a></h3>
+<p>Show the effective execution backend for each tool</p>
+<p>← back to <a href="#roksbnkctl-backend"><code>roksbnkctl backend</code></a></p>
+<h3 id="roksbnkctl-backend-unset"><a class="header" href="#roksbnkctl-backend-unset"><code>roksbnkctl backend unset</code></a></h3>
+<p>Remove a per-tool backend override (revert to the built-in default)</p>
+<pre><code>roksbnkctl backend unset &lt;tool&gt;
+</code></pre>
+<p>← back to <a href="#roksbnkctl-backend"><code>roksbnkctl backend</code></a></p>
 <h2 id="roksbnkctl-bnk"><a class="header" href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></h2>
 <p>BNK trial lifecycle (sits on top of a cluster)</p>
 <p>Manage the BNK trial resources (flo, cne_instance, license) as a
@@ -257,6 +278,39 @@ single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h3 id="roksbnkctl-bnk-output"><a class="header" href="#roksbnkctl-bnk-output"><code>roksbnkctl bnk output</code></a></h3>
+<p>Print the BNK phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl bnk output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h3 id="roksbnkctl-bnk-status"><a class="header" href="#roksbnkctl-bnk-status"><code>roksbnkctl bnk status</code></a></h3>
+<p>Live runtime status of the BNK trial phase (namespaces + component readiness)</p>
+<pre><code>roksbnkctl bnk status [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
 <h3 id="roksbnkctl-bnk-up"><a class="header" href="#roksbnkctl-bnk-up"><code>roksbnkctl bnk up</code></a></h3>
 <p>Deploy the BNK trial; provisions the cluster first if missing</p>
 <pre><code>roksbnkctl bnk up [flags]
@@ -265,10 +319,6 @@ single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 the workspace has no cluster registered yet, <code>bnk up</code> bootstraps the
 cluster phase first (with a confirmation prompt — the cluster
 provision takes ~30 min) before the trial apply.</p>
-<p>Refuses on legacy single-state workspaces (those provisioned with
-v1.0.x <code>roksbnkctl up</code>): cluster + trial share one state file there,
-so the trial can’t be applied in isolation without state migration.
-Use <code>roksbnkctl up</code> on those workspaces.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -284,6 +334,57 @@ Use <code>roksbnkctl up</code> on those workspaces.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-bnk"><code>roksbnkctl bnk</code></a></p>
+<h2 id="roksbnkctl-bnkforge"><a class="header" href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></h2>
+<p>Configure + drive BNK Forge cluster registration</p>
+<p>Configure and drive registration of this workspace’s cluster with a
+co-located BNK Forge install — without hand-editing config.yaml.</p>
+<p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
+disable   turn it back off
+status    show the effective config + whether the bnk-forge CLI / cluster id are ready
+register  register this workspace’s cluster with BNK Forge right now</p>
+<p>Registration is credential-backed: BNK Forge re-derives the kubeconfig on demand
+from an IBM Cloud credential template, so nothing perishable is stored. The
+<code>bnk-forge</code> CLI (which ships with BNK Forge, not roksbnkctl) must be on PATH.</p>
+<h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
+<p>Turn off BNK Forge auto-registration</p>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-enable"><a class="header" href="#roksbnkctl-bnkforge-enable"><code>roksbnkctl bnkforge enable</code></a></h3>
+<p>Enable BNK Forge auto-registration on <code>cluster up</code> (writes config.yaml for you)</p>
+<pre><code>roksbnkctl bnkforge enable [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides the bnk-forge CLI’s stored-session URL)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-register"><a class="header" href="#roksbnkctl-bnkforge-register"><code>roksbnkctl bnkforge register</code></a></h3>
+<p>Register this workspace’s cluster with BNK Forge now (no re-<code>up</code> needed)</p>
+<pre><code>roksbnkctl bnkforge register [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id (overrides config)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config + stored session)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-status"><a class="header" href="#roksbnkctl-bnkforge-status"><code>roksbnkctl bnkforge status</code></a></h3>
+<p>Show this workspace’s BNK Forge registration config + readiness</p>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h2 id="roksbnkctl-cleanup"><a class="header" href="#roksbnkctl-cleanup"><code>roksbnkctl cleanup</code></a></h2>
 <p>Delete orphaned IBM Cloud resources left by a failed <code>down</code></p>
 <pre><code>roksbnkctl cleanup [flags]
@@ -319,10 +420,32 @@ sits underneath your BNK trials.</p>
 roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
 roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
 roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
-roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json</p>
+roksbnkctl cluster config    Print the recorded cluster identity from cluster-outputs.json
+roksbnkctl cluster status    Live runtime status (endpoints + node readiness)</p>
 <p>Each <code>roksbnkctl up</code> against this workspace will reuse the registered
 cluster (reading cluster-outputs.json) so multiple BNK trials can share
 one cluster.</p>
+<h3 id="roksbnkctl-cluster-config"><a class="header" href="#roksbnkctl-cluster-config"><code>roksbnkctl cluster config</code></a></h3>
+<p>Print the recorded cluster identity (cluster-outputs.json)</p>
+<p><strong>Aliases</strong>: <code>show</code></p>
+<pre><code>roksbnkctl cluster config [flags]
+</code></pre>
+<p>Prints the cluster identity recorded at cluster up / register time
+(~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json): cluster ID, endpoints, VPC,
+transit gateway, and registry COS. This is the RECORDED config; for live runtime
+state (node readiness) use <code>roksbnkctl cluster status</code>.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></p>
 <h3 id="roksbnkctl-cluster-down"><a class="header" href="#roksbnkctl-cluster-down"><code>roksbnkctl cluster down</code></a></h3>
 <p>Destroy the cluster phase (ROKS + cluster-shared services)</p>
 <pre><code>roksbnkctl cluster down [flags]
@@ -339,6 +462,23 @@ with <code>roksbnkctl down</code> to avoid orphaned BNK resources.</p>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></p>
+<h3 id="roksbnkctl-cluster-output"><a class="header" href="#roksbnkctl-cluster-output"><code>roksbnkctl cluster output</code></a></h3>
+<p>Print the Cluster phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl cluster output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
 </tbody>
 </table>
 </div>
@@ -370,8 +510,21 @@ value).</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></p>
-<h3 id="roksbnkctl-cluster-show"><a class="header" href="#roksbnkctl-cluster-show"><code>roksbnkctl cluster show</code></a></h3>
-<p>Print the registered cluster (cluster-outputs.json)</p>
+<h3 id="roksbnkctl-cluster-status"><a class="header" href="#roksbnkctl-cluster-status"><code>roksbnkctl cluster status</code></a></h3>
+<p>Live runtime status of the Cluster phase (endpoints + node readiness)</p>
+<pre><code>roksbnkctl cluster status [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></p>
 <h3 id="roksbnkctl-cluster-up"><a class="header" href="#roksbnkctl-cluster-up"><code>roksbnkctl cluster up</code></a></h3>
 <p>Provision the ROKS cluster (and cluster-shared services) only</p>
@@ -639,6 +792,39 @@ cluster, BNK and testing phases intact.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
+<h3 id="roksbnkctl-gateway-output"><a class="header" href="#roksbnkctl-gateway-output"><code>roksbnkctl gateway output</code></a></h3>
+<p>Print the Gateway phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl gateway output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
+<h3 id="roksbnkctl-gateway-status"><a class="header" href="#roksbnkctl-gateway-status"><code>roksbnkctl gateway status</code></a></h3>
+<p>Runtime status of the Gateway phase (CR readiness + assigned address)</p>
+<pre><code>roksbnkctl gateway status [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></p>
 <h3 id="roksbnkctl-gateway-up"><a class="header" href="#roksbnkctl-gateway-up"><code>roksbnkctl gateway up</code></a></h3>
 <p>Apply the BNK data-plane config (BNK must be healthy)</p>
 <pre><code>roksbnkctl gateway up [flags]
@@ -646,7 +832,7 @@ cluster, BNK and testing phases intact.</p>
 <p>Applies the Gateway API + SnatPool + Egress + static-route CRs and the
 VXLAN security-group rule against the existing cluster + BNK (read from
 cluster-outputs.json). Runs in its own state (state-gateway/).</p>
-<p>Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.</p>
+<p>Refuses when no cluster/BNK exists yet.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -707,12 +893,26 @@ release.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--config-file</code></td><td><code>string</code></td><td>—</td><td>path or http(s) URL to a workspace config.yaml to seed (non-interactive when complete; see <code>init example</code>)</td></tr>
+<tr><td><code>--non-interactive</code></td><td><code>bool</code></td><td><code>false</code></td><td>build config.yaml from environment variables ALONE — no prompts, no –config-file (for argv+env runners; pair with the ROKSBNKCTL_* env vars)</td></tr>
+<tr><td><code>--override-from-env</code></td><td><code>bool</code></td><td><code>false</code></td><td>after seeding, overlay config.yaml fields from environment variables (e.g. IBMCLOUD_API_KEY → ibmcloud.api_key_b64)</td></tr>
 <tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml</td></tr>
 <tr><td><code>--upgrade-tf</code></td><td><code>bool</code></td><td><code>false</code></td><td>resolve and pin the latest TF release into config.yaml</td></tr>
-<tr><td><code>--var-file</code></td><td><code>string</code></td><td>—</td><td>path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases)</td></tr>
 </tbody>
 </table>
 </div>
+<h3 id="roksbnkctl-init-example"><a class="header" href="#roksbnkctl-init-example"><code>roksbnkctl init example</code></a></h3>
+<p>Print an annotated example config.yaml to stdout (a template, or for piping)</p>
+<p>Writes an annotated config.yaml to stdout — the canonical declarative input,
+with the required fields filled and every optional axis documented (cluster
+create-or-attach, BYO infrastructure reuse, BNK install, gateway, registry
+mirror, remote state). config.yaml is the single input to a workspace; the
+embedded terraform is internal.</p>
+<p>Create a starting config or inspect the knobs with ordinary pipes:</p>
+<p>roksbnkctl init example &gt; config.yaml
+roksbnkctl -w demo init –config-file config.yaml
+roksbnkctl init example | grep -E ‘manifest_version|cluster_vpc’</p>
+<p>← back to <a href="#roksbnkctl-init"><code>roksbnkctl init</code></a></p>
 <h2 id="roksbnkctl-install"><a class="header" href="#roksbnkctl-install"><code>roksbnkctl install</code></a></h2>
 <p>Copy the running roksbnkctl binary into a directory on PATH</p>
 <pre><code>roksbnkctl install [flags]
@@ -1071,6 +1271,26 @@ static-key Secret.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-ops"><code>roksbnkctl ops</code></a></p>
+<h2 id="roksbnkctl-output"><a class="header" href="#roksbnkctl-output"><code>roksbnkctl output</code></a></h2>
+<p>Print the merged outputs across all phases (cluster + bnk + testing + gateway)</p>
+<pre><code>roksbnkctl output [name] [flags]
+</code></pre>
+<p>Print the union of every phase’s own outputs — each read from its owning
+phase’s state, so values are the populated ones and never conflict. This is the
+“everything” view; the per-phase <code>&lt;phase&gt; output</code> commands scope to just that
+phase’s managed attributes.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-plan"><a class="header" href="#roksbnkctl-plan"><code>roksbnkctl plan</code></a></h2>
 <p>Read-only; show what roksbnkctl up would change</p>
 <pre><code>roksbnkctl plan [flags]
@@ -1094,12 +1314,14 @@ the F5 Artifact Repository (repo.f5.com) into a private target — the cluster�
 own OpenShift internal registry — so an air-gapped cluster installs BNK from
 images it hosts itself.</p>
 <p>Commands:
+roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
 roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
 roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
-roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM</p>
+roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
+roksbnkctl registry delete     Delete ALL replicated artifacts from the target</p>
 <p><code>registry bom</code> works offline against the FAR manifest; the cluster-touching
 verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
 registry: block in the workspace config.</p>
@@ -1123,6 +1345,31 @@ and prints the resulting BOM. Needs no target — it only reads from FAR.</p>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-delete"><a class="header" href="#roksbnkctl-registry-delete"><code>roksbnkctl registry delete</code></a></h3>
+<p>Delete ALL replicated artifacts from the target registry</p>
+<pre><code>roksbnkctl registry delete [flags]
+</code></pre>
+<p>Removes every artifact roksbnkctl replicated (recorded in registry-mirror.json)
+from the configured target, then clears the mirror record so the BNK install
+reverts to pulling from FAR. Destructive — pass –force to skip the confirmation.</p>
+<p>Deletion is by digest where recorded (the reliable form for a registry manifest
+DELETE). Artifacts that fail to delete are kept in the record so a re-run retries
+them. For target=icr the API key needs Manager (delete) rights on the namespace;
+for target=generic the registry must have deletes enabled.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+<tr><td><code>--kubeconfig</code></td><td><code>string</code></td><td>—</td><td>kubeconfig path (default: workspace/cluster default)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1168,6 +1415,7 @@ and prints the resulting BOM. Needs no target — it only reads from FAR.</p>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1193,6 +1441,39 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
+<h3 id="roksbnkctl-registry-target"><a class="header" href="#roksbnkctl-registry-target"><code>roksbnkctl registry target</code></a></h3>
+<p>Show or set the registry mirror target and its fields</p>
+<pre><code>roksbnkctl registry target [icr|generic|openshift | &lt;field&gt; &lt;value&gt;] [flags]
+</code></pre>
+<p>Configure the registry replication target without hand-editing config.yaml.</p>
+<p>With no arguments, prints the current target + configured fields. Otherwise the
+first argument is either a backend KIND (sets registry.target) or a FIELD name
+(set with a following value):</p>
+<p>Kinds:  icr | generic | openshift
+Fields: icr_host  icr_namespace
+generic_host  generic_repo_prefix  generic_username  generic_password</p>
+<p>Examples:
+roksbnkctl registry target                          # show current config
+roksbnkctl registry target icr                      # use IBM Container Registry
+roksbnkctl registry target icr_namespace bnk-test
+roksbnkctl registry target generic                  # use a generic OCI registry
+roksbnkctl registry target generic_host art.example.com
+roksbnkctl registry target generic_repo_prefix bnk
+roksbnkctl registry target generic_username ci-bot
+echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdin</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--password-stdin</code></td><td><code>bool</code></td><td><code>false</code></td><td>read the generic registry password from stdin (for <code>registry target generic_password</code>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1214,6 +1495,7 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic|openshift (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1237,20 +1519,95 @@ upgrade verb).</p>
 KUBECONFIG, IBMCLOUD_API_KEY, IC_API_KEY, and IBMCLOUD_REGION exported so
 locally-installed kubectl / oc / ibmcloud commands work without further
 setup. Exits when the subshell does.</p>
+<h2 id="roksbnkctl-state"><a class="header" href="#roksbnkctl-state"><code>roksbnkctl state</code></a></h2>
+<p>Manage where terraform state lives (local vs COS/S3 remote backend)</p>
+<h3 id="roksbnkctl-state-local"><a class="header" href="#roksbnkctl-state-local"><code>roksbnkctl state local</code></a></h3>
+<p>Use local per-phase terraform state (the default) — writes config.yaml for you</p>
+<p>← back to <a href="#roksbnkctl-state"><code>roksbnkctl state</code></a></p>
+<h3 id="roksbnkctl-state-migrate"><a class="header" href="#roksbnkctl-state-migrate"><code>roksbnkctl state migrate</code></a></h3>
+<p>Copy each phase’s local terraform state into the configured COS/S3 backend</p>
+<pre><code>roksbnkctl state migrate [flags]
+</code></pre>
+<p>Migrates a workspace’s terraform state from local files into the COS/S3
+remote backend declared in config.yaml’s state: block (PRD 16).</p>
+<p>Pre-requisite: set state.backend = “s3” (+ state.s3.{endpoint,bucket,region})
+and export the COS HMAC keys (ROKSBNKCTL_COS_HMAC_ACCESS_KEY /
+ROKSBNKCTL_COS_HMAC_SECRET_KEY, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
+before running.</p>
+<p>For each deployed phase (cluster / bnk / testing / gateway), this runs
+terraform init -migrate-state to copy its local state to the per-phase key
+in the bucket. It refuses to overwrite a key that already holds state (pass
+–force to override). The local state files are left in place; verify the
+remote read-back before deleting them.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>migrate even if the remote key already holds state (overwrites it)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-state"><code>roksbnkctl state</code></a></p>
+<h3 id="roksbnkctl-state-s3"><a class="header" href="#roksbnkctl-state-s3"><code>roksbnkctl state s3</code></a></h3>
+<p>Use the COS/S3 remote terraform-state backend — writes the state: block for you</p>
+<pre><code>roksbnkctl state s3 [flags]
+</code></pre>
+<p>Switch this workspace to the COS/S3 remote state backend (PRD 16) by writing
+its state: block to config.yaml — no hand-edit.</p>
+<p>You still provision the bucket + HMAC credentials yourself: the HMAC access/
+secret keys are NEVER written to config.yaml — only the names of the env vars
+they come from are (–access-key-source / –secret-key-source, defaulting to
+ROKSBNKCTL_COS_HMAC_ACCESS_KEY / ROKSBNKCTL_COS_HMAC_SECRET_KEY). After this,
+export those env vars and run <code>roksbnkctl state migrate</code> to move existing state.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--access-key-source</code></td><td><code>string</code></td><td>—</td><td>env var holding the HMAC access key (default ROKSBNKCTL_COS_HMAC_ACCESS_KEY)</td></tr>
+<tr><td><code>--bucket</code></td><td><code>string</code></td><td>—</td><td>pre-provisioned bucket name (required)</td></tr>
+<tr><td><code>--endpoint</code></td><td><code>string</code></td><td>—</td><td>COS S3 endpoint URL (required)</td></tr>
+<tr><td><code>--key-prefix</code></td><td><code>string</code></td><td>—</td><td>state key prefix (default: the workspace name)</td></tr>
+<tr><td><code>--region</code></td><td><code>string</code></td><td>—</td><td>COS location / region (required)</td></tr>
+<tr><td><code>--secret-key-source</code></td><td><code>string</code></td><td>—</td><td>env var holding the HMAC secret key (default ROKSBNKCTL_COS_HMAC_SECRET_KEY)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-state"><code>roksbnkctl state</code></a></p>
+<h3 id="roksbnkctl-state-show"><a class="header" href="#roksbnkctl-state-show"><code>roksbnkctl state show</code></a></h3>
+<p>Show the workspace’s terraform-state backend config</p>
+<p>← back to <a href="#roksbnkctl-state"><code>roksbnkctl state</code></a></p>
 <h2 id="roksbnkctl-status"><a class="header" href="#roksbnkctl-status"><code>roksbnkctl status</code></a></h2>
 <p>Summary of the workspace: cluster, components, last apply</p>
+<pre><code>roksbnkctl status [flags]
+</code></pre>
 <p>roksbnkctl status reports a quick read of the workspace:</p>
 <ul>
 <li>workspace name + region</li>
 <li>configured cluster name</li>
 <li>pinned Terraform source</li>
-<li>per-phase deployment status (cluster phase + BNK trial)</li>
-<li>v1.0.x <code>Last apply</code> line preserved for legacy single-state workspaces</li>
+<li>per-phase deployment status (Cluster, BNK trial, Testing, Gateway)</li>
 <li>kubeconfig path (if any)</li>
 <li>cluster reachability (node count + ready count)</li>
 </ul>
 <p>v1.x will add per-BNK-component readiness (flo, cis, cert-manager,
 cneinstance) once the component-discovery shape is finalised.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-targets"><a class="header" href="#roksbnkctl-targets"><code>roksbnkctl targets</code></a></h2>
 <p>Manage SSH targets used by –on</p>
 <p>Targets are named SSH endpoints stored under the workspace’s
@@ -1513,7 +1870,7 @@ BNK phase on top of a shared cluster. Pure IBM VPC — no Kubernetes.</p>
 <p>Commands:
 roksbnkctl testing up       Provision the jumphosts (needs a cluster: VPC + transit gateway)
 roksbnkctl testing down     Destroy the jumphosts, leaving the cluster and BNK intact
-roksbnkctl testing migrate  Move pre-Sprint-28 jumphosts out of the BNK state into state-testing/</p>
+roksbnkctl testing status   Live jumphost IPs / SSH commands + reachability</p>
 <p>This is the provisioning phase. To RUN connectivity/DNS/throughput probes
 against a deployed environment, use <code>roksbnkctl test</code> (and
 <code>roksbnkctl test hosts</code> to manage the probe target list) — those
@@ -1524,9 +1881,7 @@ provision nothing.</p>
 </code></pre>
 <p>Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
-each phase tears down independently.</p>
-<p>Refuses when there’s no testing state to destroy, and on legacy
-single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+each phase tears down independently. Refuses when there’s no testing state.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1540,15 +1895,38 @@ single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
-<h3 id="roksbnkctl-testing-migrate"><a class="header" href="#roksbnkctl-testing-migrate"><code>roksbnkctl testing migrate</code></a></h3>
-<p>Move pre-Sprint-28 jumphosts from the BNK state into state-testing/</p>
-<p>One-shot migration for workspaces provisioned before the Sprint 28
-three-phase split, where the jumphosts (module.testing.*) still live in the
-BNK state (state/). Moves them into state-testing/ with no cloud churn
-(terraform state mv) so the live jumphosts are preserved.</p>
-<p>After migrating, re-run <code>roksbnkctl bnk up</code> to reconcile the
-now-jumphost-free BNK state, and <code>roksbnkctl testing up</code> to adopt the
-moved jumphosts (plan shows a no-op).</p>
+<h3 id="roksbnkctl-testing-output"><a class="header" href="#roksbnkctl-testing-output"><code>roksbnkctl testing output</code></a></h3>
+<p>Print the Testing phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl testing output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
+<h3 id="roksbnkctl-testing-status"><a class="header" href="#roksbnkctl-testing-status"><code>roksbnkctl testing status</code></a></h3>
+<p>Live runtime status of the Testing phase (jumphost IPs + SSH reachability)</p>
+<pre><code>roksbnkctl testing status [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+</tbody>
+</table>
+</div>
 <p>← back to <a href="#roksbnkctl-testing"><code>roksbnkctl testing</code></a></p>
 <h3 id="roksbnkctl-testing-up"><a class="header" href="#roksbnkctl-testing-up"><code>roksbnkctl testing up</code></a></h3>
 <p>Provision the testing jumphosts (cluster must exist)</p>
@@ -1558,7 +1936,6 @@ moved jumphosts (plan shows a no-op).</p>
 transit gateway (read from cluster-outputs.json). Runs in its own state
 (state-testing/), independent of the BNK phase — <code>bnk down</code> leaves
 the jumphosts and <code>testing down</code> leaves BNK.</p>
-<p>Refuses on legacy single-state workspaces (use <code>roksbnkctl up</code>).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>

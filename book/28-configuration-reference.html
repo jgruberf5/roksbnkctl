@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -208,6 +208,7 @@ tf_source:       # required (defaults to embedded if omitted)
 cos:             # optional; supply-chain auto-upload
 targets:         # optional; populated automatically by up's post-apply hook
 exec:            # optional; per-tool default-backend map
+bnkforge:        # optional; opt-in BNK Forge cluster registration
 </code></pre>
 <p>The order of the top-level keys in the file doesn’t matter; YAML is a mapping. The order shown above is the canonical render order produced by <code>roksbnkctl init</code>.</p>
 <h2 id="prefix-field"><a class="header" href="#prefix-field"><code>prefix:</code> field</a></h2>
@@ -508,6 +509,63 @@ cells:
 </table>
 </div>
 <p>See <a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> for the full surface.</p>
+<h2 id="state-block"><a class="header" href="#state-block"><code>state:</code> block</a></h2>
+<p>Selects where terraform state lives. Absent (or <code>backend: local</code>) keeps per-phase local <code>terraform.tfstate</code> — byte-identical to before. <code>backend: s3</code> stores each phase’s state in an S3-compatible bucket (IBM COS). See <a href="./12a-remote-state.html">Chapter 12a — Remote state</a> for the full walkthrough.</p>
+<pre><code class="language-yaml">state:
+  backend: s3          # "" | local (default) | s3
+  s3:
+    endpoint: "https://s3.us-south.cloud-object-storage.appdomain.cloud"
+    bucket:   "acme-bnk-tfstate"
+    region:   "us-south"
+    key_prefix: "roksbnkctl"
+    access_key_source: ""    # env var name; default ROKSBNKCTL_COS_HMAC_ACCESS_KEY → AWS_ACCESS_KEY_ID
+    secret_key_source: ""    # env var name; default ROKSBNKCTL_COS_HMAC_SECRET_KEY → AWS_SECRET_ACCESS_KEY
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>backend</code></td><td>string</td><td><code>local</code></td><td><code>local</code> | <code>s3</code>. Empty = local.</td></tr>
+<tr><td><code>s3.endpoint</code></td><td>string</td><td>—</td><td>COS S3 endpoint URL (required for <code>s3</code>).</td></tr>
+<tr><td><code>s3.bucket</code></td><td>string</td><td>—</td><td>Pre-provisioned bucket (required). roksbnkctl never creates/deletes it.</td></tr>
+<tr><td><code>s3.region</code></td><td>string</td><td>—</td><td>COS location / region (required).</td></tr>
+<tr><td><code>s3.key_prefix</code></td><td>string</td><td>the workspace name</td><td>First segment of the per-phase key <code>&lt;prefix&gt;/&lt;workspace&gt;/&lt;phase&gt;/terraform.tfstate</code>.</td></tr>
+<tr><td><code>s3.access_key_source</code></td><td>string</td><td><code>ROKSBNKCTL_COS_HMAC_ACCESS_KEY</code> → <code>AWS_ACCESS_KEY_ID</code></td><td>Env var the <strong>HMAC</strong> access key is read from. Never stored in config / HCL / state.</td></tr>
+<tr><td><code>s3.secret_key_source</code></td><td>string</td><td><code>ROKSBNKCTL_COS_HMAC_SECRET_KEY</code> → <code>AWS_SECRET_ACCESS_KEY</code></td><td>Env var for the HMAC secret key.</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>s3</code> requires <strong>terraform ≥ 1.10</strong> (the native lockfile) — a preflight error fires otherwise. Convert an existing local-state workspace with <code>roksbnkctl state migrate</code>.</p>
+<h2 id="bnkforge-block"><a class="header" href="#bnkforge-block"><code>bnkforge:</code> block</a></h2>
+<p>Opt-in integration with a co-located <a href="./24a-bnk-forge-registration.html">BNK Forge</a>
+install. When <code>register: true</code> and the <code>bnk-forge</code> CLI is on <code>PATH</code>, a post-apply
+hook on <code>cluster up</code> registers the just-provisioned ROKS cluster with BNK Forge —
+<strong>credential-backed</strong>, so Forge re-derives the kubeconfig on demand from an IBM
+Cloud credential template rather than storing a perishable one. Best-effort: it
+never blocks or fails the deploy. Absent (or <code>register: false</code>) ⇒ no-op. See
+<a href="./24a-bnk-forge-registration.html">Chapter 24a — Registering the cluster with BNK Forge</a>.</p>
+<p><strong>Set this block with the CLI — don’t hand-edit it:</strong> <code>roksbnkctl bnkforge enable [--url U] [--project P]</code> writes it for you, <code>roksbnkctl bnkforge disable</code>
+flips <code>register</code> off, and <code>roksbnkctl bnkforge status</code> shows the effective
+values. The resulting block looks like:</p>
+<pre><code class="language-yaml">bnkforge:
+  register: true
+  url: https://forge.example.com   # only if you passed --url
+  project: "42"                    # only if you passed --project
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>register</code></td><td>bool</td><td><code>false</code></td><td>Opt the workspace in. <code>false</code>/omitted ⇒ no registration.</td></tr>
+<tr><td><code>url</code></td><td>string</td><td>(CLI’s stored-session URL)</td><td>Overrides the BNK Forge server URL the <code>bnk-forge</code> CLI would read from its stored session (<code>~/.bnk-forge/config.json</code>). Empty ⇒ use the stored session’s URL.</td></tr>
+<tr><td><code>project</code></td><td>string</td><td>(CLI auto-selects)</td><td>Target BNK Forge project id to register the cluster under. Empty ⇒ the CLI picks the active/sole project, or prompts.</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="targets-block"><a class="header" href="#targets-block"><code>targets:</code> block</a></h2>
 <pre><code class="language-yaml">targets:
   jumphost:
@@ -616,6 +674,9 @@ cells:
 <tr><td><code>targets.&lt;name&gt;.key_path</code></td><td>string</td><td>(empty)</td><td>PEM file path.</td></tr>
 <tr><td><code>targets.&lt;name&gt;.key_source</code></td><td>string</td><td>(empty)</td><td><code>agent</code> | <code>tf-output:&lt;name&gt;</code>.</td></tr>
 <tr><td><code>exec.&lt;tool&gt;.backend</code></td><td>string</td><td><code>local</code> (varies by tool)</td><td><code>local</code> | <code>docker</code> | <code>k8s</code> | <code>ssh:&lt;target&gt;</code>.</td></tr>
+<tr><td><code>bnkforge.register</code></td><td>bool</td><td><code>false</code></td><td>Opt into BNK Forge cluster registration on <code>cluster up</code>.</td></tr>
+<tr><td><code>bnkforge.url</code></td><td>string</td><td>(CLI’s stored-session URL)</td><td>Override the BNK Forge server URL.</td></tr>
+<tr><td><code>bnkforge.project</code></td><td>string</td><td>(CLI auto-selects)</td><td>Target BNK Forge project id.</td></tr>
 </tbody>
 </table>
 </div>
@@ -644,6 +705,7 @@ cells:
 <tr><td><code>cos</code></td><td>Block omitted ⇒ no pre-flight uploads; FLO reads whatever’s already in the configured bucket.</td></tr>
 <tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code> when terraform provisions a jumphost.</td></tr>
 <tr><td><code>exec.*</code></td><td>Each tool falls back to its built-in default (typically <code>local</code>; <code>iperf3</code> is <code>k8s</code>).</td></tr>
+<tr><td><code>bnkforge</code></td><td>Block absent (or <code>register: false</code>) ⇒ no BNK Forge registration; <code>cluster up</code> behaves exactly as before.</td></tr>
 </tbody>
 </table>
 </div>

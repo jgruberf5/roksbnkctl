@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -201,6 +201,9 @@
 <li><strong><code>k8s</code></strong> when the call’s <em>network position</em> matters and the cluster is the right vantage point.</li>
 <li><strong><code>ssh:&lt;target&gt;</code></strong> when the call needs to originate from a specific external host (a customer bastion, an air-gapped bridge).</li>
 </ul>
+<blockquote>
+<p><strong>Inside the all-in-one runner image, use <code>local</code>.</strong> When you run roksbnkctl from the <a href="./04-installation.html#path-c--run-from-the-all-in-one-container-image-no-install">runner container</a>, every tool it dispatches is already on <code>PATH</code> in the image — so <code>local</code> is the right call and the <code>docker</code>/<code>k8s</code> backends (which fetch a tool from elsewhere) are redundant there (and <code>docker</code> would mean docker-in-docker). The decision tree below is for the <strong>binary-on-host</strong> case, where those backends earn their keep.</p>
+</blockquote>
 <p>The rest of this chapter is the longer version.</p>
 <h2 id="per-tool-default-backends"><a class="header" href="#per-tool-default-backends">Per-tool default backends</a></h2>
 <p>Every tool has a default backend baked into <code>roksbnkctl</code>. Workspace config (<code>exec:</code> block) can override the default per workspace; <code>--backend</code> overrides for a single invocation.</p>
@@ -222,9 +225,14 @@
 <li><strong><code>iperf3</code> defaults to <code>k8s</code></strong> because throughput from a laptop’s uplink isn’t the cluster’s bandwidth. The k8s backend places the iperf3 client in (or adjacent to) the cluster so the number reflects fabric, not Wi-Fi. Laptop-uplink-to-cluster is a real measurement too, but it’s the special case — opt in via <code>--backend local</code>.</li>
 <li><strong><code>terraform</code> defaults to <code>local</code></strong> because the terraform-exec local path is the established workflow. State handling is simplest there. Frozen-version CI runs use <code>--backend docker</code>; non-local network-locality use cases (cluster-side, SSH-bastion-side) are deferred to a future release pending a state-handling design — see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform">PRD 03 §“State concerns”</a>.</li>
 </ul>
-<p>To change a default per workspace, edit <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code>:</p>
+<p>To change a default per workspace, use the <code>backend</code> command — <strong>no config.yaml hand-edit</strong>:</p>
+<pre><code class="language-bash">roksbnkctl -w acme backend set ibmcloud ssh:bastion
+roksbnkctl -w acme backend set terraform docker
+roksbnkctl -w acme backend show              # effective backend per tool + where it came from
+roksbnkctl -w acme backend unset terraform   # revert to the built-in default
+</code></pre>
+<p>That writes the <code>exec:</code> block for you:</p>
 <pre><code class="language-yaml">exec:
-  iperf3:    { backend: k8s }      # already the default; shown for clarity
   ibmcloud:  { backend: ssh:bastion }
   terraform: { backend: docker }
 </code></pre>

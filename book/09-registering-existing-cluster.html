@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,6 +182,9 @@
 <p>This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the <code>cluster-outputs.json</code> write, and a worked example.</p>
 <blockquote>
 <p><strong><code>roksbnkctl init</code> can register for you.</strong> Since <code>v1.9.0</code>, answering <strong>no</strong> to <em>Create a new ROKS cluster?</em> in the <a href="./07-quick-start.html#reusing-an-existing-cluster"><code>init</code> interview</a> lists the account’s running OpenShift clusters and registers the one you pick — it performs the same <code>cluster-outputs.json</code> write described here, inline. Use <code>cluster register &lt;name&gt;</code> directly when you want to (re)register without re-running the full interview, or when scripting.</p>
+</blockquote>
+<blockquote>
+<p><strong><code>cluster up</code> attaches when <code>cluster.create=false</code>.</strong> You don’t need a separate <code>cluster register</code> call: if the workspace’s <code>cluster.create</code> is <code>false</code>, <code>roksbnkctl cluster up</code> <em>attaches</em> to the existing cluster named in <code>cluster.name</code> (the same discovery + <code>cluster-outputs.json</code> write) instead of running the terraform create. So one command — and one toggle in an automation/CI form — covers both “make a new cluster” and “use the existing one”. Set it non-interactively with <code>ROKSBNKCTL_CLUSTER_CREATE</code> / <code>ROKSBNKCTL_CLUSTER_NAME</code> (see <a href="./07a-unattended-setup.html">Chapter 7a</a>).</p>
 </blockquote>
 <h2 id="when-to-use-this"><a class="header" href="#when-to-use-this">When to use this</a></h2>
 <p><code>cluster register</code> is the answer when <strong>all</strong> of these are true:</p>

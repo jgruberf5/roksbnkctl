@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -232,7 +232,7 @@
 <p><strong>Documentation.</strong> New chapter or major section in Part VI of the book (currently chapters 20-23). Cross-link from <a href="./23-e2e-test-plan.html">Chapter 23 — The E2E test plan</a> and <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a>.</p>
 </li>
 </ol>
-<p>The DNS probe is the canonical worked example — read <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/test/dns.go"><code>internal/test/dns.go</code></a> + <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/test.go"><code>internal/cli/test.go</code></a> to see all six steps in their landed form, plus the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/prompts/sprint5/architect.md">Sprint 5 architect prompt</a> for the design framing.</p>
+<p>The DNS probe is the canonical worked example — read <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/test/dns.go"><code>internal/test/dns.go</code></a> + <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/test.go"><code>internal/cli/test.go</code></a> to see all six steps in their landed form.</p>
 <h2 id="adding-a-new-tool-to-an-existing-backend"><a class="header" href="#adding-a-new-tool-to-an-existing-backend">Adding a new tool to an existing backend</a></h2>
 <p>The <code>docker</code>, <code>k8s</code>, and <code>ssh</code> backends each maintain a map of tool-name → image / package. Adding a new tool (e.g., <code>mtr</code>, <code>tcpdump</code>, <code>helm</code>) means an entry in each backend’s map.</p>
 <h3 id="docker-backend"><a class="header" href="#docker-backend">Docker backend</a></h3>
@@ -305,7 +305,7 @@ var toolPackages = map[string]toolPackage{
 <li><strong>Implement</strong>: the PRD becomes the implementation plan. Per-sprint tasks land in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> referencing the PRD by number.</li>
 <li><strong>Land</strong>: code PRs reference the PRD; the PRD itself is the <em>spec</em>, code is the <em>implementation</em>. When the implementation diverges from the PRD, the PRD gets updated to match — never the other way around (the binary’s behaviour is the source of truth).</li>
 </ol>
-<p>The PLAN.md per-sprint planning rhythm interleaves code + tests + docs per sprint. Each sprint’s prompts (under <code>prompts/sprint&lt;N&gt;/</code>) translate the PLAN into concrete agent tasks.</p>
+<p>The PLAN.md per-sprint planning rhythm interleaves code + tests + docs per sprint. Each sprint’s prompts translate the PLAN into concrete agent tasks.</p>
 <h2 id="the-four-agent-sprint-dispatch"><a class="header" href="#the-four-agent-sprint-dispatch">The four-agent sprint dispatch</a></h2>
 <p>Larger sprints (Sprints 3-6) are dispatched as four parallel agents:</p>
 <ul>
@@ -314,7 +314,7 @@ var toolPackages = map[string]toolPackage{
 <li><strong>Tech-writer</strong> — reviews the architect’s chapters for accuracy, fluency, and cross-link integrity. Files tech-writer-side issues.</li>
 <li><strong>Validator</strong> — writes / extends the e2e test scripts and CI workflows, files validator-side issues.</li>
 </ul>
-<p>The dispatch lives at <code>prompts/sprint&lt;N&gt;/{architect,staff,tech-writer,validator}.md</code> — one prompt per agent. Each agent runs independently against the same repo snapshot. An integrator at the end folds the four agents’ outputs together, resolves the issues each filed against the others, and commits the aggregate.</p>
+<p>Each agent runs independently from its own prompt — one per agent — against the same repo snapshot. An integrator at the end folds the four agents’ outputs together, resolves the issues each filed against the others, and commits the aggregate.</p>
 <p>When to dispatch four agents vs. just open a PR:</p>
 <div class="table-wrapper">
 <table>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Connectivity testing - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>Registering the cluster with BNK Forge - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,237 +177,244 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="connectivity-testing"><a class="header" href="#connectivity-testing">Connectivity testing</a></h1>
-<p><code>roksbnkctl test connectivity</code> answers one question: <em>can my workspace reach the HTTP/HTTPS endpoints I care about right now?</em></p>
-<p>It’s the simplest of the three test suites — no cluster fixtures, no remote vantage, no JSON parsing harness. Each configured URL gets one HTTP <code>GET</code>, the suite reports pass/fail, and the runner exits <code>0</code> if every probe passed.</p>
-<p>Use it as the first sanity check after <code>roksbnkctl up</code>, as a CI smoke step against a known-good fixture set, or as the “is it me or is it the network” baseline before reaching for <code>curl -v</code> or <code>openssl s_client</code>.</p>
-<h2 id="what-the-connectivity-suite-does"><a class="header" href="#what-the-connectivity-suite-does">What the connectivity suite does</a></h2>
-<p>For each configured URL the runner:</p>
-<ol>
-<li>Adds an <code>https://</code> scheme if you didn’t write one.</li>
-<li>Issues a single <code>GET</code> with a 10-second timeout and the user-agent <code>roksbnkctl/test</code>.</li>
-<li>Records the HTTP status code, the wall-clock duration, and (for HTTPS) the negotiated TLS version.</li>
-<li>Marks the probe <strong>pass</strong> if the status code is in <code>[200, 400)</code> (any 2xx or 3xx); <strong>fail</strong> for anything else, any TLS error, any DNS error, any timeout.</li>
-<li>Aggregates the per-URL results into a suite result; the suite passes only when every URL passed.</li>
-</ol>
-<p>That’s it. No retries, no expected-body matching, no configurable status assertions, no L4 reachability — those are deliberate non-goals (see <a href="#when-connectivity-is-the-wrong-tool">§ When connectivity is the wrong tool</a> below).</p>
-<h2 id="configuring-extra_hosts"><a class="header" href="#configuring-extra_hosts">Configuring <code>extra_hosts</code></a></h2>
-<p>The list of URLs to probe lives in your workspace config under <code>test.connectivity.extra_hosts</code>:</p>
-<pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
-test:
-  connectivity:
-    extra_hosts:
-      - https://my-bnk-cis-controller.example.com
-      - https://bigip-next-admin.example.com:8443
-      - https://gslb.example.com
-      - my-bare-host.example.com    # scheme defaults to https://
+                        <h1 id="registering-the-cluster-with-bnk-forge"><a class="header" href="#registering-the-cluster-with-bnk-forge">Registering the cluster with BNK Forge</a></h1>
+<p><a href="https://github.com/jgruberf5">BNK Forge</a> is a separate platform — a FastAPI/React
+app with its own <code>bnk-forge</code> CLI — for operating BIG-IP Next for Kubernetes across
+a fleet of clusters. When you run BNK Forge co-located with your ROKS deployments,
+<code>roksbnkctl</code> can hand each cluster it provisions straight to BNK Forge, so the
+cluster shows up in the Forge fleet the moment <code>cluster up</code> finishes.</p>
+<p>This is <strong>opt-in</strong> and <strong>best-effort</strong>: it never blocks or fails a deploy. If you
+don’t enable it (the default), nothing changes.</p>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
+<p>Three commands cover everything. None of them edits <code>config.yaml</code> by hand —
+<code>enable</code> writes the opt-in for you, exactly like <code>registry target</code> or <code>targets add</code> elsewhere in the tool:</p>
+<pre><code class="language-bash">roksbnkctl -w acme-eu bnkforge enable     # auto-register on every `cluster up`
+roksbnkctl -w acme-eu bnkforge register   # register the current cluster right now
+roksbnkctl -w acme-eu bnkforge status     # show config + readiness (CLI, session, cluster id)
 </code></pre>
-<p>The schema is intentionally minimal — <code>extra_hosts</code> is a <code>[]string</code> of URLs (or bare hostnames; <code>https://</code> is added when no scheme is present). One entry per line. The order in the file is the order the runner probes.</p>
-<p>You don’t have to hand-edit the YAML to populate this list — <code>roksbnkctl test hosts {list,add,remove,clear}</code> reads and writes the same slice. See <a href="#managing-test-hosts-via-the-cli">§ Managing test hosts via the CLI</a> below.</p>
-<p>There’s no per-host method, no per-host expected-status, and no per-host TLS-trust override today. If you need to assert something more specific than “does HTTP work” — a particular status code, a custom header, a body match — <code>curl</code> is the right tool, not <code>roksbnkctl test connectivity</code>. A richer per-host schema is queued for v1.x; the v1.0 surface holds the YAML simple on purpose.</p>
-<p><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> covers the full <code>test:</code> block; this chapter expands the <code>connectivity</code> slice.</p>
-<h3 id="what-extra_hosts-typically-holds"><a class="header" href="#what-extra_hosts-typically-holds">What <code>extra_hosts</code> typically holds</a></h3>
-<p>Three classes of URL show up most often in a real workspace:</p>
+<p><code>enable</code> turns on the post-<code>cluster up</code> hook; <code>register</code> is the on-demand path
+(no re-<code>up</code> needed) for a cluster that already exists. Either way the actual work
+is done by the <code>bnk-forge</code> CLI, which <strong>ships with BNK Forge, not roksbnkctl</strong> —
+see <a href="#prerequisites">Prerequisites</a>.</p>
+<h2 id="why-credential-backed"><a class="header" href="#why-credential-backed">Why credential-backed</a></h2>
+<p>The naive way to register a cluster with an external platform is to hand it a
+kubeconfig. ROKS admin kubeconfigs are short-lived — they carry an embedded token
+that expires — so a stored kubeconfig goes stale and the platform loses access
+until someone re-uploads a fresh one.</p>
+<p><code>roksbnkctl</code> registers <strong>credential-backed</strong> instead. It points BNK Forge at an
+IBM Cloud <strong>credential template</strong> (your IBM Cloud API key, stored once in Forge)
+plus the cluster’s id and region. BNK Forge then <strong>re-derives the kubeconfig on
+demand</strong> from that credential whenever it needs cluster access. Nothing
+perishable is stored, so the registration doesn’t go stale.</p>
+<pre><code>roksbnkctl                      BNK Forge
+-----------                     ---------
+cluster id + region   ───────▶  credential template (IBM Cloud API key)
+                                        │
+                                        ▼
+                                derive kubeconfig on demand (never stale)
+</code></pre>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li><strong>The BNK CIS controller</strong> — confirms the data-plane front-end is reachable and is returning a sane status code.</li>
-<li><strong>The F5 BIG-IP Next admin endpoint</strong> — confirms the management plane is reachable from your seat (often <code>:8443</code> rather than <code>:443</code>).</li>
-<li><strong>The GSLB VIP that fronts the application</strong> — confirms the routed name actually serves a 2xx; pair with <a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a> for the GSLB-aware DNS-side validation.</li>
+<li><strong>A co-located BNK Forge install</strong> that supports IBM ROKS <strong>credential-backed</strong>
+registration — i.e. a Forge that can re-derive a ROKS kubeconfig from an IBM
+Cloud credential template. (This backend support is being added on a BNK Forge
+branch; an older Forge that only accepts a static kubeconfig won’t work with
+this flow.)</li>
+<li><strong>The <code>bnk-forge</code> CLI on your <code>PATH</code>.</strong> roksbnkctl doesn’t build or bundle it —
+it’s a separate script that ships with BNK Forge. roksbnkctl shells out to
+whatever <code>bnk-forge</code> is on <code>PATH</code>; if none is found, registration is skipped
+with a one-line note. <code>roksbnkctl bnkforge status</code> tells you whether it’s found.</li>
+<li><strong>A BNK Forge session</strong> — run <code>bnk-forge login</code> once so a session is stored in
+<code>~/.bnk-forge/config.json</code>. Without a stored session, roksbnkctl lets the CLI
+prompt you interactively (a separate, in-memory session); on a non-interactive
+run (no TTY) the registration is simply skipped.</li>
+<li><strong>An IBM Cloud API key</strong> resolvable for the workspace (the usual env / keychain /
+config chain — see <a href="./14-credentials-resolver.html">Chapter 14</a>). It’s passed to
+the CLI so Forge can create a credential template if you don’t have one yet.</li>
 </ul>
-<p>What doesn’t belong in <code>extra_hosts</code>: anything you only care about on a specific TLS error, anything that needs a request body, anything where pass/fail is more nuanced than “got a 2xx or 3xx”. Those are <code>curl</code> jobs, not connectivity-suite jobs.</p>
-<h2 id="managing-test-hosts-via-the-cli"><a class="header" href="#managing-test-hosts-via-the-cli">Managing test hosts via the CLI</a></h2>
-<p>The YAML in <a href="#configuring-extra_hosts">§ Configuring <code>extra_hosts</code></a> is the persistent backing store, but you don’t have to hand-edit <code>config.yaml</code> to populate it. <code>roksbnkctl test hosts</code> mirrors the <code>roksbnkctl targets</code> ergonomic (see <a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a>) and gives you four subcommands that read and write the <code>test.connectivity.extra_hosts</code> slice directly:</p>
-<pre><code>roksbnkctl test hosts list                       # print current extra_hosts, one per line
-roksbnkctl test hosts add &lt;url&gt; [&lt;url&gt;...]       # append; idempotent (no-op if already present)
-roksbnkctl test hosts remove &lt;url&gt; [&lt;url&gt;...]    # remove; tolerant of absent (no error)
-roksbnkctl test hosts clear                      # remove ALL (confirmation prompt, --auto skip)
-</code></pre>
-<p>All four route through the same workspace marshaller <code>targets add</code> uses, so a <code>test hosts add</code> write lands in <code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> under <code>test.connectivity.extra_hosts</code> — operators who already know the YAML field see the connection. Run <code>cat ~/.roksbnkctl/&lt;workspace&gt;/config.yaml</code> after any mutation to confirm.</p>
-<p>Argv discipline matches the rest of the v1.7.x surface: <code>list</code> and <code>clear</code> take <code>cobra.NoArgs</code> (a stray positional is rejected at parse time, not silently consumed); <code>add</code> and <code>remove</code> take <code>cobra.MinimumNArgs(1)</code>. A typo like <code>roksbnkctl test hosts list extra</code> fails before any RunE runs.</p>
-<h3 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h3>
-<p>Start from an empty workspace, add a URL, list, then run the connectivity probe — the exact sequence an operator hits the first time the <code>no hosts configured to probe; add via roksbnkctl test hosts add &lt;url&gt;</code> error fires from <code>roksbnkctl test connectivity</code> or no-flag <code>roksbnkctl test dns</code>:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts list
-$ echo $?
-0
-
-$ roksbnkctl test hosts add https://docs.f5.com
-added https://docs.f5.com
-
-$ roksbnkctl test hosts add https://docs.f5.com
-already present: https://docs.f5.com
-
-$ roksbnkctl test hosts list
-https://docs.f5.com
-
-$ roksbnkctl test connectivity
-running connectivity ...
-  PASS  https://docs.f5.com  200 OK in 187ms
-connectivity PASS (1/1 passed)
-</code></pre>
-<blockquote>
-<p><strong>Note:</strong> the byte-for-byte output above is illustrative — it reflects the surface the Sprint 24 CLI ships and is what tech-writer’s drift sweep will re-capture against the built binary before the <code>v1.7.1</code> cut. The shape is stable (<code>list</code> empty → zero bytes + exit 0; <code>add</code> against already-present → “already present:” log + exit 0); minor wording deltas in the log lines may surface in the GREEN-verdict re-capture.</p>
-</blockquote>
-<p><code>--output json</code> is supported on <code>list</code> for scripted callers — empty list emits <code>[]</code>, populated list emits a JSON array preserving insertion order:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts list -o json
-["https://docs.f5.com","https://bigip-next-admin.example.com:8443"]
-</code></pre>
-<h3 id="clear"><a class="header" href="#clear"><code>clear</code></a></h3>
-<p><code>clear</code> requires confirmation (defaults to No) because it wipes the entire slice — the same pattern <code>roksbnkctl down</code> and <code>roksbnkctl cluster down</code> use, not the per-target <code>targets remove</code> pattern:</p>
-<pre><code class="language-bash">$ roksbnkctl test hosts clear
-This will remove ALL configured test hosts (2 entries). Continue? [y/N]: y
-cleared 2 entries
-
-$ roksbnkctl test hosts clear --auto
-cleared 0 entries
-</code></pre>
-<p><code>--auto</code> skips the prompt for automation contexts. Mirrors the <code>--auto</code> semantics elsewhere in the binary.</p>
-<h3 id="scope-of-the-cli"><a class="header" href="#scope-of-the-cli">Scope of the CLI</a></h3>
-<p>The CLI manages <strong>only</strong> <code>test.connectivity.extra_hosts</code> — the slice shared by <code>roksbnkctl test connectivity</code> and no-flag <code>roksbnkctl test dns</code>. The <code>test.dns.{default_target,resolvers}</code> and <code>test.throughput.*</code> fields have working flag-driven equivalents (<code>--target</code>, <code>--server</code>, <code>--duration</code>, …) and aren’t covered by <code>test hosts</code>; populate those by hand-editing <code>config.yaml</code> for now. A broader <code>test config</code> surface is a candidate for a future sprint.</p>
-<p>YAML-comment preservation through the marshaller is best-effort and depends on the workspace round-trip — if you keep hand-written comments in <code>config.yaml</code>, prefer the YAML path for additions that need to land alongside specific comments; use the CLI for the routine add/remove/list/clear flow.</p>
-<h2 id="the---insecure-flag"><a class="header" href="#the---insecure-flag">The <code>--insecure</code> flag</a></h2>
-<p>Self-signed certs are common in pre-production BNK deployments — the F5 BIG-IP Next admin endpoint, the CIS controller, an internal GSLB VIP that hasn’t yet been re-fronted with a public CA cert. By default Go’s TLS stack rejects them and the probe fails with <code>x509: certificate signed by unknown authority</code>.</p>
-<p>Pass <code>--insecure</code> to skip certificate verification for the run:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity --insecure
-</code></pre>
-<p>What <code>--insecure</code> does:</p>
-<ul>
-<li>Sets <code>tls.Config.InsecureSkipVerify = true</code> on the HTTP client used by the connectivity suite.</li>
-<li>Applies for the duration of one invocation only.</li>
-<li>Affects every URL probed in that run.</li>
-</ul>
-<p>What <code>--insecure</code> does <strong>not</strong> do:</p>
-<ul>
-<li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
-<li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
-<li>It is not persisted. Setting it in one invocation does not affect the next.</li>
-<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v1.0 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
-</ul>
-<p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
-<h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
-<p>Default output is human-readable on stderr; pass <code>-o json</code> for machine-readable on stdout.</p>
-<h3 id="human-readable"><a class="header" href="#human-readable">Human-readable</a></h3>
-<pre><code class="language-bash">$ roksbnkctl test connectivity
-running connectivity ...
-  PASS  https://my-bnk-cis-controller.example.com  200 OK in 142ms
-  PASS  https://bigip-next-admin.example.com:8443  302 Found in 88ms
-  FAIL  https://gslb.example.com                   Get "...": dial tcp: i/o timeout
-connectivity FAIL (2/3 passed)
-$ echo $?
-1
-</code></pre>
-<p>A 3xx redirect counts as pass — the runner doesn’t follow redirects, but the redirect itself is a successful HTTP response, which is what the suite measures. If you specifically need the final 200 after a redirect chain, <code>curl -L</code> is the tool.</p>
-<h3 id="json"><a class="header" href="#json">JSON</a></h3>
-<pre><code class="language-bash">$ roksbnkctl test connectivity -o json
-</code></pre>
-<pre><code class="language-json">{
-  "schema": "roksbnkctl.v1",
-  "command": "test",
-  "suite": "connectivity",
-  "timestamp": "2026-05-10T14:32:01.123Z",
-  "duration_ms": 235,
-  "overall": "fail",
-  "results": [
-    {
-      "suite": "connectivity",
-      "name": "https://my-bnk-cis-controller.example.com",
-      "status": "pass",
-      "detail": "200 OK in 142ms",
-      "duration_ms": 142,
-      "extra": { "status_code": 200, "tls_version": "TLS 1.3" }
-    },
-    {
-      "suite": "connectivity",
-      "name": "https://gslb.example.com",
-      "status": "fail",
-      "detail": "Get \"https://gslb.example.com\": dial tcp: i/o timeout",
-      "duration_ms": 10003
-    }
-  ]
-}
-</code></pre>
-<p>Exit code follows the same rules as the human-readable form: <code>0</code> on <code>overall: pass</code>, <code>1</code> on <code>overall: fail</code>. CI runners can branch on the exit code; richer assertions (e.g., “I tolerate one fail out of five”) need to consume the JSON.</p>
-<h2 id="running-connectivity-inside-roksbnkctl-test-all"><a class="header" href="#running-connectivity-inside-roksbnkctl-test-all">Running connectivity inside <code>roksbnkctl test all</code></a></h2>
-<p>Connectivity is one of the suites the bare <code>roksbnkctl test</code> (or <code>roksbnkctl test all</code>) command dispatches. The runner walks every configured suite, prints per-suite summaries on stderr, and exits non-zero if any suite failed:</p>
-<pre><code class="language-bash">$ roksbnkctl test
-running connectivity ...
-  PASS  https://bnk-cis.dev-tor.example.com  200 OK in 174ms
-running dns ...
-  PASS  bnk-cis.dev-tor.example.com  resolved 1 address(es)
-connectivity PASS (1/1 passed)
-dns          PASS (1/1 passed)
-
-PASS overall (2/2 suites passed)
-</code></pre>
-<p>In <code>-o json</code> mode, <code>roksbnkctl test all</code> emits an <code>all</code>-shape envelope with one <code>suites[]</code> entry per suite. CI assertions can pin to either the suite-level overall or to a specific probe’s status:</p>
-<pre><code class="language-bash">roksbnkctl test all -o json | jq -e '.suites[] | select(.suite=="connectivity") | .overall == "pass"'
-</code></pre>
-<p>The bare <code>roksbnkctl test</code> defaults to the <code>all</code> suite. To run connectivity in isolation:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity            # explicit suite
-roksbnkctl test connectivity --insecure # session-wide TLS skip
-</code></pre>
-<h2 id="exit-codes-and-ci-integration"><a class="header" href="#exit-codes-and-ci-integration">Exit codes and CI integration</a></h2>
-<pre><code>exit 0  →  every probe passed (every URL returned 2xx or 3xx)
-exit 1  →  any probe failed (non-2xx/3xx, TLS error, DNS error, timeout)
-</code></pre>
-<p>There’s no third “infra error” exit code from the connectivity suite specifically — the suite is straight Go HTTP, no external tooling, no backend dispatch. If <code>roksbnkctl test connectivity</code> exits non-zero, the cause is in the response from one of your configured URLs.</p>
-<p>For a CI step that tolerates a known-flaky endpoint while still failing on the others, consume the JSON instead of relying on the exit code:</p>
-<pre><code class="language-bash">roksbnkctl test connectivity -o json \
-  | jq -e '[.results[] | select(.name | test("flaky-staging.example") | not) | .status] | all(. == "pass")'
-</code></pre>
-<h2 id="worked-example-probing-a-bnk-deployment"><a class="header" href="#worked-example-probing-a-bnk-deployment">Worked example: probing a BNK deployment</a></h2>
-<p>A typical post-<code>up</code> config for a BNK trial — cover the data-plane VIP, the admin endpoint, and the GSLB front:</p>
-<pre><code class="language-yaml"># ~/.roksbnkctl/dev-tor/config.yaml
-test:
-  connectivity:
-    extra_hosts:
-      - https://bnk-cis.dev-tor.bnkfun.example.com         # BNK CIS controller (data plane)
-      - https://bigip-next-admin.dev-tor.bnkfun.example.com:8443  # F5 BIG-IP Next admin
-      - https://gslb-vip.dev-tor.bnkfun.example.com        # the GSLB front
-</code></pre>
-<p>Then:</p>
-<pre><code class="language-bash">$ roksbnkctl test connectivity --insecure
-running connectivity ...
-  PASS  https://bnk-cis.dev-tor.bnkfun.example.com               200 OK in 174ms
-  PASS  https://bigip-next-admin.dev-tor.bnkfun.example.com:8443 302 Found in 91ms
-  PASS  https://gslb-vip.dev-tor.bnkfun.example.com              200 OK in 211ms
-connectivity PASS (3/3 passed)
-</code></pre>
-<p><code>--insecure</code> is needed here because BNK’s admin endpoint and the GSLB VIP are fronted by a self-signed cert in dev. Once the trial moves to a production cert chain, drop the flag — the strict path is what you want for staging and prod.</p>
-<h2 id="when-connectivity-is-the-wrong-tool"><a class="header" href="#when-connectivity-is-the-wrong-tool">When connectivity is the wrong tool</a></h2>
-<p><code>roksbnkctl test connectivity</code> is “does HTTP work”. For anything finer-grained, reach for the right tool:</p>
+<h2 id="the-bnkforge-commands"><a class="header" href="#the-bnkforge-commands">The <code>bnkforge</code> commands</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Scenario</th><th>Use this instead</th></tr>
+<tr><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr><td>You want to see the full TLS handshake, the cert chain, the SNI resolution, the negotiated cipher</td><td><code>openssl s_client -connect host:port -servername host</code></td></tr>
-<tr><td>You want headers, redirect-following, body matching, a specific status assertion</td><td><code>curl -v -L --fail-with-body &lt;url&gt;</code></td></tr>
-<tr><td>You want to confirm L4 reachability on a specific port, no HTTP layer</td><td><code>nc -vz host port</code> (or <code>bash -c 'echo &gt; /dev/tcp/host/port'</code>)</td></tr>
-<tr><td>You want to confirm DNS resolution from a specific resolver, especially across vantages for GSLB</td><td><a href="./21-dns-testing-gslb.html"><code>roksbnkctl test dns</code></a></td></tr>
-<tr><td>You want to see what answer a name returns from inside the cluster vs from your laptop</td><td><a href="./21-dns-testing-gslb.html#the---gslb-compare-workflow"><code>roksbnkctl test dns --gslb-compare</code></a></td></tr>
-<tr><td>You want to measure bandwidth between two endpoints</td><td><a href="./22-throughput-testing.html"><code>roksbnkctl test throughput</code></a></td></tr>
+<tr><td><code>bnkforge enable [--url U] [--project P]</code></td><td>Persist <code>register: true</code> (+ optional overrides) so every <code>cluster up</code> registers the cluster.</td></tr>
+<tr><td><code>bnkforge disable</code></td><td>Persist <code>register: false</code> — turn the auto-hook off.</td></tr>
+<tr><td><code>bnkforge status</code></td><td>Show the effective config (register / url / project), whether the <code>bnk-forge</code> CLI is on <code>PATH</code>, and whether a cluster id is recorded.</td></tr>
+<tr><td><code>bnkforge register [--url U] [--project P]</code></td><td>Register the current workspace’s cluster <strong>now</strong>, regardless of the opt-in. Surfaces errors (the auto-hook swallows them).</td></tr>
 </tbody>
 </table>
 </div>
-<p>The connectivity suite is intentionally a thin probe. When the answer to “is it broken” is “yes” and you need to know why, the suite has done its job — it’s flagged the URL — and the next step is one of the tools above.</p>
+<p><code>enable</code>, <code>disable</code>, and <code>register</code> all accept <code>--url</code> (override the Forge URL
+the CLI would read from its stored session) and <code>--project</code> (target Forge project
+id). On <code>enable</code> those are <strong>persisted</strong>; on <code>register</code> they’re <strong>one-off</strong>
+overrides that aren’t written to <code>config.yaml</code>.</p>
+<h3 id="what-enable-writes"><a class="header" href="#what-enable-writes">What <code>enable</code> writes</a></h3>
+<p><code>enable</code> writes a <code>bnkforge:</code> block into the workspace <code>config.yaml</code> for you (the
+same marshaller every other roksbnkctl command uses — no hand-edit):</p>
+<pre><code class="language-yaml">bnkforge:
+  register: true
+  url: https://forge.example.com   # only if you passed --url
+  project: "42"                    # only if you passed --project
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Set by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>register</code></td><td>bool</td><td><code>false</code></td><td><code>bnkforge enable</code> / <code>disable</code>. <code>false</code> / omitted ⇒ no-op.</td></tr>
+<tr><td><code>url</code></td><td>string</td><td>(CLI’s stored-session URL)</td><td><code>bnkforge enable --url</code>. Overrides the URL the CLI reads from <code>~/.bnk-forge/config.json</code>.</td></tr>
+<tr><td><code>project</code></td><td>string</td><td>(CLI auto-selects)</td><td><code>bnkforge enable --project</code>. Empty ⇒ the CLI uses the active/sole project, or prompts.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is additive — an absent <code>bnkforge:</code> block (any existing <code>config.yaml</code>)
+loads unchanged.</p>
+<h2 id="what-happens-on-cluster-up"><a class="header" href="#what-happens-on-cluster-up">What happens on <code>cluster up</code></a></h2>
+<p>When <code>register: true</code>, <code>roksbnkctl</code> runs a post-apply hook right after it fetches
+the admin kubeconfig (the same spot whether the apply made changes or was a
+no-op). The hook is exactly what <code>bnkforge register</code> runs, with errors swallowed.
+It:</p>
+<ol>
+<li><strong>Checks the opt-in.</strong> No <code>bnkforge.register: true</code> ⇒ it does nothing.</li>
+<li><strong>Finds the <code>bnk-forge</code> CLI</strong> on <code>PATH</code>. Not found ⇒ a one-line note, and the
+deploy proceeds normally.</li>
+<li><strong>Reads the cluster identity</strong> from <code>cluster-outputs.json</code> (cluster id, region,
+name). No recorded cluster id yet ⇒ skipped with a note.</li>
+<li><strong>Resolves the IBM Cloud API key non-interactively</strong> (env → keychain → config)
+and passes it through as <code>IBMCLOUD_API_KEY</code> so the CLI can create a credential
+template if needed. If it can’t be resolved without a prompt, it’s left to the
+CLI (which can use an existing template or ask).</li>
+<li><strong>Invokes <code>bnk-forge clusters register</code></strong> with the cluster facts, passing your
+terminal through so any login / selection prompts work. The CLI then:
+<ul>
+<li><strong>Resolves auth</strong> — reuses the stored <code>~/.bnk-forge/config.json</code> session if
+it’s still valid; otherwise, if interactive, prompts for a separate login;
+otherwise (no TTY, no valid session) it skips.</li>
+<li><strong>Selects or creates an IBM Cloud credential template</strong> — uses an existing
+one if there’s exactly one (or you pick), else creates one from the API key.</li>
+<li><strong>Registers the cluster</strong> by id + region + credential template (no static
+kubeconfig).</li>
+</ul>
+</li>
+</ol>
+<p>Sample output on a successful run:</p>
+<pre><code>→ Registering cluster "acme-eu-roks" with BNK Forge…
+  Using stored BNK-Forge session (https://forge.example.com)
+  Using IBM credential template 'roksbnkctl-eu-de' (id=3)
+✓ Registered cluster acme-eu-roks (id=17) with BNK-Forge
+  BNK-Forge will derive the kubeconfig on demand from the credential template.
+</code></pre>
+<h2 id="registering-on-demand-no-re-up"><a class="header" href="#registering-on-demand-no-re-up">Registering on demand (no re-<code>up</code>)</a></h2>
+<p><code>roksbnkctl bnkforge register</code> registers the current workspace’s cluster right
+now, without enabling the auto-hook or re-running <code>cluster up</code>. Use it to
+register a cluster that was provisioned before you enabled the feature, or one you
+<a href="./09-registering-existing-cluster.html">registered with an existing-cluster record</a>:</p>
+<pre><code class="language-bash">roksbnkctl -w acme-eu bnkforge register
+roksbnkctl -w acme-eu bnkforge register --project 42   # one-off project override
+</code></pre>
+<p>It reads the cluster id + region from <code>cluster-outputs.json</code>, resolves your IBM
+Cloud API key the usual way, and runs exactly what the post-<code>up</code> hook runs — the
+only difference is that errors are <strong>surfaced</strong> rather than swallowed.</p>
+<h3 id="driving-the-bnk-forge-cli-directly"><a class="header" href="#driving-the-bnk-forge-cli-directly">Driving the <code>bnk-forge</code> CLI directly</a></h3>
+<p><code>bnkforge register</code> is a thin wrapper around the <code>bnk-forge clusters register</code>
+command, which you can also run yourself. Look up the cluster’s id and region
+from the recorded identity:</p>
+<pre><code class="language-bash">roksbnkctl -w acme-eu cluster show     # cluster_id, region, cluster_name
+</code></pre>
+<p>Then register it (this is exactly what the wrapper runs, minus the auto-resolved key):</p>
+<pre><code class="language-bash">bnk-forge clusters register \
+  --name acme-eu-roks \
+  --cluster-id cre6h4l20jjsg4kvt3a0 \
+  --region eu-de \
+  --provider ibm_roks \
+  --ibmcloud-api-key "$IBMCLOUD_API_KEY"
+</code></pre>
+<p>Preview the exact request without sending it:</p>
+<pre><code class="language-bash">bnk-forge clusters register \
+  --name acme-eu-roks --cluster-id cre6h4l20jjsg4kvt3a0 --region eu-de \
+  --dry-run
+</code></pre>
+<h4 id="bnk-forge-clusters-register-flags"><a class="header" href="#bnk-forge-clusters-register-flags"><code>bnk-forge clusters register</code> flags</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Required</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--name</code></td><td>yes</td><td>The cluster name as it appears in BNK Forge.</td></tr>
+<tr><td><code>--cluster-id</code></td><td>yes</td><td>The provider cluster id (the ROKS cluster id).</td></tr>
+<tr><td><code>--region</code></td><td>yes</td><td>The cloud region (e.g. <code>eu-de</code>).</td></tr>
+<tr><td><code>--provider</code></td><td>no</td><td>Platform-profile hint. Default <code>ibm_roks</code>.</td></tr>
+<tr><td><code>--project</code></td><td>no</td><td>Target Forge project id. Else active / sole / prompt.</td></tr>
+<tr><td><code>--ibmcloud-api-key</code></td><td>no</td><td>IBM Cloud API key for the credential template (or set <code>IBMCLOUD_API_KEY</code>).</td></tr>
+<tr><td><code>--resource-group</code></td><td>no</td><td>IBM Cloud resource group for a newly-created template. Default <code>default</code>.</td></tr>
+<tr><td><code>--credential-template-id</code></td><td>no</td><td>Use this existing template id; skip select/create.</td></tr>
+<tr><td><code>--credential-template-name</code></td><td>no</td><td>Name for a newly-created template. Default <code>roksbnkctl-&lt;region&gt;</code>.</td></tr>
+<tr><td><code>--new-credential</code></td><td>no</td><td>Force creating a new credential template.</td></tr>
+<tr><td><code>--url</code></td><td>no</td><td>BNK Forge URL, overriding the stored session.</td></tr>
+<tr><td><code>--save-session</code></td><td>no</td><td>Persist a fallback login to <code>~/.bnk-forge/config.json</code>.</td></tr>
+<tr><td><code>-y</code>, <code>--yes</code></td><td>no</td><td>Non-interactive: auto-select when unambiguous, never prompt.</td></tr>
+<tr><td><code>--dry-run</code></td><td>no</td><td>Print the registration request without sending it.</td></tr>
+</tbody>
+</table>
+</div>
+<p>roksbnkctl’s wrapper supplies <code>--name</code>, <code>--cluster-id</code>, <code>--region</code>, <code>--provider ibm_roks</code>, and — when set — <code>--project</code> and <code>--url</code>, plus the resolved
+<code>IBMCLOUD_API_KEY</code> in the environment.</p>
+<h2 id="behaviour-notes"><a class="header" href="#behaviour-notes">Behaviour notes</a></h2>
+<ul>
+<li><strong>Best-effort — it never blocks or fails the deploy.</strong> Whatever happens with
+Forge, <code>cluster up</code> succeeds if the cluster came up. Worst case you get a
+one-line note and register later with <code>roksbnkctl bnkforge register</code>.</li>
+<li><strong>Idempotent.</strong> Re-registering a cluster that’s already in Forge is safe — the
+CLI reports <code>already registered — leaving it as is</code> (the backend returns a
+conflict, which the CLI treats as a no-op). Running <code>cluster up</code> again on an
+unchanged cluster re-runs the hook harmlessly.</li>
+<li><strong>Registering later.</strong> If it was skipped (CLI missing, no session, no TTY), fix
+the prerequisite and run <code>roksbnkctl bnkforge register</code> — no re-<code>up</code> needed.</li>
+</ul>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<ul>
+<li><strong><code>the bnk-forge CLI is not on PATH</code></strong> — install BNK Forge’s <code>bnk-forge</code> CLI
+(it doesn’t come with roksbnkctl) and make sure it’s on the <code>PATH</code> roksbnkctl
+sees. <code>roksbnkctl bnkforge status</code> confirms whether it’s found.</li>
+<li><strong><code>No valid BNK-Forge session and no TTY to prompt</code></strong> — run <code>bnk-forge login</code>
+once to store a session, then re-run. On a CI / non-interactive runner a stored
+session is required (there’s no prompt to fall back to).</li>
+<li><strong><code>Multiple IBM credential templates — pass --credential-template-id &lt;id&gt;</code></strong> —
+Forge has more than one IBM credential template and can’t pick non-interactively.
+Run <a href="#driving-the-bnk-forge-cli-directly"><code>bnk-forge clusters register</code></a> with
+<code>--credential-template-id &lt;id&gt;</code> (or run it interactively to choose).</li>
+<li><strong><code>HTTP 403</code> / lacks permission to manage credential templates</strong> — your BNK
+Forge session’s role can’t create/list credential templates. Log in as an
+operator/admin, or have one pre-create the template and pass its id.</li>
+<li><strong><code>no cluster id recorded in cluster-outputs.json yet</code></strong> — the cluster identity
+wasn’t written. Run <code>roksbnkctl cluster register &lt;name&gt;</code> (or re-run <code>cluster up</code>) so <code>cluster-outputs.json</code> is populated, then register.</li>
+</ul>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
-<li><a href="./12-workspace-config.html#test">Chapter 12 — Workspace config</a> — full <code>test:</code> block schema, including <code>connectivity.extra_hosts</code>.</li>
-<li><a href="./15-ssh-targets.html#roksbnkctl-targets--full-reference">Chapter 15 — SSH targets</a> — the <code>roksbnkctl targets</code> ergonomic precedent that <code>roksbnkctl test hosts</code> mirrors.</li>
-<li><a href="./21-dns-testing-gslb.html">Chapter 21 — DNS testing for GSLB</a> — when “the URL fails” actually means “the name doesn’t resolve from this vantage”.</li>
-<li><a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> — the bandwidth-measurement companion suite.</li>
-<li><a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> — common patterns for diagnosing connectivity failures across BNK / ROKS deployments.</li>
+<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — where the post-apply
+hook fires.</li>
+<li><a href="./09-registering-existing-cluster.html">Chapter 9 — Registering an existing cluster</a>
+— how <code>cluster-outputs.json</code> (the cluster id + region the hook reads) gets
+populated for clusters <code>roksbnkctl</code> didn’t provision.</li>
+<li><a href="./14-credentials-resolver.html">Chapter 14 — Credentials and the resolver chain</a>
+— how the IBM Cloud API key passed to Forge is resolved.</li>
+<li><a href="./28-configuration-reference.html#bnkforge-block">Chapter 28 — Configuration reference</a>
+— the <code>bnkforge:</code> field schema.</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="19-in-cluster-ops-pod.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="24-day-2-ops.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="21-dns-testing-gslb.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="25-cos-supply-chain.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -417,11 +424,11 @@ connectivity PASS (3/3 passed)
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="19-in-cluster-ops-pod.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="24-day-2-ops.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="21-dns-testing-gslb.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="25-cos-supply-chain.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

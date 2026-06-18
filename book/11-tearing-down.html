@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -281,6 +281,14 @@ roksbnkctl down --auto
 roksbnkctl ws delete &lt;name&gt; --force
 </code></pre>
 <p>If you <code>roksbnkctl up</code> against a registered cluster (one you didn’t <code>cluster up</code> yourself), step 2 doesn’t apply — the cluster wasn’t yours to destroy. Just <code>bnk down</code> the trial and stop there, then optionally unregister by deleting <code>cluster-outputs.json</code>.</p>
+<blockquote>
+<p><strong>SSH key cleanup.</strong> If <code>init</code> generated a testing SSH key and you accepted the
+prompt to copy it into <code>~/.ssh/</code>, <code>ws delete</code> removes those copied files too,
+so a generated key doesn’t outlive its workspace. It deletes <strong>only</strong> the files
+<code>init</code> actually created (recorded in <code>resources.copied_ssh_key_files</code>) — a
+pre-existing <code>~/.ssh</code> key with the same name is never touched. The confirmation
+prompt names the files it will remove.</p>
+</blockquote>
 <h2 id="roksbnkctl-cleanup--recovering-from-a-failed-down"><a class="header" href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code> — recovering from a failed <code>down</code></a></h2>
 <p><code>terraform destroy</code> is not always clean. A transient IBM Cloud API error, a resource stuck behind a finaliser, or a <code>down</code> you <code>Ctrl-C</code>’d partway can leave <strong>orphaned cloud resources</strong> that Terraform no longer tracks — and a re-run of <code>down</code> may not finish the job. The classic symptom is a follow-up <code>up</code> that fails with <code>… name is not unique</code> because a half-deleted security group or VPC is still there.</p>
 <p><code>roksbnkctl cleanup</code> is the recovery tool. It sweeps your IBM Cloud account for every resource named after the workspace prefix (<code>&lt;prefix&gt;-*</code>) and deletes them in dependency order — regardless of what Terraform state says.</p>
@@ -478,7 +486,7 @@ roksbnkctl down --auto -w preexisting
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="10a-air-gapped-install.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="10b-registry-targets.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -492,7 +500,7 @@ roksbnkctl down --auto -w preexisting
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="10a-air-gapped-install.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="10b-registry-targets.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

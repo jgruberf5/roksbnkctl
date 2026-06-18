@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -327,7 +327,7 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 <p>A realistic scenario: workspace config routes each tool to its preferred backend, then a full <code>up</code> + <code>test</code> + <code>down</code> cycle runs end-to-end. Concretely, <code>exec.terraform=local</code>, <code>exec.ibmcloud=ssh:jumphost</code>, <code>exec.iperf3=k8s</code> — three different backends in one lifecycle. The phase asserts state is preserved across the per-tool dispatch (the workspace’s terraform state file is touched only by the local-backend terraform; the API key projected into the k8s ops pod is the same one resolved for the SSH dispatch) and that <code>down</code> cleanly destroys everything.</p>
 <h2 id="how-ci-runs-it"><a class="header" href="#how-ci-runs-it">How CI runs it</a></h2>
 <p><code>.github/workflows/ci.yml</code> runs <strong>unit + integration</strong> on every PR — <code>go test ./...</code> plus the testcontainers-go-backed integration tests. The full e2e suite is too expensive (4-6 hours, $5-10 of IBM Cloud spend per run) to gate on every PR.</p>
-<p>A separate <strong>manual-trigger workflow</strong> runs <code>scripts/e2e-test-full.sh</code> on demand and on release branches. The workflow is dispatched via the GitHub Actions UI (“Run workflow”) and stamps the resulting log artefacts onto the workflow run. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/e2e-full.yml"><code>.github/workflows/e2e-full.yml</code></a> for the workflow YAML — the workflow accepts optional <code>cluster_region</code> + <code>teardown_on_success</code> inputs and runs automatically on every <code>release/**</code> branch push.</p>
+<p>The full e2e suite is run <strong>manually, out of band</strong> — on demand and on release branches — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with <code>IBMCLOUD_API_KEY</code> set) and its log artefacts archived against the run.</p>
 <p>The release-cut policy is: don’t tag <code>vX.Y.Z</code> until the most recent manual-trigger run on the release branch is green for <strong>three consecutive nights</strong>. This catches the flakes that don’t reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.</p>
 <h2 id="cost-and-time"><a class="header" href="#cost-and-time">Cost and time</a></h2>
 <p>A full <code>scripts/e2e-test-full.sh</code> run currently costs:</p>

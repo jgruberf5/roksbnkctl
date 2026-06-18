@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cf6eff36.js";
+            window.path_to_searchindex_js = "searchindex-5b25e69a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce6156b4.js"></script>
+        <script src="toc-c85ebb11.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -294,7 +294,7 @@ echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
 <h3 id="backward-compatibility"><a class="header" href="#backward-compatibility">Backward compatibility</a></h3>
 <p>The change is additive. A pre-<code>v1.8.0</code> <code>config.yaml</code> has no <code>prefix:</code> field; <code>roksbnkctl</code> detects the empty prefix and renders the <strong>old sparse <code>terraform.tfvars</code></strong> unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run <code>roksbnkctl init -w &lt;ws&gt;</code> and answer the prefix prompt.</p>
 <blockquote>
-<p><strong>Detection complement.</strong> Prefix-derived naming <em>prevents</em> the collisions described above. The forward-looking <code>roksbnkctl doctor --orphan-sweep</code> diagnostic (tracked for a later release — see <code>issues/issue_sprint25_staff.md</code>) <em>detects</em> already-stranded resources by deriving the same <code>&lt;prefix&gt;-cluster-vpc</code> / <code>&lt;prefix&gt;-tgw</code> formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.</p>
+<p><strong>Detection complement.</strong> Prefix-derived naming <em>prevents</em> the collisions described above. The forward-looking <code>roksbnkctl doctor --orphan-sweep</code> diagnostic (tracked for a later release) <em>detects</em> already-stranded resources by deriving the same <code>&lt;prefix&gt;-cluster-vpc</code> / <code>&lt;prefix&gt;-tgw</code> formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.</p>
 </blockquote>
 <h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
 <p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
@@ -372,7 +372,7 @@ $ roksbnkctl apply
 <tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
 <tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
 <tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
-<tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td><code>roksbnkctl init -w &lt;ws&gt; --var-file ./terraform.tfvars</code> — drops the file at <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="./06-workspaces.html#skip-the-interview-init---var-file">Chapter 6 §“Skip the interview: <code>init --var-file</code>”</a>.</td></tr>
+<tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td>Copy it to <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>, mode <code>0600</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="./06-workspaces.html#raw-terraform-variable-overrides">Chapter 6 §“Raw terraform-variable overrides”</a>.</td></tr>
 <tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
 <tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
 </tbody>
@@ -392,7 +392,7 @@ $ roksbnkctl apply
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="12-workspace-config.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="12a-remote-state.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -406,7 +406,7 @@ $ roksbnkctl apply
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="12-workspace-config.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="12a-remote-state.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
