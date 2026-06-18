@@ -36,6 +36,13 @@ var (
 	// fields from environment variables after seeding (PRD 13 Issue 4).
 	flagInitOverrideFromEnv bool
 
+	// flagInitNonInteractive — `init --non-interactive`: build config.yaml from
+	// the ROKSBNKCTL_* / IBMCLOUD_API_KEY environment variables ALONE — no
+	// prompts, no --config-file. The path for an argv+env container runner
+	// (CI / BNK Forge container step), where there is no TTY and no way to stage
+	// a seed file. tf_source.type defaults to "embedded".
+	flagInitNonInteractive bool
+
 	seedURLRe = regexp.MustCompile(`^https?://`)
 )
 
@@ -44,6 +51,65 @@ func init() {
 		"path or http(s) URL to a workspace config.yaml to seed (sibling of --var-file; non-interactive when complete)")
 	initCmd.Flags().BoolVar(&flagInitOverrideFromEnv, "override-from-env", false,
 		"after seeding, overlay config.yaml fields from environment variables (e.g. IBMCLOUD_API_KEY → ibmcloud.api_key_b64)")
+	initCmd.Flags().BoolVar(&flagInitNonInteractive, "non-interactive", false,
+		"build config.yaml from environment variables ALONE — no prompts, no --config-file (for argv+env runners; pair with the ROKSBNKCTL_* env vars)")
+}
+
+// runInitFromEnv is the `--non-interactive` path: assemble a Workspace purely
+// from the supported environment variables (config.OverrideFromEnv), default
+// tf_source.type to embedded, validate completeness, and write it. No file is
+// read and no prompt is shown — the path for an argv+env container runner that
+// cannot stage a --config-file. A `--var-file` supplied alongside is still
+// copied verbatim to terraform.tfvars.user.
+func runInitFromEnv(cctx *config.Context) error {
+	var ws config.Workspace
+	// Seed the standard resource toggles BEFORE the env overlay so an override
+	// that touches one toggle (e.g. adopting an existing transit gateway) leaves
+	// the rest at their create:true defaults instead of the bool zero value.
+	ws.Resources = config.DefaultResources()
+	applied := config.OverrideFromEnv(&ws)
+	if len(applied) > 0 {
+		fmt.Fprintf(os.Stderr, "✓ Applied %d field(s) from environment: %s\n", len(applied), strings.Join(applied, ", "))
+	}
+
+	// tf_source.type is the one required field with no env override; an empty
+	// type already means "embedded" at render time, so default it explicitly so
+	// the completeness check passes (PRD 13 / runner contract).
+	if ws.TFSource.Type == "" {
+		ws.TFSource.Type = "embedded"
+	}
+
+	if missing := missingRequiredConfigFields(&ws); len(missing) > 0 {
+		return fmt.Errorf("--non-interactive init: missing required field(s): %s\n  set them via env — ROKSBNKCTL_REGION, ROKSBNKCTL_RESOURCE_GROUP, ROKSBNKCTL_PREFIX (and IBMCLOUD_API_KEY); cluster identity via ROKSBNKCTL_CLUSTER_NAME / ROKSBNKCTL_CLUSTER_CREATE",
+			strings.Join(missing, ", "))
+	}
+
+	if err := config.SaveWorkspace(cctx.WorkspaceName, &ws); err != nil {
+		return fmt.Errorf("saving workspace: %w", err)
+	}
+	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
+	fmt.Fprintf(os.Stderr, "✓ Wrote %s (non-interactive, from environment)\n", cfgPath)
+
+	// A --var-file supplied alongside still seeds terraform.tfvars.user.
+	if flagInitVarFile != "" {
+		vpath, vcleanup, verr := resolveSeedInput(flagInitVarFile)
+		if verr != nil {
+			return verr
+		}
+		defer vcleanup()
+		dest, cerr := writeUserTFVarsCopies(cctx.WorkspaceName, vpath)
+		if cerr != nil {
+			return cerr
+		}
+		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", dest)
+	}
+
+	if err := config.SetCurrent(cctx.WorkspaceName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not set current workspace: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ Current workspace: %s\n", cctx.WorkspaceName)
+	}
+	return nil
 }
 
 // isSeedURL reports whether s is an http(s) URL — the only fetchable seed form.

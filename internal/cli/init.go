@@ -166,6 +166,13 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return runInitFromConfigFile(cctx)
 	}
 
+	// --non-interactive (no --config-file): assemble config.yaml from the
+	// ROKSBNKCTL_* / IBMCLOUD_API_KEY env vars alone — the argv+env runner path
+	// (CI / BNK Forge container step), no TTY, no seed file to stage.
+	if flagInitNonInteractive {
+		return runInitFromEnv(cctx)
+	}
+
 	fmt.Fprintf(os.Stderr, "Setting up workspace %q\n\n", cctx.WorkspaceName)
 
 	// Existing values become defaults; otherwise PRD-stated defaults.

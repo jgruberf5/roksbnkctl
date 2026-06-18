@@ -6,6 +6,8 @@ This chapter covers when registration is the right answer, what input is require
 
 > **`roksbnkctl init` can register for you.** Since `v1.9.0`, answering **no** to *Create a new ROKS cluster?* in the [`init` interview](./07-quick-start.md#reusing-an-existing-cluster) lists the account's running OpenShift clusters and registers the one you pick — it performs the same `cluster-outputs.json` write described here, inline. Use `cluster register <name>` directly when you want to (re)register without re-running the full interview, or when scripting.
 
+> **`cluster up` attaches when `cluster.create=false`.** You don't need a separate `cluster register` call: if the workspace's `cluster.create` is `false`, `roksbnkctl cluster up` *attaches* to the existing cluster named in `cluster.name` (the same discovery + `cluster-outputs.json` write) instead of running the terraform create. So one command — and one toggle in an automation/CI form — covers both "make a new cluster" and "use the existing one". Set it non-interactively with `ROKSBNKCTL_CLUSTER_CREATE` / `ROKSBNKCTL_CLUSTER_NAME` (see [Chapter 7a](./07a-unattended-setup.md)).
+
 ## When to use this
 
 `cluster register` is the answer when **all** of these are true:

@@ -47,6 +47,45 @@ roksbnkctl apply [flags]
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
+## `roksbnkctl backend`
+
+Configure the per-tool execution backend default (writes config.yaml for you)
+
+Set or inspect the per-tool execution-backend default — the exec: block — from
+the CLI, instead of hand-editing config.yaml.
+
+  show              effective backend for each tool, and where it came from
+  set `<tool>` `<be>`   persist exec.`<tool>`.backend (be: local | docker | k8s | ssh:`<target>`)
+  unset `<tool>`      remove the override; the tool reverts to its built-in default
+
+The per-invocation `--backend` flag still wins over whatever is persisted here.
+
+### `roksbnkctl backend set`
+
+Persist a per-tool execution-backend default
+
+```
+roksbnkctl backend set <tool> <backend>
+```
+
+← back to [`roksbnkctl backend`](#roksbnkctl-backend)
+
+### `roksbnkctl backend show`
+
+Show the effective execution backend for each tool
+
+← back to [`roksbnkctl backend`](#roksbnkctl-backend)
+
+### `roksbnkctl backend unset`
+
+Remove a per-tool backend override (revert to the built-in default)
+
+```
+roksbnkctl backend unset <tool>
+```
+
+← back to [`roksbnkctl backend`](#roksbnkctl-backend)
+
 ## `roksbnkctl bnk`
 
 BNK trial lifecycle (sits on top of a cluster)
@@ -87,6 +126,39 @@ single-state workspaces (use `roksbnkctl down` there).
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
 
+### `roksbnkctl bnk output`
+
+Print the BNK phase's terraform outputs (text or --json; [name] = one raw value)
+
+```
+roksbnkctl bnk output [name] [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
+
+### `roksbnkctl bnk status`
+
+Live runtime status of the BNK trial phase (namespaces + component readiness)
+
+```
+roksbnkctl bnk status [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+
+← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
+
 ### `roksbnkctl bnk up`
 
 Deploy the BNK trial; provisions the cluster first if missing
@@ -100,11 +172,6 @@ the workspace has no cluster registered yet, `bnk up` bootstraps the
 cluster phase first (with a confirmation prompt — the cluster
 provision takes ~30 min) before the trial apply.
 
-Refuses on legacy single-state workspaces (those provisioned with
-v1.0.x `roksbnkctl up`): cluster + trial share one state file there,
-so the trial can't be applied in isolation without state migration.
-Use `roksbnkctl up` on those workspaces.
-
 **Flags**
 
 | Flag | Type | Default | Description |
@@ -115,6 +182,68 @@ Use `roksbnkctl up` on those workspaces.
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
+
+## `roksbnkctl bnkforge`
+
+Configure + drive BNK Forge cluster registration
+
+Configure and drive registration of this workspace's cluster with a
+co-located BNK Forge install — without hand-editing config.yaml.
+
+  enable    turn on auto-registration on `cluster up` (writes config.yaml)
+  disable   turn it back off
+  status    show the effective config + whether the bnk-forge CLI / cluster id are ready
+  register  register this workspace's cluster with BNK Forge right now
+
+Registration is credential-backed: BNK Forge re-derives the kubeconfig on demand
+from an IBM Cloud credential template, so nothing perishable is stored. The
+`bnk-forge` CLI (which ships with BNK Forge, not roksbnkctl) must be on PATH.
+
+### `roksbnkctl bnkforge disable`
+
+Turn off BNK Forge auto-registration
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
+### `roksbnkctl bnkforge enable`
+
+Enable BNK Forge auto-registration on `cluster up` (writes config.yaml for you)
+
+```
+roksbnkctl bnkforge enable [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project` | `string` | — | target BNK Forge project id |
+| `--url` | `string` | — | BNK Forge server URL (overrides the bnk-forge CLI's stored-session URL) |
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
+### `roksbnkctl bnkforge register`
+
+Register this workspace's cluster with BNK Forge now (no re-`up` needed)
+
+```
+roksbnkctl bnkforge register [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project` | `string` | — | target BNK Forge project id (overrides config) |
+| `--url` | `string` | — | BNK Forge server URL (overrides config + stored session) |
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
+### `roksbnkctl bnkforge status`
+
+Show this workspace's BNK Forge registration config + readiness
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
 ## `roksbnkctl cleanup`
 
@@ -156,11 +285,35 @@ Commands:
   roksbnkctl cluster up        Create the ROKS cluster (+ transit gateway, registry COS)
   roksbnkctl cluster down      Destroy the cluster and everything cluster-scoped
   roksbnkctl cluster register  Discover an already-existing cluster and persist its identity
-  roksbnkctl cluster show      Print the registered cluster from cluster-outputs.json
+  roksbnkctl cluster config    Print the recorded cluster identity from cluster-outputs.json
+  roksbnkctl cluster status    Live runtime status (endpoints + node readiness)
 
 Each `roksbnkctl up` against this workspace will reuse the registered
 cluster (reading cluster-outputs.json) so multiple BNK trials can share
 one cluster.
+
+### `roksbnkctl cluster config`
+
+Print the recorded cluster identity (cluster-outputs.json)
+
+**Aliases**: `show`
+
+```
+roksbnkctl cluster config [flags]
+```
+
+Prints the cluster identity recorded at cluster up / register time
+(~/.roksbnkctl/`<workspace>`/cluster-outputs.json): cluster ID, endpoints, VPC,
+transit gateway, and registry COS. This is the RECORDED config; for live runtime
+state (node readiness) use `roksbnkctl cluster status`.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+
+← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
 ### `roksbnkctl cluster down`
 
@@ -180,6 +333,23 @@ with `roksbnkctl down` to avoid orphaned BNK resources.
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the destroy confirmation |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
+
+### `roksbnkctl cluster output`
+
+Print the Cluster phase's terraform outputs (text or --json; [name] = one raw value)
+
+```
+roksbnkctl cluster output [name] [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
@@ -213,9 +383,19 @@ value).
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
-### `roksbnkctl cluster show`
+### `roksbnkctl cluster status`
 
-Print the registered cluster (cluster-outputs.json)
+Live runtime status of the Cluster phase (endpoints + node readiness)
+
+```
+roksbnkctl cluster status [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
@@ -537,6 +717,39 @@ Refuses when there's no gateway state to destroy.
 
 ← back to [`roksbnkctl gateway`](#roksbnkctl-gateway)
 
+### `roksbnkctl gateway output`
+
+Print the Gateway phase's terraform outputs (text or --json; [name] = one raw value)
+
+```
+roksbnkctl gateway output [name] [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl gateway`](#roksbnkctl-gateway)
+
+### `roksbnkctl gateway status`
+
+Runtime status of the Gateway phase (listeners + app namespace)
+
+```
+roksbnkctl gateway status [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+
+← back to [`roksbnkctl gateway`](#roksbnkctl-gateway)
+
 ### `roksbnkctl gateway up`
 
 Apply the BNK data-plane config (BNK must be healthy)
@@ -549,7 +762,7 @@ Applies the Gateway API + SnatPool + Egress + static-route CRs and the
 VXLAN security-group rule against the existing cluster + BNK (read from
 cluster-outputs.json). Runs in its own state (state-gateway/).
 
-Refuses on legacy single-state workspaces, and when no cluster/BNK exists yet.
+Refuses when no cluster/BNK exists yet.
 
 **Flags**
 
@@ -618,9 +831,27 @@ release.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--config-file` | `string` | — | path or http(s) URL to a workspace config.yaml to seed (sibling of --var-file; non-interactive when complete) |
+| `--non-interactive` | `bool` | `false` | build config.yaml from environment variables ALONE — no prompts, no --config-file (for argv+env runners; pair with the ROKSBNKCTL_* env vars) |
+| `--override-from-env` | `bool` | `false` | after seeding, overlay config.yaml fields from environment variables (e.g. IBMCLOUD_API_KEY → ibmcloud.api_key_b64) |
 | `--tf-source` | `string` | — | override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml |
 | `--upgrade-tf` | `bool` | `false` | resolve and pin the latest TF release into config.yaml |
 | `--var-file` | `string` | — | path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases) |
+
+### `roksbnkctl init example`
+
+Print the example terraform.tfvars to stdout (a template, or for piping)
+
+Writes the bundled terraform.tfvars.example to stdout — the annotated template
+of the available terraform variables. It reads from the binary's embedded
+terraform, so it works from any directory and matches the binary's version.
+
+Create a starting tfvars or inspect the knobs with ordinary pipes:
+
+  roksbnkctl init example > terraform.tfvars.user
+  roksbnkctl init example | grep -E 'far_repo_url|manifest_version'
+
+← back to [`roksbnkctl init`](#roksbnkctl-init)
 
 ## `roksbnkctl install`
 
@@ -1062,12 +1293,14 @@ own OpenShift internal registry — so an air-gapped cluster installs BNK from
 images it hosts itself.
 
 Commands:
+  roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
   roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
+  roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
 `registry bom` works offline against the FAR manifest; the cluster-touching
 verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
@@ -1095,6 +1328,33 @@ and prints the resulting BOM. Needs no target — it only reads from FAR.
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry delete`
+
+Delete ALL replicated artifacts from the target registry
+
+```
+roksbnkctl registry delete [flags]
+```
+
+Removes every artifact roksbnkctl replicated (recorded in registry-mirror.json)
+from the configured target, then clears the mirror record so the BNK install
+reverts to pulling from FAR. Destructive — pass --force to skip the confirmation.
+
+Deletion is by digest where recorded (the reliable form for a registry manifest
+DELETE). Artifacts that fail to delete are kept in the record so a re-run retries
+them. For target=icr the API key needs Manager (delete) rights on the namespace;
+for target=generic the registry must have deletes enabled.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | `bool` | `false` | skip the confirmation prompt |
+| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
+| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1144,6 +1404,7 @@ roksbnkctl registry prune [flags]
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1170,6 +1431,43 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
+
+### `roksbnkctl registry target`
+
+Show or set the registry mirror target and its fields
+
+```
+roksbnkctl registry target [icr|generic|openshift | <field> <value>] [flags]
+```
+
+Configure the registry replication target without hand-editing config.yaml.
+
+With no arguments, prints the current target + configured fields. Otherwise the
+first argument is either a backend KIND (sets registry.target) or a FIELD name
+(set with a following value):
+
+  Kinds:  icr | generic | openshift
+  Fields: icr_host  icr_namespace
+          generic_host  generic_repo_prefix  generic_username  generic_password
+
+Examples:
+  roksbnkctl registry target                          # show current config
+  roksbnkctl registry target icr                      # use IBM Container Registry
+  roksbnkctl registry target icr_namespace bnk-test
+  roksbnkctl registry target generic                  # use a generic OCI registry
+  roksbnkctl registry target generic_host art.example.com
+  roksbnkctl registry target generic_repo_prefix bnk
+  roksbnkctl registry target generic_username ci-bot
+  echo "$TOKEN" | roksbnkctl registry target generic_password --password-stdin
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--password-stdin` | `bool` | `false` | read the generic registry password from stdin (for `registry target generic_password`) |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1191,6 +1489,7 @@ roksbnkctl registry verify [flags]
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
+| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1224,22 +1523,107 @@ KUBECONFIG, IBMCLOUD_API_KEY, IC_API_KEY, and IBMCLOUD_REGION exported so
 locally-installed kubectl / oc / ibmcloud commands work without further
 setup. Exits when the subshell does.
 
+## `roksbnkctl state`
+
+Manage where terraform state lives (local vs COS/S3 remote backend)
+
+### `roksbnkctl state local`
+
+Use local per-phase terraform state (the default) — writes config.yaml for you
+
+← back to [`roksbnkctl state`](#roksbnkctl-state)
+
+### `roksbnkctl state migrate`
+
+Copy each phase's local terraform state into the configured COS/S3 backend
+
+```
+roksbnkctl state migrate [flags]
+```
+
+Migrates a workspace's terraform state from local files into the COS/S3
+remote backend declared in config.yaml's state: block (PRD 16).
+
+Pre-requisite: set state.backend = "s3" (+ state.s3.{endpoint,bucket,region})
+and export the COS HMAC keys (ROKSBNKCTL_COS_HMAC_ACCESS_KEY /
+ROKSBNKCTL_COS_HMAC_SECRET_KEY, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
+before running.
+
+For each deployed phase (cluster / bnk / testing / gateway), this runs
+terraform init -migrate-state to copy its local state to the per-phase key
+in the bucket. It refuses to overwrite a key that already holds state (pass
+--force to override). The local state files are left in place; verify the
+remote read-back before deleting them.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | `bool` | `false` | migrate even if the remote key already holds state (overwrites it) |
+
+← back to [`roksbnkctl state`](#roksbnkctl-state)
+
+### `roksbnkctl state s3`
+
+Use the COS/S3 remote terraform-state backend — writes the state: block for you
+
+```
+roksbnkctl state s3 [flags]
+```
+
+Switch this workspace to the COS/S3 remote state backend (PRD 16) by writing
+its state: block to config.yaml — no hand-edit.
+
+You still provision the bucket + HMAC credentials yourself: the HMAC access/
+secret keys are NEVER written to config.yaml — only the names of the env vars
+they come from are (--access-key-source / --secret-key-source, defaulting to
+ROKSBNKCTL_COS_HMAC_ACCESS_KEY / ROKSBNKCTL_COS_HMAC_SECRET_KEY). After this,
+export those env vars and run `roksbnkctl state migrate` to move existing state.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--access-key-source` | `string` | — | env var holding the HMAC access key (default ROKSBNKCTL_COS_HMAC_ACCESS_KEY) |
+| `--bucket` | `string` | — | pre-provisioned bucket name (required) |
+| `--endpoint` | `string` | — | COS S3 endpoint URL (required) |
+| `--key-prefix` | `string` | — | state key prefix (default: the workspace name) |
+| `--region` | `string` | — | COS location / region (required) |
+| `--secret-key-source` | `string` | — | env var holding the HMAC secret key (default ROKSBNKCTL_COS_HMAC_SECRET_KEY) |
+
+← back to [`roksbnkctl state`](#roksbnkctl-state)
+
+### `roksbnkctl state show`
+
+Show the workspace's terraform-state backend config
+
+← back to [`roksbnkctl state`](#roksbnkctl-state)
+
 ## `roksbnkctl status`
 
 Summary of the workspace: cluster, components, last apply
+
+```
+roksbnkctl status [flags]
+```
 
 roksbnkctl status reports a quick read of the workspace:
 
   - workspace name + region
   - configured cluster name
   - pinned Terraform source
-  - per-phase deployment status (cluster phase + BNK trial)
-  - v1.0.x `Last apply` line preserved for legacy single-state workspaces
+  - per-phase deployment status (Cluster, BNK trial, Testing, Gateway)
   - kubeconfig path (if any)
   - cluster reachability (node count + ready count)
 
 v1.x will add per-BNK-component readiness (flo, cis, cert-manager,
 cneinstance) once the component-discovery shape is finalised.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
 
 ## `roksbnkctl targets`
 
@@ -1578,7 +1962,7 @@ BNK phase on top of a shared cluster. Pure IBM VPC — no Kubernetes.
 Commands:
   roksbnkctl testing up       Provision the jumphosts (needs a cluster: VPC + transit gateway)
   roksbnkctl testing down     Destroy the jumphosts, leaving the cluster and BNK intact
-  roksbnkctl testing migrate  Move pre-Sprint-28 jumphosts out of the BNK state into state-testing/
+  roksbnkctl testing status   Live jumphost IPs / SSH commands + reachability
 
 This is the provisioning phase. To RUN connectivity/DNS/throughput probes
 against a deployed environment, use `roksbnkctl test` (and
@@ -1595,10 +1979,7 @@ roksbnkctl testing down [flags]
 
 Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of `bnk down`:
-each phase tears down independently.
-
-Refuses when there's no testing state to destroy, and on legacy
-single-state workspaces (use `roksbnkctl down` there).
+each phase tears down independently. Refuses when there's no testing state.
 
 **Flags**
 
@@ -1609,18 +1990,36 @@ single-state workspaces (use `roksbnkctl down` there).
 
 ← back to [`roksbnkctl testing`](#roksbnkctl-testing)
 
-### `roksbnkctl testing migrate`
+### `roksbnkctl testing output`
 
-Move pre-Sprint-28 jumphosts from the BNK state into state-testing/
+Print the Testing phase's terraform outputs (text or --json; [name] = one raw value)
 
-One-shot migration for workspaces provisioned before the Sprint 28
-three-phase split, where the jumphosts (module.testing.*) still live in the
-BNK state (state/). Moves them into state-testing/ with no cloud churn
-(terraform state mv) so the live jumphosts are preserved.
+```
+roksbnkctl testing output [name] [flags]
+```
 
-After migrating, re-run `roksbnkctl bnk up` to reconcile the
-now-jumphost-free BNK state, and `roksbnkctl testing up` to adopt the
-moved jumphosts (plan shows a no-op).
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl testing`](#roksbnkctl-testing)
+
+### `roksbnkctl testing status`
+
+Live runtime status of the Testing phase (jumphost IPs + SSH reachability)
+
+```
+roksbnkctl testing status [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
 
 ← back to [`roksbnkctl testing`](#roksbnkctl-testing)
 
@@ -1636,8 +2035,6 @@ Provisions the testing jumphosts against the existing cluster's VPC +
 transit gateway (read from cluster-outputs.json). Runs in its own state
 (state-testing/), independent of the BNK phase — `bnk down` leaves
 the jumphosts and `testing down` leaves BNK.
-
-Refuses on legacy single-state workspaces (use `roksbnkctl up`).
 
 **Flags**
 

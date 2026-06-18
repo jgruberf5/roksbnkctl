@@ -4,6 +4,27 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.12.0 — 2026-06-18
+
+The customer-release cut: a leaner, declarative, CI-driven workflow, a trimmed repository, and a security cleanup of leaked cluster credentials. New config axes let one committed `config.yaml` (plus `ROKSBNKCTL_*` env) stand up many workspaces unattended; the repo drops 443 internal-development files; and 48 leaked ROKS kubeconfigs are purged from the tree, the `.gitignore`, and git history.
+
+### Added
+
+- **`init --non-interactive` — build `config.yaml` from the environment alone.** No seed file, no prompt, no TTY: the workspace is assembled entirely from `ROKSBNKCTL_*` / `IBMCLOUD_API_KEY`, validated for completeness, and fails fast (never falls back to a prompt) if a required field is missing. This is the argv+env container-runner path (a CI job or a BNK Forge container step).
+- **A single create-or-attach cluster toggle.** `cluster up` now **creates** a cluster when `cluster.create: true` and **attaches** to an existing one when `false` — collapsing the previous pair of inverse booleans into one switch driven by config.
+- **Bring-your-own infrastructure, expressed as config (never new commands).** Adopt an existing Transit Gateway by name, a cluster VPC by ID (`resources.cluster_vpc`), name the Testing client VPC, set per-AZ addressing (external/internal VLAN, SNAT, and VIP CIDRs + self-IPs), and supply CIS BIG-IP URL/username/password — all via `config.yaml` and matching `ROKSBNKCTL_*` env overrides.
+- **`output` on every phase.** `roksbnkctl <phase> output [name] [--json] [--show-sensitive]` (cluster/bnk/testing/gateway) prints that phase's terraform outputs, mirroring `terraform output`: the full set (sensitive redacted) or one named raw value for `$(…)` capture. The sibling of the existing per-phase `status`.
+- **BNK Forge registration configured from the CLI.** The `state:` / `exec:` blocks and cluster registration are set through the CLI — no `config.yaml` hand-editing — with a best-effort registration after `cluster up`.
+- **Docs: a "GitHub Actions CI as an example" chapter** (env → `init --non-interactive` → `up`, single cluster and a matrix fleet) and **PRD 17 (declarative-CLI direction)**.
+
+### Security
+
+- **Removed 48 leaked IBM ROKS kubeconfigs** (`terraform/**/*_k8sconfig/config.yml`, each carrying an IAM token) that were `go:embed`'d into the binary and shipped in public runner images. The path is now `.gitignore`d so they can't return, and **git history has been rewritten to purge them**. The exposed tokens must be treated as compromised and rotated in IBM Cloud — a history rewrite cannot recall what was already published.
+
+### Removed
+
+- **443 internal-development files** trimmed for the customer release (~890 → ~447 tracked): the agentic-dev process (`.archive/`, `issues/`, `prompts/`, `agents/`), internal QA scripts and CI workflows, and dev-only root files. The shipped surface — `cmd/` `internal/` `terraform/` (cleaned) `book/` `docs/` `go.*` `embedded.go` `tools/docker` `tools/refgen` and the release/CI/security workflows — is unchanged and the embed still resolves.
+
 ## v1.11.4 — 2026-06-15
 
 A one-line auth fix: the BNK install now pulls the FLO chart correctly from an ICR-backed air-gap mirror.

@@ -27,6 +27,7 @@ type Workspace struct {
 	COS      *COSCfg              `yaml:"cos,omitempty"`
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
 	State    StateCfg             `yaml:"state,omitempty"`
+	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base
 	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
@@ -56,6 +57,25 @@ type Workspace struct {
 	//     iperf3:    { backend: k8s }
 	//     terraform: { backend: local }
 	Exec map[string]ExecToolCfg `yaml:"exec,omitempty"`
+}
+
+// BNKForgeCfg is the optional integration with a co-located BNK Forge
+// install. When Register is true and the `bnk-forge` CLI is on PATH (with a
+// valid session, or one the operator can create interactively), `cluster up`
+// registers the just-provisioned ROKS cluster with BNK Forge — credential-
+// backed, so BNK Forge derives the kubeconfig on demand from the IBM Cloud
+// credential rather than storing a perishable one. Best-effort: registration
+// never blocks or fails the deploy. nil/absent (legacy config) = no-op.
+type BNKForgeCfg struct {
+	// Register opts the workspace in. Default false.
+	Register bool `yaml:"register,omitempty"`
+	// URL overrides the BNK Forge server URL the `bnk-forge` CLI would use
+	// from its stored session (~/.bnk-forge/config.json). Empty = use the
+	// stored session's URL.
+	URL string `yaml:"url,omitempty"`
+	// Project is the target BNK Forge project id to register the cluster
+	// under. Empty = let the CLI pick the active/sole project (or prompt).
+	Project string `yaml:"project,omitempty"`
 }
 
 // ExecToolCfg is one entry under workspace.Exec — the chosen backend
@@ -120,10 +140,20 @@ type ResourcesCfg struct {
 	TGWJumphost      ResourceToggle `yaml:"tgw_jumphost"`
 	ClusterJumphosts ResourceToggle `yaml:"cluster_jumphosts"`
 	ClientVPC        ResourceToggle `yaml:"client_vpc"`
+	// ClusterVPC controls the ROKS cluster's OWN VPC. Create=true (default)
+	// provisions a new one (named from the prefix); Create=false + Existing=<vpc-id>
+	// brings your own — rendered as use_existing_cluster_vpc + existing_cluster_vpc_id.
+	// (Existing is the VPC *ID*, unlike the transit-gateway/client-vpc adopt-by-name.)
+	ClusterVPC ResourceToggle `yaml:"cluster_vpc"`
 	// ClientRegion is the region the testing client (TGW jumphost + client VPC)
 	// is installed in. Empty → the terraform default (testing_client_vpc_region).
 	// Lets the test client live in a different region from the cluster.
 	ClientRegion string `yaml:"client_region,omitempty"`
+	// TestingClientVPCName names the testing client VPC when ClientVPC.Create is
+	// true (rendered as testing_client_vpc_name). Empty → the prefix-derived
+	// default. (When ClientVPC.Create is false, ClientVPC.Existing names the VPC
+	// to adopt instead.)
+	TestingClientVPCName string `yaml:"testing_client_vpc_name,omitempty"`
 	// TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing
 	// jumphosts (rendered as testing_ssh_key_name). `roksbnkctl init` resolves it:
 	// an existing key is used as-is, otherwise roksbnkctl generates one, stores the
@@ -136,6 +166,24 @@ type ResourcesCfg struct {
 	// `ws delete` removes exactly these so a generated key doesn't outlive its
 	// workspace. Empty when nothing was copied.
 	CopiedSSHKeyFiles []string `yaml:"copied_ssh_key_files,omitempty"`
+}
+
+// DefaultResources returns the standard create/reuse toggle set a fresh
+// workspace gets (mirrors the `init` interview defaults + the upstream module
+// defaults). Used by the non-interactive paths so that an env override touching
+// ONE toggle (e.g. adopting an existing transit gateway) doesn't leave the rest
+// at their bool zero value (create:false) and silently disable BNK / COS / etc.
+func DefaultResources() *ResourcesCfg {
+	return &ResourcesCfg{
+		TransitGateway:   ResourceToggle{Create: true},
+		RegistryCOS:      ResourceToggle{Create: true},
+		CertManager:      ResourceToggle{Create: true},
+		BNK:              ResourceToggle{Create: true},
+		TGWJumphost:      ResourceToggle{Create: true},
+		ClusterJumphosts: ResourceToggle{Create: false},
+		ClientVPC:        ResourceToggle{Create: true},
+		ClusterVPC:       ResourceToggle{Create: true},
+	}
 }
 
 // ResourceToggle is one create/reuse decision: Create=true provisions the
@@ -184,6 +232,22 @@ type BNKCfg struct {
 	// install-guide defaults apply. Zone NAMES are derived from the region, so
 	// only the CIDRs/self-IPs live here. Rendered as cneinstance_network_zones.
 	Network *BNKNetworkCfg `yaml:"network,omitempty"`
+
+	// CIS holds the BIG-IP management endpoint + credentials the BNK CIS
+	// controller (k8s-bigip-ctlr) uses. nil / empty → BNK is installed without
+	// CIS (the bigip_* tfvars stay blank). Rendered as bigip_url / bigip_username
+	// / bigip_password.
+	CIS *BNKCISCfg `yaml:"cis,omitempty"`
+}
+
+// BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
+// BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
+// encryption — like ibmcloud.api_key_b64); the raw value is rendered to
+// terraform.tfvars as bigip_password at apply time.
+type BNKCISCfg struct {
+	BigIPURL         string `yaml:"bigip_url,omitempty"`
+	BigIPUsername    string `yaml:"bigip_username,omitempty"`
+	BigIPPasswordB64 string `yaml:"bigip_password_b64,omitempty"`
 }
 
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.

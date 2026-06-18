@@ -187,7 +187,7 @@ A realistic scenario: workspace config routes each tool to its preferred backend
 
 `.github/workflows/ci.yml` runs **unit + integration** on every PR — `go test ./...` plus the testcontainers-go-backed integration tests. The full e2e suite is too expensive (4-6 hours, $5-10 of IBM Cloud spend per run) to gate on every PR.
 
-A separate **manual-trigger workflow** runs `scripts/e2e-test-full.sh` on demand and on release branches. The workflow is dispatched via the GitHub Actions UI ("Run workflow") and stamps the resulting log artefacts onto the workflow run. See [`.github/workflows/e2e-full.yml`](https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/e2e-full.yml) for the workflow YAML — the workflow accepts optional `cluster_region` + `teardown_on_success` inputs and runs automatically on every `release/**` branch push.
+The full e2e suite is run **manually, out of band** — on demand and on release branches — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with `IBMCLOUD_API_KEY` set) and its log artefacts archived against the run.
 
 The release-cut policy is: don't tag `vX.Y.Z` until the most recent manual-trigger run on the release branch is green for **three consecutive nights**. This catches the flakes that don't reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.
 

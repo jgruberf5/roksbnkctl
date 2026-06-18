@@ -130,7 +130,7 @@ The `.user` file (or `--var-file`) layers **after** the generated `terraform.tfv
 
 The change is additive. A pre-`v1.8.0` `config.yaml` has no `prefix:` field; `roksbnkctl` detects the empty prefix and renders the **old sparse `terraform.tfvars`** unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run `roksbnkctl init -w <ws>` and answer the prefix prompt.
 
-> **Detection complement.** Prefix-derived naming *prevents* the collisions described above. The forward-looking `roksbnkctl doctor --orphan-sweep` diagnostic (tracked for a later release — see `issues/issue_sprint25_staff.md`) *detects* already-stranded resources by deriving the same `<prefix>-cluster-vpc` / `<prefix>-tgw` formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.
+> **Detection complement.** Prefix-derived naming *prevents* the collisions described above. The forward-looking `roksbnkctl doctor --orphan-sweep` diagnostic (tracked for a later release) *detects* already-stranded resources by deriving the same `<prefix>-cluster-vpc` / `<prefix>-tgw` formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.
 
 ## The layering rule
 

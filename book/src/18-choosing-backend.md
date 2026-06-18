@@ -40,11 +40,19 @@ The defaults reflect "what's the right answer for the most common scenario":
 - **`iperf3` defaults to `k8s`** because throughput from a laptop's uplink isn't the cluster's bandwidth. The k8s backend places the iperf3 client in (or adjacent to) the cluster so the number reflects fabric, not Wi-Fi. Laptop-uplink-to-cluster is a real measurement too, but it's the special case — opt in via `--backend local`.
 - **`terraform` defaults to `local`** because the terraform-exec local path is the established workflow. State handling is simplest there. Frozen-version CI runs use `--backend docker`; non-local network-locality use cases (cluster-side, SSH-bastion-side) are deferred to a future release pending a state-handling design — see [PRD 03 §"State concerns"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#terraform).
 
-To change a default per workspace, edit `~/.roksbnkctl/<workspace>/config.yaml`:
+To change a default per workspace, use the `backend` command — **no config.yaml hand-edit**:
+
+```bash
+roksbnkctl -w acme backend set ibmcloud ssh:bastion
+roksbnkctl -w acme backend set terraform docker
+roksbnkctl -w acme backend show              # effective backend per tool + where it came from
+roksbnkctl -w acme backend unset terraform   # revert to the built-in default
+```
+
+That writes the `exec:` block for you:
 
 ```yaml
 exec:
-  iperf3:    { backend: k8s }      # already the default; shown for clarity
   ibmcloud:  { backend: ssh:bastion }
   terraform: { backend: docker }
 ```

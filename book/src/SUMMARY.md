@@ -15,6 +15,7 @@
 - [Workspaces](./06-workspaces.md)
 - [Quick start: from API key to deployed BNK](./07-quick-start.md)
 - [Unattended setup: file, URL, or environment](./07a-unattended-setup.md)
+- [GitHub Actions CI as an example](./07b-github-actions-ci.md)
 
 # Part III — Cluster Lifecycle
 
@@ -52,6 +53,7 @@
 # Part VII — Operations
 
 - [Day-2 ops: status, logs, k get/apply/exec](./24-day-2-ops.md)
+- [Registering the cluster with BNK Forge](./24a-bnk-forge-registration.md)
 - [COS supply chain management](./25-cos-supply-chain.md)
 - [Troubleshooting](./26-troubleshooting.md)
 

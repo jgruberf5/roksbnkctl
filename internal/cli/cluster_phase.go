@@ -320,6 +320,20 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 func runClusterUp(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
+	// Create-or-attach: when the workspace targets an EXISTING cluster
+	// (cluster.create=false), `cluster up` ATTACHES to it — the same discovery +
+	// cluster-outputs.json write as `cluster register` — instead of running the
+	// terraform create. So one command (and one blueprint/CI toggle) covers both
+	// "make a new cluster" and "use the one named in config".
+	if c, cerr := config.New(flagWorkspace); cerr == nil && c.Workspace != nil && !c.Workspace.Cluster.Create {
+		name := c.Workspace.Cluster.Name
+		if name == "" {
+			return fmt.Errorf("cluster.create is false but cluster.name is empty — set the existing cluster's name/ID (config.yaml cluster.name or ROKSBNKCTL_CLUSTER_NAME)")
+		}
+		fmt.Fprintf(os.Stderr, "→ cluster.create=false — attaching to existing cluster %q\n", name)
+		return runClusterRegister(cmd, []string{name})
+	}
+
 	// flagVarFiles is already chokepoint-normalized to absolute paths
 	// against the invocation CWD (root PersistentPreRunE →
 	// resolveInvocationContext) before openClusterTF folds them into the
@@ -345,6 +359,7 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 		// cluster identity. Best-effort.
 		_ = persistClusterOutputs(ctx, cctx, tfws, "cluster-up")
 		tryAutoKubeconfig(ctx, cctx, tfws)
+		tryRegisterBNKForge(ctx, cctx)
 		return nil
 	}
 	if !flagAuto && !promptYesNo("Apply this plan?", false) {
@@ -361,6 +376,7 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "         (run `roksbnkctl cluster register <name>` to populate it manually)")
 	}
 	tryAutoKubeconfig(ctx, cctx, tfws)
+	tryRegisterBNKForge(ctx, cctx)
 	return nil
 }
 

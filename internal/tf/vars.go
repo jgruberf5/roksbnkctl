@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -215,6 +216,14 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 	// name (no standalone toggle; it follows the cluster).
 	fmt.Fprintf(w, "roks_cluster_vpc_name = %q\n", plan.ClusterVPCName)
 
+	// BYO cluster VPC: adopt an existing VPC by ID instead of creating one.
+	// Emitted only when adopting; absent ⇒ use_existing_cluster_vpc defaults false
+	// (create a new VPC) — old configs without a cluster_vpc block are unchanged.
+	if !res.ClusterVPC.Create && res.ClusterVPC.Existing != "" {
+		fmt.Fprintln(w, "use_existing_cluster_vpc = true")
+		fmt.Fprintf(w, "existing_cluster_vpc_id = %q\n", res.ClusterVPC.Existing)
+	}
+
 	// Registry COS instance. Only meaningful when the cluster is created;
 	// the upstream count gate is (create_cluster && create_cos_instance).
 	fmt.Fprintf(w, "create_roks_registry_cos_instance = %v\n", res.RegistryCOS.Create)
@@ -245,7 +254,13 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 	// Client VPC (for the TGW jumphost).
 	fmt.Fprintf(w, "testing_create_client_vpc = %v\n", res.ClientVPC.Create)
 	if res.ClientVPC.Create {
-		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", plan.ClientVPCName)
+		// A config-supplied name (resources.testing_client_vpc_name) wins over the
+		// prefix-derived default.
+		vpcName := plan.ClientVPCName
+		if res.TestingClientVPCName != "" {
+			vpcName = res.TestingClientVPCName
+		}
+		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", vpcName)
 	} else if res.ClientVPC.Existing != "" {
 		fmt.Fprintf(w, "testing_client_vpc_name = %q\n", res.ClientVPC.Existing)
 	}
@@ -352,6 +367,21 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	// module's install-guide defaults apply (existing configs unchanged).
 	if ws.BNK.Network != nil && len(ws.BNK.Network.Zones) > 0 {
 		renderNetworkZones(w, ws.BNK.Network.Zones)
+	}
+	// BNK CIS controller's BIG-IP target. Emitted only when configured; absent →
+	// the bigip_* vars stay at their terraform defaults (blank = BNK without CIS).
+	if cis := ws.BNK.CIS; cis != nil {
+		if cis.BigIPURL != "" {
+			fmt.Fprintf(w, "bigip_url = %q\n", cis.BigIPURL)
+		}
+		if cis.BigIPUsername != "" {
+			fmt.Fprintf(w, "bigip_username = %q\n", cis.BigIPUsername)
+		}
+		if cis.BigIPPasswordB64 != "" {
+			if raw, derr := base64.StdEncoding.DecodeString(cis.BigIPPasswordB64); derr == nil {
+				fmt.Fprintf(w, "bigip_password = %q\n", string(raw))
+			}
+		}
 	}
 }
 

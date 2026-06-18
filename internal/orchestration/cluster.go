@@ -409,6 +409,19 @@ var perToolDefaultBackend = map[string]string{
 	"terraform": "local",
 }
 
+// PerToolDefaultBackends returns a copy of the per-tool default backend table —
+// the canonical set of backend-dispatching tools and their built-in defaults.
+// The `roksbnkctl backend` command uses it to validate tool names and to show
+// the effective default when no exec: override is set. A copy is returned so
+// callers can't mutate the package table.
+func PerToolDefaultBackends() map[string]string {
+	out := make(map[string]string, len(perToolDefaultBackend))
+	for k, v := range perToolDefaultBackend {
+		out[k] = v
+	}
+	return out
+}
+
 // resolveBackendSpecWith picks the execution backend for tool. Order:
 //
 //  1. flagOverride (the explicit per-invocation flag — caller passes

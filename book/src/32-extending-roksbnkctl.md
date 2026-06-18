@@ -44,7 +44,7 @@ The test subtree (`roksbnkctl test <suite>`) holds three suites at v1.0: `connec
 
 6. **Documentation.** New chapter or major section in Part VI of the book (currently chapters 20-23). Cross-link from [Chapter 23 — The E2E test plan](./23-e2e-test-plan.md) and [Chapter 18 — Choosing a backend per tool](./18-choosing-backend.md).
 
-The DNS probe is the canonical worked example — read [`internal/test/dns.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/test/dns.go) + [`internal/cli/test.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/test.go) to see all six steps in their landed form, plus the [Sprint 5 architect prompt](https://github.com/jgruberf5/roksbnkctl/blob/main/prompts/sprint5/architect.md) for the design framing.
+The DNS probe is the canonical worked example — read [`internal/test/dns.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/test/dns.go) + [`internal/cli/test.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/test.go) to see all six steps in their landed form.
 
 ## Adding a new tool to an existing backend
 
@@ -130,7 +130,7 @@ The PRD lifecycle:
 3. **Implement**: the PRD becomes the implementation plan. Per-sprint tasks land in [`docs/PLAN.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md) referencing the PRD by number.
 4. **Land**: code PRs reference the PRD; the PRD itself is the *spec*, code is the *implementation*. When the implementation diverges from the PRD, the PRD gets updated to match — never the other way around (the binary's behaviour is the source of truth).
 
-The PLAN.md per-sprint planning rhythm interleaves code + tests + docs per sprint. Each sprint's prompts (under `prompts/sprint<N>/`) translate the PLAN into concrete agent tasks.
+The PLAN.md per-sprint planning rhythm interleaves code + tests + docs per sprint. Each sprint's prompts translate the PLAN into concrete agent tasks.
 
 ## The four-agent sprint dispatch
 
@@ -141,7 +141,7 @@ Larger sprints (Sprints 3-6) are dispatched as four parallel agents:
 - **Tech-writer** — reviews the architect's chapters for accuracy, fluency, and cross-link integrity. Files tech-writer-side issues.
 - **Validator** — writes / extends the e2e test scripts and CI workflows, files validator-side issues.
 
-The dispatch lives at `prompts/sprint<N>/{architect,staff,tech-writer,validator}.md` — one prompt per agent. Each agent runs independently against the same repo snapshot. An integrator at the end folds the four agents' outputs together, resolves the issues each filed against the others, and commits the aggregate.
+Each agent runs independently from its own prompt — one per agent — against the same repo snapshot. An integrator at the end folds the four agents' outputs together, resolves the issues each filed against the others, and commits the aggregate.
 
 When to dispatch four agents vs. just open a PR:
 

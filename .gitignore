@@ -48,3 +48,6 @@ book/book/
 
 # shakeout run outputs (scripts/full-shakeout.sh) — local artifacts
 .shakeout/
+
+# Leaked IBM ROKS kubeconfig caches (never commit cluster creds)
+**/*_k8sconfig/

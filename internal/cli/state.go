@@ -12,9 +12,63 @@ import (
 
 var flagStateMigrateForce bool
 
+var (
+	flagStateEndpoint  string
+	flagStateBucket    string
+	flagStateRegion    string
+	flagStateKeyPrefix string
+	flagStateAccessSrc string
+	flagStateSecretSrc string
+)
+
 var stateCmd = &cobra.Command{
 	Use:   "state",
 	Short: "Manage where terraform state lives (local vs COS/S3 remote backend)",
+}
+
+// loadWorkspaceForEdit resolves the selected workspace and loads it for an
+// in-place mutate → SaveWorkspace edit. Shared by the config-writing commands
+// (state, backend, bnkforge) so turning a feature on never needs a hand-edit of
+// config.yaml.
+func loadWorkspaceForEdit() (string, *config.Workspace, error) {
+	name := resolvedWorkspaceName()
+	if name == "" {
+		return "", nil, fmt.Errorf("no workspace selected (use -w <name> or `roksbnkctl init`)")
+	}
+	ws, err := config.LoadWorkspace(name)
+	if err != nil {
+		return "", nil, err
+	}
+	return name, ws, nil
+}
+
+var stateShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show the workspace's terraform-state backend config",
+	Args:  cobra.NoArgs,
+	RunE:  runStateShow,
+}
+
+var stateLocalCmd = &cobra.Command{
+	Use:   "local",
+	Short: "Use local per-phase terraform state (the default) — writes config.yaml for you",
+	Args:  cobra.NoArgs,
+	RunE:  runStateLocal,
+}
+
+var stateS3Cmd = &cobra.Command{
+	Use:   "s3",
+	Short: "Use the COS/S3 remote terraform-state backend — writes the state: block for you",
+	Long: `Switch this workspace to the COS/S3 remote state backend (PRD 16) by writing
+its state: block to config.yaml — no hand-edit.
+
+You still provision the bucket + HMAC credentials yourself: the HMAC access/
+secret keys are NEVER written to config.yaml — only the names of the env vars
+they come from are (--access-key-source / --secret-key-source, defaulting to
+ROKSBNKCTL_COS_HMAC_ACCESS_KEY / ROKSBNKCTL_COS_HMAC_SECRET_KEY). After this,
+export those env vars and run ` + "`roksbnkctl state migrate`" + ` to move existing state.`,
+	Args: cobra.NoArgs,
+	RunE: runStateS3,
 }
 
 var stateMigrateCmd = &cobra.Command{
@@ -40,8 +94,107 @@ remote read-back before deleting them.`,
 func init() {
 	stateMigrateCmd.Flags().BoolVar(&flagStateMigrateForce, "force", false,
 		"migrate even if the remote key already holds state (overwrites it)")
-	stateCmd.AddCommand(stateMigrateCmd)
+
+	stateS3Cmd.Flags().StringVar(&flagStateEndpoint, "endpoint", "", "COS S3 endpoint URL (required)")
+	stateS3Cmd.Flags().StringVar(&flagStateBucket, "bucket", "", "pre-provisioned bucket name (required)")
+	stateS3Cmd.Flags().StringVar(&flagStateRegion, "region", "", "COS location / region (required)")
+	stateS3Cmd.Flags().StringVar(&flagStateKeyPrefix, "key-prefix", "", "state key prefix (default: the workspace name)")
+	stateS3Cmd.Flags().StringVar(&flagStateAccessSrc, "access-key-source", "", "env var holding the HMAC access key (default ROKSBNKCTL_COS_HMAC_ACCESS_KEY)")
+	stateS3Cmd.Flags().StringVar(&flagStateSecretSrc, "secret-key-source", "", "env var holding the HMAC secret key (default ROKSBNKCTL_COS_HMAC_SECRET_KEY)")
+
+	stateCmd.AddCommand(stateShowCmd, stateLocalCmd, stateS3Cmd, stateMigrateCmd)
 	rootCmd.AddCommand(stateCmd)
+}
+
+func runStateShow(_ *cobra.Command, _ []string) error {
+	name, ws, err := loadWorkspaceForEdit()
+	if err != nil {
+		return err
+	}
+	backend := ws.State.Backend
+	if backend == "" {
+		backend = "local"
+	}
+	fmt.Printf("workspace:   %s\n", name)
+	fmt.Printf("backend:     %s\n", backend)
+	if ws.State.S3 != nil {
+		s3 := ws.State.S3
+		fmt.Printf("s3.endpoint: %s\n", s3.Endpoint)
+		fmt.Printf("s3.bucket:   %s\n", s3.Bucket)
+		fmt.Printf("s3.region:   %s\n", s3.Region)
+		kp := s3.KeyPrefix
+		if kp == "" {
+			kp = name + " (default: workspace name)"
+		}
+		fmt.Printf("s3.key_prefix: %s\n", kp)
+		acc := s3.AccessKeySource
+		if acc == "" {
+			acc = "ROKSBNKCTL_COS_HMAC_ACCESS_KEY (default)"
+		}
+		sec := s3.SecretKeySource
+		if sec == "" {
+			sec = "ROKSBNKCTL_COS_HMAC_SECRET_KEY (default)"
+		}
+		fmt.Printf("s3.access_key_source: %s\n", acc)
+		fmt.Printf("s3.secret_key_source: %s\n", sec)
+	}
+	return nil
+}
+
+func runStateLocal(_ *cobra.Command, _ []string) error {
+	name, ws, err := loadWorkspaceForEdit()
+	if err != nil {
+		return err
+	}
+	ws.State.Backend = "local"
+	if err := config.SaveWorkspace(name, ws); err != nil {
+		return fmt.Errorf("saving workspace: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ %q now uses local terraform state.\n", name)
+	if ws.State.S3 != nil {
+		fmt.Fprintln(os.Stderr, "  note: the s3: block is kept (inert while backend=local) so `state s3` can switch back without re-entering it.")
+	}
+	return nil
+}
+
+func runStateS3(_ *cobra.Command, _ []string) error {
+	if flagStateEndpoint == "" || flagStateBucket == "" || flagStateRegion == "" {
+		return fmt.Errorf("--endpoint, --bucket, and --region are all required")
+	}
+	name, ws, err := loadWorkspaceForEdit()
+	if err != nil {
+		return err
+	}
+	if ws.State.S3 == nil {
+		ws.State.S3 = &config.StateS3Cfg{}
+	}
+	ws.State.Backend = "s3"
+	ws.State.S3.Endpoint = flagStateEndpoint
+	ws.State.S3.Bucket = flagStateBucket
+	ws.State.S3.Region = flagStateRegion
+	if flagStateKeyPrefix != "" {
+		ws.State.S3.KeyPrefix = flagStateKeyPrefix
+	}
+	if flagStateAccessSrc != "" {
+		ws.State.S3.AccessKeySource = flagStateAccessSrc
+	}
+	if flagStateSecretSrc != "" {
+		ws.State.S3.SecretKeySource = flagStateSecretSrc
+	}
+	if err := config.SaveWorkspace(name, ws); err != nil {
+		return fmt.Errorf("saving workspace: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ %q now uses the COS/S3 remote state backend (s3://%s).\n", name, ws.State.S3.Bucket)
+	acc := ws.State.S3.AccessKeySource
+	if acc == "" {
+		acc = "ROKSBNKCTL_COS_HMAC_ACCESS_KEY"
+	}
+	sec := ws.State.S3.SecretKeySource
+	if sec == "" {
+		sec = "ROKSBNKCTL_COS_HMAC_SECRET_KEY"
+	}
+	fmt.Fprintf(os.Stderr, "  Next: export the HMAC keys (%s / %s), then run `roksbnkctl state migrate` to move existing state.\n", acc, sec)
+	return nil
 }
 
 type migratePhase struct {

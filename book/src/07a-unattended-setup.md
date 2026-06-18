@@ -13,6 +13,7 @@ Three `init` options make that work:
 | `--config-file <path\|url>` | Seed the workspace `config.yaml` directly (no interview) |
 | `--var-file <path\|url>` | Seed `terraform.tfvars` (sibling; pre-existing, now URL-aware) |
 | `--override-from-env` | Overlay specific `config.yaml` fields from environment variables |
+| `--non-interactive` | Build `config.yaml` from environment variables alone — no file, no prompt (argv+env runners) |
 
 ## The pattern
 
@@ -96,6 +97,17 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_PREFIX` | `prefix` | verbatim |
 | `ROKSBNKCTL_REGION` | `ibmcloud.region` | verbatim |
 | `ROKSBNKCTL_RESOURCE_GROUP` | `ibmcloud.resource_group` | verbatim |
+| `ROKSBNKCTL_CLUSTER_NAME` | `cluster.name` | verbatim |
+| `ROKSBNKCTL_CLUSTER_CREATE` | `cluster.create` | bool (`true`/`false`/`1`/`0`) |
+| `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
+| `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
+| `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | verbatim (adopt an existing TGW) |
+| `ROKSBNKCTL_CLUSTER_VPC_ID` | `resources.cluster_vpc` (`create:false` + `existing`) | verbatim — adopt an existing cluster VPC by **ID** |
+| `ROKSBNKCTL_TESTING_VPC_NAME` | `resources.testing_client_vpc_name` | verbatim (names the client VPC to create) |
+| `ROKSBNKCTL_BIGIP_URL` | `bnk.cis.bigip_url` | verbatim |
+| `ROKSBNKCTL_BIGIP_USERNAME` | `bnk.cis.bigip_username` | verbatim |
+| `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |
+| `ROKSBNKCTL_ZONE<n>_EXT_VLAN_CIDR` … `_INTERNAL_SELFIP` | `bnk.network.zones[n-1]` | per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply) |
 | `ROKSBNKCTL_TESTING_SSH_KEY_NAME` | `resources.testing_ssh_key_name` | verbatim |
 | `ROKSBNKCTL_GENERIC_PASSWORD` | `registry.generic_password_b64` | raw, base64-encoded |
 
@@ -109,3 +121,46 @@ Notes:
   values**, so secrets stay out of CI logs.
 - `--override-from-env` also applies on the interactive path, so you can answer
   the interview and still pull the API key from the environment.
+
+## `--non-interactive` — config from the environment alone
+
+`--override-from-env` *overlays* env onto a file or interview. `--non-interactive`
+goes further: it builds `config.yaml` **entirely from the environment** — no
+`--config-file`, no prompts, no TTY. It is the path for an **argv + env container
+runner** (a CI job, or a [BNK Forge](./24a-bnk-forge-registration.md) container
+step) that can pass environment variables and arguments but cannot stage a seed
+file.
+
+```bash
+roksbnkctl -w forge init --non-interactive
+```
+
+It assembles the workspace from the same `ROKSBNKCTL_*` / `IBMCLOUD_API_KEY`
+variables in the table above, then:
+
+- defaults `tf_source.type` to `embedded` (the one required field with no env
+  override — an empty type already means "embedded" at render time);
+- validates completeness and **fails fast** if a required field is missing
+  (`ibmcloud.region`, `ibmcloud.resource_group`, `prefix`, `tf_source.type`) —
+  it never falls back to a prompt;
+- logs which fields were applied (never the values).
+
+A complete one-shot, file-free setup:
+
+```bash
+export IBMCLOUD_API_KEY=…              # raw key → ibmcloud.api_key_b64
+export ROKSBNKCTL_REGION=eu-de
+export ROKSBNKCTL_RESOURCE_GROUP=default
+export ROKSBNKCTL_PREFIX=acme-eu
+export ROKSBNKCTL_CLUSTER_NAME=acme-eu-roks
+export ROKSBNKCTL_CLUSTER_CREATE=true
+
+roksbnkctl -w forge init --non-interactive
+roksbnkctl -w forge cluster up --auto
+roksbnkctl -w forge bnk up --auto
+```
+
+This is exactly how the [all-in-one runner image](./04-installation.md#path-c--run-from-the-all-in-one-container-image-no-install)
+is meant to be driven from a pipeline: every step is `roksbnkctl <args>` with the
+config supplied through the environment, and state persisted on the mounted
+`/work` volume (`ROKSBNKCTL_HOME=/work/.roksbnkctl`).

@@ -30,6 +30,7 @@ tf_source:       # required (defaults to embedded if omitted)
 cos:             # optional; supply-chain auto-upload
 targets:         # optional; populated automatically by up's post-apply hook
 exec:            # optional; per-tool default-backend map
+bnkforge:        # optional; opt-in BNK Forge cluster registration
 ```
 
 The order of the top-level keys in the file doesn't matter; YAML is a mapping. The order shown above is the canonical render order produced by `roksbnkctl init`.
@@ -315,6 +316,34 @@ state:
 
 `s3` requires **terraform ≥ 1.10** (the native lockfile) — a preflight error fires otherwise. Convert an existing local-state workspace with `roksbnkctl state migrate`.
 
+## `bnkforge:` block
+
+Opt-in integration with a co-located [BNK Forge](./24a-bnk-forge-registration.md)
+install. When `register: true` and the `bnk-forge` CLI is on `PATH`, a post-apply
+hook on `cluster up` registers the just-provisioned ROKS cluster with BNK Forge —
+**credential-backed**, so Forge re-derives the kubeconfig on demand from an IBM
+Cloud credential template rather than storing a perishable one. Best-effort: it
+never blocks or fails the deploy. Absent (or `register: false`) ⇒ no-op. See
+[Chapter 24a — Registering the cluster with BNK Forge](./24a-bnk-forge-registration.md).
+
+**Set this block with the CLI — don't hand-edit it:** `roksbnkctl bnkforge
+enable [--url U] [--project P]` writes it for you, `roksbnkctl bnkforge disable`
+flips `register` off, and `roksbnkctl bnkforge status` shows the effective
+values. The resulting block looks like:
+
+```yaml
+bnkforge:
+  register: true
+  url: https://forge.example.com   # only if you passed --url
+  project: "42"                    # only if you passed --project
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `register` | bool | `false` | Opt the workspace in. `false`/omitted ⇒ no registration. |
+| `url` | string | (CLI's stored-session URL) | Overrides the BNK Forge server URL the `bnk-forge` CLI would read from its stored session (`~/.bnk-forge/config.json`). Empty ⇒ use the stored session's URL. |
+| `project` | string | (CLI auto-selects) | Target BNK Forge project id to register the cluster under. Empty ⇒ the CLI picks the active/sole project, or prompts. |
+
 ## `targets:` block
 
 ```yaml
@@ -414,6 +443,9 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `targets.<name>.key_path` | string | (empty) | PEM file path. |
 | `targets.<name>.key_source` | string | (empty) | `agent` \| `tf-output:<name>`. |
 | `exec.<tool>.backend` | string | `local` (varies by tool) | `local` \| `docker` \| `k8s` \| `ssh:<target>`. |
+| `bnkforge.register` | bool | `false` | Opt into BNK Forge cluster registration on `cluster up`. |
+| `bnkforge.url` | string | (CLI's stored-session URL) | Override the BNK Forge server URL. |
+| `bnkforge.project` | string | (CLI auto-selects) | Target BNK Forge project id. |
 
 ## Behaviour when fields are missing
 
@@ -438,6 +470,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cos` | Block omitted ⇒ no pre-flight uploads; FLO reads whatever's already in the configured bucket. |
 | `targets.*` | Block absent ⇒ `roksbnkctl --on jumphost` errors with "no target named jumphost"; auto-populated by `up` when terraform provisions a jumphost. |
 | `exec.*` | Each tool falls back to its built-in default (typically `local`; `iperf3` is `k8s`). |
+| `bnkforge` | Block absent (or `register: false`) ⇒ no BNK Forge registration; `cluster up` behaves exactly as before. |
 
 ## How `--var-file` interacts with `config.yaml`
 

@@ -11,7 +11,28 @@ The default is unchanged — **omit the `state:` block and everything works exac
 
 ## Turning it on
 
-Add a `state:` block to your workspace `config.yaml`:
+Turn it on from the CLI — **you never hand-edit `config.yaml`**:
+
+```bash
+roksbnkctl -w acme state s3 \
+  --endpoint https://s3.us-south.cloud-object-storage.appdomain.cloud \
+  --bucket   acme-bnk-tfstate \
+  --region   us-south \
+  --key-prefix roksbnkctl
+```
+
+`--bucket` you create ahead of time; `--key-prefix` is optional (defaults to the
+workspace name). Two more optional flags — `--access-key-source` /
+`--secret-key-source` — name the env vars the HMAC keys come from (see
+[Credentials](#credentials) below). Switch back, or inspect, with:
+
+```bash
+roksbnkctl -w acme state local    # back to per-phase local tfstate
+roksbnkctl -w acme state show     # backend + s3 endpoint/bucket/region/key sources
+```
+
+That writes the `state:` block into the workspace `config.yaml` for you (the same
+marshaller every other command uses — no hand-edit):
 
 ```yaml
 state:
@@ -62,7 +83,7 @@ What it does **not** do: serialize *different* phases or *different* workspaces 
 
 ## Migrating an existing workspace
 
-A **new** workspace with `state: backend: s3` just works — the first `up` creates state straight in the bucket. To move an **existing** local-state workspace over, set the `state:` block, export the HMAC keys, then:
+A **new** workspace with `state: backend: s3` just works — the first `up` creates state straight in the bucket. To move an **existing** local-state workspace over, run `roksbnkctl state s3 …` (above), export the HMAC keys, then:
 
 ```bash
 roksbnkctl state migrate

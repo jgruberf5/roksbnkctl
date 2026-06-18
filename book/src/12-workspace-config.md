@@ -344,6 +344,11 @@ Several commands manage subsets of `config.yaml` so you don't have to:
 | Whole file (interactive) | `roksbnkctl init` |
 | `tf_source:` only | `roksbnkctl init --upgrade-tf` |
 | `targets:` block | `roksbnkctl targets add/remove` |
+| `registry:` block | `roksbnkctl registry target …` |
+| `test.connectivity.extra_hosts` | `roksbnkctl test hosts add/remove/clear` |
+| `state:` block (local ↔ COS/S3) | `roksbnkctl state local` / `state s3 …` / `state show` |
+| `exec:` block (per-tool backend) | `roksbnkctl backend set/unset/show` |
+| `bnkforge:` block | `roksbnkctl bnkforge enable/disable/status` |
 | `ibmcloud.api_key_b64` | `roksbnkctl init` (after entering the key, it offers to save) |
 
 When you do edit by hand, the load-time validators run on next `roksbnkctl` invocation:
