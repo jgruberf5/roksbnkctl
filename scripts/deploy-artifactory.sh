@@ -141,20 +141,26 @@ resolve_apikey() {
 }
 
 # ── auth + region ───────────────────────────────────────────────────────────
+echo "==> workspace '$WS': region=$REGION  zone=$ZONE  vpc=$VPC  profile=$PROFILE"
 # Reuse an existing `ibmcloud` session if there is one (`is regions` only works
-# when logged in); otherwise log in with the workspace's own credential.
-if ! ibmcloud is regions >/dev/null 2>&1; then
+# when logged in); otherwise log in with the workspace's own credential. stdin is
+# closed (</dev/null) on login so a key that maps to multiple accounts can't block
+# on an interactive account-selection prompt (a common silent hang).
+echo "==> checking IBM Cloud session…"
+if ! ibmcloud is regions >/dev/null 2>&1 </dev/null; then
+  echo "==> not logged in — resolving the workspace credential…"
   if api_key=$(resolve_apikey); then
-    echo "==> logging in with workspace '$WS' credential -r $REGION"
-    ibmcloud login --apikey "$api_key" -r "$REGION" >/dev/null
+    echo "==> logging in with workspace '$WS' credential (region $REGION)…"
+    ibmcloud login --apikey "$api_key" -r "$REGION" >/dev/null </dev/null
     unset api_key
   else
-    echo "not logged in, and no credential found for workspace '$WS' (config.yaml api_key_b64 / keychain)." >&2
+    echo "not logged in, and no credential found for workspace '$WS' (env / .env / config.yaml / keychain)." >&2
     echo "  run 'ibmcloud login', or set IBMCLOUD_API_KEY, or re-run 'roksbnkctl -w $WS init'." >&2
     exit 1
   fi
 fi
 ibmcloud target -r "$REGION" >/dev/null
+echo "==> authenticated; provisioning in $REGION…"
 
 # Find a resource by name within a list command; echoes its id or "".
 id_of() { ibmcloud is "$1" --output json 2>/dev/null | jq -r --arg n "$2" '.[]|select(.name==$n)|.id' | head -1; }
@@ -171,15 +177,15 @@ if [[ "$ACTION" == "destroy" ]]; then
   exit 0
 fi
 
-echo "==> workspace=$WS region=$REGION zone=$ZONE vpc=$VPC profile=$PROFILE"
-
 # ── AZ1 subnet in the cluster VPC ───────────────────────────────────────────
+echo "==> finding the AZ1 subnet in VPC $VPC…"
 SUBNET=$(ibmcloud is subnets --output json | jq -r --arg vpc "$VPC" --arg z "$ZONE" \
   '.[]|select(.vpc.id==$vpc)|select(.zone.name==$z)|.id' | head -1)
 [[ -n "$SUBNET" ]] || { echo "no subnet found in VPC $VPC zone $ZONE" >&2; exit 1; }
 echo "==> AZ1 subnet: $SUBNET"
 
 # ── SSH key (generate + upload, reuse if present) ───────────────────────────
+echo "==> ensuring SSH key $KEY_NAME…"
 KEY_DIR="$HOME_DIR/$WS/artifactory"
 mkdir -p "$KEY_DIR"
 KEY_FILE="$KEY_DIR/id_ed25519"
@@ -204,6 +210,7 @@ fi
 # ── Ubuntu image (newest available LTS amd64, override with IMAGE) ───────────
 IMAGE_ID="${IMAGE:-}"
 if [[ -z "$IMAGE_ID" ]]; then
+  echo "==> selecting the newest Ubuntu LTS image…"
   IMAGE_ID=$(ibmcloud is images --output json | jq -r '
     [ .[] | select(.status=="available")
           | select(.operating_system.architecture=="amd64")
@@ -259,7 +266,7 @@ CLOUDINIT
 # ── create the VSI ──────────────────────────────────────────────────────────
 VSI_ID=$(id_of instances "$VSI_NAME")
 if [[ -z "$VSI_ID" ]]; then
-  echo "==> creating VSI $VSI_NAME ($PROFILE)"
+  echo "==> creating VSI $VSI_NAME ($PROFILE) — provisioning can take ~1 minute…"
   VSI_ID=$(ibmcloud is instance-create "$VSI_NAME" "$VPC" "$ZONE" "$PROFILE" "$SUBNET" \
     --image "$IMAGE_ID" --keys "$KEY_ID" --resource-group-id "$RG" \
     --user-data "@$CLOUD_INIT" --output json | jq -r '.id')
@@ -267,6 +274,7 @@ else
   echo "==> VSI $VSI_NAME already exists ($VSI_ID)"
 fi
 
+echo "==> attaching the security group to the VSI network interface…"
 # Attach our SG to the primary NIC (additive to the VPC default SG).
 NIC_ID=$(ibmcloud is instance "$VSI_ID" --output json | jq -r '.primary_network_interface.id')
 PRIV_IP=$(ibmcloud is instance "$VSI_ID" --output json | jq -r '.primary_network_interface.primary_ip.address // .primary_network_interface.primary_ipv4_address')
