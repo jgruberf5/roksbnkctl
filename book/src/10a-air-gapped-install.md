@@ -1,18 +1,24 @@
-# Air-gapped install: mirroring BNK into the cluster registry
+# Air-gapped install: mirroring BNK into a private registry
 
 Some ROKS environments forbid pulling install resources from external repositories
 at deploy time. For these, `roksbnkctl` can **replicate every artifact BNK needs**
 — the F5 charts and images, plus the non-F5 dependencies — from the F5 Artifact
-Repository (FAR, `repo.f5.com`) into the cluster's **own OpenShift internal
-registry**, and then install BNK entirely from there. With the mirror in place, the
-cluster needs no egress to `repo.f5.com`, `quay.io`, `docker.io`, or
-`charts.jetstack.io` to bring up BNK.
+Repository (FAR, `repo.f5.com`) into a **private registry you control**, and then
+install BNK entirely from there. With the mirror in place, the cluster needs no
+egress to `repo.f5.com`, `quay.io`, `docker.io`, or `charts.jetstack.io` to bring
+up BNK.
+
+The mirror target is a registry you own — **IBM Container Registry (ICR)**, the
+default, or a **generic OCI-compliant registry** (Artifactory, Harbor, Quay,
+`registry:2`). Choosing and configuring the target is its own chapter,
+[Registry targets: ICR and Artifactory](./10b-registry-targets.md); this chapter
+is the air-gap flow itself.
 
 The registry surface is CRUD-shaped, modeled on the IBM COS client:
 
 | Command | What it does |
 |---|---|
-| `roksbnkctl registry target` | Show or set the mirror target — icr / generic / openshift (see [Registry targets](./10b-registry-targets.md)) |
+| `roksbnkctl registry target` | Show or set the mirror target — `icr` / `generic` (see [Registry targets](./10b-registry-targets.md)) |
 | `roksbnkctl registry bom` | Print the bill-of-materials — every chart + image BNK needs |
 | `roksbnkctl registry replicate` | Mirror the BOM into the target registry |
 | `roksbnkctl registry list` | What's present in the target |
@@ -45,45 +51,43 @@ images  docker.io/bitnami/kubectl                  <tag>
 ## The walk-through
 
 ```console
-$ roksbnkctl cluster up                              # the durable cluster
-$ roksbnkctl registry replicate --target openshift   # mirror the BOM (one-time per BNK version)
-$ roksbnkctl registry verify                          # confirm completeness
-$ roksbnkctl bnk up                                   # installs from the internal registry
+$ roksbnkctl cluster up               # the durable cluster
+$ roksbnkctl registry target icr      # choose the target (icr is the default)
+$ roksbnkctl registry replicate       # mirror the BOM (one-time per BNK version)
+$ roksbnkctl registry verify          # confirm completeness
+$ roksbnkctl bnk up                   # installs from the mirror
 ```
 
 `registry replicate` runs **after** the Cluster phase and **before** BNK. It is a
 deliberate, occasional supply-chain step — it is **not** part of the composite
-`roksbnkctl up` (like `gateway`, you run it explicitly). It copies each artifact
+`roksbnkctl up` (like `gateway`, you run it explicitly). With no `--target`, it
+uses the workspace's `registry.target` (default `icr`). It copies each artifact
 registry-to-registry by digest, idempotently — re-running it only moves what
 changed (e.g. after a BNK version bump, `registry diff` shows exactly the changed
 artifacts).
 
-Once the mirror is populated, the BNK phase reads it and redirects the install: the
-container images resolve from the cluster's internal registry, and BNK comes up
-with no external pulls. The Stage acceptance is exactly this, with egress to the
-external registries blocked.
+## How the install reads the mirror
 
-## How it works: the registry's two faces
+`registry replicate` records what it copied — and where — in
+`registry-mirror.json`. The BNK phase reads that record and **redirects the
+install** to the target: every chart and image resolves from your private
+registry instead of FAR, so BNK comes up with no external pulls. The air-gap
+acceptance is exactly this, with egress to the external registries blocked.
 
-The OpenShift internal registry is reachable two ways, and `roksbnkctl` uses both:
+The target's own pull credential is wired in for you:
 
-- **Charts** are pulled by the in-process helm provider on the `roksbnkctl` host,
-  over the registry's external **route** (`oci://<route>/<ns>/charts/…`).
-- **Images** are pulled by the cluster's pods over the in-cluster **service**
-  (`image-registry.openshift-image-registry.svc:5000/<ns>/images/…`), authorized by
-  a `system:image-puller` role binding — **no image pull secret**.
+- **ICR** — the cluster authenticates to `*.icr.io` with `iamapikey` + the
+  workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.
+- **Generic OCI** — the cluster pulls with the basic-auth credential you set
+  (`registry target generic_username` / `generic_password`), or anonymously for a
+  read-open registry.
 
-`registry replicate` bootstraps this for you: it enables the registry's default
-route, creates a mirror project, mints a push credential, and binds the pull RBAC.
+The per-target host, namespace/repository, and credential specifics — including
+the ICR namespace and a full Artifactory walkthrough — are in
+[Registry targets](./10b-registry-targets.md).
 
-> **Custom ingress certificate.** The host pulls charts over the route, trusting the
-> cluster's `*.apps` ingress certificate. ROKS apps domains carry a publicly-trusted
-> cert by default. If your cluster uses a custom or self-signed ingress cert, add its
-> CA to the host's trust store before `registry replicate`.
-
-## Other targets
-
-The OpenShift internal registry is the first-class target. The mirror is built
-against a pluggable `RegistryTarget`, so IBM Container Registry (`icr.io`) and a
-generic private OCI registry (Harbor / Artifactory / Quay) are natural follow-on
-targets — `--target` selects which.
+> **TLS trust.** Charts and images are pulled over the target's HTTPS endpoint.
+> ICR and a public Artifactory carry publicly-trusted certificates. If your
+> registry uses a custom or self-signed cert, add its CA to the trust store on the
+> host running `registry replicate` (and on the cluster, for the image pulls)
+> before you replicate.

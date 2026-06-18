@@ -17,12 +17,12 @@ func TestRegistryTargetKind(t *testing.T) {
 	if k := registryTargetKind(&config.Workspace{}); k != "icr" {
 		t.Errorf("default kind = %q, want icr", k)
 	}
-	if k := registryTargetKind(&config.Workspace{Registry: &config.RegistryCfg{Target: "openshift"}}); k != "openshift" {
-		t.Errorf("config target kind = %q, want openshift", k)
+	if k := registryTargetKind(&config.Workspace{Registry: &config.RegistryCfg{Target: "generic"}}); k != "generic" {
+		t.Errorf("config target kind = %q, want generic", k)
 	}
-	flagRegistryTarget = "generic" // flag wins over config
-	if k := registryTargetKind(&config.Workspace{Registry: &config.RegistryCfg{Target: "openshift"}}); k != "generic" {
-		t.Errorf("flag-override kind = %q, want generic", k)
+	flagRegistryTarget = "icr" // flag wins over config
+	if k := registryTargetKind(&config.Workspace{Registry: &config.RegistryCfg{Target: "generic"}}); k != "icr" {
+		t.Errorf("flag-override kind = %q, want icr", k)
 	}
 }
 

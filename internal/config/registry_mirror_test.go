@@ -17,7 +17,7 @@ func TestRegistryMirror_RoundTrip(t *testing.T) {
 	}
 
 	in := &RegistryMirror{
-		Target:          "openshift",
+		Target:          "icr",
 		Namespace:       "bnk-mirror",
 		ChartHost:       "default-route-openshift-image-registry.apps.x/bnk-mirror",
 		ImageHost:       "image-registry.openshift-image-registry.svc:5000/bnk-mirror",

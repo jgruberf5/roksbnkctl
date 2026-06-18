@@ -301,11 +301,9 @@ type GatewayCfg struct {
 // pulls directly from FAR (far_repo_url). Additive + omitempty, so existing
 // config.yaml files load unchanged.
 type RegistryCfg struct {
-	// Target selects the mirror backend: "openshift" (the air-gap OpenShift
-	// internal registry), "icr" (IBM Container Registry — the Sprint 30 DEFAULT
-	// when unset), or "generic" (any OCI registry — Artifactory / Harbor /
-	// registry:2). Empty resolves to "icr"; existing air-gap workspaces must set
-	// "openshift" explicitly.
+	// Target selects the mirror backend: "icr" (IBM Container Registry — the
+	// DEFAULT when unset) or "generic" (any OCI-compliant registry —
+	// Artifactory / Harbor / Quay / registry:2). Empty resolves to "icr".
 	Target string `yaml:"target,omitempty"`
 
 	// ICRHost overrides the IBM Container Registry host for target=icr (e.g.

@@ -17,7 +17,7 @@ import (
 // (the in-cluster service, pod-reachable — image.repository + the CNEInstance
 // spec.registry.uri).
 type RegistryMirror struct {
-	Target          string           `json:"target"`     // e.g. "openshift"
+	Target          string           `json:"target"`     // e.g. "icr"
 	Namespace       string           `json:"namespace"`  // the mirror project
 	ChartHost       string           `json:"chart_host"` // "<route>/<ns>" — host-reachable
 	ImageHost       string           `json:"image_host"` // "<svc:5000>/<ns>" — pod-reachable

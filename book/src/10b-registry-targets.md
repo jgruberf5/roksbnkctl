@@ -1,28 +1,25 @@
 # Registry targets: ICR and a private Artifactory
 
-The [air-gapped install](./10a-air-gapped-install.md) chapter mirrors BNK into
-the cluster's **own OpenShift internal registry**. That is one of three targets
-`roksbnkctl registry replicate` can populate:
+The [air-gapped install](./10a-air-gapped-install.md) chapter mirrors BNK into a
+private registry you control. There are two targets `roksbnkctl registry
+replicate` can populate:
 
 | `registry.target` | Backend | Push / pull host |
 |---|---|---|
 | `icr` *(default)* | IBM Container Registry | `<region>.icr.io/<namespace>` |
-| `generic` | Any OCI registry — Artifactory, Harbor, `registry:2` | `<host>/<repo-prefix>` |
-| `openshift` | The cluster's internal registry (air-gap) | route + in-cluster service |
+| `generic` | Any OCI registry — Artifactory, Harbor, Quay, `registry:2` | `<host>/<repo-prefix>` |
 
-`icr` and `generic` are ordinary OCI registries: push, image-pull, and
-chart-pull all use the **same host**, with the FAR category nested under a
-namespace (`<host>/<ns>/images/<name>`). The `openshift` target is the special
-case — its flat `<project>/<name>` registry splits push (route) from image-pull
-(in-cluster service).
+Both are ordinary OCI registries: push, image-pull, and chart-pull all use the
+**same host**, with the FAR category nested under a namespace
+(`<host>/<ns>/images/<name>`).
 
 ## Configuring the target — `registry target`
 
 Configure the mirror with the **`registry target`** command — no `config.yaml`
 editing required. With no arguments it prints the current target and fields;
-otherwise the first argument is a backend **kind** (`icr` / `generic` /
-`openshift`) or a **field** name followed by its value. Everything it sets is
-written to the workspace `config.yaml`.
+otherwise the first argument is a backend **kind** (`icr` / `generic`) or a
+**field** name followed by its value. Everything it sets is written to the
+workspace `config.yaml`.
 
 ```bash
 roksbnkctl registry target                       # show the current target + fields
@@ -35,18 +32,17 @@ Recognized fields: `icr_host`, `icr_namespace`, `generic_host`,
 `generic_repo_prefix`, `generic_username`, `generic_password` (the last reads
 from stdin with `--password-stdin`).
 
-## The default is now ICR
+## The default is ICR
 
-> **Migration note.** As of this release, an empty target resolves to **`icr`**,
-> not `openshift`. If you rely on the air-gap OpenShift internal registry, select
-> it explicitly once:
->
-> ```bash
-> roksbnkctl registry target openshift
-> ```
->
-> Existing workspaces that mirrored into the OpenShift registry must run this;
-> otherwise `registry replicate` will target ICR.
+An empty `registry.target` resolves to **`icr`**. Set `generic` explicitly to
+mirror into an OCI-compliant registry such as Artifactory.
+
+> **The OpenShift internal registry was removed as a target.** Earlier releases
+> supported an `openshift` target that mirrored into the cluster's own internal
+> registry; it has been removed in favor of ICR and OCI-compliant registries. A
+> workspace still carrying `registry.target: openshift` now errors —
+> `unsupported registry target "openshift" (expected icr or generic)` — switch it
+> with `roksbnkctl registry target icr` (or `generic`).
 
 ### ICR configuration
 

@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.14.0 — 2026-06-18
+
+The OpenShift internal registry is removed as a registry-replication target. ICR (default) and OCI-compliant registries (Artifactory / Harbor / Quay / `registry:2`) are the supported targets.
+
+### Removed
+
+- **BREAKING: the `openshift` registry-replication target is removed.** `registry replicate` / `registry target` / `verify` / `prune` / `delete` no longer accept `openshift` — the supported targets are `icr` (the default) and `generic` (any OCI-compliant registry). Gone with it: the `--target openshift` value, the `internal/registry/openshift` package, and the openshift-only `--kubeconfig` flag on the cluster-touching registry verbs. A workspace still carrying `registry.target: openshift` now errors — `unsupported registry target "openshift" (expected icr or generic)` — switch it with `roksbnkctl registry target icr` (or `generic`).
+
+### Changed
+
+- **Docs: the "Air-gapped install" chapter is rewritten around ICR + OCI/Artifactory** (it previously centered the cluster's own OpenShift internal registry). The air-gap flow — BOM → `replicate` → install-redirect → `verify` — now leads with the private-registry targets; the "Registry targets" chapter drops the `openshift` row and notes its removal.
+
 ## v1.13.0 — 2026-06-18
 
 Declarative-input cleanup and a phase-output fix: `init example` now prints an annotated **config.yaml**, the legacy `init --var-file` is removed, and per-phase `output` is scoped to each phase's own attributes (plus a new top-level `output` that merges them).

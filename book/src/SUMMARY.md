@@ -23,7 +23,7 @@
 - [The three-phase lifecycle (Cluster / BNK / Testing)](./08a-three-phase-lifecycle.md)
 - [Registering an existing cluster](./09-registering-existing-cluster.md)
 - [Deploying BNK trials on top](./10-deploying-bnk-trials.md)
-- [Air-gapped install: mirroring BNK into the cluster registry](./10a-air-gapped-install.md)
+- [Air-gapped install: mirroring BNK into a private registry](./10a-air-gapped-install.md)
 - [Registry targets: ICR and Artifactory](./10b-registry-targets.md)
 - [Tearing down](./11-tearing-down.md)
 

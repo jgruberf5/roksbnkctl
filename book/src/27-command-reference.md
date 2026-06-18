@@ -1310,12 +1310,12 @@ Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD
 
 Manage the air-gap registry mirror: replicate every chart + image a BNK
 install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
-the F5 Artifact Repository (repo.f5.com) into a private target — the cluster's
-own OpenShift internal registry — so an air-gapped cluster installs BNK from
-images it hosts itself.
+the F5 Artifact Repository (repo.f5.com) into a private target — IBM Container
+Registry (ICR) or a generic OCI registry (Artifactory / Harbor / Quay) — so an
+air-gapped cluster installs BNK from a registry it controls.
 
 Commands:
-  roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
+  roksbnkctl registry target     Show or set the mirror target (icr|generic)
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
@@ -1375,8 +1375,7 @@ for target=generic the registry must have deletes enabled.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--force` | `bool` | `false` | skip the confirmation prompt |
-| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
-| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
+| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1422,11 +1421,10 @@ roksbnkctl registry prune [flags]
 |---|---|---|---|
 | `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
-| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
-| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
+| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1438,9 +1436,9 @@ Copy the BOM into the mirror (needs a live cluster)
 roksbnkctl registry replicate [flags]
 ```
 
-Prepares the target registry (enables the route, mints a push token, binds
-pull RBAC), then copies every BOM artifact into it, idempotently. Records the
-result in registry-mirror.json so the BNK install can be redirected to the mirror.
+Prepares the target registry (auth + repository namespace), then copies every
+BOM artifact into it, idempotently. Records the result in registry-mirror.json so
+the BNK install can be redirected to the mirror.
 
 **Flags**
 
@@ -1449,11 +1447,10 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 | `--concurrency` | `int` | `0` | parallel copy workers (default: 4) |
 | `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
-| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
-| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
+| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1462,7 +1459,7 @@ result in registry-mirror.json so the BNK install can be redirected to the mirro
 Show or set the registry mirror target and its fields
 
 ```
-roksbnkctl registry target [icr|generic|openshift | <field> <value>] [flags]
+roksbnkctl registry target [icr|generic | <field> <value>] [flags]
 ```
 
 Configure the registry replication target without hand-editing config.yaml.
@@ -1471,7 +1468,7 @@ With no arguments, prints the current target + configured fields. Otherwise the
 first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):
 
-  Kinds:  icr | generic | openshift
+  Kinds:  icr | generic
   Fields: icr_host  icr_namespace
           generic_host  generic_repo_prefix  generic_username  generic_password
 
@@ -1507,11 +1504,10 @@ roksbnkctl registry verify [flags]
 |---|---|---|---|
 | `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
-| `--kubeconfig` | `string` | — | kubeconfig path (default: workspace/cluster default) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
-| `--target` | `string` | — | mirror target backend: icr\|generic\|openshift (default: workspace registry.target, else "icr") |
+| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 

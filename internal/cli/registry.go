@@ -21,19 +21,17 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/cos"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
-	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/mirror"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/ocireg"
-	"github.com/jgruberf5/roksbnkctl/internal/registry/openshift"
 	"github.com/jgruberf5/roksbnkctl/internal/registry/source"
 )
 
 // `roksbnkctl registry ...` is the Sprint 29 air-gap registry-mirror command
 // group (PRD 11). It replicates every artifact a BNK install needs — the F5
 // charts + images enumerated by the f5-bigip-k8s-manifest plus the non-F5 deps —
-// from FAR (repo.f5.com) into a private target (the cluster's own OpenShift
-// internal registry), and reports on that mirror. The surface is CRUD-shaped,
-// modeled on the COS client:
+// from FAR (repo.f5.com) into a private target (IBM Container Registry, or a
+// generic OCI registry like Artifactory), and reports on that mirror. The
+// surface is CRUD-shaped, modeled on the COS client:
 //
 //	registry bom        Build + print the bill-of-materials (no target needed)
 //	registry list       List what is currently in the mirror
@@ -47,12 +45,12 @@ var registryCmd = &cobra.Command{
 	Short: "Air-gap registry mirror — replicate BNK artifacts into a private registry (PRD 11)",
 	Long: `Manage the air-gap registry mirror: replicate every chart + image a BNK
 install needs (the f5-bigip-k8s-manifest set plus the non-F5 dependencies) from
-the F5 Artifact Repository (repo.f5.com) into a private target — the cluster's
-own OpenShift internal registry — so an air-gapped cluster installs BNK from
-images it hosts itself.
+the F5 Artifact Repository (repo.f5.com) into a private target — IBM Container
+Registry (ICR) or a generic OCI registry (Artifactory / Harbor / Quay) — so an
+air-gapped cluster installs BNK from a registry it controls.
 
 Commands:
-  roksbnkctl registry target     Show or set the mirror target (icr|generic|openshift)
+  roksbnkctl registry target     Show or set the mirror target (icr|generic)
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what ` + "`replicate`" + ` would copy (BOM vs. mirror)
@@ -74,7 +72,6 @@ var (
 	flagRegistrySAB64         string
 	flagRegistryIncludeDeps   bool
 	flagRegistryNoIncludeDep  bool
-	flagRegistryKubeconfig    string
 	flagRegistryConcurrency   int
 	flagRegistryTarget        string
 	flagRegistryPasswordStdin bool
@@ -109,9 +106,9 @@ var registryDiffCmd = &cobra.Command{
 var registryReplicateCmd = &cobra.Command{
 	Use:   "replicate",
 	Short: "Copy the BOM into the mirror (needs a live cluster)",
-	Long: `Prepares the target registry (enables the route, mints a push token, binds
-pull RBAC), then copies every BOM artifact into it, idempotently. Records the
-result in registry-mirror.json so the BNK install can be redirected to the mirror.`,
+	Long: `Prepares the target registry (auth + repository namespace), then copies every
+BOM artifact into it, idempotently. Records the result in registry-mirror.json so
+the BNK install can be redirected to the mirror.`,
 	Args: cobra.NoArgs,
 	RunE: runRegistryReplicate,
 }
@@ -155,8 +152,7 @@ func init() {
 		c.Flags().BoolVar(&flagRegistryNoIncludeDep, "no-include-deps", false, "exclude the non-F5 dependency artifacts")
 	}
 	for _, c := range []*cobra.Command{registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryDeleteCmd} {
-		c.Flags().StringVar(&flagRegistryKubeconfig, "kubeconfig", "", "kubeconfig path (default: workspace/cluster default)")
-		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic|openshift (default: workspace registry.target, else "icr")`)
+		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
@@ -322,23 +318,22 @@ func registryScratchDir(name string) string {
 
 // mirrorTarget is the registry-target contract the CLI consumes: the engine's
 // push side (mirror.Target) plus the pull-side endpoints the install redirect
-// reads. Both *openshift.Target and *ocireg.Target satisfy it. (Prepare is NOT
-// on the interface — its signature differs per impl, so buildTarget prepares
-// each kind inline.)
+// reads. *ocireg.Target (ICR + generic OCI) satisfies it. (Prepare is NOT on the
+// interface — its signature differs per impl, so buildTarget prepares each kind
+// inline.)
 type mirrorTarget interface {
 	mirror.Target
 	ImagePullRef(bnkbom.Artifact) string
 	ChartPullRef(bnkbom.Artifact) string
 	ImageHostPath() string
 	ChartHostPath() string
-	// MirrorNamespace is the namespace/project recorded in registry-mirror.json
-	// (the OpenShift mirror project, or the ICR/generic repo prefix).
+	// MirrorNamespace is the repo prefix recorded in registry-mirror.json
+	// (the ICR/generic repo prefix).
 	MirrorNamespace() string
 }
 
 // registryTargetKind resolves the active target backend: --target flag >
-// registry.target > "icr" (the Sprint 30 default — existing air-gap workspaces
-// must set registry.target: openshift explicitly).
+// registry.target > "icr" (the default).
 func registryTargetKind(ws *config.Workspace) string {
 	kind := "icr"
 	if ws.Registry != nil && ws.Registry.Target != "" {
@@ -351,26 +346,15 @@ func registryTargetKind(ws *config.Workspace) string {
 }
 
 // buildTarget resolves the configured registry target and prepares it.
-// "openshift" bootstraps the live cluster's internal registry; "icr"/"generic"
-// build a static nesting OCI target.
+// "icr"/"generic" build a static nesting OCI target.
 func buildTarget(ctx context.Context, name string, ws *config.Workspace) (mirrorTarget, error) {
 	switch kind := registryTargetKind(ws); kind {
-	case "openshift":
-		cfg, err := k8s.BuildRESTConfig(flagRegistryKubeconfig)
-		if err != nil {
-			return nil, err
-		}
-		t := &openshift.Target{Namespace: ws.Registry.MirrorNamespace()} // nil-safe
-		if err := t.Prepare(ctx, cfg); err != nil {
-			return nil, fmt.Errorf("preparing mirror target: %w", err)
-		}
-		return t, nil
 	case "icr":
 		return buildICRTarget(ctx, name, ws)
 	case "generic":
 		return buildGenericTarget(ws)
 	default:
-		return nil, fmt.Errorf("unsupported registry target %q (expected openshift, icr, or generic)", kind)
+		return nil, fmt.Errorf("unsupported registry target %q (expected icr or generic)", kind)
 	}
 }
 
@@ -442,7 +426,7 @@ func buildGenericTarget(ws *config.Workspace) (mirrorTarget, error) {
 // ── registry target (CLI-driven mirror configuration) ───────────────────────
 
 var registryTargetCmd = &cobra.Command{
-	Use:   "target [icr|generic|openshift | <field> <value>]",
+	Use:   "target [icr|generic | <field> <value>]",
 	Short: "Show or set the registry mirror target and its fields",
 	Long: `Configure the registry replication target without hand-editing config.yaml.
 
@@ -450,7 +434,7 @@ With no arguments, prints the current target + configured fields. Otherwise the
 first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):
 
-  Kinds:  icr | generic | openshift
+  Kinds:  icr | generic
   Fields: icr_host  icr_namespace
           generic_host  generic_repo_prefix  generic_username  generic_password
 
@@ -468,7 +452,7 @@ Examples:
 }
 
 // registryTargetKinds are the backend selectors `registry target <kind>` accepts.
-var registryTargetKinds = map[string]bool{"icr": true, "generic": true, "openshift": true}
+var registryTargetKinds = map[string]bool{"icr": true, "generic": true}
 
 func runRegistryTarget(_ *cobra.Command, args []string) error {
 	name, ws, err := loadRegistryWorkspace()
@@ -534,7 +518,7 @@ func runRegistryTarget(_ *cobra.Command, args []string) error {
 	case "generic_password":
 		reg.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(val))
 	default:
-		return fmt.Errorf("unknown registry target arg %q\n  kinds:  icr|generic|openshift\n  fields: icr_host icr_namespace generic_host generic_repo_prefix generic_username generic_password", first)
+		return fmt.Errorf("unknown registry target arg %q\n  kinds:  icr|generic\n  fields: icr_host icr_namespace generic_host generic_repo_prefix generic_username generic_password", first)
 	}
 	return saveRegistryTarget(name, ws, first)
 }
@@ -871,8 +855,7 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "no stale artifacts in the mirror — nothing to prune")
 		return nil
 	}
-	// Pruning the OpenShift internal registry is a per-image-stream delete that
-	// the Stage-6 gated-live pass exercises against a real cluster; here we
+	// Pruning a registry target is a per-artifact manifest delete; here we
 	// report the stale set so an operator can act. Removing them from the record
 	// keeps the mirror record honest about the intended set.
 	fmt.Fprintf(os.Stderr, "%d stale artifacts (no longer in the BOM):\n", len(stale))

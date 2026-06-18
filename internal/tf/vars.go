@@ -39,7 +39,7 @@ func WriteTFVarsForWorkspace(path, workspaceName string, ws *config.Workspace, k
 	// Resolve the mirror record whenever one exists for this workspace. Its
 	// presence — written by `registry replicate` — IS the opt-in to redirect the
 	// install onto the in-cluster mirror; it does not require a registry: block in
-	// config.yaml (replicate runs flag-driven too, as `--target openshift`). A
+	// config.yaml (replicate runs flag-driven too, as `--target icr`). A
 	// workspace with no record reads ErrNoRegistryMirror, leaving mirror nil so
 	// the render stays behavior-identical to the legacy far_repo_url path.
 	var mirror *config.RegistryMirror
