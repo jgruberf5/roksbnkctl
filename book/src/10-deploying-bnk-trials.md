@@ -153,10 +153,10 @@ roksbnkctl up --auto --var-file ./more-replicas.tfvars
 The var-file chain is, in order:
 
 1. The auto-generated `terraform.tfvars` (rendered from `config.yaml`).
-2. `~/.roksbnkctl/<workspace>/terraform.tfvars.user` if present — sibling to `config.yaml`, serving both the trial and cluster phases (seeded automatically by `roksbnkctl init -w <ws> --var-file <path>` — see [Chapter 6 §"Skip the interview: `init --var-file`"](./06-workspaces.md#skip-the-interview-init---var-file) for the recommended path when you already have a `./terraform.tfvars` in hand).
+2. `~/.roksbnkctl/<workspace>/terraform.tfvars.user` if present — sibling to `config.yaml`, serving both the trial and cluster phases (a manual raw-tfvars override you place at the workspace root — see [Chapter 6 §"Raw terraform-variable overrides"](./06-workspaces.md#raw-terraform-variable-overrides)).
 3. Each `--var-file` flag, left-to-right.
 
-Later wins on conflict — same as Terraform's own ordering. If you find yourself passing the same `--var-file` on every `up` / `plan` / `apply` / `down`, `init --var-file` is the persistence path that lets you drop the flag from subsequent calls.
+Later wins on conflict — same as Terraform's own ordering. If you find yourself passing the same `--var-file` on every `up` / `plan` / `apply` / `down`, drop it once at `~/.roksbnkctl/<ws>/terraform.tfvars.user` (sibling to `config.yaml`) — the lifecycle auto-layers that file on every subsequent call, so you can drop the flag.
 
 ## Apply retries on transient errors
 

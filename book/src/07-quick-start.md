@@ -56,7 +56,7 @@ If you'd rather not export it in your shell, `roksbnkctl init` will prompt for i
 
 Initialises a workspace under `~/.roksbnkctl/default/` (or under `<name>/` if you pass `-w <name>`). Verifies the API key against IBM IAM, resolves the resource group, and writes `config.yaml`.
 
-> **Flag-value syntax.** Short flags accept their value as `-w value` (one space) or `-w=value` (immediate equals); the stuck-together form `-wvalue` is rejected at parse time before any workspace dir is created. The same rule applies to every short flag (`-w`, `-f`, `-n`, `-c`, `-l`, `-o`). Long flags follow the same two shapes: `--workspace value` or `--workspace=value`. So if you typo the long-flag name as a short — e.g. `roksbnkctl init -ws canada-roks --var-file ./terraform.tfvars` — the binary rejects it immediately with:
+> **Flag-value syntax.** Short flags accept their value as `-w value` (one space) or `-w=value` (immediate equals); the stuck-together form `-wvalue` is rejected at parse time before any workspace dir is created. The same rule applies to every short flag (`-w`, `-f`, `-n`, `-c`, `-l`, `-o`). Long flags follow the same two shapes: `--workspace value` or `--workspace=value`. So if you typo the long-flag name as a short — e.g. `roksbnkctl init -ws canada-roks --config-file ./config.yaml` — the binary rejects it immediately with:
 >
 > ```
 > roksbnkctl: "-ws" is not a recognised flag (looks like a stuck-together short-flag-value, which this binary does not accept).

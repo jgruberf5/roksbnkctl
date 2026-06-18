@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.13.0 — 2026-06-18
+
+Declarative-input cleanup: `init example` now prints an annotated **config.yaml** (the single declarative input), and the legacy `init --var-file` seed flag is removed.
+
+### Changed
+
+- **`roksbnkctl init example` now prints an annotated `config.yaml`**, not `terraform.tfvars`. config.yaml is the canonical input; the embedded terraform is internal. The template fills the required fields and documents every optional axis (cluster create-or-attach, BYO infrastructure reuse incl. `cluster_vpc`, BNK install + CIS + per-AZ addressing, gateway, registry mirror, remote state). One-shot author-and-seed: `roksbnkctl init example > config.yaml && roksbnkctl -w <ws> init --config-file config.yaml`. The template is schema-checked in CI (it strict-parses into the workspace config, unknown fields rejected) so it can't drift.
+
+### Removed
+
+- **BREAKING: `roksbnkctl init --var-file` is removed.** `init` previously seeded `config.yaml` (and dropped a verbatim `terraform.tfvars.user`) from a `terraform.tfvars` file; the seed surface is now `config.yaml` itself via `--config-file` (local path or URL) or `--non-interactive` (from `ROKSBNKCTL_*` env). Raw terraform-variable overrides are **unchanged**: place a `terraform.tfvars.user` at the workspace root (auto-layered on every lifecycle op), or pass `--var-file` on a **phase** command (`cluster`/`bnk`/`gateway up`/`down`) — those flags are unaffected.
+
 ## v1.12.0 — 2026-06-18
 
 The customer-release cut: a leaner, declarative, CI-driven workflow, a trimmed repository, and a security cleanup of leaked cluster credentials. New config axes let one committed `config.yaml` (plus `ROKSBNKCTL_*` env) stand up many workspaces unattended; the repo drops 443 internal-development files; and 48 leaked ROKS kubeconfigs are purged from the tree, the `.gitignore`, and git history.

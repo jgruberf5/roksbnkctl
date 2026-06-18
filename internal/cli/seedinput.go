@@ -1,12 +1,13 @@
 package cli
 
-// Sprint 30 (PRD 13) — `roksbnkctl init` config seeding. Two related surfaces:
+// `roksbnkctl init` config seeding (PRD 13). config.yaml is the single
+// declarative input:
 //
-//   - `--config-file <path|url>` seeds the workspace config.yaml directly
-//     (sibling of `--var-file`, which seeds terraform.tfvars). Non-interactive
-//     when the supplied config is complete.
-//   - both `--var-file` and `--config-file` accept a local path OR an http(s)
-//     URL, fetched by resolveSeedInput before the existing file-based logic.
+//   - `--config-file <path|url>` seeds the workspace config.yaml directly —
+//     non-interactive when the supplied config is complete. A local path OR an
+//     http(s) URL is accepted, fetched by resolveSeedInput before parsing.
+//   - `--non-interactive` builds config.yaml from the ROKSBNKCTL_* /
+//     IBMCLOUD_API_KEY environment alone (the argv+env runner path).
 
 import (
 	"bytes"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -48,7 +50,7 @@ var (
 
 func init() {
 	initCmd.Flags().StringVar(&flagInitConfigFile, "config-file", "",
-		"path or http(s) URL to a workspace config.yaml to seed (sibling of --var-file; non-interactive when complete)")
+		"path or http(s) URL to a workspace config.yaml to seed (non-interactive when complete; see `init example`)")
 	initCmd.Flags().BoolVar(&flagInitOverrideFromEnv, "override-from-env", false,
 		"after seeding, overlay config.yaml fields from environment variables (e.g. IBMCLOUD_API_KEY → ibmcloud.api_key_b64)")
 	initCmd.Flags().BoolVar(&flagInitNonInteractive, "non-interactive", false,
@@ -90,20 +92,6 @@ func runInitFromEnv(cctx *config.Context) error {
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "✓ Wrote %s (non-interactive, from environment)\n", cfgPath)
 
-	// A --var-file supplied alongside still seeds terraform.tfvars.user.
-	if flagInitVarFile != "" {
-		vpath, vcleanup, verr := resolveSeedInput(flagInitVarFile)
-		if verr != nil {
-			return verr
-		}
-		defer vcleanup()
-		dest, cerr := writeUserTFVarsCopies(cctx.WorkspaceName, vpath)
-		if cerr != nil {
-			return cerr
-		}
-		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", dest)
-	}
-
 	if err := config.SetCurrent(cctx.WorkspaceName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not set current workspace: %v\n", err)
 	} else {
@@ -115,16 +103,30 @@ func runInitFromEnv(cctx *config.Context) error {
 // isSeedURL reports whether s is an http(s) URL — the only fetchable seed form.
 func isSeedURL(s string) bool { return seedURLRe.MatchString(strings.TrimSpace(s)) }
 
-// resolveSeedInput turns a --var-file / --config-file value into a LOCAL file
-// path the rest of init can os.ReadFile. A local path is returned absolute and
-// cleanup is a no-op. An http(s) URL is fetched (30s timeout, 10 MB cap) into a
-// temp file whose path is returned; the caller MUST defer cleanup() to remove
-// it. Non-http(s) values are treated as local paths.
+// absSeedPath resolves a local `--config-file <path>` value to an absolute path
+// against the current CWD, so the os.ReadFile in runInitFromConfigFile and any
+// confirmation output see the same path the operator passed.
+func absSeedPath(p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return p, nil
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolving --config-file %q to absolute path: %w", p, err)
+	}
+	return abs, nil
+}
+
+// resolveSeedInput turns a --config-file value into a LOCAL file path the rest
+// of init can os.ReadFile. A local path is returned absolute and cleanup is a
+// no-op. An http(s) URL is fetched (30s timeout, 10 MB cap) into a temp file
+// whose path is returned; the caller MUST defer cleanup() to remove it.
+// Non-http(s) values are treated as local paths.
 func resolveSeedInput(s string) (localPath string, cleanup func(), err error) {
 	noop := func() {}
 	s = strings.TrimSpace(s)
 	if !isSeedURL(s) {
-		abs, aerr := absVarFilePath(s)
+		abs, aerr := absSeedPath(s)
 		return abs, noop, aerr
 	}
 	client := &http.Client{Timeout: seedFetchTimeout}
@@ -164,8 +166,7 @@ func resolveSeedInput(s string) (localPath string, cleanup func(), err error) {
 // runInitFromConfigFile is the non-interactive `--config-file` path: resolve
 // the input, strict-parse it into a Workspace (unknown fields rejected — never
 // silently dropped), apply `--override-from-env`, validate completeness, then
-// write it. The interview is skipped. A `--var-file` supplied alongside is
-// still copied verbatim to terraform.tfvars.user.
+// write it. The interview is skipped.
 func runInitFromConfigFile(cctx *config.Context) error {
 	path, cleanup, err := resolveSeedInput(flagInitConfigFile)
 	if err != nil {
@@ -200,20 +201,6 @@ func runInitFromConfigFile(cctx *config.Context) error {
 	}
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", cfgPath)
-
-	// A --var-file alongside --config-file still seeds terraform.tfvars.user.
-	if flagInitVarFile != "" {
-		vpath, vcleanup, verr := resolveSeedInput(flagInitVarFile)
-		if verr != nil {
-			return verr
-		}
-		defer vcleanup()
-		dest, cerr := writeUserTFVarsCopies(cctx.WorkspaceName, vpath)
-		if cerr != nil {
-			return cerr
-		}
-		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", dest)
-	}
 
 	if err := config.SetCurrent(cctx.WorkspaceName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not set current workspace: %v\n", err)

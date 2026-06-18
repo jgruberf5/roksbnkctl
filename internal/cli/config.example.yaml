@@ -1,0 +1,85 @@
+# ============================================================================
+# roksbnkctl workspace config.yaml — the single declarative input.
+#
+#   roksbnkctl init example > config.yaml                  # this template
+#   roksbnkctl -w <ws> init --config-file config.yaml      # seed a workspace
+#
+# REQUIRED: ibmcloud.region, ibmcloud.resource_group, prefix, tf_source.type.
+# Everything else is optional — omit a block to take roksbnkctl's default.
+# Secrets are *_b64 (base64 = OBFUSCATION, not encryption); prefer env / the OS
+# keychain in CI (IBMCLOUD_API_KEY, ROKSBNKCTL_BIGIP_PASSWORD,
+# ROKSBNKCTL_COS_HMAC_*). Plaintext keys in this file are rejected at load.
+# ============================================================================
+
+ibmcloud:
+  region: eu-de                 # IBM Cloud region (REQUIRED)
+  resource_group: default       # IBM Cloud resource group (REQUIRED)
+  # api_key_b64: ""             # base64(API key); prefer the IBMCLOUD_API_KEY env var
+  # api_key_source: env         # env | keychain | config | prompt
+
+prefix: acme-eu                 # resource-name prefix for everything this workspace creates (REQUIRED)
+
+cluster:
+  create: true                  # true = provision a new ROKS cluster; false = attach to an existing one
+  name: acme-eu-roks            # new cluster name, or an existing cluster name/ID when create:false
+  # openshift_version: "4.18"   # blank = roksbnkctl default
+  # workers_per_zone: 2         # blank = roksbnkctl default (AZ-floor clamped)
+
+tf_source:
+  type: embedded                # embedded | github | local (REQUIRED)
+
+# ---- Reuse existing infrastructure (BYO) -----------------------------------
+# Each toggle defaults to create:true. To ADOPT an existing resource instead,
+# set create:false and `existing: <name-or-id>`.
+resources:
+  transit_gateway:   { create: true }   # e.g. { create: false, existing: shared-corp-tgw }
+  cluster_vpc:       { create: true }   # e.g. { create: false, existing: r006-vpc-abc123 } — BYO cluster VPC by ID
+  registry_cos:      { create: true }
+  cert_manager:      { create: true }
+  bnk:               { create: true }
+  tgw_jumphost:      { create: true }
+  cluster_jumphosts: { create: true }
+  client_vpc:        { create: true }
+  # testing_client_vpc_name: ""         # name the testing client VPC (testing phase)
+  # testing_ssh_key_name: ""            # reuse an existing IBM Cloud SSH key for the testing jumphosts
+
+# ---- BNK install -----------------------------------------------------------
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170   # BNK manifest (default shown — the BNK 2.3 line)
+  # far_repo_url: oci://repo.f5.com/...      # FAR OCI repo for the BNK charts/images
+  # cis:                                      # optional BIG-IP CIS controller
+  #   bigip_url: https://10.1.1.5
+  #   bigip_username: admin
+  #   bigip_password_b64: ""                  # base64(password); prefer ROKSBNKCTL_BIGIP_PASSWORD env
+  # network:                                  # per-AZ data-plane addressing (all 6 fields per zone)
+  #   zones:
+  #     - ext_vlan_cidr: 10.10.1.0/24
+  #       int_vlan_cidr: 10.10.2.0/24
+  #       int_snat_cidr: 10.10.3.0/24         # SNAT addresses
+  #       int_vip_cidr:  10.10.4.0/24         # listener / VIP IPs
+  #       external_selfip: 10.10.1.10
+  #       internal_selfip: 10.10.2.10
+
+# ---- Gateway phase (optional) ----------------------------------------------
+# gateway:
+#   app_namespace: my-app
+#   backend_service: my-svc
+#   backend_port: 80
+#   egress_mode: snatpool                     # snatpool | automap | both
+#   client_subnet_local:  [10.241.0.0/24]
+#   client_subnet_remote: [10.242.0.0/24]
+
+# ---- Air-gap registry mirror (optional; PRD 11) ----------------------------
+# registry:
+#   target: icr                               # openshift | icr | generic  (default icr)
+#   icr_namespace: acme-eu                    # default: the prefix
+#   # generic_host / generic_repo_prefix / generic_username / generic_password_b64 for target=generic
+
+# ---- Remote state (optional) -----------------------------------------------
+state:
+  backend: local                              # local | s3 (COS remote state — see the Remote state chapter)
+  # s3:
+  #   endpoint: https://s3.eu-de.cloud-object-storage.appdomain.cloud
+  #   bucket: my-tfstate-bucket
+  #   region: eu-de
+  #   # HMAC keys come from env: ROKSBNKCTL_COS_HMAC_ACCESS_KEY / _SECRET_KEY

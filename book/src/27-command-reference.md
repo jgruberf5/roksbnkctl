@@ -831,25 +831,27 @@ release.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--config-file` | `string` | — | path or http(s) URL to a workspace config.yaml to seed (sibling of --var-file; non-interactive when complete) |
+| `--config-file` | `string` | — | path or http(s) URL to a workspace config.yaml to seed (non-interactive when complete; see `init example`) |
 | `--non-interactive` | `bool` | `false` | build config.yaml from environment variables ALONE — no prompts, no --config-file (for argv+env runners; pair with the ROKSBNKCTL_* env vars) |
 | `--override-from-env` | `bool` | `false` | after seeding, overlay config.yaml fields from environment variables (e.g. IBMCLOUD_API_KEY → ibmcloud.api_key_b64) |
 | `--tf-source` | `string` | — | override TF source (path or URL); relative local paths are resolved to absolute before being pinned into config.yaml |
 | `--upgrade-tf` | `bool` | `false` | resolve and pin the latest TF release into config.yaml |
-| `--var-file` | `string` | — | path to a tfvars file (shaped like terraform.tfvars.example); seeds config.yaml and is copied verbatim to the workspace root as terraform.tfvars.user (sibling to config.yaml; serves both phases) |
 
 ### `roksbnkctl init example`
 
-Print the example terraform.tfvars to stdout (a template, or for piping)
+Print an annotated example config.yaml to stdout (a template, or for piping)
 
-Writes the bundled terraform.tfvars.example to stdout — the annotated template
-of the available terraform variables. It reads from the binary's embedded
-terraform, so it works from any directory and matches the binary's version.
+Writes an annotated config.yaml to stdout — the canonical declarative input,
+with the required fields filled and every optional axis documented (cluster
+create-or-attach, BYO infrastructure reuse, BNK install, gateway, registry
+mirror, remote state). config.yaml is the single input to a workspace; the
+embedded terraform is internal.
 
-Create a starting tfvars or inspect the knobs with ordinary pipes:
+Create a starting config or inspect the knobs with ordinary pipes:
 
-  roksbnkctl init example > terraform.tfvars.user
-  roksbnkctl init example | grep -E 'far_repo_url|manifest_version'
+  roksbnkctl init example > config.yaml
+  roksbnkctl -w demo init --config-file config.yaml
+  roksbnkctl init example | grep -E 'manifest_version|cluster_vpc'
 
 ← back to [`roksbnkctl init`](#roksbnkctl-init)
 

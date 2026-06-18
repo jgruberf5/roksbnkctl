@@ -139,46 +139,21 @@ roksbnkctl ws list
 
 `roksbnkctl init -w <name>` is the one-shot path that creates the directory **and** populates `config.yaml` interactively — and selects it. Everything else (`ws new`, `ws use`, `ws delete`) is the deconstructed form for users who want finer-grained control. The `init` interview itself (which now lists your account's regions and existing clusters) is covered in [Chapter 7 — Quick start](./07-quick-start.md#step-2--roksbnkctl-init).
 
-## Skip the interview: `init --var-file`
+## Skip the interview: `init --config-file`
 
-If you already have a `terraform.tfvars` in hand — from a prior run, a colleague's hand-off, or `cp terraform.tfvars.example terraform.tfvars && $EDITOR terraform.tfvars` — you don't need to retype its values into the interactive prompts. Pass the file to `init` and the interview is short-circuited for every field the file already answers:
-
-```bash
-roksbnkctl init -w myws --var-file ./terraform.tfvars
-```
-
-What that one command persists:
-
-- **`~/.roksbnkctl/myws/config.yaml`** — seeded from the tfvars' values for the fields the interview asks about (`ibmcloud_cluster_region`, `openshift_cluster_name`, `openshift_cluster_version`, worker pool sizing, resource group, and the BNK-block knobs). Fields the file doesn't carry still prompt (or fall back to defaults), so a partial `terraform.tfvars` is fine. Since `v1.8.0`, `init --var-file` also sets a sanitized `prefix` (derived from the workspace name or the file's `openshift_cluster_name`) and a default all-create `resources:` block non-interactively, so the generated base is collision-safe — and your var-file still overrides any generated name via the layering below. The prefix-driven naming concept is [Chapter 13 §"Resource naming & collision avoidance"](./13-terraform-variables.md#resource-naming--collision-avoidance).
-- **`~/.roksbnkctl/myws/terraform.tfvars.user`** — a verbatim copy of your var-file at the workspace root (sibling to `config.yaml`), mode `0600`. This is the workspace-persistent override the lifecycle auto-layers on every `up` / `plan` / `apply` / `down` for **both** the trial and the cluster phases. One file serves both — internally, `tf.Workspace.UserTFVarsPath()` resolves to `<workspace-dir>/terraform.tfvars.user` regardless of which phase opened the workspace.
-
-### Why it matters: subsequent commands Just Work on bare `-w <ws>`
-
-Once `init --var-file` has dropped the workspace-root `terraform.tfvars.user`, you can run the rest of the lifecycle without re-passing the var-file:
+`config.yaml` is the single declarative input, so if you already have one — from a prior workspace, a colleague's hand-off, or `roksbnkctl init example > config.yaml` followed by an edit — seed the workspace from it and skip the prompts entirely:
 
 ```bash
-roksbnkctl up    -w myws --auto    # var-file already on disk; no flag needed
-roksbnkctl plan  -w myws
-roksbnkctl apply -w myws --auto
-roksbnkctl down  -w myws --auto    # bare -w; no "No value for required variable" error
+roksbnkctl init example > config.yaml      # annotated template, every axis documented
+$EDITOR config.yaml
+roksbnkctl init -w myws --config-file ./config.yaml
 ```
 
-This closes the UX gap where a fresh workspace's first `up --var-file <path>` was followed later by a bare `down -w <ws>` that errored out because the var-file was nowhere on disk for the destroy. With `init --var-file`, the file is on disk from the moment the workspace exists.
+This writes `~/.roksbnkctl/myws/config.yaml` directly — unknown fields are **rejected**, not silently dropped — and is fully non-interactive when the file is complete (`ibmcloud.region`, `ibmcloud.resource_group`, `prefix`, `tf_source.type`). The API key is **not** required in the file; it resolves from the environment / keychain at run time (see [Credentials](./14-credentials-resolver.md)). A local path **or** an `http(s)` URL is accepted, and `--config-file` composes with `--override-from-env` to inject secrets from the environment — the full unattended / CI patterns (including `--non-interactive`, which builds `config.yaml` from `ROKSBNKCTL_*` env alone) are in [Chapter 7a — Unattended setup](./07a-unattended-setup.md).
 
-Passing `--var-file <path>` on a later command still wins — the precedence chain is unchanged: rendered `terraform.tfvars` → `terraform.tfvars.user` (this section's deliverable) → caller's `--var-file` flags → phase overrides. To swap credentials or knobs for a single invocation, pass `--var-file ./alt.tfvars` on that one call; the persisted `terraform.tfvars.user` is untouched.
+### Raw terraform-variable overrides
 
-### Secrets on disk
-
-The operator's `ibmcloud_api_key` from `./terraform.tfvars` lands at `~/.roksbnkctl/<ws>/terraform.tfvars.user`, mode `0600`. This is the same security posture as the repo-root `./terraform.tfvars` you copied from — just relocated under the workspace dir. The standard tfvars guidance applies (see [Chapter 13 §"The `IBMCLOUD_API_KEY` exception"](./13-terraform-variables.md#the-ibmcloud_api_key-exception)): if you'd prefer not to have the key on disk at all, omit `ibmcloud_api_key` from `./terraform.tfvars` before running `init --var-file`, and let the [cred resolver](./14-credentials-resolver.md) supply it from env / keychain / `~/.bluemix/api_key` at apply time. The persisted `terraform.tfvars.user` then carries every other knob but no credential.
-
-### Diagnostics
-
-If `roksbnkctl down -w <ws>` (no `--var-file` flag) errors with `No value for required variable …`, you're in one of two states:
-
-1. **The workspace was `init`-ed without `--var-file`.** No `terraform.tfvars.user` was dropped, so the lifecycle has nothing to layer in for the required variable. Re-run `roksbnkctl init -w <ws> --var-file <path>` to seed the workspace-root copy and retry the `down`.
-2. **The `terraform.tfvars.user` was removed.** Either by hand, by a `ws delete --force` that took the dir out from under you, or by an out-of-band cleanup. Re-run `roksbnkctl init -w <ws> --var-file <path>` to re-drop it, or pass `--var-file <path>` on the `down` for a one-shot fix.
-
-The fastest verification that the file is in the right place: `ls -l ~/.roksbnkctl/<ws>/terraform.tfvars.user`. It should exist at mode `0600`. (Earlier development drafts of this feature wrote two copies into `state/` and `state-cluster/`; the shipped design uses one file at the workspace root that serves both phases — if you have stale copies in those state dirs from an early build, they're harmless and can be removed.)
+For the rare case where you need to override a raw terraform variable the `config.yaml` schema doesn't surface, drop a `terraform.tfvars.user` at the workspace root (`~/.roksbnkctl/<ws>/terraform.tfvars.user`, mode `0600`) — the lifecycle auto-layers it on every `up` / `plan` / `apply` / `down` for **both** phases — or pass `--var-file <path>` on a phase command (`cluster up`, `bnk up`, …) for a one-shot. The precedence chain is: rendered `terraform.tfvars` → `terraform.tfvars.user` → a phase command's `--var-file` flags → phase overrides. See [Chapter 13 — Terraform variables](./13-terraform-variables.md). (`init` itself no longer seeds from a tfvars file — `config.yaml` is the seed surface.)
 
 ## The full command tree
 

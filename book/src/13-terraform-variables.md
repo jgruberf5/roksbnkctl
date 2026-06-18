@@ -225,7 +225,7 @@ A rough decision matrix:
 | Cluster identity, region, OpenShift version, worker count | `config.yaml` (via `roksbnkctl init` or by hand) |
 | BNK chart version, CNEInstance size, FAR repo | `config.yaml` (the `bnk:` block) |
 | A variable not modelled in `config.yaml` (e.g. `cneinstance_gslb_datacenter_name`, `bigip_password`) | `terraform.tfvars.user` (workspace-local, persistent) |
-| You have a complete `./terraform.tfvars` you want this workspace to always use | `roksbnkctl init -w <ws> --var-file ./terraform.tfvars` — drops the file at `~/.roksbnkctl/<ws>/terraform.tfvars.user` (sibling to `config.yaml`) so bare `-w <ws>` commands Just Work for both phases. See [Chapter 6 §"Skip the interview: `init --var-file`"](./06-workspaces.md#skip-the-interview-init---var-file). |
+| You have a complete `./terraform.tfvars` you want this workspace to always use | Copy it to `~/.roksbnkctl/<ws>/terraform.tfvars.user` (sibling to `config.yaml`, mode `0600`) so bare `-w <ws>` commands Just Work for both phases. See [Chapter 6 §"Raw terraform-variable overrides"](./06-workspaces.md#raw-terraform-variable-overrides). |
 | A one-off override for a single run (perf test, capacity bump) | `--var-file ./oneoff.tfvars` (CLI) |
 | A CI-pipeline variable bundle that's checked into git | `--var-file ./ci-overrides.tfvars` (CLI; the file lives in your CI repo, not the workspace) |
 

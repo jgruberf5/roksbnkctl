@@ -82,12 +82,9 @@ const (
 //   - If --upgrade-tf and the workspace exists, just bumps tf_source.ref.
 //   - If the workspace exists and --upgrade-tf is not set, prompts to
 //     overwrite (existing values become the default for each prompt).
-//   - If --var-file <path> is supplied (Sprint 19 Issue 1), the file
-//     seeds the interview-targeted config.yaml fields and is copied
-//     verbatim to BOTH phase state dirs as `terraform.tfvars.user`
-//     (mode 0600). Prompts the file answered are skipped; fields it
-//     doesn't carry still prompt (or default) exactly as today. Without
-//     --var-file, behaviour is byte-identical to pre-Sprint-19.
+//   - If --config-file <path|url> is supplied, config.yaml is seeded from it
+//     and the interview is skipped; --non-interactive builds config.yaml from
+//     the environment alone (the argv+env runner path).
 //   - If stdin is not a TTY, accepts every default — usable from CI as
 //     long as IBMCLOUD_API_KEY and the existing config (or workspace
 //     name) provide enough context.
@@ -124,33 +121,6 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return runUpgradeTF(ctx, cctx)
 	}
 
-	// Sprint 19 Issue 1 — `--var-file <path>` parsed up-front so a
-	// missing/malformed file surfaces an actionable error BEFORE the
-	// interview runs (acceptance #4, #5). Resolution to an absolute path
-	// is done here at the var-file branch entry — init's single-string
-	// `--var-file` is not the lifecycle's chokepoint-normalized
-	// flagVarFiles array, and the chokepoint guard test pins zero
-	// per-RunE re-derivations of THAT name. This is a separate flag,
-	// resolved once, at its own seam.
-	var seeds varFileSeeds
-	varFilePath := ""
-	// --config-file (Sprint 30) owns its own var-file copy in
-	// runInitFromConfigFile; only the interactive/interview path parses the
-	// var-file into interview seeds here. resolveSeedInput accepts a local path
-	// or an http(s) URL (Sprint 30 Issue 3).
-	if flagInitVarFile != "" && flagInitConfigFile == "" {
-		var cleanup func()
-		varFilePath, cleanup, err = resolveSeedInput(flagInitVarFile)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		seeds, err = loadInitVarFile(varFilePath)
-		if err != nil {
-			return err
-		}
-	}
-
 	// Existing workspace + interactive overwrite confirmation.
 	if cctx.Workspace != nil {
 		fmt.Fprintf(os.Stderr, "Workspace %q already exists.\n", cctx.WorkspaceName)
@@ -176,7 +146,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "Setting up workspace %q\n\n", cctx.WorkspaceName)
 
 	// Existing values become defaults; otherwise PRD-stated defaults.
-	dRegion, dRG, dCluster, dOCP, dWorkers, dCreate := initDefaults(cctx)
+	dRegion, dRG, _, dOCP, dWorkers, dCreate := initDefaults(cctx)
 
 	// API key — env, then keychain, then prompt; offer to save on prompt.
 	resolver := &cred.Resolver{Workspace: cctx.WorkspaceName}
@@ -191,9 +161,6 @@ func runInit(_ *cobra.Command, _ []string) error {
 	// chosen in the interview below — a menu when creating a cluster, the
 	// chosen cluster's own region when reusing one.
 	region := dRegion
-	if seeds.HasRegion {
-		region = seeds.Region
-	}
 
 	// The interview is interactive, so the flow context must NOT carry a
 	// wall-clock deadline — slow human answers between prompts would otherwise
@@ -216,42 +183,21 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ %s\n\n", id)
 
-	// Two flows:
-	//   - --var-file: non-interactive seed path (cluster from the file, every
-	//     resource defaulted to "create"); region from the seed/default.
-	//   - interactive: the account-aware interview — create-vs-reuse, region +
-	//     existing-cluster menus pulled from the credentials, resource toggles,
-	//     and the optional testing client (with its own region).
-	var (
-		cluster   config.ClusterCfg
-		prefix    string
-		resources *config.ResourcesCfg
-		rgName    string
-	)
-	if varFilePath != "" {
-		cluster, prefix, resources, err = seedVarFileInterview(seeds, dCreate, dCluster, dOCP, dWorkers, cctx.WorkspaceName)
-		if err != nil {
-			return err
-		}
-		if seeds.HasResourceGroup {
-			rgName = seeds.ResourceGroup
-		}
-	} else {
-		choices, ierr := runAccountInterview(ctx, ic, cctx, region, dOCP, dWorkers, dCreate)
-		if ierr != nil {
-			return ierr
-		}
-		region = choices.Region
-		cluster = choices.Cluster
-		prefix = choices.Prefix
-		resources = choices.Resources
+	// The account-aware interview: create-vs-reuse, region + existing-cluster
+	// menus pulled from the credentials, resource toggles, and the optional
+	// testing client (with its own region).
+	choices, ierr := runAccountInterview(ctx, ic, cctx, region, dOCP, dWorkers, dCreate)
+	if ierr != nil {
+		return ierr
 	}
+	region = choices.Region
+	cluster := choices.Cluster
+	prefix := choices.Prefix
+	resources := choices.Resources
 
-	// Resource group (global; region-independent). Interactive: prompt after
-	// the cluster/region choice; --var-file: the seeded group, else prompt.
-	if rgName == "" {
-		rgName = promptString("Resource group", dRG)
-	}
+	// Resource group (global; region-independent): prompt after the
+	// cluster/region choice.
+	rgName := promptString("Resource group", dRG)
 	rgCtx, rgCancel := apiCtx(ctx)
 	rgID, err := ic.ResolveResourceGroup(rgCtx, rgName)
 	rgCancel()
@@ -309,34 +255,6 @@ func runInit(_ *cobra.Command, _ []string) error {
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "\n✓ Wrote %s\n", cfgPath)
 
-	// Sprint 19 Issue 1 — `--var-file <path>`. Copy the operator's file
-	// verbatim to the workspace root as `terraform.tfvars.user`
-	// (mode 0600, sibling to config.yaml). This is the file the existing
-	// tfws.HasUserTFVars() codepath auto-layers between the auto-rendered
-	// tfvars and any caller's `--var-file <…>` flag on every subsequent
-	// lifecycle op — no further code change needed. The same file serves
-	// BOTH the trial and cluster phases (tf.Workspace.UserTFVarsPath
-	// resolves to filepath.Dir(stateDir)/terraform.tfvars.user for either
-	// phase). Pre-existing file is overwritten (acceptance #7) with a
-	// brief stderr note so the operator sees what landed.
-	if varFilePath != "" {
-		// AC #7 — a re-init that supplies a different var-file overwrites
-		// the existing terraform.tfvars.user copy; note on stderr so the
-		// operator sees the replacement happened. Detection is a pre-copy
-		// stat because the helper is atomic-rename (the old file vanishes
-		// as the new one lands — no chance to check post-hoc).
-		wsRoot, _ := config.WorkspaceDir(cctx.WorkspaceName)
-		prior := filepath.Join(wsRoot, "terraform.tfvars.user")
-		if _, statErr := os.Stat(prior); statErr == nil {
-			fmt.Fprintf(os.Stderr, "note: replacing existing %s\n", prior)
-		}
-		dest, copyErr := writeUserTFVarsCopies(cctx.WorkspaceName, varFilePath)
-		if copyErr != nil {
-			return copyErr
-		}
-		fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", dest)
-	}
-
 	// Persist the API key for future runs. ResolveAPIKey may have
 	// already saved to the keychain during the prompt path, but if it
 	// couldn't (e.g. WSL2 without libsecret) the workspace didn't yet
@@ -364,9 +282,8 @@ func runInit(_ *cobra.Command, _ []string) error {
 }
 
 // allCreateResources returns a ResourcesCfg with every toggle set to
-// create + no existing refs — the default the non-interactive (--var-file
-// and re-init-without-answers) flows land so the generated base is
-// collision-safe.
+// create + no existing refs — the default a re-init-without-answers flow
+// lands so the generated base is collision-safe.
 func allCreateResources() *config.ResourcesCfg {
 	return &config.ResourcesCfg{
 		TransitGateway:   config.ResourceToggle{Create: true},
@@ -377,55 +294,6 @@ func allCreateResources() *config.ResourcesCfg {
 		ClusterJumphosts: config.ResourceToggle{Create: false},
 		ClientVPC:        config.ResourceToggle{Create: true},
 	}
-}
-
-// seedVarFileInterview builds the cluster + prefix + resources for the
-// --var-file flow. The cluster block keeps the Sprint 19 seed-driven
-// behaviour; the prefix is derived non-interactively (the file's
-// openshift_cluster_name sanitized, else the sanitized workspace name) and
-// every resource defaults to create. The generated base is collision-safe;
-// the operator's verbatim terraform.tfvars.user still overrides it via
-// terraform's var-file layering.
-func seedVarFileInterview(seeds varFileSeeds, dCreate bool, dCluster, dOCP string, dWorkers int, workspaceName string) (config.ClusterCfg, string, *config.ResourcesCfg, error) {
-	create := dCreate
-	if seeds.HasCreateCluster {
-		create = seeds.CreateCluster
-	}
-	cluster := config.ClusterCfg{Create: create}
-	if create {
-		if seeds.HasClusterName {
-			cluster.Name = seeds.ClusterName
-		} else {
-			cluster.Name = dCluster
-		}
-		if seeds.HasOCPVersion {
-			cluster.OpenShiftVersion = seeds.OCPVersion
-		} else {
-			cluster.OpenShiftVersion = dOCP
-		}
-		if seeds.HasWorkersPerZone {
-			cluster.WorkersPerZone = seeds.WorkersPerZone
-		} else {
-			cluster.WorkersPerZone = dWorkers
-		}
-	} else {
-		if seeds.HasClusterName {
-			cluster.Name = seeds.ClusterName
-		} else {
-			cluster.Name = dCluster
-		}
-		if cluster.Name == "" {
-			return config.ClusterCfg{}, "", nil, errors.New("existing cluster name is required when not creating")
-		}
-	}
-
-	// Prefix: prefer the file's cluster name, else the workspace name.
-	seedName := workspaceName
-	if seeds.HasClusterName && seeds.ClusterName != "" {
-		seedName = seeds.ClusterName
-	}
-	prefix := naming.SanitizeToPrefix(seedName)
-	return cluster, prefix, allCreateResources(), nil
 }
 
 // accountInterview is the result of the interactive, account-aware init

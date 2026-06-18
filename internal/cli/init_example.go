@@ -1,28 +1,34 @@
 package cli
 
 import (
+	_ "embed"
 	"fmt"
-	"io/fs"
 
-	roksbnkctl "github.com/jgruberf5/roksbnkctl"
 	"github.com/spf13/cobra"
 )
 
-// exampleTFVarsPath is the bundled root example tfvars `init example` prints —
-// the same annotated template that ships in the binary's embedded terraform.
-const exampleTFVarsPath = "terraform/terraform.tfvars.example"
+// exampleConfigYAML is the annotated config.yaml template `init example` prints —
+// the canonical declarative input, with the required fields filled and every
+// optional axis documented. Embedded so it works from any directory and ships
+// with the binary.
+//
+//go:embed config.example.yaml
+var exampleConfigYAML []byte
 
 var initExampleCmd = &cobra.Command{
 	Use:   "example",
-	Short: "Print the example terraform.tfvars to stdout (a template, or for piping)",
-	Long: `Writes the bundled terraform.tfvars.example to stdout — the annotated template
-of the available terraform variables. It reads from the binary's embedded
-terraform, so it works from any directory and matches the binary's version.
+	Short: "Print an annotated example config.yaml to stdout (a template, or for piping)",
+	Long: `Writes an annotated config.yaml to stdout — the canonical declarative input,
+with the required fields filled and every optional axis documented (cluster
+create-or-attach, BYO infrastructure reuse, BNK install, gateway, registry
+mirror, remote state). config.yaml is the single input to a workspace; the
+embedded terraform is internal.
 
-Create a starting tfvars or inspect the knobs with ordinary pipes:
+Create a starting config or inspect the knobs with ordinary pipes:
 
-  roksbnkctl init example > terraform.tfvars.user
-  roksbnkctl init example | grep -E 'far_repo_url|manifest_version'`,
+  roksbnkctl init example > config.yaml
+  roksbnkctl -w demo init --config-file config.yaml
+  roksbnkctl init example | grep -E 'manifest_version|cluster_vpc'`,
 	Args: cobra.NoArgs,
 	RunE: runInitExample,
 }
@@ -32,10 +38,8 @@ func init() {
 }
 
 func runInitExample(cmd *cobra.Command, _ []string) error {
-	body, err := fs.ReadFile(roksbnkctl.EmbeddedTerraform, exampleTFVarsPath)
-	if err != nil {
-		return fmt.Errorf("reading embedded %s: %w", exampleTFVarsPath, err)
+	if _, err := cmd.OutOrStdout().Write(exampleConfigYAML); err != nil {
+		return fmt.Errorf("writing example config.yaml: %w", err)
 	}
-	_, err = cmd.OutOrStdout().Write(body)
-	return err
+	return nil
 }

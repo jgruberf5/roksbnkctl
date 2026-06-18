@@ -331,7 +331,7 @@ Later layers override earlier. Concretely: `config.yaml`'s `cluster.workers_per_
 
 The `terraform.tfvars.user` middle layer is for when you want a workspace-local override that survives across runs without modifying `config.yaml` — it's typically used for fields the YAML schema doesn't model (rare; the schema covers the common knobs). [Chapter 13](./13-terraform-variables.md) goes deep on this.
 
-If you already have a complete `./terraform.tfvars` (your own, or from a colleague's hand-off) and want this workspace to always use it without re-passing `--var-file` on every command, run `roksbnkctl init -w <ws> --var-file ./terraform.tfvars`. That seeds `config.yaml` from the file **and** drops a verbatim copy at `~/.roksbnkctl/<ws>/terraform.tfvars.user` (mode `0600`, sibling to `config.yaml`), so subsequent `up` / `plan` / `apply` / `down` against bare `-w <ws>` pick it up automatically — for both the trial and cluster phases. The full walkthrough is in [Chapter 6 §"Skip the interview: `init --var-file`"](./06-workspaces.md#skip-the-interview-init---var-file).
+If you want a workspace to always apply a raw `terraform.tfvars` without re-passing `--var-file` on every phase command, drop it verbatim at `~/.roksbnkctl/<ws>/terraform.tfvars.user` (mode `0600`, sibling to `config.yaml`); subsequent `up` / `plan` / `apply` / `down` against bare `-w <ws>` pick it up automatically for both phases. To seed the workspace's `config.yaml` itself from a file, use `roksbnkctl init -w <ws> --config-file ./config.yaml` — see [Chapter 6 §"Skip the interview: `init --config-file`"](./06-workspaces.md#skip-the-interview-init---config-file).
 
 The `IBMCLOUD_API_KEY` is the one exception that **never** goes through tfvars on disk. It's passed as a `TF_VAR_ibmcloud_api_key` env var on the terraform invocation. `--var-file` cannot supply the API key — the resolver chain in [Chapter 14](./14-credentials-resolver.md) is the only path.
 
@@ -436,7 +436,7 @@ tf_source:
   type: embedded
 ```
 
-That's the minimum a prefix-driven workspace writes. Everything else (`bnk:`, `test:`, `targets:`, `exec:`, `cos:`) is empty and falls through to defaults. A workspace created **without** a prefix (e.g. an old config, or `init --var-file`) omits both `prefix:` and `resources:` and renders the legacy sparse `terraform.tfvars`. The API key can also be supplied non-interactively from your password manager's CLI by setting `IBMCLOUD_API_KEY` in the environment of the `init` invocation:
+That's the minimum a prefix-driven workspace writes. Everything else (`bnk:`, `test:`, `targets:`, `exec:`, `cos:`) is empty and falls through to defaults. A workspace created **without** a prefix (e.g. an old config) omits both `prefix:` and `resources:` and renders the legacy sparse `terraform.tfvars`. The API key can also be supplied non-interactively from your password manager's CLI by setting `IBMCLOUD_API_KEY` in the environment of the `init` invocation:
 
 `op` here is the [1Password CLI](https://developer.1password.com/docs/cli/); the `op://...` URI is its secret-reference scheme. Any password-manager CLI that prints a secret to stdout works the same way — Bitwarden (`bw`), gopass, `aws secretsmanager get-secret-value`, Doppler, etc. — the only thing roksbnkctl cares about is that `IBMCLOUD_API_KEY` is set in the environment when `init` runs.
 

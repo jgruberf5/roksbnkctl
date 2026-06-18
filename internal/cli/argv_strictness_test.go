@@ -526,17 +526,16 @@ func writeArgvFixture(t *testing.T, dir, name, content string) string {
 // resetArgvFlags zeroes the package-global flag vars an in-process
 // runRootCmd run reads, both before AND after the test, so a stray
 // value from a previous sub-test (or a prior package test) cannot
-// bleed into the run. Mirrors resetInitFlags() in
-// init_var_file_test.go; kept under a distinct name so the two
-// helpers don't collide.
+// bleed into the run. Distinct from the shared resetInitFlags() helper
+// so the two don't collide.
 func resetArgvFlags(t *testing.T) {
 	t.Helper()
-	prevWS, prevTF, prevUpg, prevVF, prevInitVF :=
-		flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles, flagInitVarFile
-	flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles, flagInitVarFile =
-		"", "", false, nil, ""
+	prevWS, prevTF, prevUpg, prevVF :=
+		flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles
+	flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles =
+		"", "", false, nil
 	t.Cleanup(func() {
-		flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles, flagInitVarFile =
-			prevWS, prevTF, prevUpg, prevVF, prevInitVF
+		flagWorkspace, flagTFSource, flagUpgradeTF, flagVarFiles =
+			prevWS, prevTF, prevUpg, prevVF
 	})
 }

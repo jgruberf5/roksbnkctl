@@ -11,7 +11,6 @@ Three `init` options make that work:
 | Option | What it does |
 |---|---|
 | `--config-file <path\|url>` | Seed the workspace `config.yaml` directly (no interview) |
-| `--var-file <path\|url>` | Seed `terraform.tfvars` (sibling; pre-existing, now URL-aware) |
 | `--override-from-env` | Overlay specific `config.yaml` fields from environment variables |
 | `--non-interactive` | Build `config.yaml` from environment variables alone — no file, no prompt (argv+env runners) |
 
@@ -73,15 +72,12 @@ environment, or run `init` interactively. The API key is **not** required in the
 file; it resolves from the environment, keychain, or config at run time as usual
 (see [Credentials](./14-credentials-resolver.md)).
 
-`--config-file` and `--var-file` are independent and may be combined: the former
-seeds `config.yaml`, the latter is copied verbatim to `terraform.tfvars.user`.
-
 ## URL inputs
 
-Both `--config-file` and `--var-file` accept a local path **or** an `http(s)`
-URL. A URL is fetched (30 s timeout, 10 MB cap) and treated identically to a
-local file — a raw-git URL, a presigned IBM COS URL, or any reachable endpoint.
-There is no fetch authentication in this release; use a presigned or public URL.
+`--config-file` accepts a local path **or** an `http(s)` URL. A URL is fetched
+(30 s timeout, 10 MB cap) and treated identically to a local file — a raw-git
+URL, a presigned IBM COS URL, or any reachable endpoint. There is no fetch
+authentication in this release; use a presigned or public URL.
 
 ## `--override-from-env`
 
