@@ -76,7 +76,7 @@ jobs:
       - name: Publish cluster outputs
         run: |
           roksbnkctl -w ci cluster output --json | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "cluster_id=$(roksbnkctl -w ci cluster output cluster_id)" >> "$GITHUB_OUTPUT"
+          echo "roks_cluster_id=$(roksbnkctl -w ci cluster output roks_cluster_id)" >> "$GITHUB_OUTPUT"
 ```
 
 `init --non-interactive` logs which fields it pulled from the environment (never
@@ -159,7 +159,7 @@ destroyed; `down` tears down only what roksbnkctl created.)
 - **This is the same contract bnk-forge uses.** The bnk-forge container step *is* a
   GitHub-Action-style invocation of this image with these env vars; this chapter is
   the do-it-yourself version of [Registering with BNK Forge](./24a-bnk-forge-registration.md).
-- **Every phase has `status` + `output`.** `roksbnkctl <phase> status [--json]` and `<phase> output [name] [--json]` (cluster/bnk/testing/gateway) are CI stage gates and value sources — e.g. `roksbnkctl testing output testing_tgw_jumphost_ip`.
+- **Every phase has `status` + `output`.** `roksbnkctl <phase> status [--json]` and `<phase> output [name]` (scoped to that phase’s own attributes) are CI stage gates; `roksbnkctl output` merges them all — e.g. `roksbnkctl testing output testing_tgw_jumphost_ip`.
 - **Where this is heading.** `up` already reconciles cluster + BNK + Testing from
   config; folding `gateway` in (so a single `up` is the whole deployment) plus
   `output -o json` / `validate` are the next step — see

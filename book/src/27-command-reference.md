@@ -128,7 +128,7 @@ single-state workspaces (use `roksbnkctl down` there).
 
 ### `roksbnkctl bnk output`
 
-Print the BNK phase's terraform outputs (text or --json; [name] = one raw value)
+Print the BNK phase's own terraform outputs (text or --json; [name] = one raw value)
 
 ```
 roksbnkctl bnk output [name] [flags]
@@ -338,7 +338,7 @@ with `roksbnkctl down` to avoid orphaned BNK resources.
 
 ### `roksbnkctl cluster output`
 
-Print the Cluster phase's terraform outputs (text or --json; [name] = one raw value)
+Print the Cluster phase's own terraform outputs (text or --json; [name] = one raw value)
 
 ```
 roksbnkctl cluster output [name] [flags]
@@ -719,7 +719,7 @@ Refuses when there's no gateway state to destroy.
 
 ### `roksbnkctl gateway output`
 
-Print the Gateway phase's terraform outputs (text or --json; [name] = one raw value)
+Print the Gateway phase's own terraform outputs (text or --json; [name] = one raw value)
 
 ```
 roksbnkctl gateway output [name] [flags]
@@ -1269,6 +1269,26 @@ roksbnkctl ops uninstall [flags]
 | `--confirm` | `bool` | `false` | actually perform the uninstall (otherwise prints what would be deleted) |
 
 ← back to [`roksbnkctl ops`](#roksbnkctl-ops)
+
+## `roksbnkctl output`
+
+Print the merged outputs across all phases (cluster + bnk + testing + gateway)
+
+```
+roksbnkctl output [name] [flags]
+```
+
+Print the union of every phase's own outputs — each read from its owning
+phase's state, so values are the populated ones and never conflict. This is the
+"everything" view; the per-phase `<phase> output` commands scope to just that
+phase's managed attributes.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
 
 ## `roksbnkctl plan`
 
@@ -1994,7 +2014,7 @@ each phase tears down independently. Refuses when there's no testing state.
 
 ### `roksbnkctl testing output`
 
-Print the Testing phase's terraform outputs (text or --json; [name] = one raw value)
+Print the Testing phase's own terraform outputs (text or --json; [name] = one raw value)
 
 ```
 roksbnkctl testing output [name] [flags]

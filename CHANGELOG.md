@@ -6,7 +6,11 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## v1.13.0 — 2026-06-18
 
-Declarative-input cleanup: `init example` now prints an annotated **config.yaml** (the single declarative input), and the legacy `init --var-file` seed flag is removed.
+Declarative-input cleanup and a phase-output fix: `init example` now prints an annotated **config.yaml**, the legacy `init --var-file` is removed, and per-phase `output` is scoped to each phase's own attributes (plus a new top-level `output` that merges them).
+
+### Added
+
+- **`roksbnkctl output` — the merged outputs across all phases.** The union of every phase's own outputs, each read from its owning phase's state, so values are the populated ones and never conflict. Pairs with the now-scoped per-phase commands; `roksbnkctl output <name>` returns one value from whichever phase owns it.
 
 ### Changed
 
@@ -15,6 +19,10 @@ Declarative-input cleanup: `init example` now prints an annotated **config.yaml*
 ### Removed
 
 - **BREAKING: `roksbnkctl init --var-file` is removed.** `init` previously seeded `config.yaml` (and dropped a verbatim `terraform.tfvars.user`) from a `terraform.tfvars` file; the seed surface is now `config.yaml` itself via `--config-file` (local path or URL) or `--non-interactive` (from `ROKSBNKCTL_*` env). Raw terraform-variable overrides are **unchanged**: place a `terraform.tfvars.user` at the workspace root (auto-layered on every lifecycle op), or pass `--var-file` on a **phase** command (`cluster`/`bnk`/`gateway up`/`down`) — those flags are unaffected.
+
+### Fixed
+
+- **`roksbnkctl <phase> output` leaked other phases' attributes and could show conflicting values.** All phases apply the same terraform root into separate states, so each phase's `terraform.tfstate` carried the full output schema — `bnk output` showed blank `testing_*`, `testing output` showed blank `flo_*`, and shared keys (e.g. `flo_trusted_profile_id`) differed between phases. Each `<phase> output` is now scoped to the outputs that phase actually manages (per `terraform/outputs.tf` module ownership: `roks_cluster` → cluster, `flo` → bnk, `testing` → testing); cross-phase keys are dropped, and naming another phase's output points you at the right command. A drift test pins that the ownership map partitions every root output exactly once.
 
 ## v1.12.0 — 2026-06-18
 

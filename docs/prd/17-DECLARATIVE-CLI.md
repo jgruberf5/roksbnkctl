@@ -39,7 +39,7 @@ hatches, not the primary interface.
 | `down` (alias `destroy`) | tear down everything declared, in reverse |
 | `plan` | dry-run: what `up` would change |
 | `status` | declared-vs-actual across all phases |
-| `output` | structured outputs — **per-phase delivered** (`<phase> output`); a top-level aggregate `output` is the remaining piece |
+| `output` | structured outputs — **delivered**: `<phase> output` scoped to that phase's own attributes (terraform/outputs.tf ownership), and a top-level `output` merging all phases (each value from its owning phase's state) |
 | `validate` | schema-check config.yaml; no cloud calls |
 
 ### Phase verbs → targets
