@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -63,15 +62,4 @@ func skipIfNoLiveIBMCreds(t *testing.T) {
 		}
 	}
 	t.Skip("skipped: init runs ibm.Verify() before persisting; no IBMCLOUD_API_KEY in env")
-}
-
-// writeTFVars drops content at <dir>/<name> and returns the absolute path — used
-// by the phase-level `--var-file` tests (cluster/bnk/gateway up/down).
-func writeTFVars(t *testing.T, dir, name, content string) string {
-	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-		t.Fatalf("seeding tfvars fixture %s: %v", p, err)
-	}
-	return p
 }
