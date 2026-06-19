@@ -188,8 +188,9 @@ echo "==> AZ1 subnet: $SUBNET"
 echo "==> ensuring SSH key $KEY_NAME…"
 KEY_DIR="$HOME_DIR/$WS/artifactory"
 mkdir -p "$KEY_DIR"
-KEY_FILE="$KEY_DIR/id_ed25519"
-[[ -f "$KEY_FILE" ]] || ssh-keygen -t ed25519 -N "" -C "$KEY_NAME" -f "$KEY_FILE" >/dev/null
+# IBM Cloud VPC SSH keys must be RSA — ed25519 is rejected ("not of type rsa").
+KEY_FILE="$KEY_DIR/id_rsa"
+[[ -f "$KEY_FILE" ]] || ssh-keygen -t rsa -b 4096 -N "" -C "$KEY_NAME" -f "$KEY_FILE" >/dev/null
 KEY_ID=$(id_of keys "$KEY_NAME")
 if [[ -z "$KEY_ID" ]]; then
   echo "==> uploading SSH key $KEY_NAME"
