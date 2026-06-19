@@ -385,6 +385,7 @@ resource "ibm_tg_connection" "cluster_vpc_connection" {
 data "ibm_container_cluster_config" "cluster_config" {
   count           = var.create_cluster ? 1 : 0
   cluster_name_id = ibm_container_vpc_cluster.openshift_cluster[0].id
+  config_dir      = var.kubeconfig_dir
   depends_on      = [ibm_container_vpc_cluster.openshift_cluster]
 }
 

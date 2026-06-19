@@ -102,3 +102,8 @@ variable "existing_cluster_vpc_id" {
   type        = string
   default     = ""
 }
+
+variable "kubeconfig_dir" {
+  description = "Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner."
+  type        = string
+}

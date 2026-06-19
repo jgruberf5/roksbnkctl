@@ -121,3 +121,8 @@ variable "transit_gateway_name" {
   type        = string
   default     = "tf-tgw"
 }
+
+variable "kubeconfig_dir" {
+  description = "Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner."
+  type        = string
+}

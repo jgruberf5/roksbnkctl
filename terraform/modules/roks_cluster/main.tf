@@ -22,6 +22,7 @@ module "cluster" {
   ibmcloud_api_key = var.ibmcloud_api_key
   cluster_region   = var.ibmcloud_cluster_region
   resource_group   = var.ibmcloud_resource_group
+  kubeconfig_dir   = var.kubeconfig_dir
 
   create_cluster         = var.create_roks_cluster
   create_transit_gateway = var.create_roks_transit_gateway
