@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -54,7 +53,8 @@ var testingDownCmd = &cobra.Command{
 	Short: "Destroy the testing jumphosts, leaving the cluster and BNK",
 	Long: `Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of ` + "`bnk down`" + `:
-each phase tears down independently. Refuses when there's no testing state.`,
+each phase tears down independently. Exits 0 ("nothing to do") when there's no
+testing state, so it's safe in a reverse-order teardown of every phase.`,
 	Args: cobra.NoArgs,
 	RunE: runTestingDown,
 }
@@ -86,7 +86,13 @@ func runTestingDown(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
 	if !pres.Testing {
-		return errors.New("no testing jumphost state to destroy in this workspace")
+		// No-op success, not an error: the testing phase is optional
+		// (install_testing=false never creates a jumphost), and bnk-forge's
+		// reverse-order teardown calls every phase's `down`. A non-zero exit
+		// here would block the cluster from being destroyed. "Nothing to do"
+		// is the correct outcome for an absent phase.
+		fmt.Fprintln(os.Stderr, "✓ No testing jumphost state to destroy in this workspace — nothing to do.")
+		return nil
 	}
 	if err := orchestration.RunTestingDown(ctxWithCmd(cmd), lifecycleInputs()); err != nil {
 		return err

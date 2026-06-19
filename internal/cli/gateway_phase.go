@@ -52,7 +52,8 @@ var gatewayDownCmd = &cobra.Command{
 	Long: `Destroys only the Gateway-phase resources (state-gateway/), leaving the
 cluster, BNK and testing phases intact.
 
-Refuses when there's no gateway state to destroy.`,
+Exits 0 ("nothing to do") when there's no gateway state, so it's safe in a
+reverse-order teardown of every phase.`,
 	Args: cobra.NoArgs,
 	RunE: runGatewayDown,
 }
@@ -96,7 +97,13 @@ func runGatewayDown(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
 	if !pres.Gateway {
-		return errors.New("no gateway phase state to destroy in this workspace")
+		// No-op success, not an error: the gateway phase is opt-in (the
+		// composite up/down never runs it), and bnk-forge's reverse-order
+		// teardown calls every phase's `down`. A non-zero exit here would
+		// block the cluster from being destroyed. "Nothing to do" is the
+		// correct outcome for an absent phase.
+		fmt.Fprintln(os.Stderr, "✓ No gateway phase state to destroy in this workspace — nothing to do.")
+		return nil
 	}
 	if err := orchestration.RunGatewayDown(ctxWithCmd(cmd), lifecycleInputs()); err != nil {
 		return err

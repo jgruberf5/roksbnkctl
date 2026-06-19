@@ -48,8 +48,9 @@ intact for the next ` + "`bnk up`" + ` to attach to. The common iteration loop:
   roksbnkctl bnk down && roksbnkctl bnk up   # ~5 min trial reset
   roksbnkctl down                            # full teardown, ~30 min
 
-Refuses when there's no trial state to destroy, and on legacy
-single-state workspaces (use ` + "`roksbnkctl down`" + ` there).`,
+Exits 0 ("nothing to do") when there's no trial state (cluster-only or
+empty), so it's safe in a reverse-order teardown of every phase. Refuses
+on legacy single-state workspaces (use ` + "`roksbnkctl down`" + ` there).`,
 	Args: cobra.NoArgs,
 	RunE: runBnkDown,
 }
@@ -129,7 +130,13 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 	}
 	switch shape {
 	case config.ShapeEmpty, config.ShapeClusterOnly:
-		return errors.New("no BNK trial state to destroy in this workspace")
+		// No-op success, not an error: a workspace with no trial state
+		// (cluster-only, or empty) has nothing for `bnk down` to do. The
+		// cluster phase persists either way, and bnk-forge's reverse-order
+		// teardown calls `bnk down` before `cluster down` — a non-zero exit
+		// here would block the cluster destroy.
+		fmt.Fprintln(os.Stderr, "✓ No BNK trial state to destroy in this workspace — nothing to do.")
+		return nil
 	}
 	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
 	// live in the BNK namespace (f5-bnk). Destroying BNK deletes that namespace,

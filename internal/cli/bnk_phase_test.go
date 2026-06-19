@@ -104,37 +104,29 @@ func newCmd() *cobra.Command {
 	return c
 }
 
-// TestRunBnkDown_EmptyRefuses — `bnk down` must refuse on empty
-// workspaces with "no BNK trial state to destroy" (PRD 06 §"Refusal
-// messages").
-func TestRunBnkDown_EmptyRefuses(t *testing.T) {
+// TestRunBnkDown_EmptyNoOps — `bnk down` on an empty workspace is a
+// no-op SUCCESS (exit 0), not a refusal: bnk-forge's reverse-order
+// teardown calls every phase's `down`, and a non-zero exit on an absent
+// phase would block the cluster destroy. (Behavior change from the
+// earlier PRD 06 refusal — see bnk_phase.go.)
+func TestRunBnkDown_EmptyNoOps(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeEmpty)
 	pointWorkspaceFlag(t, ws)
 
-	err := runBnkDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "no BNK trial state to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
+	if err := runBnkDown(newCmd(), nil); err != nil {
+		t.Fatalf("expected no-op success, got error: %v", err)
 	}
 }
 
-// TestRunBnkDown_ClusterOnlyRefuses — same "no trial" message on a
+// TestRunBnkDown_ClusterOnlyNoOps — same no-op success on a
 // cluster-only workspace; user landed `cluster up` but never
-// `bnk up` / `up`.
-func TestRunBnkDown_ClusterOnlyRefuses(t *testing.T) {
+// `bnk up` / `up`, so there is no trial state to destroy.
+func TestRunBnkDown_ClusterOnlyNoOps(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeClusterOnly)
 	pointWorkspaceFlag(t, ws)
 
-	err := runBnkDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "no BNK trial state to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
+	if err := runBnkDown(newCmd(), nil); err != nil {
+		t.Fatalf("expected no-op success, got error: %v", err)
 	}
 }
 
