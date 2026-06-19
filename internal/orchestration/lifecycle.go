@@ -789,14 +789,14 @@ func tryAutoKubeconfig(ctx context.Context, in *LifecycleInputs, cctx *config.Co
 		fmt.Fprintln(os.Stderr, "         (run `roksbnkctl kubeconfig --download` to retry)")
 		return
 	}
-	target := k8s.DefaultKubeconfigPath()
+	// KubeconfigWritePath returns a writable target even when nothing
+	// exists yet (tf.Open has pointed $KUBECONFIG at the writable
+	// <base>/.kube/config), so this no longer warns "mkdir <HOME>:
+	// permission denied" in a runner whose $HOME isn't writable.
+	target := k8s.KubeconfigWritePath()
 	if target == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			fmt.Fprintf(os.Stderr, "warning: resolving home dir: %v\n", herr)
-			return
-		}
-		target = filepath.Join(home, ".kube", "config")
+		fmt.Fprintln(os.Stderr, "warning: could not resolve a kubeconfig write path")
+		return
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: creating %s: %v\n", filepath.Dir(target), err)

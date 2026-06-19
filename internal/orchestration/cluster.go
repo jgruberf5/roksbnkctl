@@ -303,13 +303,13 @@ func runKubeconfigDownload(ctx context.Context, in *ClusterInputs) error {
 		return err
 	}
 
-	target := k8s.DefaultKubeconfigPath()
+	// KubeconfigWritePath returns a writable target even when nothing
+	// exists yet (under tf.Open it's the workspace-relative
+	// <base>/.kube/config), so the fetch no longer fails on a runner
+	// whose $HOME isn't writable.
+	target := k8s.KubeconfigWritePath()
 	if target == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return fmt.Errorf("resolving home directory: %w", herr)
-		}
-		target = filepath.Join(home, ".kube", "config")
+		return fmt.Errorf("could not resolve a kubeconfig write path")
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err

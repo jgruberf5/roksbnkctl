@@ -72,8 +72,15 @@ func NewFromDefault() (*Client, error) {
 }
 
 // DefaultKubeconfigPath returns the first existing path in $KUBECONFIG
-// (colon-separated), falling back to ~/.kube/config. Empty if neither
-// exists.
+// (colon-separated), falling back to ~/.kube/config and then to the
+// roksbnkctl base's .kube/config. Empty if none exist.
+//
+// The final <roksbnkctl-base>/.kube/config fallback matches the writable
+// location tf.Open exports as $KUBECONFIG and the admin-kubeconfig writer
+// targets when $HOME isn't writable (the runner case): a later, separate
+// `roksbnkctl k …` invocation doesn't run through tf.Open, so $KUBECONFIG
+// is unset there and ~/.kube/config never got written — this fallback is
+// how those reads still find the fetched config.
 func DefaultKubeconfigPath() string {
 	if v := os.Getenv("KUBECONFIG"); v != "" {
 		// $KUBECONFIG is a list; pick the first that exists.
@@ -83,15 +90,60 @@ func DefaultKubeconfigPath() string {
 			}
 		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	if home, err := os.UserHomeDir(); err == nil {
+		def := filepath.Join(home, ".kube", "config")
+		if _, err := os.Stat(def); err == nil {
+			return def
+		}
 	}
-	def := filepath.Join(home, ".kube", "config")
-	if _, err := os.Stat(def); err == nil {
-		return def
+	if base, err := roksbnkctlBaseDir(); err == nil {
+		def := filepath.Join(base, ".kube", "config")
+		if _, err := os.Stat(def); err == nil {
+			return def
+		}
 	}
 	return ""
+}
+
+// KubeconfigWritePath returns where roksbnkctl should WRITE a freshly
+// fetched admin kubeconfig. Unlike DefaultKubeconfigPath (which returns
+// only paths that already exist), this returns a target even when nothing
+// exists yet, choosing the first writable candidate:
+//
+//  1. the first entry of $KUBECONFIG, if set (tf.Open points this at the
+//     writable <base>/.kube/config);
+//  2. ~/.kube/config, if $HOME resolves;
+//  3. <roksbnkctl-base>/.kube/config (always writable — the runner case).
+//
+// Callers MkdirAll the parent before writing.
+func KubeconfigWritePath() string {
+	if v := os.Getenv("KUBECONFIG"); v != "" {
+		if list := filepath.SplitList(v); len(list) > 0 && list[0] != "" {
+			return list[0]
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".kube", "config")
+	}
+	if base, err := roksbnkctlBaseDir(); err == nil {
+		return filepath.Join(base, ".kube", "config")
+	}
+	return ""
+}
+
+// roksbnkctlBaseDir resolves the roksbnkctl root the same way
+// config.BaseDir does — $ROKSBNKCTL_HOME, else $HOME/.roksbnkctl. Kept as
+// a tiny local helper (rather than importing internal/config) so the k8s
+// package stays free of the config dependency.
+func roksbnkctlBaseDir() (string, error) {
+	if v := os.Getenv("ROKSBNKCTL_HOME"); v != "" {
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".roksbnkctl"), nil
 }
 
 // Clientset returns the underlying client-go clientset.

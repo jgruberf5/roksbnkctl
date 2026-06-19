@@ -93,6 +93,22 @@ func Open(
 			return nil, fmt.Errorf("creating %s: %w", p, err)
 		}
 	}
+	// Point Helm and the admin-kubeconfig writer at writable, workspace-
+	// relative paths under ROKSBNKCTL_HOME so neither depends on the
+	// container's $HOME. In a fresh roksbnkctl runner $HOME often resolves
+	// to an empty / non-writable path, which makes the helm provider's
+	// repo-index download (e.g. cert-manager off charts.jetstack.io) fail
+	// with "open <HOME>/.cache/helm/repository/<hash>-index.yaml: no such
+	// file or directory", and the post-apply kubeconfig fetch warn with
+	// "mkdir <HOME>: permission denied". Setting these on the process env
+	// (the same mechanism as TF_PLUGIN_CACHE_DIR / TF_VAR_* below) routes
+	// the helm cache + kubeconfig to the persisted workspace tree, which is
+	// writable and survives the phased invocations. Best-effort: a failure
+	// to create the dirs degrades to the $HOME-derived defaults rather than
+	// failing the whole open.
+	if err := prepareToolEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not prepare helm/kubeconfig env: %v\n", err)
+	}
 
 	sourceDir, err := FetchSource(ctx, wsCfg.TFSource, srcRoot)
 	if err != nil {
@@ -210,6 +226,79 @@ func Open(
 		stateDir:  stateDir,
 		tf:        tf,
 	}, nil
+}
+
+// prepareToolEnv exports writable, ROKSBNKCTL_HOME-relative paths for the
+// helm provider's repository cache/config and the admin kubeconfig, and
+// pre-creates the dirs they need. The leaf-dir pre-creation mirrors the
+// kubeconfig/scratch pre-creation in Open — neither Helm's repo download
+// nor the IBM kubeconfig writer does MkdirAll for these.
+//
+// Every var is set "if empty" so an operator (or bnk-forge) can still
+// override any of them — e.g. pointing the helm cache at an air-gap
+// mirror — and we won't clobber that choice. The base is config.BaseDir
+// (ROKSBNKCTL_HOME, /work/.roksbnkctl under bnk-forge), the persisted
+// workspace tree, so the cache survives across the phased invocations.
+func prepareToolEnv() error {
+	base, err := config.BaseDir()
+	if err != nil {
+		return err
+	}
+
+	// Helm: $HELM_REPOSITORY_CACHE (dir of cached repo indexes + pulled
+	// charts), $HELM_REPOSITORY_CONFIG (the repositories.yaml file), and
+	// $HELM_REGISTRY_CONFIG (OCI registry auth, used by the air-gap mirror
+	// path's oci:// charts). All under <base>/.helm.
+	helmBase := filepath.Join(base, ".helm")
+	helmCache := filepath.Join(helmBase, "cache")
+	helmConfig := filepath.Join(helmBase, "config")
+	for _, d := range []string{helmCache, helmConfig} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", d, err)
+		}
+	}
+	setEnvIfEmpty("HELM_REPOSITORY_CACHE", helmCache)
+	setEnvIfEmpty("HELM_REPOSITORY_CONFIG", filepath.Join(helmConfig, "repositories.yaml"))
+	setEnvIfEmpty("HELM_REGISTRY_CONFIG", filepath.Join(helmConfig, "registry.json"))
+
+	// Kubeconfig: only redirect $KUBECONFIG to the workspace tree when the
+	// standard $HOME/.kube location ISN'T writable (the runner case). On a
+	// normal host $HOME/.kube is writable, so we leave $KUBECONFIG unset and
+	// the post-apply fetch keeps landing at the conventional ~/.kube/config
+	// (where the user's own kubectl reads it) — no behavior change there.
+	// When $HOME/.kube can't be created (empty / non-writable $HOME in a
+	// fresh runner), point $KUBECONFIG at the writable <base>/.kube/config;
+	// k8s.DefaultKubeconfigPath falls back to that same path so later,
+	// separate `roksbnkctl k …` invocations (which don't run through
+	// tf.Open) still find it. An operator-set $KUBECONFIG always wins.
+	if os.Getenv("KUBECONFIG") == "" && !homeKubeDirWritable() {
+		kubeDir := filepath.Join(base, ".kube")
+		if err := os.MkdirAll(kubeDir, 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", kubeDir, err)
+		}
+		_ = os.Setenv("KUBECONFIG", filepath.Join(kubeDir, "config"))
+	}
+	return nil
+}
+
+// homeKubeDirWritable reports whether $HOME/.kube exists or can be created
+// — the test that decides whether the conventional kubeconfig location is
+// usable. Returns false when $HOME is unset/empty or the MkdirAll is
+// denied (the fresh-runner case the workspace-relative fallback targets).
+func homeKubeDirWritable() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	return os.MkdirAll(filepath.Join(home, ".kube"), 0o755) == nil
+}
+
+// setEnvIfEmpty sets key=val only when key is not already present (or is
+// empty) in the process env, so an operator override always wins.
+func setEnvIfEmpty(key, val string) {
+	if os.Getenv(key) == "" {
+		_ = os.Setenv(key, val)
+	}
 }
 
 // SourceDir is the path containing the resolved .tf files.
