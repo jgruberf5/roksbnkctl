@@ -266,7 +266,7 @@ The unscoped `roksbnkctl up` / `down` verbs are now **shape-aware composites** �
 | `up` | `cluster up` → trial up | trial up | `cluster up` (refresh) → trial up | monolithic trial up (v1.0.x behaviour) |
 | `down` | error: nothing to destroy | `cluster down` | trial down → `cluster down` | monolithic trial down (v1.0.x behaviour) |
 | `bnk up` | confirm + `cluster up` → trial up | trial up | trial up | **refuse** |
-| `bnk down` | refuse: no trial | refuse: no trial | trial down | **refuse** |
+| `bnk down` | no-op (exit 0): no trial | no-op (exit 0): no trial | trial down | **refuse** |
 | `cluster up` | `cluster up` | `cluster up` (refresh) | `cluster up` (refresh) | **refuse** |
 | `cluster down` | refuse: nothing to destroy | `cluster down` | **refuse**: trial exists | **refuse** |
 

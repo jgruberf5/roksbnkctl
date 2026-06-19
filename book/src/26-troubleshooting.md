@@ -56,6 +56,12 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 **Fix**: `roksbnkctl` writes a workspace-scoped override (`kubeconfig_dir = ~/.roksbnkctl/<ws>/state/kubeconfig`) and creates the dir at apply time. If you're hand-rolling terraform without `roksbnkctl up`, `mkdir -p ~/.roksbnkctl/<ws>/state/kubeconfig` first.
 
+### Symptom: cert-manager (or another chart) fails with `could not download chart: ... open <HOME>/.cache/helm/repository/<hash>-index.yaml: no such file or directory`
+
+**Root cause**: the terraform `helm` provider caches repository indexes and pulled charts under `$HOME` by default (`$HOME/.cache/helm`, `$HOME/.config/helm`). In a runner whose `$HOME` resolves to an empty or non-writable path — which is how the bnk-forge tools-runner image launches the phases — that cache directory can't be created, so the chart download fails even though `charts.jetstack.io` is perfectly reachable. The sibling symptom is a non-fatal `warning: creating <HOME>/.kube: mkdir <HOME>: permission denied` from the post-apply admin-kubeconfig fetch.
+
+**Fix**: `roksbnkctl` now exports writable, `$ROKSBNKCTL_HOME`-relative paths before invoking terraform/helm — `HELM_REPOSITORY_CACHE`, `HELM_REPOSITORY_CONFIG`, `HELM_REGISTRY_CONFIG` under `$ROKSBNKCTL_HOME/.helm/`, and `KUBECONFIG` at `$ROKSBNKCTL_HOME/.kube/config` — and pre-creates those dirs (see [`prepareToolEnv` in `internal/tf/terraform.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/tf/terraform.go)). `$ROKSBNKCTL_HOME` is the persisted workspace tree (`/work/.roksbnkctl` under bnk-forge), so the cache is writable and survives across the phased invocations. Each var is set only when unset, so you can still point the cache at an air-gap mirror by exporting your own value. No action needed on a normal host run — `$HOME` there is already writable.
+
 ### Symptom: `terraform destroy` leaves orphan IBM Cloud resources (LBs, security groups, VPEs)
 
 **Root cause**: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster's ID.

@@ -134,8 +134,9 @@ intact for the next `bnk up` to attach to. The common iteration loop:
   roksbnkctl bnk down && roksbnkctl bnk up   # ~5 min trial reset
   roksbnkctl down                            # full teardown, ~30 min
 
-Refuses when there's no trial state to destroy, and on legacy
-single-state workspaces (use `roksbnkctl down` there).
+Exits 0 ("nothing to do") when there's no trial state (cluster-only or
+empty), so it's safe in a reverse-order teardown of every phase. Refuses
+on legacy single-state workspaces (use `roksbnkctl down` there).
 
 **Flags**
 
@@ -727,7 +728,8 @@ roksbnkctl gateway down [flags]
 Destroys only the Gateway-phase resources (state-gateway/), leaving the
 cluster, BNK and testing phases intact.
 
-Refuses when there's no gateway state to destroy.
+Exits 0 ("nothing to do") when there's no gateway state, so it's safe in a
+reverse-order teardown of every phase.
 
 **Flags**
 
@@ -2018,7 +2020,8 @@ roksbnkctl testing down [flags]
 
 Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of `bnk down`:
-each phase tears down independently. Refuses when there's no testing state.
+each phase tears down independently. Exits 0 ("nothing to do") when there's
+no testing state, so it's safe in a reverse-order teardown of every phase.
 
 **Flags**
 

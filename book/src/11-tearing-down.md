@@ -77,7 +77,7 @@ What survives:
 
 Roughly **41 resources destroyed** on a clean trial-only `bnk down`. Time is dominated by Helm's pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.
 
-`bnk down` **refuses** on Empty, ClusterOnly, and LegacySingle workspaces — there's nothing to destroy on the first two, and the trial-only isolation isn't possible on the third. See [§"Refusal messages catalogue"](#refusal-messages-catalogue) for the exact text.
+`bnk down` is a **no-op success** (exits 0, "nothing to do") on Empty and ClusterOnly workspaces — there's no trial state to destroy, so it leaves the cluster alone and returns cleanly. This lets a tool like bnk-forge call `bnk down` unconditionally in a reverse-order teardown without a missing-trial error blocking the cluster destroy. It still **refuses** on LegacySingle workspaces, where trial-only isolation isn't possible (use `roksbnkctl down` there). See [§"Refusal messages catalogue"](#refusal-messages-catalogue) for the exact text.
 
 ### `roksbnkctl cluster down` — destroy the cluster phase
 
@@ -197,7 +197,9 @@ The phase-scoped destroy verbs refuse loudly when the shape doesn't allow what y
 | Command + shape | Refusal text | Resolution |
 |---|---|---|
 | `bnk down` on **LegacySingle** | `this workspace is legacy single-state; `bnk down` can't isolate the trial phase. Use `roksbnkctl down` to tear down both, or migrate the state first` | Use `roksbnkctl down`; the legacy state has the trial and cluster in one file, so a trial-only destroy isn't possible. See [Chapter 8 §"Legacy single-state workspaces"](./08-cluster-phase.md#legacy-single-state-workspaces). |
-| `bnk down` on **Empty** or **ClusterOnly** | `no BNK trial state to destroy in this workspace` | Nothing to do — no trial is deployed. If you want to destroy the cluster, use `roksbnkctl cluster down`. |
+| `bnk down` on **Empty** or **ClusterOnly** | *(not a refusal — exits 0)* `✓ No BNK trial state to destroy in this workspace — nothing to do.` | No-op success — no trial is deployed, so the command returns cleanly and leaves the cluster alone. If you want to destroy the cluster, use `roksbnkctl cluster down`. |
+| `testing down` with **no jumphosts** | *(not a refusal — exits 0)* `✓ No testing jumphost state to destroy in this workspace — nothing to do.` | No-op success — the testing phase is optional, so `down` returns cleanly when nothing was provisioned. |
+| `gateway down` with **no gateway state** | *(not a refusal — exits 0)* `✓ No gateway phase state to destroy in this workspace — nothing to do.` | No-op success — the gateway phase is opt-in, so `down` returns cleanly when it was never applied. |
 | `cluster down` on **LegacySingle** | `this workspace is legacy single-state; cluster and BNK trial share one state. Use `roksbnkctl down` to tear down both, or migrate the state first` | Use `roksbnkctl down`. |
 | `cluster down` on **Split** | ``BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)`` | Run `bnk down` first to remove the trial, then `cluster down` for the cluster — or `roksbnkctl down` to do both in one shot. |
 | `cluster down` on **Empty** | `nothing to destroy in this workspace` | Nothing to do — the cluster hasn't been provisioned. |
