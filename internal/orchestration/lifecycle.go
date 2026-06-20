@@ -814,26 +814,27 @@ func tryAutoKubeconfig(ctx context.Context, in *LifecycleInputs, cctx *config.Co
 	writeForgeKubeconfig(ic, cluster, body)
 }
 
-// writeForgeKubeconfig derives a portable token-based kubeconfig from the
-// just-fetched admin kubeconfig (keeps server + CA, swaps the user for an
-// IAM bearer token) and writes it to config.ForgeKubeconfigPath(). This is
-// the file BNK Forge registers the cluster from and keeps current by
-// re-minting the token; ensureFreshKubeconfig refreshes it locally too.
+// writeForgeKubeconfig derives a portable, self-contained CERT-based kubeconfig
+// from the just-fetched admin kubeconfig (server + CA-if-any + admin client
+// cert/key) and writes it to config.ForgeKubeconfigPath(). This is the file
+// BNK Forge registers the cluster from; the freshness gate classifies it as
+// cert-based and keeps it current by re-fetching the admin kubeconfig.
 //
-// Best-effort: a failure is a warning, never a failed `cluster up` — the
-// admin kubeconfig is already written and the cluster is up.
-func writeForgeKubeconfig(ic *ibm.Client, cluster string, adminKubeconfig []byte) {
+// IBM ROKS is Red Hat OpenShift: its API server authenticates via OpenShift
+// OAuth tokens or client certificates — NOT raw IBM IAM bearer tokens, which it
+// rejects with 401. Earlier versions stamped an IAM token here; that produced a
+// forge kubeconfig that BNK Forge registered but could not authenticate with.
+// The admin client cert/key authenticate directly, so we carry those instead.
+//
+// Best-effort: a failure is a warning, never a failed `cluster up` — the admin
+// kubeconfig is already written and the cluster is up.
+func writeForgeKubeconfig(_ *ibm.Client, cluster string, adminKubeconfig []byte) {
 	path, err := config.ForgeKubeconfigPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: resolving forge kubeconfig path: %v\n", err)
 		return
 	}
-	token, err := ic.IAMToken()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: skipping forge kubeconfig (IAM token): %v\n", err)
-		return
-	}
-	tokenKC, err := k8s.BuildTokenKubeconfig(adminKubeconfig, token, cluster+"-token")
+	certKC, err := k8s.BuildCertKubeconfig(adminKubeconfig, cluster+"-admin")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: building forge kubeconfig: %v\n", err)
 		return
@@ -842,11 +843,11 @@ func writeForgeKubeconfig(ic *ibm.Client, cluster string, adminKubeconfig []byte
 		fmt.Fprintf(os.Stderr, "warning: creating %s: %v\n", filepath.Dir(path), err)
 		return
 	}
-	if err := writeFileAtomic(path, tokenKC, 0o600); err != nil {
+	if err := writeFileAtomic(path, certKC, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing %s: %v\n", path, err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "✓ Wrote token kubeconfig to %s (for BNK Forge registration)\n", path)
+	fmt.Fprintf(os.Stderr, "✓ Wrote cert kubeconfig to %s (for BNK Forge registration)\n", path)
 }
 
 // tryAutoJumphost is the post-apply jumphost-target writer. When the

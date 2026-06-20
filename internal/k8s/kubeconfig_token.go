@@ -107,6 +107,109 @@ func BuildTokenKubeconfig(adminKubeconfig []byte, token, userName string) ([]byt
 	return b, nil
 }
 
+// BuildCertKubeconfig produces a portable, cert-based kubeconfig from an admin
+// kubeconfig: the cluster's public `server` URL, `certificate-authority-data`
+// IF the source has one, and the admin client certificate/key. Single context,
+// fully self-contained (no file references).
+//
+// This is the form BNK Forge registers IBM ROKS clusters from. ROKS is Red Hat
+// OpenShift: its API server authenticates via OpenShift OAuth tokens or client
+// certificates — NOT raw IBM IAM bearer tokens, which it rejects with 401. The
+// admin client cert/key authenticate directly, so the forge kubeconfig carries
+// them. The freshness gate classifies the result as cert-based and keeps it
+// current by re-fetching the admin kubeconfig.
+func BuildCertKubeconfig(adminKubeconfig []byte, userName string) ([]byte, error) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(adminKubeconfig, &doc); err != nil {
+		return nil, fmt.Errorf("parsing admin kubeconfig: %w", err)
+	}
+
+	clusters, _ := doc["clusters"].([]any)
+	if len(clusters) == 0 {
+		return nil, errors.New("admin kubeconfig has no clusters")
+	}
+	c0, _ := clusters[0].(map[string]any)
+	if c0 == nil {
+		return nil, errors.New("malformed cluster entry")
+	}
+	clusterName, _ := c0["name"].(string)
+	if clusterName == "" {
+		clusterName = "cluster"
+	}
+	inner, _ := c0["cluster"].(map[string]any)
+	if inner == nil {
+		return nil, errors.New("cluster entry has no `cluster` block")
+	}
+	server, _ := inner["server"].(string)
+	if server == "" {
+		return nil, errors.New("cluster has no server URL")
+	}
+	// certificate-authority-data is OPTIONAL (IBM ROKS public masters carry
+	// none — system trust validates). Carry it through only when present;
+	// never emit an empty value.
+	caData, _ := inner["certificate-authority-data"].(string)
+
+	users, _ := doc["users"].([]any)
+	if len(users) == 0 {
+		return nil, errors.New("admin kubeconfig has no users")
+	}
+	u0, _ := users[0].(map[string]any)
+	uinner, _ := u0["user"].(map[string]any)
+	if uinner == nil {
+		return nil, errors.New("admin user has no `user` block")
+	}
+	clientCert, _ := uinner["client-certificate-data"].(string)
+	clientKey, _ := uinner["client-key-data"].(string)
+	if clientCert == "" || clientKey == "" {
+		return nil, errors.New("admin kubeconfig is not self-contained (missing client-certificate-data/client-key-data)")
+	}
+
+	if userName == "" {
+		userName = clusterName + "-admin"
+	}
+	ns := currentContextNamespace(doc)
+	if ns == "" {
+		ns = "default"
+	}
+
+	clusterBlock := map[string]any{"server": server}
+	if caData != "" {
+		clusterBlock["certificate-authority-data"] = caData
+	}
+	out := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Config",
+		"clusters": []any{
+			map[string]any{"name": clusterName, "cluster": clusterBlock},
+		},
+		"contexts": []any{
+			map[string]any{
+				"name": clusterName,
+				"context": map[string]any{
+					"cluster":   clusterName,
+					"user":      userName,
+					"namespace": ns,
+				},
+			},
+		},
+		"current-context": clusterName,
+		"users": []any{
+			map[string]any{
+				"name": userName,
+				"user": map[string]any{
+					"client-certificate-data": clientCert,
+					"client-key-data":         clientKey,
+				},
+			},
+		},
+	}
+	b, err := yaml.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("emitting cert kubeconfig: %w", err)
+	}
+	return b, nil
+}
+
 // RewriteTokens replaces the bearer token on every token-bearing user in a
 // kubeconfig, leaving clusters[].cluster (server + CA) and everything else
 // untouched. Used by the refresh gate: only the credential changes. Returns

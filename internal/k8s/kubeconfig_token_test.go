@@ -172,3 +172,71 @@ func TestRewriteTokens_NoTokenUsersErrors(t *testing.T) {
 		t.Fatal("expected error rewriting a kubeconfig with no token users, got nil")
 	}
 }
+
+func TestBuildCertKubeconfig(t *testing.T) {
+	out, err := BuildCertKubeconfig([]byte(adminKubeconfigYAML), "mycluster-admin")
+	if err != nil {
+		t.Fatalf("BuildCertKubeconfig: %v", err)
+	}
+	s := string(out)
+	// Cert-based: carries the admin client cert/key, NO token.
+	for _, want := range []string{"client-certificate-data: Q0VSVA==", "client-key-data: S0VZ", "server: https://c1.example.com:31234", "certificate-authority-data: Q0FEQVRB"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("cert kubeconfig missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "token:") {
+		t.Errorf("cert kubeconfig must not carry a token:\n%s", s)
+	}
+	// The freshness gate must classify it as cert-based (→ re-fetch admin on refresh).
+	if c := Classify(out); c != ClassCert {
+		t.Errorf("Classify = %v, want ClassCert", c)
+	}
+}
+
+// TestBuildCertKubeconfig_NoCA_ROKS — IBM ROKS public masters carry no CA;
+// the cert kubeconfig must omit certificate-authority-data entirely (never
+// emit an empty value), keeping the client cert/key.
+func TestBuildCertKubeconfig_NoCA_ROKS(t *testing.T) {
+	const roks = `apiVersion: v1
+kind: Config
+clusters:
+- name: roks/abc
+  cluster:
+    server: https://c1.us-south.containers.cloud.ibm.com:31517
+contexts:
+- name: roks/abc-ctx
+  context: {cluster: roks/abc, user: admin}
+current-context: roks/abc-ctx
+users:
+- name: admin
+  user:
+    client-certificate-data: Q0VSVA==
+    client-key-data: S0VZ
+`
+	out, err := BuildCertKubeconfig([]byte(roks), "roks-admin")
+	if err != nil {
+		t.Fatalf("BuildCertKubeconfig (ROKS no-CA): %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "certificate-authority") {
+		t.Errorf("no-CA ROKS cert kubeconfig must omit certificate-authority:\n%s", s)
+	}
+	if !strings.Contains(s, "client-certificate-data: Q0VSVA==") {
+		t.Errorf("cert kubeconfig missing client cert:\n%s", s)
+	}
+	if Classify(out) != ClassCert {
+		t.Error("Classify must be ClassCert")
+	}
+}
+
+func TestBuildCertKubeconfig_NotCertBasedErrors(t *testing.T) {
+	const tokenOnly = `apiVersion: v1
+kind: Config
+clusters: [{name: c, cluster: {server: https://x:6443}}]
+users: [{name: u, user: {token: abc}}]
+`
+	if _, err := BuildCertKubeconfig([]byte(tokenOnly), "u"); err == nil {
+		t.Fatal("expected error building cert kubeconfig from a token-only admin config, got nil")
+	}
+}
