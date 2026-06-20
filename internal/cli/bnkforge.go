@@ -75,7 +75,7 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 		"--name", name,
 		"--cluster-id", out.ClusterID,
 		"--region", out.Region,
-		"--provider", "ibm_roks",
+		"--provider", "IBM",
 	}
 	if bf.Project != "" {
 		args = append(args, "--project", bf.Project)

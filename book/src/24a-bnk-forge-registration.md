@@ -171,7 +171,7 @@ bnk-forge clusters register \
   --name acme-eu-roks \
   --cluster-id cre6h4l20jjsg4kvt3a0 \
   --region eu-de \
-  --provider ibm_roks \
+  --provider IBM \
   --ibmcloud-api-key "$IBMCLOUD_API_KEY"
 ```
 
@@ -190,7 +190,7 @@ bnk-forge clusters register \
 | `--name` | yes | The cluster name as it appears in BNK Forge. |
 | `--cluster-id` | yes | The provider cluster id (the ROKS cluster id). |
 | `--region` | yes | The cloud region (e.g. `eu-de`). |
-| `--provider` | no | Platform-profile hint. Default `ibm_roks`. |
+| `--provider` | no | Cloud provider. roksbnkctl passes `IBM`. |
 | `--project` | no | Target Forge project id. Else active / sole / prompt. |
 | `--ibmcloud-api-key` | no | IBM Cloud API key for the credential template (or set `IBMCLOUD_API_KEY`). |
 | `--resource-group` | no | IBM Cloud resource group for a newly-created template. Default `default`. |
@@ -203,7 +203,7 @@ bnk-forge clusters register \
 | `--dry-run` | no | Print the registration request without sending it. |
 
 roksbnkctl's wrapper supplies `--name`, `--cluster-id`, `--region`, `--provider
-ibm_roks`, and — when set — `--project` and `--url`, plus the resolved
+IBM`, and — when set — `--project` and `--url`, plus the resolved
 `IBMCLOUD_API_KEY` in the environment.
 
 ## Behaviour notes
