@@ -4,6 +4,25 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.15.0 — 2026-06-20
+
+Runner-image robustness for the phased lifecycle: Helm chart pulls and the admin-kubeconfig fetch no longer depend on a writable `$HOME`, phase `down` is idempotent for reverse-order teardown, and the cluster module's kubeconfig data source is wired explicitly. Plus a new `apikey` command and an Artifactory deploy helper for air-gap testing.
+
+### Added
+
+- **`roksbnkctl apikey` — print the workspace's resolved IBM Cloud API key.** Resolves the key through the same credentials chain the rest of the CLI uses and prints it to stdout, so you can splice it into ad-hoc tooling, e.g. `ibmcloud login --apikey "$(roksbnkctl -w <ws> apikey)"`. The key is never written to disk by roksbnkctl.
+- **`scripts/deploy-artifactory.sh` — stand up an Artifactory VSI in the cluster VPC** for air-gap registry-replication testing. Step-by-step progress with no silent login hang; generates an RSA SSH key (IBM Cloud VPC rejects ed25519).
+
+### Changed
+
+- **`bnk` / `testing` / `gateway down` now no-op-succeed on empty/absent state.** They exit 0 with a "nothing to do" message instead of erroring when the phase was never deployed (an optional `testing`/`gateway` phase, or a cluster-only/empty workspace for `bnk down`), so an unconditional reverse-order teardown of every phase no longer trips on a missing phase (which would otherwise block the cluster destroy). `bnk down` still refuses on legacy single-state workspaces (use `roksbnkctl down` there).
+
+### Fixed
+
+- **Helm chart downloads no longer depend on a writable `$HOME`.** Each phase now exports `HELM_CACHE_HOME` / `HELM_CONFIG_HOME` / `HELM_DATA_HOME` (the homes that actually govern Helm's anonymous chart-repo-URL path, plus the OCI path), alongside `HELM_REPOSITORY_*`, under `$ROKSBNKCTL_HOME/.helm`, and pre-creates them. In a fresh runner whose `$HOME` is empty or non-writable, a `helm_release` pulling from a chart-repo URL (cert-manager off `charts.jetstack.io`) previously failed with `could not download chart: ... open <HOME>/.cache/helm/repository/<hash>-index.yaml: no such file or directory`; the index now downloads into the writable workspace tree. `ROKSBNKCTL_DEBUG=1` logs the resolved Helm/kubeconfig env before each phase's terraform exec.
+- **The admin-kubeconfig fetch lands in a writable path in a fresh runner.** `$KUBECONFIG` is redirected to `$ROKSBNKCTL_HOME/.kube/config` when `$HOME/.kube` isn't writable (otherwise the conventional `~/.kube/config` is kept), and `roksbnkctl k …` resolves the same fallback. Removes the `warning: creating <HOME>/.kube: mkdir <HOME>: permission denied` from the post-apply fetch.
+- **The cluster module's `ibm_container_cluster_config` data source now sets an explicit `config_dir`** (threaded `roks_cluster` → `cluster`), and roksbnkctl pre-creates the `kubeconfig/cluster` leaf dir. Fixes `Error downloading the cluster config: Path: '', to download the config doesn't exist` (and the `.../kubeconfig/cluster ... doesn't exist` variant) on a runner with no usable `$HOME`, even for a healthy cluster.
+
 ## v1.14.0 — 2026-06-18
 
 The OpenShift internal registry is removed as a registry-replication target. ICR (default) and OCI-compliant registries (Artifactory / Harbor / Quay / `registry:2`) are the supported targets.
