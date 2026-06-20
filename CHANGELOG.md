@@ -4,6 +4,27 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.16.0 — 2026-06-20
+
+Token-based kubeconfig with automatic refresh: `cluster up` now also emits a
+portable, token-based kubeconfig for BNK Forge registration, and every
+kubeconfig consumer self-heals an expiring session before it runs. Plus the
+BNK Forge cluster provider is declared as `IBM`.
+
+### Added
+
+- **`cluster up` emits a token-based kubeconfig at `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`.** Alongside the existing admin (cert-based) config, roksbnkctl now writes a fully self-contained, **token-based** kubeconfig — one cluster entry with the public server + embedded `certificate-authority-data`, one `token` user, no client cert/key. This is the form BNK Forge registers from (it re-mints the IAM token from the project credential template), so a long-idle registered cluster keeps authenticating. Written `0600`, overwritten on every `cluster up`.
+- **`roksbnkctl kubeconfig --refresh`.** Force-refresh the token-based kubeconfig now (re-mint the IAM token), for CI/scripting.
+
+### Changed
+
+- **`kubeconfig` / `kubectl` / `oc` / `shell` prefer the auto-refreshed token kubeconfig.** Before each use, a single `ensureFreshKubeconfig` gate checks the embedded credential's expiry locally (no network); if a token is within ~5 minutes of expiry it re-mints it (a cheap IAM exchange) and rewrites the file atomically — otherwise it's a no-op. This keeps `roksbnkctl`'s own CLI passthroughs working without manual `kubeconfig --download`. Falls back to the admin cert-based config at `~/.kube/config` when there's no token kubeconfig or it can't be refreshed offline. The admin-kubeconfig write is unchanged.
+- **BNK Forge registration declares `--provider IBM`** (was `ibm_roks`), matching BNK Forge's provider taxonomy.
+
+### Fixed
+
+- **The IBM admin kubeconfig now inlines the cluster CA** (`certificate-authority` file ref → `certificate-authority-data`). Modern IBM kubeconfigs already embed it (no-op); older ones used a relative `.pem` ref that broke once the kubeconfig moved off its download dir. This makes the admin config self-contained and is what lets the token kubeconfig embed the CA.
+
 ## v1.15.0 — 2026-06-20
 
 Runner-image robustness for the phased lifecycle: Helm chart pulls and the admin-kubeconfig fetch no longer depend on a writable `$HOME`, phase `down` is idempotent for reverse-order teardown, and the cluster module's kubeconfig data source is wired explicitly. Plus a new `apikey` command and an Artifactory deploy helper for air-gap testing.
