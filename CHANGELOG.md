@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.17.1 — 2026-06-20
+
+Fixes the forge kubeconfig so a registered IBM ROKS cluster can actually authenticate.
+
+### Fixed
+
+- **The forge kubeconfig (`$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`) is now cert-based, not token-based.** ROKS is Red Hat OpenShift: its API server authenticates via client certificates or OpenShift OAuth tokens and **rejects raw IBM IAM bearer tokens with 401**. The token-based forge kubeconfig introduced in v1.16.x registered in BNK Forge but could not connect (dashboard red, 401 on every call). `cluster up` now builds the forge kubeconfig from the cluster's admin client certificate/key (new `k8s.BuildCertKubeconfig`), which authenticate directly. The freshness gate already classifies a cert kubeconfig as cert-based and keeps it current by re-fetching the admin kubeconfig as the certs near expiry; `kubeconfig --refresh` forces that re-fetch. CA stays optional (ROKS public masters carry none). Docs (book chapters 24a/27/33 + the embedded operator AGENTS.md) updated to match.
+
 ## v1.17.0 — 2026-06-20
 
 Adds an opt-in **agentic mode**: drive a ROKS + BNK trial with an AI coding agent acting under role-scoped personas, while roksbnkctl stays a deterministic tool (it embeds no LLM).
