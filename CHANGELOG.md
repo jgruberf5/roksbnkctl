@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.16.1 — 2026-06-20
+
+Fixes the token-based forge kubeconfig so it's actually written for IBM ROKS clusters.
+
+### Fixed
+
+- **The token-based forge kubeconfig (`$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`) is now written for IBM ROKS clusters.** In v1.16.0 the builder hard-required `certificate-authority-data` and bailed with `cluster has no certificate-authority-data (admin kubeconfig is not self-contained)` — so the file was never written and BNK Forge skipped cluster registration (`Declared cluster.kubeconfig_file not readable … No such file or directory`). But IBM ROKS masters (`*.containers.cloud.ibm.com`) present a publicly-trusted TLS cert, so the admin kubeconfig legitimately has **no** CA and none is needed (system trust validates the server). The builder now treats a missing CA as the expected case: it carries `certificate-authority-data` through when the source has one (private/self-signed clusters) and omits the field entirely when it doesn't — never emitting an empty value. The post-apply export remains best-effort and never fails `cluster up`.
+
 ## v1.16.0 — 2026-06-20
 
 Token-based kubeconfig with automatic refresh: `cluster up` now also emits a
