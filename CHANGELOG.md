@@ -4,6 +4,17 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.17.0 — 2026-06-20
+
+Adds an opt-in **agentic mode**: drive a ROKS + BNK trial with an AI coding agent acting under role-scoped personas, while roksbnkctl stays a deterministic tool (it embeds no LLM).
+
+### Added
+
+- **`roksbnkctl agent` — agentic operating mode.** `agent init` scaffolds a workspace with `AGENTS.md` (the shared operator reference — phased lifecycle, destructive-command gate contract, field-tested gotchas), four persona role contracts under `personas/` (`solution-architect` = customer interface + scope owner; `cloud-operator` = runs the lifecycle; `test-engineer` = validation probes; `doc-specialist` = the report), a `decisions.md` seed, and a `journal/`. Re-running is idempotent — operator edits survive. `roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]` prints the invocation to launch your chosen coding-agent CLI against them; bare `agent` lists the CLIs and the workspace default. roksbnkctl embeds no LLM — you bring your own agent and endpoint.
+- **`roksbnkctl journal {add,list,report}` — the append-only handoff substrate** the personas coordinate through (`<workspace>/journal/`). `add` appends a timestamped note; `list` shows the timeline; `report` assembles `report.md` from `decisions.md` + the journal.
+- **Optional `agent:` block in `config.yaml`** (`default` CLI + `llm_endpoint`), annotated in the example config.
+- **New book chapter: "Agentic mode"** (Part X) documenting the personas, the `agent`/`journal` commands, the coordination protocol, and the safety model.
+
 ## v1.16.1 — 2026-06-20
 
 Fixes the token-based forge kubeconfig so it's actually written for IBM ROKS clusters.
