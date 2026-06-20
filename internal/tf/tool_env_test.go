@@ -14,28 +14,37 @@ func TestPrepareToolEnv_SetsHelmAndPrecreates(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("ROKSBNKCTL_HOME", base)
 	// Clear any inherited values so we observe what prepareToolEnv sets.
-	t.Setenv("HELM_REPOSITORY_CACHE", "")
-	t.Setenv("HELM_REPOSITORY_CONFIG", "")
-	t.Setenv("HELM_REGISTRY_CONFIG", "")
+	for _, k := range []string{
+		"HELM_CACHE_HOME", "HELM_CONFIG_HOME", "HELM_DATA_HOME",
+		"HELM_REPOSITORY_CACHE", "HELM_REPOSITORY_CONFIG", "HELM_REGISTRY_CONFIG",
+	} {
+		t.Setenv(k, "")
+	}
 
 	if err := prepareToolEnv(); err != nil {
 		t.Fatalf("prepareToolEnv: %v", err)
 	}
 
-	cache := os.Getenv("HELM_REPOSITORY_CACHE")
-	wantCache := filepath.Join(base, ".helm", "cache")
-	if cache != wantCache {
-		t.Errorf("HELM_REPOSITORY_CACHE = %q, want %q", cache, wantCache)
+	// HELM_CACHE_HOME is the var that actually governs the anonymous
+	// `repository=<url>` chart download (helmpath.CachePath reads it); its
+	// repository/ leaf must be pre-created and writable.
+	cacheHome := os.Getenv("HELM_CACHE_HOME")
+	wantCacheHome := filepath.Join(base, ".helm", "cache")
+	if cacheHome != wantCacheHome {
+		t.Errorf("HELM_CACHE_HOME = %q, want %q", cacheHome, wantCacheHome)
 	}
-	if st, err := os.Stat(cache); err != nil || !st.IsDir() {
-		t.Errorf("HELM_REPOSITORY_CACHE dir not pre-created: %v", err)
+	repoDir := filepath.Join(cacheHome, "repository")
+	if st, err := os.Stat(repoDir); err != nil || !st.IsDir() {
+		t.Errorf("HELM_CACHE_HOME/repository not pre-created: %v", err)
 	}
-	wantCfg := filepath.Join(base, ".helm", "config", "repositories.yaml")
-	if got := os.Getenv("HELM_REPOSITORY_CONFIG"); got != wantCfg {
-		t.Errorf("HELM_REPOSITORY_CONFIG = %q, want %q", got, wantCfg)
+	if got, want := os.Getenv("HELM_CONFIG_HOME"), filepath.Join(base, ".helm", "config"); got != want {
+		t.Errorf("HELM_CONFIG_HOME = %q, want %q", got, want)
 	}
-	if st, err := os.Stat(filepath.Dir(wantCfg)); err != nil || !st.IsDir() {
-		t.Errorf("HELM_REPOSITORY_CONFIG parent dir not pre-created: %v", err)
+	if got, want := os.Getenv("HELM_DATA_HOME"), filepath.Join(base, ".helm", "data"); got != want {
+		t.Errorf("HELM_DATA_HOME = %q, want %q", got, want)
+	}
+	if got, want := os.Getenv("HELM_REPOSITORY_CACHE"), repoDir; got != want {
+		t.Errorf("HELM_REPOSITORY_CACHE = %q, want %q", got, want)
 	}
 }
 
@@ -44,13 +53,13 @@ func TestPrepareToolEnv_SetsHelmAndPrecreates(t *testing.T) {
 func TestPrepareToolEnv_RespectsOperatorOverride(t *testing.T) {
 	t.Setenv("ROKSBNKCTL_HOME", t.TempDir())
 	custom := filepath.Join(t.TempDir(), "mirror-cache")
-	t.Setenv("HELM_REPOSITORY_CACHE", custom)
+	t.Setenv("HELM_CACHE_HOME", custom)
 
 	if err := prepareToolEnv(); err != nil {
 		t.Fatalf("prepareToolEnv: %v", err)
 	}
-	if got := os.Getenv("HELM_REPOSITORY_CACHE"); got != custom {
-		t.Errorf("HELM_REPOSITORY_CACHE = %q, want operator override %q", got, custom)
+	if got := os.Getenv("HELM_CACHE_HOME"); got != custom {
+		t.Errorf("HELM_CACHE_HOME = %q, want operator override %q", got, custom)
 	}
 }
 

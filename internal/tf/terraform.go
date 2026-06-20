@@ -228,11 +228,12 @@ func Open(
 	}, nil
 }
 
-// prepareToolEnv exports writable, ROKSBNKCTL_HOME-relative paths for the
-// helm provider's repository cache/config and the admin kubeconfig, and
-// pre-creates the dirs they need. The leaf-dir pre-creation mirrors the
-// kubeconfig/scratch pre-creation in Open — neither Helm's repo download
-// nor the IBM kubeconfig writer does MkdirAll for these.
+// prepareToolEnv exports writable, ROKSBNKCTL_HOME-relative paths for
+// Helm's cache/config/data homes and the admin kubeconfig, and pre-creates
+// the dirs they need. The terraform helm provider runs as a plugin
+// subprocess that inherits this env (terraform-exec passes os.Environ()
+// through), so setting these here reaches the chart download. The leaf-dir
+// pre-creation mirrors the kubeconfig/scratch pre-creation in Open.
 //
 // Every var is set "if empty" so an operator (or bnk-forge) can still
 // override any of them — e.g. pointing the helm cache at an air-gap
@@ -245,21 +246,46 @@ func prepareToolEnv() error {
 		return err
 	}
 
-	// Helm: $HELM_REPOSITORY_CACHE (dir of cached repo indexes + pulled
-	// charts), $HELM_REPOSITORY_CONFIG (the repositories.yaml file), and
-	// $HELM_REGISTRY_CONFIG (OCI registry auth, used by the air-gap mirror
-	// path's oci:// charts). All under <base>/.helm.
+	// Helm cache/config/data, all under <base>/.helm so the terraform helm
+	// provider (a plugin subprocess that inherits this env) never touches
+	// $HOME.
+	//
+	// The var that actually matters is HELM_CACHE_HOME: a `helm_release`
+	// whose `repository` is a bare chart-repo URL (e.g. cert-manager off
+	// charts.jetstack.io) resolves through helm's anonymous-repo path
+	// (repo.FindChartInRepoURL), which downloads the repo index into
+	// helmpath.CachePath("repository") == $HELM_CACHE_HOME/repository —
+	// it does NOT consult HELM_REPOSITORY_CACHE. In a fresh runner whose
+	// $HOME isn't writable, that download can't create
+	// $HOME/.cache/helm/repository and fails with
+	//   could not download chart: ... open
+	//   <HOME>/.cache/helm/repository/<hash>-index.yaml: no such file
+	// even though the network is fine (the index downloads on the fly once
+	// the dir is writable — no pre-`helm repo add` is needed). Redirecting
+	// HELM_CACHE_HOME (+ HELM_CONFIG_HOME for repositories.yaml / OCI
+	// registry auth, + HELM_DATA_HOME) to the writable workspace tree is
+	// the fix; verified end-to-end against the hashicorp/helm provider.
+	//
+	// HELM_REPOSITORY_CACHE / HELM_REPOSITORY_CONFIG are still set (they
+	// govern the named-repo path and `helm repo` CLI) for completeness and
+	// to keep the whole helm footprint inside <base>/.helm.
 	helmBase := filepath.Join(base, ".helm")
-	helmCache := filepath.Join(helmBase, "cache")
-	helmConfig := filepath.Join(helmBase, "config")
-	for _, d := range []string{helmCache, helmConfig} {
+	helmCacheHome := filepath.Join(helmBase, "cache")
+	helmConfigHome := filepath.Join(helmBase, "config")
+	helmDataHome := filepath.Join(helmBase, "data")
+	// Pre-create the cache/repository leaf too — helm MkdirAll's it itself,
+	// but pre-creating keeps it consistent with the other roksbnkctl dirs.
+	for _, d := range []string{filepath.Join(helmCacheHome, "repository"), helmConfigHome, helmDataHome} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("creating %s: %w", d, err)
 		}
 	}
-	setEnvIfEmpty("HELM_REPOSITORY_CACHE", helmCache)
-	setEnvIfEmpty("HELM_REPOSITORY_CONFIG", filepath.Join(helmConfig, "repositories.yaml"))
-	setEnvIfEmpty("HELM_REGISTRY_CONFIG", filepath.Join(helmConfig, "registry.json"))
+	setEnvIfEmpty("HELM_CACHE_HOME", helmCacheHome)
+	setEnvIfEmpty("HELM_CONFIG_HOME", helmConfigHome)
+	setEnvIfEmpty("HELM_DATA_HOME", helmDataHome)
+	setEnvIfEmpty("HELM_REPOSITORY_CACHE", filepath.Join(helmCacheHome, "repository"))
+	setEnvIfEmpty("HELM_REPOSITORY_CONFIG", filepath.Join(helmConfigHome, "repositories.yaml"))
+	setEnvIfEmpty("HELM_REGISTRY_CONFIG", filepath.Join(helmConfigHome, "registry", "config.json"))
 
 	// Kubeconfig: only redirect $KUBECONFIG to the workspace tree when the
 	// standard $HOME/.kube location ISN'T writable (the runner case). On a
@@ -277,6 +303,16 @@ func prepareToolEnv() error {
 			return fmt.Errorf("creating %s: %w", kubeDir, err)
 		}
 		_ = os.Setenv("KUBECONFIG", filepath.Join(kubeDir, "config"))
+	}
+
+	// Opt-in debug: confirm the resolved helm/kubeconfig env right before a
+	// phase's terraform exec (the helm chart download is the one that broke
+	// in fresh runners). Off unless ROKSBNKCTL_DEBUG is set, so normal runs
+	// stay quiet.
+	if os.Getenv("ROKSBNKCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr,
+			"debug: HELM_CACHE_HOME=%s HELM_REPOSITORY_CACHE=%s KUBECONFIG=%s\n",
+			os.Getenv("HELM_CACHE_HOME"), os.Getenv("HELM_REPOSITORY_CACHE"), os.Getenv("KUBECONFIG"))
 	}
 	return nil
 }
