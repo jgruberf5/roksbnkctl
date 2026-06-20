@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
+            window.path_to_searchindex_js = "searchindex-582db346.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4d89dd13.js"></script>
@@ -208,6 +208,22 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-apikey"><a class="header" href="#roksbnkctl-apikey"><code>roksbnkctl apikey</code></a></h2>
+<p>Print the workspace’s resolved IBM Cloud API key to stdout (a secret)</p>
+<p>Resolve the workspace’s IBM Cloud API key via the standard chain and print it
+to stdout — the scripting seam for driving the ibmcloud CLI off a workspace:</p>
+<p>ibmcloud login –apikey “$(roksbnkctl -w <code>&lt;ws&gt;</code> apikey)”</p>
+<p>Resolution order (the same roksbnkctl itself uses):</p>
+<ol>
+<li>environment — IBMCLOUD_API_KEY / IC_API_KEY / TF_VAR_* (including any
+loaded from $PWD/.env, which roksbnkctl reads at startup)</li>
+<li>OS keychain  (service “roksbnkctl”, account “<code>&lt;workspace&gt;</code>/ibmcloud_api_key”)</li>
+<li>workspace config.yaml — ibmcloud.api_key_b64 (base64-decoded)</li>
+</ol>
+<p>Non-interactive: it never prompts — if no key is found it exits non-zero with an
+actionable error.</p>
+<p>WARNING: this writes the credential to stdout. Pipe or redirect it; never echo it
+into logs or CI output.</p>
 <h2 id="roksbnkctl-apply"><a class="header" href="#roksbnkctl-apply"><code>roksbnkctl apply</code></a></h2>
 <p>Apply Terraform without re-prompting (assumes config.yaml exists)</p>
 <pre><code>roksbnkctl apply [flags]
@@ -262,8 +278,9 @@ roksbnkctl bnk down  Destroy the BNK trial, leaving the cluster in place</p>
 intact for the next <code>bnk up</code> to attach to. The common iteration loop:</p>
 <p>roksbnkctl bnk down &amp;&amp; roksbnkctl bnk up   # ~5 min trial reset
 roksbnkctl down                            # full teardown, ~30 min</p>
-<p>Refuses when there’s no trial state to destroy, and on legacy
-single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p>Exits 0 (“nothing to do”) when there’s no trial state (cluster-only or
+empty), so it’s safe in a reverse-order teardown of every phase. Refuses
+on legacy single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -778,7 +795,8 @@ this phase — it is opt-in.</p>
 </code></pre>
 <p>Destroys only the Gateway-phase resources (state-gateway/), leaving the
 cluster, BNK and testing phases intact.</p>
-<p>Refuses when there’s no gateway state to destroy.</p>
+<p>Exits 0 (“nothing to do”) when there’s no gateway state, so it’s safe in a
+reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1174,9 +1192,11 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 <tr><td><code>--cluster</code></td><td><code>string</code></td><td>—</td><td>cluster name or ID for –download (default: workspace cluster.name)</td></tr>
 <tr><td><code>--download</code></td><td><code>bool</code></td><td><code>false</code></td><td>fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config</td></tr>
 <tr><td><code>--export</code></td><td><code>bool</code></td><td><code>false</code></td><td>print kubeconfig contents instead of path</td></tr>
+<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the token-based kubeconfig now (re-mint the IAM token)</td></tr>
 </tbody>
 </table>
 </div>
+<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>token-based kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it’s a no-op local check. <code>--refresh</code> forces the re-mint now — useful in CI/scripting. If there’s no token kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin cert-based config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]
@@ -1877,7 +1897,8 @@ provision nothing.</p>
 </code></pre>
 <p>Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
-each phase tears down independently. Refuses when there’s no testing state.</p>
+each phase tears down independently. Exits 0 (“nothing to do”) when there’s
+no testing state, so it’s safe in a reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>

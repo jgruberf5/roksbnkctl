@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
+            window.path_to_searchindex_js = "searchindex-582db346.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4d89dd13.js"></script>
@@ -392,7 +392,7 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <tr><td><code>up</code></td><td><code>cluster up</code> → trial up</td><td>trial up</td><td><code>cluster up</code> (refresh) → trial up</td><td>monolithic trial up (v1.0.x behaviour)</td></tr>
 <tr><td><code>down</code></td><td>error: nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td><td>monolithic trial down (v1.0.x behaviour)</td></tr>
 <tr><td><code>bnk up</code></td><td>confirm + <code>cluster up</code> → trial up</td><td>trial up</td><td>trial up</td><td><strong>refuse</strong></td></tr>
-<tr><td><code>bnk down</code></td><td>refuse: no trial</td><td>refuse: no trial</td><td>trial down</td><td><strong>refuse</strong></td></tr>
+<tr><td><code>bnk down</code></td><td>no-op (exit 0): no trial</td><td>no-op (exit 0): no trial</td><td>trial down</td><td><strong>refuse</strong></td></tr>
 <tr><td><code>cluster up</code></td><td><code>cluster up</code></td><td><code>cluster up</code> (refresh)</td><td><code>cluster up</code> (refresh)</td><td><strong>refuse</strong></td></tr>
 <tr><td><code>cluster down</code></td><td>refuse: nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td><td><strong>refuse</strong></td></tr>
 </tbody>

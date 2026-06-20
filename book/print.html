@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
+            window.path_to_searchindex_js = "searchindex-582db346.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4d89dd13.js"></script>
@@ -2529,7 +2529,7 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <tr><td><code>up</code></td><td><code>cluster up</code> → trial up</td><td>trial up</td><td><code>cluster up</code> (refresh) → trial up</td><td>monolithic trial up (v1.0.x behaviour)</td></tr>
 <tr><td><code>down</code></td><td>error: nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td><td>monolithic trial down (v1.0.x behaviour)</td></tr>
 <tr><td><code>bnk up</code></td><td>confirm + <code>cluster up</code> → trial up</td><td>trial up</td><td>trial up</td><td><strong>refuse</strong></td></tr>
-<tr><td><code>bnk down</code></td><td>refuse: no trial</td><td>refuse: no trial</td><td>trial down</td><td><strong>refuse</strong></td></tr>
+<tr><td><code>bnk down</code></td><td>no-op (exit 0): no trial</td><td>no-op (exit 0): no trial</td><td>trial down</td><td><strong>refuse</strong></td></tr>
 <tr><td><code>cluster up</code></td><td><code>cluster up</code></td><td><code>cluster up</code> (refresh)</td><td><code>cluster up</code> (refresh)</td><td><strong>refuse</strong></td></tr>
 <tr><td><code>cluster down</code></td><td>refuse: nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td><td><strong>refuse</strong></td></tr>
 </tbody>
@@ -2919,7 +2919,7 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 <li>The workspace’s <code>config.yaml</code></li>
 </ul>
 <p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>bnk down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
-<p><code>bnk down</code> <strong>refuses</strong> on Empty, ClusterOnly, and LegacySingle workspaces — there’s nothing to destroy on the first two, and the trial-only isolation isn’t possible on the third. See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
+<p><code>bnk down</code> is a <strong>no-op success</strong> (exits 0, “nothing to do”) on Empty and ClusterOnly workspaces — there’s no trial state to destroy, so it leaves the cluster alone and returns cleanly. This lets a tool like bnk-forge call <code>bnk down</code> unconditionally in a reverse-order teardown without a missing-trial error blocking the cluster destroy. It still <strong>refuses</strong> on LegacySingle workspaces, where trial-only isolation isn’t possible (use <code>roksbnkctl down</code> there). See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
 <h3 id="roksbnkctl-cluster-down--destroy-the-cluster-phase"><a class="header" href="#roksbnkctl-cluster-down--destroy-the-cluster-phase"><code>roksbnkctl cluster down</code> — destroy the cluster phase</a></h3>
 <p>Tears down the cluster + cluster-shared services: the ROKS cluster, transit gateway, registry COS instance, cert-manager Helm release, and the TGW jumphost.</p>
 <pre><code class="language-bash">roksbnkctl cluster down
@@ -3008,7 +3008,9 @@ roksbnkctl up --auto           # rebuild clean
 </thead>
 <tbody>
 <tr><td><code>bnk down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; </code>bnk down<code>can't isolate the trial phase. Use</code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>; the legacy state has the trial and cluster in one file, so a trial-only destroy isn’t possible. See <a href="#legacy-single-state-workspaces">Chapter 8 §“Legacy single-state workspaces”</a>.</td></tr>
-<tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><code>no BNK trial state to destroy in this workspace</code></td><td>Nothing to do — no trial is deployed. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
+<tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No BNK trial state to destroy in this workspace — nothing to do.</code></td><td>No-op success — no trial is deployed, so the command returns cleanly and leaves the cluster alone. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
+<tr><td><code>testing down</code> with <strong>no jumphosts</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No testing jumphost state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the testing phase is optional, so <code>down</code> returns cleanly when nothing was provisioned.</td></tr>
+<tr><td><code>gateway down</code> with <strong>no gateway state</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No gateway phase state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the gateway phase is opt-in, so <code>down</code> returns cleanly when it was never applied.</td></tr>
 <tr><td><code>cluster down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; cluster and BNK trial share one state. Use </code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>
@@ -7743,6 +7745,17 @@ same marshaller every other roksbnkctl command uses — no hand-edit):</p>
 <p>The block is additive — an absent <code>bnkforge:</code> block (any existing <code>config.yaml</code>)
 loads unchanged.</p>
 <h2 id="what-happens-on-cluster-up"><a class="header" href="#what-happens-on-cluster-up">What happens on <code>cluster up</code></a></h2>
+<blockquote>
+<p><strong>Token kubeconfig for module-based registration.</strong> Independently of the
+credential-backed CLI flow below, every <code>cluster up</code> also writes a portable,
+<strong>token-based</strong> kubeconfig to <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code> (one
+cluster entry with the public server + embedded CA, one <code>token</code> user — no
+client cert/key). A BNK Forge that registers from a declared kubeconfig file
+can point at this path; roksbnkctl keeps the embedded IAM token fresh
+automatically (see <a href="#roksbnkctl-kubeconfig"><code>kubeconfig --refresh</code></a>), and Forge re-mints it from the project credential template. This is
+separate from, and complementary to, the credential-backed <code>bnkforge register</code>
+flow documented below.</p>
+</blockquote>
 <p>When <code>register: true</code>, <code>roksbnkctl</code> runs a post-apply hook right after it fetches
 the admin kubeconfig (the same spot whether the apply made changes or was a
 no-op). The hook is exactly what <code>bnkforge register</code> runs, with errors swallowed.
@@ -7799,7 +7812,7 @@ from the recorded identity:</p>
   --name acme-eu-roks \
   --cluster-id cre6h4l20jjsg4kvt3a0 \
   --region eu-de \
-  --provider ibm_roks \
+  --provider IBM \
   --ibmcloud-api-key "$IBMCLOUD_API_KEY"
 </code></pre>
 <p>Preview the exact request without sending it:</p>
@@ -7817,7 +7830,7 @@ from the recorded identity:</p>
 <tr><td><code>--name</code></td><td>yes</td><td>The cluster name as it appears in BNK Forge.</td></tr>
 <tr><td><code>--cluster-id</code></td><td>yes</td><td>The provider cluster id (the ROKS cluster id).</td></tr>
 <tr><td><code>--region</code></td><td>yes</td><td>The cloud region (e.g. <code>eu-de</code>).</td></tr>
-<tr><td><code>--provider</code></td><td>no</td><td>Platform-profile hint. Default <code>ibm_roks</code>.</td></tr>
+<tr><td><code>--provider</code></td><td>no</td><td>Cloud provider. roksbnkctl passes <code>IBM</code>.</td></tr>
 <tr><td><code>--project</code></td><td>no</td><td>Target Forge project id. Else active / sole / prompt.</td></tr>
 <tr><td><code>--ibmcloud-api-key</code></td><td>no</td><td>IBM Cloud API key for the credential template (or set <code>IBMCLOUD_API_KEY</code>).</td></tr>
 <tr><td><code>--resource-group</code></td><td>no</td><td>IBM Cloud resource group for a newly-created template. Default <code>default</code>.</td></tr>
@@ -7831,7 +7844,7 @@ from the recorded identity:</p>
 </tbody>
 </table>
 </div>
-<p>roksbnkctl’s wrapper supplies <code>--name</code>, <code>--cluster-id</code>, <code>--region</code>, <code>--provider ibm_roks</code>, and — when set — <code>--project</code> and <code>--url</code>, plus the resolved
+<p>roksbnkctl’s wrapper supplies <code>--name</code>, <code>--cluster-id</code>, <code>--region</code>, <code>--provider IBM</code>, and — when set — <code>--project</code> and <code>--url</code>, plus the resolved
 <code>IBMCLOUD_API_KEY</code> in the environment.</p>
 <h2 id="behaviour-notes"><a class="header" href="#behaviour-notes">Behaviour notes</a></h2>
 <ul>
@@ -8132,6 +8145,9 @@ roksbnkctl logs flo
 <h3 id="symptom-error-inappropriate-value-for-attribute-kubeconfig_dir-directory-does-not-exist"><a class="header" href="#symptom-error-inappropriate-value-for-attribute-kubeconfig_dir-directory-does-not-exist">Symptom: <code>Error: Inappropriate value for attribute "kubeconfig_dir": directory does not exist</code></a></h3>
 <p><strong>Root cause</strong>: the upstream HCL’s IBM provider doesn’t <code>MkdirAll</code> for the kubeconfig output directory; it expects the parent dir to exist already. The variable’s default (<code>/work/.bnk/scratch/kubeconfig</code>) is the in-container path; on a direct-on-host run it’s a path that doesn’t exist.</p>
 <p><strong>Fix</strong>: <code>roksbnkctl</code> writes a workspace-scoped override (<code>kubeconfig_dir = ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code>) and creates the dir at apply time. If you’re hand-rolling terraform without <code>roksbnkctl up</code>, <code>mkdir -p ~/.roksbnkctl/&lt;ws&gt;/state/kubeconfig</code> first.</p>
+<h3 id="symptom-cert-manager-or-another-chart-fails-with-could-not-download-chart--open-homecachehelmrepositoryhash-indexyaml-no-such-file-or-directory"><a class="header" href="#symptom-cert-manager-or-another-chart-fails-with-could-not-download-chart--open-homecachehelmrepositoryhash-indexyaml-no-such-file-or-directory">Symptom: cert-manager (or another chart) fails with <code>could not download chart: ... open &lt;HOME&gt;/.cache/helm/repository/&lt;hash&gt;-index.yaml: no such file or directory</code></a></h3>
+<p><strong>Root cause</strong>: a <code>helm_release</code> whose <code>repository</code> is a bare chart-repo URL (cert-manager off <code>https://charts.jetstack.io</code>) resolves through Helm’s anonymous-repo path, which downloads the repo index into <code>helmpath.CachePath("repository")</code> — i.e. <code>$HELM_CACHE_HOME/repository</code>, defaulting to <code>$HOME/.cache/helm/repository</code>. Crucially, that path is governed by <strong><code>HELM_CACHE_HOME</code></strong>, <em>not</em> <code>HELM_REPOSITORY_CACHE</code> (which only covers the named-repo / <code>helm repo</code> CLI path). In a runner whose <code>$HOME</code> resolves to an empty or non-writable path — how the bnk-forge tools-runner image launches the phases — that directory can’t be created, so the download fails even though <code>charts.jetstack.io</code> is perfectly reachable (the index downloads on the fly once the dir is writable — no pre-<code>helm repo add</code> is needed). The sibling symptom is a non-fatal <code>warning: creating &lt;HOME&gt;/.kube: mkdir &lt;HOME&gt;: permission denied</code> from the post-apply admin-kubeconfig fetch.</p>
+<p><strong>Fix</strong>: <code>roksbnkctl</code> exports writable, <code>$ROKSBNKCTL_HOME</code>-relative Helm homes before invoking terraform/helm — <code>HELM_CACHE_HOME</code>, <code>HELM_CONFIG_HOME</code>, <code>HELM_DATA_HOME</code> (plus <code>HELM_REPOSITORY_CACHE</code> / <code>HELM_REPOSITORY_CONFIG</code> / <code>HELM_REGISTRY_CONFIG</code>) under <code>$ROKSBNKCTL_HOME/.helm/</code>, and <code>KUBECONFIG</code> at <code>$ROKSBNKCTL_HOME/.kube/config</code> when <code>$HOME/.kube</code> isn’t writable — and pre-creates those dirs (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/tf/terraform.go"><code>prepareToolEnv</code> in <code>internal/tf/terraform.go</code></a>). The terraform helm provider runs as a plugin subprocess that inherits this env, so the redirect reaches the chart download. <code>$ROKSBNKCTL_HOME</code> is the persisted workspace tree (<code>/work/.roksbnkctl</code> under bnk-forge), so the cache is writable and survives across the phased invocations. Each var is set only when unset, so you can still point the cache at an air-gap mirror by exporting your own value. Set <code>ROKSBNKCTL_DEBUG=1</code> to log the resolved <code>HELM_CACHE_HOME</code> / <code>KUBECONFIG</code> before each phase’s terraform exec. No action needed on a normal host run — <code>$HOME</code> there is already writable.</p>
 <h3 id="symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes"><a class="header" href="#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes">Symptom: <code>terraform destroy</code> leaves orphan IBM Cloud resources (LBs, security groups, VPEs)</a></h3>
 <p><strong>Root cause</strong>: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster’s ID.</p>
 <p><strong>Fix</strong>: run <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a>. It sweeps the account for every resource named after the workspace prefix (<code>&lt;prefix&gt;-*</code>) — VPC instances/subnets/security-groups/floating-IPs/public-gateways/VPCs, the Transit Gateway, registry COS, the cluster, and the BNK trusted profile — and deletes them in dependency order. Preview first with <code>roksbnkctl cleanup --dry-run</code>; add <code>--all-regions</code> if resources landed in a region not recorded in <code>config.yaml</code>. (For one-off resource types not covered by the prefix sweep, <code>roksbnkctl ibmcloud is load-balancers | grep &lt;cluster-name&gt;</code> + <code>ibmcloud is load-balancer-delete &lt;id&gt;</code> still works as a manual fallback.)</p>
@@ -8308,6 +8324,22 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-apikey"><a class="header" href="#roksbnkctl-apikey"><code>roksbnkctl apikey</code></a></h2>
+<p>Print the workspace’s resolved IBM Cloud API key to stdout (a secret)</p>
+<p>Resolve the workspace’s IBM Cloud API key via the standard chain and print it
+to stdout — the scripting seam for driving the ibmcloud CLI off a workspace:</p>
+<p>ibmcloud login –apikey “$(roksbnkctl -w <code>&lt;ws&gt;</code> apikey)”</p>
+<p>Resolution order (the same roksbnkctl itself uses):</p>
+<ol>
+<li>environment — IBMCLOUD_API_KEY / IC_API_KEY / TF_VAR_* (including any
+loaded from $PWD/.env, which roksbnkctl reads at startup)</li>
+<li>OS keychain  (service “roksbnkctl”, account “<code>&lt;workspace&gt;</code>/ibmcloud_api_key”)</li>
+<li>workspace config.yaml — ibmcloud.api_key_b64 (base64-decoded)</li>
+</ol>
+<p>Non-interactive: it never prompts — if no key is found it exits non-zero with an
+actionable error.</p>
+<p>WARNING: this writes the credential to stdout. Pipe or redirect it; never echo it
+into logs or CI output.</p>
 <h2 id="roksbnkctl-apply"><a class="header" href="#roksbnkctl-apply"><code>roksbnkctl apply</code></a></h2>
 <p>Apply Terraform without re-prompting (assumes config.yaml exists)</p>
 <pre><code>roksbnkctl apply [flags]
@@ -8362,8 +8394,9 @@ roksbnkctl bnk down  Destroy the BNK trial, leaving the cluster in place</p>
 intact for the next <code>bnk up</code> to attach to. The common iteration loop:</p>
 <p>roksbnkctl bnk down &amp;&amp; roksbnkctl bnk up   # ~5 min trial reset
 roksbnkctl down                            # full teardown, ~30 min</p>
-<p>Refuses when there’s no trial state to destroy, and on legacy
-single-state workspaces (use <code>roksbnkctl down</code> there).</p>
+<p>Exits 0 (“nothing to do”) when there’s no trial state (cluster-only or
+empty), so it’s safe in a reverse-order teardown of every phase. Refuses
+on legacy single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -8878,7 +8911,8 @@ this phase — it is opt-in.</p>
 </code></pre>
 <p>Destroys only the Gateway-phase resources (state-gateway/), leaving the
 cluster, BNK and testing phases intact.</p>
-<p>Refuses when there’s no gateway state to destroy.</p>
+<p>Exits 0 (“nothing to do”) when there’s no gateway state, so it’s safe in a
+reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -9274,9 +9308,11 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 <tr><td><code>--cluster</code></td><td><code>string</code></td><td>—</td><td>cluster name or ID for –download (default: workspace cluster.name)</td></tr>
 <tr><td><code>--download</code></td><td><code>bool</code></td><td><code>false</code></td><td>fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config</td></tr>
 <tr><td><code>--export</code></td><td><code>bool</code></td><td><code>false</code></td><td>print kubeconfig contents instead of path</td></tr>
+<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the token-based kubeconfig now (re-mint the IAM token)</td></tr>
 </tbody>
 </table>
 </div>
+<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>token-based kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it’s a no-op local check. <code>--refresh</code> forces the re-mint now — useful in CI/scripting. If there’s no token kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin cert-based config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]
@@ -9977,7 +10013,8 @@ provision nothing.</p>
 </code></pre>
 <p>Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
-each phase tears down independently. Refuses when there’s no testing state.</p>
+each phase tears down independently. Exits 0 (“nothing to do”) when there’s
+no testing state, so it’s safe in a reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>

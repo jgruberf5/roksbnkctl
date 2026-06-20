@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
+            window.path_to_searchindex_js = "searchindex-582db346.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4d89dd13.js"></script>
@@ -242,7 +242,7 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 <li>The workspace’s <code>config.yaml</code></li>
 </ul>
 <p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>bnk down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
-<p><code>bnk down</code> <strong>refuses</strong> on Empty, ClusterOnly, and LegacySingle workspaces — there’s nothing to destroy on the first two, and the trial-only isolation isn’t possible on the third. See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
+<p><code>bnk down</code> is a <strong>no-op success</strong> (exits 0, “nothing to do”) on Empty and ClusterOnly workspaces — there’s no trial state to destroy, so it leaves the cluster alone and returns cleanly. This lets a tool like bnk-forge call <code>bnk down</code> unconditionally in a reverse-order teardown without a missing-trial error blocking the cluster destroy. It still <strong>refuses</strong> on LegacySingle workspaces, where trial-only isolation isn’t possible (use <code>roksbnkctl down</code> there). See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
 <h3 id="roksbnkctl-cluster-down--destroy-the-cluster-phase"><a class="header" href="#roksbnkctl-cluster-down--destroy-the-cluster-phase"><code>roksbnkctl cluster down</code> — destroy the cluster phase</a></h3>
 <p>Tears down the cluster + cluster-shared services: the ROKS cluster, transit gateway, registry COS instance, cert-manager Helm release, and the TGW jumphost.</p>
 <pre><code class="language-bash">roksbnkctl cluster down
@@ -331,7 +331,9 @@ roksbnkctl up --auto           # rebuild clean
 </thead>
 <tbody>
 <tr><td><code>bnk down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; </code>bnk down<code>can't isolate the trial phase. Use</code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>; the legacy state has the trial and cluster in one file, so a trial-only destroy isn’t possible. See <a href="./08-cluster-phase.html#legacy-single-state-workspaces">Chapter 8 §“Legacy single-state workspaces”</a>.</td></tr>
-<tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><code>no BNK trial state to destroy in this workspace</code></td><td>Nothing to do — no trial is deployed. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
+<tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No BNK trial state to destroy in this workspace — nothing to do.</code></td><td>No-op success — no trial is deployed, so the command returns cleanly and leaves the cluster alone. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
+<tr><td><code>testing down</code> with <strong>no jumphosts</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No testing jumphost state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the testing phase is optional, so <code>down</code> returns cleanly when nothing was provisioned.</td></tr>
+<tr><td><code>gateway down</code> with <strong>no gateway state</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No gateway phase state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the gateway phase is opt-in, so <code>down</code> returns cleanly when it was never applied.</td></tr>
 <tr><td><code>cluster down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; cluster and BNK trial share one state. Use </code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>

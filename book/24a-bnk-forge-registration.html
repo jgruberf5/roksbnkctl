@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cddd4a4c.js";
+            window.path_to_searchindex_js = "searchindex-582db346.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4d89dd13.js"></script>
@@ -273,6 +273,17 @@ same marshaller every other roksbnkctl command uses — no hand-edit):</p>
 <p>The block is additive — an absent <code>bnkforge:</code> block (any existing <code>config.yaml</code>)
 loads unchanged.</p>
 <h2 id="what-happens-on-cluster-up"><a class="header" href="#what-happens-on-cluster-up">What happens on <code>cluster up</code></a></h2>
+<blockquote>
+<p><strong>Token kubeconfig for module-based registration.</strong> Independently of the
+credential-backed CLI flow below, every <code>cluster up</code> also writes a portable,
+<strong>token-based</strong> kubeconfig to <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code> (one
+cluster entry with the public server + embedded CA, one <code>token</code> user — no
+client cert/key). A BNK Forge that registers from a declared kubeconfig file
+can point at this path; roksbnkctl keeps the embedded IAM token fresh
+automatically (see <a href="./27-command-reference.html#roksbnkctl-kubeconfig"><code>kubeconfig --refresh</code></a>), and Forge re-mints it from the project credential template. This is
+separate from, and complementary to, the credential-backed <code>bnkforge register</code>
+flow documented below.</p>
+</blockquote>
 <p>When <code>register: true</code>, <code>roksbnkctl</code> runs a post-apply hook right after it fetches
 the admin kubeconfig (the same spot whether the apply made changes or was a
 no-op). The hook is exactly what <code>bnkforge register</code> runs, with errors swallowed.
@@ -329,7 +340,7 @@ from the recorded identity:</p>
   --name acme-eu-roks \
   --cluster-id cre6h4l20jjsg4kvt3a0 \
   --region eu-de \
-  --provider ibm_roks \
+  --provider IBM \
   --ibmcloud-api-key "$IBMCLOUD_API_KEY"
 </code></pre>
 <p>Preview the exact request without sending it:</p>
@@ -347,7 +358,7 @@ from the recorded identity:</p>
 <tr><td><code>--name</code></td><td>yes</td><td>The cluster name as it appears in BNK Forge.</td></tr>
 <tr><td><code>--cluster-id</code></td><td>yes</td><td>The provider cluster id (the ROKS cluster id).</td></tr>
 <tr><td><code>--region</code></td><td>yes</td><td>The cloud region (e.g. <code>eu-de</code>).</td></tr>
-<tr><td><code>--provider</code></td><td>no</td><td>Platform-profile hint. Default <code>ibm_roks</code>.</td></tr>
+<tr><td><code>--provider</code></td><td>no</td><td>Cloud provider. roksbnkctl passes <code>IBM</code>.</td></tr>
 <tr><td><code>--project</code></td><td>no</td><td>Target Forge project id. Else active / sole / prompt.</td></tr>
 <tr><td><code>--ibmcloud-api-key</code></td><td>no</td><td>IBM Cloud API key for the credential template (or set <code>IBMCLOUD_API_KEY</code>).</td></tr>
 <tr><td><code>--resource-group</code></td><td>no</td><td>IBM Cloud resource group for a newly-created template. Default <code>default</code>.</td></tr>
@@ -361,7 +372,7 @@ from the recorded identity:</p>
 </tbody>
 </table>
 </div>
-<p>roksbnkctl’s wrapper supplies <code>--name</code>, <code>--cluster-id</code>, <code>--region</code>, <code>--provider ibm_roks</code>, and — when set — <code>--project</code> and <code>--url</code>, plus the resolved
+<p>roksbnkctl’s wrapper supplies <code>--name</code>, <code>--cluster-id</code>, <code>--region</code>, <code>--provider IBM</code>, and — when set — <code>--project</code> and <code>--url</code>, plus the resolved
 <code>IBMCLOUD_API_KEY</code> in the environment.</p>
 <h2 id="behaviour-notes"><a class="header" href="#behaviour-notes">Behaviour notes</a></h2>
 <ul>
