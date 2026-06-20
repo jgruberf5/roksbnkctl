@@ -28,6 +28,7 @@ type Workspace struct {
 	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
 	State    StateCfg             `yaml:"state,omitempty"`
 	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
+	Agent    *AgentCfg            `yaml:"agent,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base
 	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
@@ -76,6 +77,20 @@ type BNKForgeCfg struct {
 	// Project is the target BNK Forge project id to register the cluster
 	// under. Empty = let the CLI pick the active/sole project (or prompt).
 	Project string `yaml:"project,omitempty"`
+}
+
+// AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is
+// purely advisory metadata for launching an external coding-agent CLI against
+// the workspace's scaffolded AGENTS.md + personas/ — roksbnkctl embeds no LLM.
+// nil/absent = `agent` defaults to claude and the CLI's own endpoint config.
+type AgentCfg struct {
+	// Default is the agentic CLI `roksbnkctl agent` (no arg) reports as this
+	// workspace's default — claude | gemini | aider | openai | pi | opencode.
+	Default string `yaml:"default,omitempty"`
+	// LLMEndpoint is an optional OpenAI-/Anthropic-compatible base URL woven
+	// into the printed invocation (cloud vendor, local vLLM, etc.). Empty =
+	// rely on the CLI's own environment/config.
+	LLMEndpoint string `yaml:"llm_endpoint,omitempty"`
 }
 
 // ExecToolCfg is one entry under workspace.Exec — the chosen backend

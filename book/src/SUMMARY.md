@@ -68,3 +68,7 @@
 
 - [Building from source](./31-building-from-source.md)
 - [Extending roksbnkctl](./32-extending-roksbnkctl.md)
+
+# Part X — Agentic mode
+
+- [Agentic mode](./33-agentic-mode.md)

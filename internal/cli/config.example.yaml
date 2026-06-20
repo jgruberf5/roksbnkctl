@@ -83,3 +83,11 @@ state:
   #   bucket: my-tfstate-bucket
   #   region: eu-de
   #   # HMAC keys come from env: ROKSBNKCTL_COS_HMAC_ACCESS_KEY / _SECRET_KEY
+
+# ---- Agentic mode (optional; see the Agentic mode chapter) ------------------
+# Drive this workspace with an AI coding agent under role-scoped personas.
+# `roksbnkctl agent init` scaffolds AGENTS.md + personas/ here; `roksbnkctl
+# agent <cli>` prints the launch invocation. roksbnkctl embeds no LLM.
+# agent:
+#   default: claude                           # claude | gemini | aider | openai | pi | opencode
+#   llm_endpoint: ""                          # OpenAI-/Anthropic-compatible base URL; blank = the CLI's own config
