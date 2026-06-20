@@ -24,7 +24,7 @@ State `roksbnkctl` manages for you (read, don't hand-edit):
 ```
 state-cluster/  state/  state-testing/  state-gateway/   per-phase terraform state
 cluster-outputs.json                                     persisted cluster identity
-forge/kubeconfig.yaml                                    token-based kubeconfig (auto-refreshed)
+forge/kubeconfig.yaml                                    cert-based kubeconfig (auto-refreshed)
 terraform.applied.tfvars                                 snapshot of the last apply's inputs
 ```
 
@@ -83,9 +83,12 @@ operator/customer consent.
 - `config.yaml` holds *references and sources*, not secret values. Don't paste
   keys, JWTs, or kubeconfig tokens into `config.yaml`, `decisions.md`, the
   journal, or the report.
-- The token in `forge/kubeconfig.yaml` is a short-lived IAM bearer token by
-  design — `roksbnkctl kubeconfig --refresh` (and BNK Forge) re-mint it. Don't
-  try to make it long-lived, and don't copy it into deliverables.
+- `forge/kubeconfig.yaml` is **cert-based**: it carries the cluster's admin
+  client certificate/key. ROKS is OpenShift — its API server rejects raw IBM IAM
+  bearer tokens (401), so the forge kubeconfig authenticates by client cert, not
+  a token. `roksbnkctl kubeconfig --refresh` (and BNK Forge) keep it current by
+  re-fetching the admin kubeconfig as the certs near expiry. Treat it as
+  secret-tier; don't copy it into deliverables.
 
 ---
 
@@ -97,7 +100,7 @@ operator/customer consent.
   `could not download chart: ... <HOME>/.cache/helm/...index.yaml: no such file`,
   you're on a build that predates that fix — upgrade the runner image.
 - **IBM ROKS masters use a publicly-trusted cert** → the admin kubeconfig has no
-  `certificate-authority-data`, and that's normal. The token kubeconfig at
+  `certificate-authority-data`, and that's normal. The forge kubeconfig at
   `forge/kubeconfig.yaml` omits the CA field; system trust validates the server.
 - **`cluster up` timeout while waiting for state `normal`** → usually IBM's
   control plane lagging; `up` retries, and re-running is safe (terraform state

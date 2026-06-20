@@ -104,15 +104,17 @@ loads unchanged.
 
 ## What happens on `cluster up`
 
-> **Token kubeconfig for module-based registration.** Independently of the
+> **Forge kubeconfig for module-based registration.** Independently of the
 > credential-backed CLI flow below, every `cluster up` also writes a portable,
-> **token-based** kubeconfig to `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml` (one
-> cluster entry with the public server + embedded CA, one `token` user — no
-> client cert/key). A BNK Forge that registers from a declared kubeconfig file
-> can point at this path; roksbnkctl keeps the embedded IAM token fresh
-> automatically (see [`kubeconfig --refresh`](./27-command-reference.md#roksbnkctl-kubeconfig)), and Forge re-mints it from the project credential template. This is
-> separate from, and complementary to, the credential-backed `bnkforge register`
-> flow documented below.
+> self-contained **cert-based** kubeconfig to `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`
+> (one cluster entry with the public server + CA-if-any, and the cluster's admin
+> client certificate/key). ROKS is OpenShift: its API server authenticates via
+> client certs or OAuth tokens and **rejects raw IBM IAM bearer tokens (401)**, so
+> the forge kubeconfig carries the admin client cert rather than a token. A BNK
+> Forge that registers from a declared kubeconfig file can point at this path;
+> roksbnkctl keeps it current automatically by re-fetching the admin kubeconfig as
+> the certs near expiry (see [`kubeconfig --refresh`](./27-command-reference.md#roksbnkctl-kubeconfig)). This is separate from, and complementary to, the
+> credential-backed `bnkforge register` flow documented below.
 
 When `register: true`, `roksbnkctl` runs a post-apply hook right after it fetches
 the admin kubeconfig (the same spot whether the apply made changes or was a

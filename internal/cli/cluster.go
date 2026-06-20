@@ -89,7 +89,7 @@ func init() {
 	kubeconfigCmd.Flags().BoolVar(&flagExportKubeconfig, "export", false, "print kubeconfig contents instead of path")
 	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigDownload, "download", false, "fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config")
 	kubeconfigCmd.Flags().StringVar(&flagKubeconfigCluster, "cluster", "", "cluster name or ID for --download (default: workspace cluster.name)")
-	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigRefresh, "refresh", false, "force-refresh the token-based kubeconfig now (re-mint the IAM token)")
+	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigRefresh, "refresh", false, "force-refresh the forge kubeconfig now (re-fetch the admin client certs)")
 	rootCmd.AddCommand(shellCmd, execCmd, kubeconfigCmd, kubectlCmd, ocCmd, ibmcloudCmd, terraformCmd)
 }
 

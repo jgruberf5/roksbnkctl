@@ -90,8 +90,9 @@ them:
   `--auto` to `cluster up`/`cleanup` without journaled consent.
 - Secret-tier commands (`roksbnkctl apikey`) and reading key/JWT/token material
   are off-limits to every persona except where a role genuinely needs it.
-- The token in `forge/kubeconfig.yaml` is short-lived by design and must not be
-  copied into deliverables.
+- `forge/kubeconfig.yaml` carries the cluster's admin client certificate/key
+  (ROKS/OpenShift rejects raw IAM tokens) — treat it as secret-tier and never
+  copy it into deliverables.
 
 See the scaffolded `AGENTS.md` for the full operator reference (the phased
 lifecycle, the destructive-command gate contract, and the field-tested

@@ -1178,9 +1178,9 @@ roksbnkctl kubeconfig [flags]
 | `--cluster` | `string` | — | cluster name or ID for --download (default: workspace cluster.name) |
 | `--download` | `bool` | `false` | fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config |
 | `--export` | `bool` | `false` | print kubeconfig contents instead of path |
-| `--refresh` | `bool` | `false` | force-refresh the token-based kubeconfig now (re-mint the IAM token) |
+| `--refresh` | `bool` | `false` | force-refresh the forge kubeconfig now (re-fetch the admin client certs) |
 
-By default `kubeconfig` (and the `kubectl` / `oc` / `shell` passthroughs) prefer the **token-based kubeconfig** at `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`, which `cluster up` writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it's a no-op local check. `--refresh` forces the re-mint now — useful in CI/scripting. If there's no token kubeconfig (or it can't be refreshed offline), the commands fall back to the admin cert-based config at `~/.kube/config`.
+By default `kubeconfig` (and the `kubectl` / `oc` / `shell` passthroughs) prefer the **cert-based forge kubeconfig** at `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`, which `cluster up` writes alongside the admin config. It carries the cluster's admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and **rejects raw IBM IAM bearer tokens (401)**, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it's a no-op local check. `--refresh` forces the re-fetch now — useful in CI/scripting. If there's no forge kubeconfig (or it can't be refreshed offline), the commands fall back to the admin config at `~/.kube/config`.
 
 ## `roksbnkctl kubectl`
 
