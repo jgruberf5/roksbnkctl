@@ -8,19 +8,20 @@ import (
 )
 
 // BuildTokenKubeconfig produces a portable, token-based kubeconfig from an
-// admin (cert-based) kubeconfig. It keeps the cluster's public `server` URL
-// and embedded `certificate-authority-data`, and replaces the user with a
-// single token user named userName carrying the supplied IAM bearer token.
+// admin (cert-based) kubeconfig. It keeps the cluster's public `server` URL,
+// carries through `certificate-authority-data` IF the source has one, and
+// replaces the user with a single token user named userName carrying the
+// supplied IAM bearer token.
 //
 // The result is fully self-contained: NO file references, NO client
 // certificate/key. This is the form BNK Forge registers from and refreshes
 // (it re-mints the token from the project credential template), and the one
 // ensureFreshKubeconfig refreshes locally.
 //
-// adminKubeconfig must already embed certificate-authority-data (the IBM
-// admin fetch inlines it — see ibm.buildSelfContainedKubeconfig); a cluster
-// with only a CA file ref is rejected, since the output would not be
-// portable.
+// certificate-authority-data is OPTIONAL: IBM ROKS masters present a
+// publicly-trusted TLS cert, so a ROKS admin kubeconfig legitimately has no
+// CA and none is needed (system trust validates the server). In that case
+// the CA field is omitted entirely. Only `server` is strictly required.
 func BuildTokenKubeconfig(adminKubeconfig []byte, token, userName string) ([]byte, error) {
 	if token == "" {
 		return nil, errors.New("token is empty")
@@ -50,10 +51,14 @@ func BuildTokenKubeconfig(adminKubeconfig []byte, token, userName string) ([]byt
 	if server == "" {
 		return nil, errors.New("cluster has no server URL")
 	}
+	// certificate-authority-data is OPTIONAL. IBM ROKS master endpoints
+	// (*.containers.cloud.ibm.com) present a publicly-trusted TLS cert, so
+	// the admin kubeconfig legitimately carries NO certificate-authority-data
+	// — system trust validates the server. Carry the CA through when the
+	// source has one (private/self-signed clusters); omit the field entirely
+	// when it doesn't (never emit an empty value, which kubectl would treat
+	// as an empty CA bundle and reject).
 	caData, _ := inner["certificate-authority-data"].(string)
-	if caData == "" {
-		return nil, errors.New("cluster has no certificate-authority-data (admin kubeconfig is not self-contained)")
-	}
 
 	if userName == "" {
 		userName = clusterName + "-token"
@@ -64,16 +69,17 @@ func BuildTokenKubeconfig(adminKubeconfig []byte, token, userName string) ([]byt
 		ns = "default"
 	}
 
+	clusterBlock := map[string]any{"server": server}
+	if caData != "" {
+		clusterBlock["certificate-authority-data"] = caData
+	}
 	out := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Config",
 		"clusters": []any{
 			map[string]any{
-				"name": clusterName,
-				"cluster": map[string]any{
-					"server":                     server,
-					"certificate-authority-data": caData,
-				},
+				"name":    clusterName,
+				"cluster": clusterBlock,
 			},
 		},
 		"contexts": []any{

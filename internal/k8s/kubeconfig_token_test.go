@@ -83,18 +83,50 @@ func TestBuildTokenKubeconfig(t *testing.T) {
 	}
 }
 
-func TestBuildTokenKubeconfig_RejectsMissingCAData(t *testing.T) {
-	noCA := `apiVersion: v1
+// TestBuildTokenKubeconfig_NoCA_ROKS — IBM ROKS masters present a
+// publicly-trusted TLS cert, so the admin kubeconfig has no
+// certificate-authority-data. The builder must succeed and OMIT the CA
+// field entirely (not emit an empty one); system trust validates the server.
+func TestBuildTokenKubeconfig_NoCA_ROKS(t *testing.T) {
+	roks := `apiVersion: v1
 kind: Config
 clusters:
-- name: c
+- name: roks/cre1
   cluster:
-    server: https://x:1
-    certificate-authority: ca.pem
-users: []
+    server: https://c1.containers.cloud.ibm.com:31234
+contexts:
+- name: roks/cre1-ctx
+  context: {cluster: roks/cre1, user: admin, namespace: default}
+current-context: roks/cre1-ctx
+users:
+- name: admin
+  user: {client-certificate-data: Q0VSVA==, client-key-data: S0VZ}
 `
-	if _, err := BuildTokenKubeconfig([]byte(noCA), "t", "c-token"); err == nil {
-		t.Fatal("expected error when CA is a file ref (not self-contained), got nil")
+	out, err := BuildTokenKubeconfig([]byte(roks), "tok", "roks-token")
+	if err != nil {
+		t.Fatalf("ROKS (no CA) must produce a kubeconfig, got error: %v", err)
+	}
+	s := string(out)
+	// The CA field must be ABSENT entirely — not an empty value (which
+	// kubectl treats as an empty CA bundle and rejects).
+	if strings.Contains(s, "certificate-authority") {
+		t.Errorf("forge kubeconfig must omit the CA field when the source has none:\n%s", s)
+	}
+
+	var doc map[string]any
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	cl := doc["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any)
+	if cl["server"] != "https://c1.containers.cloud.ibm.com:31234" {
+		t.Errorf("server = %v, want the public master URL", cl["server"])
+	}
+	if _, ok := cl["certificate-authority-data"]; ok {
+		t.Error("certificate-authority-data must be absent for the ROKS no-CA case")
+	}
+	uu := doc["users"].([]any)[0].(map[string]any)["user"].(map[string]any)
+	if uu["token"] != "tok" {
+		t.Errorf("user.token = %v, want tok", uu["token"])
 	}
 }
 
