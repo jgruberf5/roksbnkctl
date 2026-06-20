@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-336abc9f.js";
+            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-56c26472.js"></script>
@@ -1192,11 +1192,11 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 <tr><td><code>--cluster</code></td><td><code>string</code></td><td>—</td><td>cluster name or ID for –download (default: workspace cluster.name)</td></tr>
 <tr><td><code>--download</code></td><td><code>bool</code></td><td><code>false</code></td><td>fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config</td></tr>
 <tr><td><code>--export</code></td><td><code>bool</code></td><td><code>false</code></td><td>print kubeconfig contents instead of path</td></tr>
-<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the token-based kubeconfig now (re-mint the IAM token)</td></tr>
+<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the forge kubeconfig now (re-fetch the admin client certs)</td></tr>
 </tbody>
 </table>
 </div>
-<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>token-based kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it’s a no-op local check. <code>--refresh</code> forces the re-mint now — useful in CI/scripting. If there’s no token kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin cert-based config at <code>~/.kube/config</code>.</p>
+<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>cert-based forge kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. It carries the cluster’s admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and <strong>rejects raw IBM IAM bearer tokens (401)</strong>, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it’s a no-op local check. <code>--refresh</code> forces the re-fetch now — useful in CI/scripting. If there’s no forge kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-336abc9f.js";
+            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-56c26472.js"></script>
@@ -7746,15 +7746,17 @@ same marshaller every other roksbnkctl command uses — no hand-edit):</p>
 loads unchanged.</p>
 <h2 id="what-happens-on-cluster-up"><a class="header" href="#what-happens-on-cluster-up">What happens on <code>cluster up</code></a></h2>
 <blockquote>
-<p><strong>Token kubeconfig for module-based registration.</strong> Independently of the
+<p><strong>Forge kubeconfig for module-based registration.</strong> Independently of the
 credential-backed CLI flow below, every <code>cluster up</code> also writes a portable,
-<strong>token-based</strong> kubeconfig to <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code> (one
-cluster entry with the public server + embedded CA, one <code>token</code> user — no
-client cert/key). A BNK Forge that registers from a declared kubeconfig file
-can point at this path; roksbnkctl keeps the embedded IAM token fresh
-automatically (see <a href="#roksbnkctl-kubeconfig"><code>kubeconfig --refresh</code></a>), and Forge re-mints it from the project credential template. This is
-separate from, and complementary to, the credential-backed <code>bnkforge register</code>
-flow documented below.</p>
+self-contained <strong>cert-based</strong> kubeconfig to <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>
+(one cluster entry with the public server + CA-if-any, and the cluster’s admin
+client certificate/key). ROKS is OpenShift: its API server authenticates via
+client certs or OAuth tokens and <strong>rejects raw IBM IAM bearer tokens (401)</strong>, so
+the forge kubeconfig carries the admin client cert rather than a token. A BNK
+Forge that registers from a declared kubeconfig file can point at this path;
+roksbnkctl keeps it current automatically by re-fetching the admin kubeconfig as
+the certs near expiry (see <a href="#roksbnkctl-kubeconfig"><code>kubeconfig --refresh</code></a>). This is separate from, and complementary to, the
+credential-backed <code>bnkforge register</code> flow documented below.</p>
 </blockquote>
 <p>When <code>register: true</code>, <code>roksbnkctl</code> runs a post-apply hook right after it fetches
 the admin kubeconfig (the same spot whether the apply made changes or was a
@@ -9308,11 +9310,11 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 <tr><td><code>--cluster</code></td><td><code>string</code></td><td>—</td><td>cluster name or ID for –download (default: workspace cluster.name)</td></tr>
 <tr><td><code>--download</code></td><td><code>bool</code></td><td><code>false</code></td><td>fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config</td></tr>
 <tr><td><code>--export</code></td><td><code>bool</code></td><td><code>false</code></td><td>print kubeconfig contents instead of path</td></tr>
-<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the token-based kubeconfig now (re-mint the IAM token)</td></tr>
+<tr><td><code>--refresh</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-refresh the forge kubeconfig now (re-fetch the admin client certs)</td></tr>
 </tbody>
 </table>
 </div>
-<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>token-based kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it’s a no-op local check. <code>--refresh</code> forces the re-mint now — useful in CI/scripting. If there’s no token kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin cert-based config at <code>~/.kube/config</code>.</p>
+<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>cert-based forge kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. It carries the cluster’s admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and <strong>rejects raw IBM IAM bearer tokens (401)</strong>, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it’s a no-op local check. <code>--refresh</code> forces the re-fetch now — useful in CI/scripting. If there’s no forge kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]
@@ -11573,8 +11575,9 @@ prompt unless <code>--auto</code> is passed — and the persona contracts forbid
 <code>--auto</code> to <code>cluster up</code>/<code>cleanup</code> without journaled consent.</li>
 <li>Secret-tier commands (<code>roksbnkctl apikey</code>) and reading key/JWT/token material
 are off-limits to every persona except where a role genuinely needs it.</li>
-<li>The token in <code>forge/kubeconfig.yaml</code> is short-lived by design and must not be
-copied into deliverables.</li>
+<li><code>forge/kubeconfig.yaml</code> carries the cluster’s admin client certificate/key
+(ROKS/OpenShift rejects raw IAM tokens) — treat it as secret-tier and never
+copy it into deliverables.</li>
 </ul>
 <p>See the scaffolded <code>AGENTS.md</code> for the full operator reference (the phased
 lifecycle, the destructive-command gate contract, and the field-tested

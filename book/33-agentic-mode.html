@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-336abc9f.js";
+            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-56c26472.js"></script>
@@ -251,8 +251,9 @@ prompt unless <code>--auto</code> is passed — and the persona contracts forbid
 <code>--auto</code> to <code>cluster up</code>/<code>cleanup</code> without journaled consent.</li>
 <li>Secret-tier commands (<code>roksbnkctl apikey</code>) and reading key/JWT/token material
 are off-limits to every persona except where a role genuinely needs it.</li>
-<li>The token in <code>forge/kubeconfig.yaml</code> is short-lived by design and must not be
-copied into deliverables.</li>
+<li><code>forge/kubeconfig.yaml</code> carries the cluster’s admin client certificate/key
+(ROKS/OpenShift rejects raw IAM tokens) — treat it as secret-tier and never
+copy it into deliverables.</li>
 </ul>
 <p>See the scaffolded <code>AGENTS.md</code> for the full operator reference (the phased
 lifecycle, the destructive-command gate contract, and the field-tested
