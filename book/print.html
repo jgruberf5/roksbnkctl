@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-582db346.js";
+            window.path_to_searchindex_js = "searchindex-336abc9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4d89dd13.js"></script>
+        <script src="toc-56c26472.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -11498,6 +11498,87 @@ DRY_RUN=1 ./scripts/e2e-test-backends.sh
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> — the per-sprint planning rhythm.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/prompts/README.md"><code>prompts/README.md</code></a> — the four-agent dispatch pattern.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="agentic-mode"><a class="header" href="#agentic-mode">Agentic mode</a></h1>
+<p>Agentic mode lets you drive a ROKS + BNK trial with an AI coding agent (Claude
+Code, Gemini CLI, aider, …) acting under <strong>role-scoped personas</strong>, while
+<code>roksbnkctl</code> stays a deterministic tool. The binary embeds <strong>no LLM</strong> — you
+bring your own agent CLI; <code>roksbnkctl</code> provides the shared knowledge base
+(<code>AGENTS.md</code>), the role contracts (<code>personas/</code>), and a coordination substrate
+(<code>journal/</code>, <code>decisions.md</code>) scaffolded into the workspace.</p>
+<p>It’s markdown plus a launcher. Nothing about agentic mode changes how the
+lifecycle commands behave.</p>
+<h2 id="quick-start-1"><a class="header" href="#quick-start-1">Quick start</a></h2>
+<pre><code class="language-bash">roksbnkctl -w acme agent init        # scaffold AGENTS.md + personas/ + journal/ into the workspace
+roksbnkctl -w acme agent             # list supported CLIs + the workspace default
+roksbnkctl -w acme agent claude      # print the invocation to launch Claude Code there
+</code></pre>
+<p><code>agent init</code> writes into the workspace dir (<code>~/.roksbnkctl/&lt;workspace&gt;/</code>,
+alongside <code>config.yaml</code>):</p>
+<pre><code>AGENTS.md            shared reference every persona reads first
+CLAUDE.md            one-line @AGENTS.md include for Claude Code
+personas/            the four role contracts
+decisions.md         decision-log seed
+journal/             append-only timeline (handoffs live here)
+</code></pre>
+<p>Re-running <code>agent init</code> never clobbers your edits — existing files are left
+as-is.</p>
+<h2 id="the-personas"><a class="header" href="#the-personas">The personas</a></h2>
+<p>Act as exactly <strong>one</strong> at a time. Each persona file defines an identity, ordered
+goals, a tool allowlist, what’s explicitly <em>not</em> allowed, a handoff protocol,
+and a phase checklist.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Persona</th><th>Role</th><th>Touches infra?</th><th>Talks to customer?</th></tr>
+</thead>
+<tbody>
+<tr><td><code>solution-architect</code></td><td>Owns scope (<code>config.yaml</code>) + <code>decisions.md</code>; drives the phases</td><td>No (delegates)</td><td><strong>Yes</strong> (the only one)</td></tr>
+<tr><td><code>cloud-operator</code></td><td>Runs the lifecycle (<code>cluster up</code>, <code>bnk up</code>, …), gates destructive steps</td><td><strong>Yes</strong></td><td>No</td></tr>
+<tr><td><code>test-engineer</code></td><td>Runs connectivity/DNS/throughput probes, records evidence</td><td>No (read + test)</td><td>No</td></tr>
+<tr><td><code>doc-specialist</code></td><td>Reads everything, writes <code>report.md</code></td><td>No</td><td>No</td></tr>
+</tbody>
+</table>
+</div>
+<p>The boundaries are enforced by convention (the allowlists in each persona
+file), not by code — so the personas work with any agent CLI.</p>
+<h2 id="how-they-coordinate"><a class="header" href="#how-they-coordinate">How they coordinate</a></h2>
+<p><code>config.yaml</code> is the contract (scope/source of truth). The personas hand off
+through the <strong>append-only</strong> journal:</p>
+<pre><code class="language-bash">roksbnkctl -w acme journal add "cloud-operator: cluster up complete, nodes Ready"
+roksbnkctl -w acme journal list      # chronological, with one-line summaries
+roksbnkctl -w acme journal report    # assemble report.md from decisions.md + the journal
+</code></pre>
+<p>Never edit another persona’s journal entry — append a follow-up instead. The
+solution-architect requests infra work by journaling a request (with the
+consent tier); the cloud-operator executes and journals the result; the
+doc-specialist turns the timeline into the customer-facing <code>report.md</code>.</p>
+<h2 id="choosing-the-cli--endpoint"><a class="header" href="#choosing-the-cli--endpoint">Choosing the CLI + endpoint</a></h2>
+<p><code>roksbnkctl agent &lt;cli&gt;</code> supports <code>claude</code>, <code>gemini</code>, <code>aider</code>, <code>openai</code>, <code>pi</code>,
+and <code>opencode</code>. Set the workspace default and an optional LLM endpoint in
+<code>config.yaml</code>:</p>
+<pre><code class="language-yaml">agent:
+  default: claude
+  llm_endpoint: ""   # OpenAI-/Anthropic-compatible base URL (cloud vendor or local vLLM); blank = the CLI's own config
+</code></pre>
+<p><code>roksbnkctl</code> only <em>prints</em> the invocation — it never starts the agent or sends
+anything to an LLM itself. You run the printed command; your CLI uses your
+credentials and endpoint.</p>
+<h2 id="safety-model"><a class="header" href="#safety-model">Safety model</a></h2>
+<p>The personas inherit <code>roksbnkctl</code>’s existing guard-rails rather than replacing
+them:</p>
+<ul>
+<li>Destructive commands (<code>cluster up</code>, <code>down</code>, <code>cluster down</code>, <code>cleanup</code>) still
+prompt unless <code>--auto</code> is passed — and the persona contracts forbid passing
+<code>--auto</code> to <code>cluster up</code>/<code>cleanup</code> without journaled consent.</li>
+<li>Secret-tier commands (<code>roksbnkctl apikey</code>) and reading key/JWT/token material
+are off-limits to every persona except where a role genuinely needs it.</li>
+<li>The token in <code>forge/kubeconfig.yaml</code> is short-lived by design and must not be
+copied into deliverables.</li>
+</ul>
+<p>See the scaffolded <code>AGENTS.md</code> for the full operator reference (the phased
+lifecycle, the destructive-command gate contract, and the field-tested
+gotchas).</p>
 
                     </main>
 
