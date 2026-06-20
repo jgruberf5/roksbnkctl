@@ -38,6 +38,21 @@ func BaseDir() (string, error) {
 	return filepath.Join(home, defaultBaseDirName), nil
 }
 
+// ForgeKubeconfigPath: ~/.roksbnkctl/forge/kubeconfig.yaml — the
+// token-based, fully self-contained kubeconfig roksbnkctl emits after
+// `cluster up` for BNK Forge registration and the cheap IAM-token
+// refresh gate (ensureFreshKubeconfig). Base-relative (not per-named-
+// workspace), matching the single-file .kube/config convention — one
+// cluster per runner deploy. Distinct from the admin cert-based config
+// at KubeconfigWritePath.
+func ForgeKubeconfigPath() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "forge", "kubeconfig.yaml"), nil
+}
+
 // PluginCacheDir: ~/.roksbnkctl/plugin-cache/ — the shared terraform
 // provider plugin cache (TF_PLUGIN_CACHE_DIR). One cache across every
 // workspace and phase so each provider downloads ONCE and is linked from

@@ -35,6 +35,20 @@ const (
 // endpoint doesn't take down a long-running parent request.
 var kubeconfigHTTPClient = &http.Client{Timeout: 60 * time.Second}
 
+// IAMToken mints a fresh IAM bearer access token from the client's API
+// key. Used to (a) stamp a token into the token-based forge kubeconfig
+// and (b) cheaply refresh it when the embedded token is near expiry —
+// no cluster round-trip, just the IAM exchange. The returned token is
+// short-lived (~1h); callers re-mint as needed.
+func (c *Client) IAMToken() (string, error) {
+	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
+	token, err := auth.GetToken()
+	if err != nil {
+		return "", fmt.Errorf("getting IAM token: %w", err)
+	}
+	return token, nil
+}
+
 // FetchClusterConfig downloads the admin kubeconfig for the given
 // cluster (name or ID). Returns a self-contained kubeconfig YAML with
 // admin certs embedded as base64 data — no companion .pem files needed
@@ -217,6 +231,25 @@ func inlineCertRefs(kubeconfigYAML []byte, files map[string][]byte) ([]byte, err
 		}
 		swapCertField(inner, "client-certificate", "client-certificate-data", files)
 		swapCertField(inner, "client-key", "client-key-data", files)
+	}
+
+	// Inline the cluster CA too (certificate-authority file ref →
+	// certificate-authority-data). IBM modern kubeconfigs already embed
+	// the data, in which case this is a no-op; older ones use a relative
+	// admin-ca .pem ref that breaks once the kubeconfig moves off its
+	// download dir. Inlining makes the result fully self-contained — which
+	// the token-based forge kubeconfig (built from this output) requires.
+	clusters, _ := doc["clusters"].([]any)
+	for _, cl := range clusters {
+		clMap, _ := cl.(map[string]any)
+		if clMap == nil {
+			continue
+		}
+		inner, _ := clMap["cluster"].(map[string]any)
+		if inner == nil {
+			continue
+		}
+		swapCertField(inner, "certificate-authority", "certificate-authority-data", files)
 	}
 
 	out, err := yaml.Marshal(doc)

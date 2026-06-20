@@ -66,6 +66,10 @@ type ClusterInputs struct {
 	ExportKubeconfig   bool
 	KubeconfigDownload bool
 	KubeconfigCluster  string
+	// KubeconfigRefresh forces EnsureFreshKubeconfig to re-mint the
+	// token-based forge kubeconfig now (the `kubeconfig --refresh` flag),
+	// rather than only when it's within the expiry skew.
+	KubeconfigRefresh bool
 
 	// SetWorkspace lets the DisableFlagParsing -w/--workspace extraction
 	// mutate the cli-resident flagWorkspace global (it lives in
@@ -101,6 +105,9 @@ func RunShell(ctx context.Context, in *ClusterInputs) error {
 		// Remote shell. Always TTY — that's the point of `shell`.
 		return in.DispatchRemoteShell(ctx, in.On)
 	}
+	// Self-heal an expiring session and prefer the auto-refreshed token
+	// kubeconfig before dropping into the subshell.
+	env = preferForgeKubeconfig(ctx, in, env)
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"
@@ -253,7 +260,12 @@ func RunKubeconfig(ctx context.Context, in *ClusterInputs) error {
 		return runKubeconfigDownload(ctx, in)
 	}
 
-	path := k8s.DefaultKubeconfigPath()
+	// Prefer the auto-refreshed token-based forge kubeconfig (--refresh
+	// forces a re-mint now); fall back to the admin/default config.
+	path := EnsureFreshKubeconfig(ctx, in, in.KubeconfigRefresh)
+	if path == "" {
+		path = k8s.DefaultKubeconfigPath()
+	}
 	if path == "" {
 		return fmt.Errorf("no kubeconfig found; run `roksbnkctl kubeconfig --download` or `ibmcloud ks cluster config --admin -c <cluster>`")
 	}
@@ -609,6 +621,9 @@ func runPassthrough(ctx context.Context, in *ClusterInputs, tool string, args []
 	if err != nil {
 		return err
 	}
+	// Self-heal an expiring session and prefer the auto-refreshed token
+	// kubeconfig before exec'ing the wrapped tool (kubectl / oc).
+	env = preferForgeKubeconfig(ctx, in, env)
 	bin, err := exec.LookPath(tool)
 	if err != nil {
 		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)

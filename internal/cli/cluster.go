@@ -33,6 +33,7 @@ var (
 	flagExportKubeconfig   bool
 	flagKubeconfigDownload bool
 	flagKubeconfigCluster  string
+	flagKubeconfigRefresh  bool
 )
 
 var shellCmd = &cobra.Command{
@@ -88,6 +89,7 @@ func init() {
 	kubeconfigCmd.Flags().BoolVar(&flagExportKubeconfig, "export", false, "print kubeconfig contents instead of path")
 	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigDownload, "download", false, "fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config")
 	kubeconfigCmd.Flags().StringVar(&flagKubeconfigCluster, "cluster", "", "cluster name or ID for --download (default: workspace cluster.name)")
+	kubeconfigCmd.Flags().BoolVar(&flagKubeconfigRefresh, "refresh", false, "force-refresh the token-based kubeconfig now (re-mint the IAM token)")
 	rootCmd.AddCommand(shellCmd, execCmd, kubeconfigCmd, kubectlCmd, ocCmd, ibmcloudCmd, terraformCmd)
 }
 
@@ -184,6 +186,7 @@ func clusterInputs() *orchestration.ClusterInputs {
 		ExportKubeconfig:   flagExportKubeconfig,
 		KubeconfigDownload: flagKubeconfigDownload,
 		KubeconfigCluster:  flagKubeconfigCluster,
+		KubeconfigRefresh:  flagKubeconfigRefresh,
 
 		SetWorkspace:        func(ws string) { flagWorkspace = ws },
 		WorkspaceEnv:        workspaceEnv,

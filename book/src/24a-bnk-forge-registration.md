@@ -104,6 +104,16 @@ loads unchanged.
 
 ## What happens on `cluster up`
 
+> **Token kubeconfig for module-based registration.** Independently of the
+> credential-backed CLI flow below, every `cluster up` also writes a portable,
+> **token-based** kubeconfig to `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml` (one
+> cluster entry with the public server + embedded CA, one `token` user — no
+> client cert/key). A BNK Forge that registers from a declared kubeconfig file
+> can point at this path; roksbnkctl keeps the embedded IAM token fresh
+> automatically (see [`kubeconfig --refresh`](./27-command-reference.md#roksbnkctl-kubeconfig)), and Forge re-mints it from the project credential template. This is
+> separate from, and complementary to, the credential-backed `bnkforge register`
+> flow documented below.
+
 When `register: true`, `roksbnkctl` runs a post-apply hook right after it fetches
 the admin kubeconfig (the same spot whether the apply made changes or was a
 no-op). The hook is exactly what `bnkforge register` runs, with errors swallowed.

@@ -1178,6 +1178,9 @@ roksbnkctl kubeconfig [flags]
 | `--cluster` | `string` | — | cluster name or ID for --download (default: workspace cluster.name) |
 | `--download` | `bool` | `false` | fetch admin kubeconfig from IBM Cloud and save to ~/.kube/config |
 | `--export` | `bool` | `false` | print kubeconfig contents instead of path |
+| `--refresh` | `bool` | `false` | force-refresh the token-based kubeconfig now (re-mint the IAM token) |
+
+By default `kubeconfig` (and the `kubectl` / `oc` / `shell` passthroughs) prefer the **token-based kubeconfig** at `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`, which `cluster up` writes alongside the admin config. Before each use, roksbnkctl self-heals it: if the embedded IAM token is within ~5 minutes of expiry it re-mints the token and rewrites the file (a cheap IAM exchange, no cluster round-trip); otherwise it's a no-op local check. `--refresh` forces the re-mint now — useful in CI/scripting. If there's no token kubeconfig (or it can't be refreshed offline), the commands fall back to the admin cert-based config at `~/.kube/config`.
 
 ## `roksbnkctl kubectl`
 

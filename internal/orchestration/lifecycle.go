@@ -807,6 +807,46 @@ func tryAutoKubeconfig(ctx context.Context, in *LifecycleInputs, cctx *config.Co
 		return
 	}
 	fmt.Fprintf(os.Stderr, "✓ Wrote kubeconfig to %s\n", target)
+
+	// Also emit a token-based, fully self-contained kubeconfig for BNK Forge
+	// registration + the cheap IAM-token refresh gate (Deliverable A). This
+	// is an ADDITION — the admin cert-based config above is untouched.
+	writeForgeKubeconfig(ic, cluster, body)
+}
+
+// writeForgeKubeconfig derives a portable token-based kubeconfig from the
+// just-fetched admin kubeconfig (keeps server + CA, swaps the user for an
+// IAM bearer token) and writes it to config.ForgeKubeconfigPath(). This is
+// the file BNK Forge registers the cluster from and keeps current by
+// re-minting the token; ensureFreshKubeconfig refreshes it locally too.
+//
+// Best-effort: a failure is a warning, never a failed `cluster up` — the
+// admin kubeconfig is already written and the cluster is up.
+func writeForgeKubeconfig(ic *ibm.Client, cluster string, adminKubeconfig []byte) {
+	path, err := config.ForgeKubeconfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: resolving forge kubeconfig path: %v\n", err)
+		return
+	}
+	token, err := ic.IAMToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping forge kubeconfig (IAM token): %v\n", err)
+		return
+	}
+	tokenKC, err := k8s.BuildTokenKubeconfig(adminKubeconfig, token, cluster+"-token")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: building forge kubeconfig: %v\n", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: creating %s: %v\n", filepath.Dir(path), err)
+		return
+	}
+	if err := writeFileAtomic(path, tokenKC, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: writing %s: %v\n", path, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "✓ Wrote token kubeconfig to %s (for BNK Forge registration)\n", path)
 }
 
 // tryAutoJumphost is the post-apply jumphost-target writer. When the
