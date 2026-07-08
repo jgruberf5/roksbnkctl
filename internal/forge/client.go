@@ -257,17 +257,33 @@ func (c *Client) EnsureProject(ctx context.Context, name string) (int, error) {
 // requires the cluster kubeconfig (it connects immediately); TemplateID links
 // the IBM credential template so Forge can re-derive the kubeconfig later.
 type RegisterRequest struct {
-	Name       string `json:"name"`
-	Provider   string `json:"provider"`
-	ClusterID  string `json:"cluster_id"`
-	Region     string `json:"region"`
-	TemplateID int    `json:"template_id"`
-	Kubeconfig string `json:"kubeconfig"`
+	Name string `json:"name"`
+	// Provider is the credential provider ("IBM"). CloudProvider is the
+	// platform Forge displays (lowercase "ibm"); without it Forge stores the
+	// "on-prem" default and the UI shows the platform as Unknown.
+	Provider      string `json:"provider"`
+	CloudProvider string `json:"cloud_provider"`
+	ClusterID     string `json:"cluster_id"`
+	Region        string `json:"region"`
+	TemplateID    int    `json:"template_id"`
+	Kubeconfig    string `json:"kubeconfig"`
 }
 
-// RegisterCluster registers a cluster under projectID and returns the Forge
-// cluster id.
+// RegisterCluster is idempotent: if a cluster with the same name already exists
+// in the project (from a prior run — a re-record or a re-triggered CI pipeline),
+// it is removed first so the fresh registration (with a current kubeconfig)
+// doesn't conflict. Returns the Forge cluster id.
 func (c *Client) RegisterCluster(ctx context.Context, projectID int, req RegisterRequest) (int, error) {
+	if existing, err := c.projectClusterID(ctx, projectID, req.Name); err == nil && existing != 0 {
+		dp := fmt.Sprintf("/api/k8s/clusters/%d", existing)
+		d, code, derr := c.do(ctx, http.MethodDelete, dp, nil)
+		if derr != nil {
+			return 0, derr
+		}
+		if !ok(code) && code != http.StatusNotFound {
+			return 0, httpErr("DELETE", dp, code, d)
+		}
+	}
 	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
 	d, code, err := c.do(ctx, http.MethodPost, p, req)
 	if err != nil {
@@ -280,4 +296,35 @@ func (c *Client) RegisterCluster(ctx context.Context, projectID int, req Registe
 		return id, nil
 	}
 	return 0, fmt.Errorf("register returned no cluster id: %s", strings.TrimSpace(string(d)))
+}
+
+// projectClusterID returns the id of a cluster named name in projectID, or 0 if
+// none. Tolerates both {"clusters":[…]} and a bare array response.
+func (c *Client) projectClusterID(ctx context.Context, projectID int, name string) (int, error) {
+	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
+	data, code, err := c.do(ctx, http.MethodGet, p, nil)
+	if err != nil {
+		return 0, err
+	}
+	if !ok(code) {
+		return 0, httpErr("GET", p, code, data)
+	}
+	type clu struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	var wrapped struct {
+		Clusters []clu `json:"clusters"`
+	}
+	_ = json.Unmarshal(data, &wrapped)
+	list := wrapped.Clusters
+	if len(list) == 0 {
+		_ = json.Unmarshal(data, &list) // bare array fallback
+	}
+	for _, cl := range list {
+		if cl.Name == name {
+			return cl.ID, nil
+		}
+	}
+	return 0, nil
 }

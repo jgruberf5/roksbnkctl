@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.17.4 — 2026-07-08
+
+### Fixed
+
+- **`bnkforge register` sets the IBM platform and is now idempotent.** (1) The register body now sends `cloud_provider: "ibm"` — BNK Forge reads `cloud_provider` (not `provider`) for the platform badge, so registrations previously showed as **Unknown** (the stored default `on-prem`). (2) Registration is now **idempotent**: if a cluster with the same name already exists in the target project (a re-run of a CI pipeline, or a re-registration with a refreshed kubeconfig), the stale registration is removed before the new one is created, instead of conflicting. This makes `bnkforge register` safe to call repeatedly — including from a re-triggered CI job.
+
 ## v1.17.3 — 2026-07-08
 
 ### Fixed
