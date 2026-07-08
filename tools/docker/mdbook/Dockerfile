@@ -86,6 +86,7 @@ RUN apt-get update \
         librsvg2-bin \
         nodejs \
         npm \
+        unzip \
         chromium \
         fonts-noto \
         fonts-noto-color-emoji \
