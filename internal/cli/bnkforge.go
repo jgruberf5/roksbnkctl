@@ -142,12 +142,13 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 	}
 
 	fid, err := client.RegisterCluster(ctx, pid, forge.RegisterRequest{
-		Name:       name,
-		Provider:   "IBM",
-		ClusterID:  out.ClusterID,
-		Region:     out.Region,
-		TemplateID: tid,
-		Kubeconfig: base64.StdEncoding.EncodeToString([]byte(kubeconfig)),
+		Name:          name,
+		Provider:      "IBM",
+		CloudProvider: "ibm", // the platform Forge displays (else shows "Unknown")
+		ClusterID:     out.ClusterID,
+		Region:        out.Region,
+		TemplateID:    tid,
+		Kubeconfig:    base64.StdEncoding.EncodeToString([]byte(kubeconfig)),
 	})
 	if err != nil {
 		return fmt.Errorf("registering cluster with BNK Forge: %w", err)

@@ -257,12 +257,16 @@ func (c *Client) EnsureProject(ctx context.Context, name string) (int, error) {
 // requires the cluster kubeconfig (it connects immediately); TemplateID links
 // the IBM credential template so Forge can re-derive the kubeconfig later.
 type RegisterRequest struct {
-	Name       string `json:"name"`
-	Provider   string `json:"provider"`
-	ClusterID  string `json:"cluster_id"`
-	Region     string `json:"region"`
-	TemplateID int    `json:"template_id"`
-	Kubeconfig string `json:"kubeconfig"`
+	Name string `json:"name"`
+	// Provider is the credential provider ("IBM"). CloudProvider is the
+	// platform Forge displays (lowercase "ibm"); without it Forge stores the
+	// "on-prem" default and the UI shows the platform as Unknown.
+	Provider      string `json:"provider"`
+	CloudProvider string `json:"cloud_provider"`
+	ClusterID     string `json:"cluster_id"`
+	Region        string `json:"region"`
+	TemplateID    int    `json:"template_id"`
+	Kubeconfig    string `json:"kubeconfig"`
 }
 
 // RegisterCluster registers a cluster under projectID and returns the Forge
