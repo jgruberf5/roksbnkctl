@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.17.3 — 2026-07-08
+
+### Fixed
+
+- **`bnkforge register` now completes against BNK Forge v3** — three request/response field mismatches in the v1.17.2 REST port, found by an end-to-end run against a live Forge, are corrected: (1) the project-create response returns the id as `project_id` (not `id`), so registration failed with "create project returned no id" even though the project was created; (2) the cluster-register body **requires the cluster `kubeconfig`** (roksbnkctl now sends the cert-based forge kubeconfig `cluster up` writes, falling back to `KUBECONFIG`/`~/.kube/config`); and (3) that kubeconfig must be **base64-encoded**. Created-id parsing is now tolerant of the `id`/`project_id`/`cluster_id` naming variance across Forge's endpoints. `bnkforge register` verified green end-to-end (login → IBM credential template → project → register → verify).
+
 ## v1.17.2 — 2026-07-08
 
 ### Changed

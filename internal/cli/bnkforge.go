@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -134,12 +136,18 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 		return fmt.Errorf("ensuring project %q: %w", projName, err)
 	}
 
+	kubeconfig, err := readClusterKubeconfig()
+	if err != nil {
+		return err
+	}
+
 	fid, err := client.RegisterCluster(ctx, pid, forge.RegisterRequest{
 		Name:       name,
 		Provider:   "IBM",
 		ClusterID:  out.ClusterID,
 		Region:     out.Region,
 		TemplateID: tid,
+		Kubeconfig: base64.StdEncoding.EncodeToString([]byte(kubeconfig)),
 	})
 	if err != nil {
 		return fmt.Errorf("registering cluster with BNK Forge: %w", err)
@@ -169,4 +177,26 @@ func resolveForgePassword(interactive bool) (string, error) {
 		return "", errors.New("empty BNK Forge password")
 	}
 	return p, nil
+}
+
+// readClusterKubeconfig returns the cluster kubeconfig BNK Forge requires in the
+// register body — the cert-based forge kubeconfig `cluster up` wrote (ROKS
+// rejects token kubeconfigs), falling back to KUBECONFIG / ~/.kube/config.
+func readClusterKubeconfig() (string, error) {
+	if p, err := config.ForgeKubeconfigPath(); err == nil {
+		if b, rerr := os.ReadFile(p); rerr == nil && len(b) > 0 {
+			return string(b), nil
+		}
+	}
+	if kc := os.Getenv("KUBECONFIG"); kc != "" {
+		if b, err := os.ReadFile(kc); err == nil && len(b) > 0 {
+			return string(b), nil
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if b, err := os.ReadFile(filepath.Join(home, ".kube", "config")); err == nil && len(b) > 0 {
+			return string(b), nil
+		}
+	}
+	return "", fmt.Errorf("no cluster kubeconfig found (forge kubeconfig, KUBECONFIG, or ~/.kube/config) — run `roksbnkctl cluster up` first")
 }

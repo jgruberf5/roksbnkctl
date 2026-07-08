@@ -83,6 +83,36 @@ func httpErr(method, path string, code int, body []byte) error {
 	return fmt.Errorf("%s %s → HTTP %d: %s", method, path, code, s)
 }
 
+// numField returns the first of keys in m whose value is a non-zero JSON number.
+// Forge's create responses are inconsistent about the id field name
+// (`id` vs `project_id` vs `cluster_id`), so callers pass all plausible names.
+func numField(m map[string]any, keys ...string) int {
+	for _, k := range keys {
+		if f, ok := m[k].(float64); ok && f != 0 {
+			return int(f)
+		}
+	}
+	return 0
+}
+
+// createdID extracts the created object's id from a decoded response body,
+// checking the top level then a nested wrapper object (e.g. {"project":{...}}).
+func createdID(body []byte, wrapper string, keys ...string) int {
+	var m map[string]any
+	if json.Unmarshal(body, &m) != nil {
+		return 0
+	}
+	if id := numField(m, keys...); id != 0 {
+		return id
+	}
+	if wrapper != "" {
+		if w, ok := m[wrapper].(map[string]any); ok {
+			return numField(w, keys...)
+		}
+	}
+	return 0
+}
+
 // Login exchanges username/password for a session token and stores it on c.
 func (c *Client) Login(ctx context.Context, username, password string) error {
 	data, code, err := c.do(ctx, http.MethodPost, "/api/auth/login",
@@ -182,11 +212,10 @@ func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, name, apiKey, 
 	if !ok(code) {
 		return 0, httpErr("POST", "/api/credential-templates", code, d)
 	}
-	var t credentialTemplate
-	if err := json.Unmarshal(d, &t); err != nil || t.ID == 0 {
-		return 0, fmt.Errorf("create credential-template returned no id: %s", strings.TrimSpace(string(d)))
+	if id := createdID(d, "credential_template", "id", "template_id", "credential_template_id"); id != 0 {
+		return id, nil
 	}
-	return t.ID, nil
+	return 0, fmt.Errorf("create credential-template returned no id: %s", strings.TrimSpace(string(d)))
 }
 
 // EnsureProject returns the id of the project named name, creating it if absent.
@@ -218,30 +247,22 @@ func (c *Client) EnsureProject(ctx context.Context, name string) (int, error) {
 	if !ok(code) {
 		return 0, httpErr("POST", "/api/projects", code, d)
 	}
-	var r struct {
-		ID      int `json:"id"`
-		Project struct {
-			ID int `json:"id"`
-		} `json:"project"`
+	if id := createdID(d, "project", "id", "project_id"); id != 0 {
+		return id, nil
 	}
-	_ = json.Unmarshal(d, &r)
-	id := r.ID
-	if id == 0 {
-		id = r.Project.ID
-	}
-	if id == 0 {
-		return 0, fmt.Errorf("create project returned no id: %s", strings.TrimSpace(string(d)))
-	}
-	return id, nil
+	return 0, fmt.Errorf("create project returned no id: %s", strings.TrimSpace(string(d)))
 }
 
-// RegisterRequest is the body for registering a cluster into a project.
+// RegisterRequest is the body for registering a cluster into a project. Forge
+// requires the cluster kubeconfig (it connects immediately); TemplateID links
+// the IBM credential template so Forge can re-derive the kubeconfig later.
 type RegisterRequest struct {
 	Name       string `json:"name"`
 	Provider   string `json:"provider"`
 	ClusterID  string `json:"cluster_id"`
 	Region     string `json:"region"`
 	TemplateID int    `json:"template_id"`
+	Kubeconfig string `json:"kubeconfig"`
 }
 
 // RegisterCluster registers a cluster under projectID and returns the Forge
@@ -255,19 +276,8 @@ func (c *Client) RegisterCluster(ctx context.Context, projectID int, req Registe
 	if !ok(code) {
 		return 0, httpErr("POST", p, code, d)
 	}
-	var r struct {
-		ID      int `json:"id"`
-		Cluster struct {
-			ID int `json:"id"`
-		} `json:"cluster"`
+	if id := createdID(d, "cluster", "id", "cluster_id", "registered_cluster_id"); id != 0 {
+		return id, nil
 	}
-	_ = json.Unmarshal(d, &r)
-	id := r.ID
-	if id == 0 {
-		id = r.Cluster.ID
-	}
-	if id == 0 {
-		return 0, fmt.Errorf("register returned no cluster id: %s", strings.TrimSpace(string(d)))
-	}
-	return id, nil
+	return 0, fmt.Errorf("register returned no cluster id: %s", strings.TrimSpace(string(d)))
 }

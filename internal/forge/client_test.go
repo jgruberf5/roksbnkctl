@@ -65,9 +65,11 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		body["id"] = m.id()
-		m.projects = append(m.projects, body)
-		writeJSON(w, 201, body)
+		pid := m.id()
+		m.projects = append(m.projects, map[string]any{"id": pid, "name": body["name"]})
+		// Forge's create response uses project_id (not id) — regression-guards
+		// the field-mapping bug fixed for v1.17.3.
+		writeJSON(w, 201, map[string]any{"success": true, "project_id": pid, "name": body["name"]})
 	})
 	// register: POST /api/projects/{pid}/k8s/clusters
 	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +106,7 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 	}
 	fid, err := c.RegisterCluster(ctx, pid, RegisterRequest{
 		Name: "ws", Provider: "IBM", ClusterID: "cid", Region: "eu-gb", TemplateID: tid,
+		Kubeconfig: "YXBpVmVyc2lvbjp2MQ==", // base64 — Forge requires it in the body
 	})
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -117,7 +120,7 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 		t.Errorf("register path = %q, want %q", m.registerPath, wantPath)
 	}
 	if m.registerBody["cluster_id"] != "cid" || m.registerBody["provider"] != "IBM" ||
-		m.registerBody["region"] != "eu-gb" {
+		m.registerBody["region"] != "eu-gb" || m.registerBody["kubeconfig"] != "YXBpVmVyc2lvbjp2MQ==" {
 		t.Errorf("register body = %v", m.registerBody)
 	}
 	if _, ok := m.registerBody["template_id"]; !ok {
