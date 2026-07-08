@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Changed
+
+- **`bnkforge register` now talks to BNK Forge v3's REST API directly** instead of shelling out to a `bnk-forge` CLI. BNK Forge v3 is REST/UI-first and ships no CLI, so the old exec-based path could never succeed against it. A new `internal/forge` client authenticates (`POST /api/auth/login`), ensures a default IBM credential template holding the workspace's IBM Cloud API key (so Forge re-derives the cert-based kubeconfig on demand), ensures the target project, and registers the cluster (`POST /api/projects/{id}/k8s/clusters`). Credentials follow the IBM-API-key pattern: URL/username from `--url`/`--username`/`BNK_FORGE_URL`/`BNK_FORGE_USER`/config; the **password is never persisted** (`--password`/`BNK_FORGE_PASSWORD`/hidden prompt), and the returned **session token is cached in the OS keychain** for repeat runs. New flags: `--username`, `--password`, `--insecure` (self-signed lab certs). `bnkforge status` now shows URL/username/project/insecure/cached-session instead of the CLI path.
+
 ## v1.17.1 — 2026-06-20
 
 Fixes the forge kubeconfig so a registered IBM ROKS cluster can actually authenticate.

@@ -60,23 +60,29 @@ type Workspace struct {
 	Exec map[string]ExecToolCfg `yaml:"exec,omitempty"`
 }
 
-// BNKForgeCfg is the optional integration with a co-located BNK Forge
-// install. When Register is true and the `bnk-forge` CLI is on PATH (with a
-// valid session, or one the operator can create interactively), `cluster up`
-// registers the just-provisioned ROKS cluster with BNK Forge — credential-
-// backed, so BNK Forge derives the kubeconfig on demand from the IBM Cloud
-// credential rather than storing a perishable one. Best-effort: registration
-// never blocks or fails the deploy. nil/absent (legacy config) = no-op.
+// BNKForgeCfg is the optional integration with a co-located BNK Forge (v3)
+// install. When Register is true, `cluster up` registers the just-provisioned
+// ROKS cluster with BNK Forge via its REST API — credential-backed, so BNK
+// Forge derives the kubeconfig on demand from an IBM Cloud credential template
+// rather than storing a perishable one. Best-effort: registration never blocks
+// or fails the deploy. nil/absent (legacy config) = no-op.
 type BNKForgeCfg struct {
 	// Register opts the workspace in. Default false.
 	Register bool `yaml:"register,omitempty"`
-	// URL overrides the BNK Forge server URL the `bnk-forge` CLI would use
-	// from its stored session (~/.bnk-forge/config.json). Empty = use the
-	// stored session's URL.
+	// URL is the BNK Forge server base URL (e.g. https://forge.example.com).
+	// Also settable via BNK_FORGE_URL / --url.
 	URL string `yaml:"url,omitempty"`
-	// Project is the target BNK Forge project id to register the cluster
-	// under. Empty = let the CLI pick the active/sole project (or prompt).
+	// Project is the target BNK Forge project NAME. Ensured-or-created at
+	// register time. Empty = the workspace name.
 	Project string `yaml:"project,omitempty"`
+	// Username is the BNK Forge login user. Also settable via BNK_FORGE_USER /
+	// --username. The password is NEVER stored here — it comes from
+	// BNK_FORGE_PASSWORD or an interactive prompt; the resulting session token
+	// is cached in the OS keychain.
+	Username string `yaml:"username,omitempty"`
+	// Insecure skips TLS verification against the Forge server (self-signed
+	// certs, common in lab installs). Also settable via --insecure.
+	Insecure bool `yaml:"insecure,omitempty"`
 }
 
 // AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is

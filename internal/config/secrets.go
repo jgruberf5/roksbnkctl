@@ -260,3 +260,41 @@ func DeleteAPIKeyFromKeychain(workspace string) error {
 	}
 	return err
 }
+
+// --- BNK Forge session token (keychain-only; never written to config) --------
+//
+// The Forge password is never persisted. Instead the returned session token is
+// cached here so repeat `bnkforge register` runs don't re-prompt.
+
+func forgeTokenUser(workspace string) string { return workspace + "/bnkforge_token" }
+
+// SaveForgeTokenToKeychain caches a BNK Forge session token for the workspace.
+func SaveForgeTokenToKeychain(workspace, token string) error {
+	if err := ValidateName(workspace); err != nil {
+		return err
+	}
+	return keyring.Set(keychainService, forgeTokenUser(workspace), token)
+}
+
+// ForgeTokenFromKeychain returns the cached BNK Forge session token, or "" if
+// none is stored (or the keychain is unavailable — treated as absent).
+func ForgeTokenFromKeychain(workspace string) string {
+	t, err := keyring.Get(keychainService, forgeTokenUser(workspace))
+	if err != nil {
+		return ""
+	}
+	return t
+}
+
+// DeleteForgeTokenFromKeychain removes the cached token. Missing entry is not an
+// error. Called on `workspaces delete` and when a cached token is rejected.
+func DeleteForgeTokenFromKeychain(workspace string) error {
+	if err := ValidateName(workspace); err != nil {
+		return err
+	}
+	err := keyring.Delete(keychainService, forgeTokenUser(workspace))
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
+}
