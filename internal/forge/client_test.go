@@ -13,14 +13,15 @@ import (
 // mockForge is a minimal stateful BNK Forge v3 API for tests. Preseed
 // credTemplates / projects / clusters to exercise the find-existing paths.
 type mockForge struct {
-	token         string
-	credTemplates []map[string]any
-	projects      []map[string]any
-	clusters      []map[string]any // registered clusters (for idempotency)
-	deletedIDs    []string         // cluster ids DELETEd
-	nextID        int
-	registerBody  map[string]any // captured POST body of the last cluster register
-	registerPath  string
+	token           string
+	credTemplates   []map[string]any
+	projects        []map[string]any
+	clusters        []map[string]any // registered clusters (for idempotency)
+	deletedIDs      []string         // cluster ids DELETEd
+	nextID          int
+	registerBody    map[string]any // captured POST body of the last cluster register
+	registerPath    string
+	projectPlatform map[string]any // captured PUT body of the project platform update
 }
 
 func (m *mockForge) id() int { m.nextID++; return m.nextID }
@@ -89,6 +90,11 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 			writeJSON(w, 201, map[string]any{"id": cid})
 			return
 		}
+		if r.Method == http.MethodPut { // PUT /api/projects/{id} — set target platform
+			_ = json.NewDecoder(r.Body).Decode(&m.projectPlatform)
+			writeJSON(w, 200, map[string]any{"ok": true})
+			return
+		}
 		writeJSON(w, 404, map[string]any{"detail": "not found"})
 	})
 	// DELETE /api/k8s/clusters/{id} — used by the idempotent re-register.
@@ -135,6 +141,12 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 	pid, err := c.EnsureProject(ctx, "roks-demo")
 	if err != nil {
 		t.Fatalf("ensure project: %v", err)
+	}
+	// EnsureProject must set the project's target platform (else Forge shows Unknown).
+	if m.projectPlatform["target_platform_profile"] != "roks" ||
+		m.projectPlatform["platform_provider"] != "ibm" ||
+		m.projectPlatform["cloud_provider"] != "ibm" {
+		t.Errorf("project platform not set: %v", m.projectPlatform)
 	}
 	fid, err := c.RegisterCluster(ctx, pid, RegisterRequest{
 		Name: "ws", Provider: "IBM", CloudProvider: "ibm",

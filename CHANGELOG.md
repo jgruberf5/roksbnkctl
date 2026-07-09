@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.17.5 — 2026-07-09
+
+### Fixed
+
+- **`bnkforge register` sets the project's target platform (was "Unknown").** A BNK Forge project's target platform is configured, not derived from its clusters' detected platform — so even after v1.17.4 gave the *cluster* the IBM platform, the *project* still showed **Target Platform: Unknown**. `EnsureProject` now sets `target_platform_profile: "roks"`, `platform_provider: "ibm"`, and `cloud_provider: "ibm"` on the project (on both create and reuse, so pre-existing projects are corrected too). Best-effort: a Forge that lacks these fields won't fail registration.
+
 ## v1.17.4 — 2026-07-08
 
 ### Fixed

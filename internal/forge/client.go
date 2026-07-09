@@ -218,7 +218,9 @@ func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, name, apiKey, 
 	return 0, fmt.Errorf("create credential-template returned no id: %s", strings.TrimSpace(string(d)))
 }
 
-// EnsureProject returns the id of the project named name, creating it if absent.
+// EnsureProject returns the id of the project named name, creating it if absent,
+// and sets its target platform to IBM ROKS so the Forge UI doesn't show
+// "Target Platform: Unknown".
 func (c *Client) EnsureProject(ctx context.Context, name string) (int, error) {
 	data, code, err := c.do(ctx, http.MethodGet, "/api/projects", nil)
 	if err != nil {
@@ -234,23 +236,42 @@ func (c *Client) EnsureProject(ctx context.Context, name string) (int, error) {
 		} `json:"projects"`
 	}
 	_ = json.Unmarshal(data, &lr)
+	id := 0
 	for _, p := range lr.Projects {
 		if p.Name == name {
-			return p.ID, nil
+			id = p.ID
+			break
 		}
 	}
-	d, code, err := c.do(ctx, http.MethodPost, "/api/projects",
-		map[string]string{"name": name, "description": "roksbnkctl"})
-	if err != nil {
-		return 0, err
+	if id == 0 {
+		d, code, err := c.do(ctx, http.MethodPost, "/api/projects",
+			map[string]string{"name": name, "description": "roksbnkctl"})
+		if err != nil {
+			return 0, err
+		}
+		if !ok(code) {
+			return 0, httpErr("POST", "/api/projects", code, d)
+		}
+		id = createdID(d, "project", "id", "project_id")
+		if id == 0 {
+			return 0, fmt.Errorf("create project returned no id: %s", strings.TrimSpace(string(d)))
+		}
 	}
-	if !ok(code) {
-		return 0, httpErr("POST", "/api/projects", code, d)
-	}
-	if id := createdID(d, "project", "id", "project_id"); id != 0 {
-		return id, nil
-	}
-	return 0, fmt.Errorf("create project returned no id: %s", strings.TrimSpace(string(d)))
+	c.setProjectPlatform(ctx, id)
+	return id, nil
+}
+
+// setProjectPlatform marks the project as targeting IBM ROKS. A project's target
+// platform is configured, not derived from its clusters' detected platform, so
+// without this the Forge UI shows "Target Platform: Unknown". Best-effort: the
+// platform label is cosmetic and older Forge versions may lack these fields, so
+// a failure here must not fail registration.
+func (c *Client) setProjectPlatform(ctx context.Context, id int) {
+	_, _, _ = c.do(ctx, http.MethodPut, fmt.Sprintf("/api/projects/%d", id), map[string]string{
+		"target_platform_profile": "roks",
+		"platform_provider":       "ibm",
+		"cloud_provider":          "ibm",
+	})
 }
 
 // RegisterRequest is the body for registering a cluster into a project. Forge
