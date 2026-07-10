@@ -162,8 +162,9 @@ func (e *Engine) copyOCI(ctx context.Context, a bnkbom.Artifact) Result {
 	if dstDigest, err := crane.Digest(dst, opts...); err == nil && dstDigest == srcDigest {
 		return Result{Artifact: a, Digest: srcDigest, Skipped: true}
 	}
-	// The OpenShift internal registry intermittently 500s under concurrent
-	// pushes; retry transient failures with a linear backoff.
+	// Registries intermittently fail under concurrent pushes (OpenShift 5xx,
+	// Harbor 401 from its token service); retry transient failures with a linear
+	// backoff.
 	var copyErr error
 	for attempt := 1; attempt <= copyMaxAttempts; attempt++ {
 		if copyErr = crane.Copy(src, dst, opts...); copyErr == nil {
@@ -188,7 +189,8 @@ const copyMaxAttempts = 4
 func sanitizeRef(ref string) string { return strings.ReplaceAll(ref, "+", "_") }
 
 // isTransient reports whether a copy error is worth retrying — the OpenShift
-// registry returns intermittent 5xx under concurrent pushes.
+// registry returns intermittent 5xx under concurrent pushes, and Harbor's token
+// service intermittently 401s one repository in an otherwise-succeeding run.
 func isTransient(err error) bool {
 	if err == nil {
 		return false
@@ -199,6 +201,11 @@ func isTransient(err error) bool {
 		"status code 503", "status code 504", "TOOMANYREQUESTS", "toomanyrequests",
 		"connection reset", "unexpected EOF", "i/o timeout",
 		"unexpected end of JSON input", "end of JSON input", "EOF",
+		// Harbor's token service intermittently 401s a single repository under
+		// concurrent pushes, while every other artifact in the same run succeeds
+		// on the same credential. A genuinely bad credential still fails: it just
+		// exhausts copyMaxAttempts first.
+		"status code 401", "401 Unauthorized",
 	} {
 		if strings.Contains(s, p) {
 			return true
