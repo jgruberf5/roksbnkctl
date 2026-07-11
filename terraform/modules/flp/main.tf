@@ -254,6 +254,31 @@ resource "kubernetes_secret_v1" "flp_jwt" {
   depends_on = [kubernetes_namespace_v1.flp]
 }
 
+# OpenShift SCC. The f5-license-proxy pods run with fsGroup 1000 and the Vault
+# container needs the IPC_LOCK capability (mlock) — both are rejected by ROKS's
+# default `restricted-v2` SCC. Grant the FLP namespace's service accounts the
+# `privileged` SCC (namespace-scoped RoleBinding to the SCC ClusterRole), the
+# same mechanism `oc adm policy add-scc-to-group privileged` uses. The helm
+# release depends on this so the SCC is in place before the pods schedule.
+resource "kubernetes_role_binding_v1" "flp_scc" {
+  count = local.enabled ? 1 : 0
+  metadata {
+    name      = "flp-scc-privileged"
+    namespace = var.flp_namespace
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "system:openshift:scc:privileged"
+  }
+  subject {
+    kind      = "Group"
+    name      = "system:serviceaccounts:${var.flp_namespace}"
+    api_group = "rbac.authorization.k8s.io"
+  }
+  depends_on = [kubernetes_namespace_v1.flp]
+}
+
 # FAR image pull secret — only off the mirror path (mirror mode drops it).
 resource "kubernetes_secret_v1" "far_secret" {
   count = local.enabled && !var.use_registry_mirror ? 1 : 0
@@ -295,5 +320,6 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.mtls,
     kubernetes_secret_v1.flp_jwt,
     kubernetes_secret_v1.far_secret,
+    kubernetes_role_binding_v1.flp_scc,
   ]
 }
