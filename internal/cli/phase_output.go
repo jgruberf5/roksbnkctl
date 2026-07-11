@@ -75,6 +75,11 @@ var phaseOutputOwnership = map[string][]string{
 		"gateway_vxlan_port",
 		"gateway_static_routes",
 	},
+	"flp": {
+		"flp_root_ca",
+		"flp_endpoint",
+		"flp_namespace",
+	},
 }
 
 // phaseStateDirs is the read order for the aggregate: each phase's owned outputs
@@ -87,6 +92,7 @@ var phaseStateDirs = []struct {
 	{"bnk", config.WorkspaceStateDir},
 	{"testing", config.WorkspaceTestingStateDir},
 	{"gateway", config.WorkspaceGatewayStateDir},
+	{"flp", config.WorkspaceFLPStateDir},
 }
 
 // outputOwner returns the phase that manages output name, or "" if unowned.
@@ -279,9 +285,18 @@ var gatewayOutputCmd = &cobra.Command{
 	},
 }
 
+var flpOutputCmd = &cobra.Command{
+	Use:   "output [name]",
+	Short: "Print the FLP phase's own terraform outputs (text or --json; [name] = one raw value)",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runPhaseOutput(cmd, "flp", config.WorkspaceFLPStateDir, args)
+	},
+}
+
 var outputCmd = &cobra.Command{
 	Use:   "output [name]",
-	Short: "Print the merged outputs across all phases (cluster + bnk + testing + gateway)",
+	Short: "Print the merged outputs across all phases (cluster + bnk + testing + gateway + flp)",
 	Long: `Print the union of every phase's own outputs — each read from its owning
 phase's state, so values are the populated ones and never conflict. This is the
 "everything" view; the per-phase ` + "`<phase> output`" + ` commands scope to just that
@@ -291,7 +306,7 @@ phase's managed attributes.`,
 }
 
 func init() {
-	cmds := []*cobra.Command{clusterOutputCmd, bnkOutputCmd, testingOutputCmd, gatewayOutputCmd, outputCmd}
+	cmds := []*cobra.Command{clusterOutputCmd, bnkOutputCmd, testingOutputCmd, gatewayOutputCmd, flpOutputCmd, outputCmd}
 	for _, c := range cmds {
 		c.Flags().BoolVar(&flagOutputJSON, "json", false, "output JSON (CI-friendly)")
 		c.Flags().BoolVar(&flagOutputShowSensitive, "show-sensitive", false, "reveal sensitive output values (default redacted)")
@@ -300,6 +315,7 @@ func init() {
 	bnkCmd.AddCommand(bnkOutputCmd)
 	testingCmd.AddCommand(testingOutputCmd)
 	gatewayCmd.AddCommand(gatewayOutputCmd)
+	flpCmd.AddCommand(flpOutputCmd)
 	rootCmd.AddCommand(outputCmd)
 }
 

@@ -135,6 +135,7 @@ type Presence struct {
 	BNK     bool // state/ has managed BNK resources
 	Testing bool // state-testing/ has managed resources (the jumphosts)
 	Gateway bool // state-gateway/ has managed resources (the data-plane config)
+	FLP     bool // state-flp/ has managed resources (the F5 License Proxy)
 
 	// ClusterResidual is true when state-cluster/ holds ANY managed resource,
 	// even if the ibm_container_vpc_cluster itself is gone. A partial cluster
@@ -149,7 +150,7 @@ type Presence struct {
 // Any reports whether at least one phase has resources — i.e. the
 // workspace is non-empty.
 func (p Presence) Any() bool {
-	return p.Cluster || p.BNK || p.Testing || p.Gateway
+	return p.Cluster || p.BNK || p.Testing || p.Gateway || p.FLP
 }
 
 // DetectPresence inspects on-disk state for `workspace` and reports the
@@ -220,6 +221,17 @@ func DetectPresence(workspace string) (Presence, error) {
 		return p, err
 	}
 	p.Gateway = gatewayHas
+
+	// FLP — any managed resource in state-flp/.
+	flpDir, err := WorkspaceFLPStateDir(workspace)
+	if err != nil {
+		return p, err
+	}
+	flpHas, err := tfstateHasResources(filepath.Join(flpDir, "terraform.tfstate"))
+	if err != nil {
+		return p, err
+	}
+	p.FLP = flpHas
 
 	return p, nil
 }

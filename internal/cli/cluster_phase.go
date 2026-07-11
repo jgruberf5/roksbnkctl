@@ -398,12 +398,16 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	if pres.BNK || pres.Testing || pres.Gateway {
+	if pres.BNK || pres.Testing || pres.Gateway || pres.FLP {
 		var present []string
 		var verbs []string
 		if pres.Gateway {
 			present = append(present, "Gateway")
 			verbs = append(verbs, "`roksbnkctl gateway down`")
+		}
+		if pres.FLP {
+			present = append(present, "FLP")
+			verbs = append(verbs, "`roksbnkctl flp down`")
 		}
 		if pres.BNK {
 			present = append(present, "BNK")
