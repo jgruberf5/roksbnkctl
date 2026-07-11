@@ -10,6 +10,22 @@ locals {
   use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
   jwt_token      = local.global_enabled && var.use_cos_bucket ? trimspace(data.http.jwt_download[0].response_body) : var.jwt_token
 
+  # F5 License Proxy mode. In FLP mode the CWC talks to the in-cluster FLP instead
+  # of F5 directly, so the License CR carries the three teem*Url endpoints (the FLP
+  # service) plus licenseProxyServerRootCaPath — the fixed path where CWC mounts the
+  # FLP root CA (from the `licenseserver-rootca` Secret this module writes below).
+  # The JWT is STILL required in every mode (License CRD spec.required: [jwt]).
+  is_flp       = var.license_mode == "f5licenseproxy"
+  flp_ca_path  = "/etc/cm20/licenseserver-rootca/licenseserver-rootca.txt"
+  flp_teem_url = "${var.flp_license_server_url}/ee/v1"
+
+  flp_spec_fields = local.is_flp ? {
+    teemCertUrl                  = local.flp_teem_url
+    teemEntitlementUrl           = local.flp_teem_url
+    teemInitialConfigUrl         = local.flp_teem_url
+    licenseProxyServerRootCaPath = local.flp_ca_path
+  } : {}
+
   license_manifest = {
     apiVersion = "k8s.f5net.com/v1"
     kind       = "License"
@@ -17,11 +33,36 @@ locals {
       name      = "bnk-license"
       namespace = var.utils_namespace
     }
-    spec = {
+    spec = merge({
       jwt           = local.jwt_token
       operationMode = var.license_mode
-    }
+    }, local.flp_spec_fields)
   }
+
+  # The CWC chart mounts this Secret (non-optional) at flp_ca_path. In connected/
+  # disconnected mode CWC ships it empty; in FLP mode we populate it with the FLP
+  # root CA so CWC trusts the proxy's TLS. Written as a real Secret so a CWC
+  # rollout picks it up.
+  write_flp_ca = local.use_kubectl && local.is_flp && var.license_server_root_ca != ""
+}
+
+resource "kubectl_manifest" "licenseserver_rootca" {
+  count             = local.write_flp_ca ? 1 : 0
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    type       = "Opaque"
+    metadata = {
+      name      = "licenseserver-rootca"
+      namespace = var.utils_namespace
+    }
+    stringData = {
+      "licenseserver-rootca.txt" = trimspace(var.license_server_root_ca)
+    }
+  })
 }
 
 # Wait for License CRD to be available (legacy mode only — kubectl mode gates
@@ -125,7 +166,7 @@ resource "null_resource" "bnk_license" {
       # Apply the License CR. Retry on transient/admission-webhook-not-ready
       # errors (4xx/5xx) — the API group can be served before the FLO admission
       # webhook is reachable, producing 403/503 responses for ~30-60s.
-      patch_body='{"apiVersion":"k8s.f5net.com/v1","kind":"License","metadata":{"name":"bnk-license","namespace":"${var.utils_namespace}"},"spec":{"jwt":"${local.jwt_token}","operationMode":"${var.license_mode}"}}'
+      patch_body='${jsonencode(local.license_manifest)}'
       patch_url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.utils_namespace}/licenses/bnk-license?fieldManager=terraform&force=true"
       patch_status=000
       for i in $(seq 1 30); do
@@ -202,5 +243,7 @@ resource "kubectl_manifest" "bnk_license" {
     create = "15m"
   }
 
-  depends_on = [var.cneinstance_dependency]
+  # In FLP mode the CA Secret must exist before the license verifies (CWC reads it
+  # to trust the proxy). In other modes this list element is absent (count 0).
+  depends_on = [var.cneinstance_dependency, kubectl_manifest.licenseserver_rootca]
 }

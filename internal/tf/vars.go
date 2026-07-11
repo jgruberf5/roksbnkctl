@@ -362,6 +362,14 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.CRMode != "" {
 		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
 	}
+	// License operation mode. Emitted only when set; empty leaves the terraform
+	// default ("connected"), keeping existing JWT configs byte-identical. The FLP
+	// endpoint + root CA needed for "f5licenseproxy" mode are NOT rendered here —
+	// they come from the flp phase outputs (flp-outputs.json), layered into the
+	// bnk-phase override when `bnk up` runs in FLP mode.
+	if ws.BNK.LicenseMode != "" {
+		fmt.Fprintf(w, "license_mode = %q\n", ws.BNK.LicenseMode)
+	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
 	// Emitted only when config.yaml supplies them; absent → the terraform
 	// module's install-guide defaults apply (existing configs unchanged).

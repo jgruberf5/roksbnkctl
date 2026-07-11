@@ -225,6 +225,12 @@ const (
 	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
 	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
 	DefaultSubscriptionJWTFile = "trial.jwt"
+	// DefaultLicenseMode is the terraform License CR operationMode default; an
+	// empty bnk.license_mode leaves it unset (terraform defaults to "connected"),
+	// so JWT/connected licensing is unchanged unless FLP is opted into.
+	DefaultLicenseMode = "connected"
+	// DefaultFLPNamespace is where the `flp` phase installs the F5 License Proxy.
+	DefaultFLPNamespace = "f5-license-proxy"
 )
 
 type BNKCfg struct {
@@ -259,6 +265,29 @@ type BNKCfg struct {
 	// CIS (the bigip_* tfvars stay blank). Rendered as bigip_url / bigip_username
 	// / bigip_password.
 	CIS *BNKCISCfg `yaml:"cis,omitempty"`
+
+	// LicenseMode selects the License CR operationMode: "connected" (default when
+	// empty), "disconnected", or "f5licenseproxy". FLP mode additionally requires
+	// the `flp` phase to be up (roksbnkctl flp up) so the BNK install can point at
+	// the in-cluster F5 License Proxy. Empty → terraform default ("connected") →
+	// the JWT/connected path is unchanged. Rendered as license_mode.
+	LicenseMode string `yaml:"license_mode,omitempty"`
+
+	// FLP holds settings for the optional F5 License Proxy phase. nil → FLP is not
+	// deployed (and license_mode must not be f5licenseproxy). The proxy's root CA
+	// and service endpoint are NOT config — they are produced by `flp up` and read
+	// from flp-outputs.json when `bnk up` runs in FLP mode.
+	FLP *BNKFLPCfg `yaml:"flp,omitempty"`
+}
+
+// BNKFLPCfg configures the F5 License Proxy (FLP) phase deployment. All optional;
+// nil block means FLP is off. It never carries secrets — the FLP generates its own
+// certs, and its subscription JWT is the same one resolved from COS.
+type BNKFLPCfg struct {
+	// Namespace the FLP is installed into. Empty → DefaultFLPNamespace.
+	Namespace string `yaml:"namespace,omitempty"`
+	// ChartVersion pins the f5-license-proxy chart. Empty → the terraform default.
+	ChartVersion string `yaml:"chart_version,omitempty"`
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.

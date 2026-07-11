@@ -30,14 +30,32 @@ variable "jwt_token" {
 }
 
 variable "license_mode" {
-  description = "License operation mode (connected or disconnected)"
+  description = "License operation mode: connected, disconnected, or f5licenseproxy (FLP)."
   type        = string
   default     = "connected"
 
   validation {
-    condition     = contains(["connected", "disconnected"], var.license_mode)
-    error_message = "license_mode must be either 'connected' or 'disconnected'."
+    condition     = contains(["connected", "disconnected", "f5licenseproxy"], var.license_mode)
+    error_message = "license_mode must be 'connected', 'disconnected', or 'f5licenseproxy'."
   }
+}
+
+# ── F5 License Proxy (FLP) mode ───────────────────────────────────────────────
+# Only consumed when license_mode == "f5licenseproxy". In FLP mode the License CR
+# additionally requires the three teem*Url endpoints (the in-cluster FLP service)
+# and licenseProxyServerRootCaPath (a file path). The FLP root CA is delivered to
+# the CWC pod via the `licenseserver-rootca` Secret, which CWC mounts at that path.
+
+variable "flp_license_server_url" {
+  description = "Base URL of the in-cluster F5 License Proxy service, e.g. https://f5-license-proxy.<ns>.svc.cluster.local:8443. Required when license_mode=f5licenseproxy."
+  type        = string
+  default     = ""
+}
+
+variable "license_server_root_ca" {
+  description = "PEM of the FLP root CA. Written into the `licenseserver-rootca` Secret so CWC trusts the FLP. Required when license_mode=f5licenseproxy."
+  type        = string
+  default     = ""
 }
 
 variable "cneinstance_dependency" {

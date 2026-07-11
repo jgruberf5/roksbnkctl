@@ -192,6 +192,8 @@ module "license" {
   flo_utils_namespace           = var.flo_utils_namespace
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   license_mode                  = var.license_mode
+  flp_license_server_url        = var.flp_license_server_url
+  license_server_root_ca        = var.license_server_root_ca
   create_roks_cluster           = var.create_roks_cluster
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cneinstance_dependency_id     = module.cne_instance.cneinstance_ready_id

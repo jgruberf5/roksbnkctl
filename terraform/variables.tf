@@ -376,9 +376,21 @@ variable "cneinstance_network_zones" {
 # ============================================================
 
 variable "license_mode" {
-  description = "License operation mode (connected or disconnected)"
+  description = "License operation mode (connected, disconnected, or f5licenseproxy)"
   type        = string
   default     = "connected"
+}
+
+variable "flp_license_server_url" {
+  description = "Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.<ns>.svc.cluster.local:8443)"
+  type        = string
+  default     = ""
+}
+
+variable "license_server_root_ca" {
+  description = "PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only)"
+  type        = string
+  default     = ""
 }
 
 
