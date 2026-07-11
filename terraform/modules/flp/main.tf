@@ -57,11 +57,15 @@ locals {
   # install's use_registry_mirror behaviour.
   flp_image_pull_secret = !var.use_registry_mirror ? "far-secret" : ""
 
-  # mTLS leaf certs: name → SAN DNS list (from the f5-license-proxy chart + docs).
+  # mTLS leaf certs: name → SAN DNS list. postgresql/vault keep the chart's
+  # in-pod SANs. The flp leaf is ALSO the FLP's public server cert, so it must
+  # additionally cover the Service DNS the CWC connects to (the teem*Url) — else
+  # the CWC rejects it with "bad certificate" on hostname mismatch.
+  flp_svc = "f5-license-proxy.${var.flp_namespace}.svc"
   leaves = {
     postgresql = ["postgresql", "localhost"]
     vault      = ["vault", "localhost", "vault-postgresql-service"]
-    flp        = ["flp", "localhost"]
+    flp        = ["flp", "localhost", "f5-license-proxy", local.flp_svc, "${local.flp_svc}.cluster.local"]
   }
   # leaf → the Secret name the chart mounts it from.
   leaf_secret = {
