@@ -1,6 +1,6 @@
 # roksbnkctl demonstration video pipeline
 
-Reproducible tooling to **record (and re-record)** three demos as time-compressed,
+Reproducible tooling to **record (and re-record)** four demos as time-compressed,
 EN + FR narrated 1080p mp4s:
 
 | # | Screenplay | What it demonstrates |
@@ -8,8 +8,9 @@ EN + FR narrated 1080p mp4s:
 | 1 | `cli-demo.sh` | The **roksbnkctl CLI lifecycle** — install on a fresh Ubuntu VSI, build a ROKS cluster, register it with BNK Forge, install BNK, run the testing framework, remove/rebuild BNK, then `down` everything. |
 | 2 | `ci-demo.sh` | The **tools-runner container as a CI pipeline** — the same story with *zero* host install; every step is a `docker run` of the all-in-one runner image, exactly what a CI job calls. |
 | 3 | `far-replication-demo.sh` | **FAR replication into a private registry** — pull the FAR credential from IBM COS, then mirror every BNK chart and image out of `repo.f5.com` into a private OCI registry and verify each artifact by digest. The registry (a standard open-source Harbor) is built beforehand, off-camera. |
+| 4 | `flp-licensed-demo.sh` | **Air-gap-style install, licensed by the F5 License Proxy** — one workspace declares a Harbor mirror + FLP licensing, then replicates FAR → Harbor, builds the cluster, installs the FLP (from Harbor), installs BNK (from Harbor, licensed by the in-cluster FLP), confirms the License CR is Active via the proxy, and `down`s everything. Nothing is pulled from `repo.f5.com` after replication. The Harbor is built beforehand, off-camera. |
 
-All three share one pipeline. The raw asciinema `.cast` is the **master** — the
+All four share one pipeline. The raw asciinema `.cast` is the **master** — the
 mp4s are derived from it, so re-cuts (pacing, narration, language) never need
 another cloud run.
 
@@ -38,6 +39,7 @@ Pick the screenplay with the `SCREENPLAY` environment variable. It defaults to
 | `cli-demo.sh [teardown]` | **on the VSI** | Demo #1 — see the table above. |
 | `ci-demo.sh [teardown]` | **on the VSI** | Demo #2 — see the table above. |
 | `far-replication-demo.sh [teardown]` | **on the VSI** | Demo #3 — see the table above. Drives `../deploy-far-registry.sh`, which provisions a *second* VSI to host Harbor. |
+| `flp-licensed-demo.sh [teardown]` | **on the VSI** | Demo #4 — see the table above. Targets a pre-built Harbor (`REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD` in `demo.env`); builds a cluster, installs the FLP + BNK from Harbor, licenses via the FLP. |
 | `demo-lib.sh` | on the VSI | Shared presentation helpers: stage cards + framed commands. The `STAGE n/N · Title` line doubles as the chapter marker. |
 | `record.sh {run\|start\|wait\|fetch\|attach\|teardown}` | control host | Copies the screenplay + `demo.env` to the VSI, records it under `asciinema rec` in `tmux`, polls, and pulls the master `.cast` into `out/`. |
 | `postprocess.sh <cast>` | control host | Idle-compresses the cast (`MAX_IDLE`), renders `agg`→gif→`ffmpeg`→`*.silent.mp4`, and extracts `*.chapters.tsv`. |
@@ -137,6 +139,55 @@ Details:
 - **Re-records:** the registry persists between takes, so empty the project first
   (`roksbnkctl -w <ws> registry delete --force`) or rebuild the registry, so
   `diff` shows everything missing again.
+
+---
+
+## Demo #4 — FLP-licensed install from Harbor
+
+The full-length one: it **builds a ROKS cluster**, installs the FLP, and installs
+BNK, so budget roughly **90–120 min** of live cloud (and real IBM Cloud spend).
+The master `.cast` captures it once; re-cuts never need another run.
+
+**Same Harbor prerequisites as Demo #3** — build the registry off-camera with
+`scripts/deploy-far-registry.sh` and put `REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD`
+in `demo.env` (see Demo #3 above). The screenplay itself replicates FAR into it on
+camera, so start from an **empty** Harbor project (`registry delete --force`, or a
+fresh project) so the replication has real work to show.
+
+**Use `SRC_BUILD=1`** — FLP support is not in a public release yet, so the demo
+must install the source build (`record.sh` builds `roksbnkctl.bin` from this repo
+and ships it; the screenplay installs it in preference to any release).
+
+```bash
+SRC_BUILD=1 SCREENPLAY=flp-licensed-demo.sh ./record.sh run
+./postprocess.sh out/latest.cast
+./voiceover.sh out/latest.compressed.cast out/latest.chapters.tsv
+mv out/latest.en.mp4 out/demo4-flp.en.mp4   # keep it alongside the others
+mv out/latest.fr.mp4 out/demo4-flp.fr.mp4
+```
+
+Details:
+
+- **The install pulls from Harbor, not FAR.** `registry replicate` records a
+  `registry-mirror.json` whose `ChartHost`/`ImageHost` point at the Harbor project;
+  `renderBNKFields` turns that into `far_chart_repo_url` / `far_image_repo_url` +
+  `use_registry_mirror = true`, which both the FLP phase and the BNK install consume.
+  Because `use_registry_mirror` drops the FAR pull secret (`imagePullSecrets: []`),
+  the **Harbor project must allow anonymous pull** (public project) — otherwise the
+  in-cluster pulls have no credential. `deploy-far-registry.sh --project bnk-mirror`
+  creates a public project by default.
+- **FLP licensing.** `bnk.license_mode: f5licenseproxy` + the `bnk.flp` block make
+  the run install the in-cluster F5 License Proxy (`flp up`) and point BNK's License
+  CR at it. The cluster-wide controller trusts the proxy's CA (written to the
+  `licenseserver-rootca` Secret) and brokers the entitlement through the proxy — see
+  `book/src/10c-flp-licensing.md`. A subscription JWT is still required
+  (`bnk.subscription_jwt_file`, default `trial.jwt`, pulled from COS like the FAR
+  credential).
+- **No FAR credential / JWT to supply** — same as Demo #3, roksbnkctl reads both from
+  the orchestration COS bucket.
+- **Teardown is two commands** (the screenplay's stage 9 does both): `flp down` first
+  (the FLP is a standalone phase the composite `down` does not touch), then `down`
+  removes BNK + the cluster. The closing `down` destroys the cluster on camera.
 
 ---
 
