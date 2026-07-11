@@ -292,4 +292,5 @@ module "flp" {
 
   flp_namespace     = var.flp_namespace
   flp_chart_version = var.flp_chart_version
+  flp_storage_class = var.flp_storage_class
 }

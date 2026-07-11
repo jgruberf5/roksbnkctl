@@ -74,14 +74,49 @@ locals {
   # prefix and set the (conditional) pull secret. Everything else stays at the
   # chart defaults (isProxy* forward-proxy flags off — direct egress).
   flp_helm_values = {
-    vaultInit  = { image = { repository = local.image_repository } }
-    vault      = { image = { repository = local.image_repository } }
-    postgresql = { image = { repository = local.image_repository } }
+    vaultInit = { image = { repository = local.image_repository } }
+    vault     = { image = { repository = local.image_repository } }
+    postgresql = {
+      image = { repository = local.image_repository }
+      # Mount the (now dynamic) data PVC where the bitnami image actually writes
+      # (/bitnami/postgresql), not the chart's default /var/lib/postgresql — the
+      # bitnami entrypoint initialises /bitnami/postgresql/data.
+      DataDir = "/bitnami/postgresql"
+    }
     flp = {
       image            = { repository = local.image_repository }
       imagePullSecrets = local.flp_image_pull_secret
     }
   }
+}
+
+# Post-renderer: the f5-license-proxy chart ships three hostPath PersistentVolumes
+# + label-selected PVCs (a single-node/dev model). On ROKS the hostPath dirs are
+# root-owned and never chowned to the non-root container UIDs, and the PVs go
+# Released on teardown and block re-install. This script (run by helm on the
+# rendered manifests) drops the hostPath PVs and rewrites the PVCs to dynamically
+# provision from var.flp_storage_class — the CSI driver then chowns each volume to
+# fsGroup, so postgres/vault can write. The storage class is baked in so no
+# post-render args are needed (older helm providers don't pass them).
+resource "local_file" "postrender" {
+  count           = local.enabled ? 1 : 0
+  filename        = "${var.scratch_dir}/flp-postrender.py"
+  file_permission = "0755"
+  content         = <<-PY
+    #!/usr/bin/env python3
+    import sys, re
+    SC = "${var.flp_storage_class}"
+    docs = sys.stdin.read().split("\n---\n")
+    out = []
+    for d in docs:
+        if re.search(r"^[ \t]*kind:[ \t]*PersistentVolume[ \t]*$", d, re.M) and "hostPath:" in d:
+            continue  # drop the chart's hostPath PVs
+        if re.search(r"^[ \t]*kind:[ \t]*PersistentVolumeClaim[ \t]*$", d, re.M):
+            d = re.sub(r"(storageClassName:[ \t]*).*", r"\g<1>" + SC, d)
+            d = re.sub(r"\n[ \t]*selector:[ \t]*\n[ \t]*matchLabels:[ \t]*\n[ \t]*volumeType:[^\n]*", "", d)
+        out.append(d)
+    sys.stdout.write("\n---\n".join(out))
+  PY
 }
 
 # ── COS: FAR auth tarball → _json_key_base64 SA ───────────────────────────────
@@ -315,11 +350,17 @@ resource "helm_release" "flp" {
 
   values = [yamlencode(local.flp_helm_values)]
 
+  # Rewrite the chart's hostPath storage to dynamic ROKS block storage.
+  postrender {
+    binary_path = local_file.postrender[0].filename
+  }
+
   depends_on = [
     kubernetes_namespace_v1.flp,
     kubernetes_secret_v1.mtls,
     kubernetes_secret_v1.flp_jwt,
     kubernetes_secret_v1.far_secret,
     kubernetes_role_binding_v1.flp_scc,
+    local_file.postrender,
   ]
 }

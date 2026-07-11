@@ -535,6 +535,12 @@ variable "flp_chart_version" {
   default     = ""
 }
 
+variable "flp_storage_class" {
+  description = "Dynamic StorageClass for the FLP's PVCs (FLP phase). Default = ROKS VPC block."
+  type        = string
+  default     = "ibmc-vpc-block-metro-10iops-tier"
+}
+
 variable "gateway_app_namespace" {
   description = "Application namespace the Gateway + HTTPRoute serve (created by the gateway module)"
   type        = string

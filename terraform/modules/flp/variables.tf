@@ -126,3 +126,9 @@ variable "flp_chart_version" {
   type        = string
   default     = ""
 }
+
+variable "flp_storage_class" {
+  description = "Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default."
+  type        = string
+  default     = "ibmc-vpc-block-metro-10iops-tier"
+}
