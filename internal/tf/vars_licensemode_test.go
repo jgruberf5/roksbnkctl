@@ -67,6 +67,11 @@ func TestRenderTFVars_LicenseMode_FLP(t *testing.T) {
 	if n := strings.Count(out, "license_mode ="); n != 1 {
 		t.Errorf("license_mode emitted %d times, want exactly 1\noutput:\n%s", n, out)
 	}
+	// The FLP block's namespace renders (drives the flp phase); deploy_flp itself
+	// is forced by the phase override, not config.
+	if !strings.Contains(out, `flp_namespace = "f5-license-proxy"`) {
+		t.Errorf("FLP block must emit flp_namespace\noutput:\n%s", out)
+	}
 	// The CA/endpoint are flp-phase outputs, never rendered from config here.
 	if strings.Contains(out, "license_server_root_ca") {
 		t.Errorf("license_server_root_ca must not render from config\noutput:\n%s", out)

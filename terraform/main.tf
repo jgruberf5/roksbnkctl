@@ -261,3 +261,35 @@ module "gateway" {
   gateway_client_subnet_remote = var.gateway_client_subnet_remote
   gateway_vxlan_port           = var.gateway_vxlan_port
 }
+
+# F5 License Proxy — optional, deployed only by `roksbnkctl flp up` (deploy_flp).
+# A no-op in every other phase (its override forces deploy_flp=false). Reuses the
+# BNK install's registry/mirror + COS contract so it pulls from Harbor or FAR.
+module "flp" {
+  source = "./modules/flp"
+
+  deploy_flp                 = var.deploy_flp
+  create_roks_cluster        = var.create_roks_cluster
+  roks_cluster_name_or_id    = module.roks_cluster.roks_cluster_name
+  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
+  kubeconfig_dir             = "${var.kubeconfig_dir}/flp"
+
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+
+  ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
+  ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
+  ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  f5_cne_far_auth_file          = var.f5_cne_far_auth_file
+  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  scratch_dir                   = var.scratch_dir
+
+  far_repo_url        = var.far_repo_url
+  far_chart_repo_url  = var.far_chart_repo_url
+  far_image_repo_url  = var.far_image_repo_url
+  use_registry_mirror = var.use_registry_mirror
+
+  flp_namespace     = var.flp_namespace
+  flp_chart_version = var.flp_chart_version
+}

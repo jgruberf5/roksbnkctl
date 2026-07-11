@@ -370,6 +370,17 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.LicenseMode != "" {
 		fmt.Fprintf(w, "license_mode = %q\n", ws.BNK.LicenseMode)
 	}
+	// F5 License Proxy phase settings. Emitted only when an flp block is present;
+	// deploy_flp itself is forced by the phase override (true for `flp up`, false
+	// everywhere else), so these lines are harmless no-ops in the other phases.
+	if flp := ws.BNK.FLP; flp != nil {
+		if flp.Namespace != "" {
+			fmt.Fprintf(w, "flp_namespace = %q\n", flp.Namespace)
+		}
+		if flp.ChartVersion != "" {
+			fmt.Fprintf(w, "flp_chart_version = %q\n", flp.ChartVersion)
+		}
+	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
 	// Emitted only when config.yaml supplies them; absent → the terraform
 	// module's install-guide defaults apply (existing configs unchanged).

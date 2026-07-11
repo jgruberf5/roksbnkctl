@@ -130,6 +130,27 @@ output "gateway_enabled" {
   value       = module.gateway.gateway_enabled
 }
 
+# ============================================================
+# F5 License Proxy (empty/placeholder unless the FLP phase is deployed).
+# The FLP phase persists these to flp-outputs.json; the BNK phase reads them
+# in f5licenseproxy mode.
+# ============================================================
+
+output "flp_root_ca" {
+  description = "Base64 PEM of the FLP root CA (for CWC's licenseserver-rootca Secret)"
+  value       = module.flp.flp_root_ca
+}
+
+output "flp_endpoint" {
+  description = "Base URL of the in-cluster F5 License Proxy service"
+  value       = module.flp.flp_endpoint
+}
+
+output "flp_namespace" {
+  description = "Namespace the F5 License Proxy was installed into"
+  value       = module.flp.flp_namespace
+}
+
 output "gateway_app_namespace" {
   description = "Namespace of the Gateway + HTTPRoute"
   value       = module.gateway.gateway_app_namespace

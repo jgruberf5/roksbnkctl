@@ -517,6 +517,24 @@ variable "deploy_gateway" {
   default     = false
 }
 
+variable "deploy_flp" {
+  description = "Master toggle for the F5 License Proxy phase. Off in every other phase's override; on only for `flp up`."
+  type        = bool
+  default     = false
+}
+
+variable "flp_namespace" {
+  description = "Namespace the F5 License Proxy is installed into (FLP phase)."
+  type        = string
+  default     = "f5-license-proxy"
+}
+
+variable "flp_chart_version" {
+  description = "Pin for the f5-license-proxy chart version (empty → registry latest)."
+  type        = string
+  default     = ""
+}
+
 variable "gateway_app_namespace" {
   description = "Application namespace the Gateway + HTTPRoute serve (created by the gateway module)"
   type        = string
