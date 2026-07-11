@@ -422,6 +422,9 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large`. |
 | `bnk.far_repo_url` | string | `repo.f5.com` | FAR image registry URL. |
 | `bnk.manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | f5-bigip-k8s-manifest chart version. |
+| `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the in-cluster [F5 License Proxy](./10c-flp-licensing.md) (`roksbnkctl flp up` must have run); empty/omitted keeps the JWT/connected default. |
+| `bnk.flp.namespace` | string | `f5-license-proxy` | Namespace the FLP phase installs into (FLP mode only). |
+| `bnk.flp.chart_version` | string | (empty ⇒ registry latest) | Pin the `f5-license-proxy` chart version (FLP mode only). |
 | `test.throughput.image` | string | `networkstatic/iperf3:latest` | iperf3 image. |
 | `test.throughput.duration` | integer | `30` | iperf3 `-t` (seconds). |
 | `test.throughput.streams` | integer | `8` | iperf3 `-P` (parallel streams). |
