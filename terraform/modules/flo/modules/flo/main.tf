@@ -471,7 +471,12 @@ resource "null_resource" "extract_flo_version" {
       fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_chart_hostname}
+      # The f5-bigip-k8s-manifest chart is mirrored like any other chart (it is a BOM
+      # artifact — see bnkbom.ManifestChartName), so pull it from the same chart host
+      # as everything else: FAR off the mirror, the mirror under it. That keeps a
+      # mirrored install fully disconnected — nothing reaches repo.f5.com after
+      # replication. Its FLO/CIS versions feed the CNEManifest CR applied below.
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
       $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
       FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
@@ -818,9 +823,9 @@ resource "null_resource" "f5_lifecycle_operator" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       FLO_VERSION=$(cat ${var.manifest_download_dir}/flo-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.flo_helm_values))}" | base64 -d > /tmp/flo-helm-values.json
       $HELM_BIN upgrade --install flo \
         oci://${local.far_chart_hostname}/charts/f5-lifecycle-operator \
@@ -896,9 +901,9 @@ resource "null_resource" "f5_bnk_cis" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       CIS_VERSION=$(cat ${var.manifest_download_dir}/cis-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.cis_helm_values))}" | base64 -d > /tmp/cis-helm-values.json
       $HELM_BIN upgrade --install f5-bnk-cis \
         oci://${local.far_chart_hostname}/charts/f5-bnk-cis \
@@ -1468,14 +1473,26 @@ locals {
   #     rejected with "unable to validate token").
   is_icr_mirror = var.use_registry_mirror && can(regex("(^|[.])icr[.]io(/|$)", local.far_chart_hostname))
 
+  # An EXTERNAL mirror (e.g. Harbor) authenticates chart pulls with its own
+  # basic-auth credentials — not the kube token (in-cluster OpenShift registry) or
+  # an IAM key (ICR). Signalled by registry_mirror_password being set.
+  has_mirror_creds = var.use_registry_mirror && !local.is_icr_mirror && var.registry_mirror_password != ""
+
   chart_pull_username = (
     !var.use_registry_mirror ? "_json_key_base64" :
-    local.is_icr_mirror ? "iamapikey" : "unused"
+    local.is_icr_mirror ? "iamapikey" :
+    local.has_mirror_creds ? var.registry_mirror_username : "unused"
   )
   chart_pull_password = (
     !var.use_registry_mirror ? local.far_service_account_b64 :
-    local.is_icr_mirror ? var.ibmcloud_api_key : var.kube_token
+    local.is_icr_mirror ? var.ibmcloud_api_key :
+    local.has_mirror_creds ? var.registry_mirror_password : var.kube_token
   )
+
+  # `helm registry login` takes a bare registry HOST; far_chart_hostname carries a
+  # repo-prefix path for a mirror (e.g. host/bnk-mirror), so strip it — the
+  # credential must be stored under the host the subsequent `helm pull` resolves.
+  chart_login_host = split("/", local.far_chart_hostname)[0]
 }
 
 resource "helm_release" "flo" {
@@ -1511,6 +1528,69 @@ resource "helm_release" "flo" {
     kubectl_manifest.ca_cluster_issuer,
     data.external.versions,
   ]
+}
+
+# ── CNEManifest CR — the disconnected FLO install ────────────────────────────
+# FLO resolves the BNK manifest by LISTING cluster-scoped CNEManifest CRs and
+# matching spec.version (GetManifest). Only when none matches does it fall back to
+# pulling the manifest chart from the CNEInstance's spec.registry.uri — i.e. the
+# MIRROR. But f5-bigip-k8s-manifest is the BOM's *source*, not a BOM member, so it
+# is never replicated into a mirror; that fallback therefore 404s on any mirrored
+# install and the CNEInstance never reconciles ("No CNEManifest exists which
+# contains expected manifestVersion").
+#
+# So convert the manifest roksbnkctl already downloaded into a CNEManifest CR and
+# apply it up front. FLO then reads the manifest from the CLUSTER and never reaches
+# out to a registry for it — the install is fully disconnected.
+#
+# The conversion mirrors FLO's own RetrieveRemoteManifest byte-for-byte: strip the
+# "images/" / "charts/" path prefix off each entry (split(name,"/")[1]) and name the
+# CR lower("<productType>-<version>") — productType is BNK.
+data "local_file" "bnk_manifest" {
+  count      = local.use_kubectl ? 1 : 0
+  filename   = "${var.manifest_download_dir}/f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml"
+  depends_on = [null_resource.extract_flo_version]
+}
+
+locals {
+  # The release stanza for the version we are installing.
+  bnk_manifest_release = one([
+    for r in try(yamldecode(data.local_file.bnk_manifest[0].content).releases, []) :
+    r if r.version == var.f5_bigip_k8s_manifest_version
+  ])
+
+  cnemanifest_spec = {
+    version = var.f5_bigip_k8s_manifest_version
+    images = [
+      for i in try(local.bnk_manifest_release.docker_images, []) :
+      { name = split("/", i.name)[1], version = i.version }
+    ]
+    charts = [
+      for c in try(local.bnk_manifest_release.helm_charts, []) :
+      { name = split("/", c.name)[1], version = c.version }
+    ]
+  }
+}
+
+resource "kubectl_manifest" "cnemanifest" {
+  count             = local.use_kubectl ? 1 : 0
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+
+  yaml_body = yamlencode({
+    apiVersion = "k8s.f5.com/v1"
+    kind       = "CNEManifest"
+    metadata = {
+      # Same name FLO would mint itself, so a later FLO-side apply is a no-op
+      # rather than a second CR (two matches → MultipleMatching → reconcile stops).
+      name = lower("BNK-${var.f5_bigip_k8s_manifest_version}")
+    }
+    spec = local.cnemanifest_spec
+  })
+
+  # The CNEManifest CRD ships in the FLO chart's crds subchart.
+  depends_on = [helm_release.flo]
 }
 
 resource "helm_release" "cis" {

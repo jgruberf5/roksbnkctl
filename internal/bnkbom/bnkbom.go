@@ -30,6 +30,14 @@ const (
 	KindImage Kind = "image"
 )
 
+// ManifestChartName is the repository path of the f5-bigip-k8s-manifest chart
+// within the F5 helm host. It is mirrored like any other chart so an air-gapped
+// install can pull the manifest (to derive the FLO/CIS versions and to build the
+// CNEManifest CR) from the mirror instead of reaching back to repo.f5.com. The
+// terraform FLO module pulls it from "<chart-host>/release/f5-bigip-k8s-manifest",
+// so this path must stay in sync with that.
+const ManifestChartName = "release/f5-bigip-k8s-manifest"
+
 // Origin records how an artifact entered the BOM — for reporting and for the
 // --include-deps toggle (the non-F5 deps can be excluded).
 type Origin string
@@ -180,6 +188,22 @@ func ParseManifest(data []byte, version string) (*BOM, error) {
 	}
 
 	bom := &BOM{ManifestVersion: strings.TrimSpace(rel.Version)}
+
+	// The f5-bigip-k8s-manifest chart is the BOM's own source — but it must be
+	// mirrored too, or a mirrored install is not actually disconnected. The BNK
+	// install pulls this chart to derive the FLO/CIS chart versions and to build
+	// the cluster-scoped CNEManifest CR that FLO resolves the manifest from; if it
+	// only ever lives on FAR, every install still reaches back to repo.f5.com.
+	// It is a normal OCI chart at <helmHost>/release/f5-bigip-k8s-manifest:<version>,
+	// so mirroring it preserves that path and the install pulls it from the mirror.
+	bom.Artifacts = append(bom.Artifacts, Artifact{
+		Kind:       KindChart,
+		SourceHost: helmHost,
+		Name:       ManifestChartName,
+		Tag:        bom.ManifestVersion,
+		Origin:     OriginManifest,
+	})
+
 	for _, c := range rel.HelmCharts {
 		bom.Artifacts = append(bom.Artifacts, Artifact{
 			Kind:       KindChart,

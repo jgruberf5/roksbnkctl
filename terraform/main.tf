@@ -105,6 +105,8 @@ module "flo" {
   far_chart_repo_url            = var.far_chart_repo_url
   far_image_repo_url            = var.far_image_repo_url
   use_registry_mirror           = var.use_registry_mirror
+  registry_mirror_username      = var.registry_mirror_username
+  registry_mirror_password      = var.registry_mirror_password
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   use_cos_bucket                = true
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
@@ -285,10 +287,12 @@ module "flp" {
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   scratch_dir                   = var.scratch_dir
 
-  far_repo_url        = var.far_repo_url
-  far_chart_repo_url  = var.far_chart_repo_url
-  far_image_repo_url  = var.far_image_repo_url
-  use_registry_mirror = var.use_registry_mirror
+  far_repo_url             = var.far_repo_url
+  far_chart_repo_url       = var.far_chart_repo_url
+  far_image_repo_url       = var.far_image_repo_url
+  use_registry_mirror      = var.use_registry_mirror
+  registry_mirror_username = var.registry_mirror_username
+  registry_mirror_password = var.registry_mirror_password
 
   flp_namespace     = var.flp_namespace
   flp_chart_version = var.flp_chart_version

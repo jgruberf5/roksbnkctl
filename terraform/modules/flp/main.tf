@@ -37,25 +37,49 @@ locals {
     ":", ": "
   )
 
+  # dockerconfigjson for an external mirror's basic-auth (Harbor robot/admin). The
+  # auth key is the bare registry host (kubelet matches image refs by host prefix),
+  # stripped of the repo-prefix path segment far_image_hostname may carry.
+  mirror_registry_host = split("/", local.far_image_hostname)[0]
+  mirror_auth_value    = base64encode("${var.registry_mirror_username}:${var.registry_mirror_password}")
+  mirror_docker_config_json = replace(
+    jsonencode({
+      auths = { (local.mirror_registry_host) = { auth = local.mirror_auth_value } }
+    }),
+    ":", ": "
+  )
+
   kube_token = try(data.ibm_container_cluster_config.cluster_config[0].token, "")
 
   # Chart-pull auth for the in-process helm provider (copied from the FLO module):
   # FAR creds off the mirror, iamapikey for an ICR mirror, the cluster token for
   # the in-cluster registry route.
   is_icr_mirror = var.use_registry_mirror && can(regex("(^|[.])icr[.]io(/|$)", local.far_chart_hostname))
+
+  # An EXTERNAL registry mirror (e.g. Harbor) authenticates with its own basic-auth
+  # credentials, not the kube token (which only the in-cluster OpenShift registry
+  # accepts) or an IAM key (ICR). Detected by registry_mirror_password being set.
+  has_mirror_creds = var.use_registry_mirror && !local.is_icr_mirror && var.registry_mirror_password != ""
+
   chart_pull_username = (
     !var.use_registry_mirror ? "_json_key_base64" :
-    local.is_icr_mirror ? "iamapikey" : "unused"
+    local.is_icr_mirror ? "iamapikey" :
+    local.has_mirror_creds ? var.registry_mirror_username : "unused"
   )
   chart_pull_password = (
     !var.use_registry_mirror ? local.far_service_account_b64 :
-    local.is_icr_mirror ? var.ibmcloud_api_key : local.kube_token
+    local.is_icr_mirror ? var.ibmcloud_api_key :
+    local.has_mirror_creds ? var.registry_mirror_password : local.kube_token
   )
 
-  # Off the mirror the pods need the FAR dockerconfig pull secret; in mirror mode
-  # it is dropped (RBAC / the mirror's own pull path handles it), matching the BNK
-  # install's use_registry_mirror behaviour.
-  flp_image_pull_secret = !var.use_registry_mirror ? "far-secret" : ""
+  # Off the mirror the pods pull via the FAR dockerconfig secret. On an in-cluster/
+  # ICR mirror pulls go through RBAC, so the secret is dropped (imagePullSecrets []).
+  # On an EXTERNAL mirror with credentials the pods need a dockerconfig secret built
+  # from those credentials — created below as `flp-mirror-pull` when has_mirror_creds.
+  flp_image_pull_secret = (
+    !var.use_registry_mirror ? "far-secret" :
+    local.has_mirror_creds ? "flp-mirror-pull" : ""
+  )
 
   # mTLS leaf certs: name → SAN DNS list. postgresql/vault keep the chart's
   # in-pod SANs. The flp leaf is ALSO the FLP's public server cert, so it must
@@ -332,6 +356,22 @@ resource "kubernetes_secret_v1" "far_secret" {
   depends_on = [kubernetes_namespace_v1.flp]
 }
 
+# External-mirror image pull secret — the pods pull FLP images from an external
+# registry (Harbor) that needs basic auth. Created only when credentials are
+# supplied for the mirror; referenced by flp_image_pull_secret above.
+resource "kubernetes_secret_v1" "mirror_pull" {
+  count = local.enabled && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = "flp-mirror-pull"
+    namespace = var.flp_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.flp]
+}
+
 # ── the FLP chart ─────────────────────────────────────────────────────────────
 
 resource "helm_release" "flp" {
@@ -364,6 +404,7 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.mtls,
     kubernetes_secret_v1.flp_jwt,
     kubernetes_secret_v1.far_secret,
+    kubernetes_secret_v1.mirror_pull,
     kubernetes_role_binding_v1.flp_scc,
     local_file.postrender,
   ]

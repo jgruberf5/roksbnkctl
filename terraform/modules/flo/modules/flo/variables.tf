@@ -66,6 +66,19 @@ variable "use_registry_mirror" {
   default     = false
 }
 
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror (kube-token/IAM auth)."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart pulls authenticate with it instead of the kube token."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "cert_manager_namespace" {
   description = "Namespace for cert-manager installation"
   type        = string
