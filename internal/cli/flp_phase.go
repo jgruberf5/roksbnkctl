@@ -37,6 +37,16 @@ Typical flow (FLP-licensed BNK):
 FLP is opt-in: without it, BNK licenses with a subscription JWT as before.`,
 }
 
+// flagFLPNodePort backs `flp up --add-node-port-access`. It is PERSISTED into the
+// workspace config (bnk.flp.node_port_access), so a later `flp up` — or any
+// re-apply — keeps the NodePort rather than silently destroying it because the flag
+// was not repeated.
+var flagFLPNodePort bool
+
+// flagFLPNodePortCIDR backs `--node-port-source-cidr`, the consuming cluster's
+// subnet, opened on the worker security group. Also persisted.
+var flagFLPNodePortCIDR string
+
 var flpUpCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Install the F5 License Proxy (a cluster must exist)",
@@ -44,7 +54,16 @@ var flpUpCmd = &cobra.Command{
 cluster-outputs.json) in its own state (state-flp/), and writes flp-outputs.json
 (root CA + endpoint) for a later ` + "`bnk up`" + ` in f5licenseproxy mode.
 
-Refuses when no cluster exists yet.`,
+Refuses when no cluster exists yet.
+
+With --add-node-port-access the proxy is also reachable from OUTSIDE its own
+cluster, so a BNK install in a DIFFERENT cluster (same VPC, or across a transit
+gateway) can license through it — a "shared licensing cluster", where only the
+cluster running the proxy needs egress to F5. That additionally puts the worker
+node IPs in the proxy's server certificate (without them the remote cluster's
+controller rejects the TLS handshake) and records an external endpoint in
+flp-outputs.json. Feed that endpoint + CA to the other workspace via its
+bnk.flp.external block.`,
 	Args: cobra.NoArgs,
 	RunE: runFLPUp,
 }
@@ -64,6 +83,10 @@ reverse-order teardown of every phase.`,
 func init() {
 	flpUpCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt before apply")
 	flpUpCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
+	flpUpCmd.Flags().BoolVar(&flagFLPNodePort, "add-node-port-access", false,
+		"expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it")
+	flpUpCmd.Flags().StringVar(&flagFLPNodePortCIDR, "node-port-source-cidr", "",
+		"with --add-node-port-access: open the NodePort on the worker security group to this CIDR (the consuming cluster's subnet)")
 	flpDownCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 	flpDownCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 
@@ -84,6 +107,28 @@ func runFLPUp(cmd *cobra.Command, _ []string) error {
 	if !pres.Cluster {
 		return errors.New("no cluster found — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`")
 	}
+
+	// Persist the NodePort intent, so it survives a re-apply that omits the flag.
+	// Without this, a plain `flp up` after an `flp up --add-node-port-access` would
+	// render node_port_access=false and terraform would DESTROY the NodePort exposure
+	// (and re-issue the cert without the node IPs), silently breaking every remote
+	// cluster licensing through this proxy.
+	if cmd.Flags().Changed("add-node-port-access") || cmd.Flags().Changed("node-port-source-cidr") {
+		if cctx.Workspace.BNK.FLP == nil {
+			cctx.Workspace.BNK.FLP = &config.BNKFLPCfg{}
+		}
+		if cmd.Flags().Changed("add-node-port-access") {
+			cctx.Workspace.BNK.FLP.NodePortAccess = flagFLPNodePort
+		}
+		if cmd.Flags().Changed("node-port-source-cidr") {
+			cctx.Workspace.BNK.FLP.NodePortSourceCIDR = flagFLPNodePortCIDR
+		}
+		if err := config.SaveWorkspace(cctx.WorkspaceName, cctx.Workspace); err != nil {
+			return fmt.Errorf("persisting FLP node-port settings: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "✓ FLP node-port access: %v (saved to config.yaml)\n", cctx.Workspace.BNK.FLP.NodePortAccess)
+	}
+
 	return orchestration.RunFLPUp(ctxWithCmd(cmd), lifecycleInputs())
 }
 

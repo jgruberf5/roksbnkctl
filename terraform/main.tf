@@ -298,4 +298,6 @@ module "flp" {
   flp_chart_version             = var.flp_chart_version
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flp_storage_class             = var.flp_storage_class
+  flp_node_port_access          = var.flp_node_port_access
+  flp_node_port_source_cidr     = var.flp_node_port_source_cidr
 }

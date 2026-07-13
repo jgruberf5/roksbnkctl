@@ -595,3 +595,15 @@ variable "gateway_vxlan_port" {
   type        = number
   default     = 6789
 }
+
+variable "flp_node_port_access" {
+  description = "Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it."
+  type        = bool
+  default     = false
+}
+
+variable "flp_node_port_source_cidr" {
+  description = "With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet)."
+  type        = string
+  default     = ""
+}

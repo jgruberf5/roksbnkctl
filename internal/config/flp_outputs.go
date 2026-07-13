@@ -21,8 +21,22 @@ type FLPOutputs struct {
 	// flp_root_ca output is already base64; stored verbatim).
 	RootCAB64 string `json:"root_ca_b64"`
 	// Endpoint is the FLP service base URL (e.g.
-	// https://f5-license-proxy.<ns>.svc.cluster.local:8443).
+	// https://f5-license-proxy.<ns>.svc.cluster.local:8443). In-cluster only — that
+	// name does not resolve anywhere else.
 	Endpoint string `json:"endpoint"`
+
+	// ExternalEndpoint is the address a BNK install in a DIFFERENT cluster dials,
+	// e.g. https://10.240.64.5:30001. Set only when the proxy was exposed with
+	// `flp up --add-node-port-access`; empty for an in-cluster-only proxy.
+	//
+	// Copy this (with RootCAB64) into the consuming workspace's bnk.flp.external.
+	ExternalEndpoint string `json:"external_endpoint,omitempty"`
+
+	// ExternalEndpoints lists every worker-node URL the proxy answers on. All are IP
+	// SANs on its certificate, so any of them is a valid bnk.flp.external.url — use
+	// another if the first node is drained.
+	ExternalEndpoints []string `json:"external_endpoints,omitempty"`
+
 	// Namespace the FLP was installed into.
 	Namespace  string    `json:"namespace,omitempty"`
 	RecordedAt time.Time `json:"recorded_at"`

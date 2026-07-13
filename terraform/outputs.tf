@@ -220,3 +220,18 @@ output "gateway_static_routes" {
   description = "F5SPKStaticRoute set: name => { destination, prefix_len, gateway }"
   value       = module.gateway.gateway_static_routes
 }
+
+output "flp_external_endpoint" {
+  description = "Externally-reachable FLP URL for a BNK install in another cluster (empty unless flp_node_port_access)."
+  value       = try(module.flp.flp_external_endpoint, "")
+}
+
+output "flp_external_endpoints" {
+  description = "Every worker-node URL the FLP answers on."
+  value       = try(module.flp.flp_external_endpoints, [])
+}
+
+output "flp_node_port" {
+  description = "NodePort the FLP Service listens on (0 unless flp_node_port_access)."
+  value       = try(module.flp.flp_node_port, 0)
+}

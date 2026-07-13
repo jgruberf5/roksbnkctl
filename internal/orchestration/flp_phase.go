@@ -139,6 +139,15 @@ func persistFLPOutputs(ctx context.Context, tfws *tf.Workspace, workspace string
 		RootCAB64: rootCA,
 		Endpoint:  endpoint,
 		Namespace: tfStringOutput(outputs, "flp_namespace"),
+		// Empty unless the proxy was exposed with --add-node-port-access.
+		ExternalEndpoint:  tfStringOutput(outputs, "flp_external_endpoint"),
+		ExternalEndpoints: tfStringListOutput(outputs, "flp_external_endpoints"),
+	}
+	if out.ExternalEndpoint != "" {
+		fmt.Fprintf(w, "→ FLP reachable from other clusters at %s\n"+
+			"  point the consuming workspace at it with:\n"+
+			"    bnk:\n      flp:\n        external:\n          url: %s\n          root_ca_b64: <`roksbnkctl -w %s flp output` → root_ca_b64>\n",
+			out.ExternalEndpoint, out.ExternalEndpoint, workspace)
 	}
 	if err := config.WriteFLPOutputs(workspace, out); err != nil {
 		return fmt.Errorf("writing flp-outputs.json: %w", err)
@@ -192,6 +201,20 @@ func tfStringOutput(outputs map[string]tfexec.OutputMeta, key string) string {
 	var s string
 	if err := json.Unmarshal(v.Value, &s); err != nil {
 		return ""
+	}
+	return s
+}
+
+// tfStringListOutput reads a terraform list(string) output. Missing or
+// non-decodable → nil, matching tfStringOutput's forgiving contract.
+func tfStringListOutput(outputs map[string]tfexec.OutputMeta, key string) []string {
+	v, ok := outputs[key]
+	if !ok {
+		return nil
+	}
+	var s []string
+	if err := json.Unmarshal(v.Value, &s); err != nil {
+		return nil
 	}
 	return s
 }

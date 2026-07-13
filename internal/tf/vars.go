@@ -406,6 +406,15 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		if flp.ChartVersion != "" {
 			fmt.Fprintf(w, "flp_chart_version = %q\n", flp.ChartVersion)
 		}
+		// Expose the proxy outside its own cluster (the shared-licensing-cluster
+		// topology). Emitted only when opted in, so the single-cluster render is
+		// byte-identical.
+		if flp.NodePortAccess {
+			fmt.Fprintln(w, "flp_node_port_access = true")
+		}
+		if flp.NodePortSourceCIDR != "" {
+			fmt.Fprintf(w, "flp_node_port_source_cidr = %q\n", flp.NodePortSourceCIDR)
+		}
 	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
 	// Emitted only when config.yaml supplies them; absent → the terraform

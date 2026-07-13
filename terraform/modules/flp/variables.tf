@@ -146,6 +146,18 @@ variable "f5_bigip_k8s_manifest_version" {
   default     = ""
 }
 
+variable "flp_node_port_access" {
+  description = "Expose the proxy OUTSIDE its own cluster so a BNK install in a different cluster can license through it. The chart's Service is already type NodePort (30001), but it hardcodes externalTrafficPolicy: Local — with one replica only the node running the pod answers — so this flips it to Cluster and adds the worker node IPs to the proxy's server certificate (without them the remote CWC rejects the TLS handshake)."
+  type        = bool
+  default     = false
+}
+
+variable "flp_node_port_source_cidr" {
+  description = "With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). Empty leaves the security group untouched."
+  type        = string
+  default     = ""
+}
+
 variable "flp_storage_class" {
   description = "Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default."
   type        = string

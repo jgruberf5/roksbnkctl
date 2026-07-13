@@ -103,12 +103,37 @@ locals {
     vault      = ["vault", "localhost", "vault-postgresql-service"]
     flp        = ["flp", "localhost", "f5-license-proxy", local.flp_svc, "${local.flp_svc}.cluster.local"]
   }
+
+  # A remote cluster's CWC dials the proxy at https://<worker-node-ip>:<nodePort>,
+  # so that IP must be an IP SAN on the proxy's server cert. DNS SANs do not help —
+  # the connection is made to a literal address. Without these the handshake fails
+  # exactly as it did before the Service DNS SAN was added: "bad certificate".
+  #
+  # Worker InternalIPs are the routable VPC addresses. They CHANGE when a worker is
+  # replaced, which re-issues the cert on the next apply — acceptable for a NodePort
+  # topology, and the reason a stable VIP is preferable long term.
+  node_ips = var.flp_node_port_access ? sort(distinct(flatten([
+    for n in try(data.kubernetes_nodes.workers[0].nodes, []) : [
+      for a in n.status[0].addresses : a.address if a.type == "InternalIP"
+    ]
+  ]))) : []
+
+  # leaf → IP SANs (only the flp leaf is a public server cert).
+  leaf_ips = {
+    postgresql = []
+    vault      = []
+    flp        = local.node_ips
+  }
+
   # leaf → the Secret name the chart mounts it from.
   leaf_secret = {
     postgresql = "postgresql-mtls-secret"
     vault      = "vault-ssl-secret"
     flp        = "flp-mtls-secret"
   }
+
+  # The chart's Service is already type NodePort on this port.
+  flp_node_port = 30001
 
   # Helm values: point every component's image.repository at the resolved host
   # prefix and set the (conditional) pull secret. Everything else stays at the
@@ -146,6 +171,14 @@ resource "local_file" "postrender" {
     #!/usr/bin/env python3
     import sys, re
     SC = "${var.flp_storage_class}"
+    # When the proxy must be reachable from OUTSIDE this cluster, the chart's
+    # Service is unusable as shipped: it hardcodes externalTrafficPolicy: Local
+    # and the deployment has replicas: 1, so ONLY the node currently running the
+    # pod answers on the NodePort — every other node refuses, and which node that
+    # is changes whenever the pod reschedules. Cluster policy makes every node
+    # forward to the pod, so any worker IP is a valid endpoint. (Local exists to
+    # preserve the client source IP; licensing does not care.)
+    EXTERNAL = ${var.flp_node_port_access ? "True" : "False"}
     docs = sys.stdin.read().split("\n---\n")
     out = []
     for d in docs:
@@ -154,6 +187,8 @@ resource "local_file" "postrender" {
         if re.search(r"^[ \t]*kind:[ \t]*PersistentVolumeClaim[ \t]*$", d, re.M):
             d = re.sub(r"(storageClassName:[ \t]*).*", r"\g<1>" + SC, d)
             d = re.sub(r"\n[ \t]*selector:[ \t]*\n[ \t]*matchLabels:[ \t]*\n[ \t]*volumeType:[^\n]*", "", d)
+        if EXTERNAL and re.search(r"^[ \t]*kind:[ \t]*Service[ \t]*$", d, re.M):
+            d = re.sub(r"(externalTrafficPolicy:[ \t]*)Local", r"\g<1>Cluster", d)
         out.append(d)
     sys.stdout.write("\n---\n".join(out))
   PY
@@ -273,10 +308,46 @@ resource "tls_private_key" "leaf" {
   ecdsa_curve = "P256"
 }
 
+# Worker node IPs for the proxy's cert SANs — only needed when the proxy is
+# exposed outside its cluster.
+data "kubernetes_nodes" "workers" {
+  count = local.enabled && var.flp_node_port_access ? 1 : 0
+}
+
+# ── opening the NodePort to the consuming cluster ─────────────────────────────
+# ROKS puts its workers in a security group named kube-<cluster-id>, which does
+# NOT admit traffic from another cluster by default — so even with the Service
+# exposed, a CWC in a peer cluster is dropped at the SG. Open just the proxy's
+# NodePort, and only to the CIDR the operator names.
+locals {
+  open_node_port = local.enabled && var.flp_node_port_access && var.flp_node_port_source_cidr != ""
+}
+
+data "ibm_container_vpc_cluster" "cluster" {
+  count = local.open_node_port ? 1 : 0
+  name  = var.roks_cluster_name_or_id
+}
+
+data "ibm_is_security_group" "cluster_workers" {
+  count = local.open_node_port ? 1 : 0
+  name  = "kube-${data.ibm_container_vpc_cluster.cluster[0].id}"
+}
+
+resource "ibm_is_security_group_rule" "flp_node_port" {
+  count     = local.open_node_port ? 1 : 0
+  group     = data.ibm_is_security_group.cluster_workers[0].id
+  direction = "inbound"
+  remote    = var.flp_node_port_source_cidr
+  protocol  = "tcp"
+  port_min  = local.flp_node_port
+  port_max  = local.flp_node_port
+}
+
 resource "tls_cert_request" "leaf" {
   for_each        = local.enabled ? local.leaves : {}
   private_key_pem = tls_private_key.leaf[each.key].private_key_pem
   dns_names       = each.value
+  ip_addresses    = lookup(local.leaf_ips, each.key, [])
   subject {
     common_name  = each.key
     organization = "F5"
