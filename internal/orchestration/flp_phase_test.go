@@ -33,7 +33,7 @@ func TestWriteBnkFLPOverride(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	p, err := writeBnkFLPOverride(stateDir, ws, &config.Workspace{})
+	p, _, err := writeBnkFLPOverride(stateDir, ws, &config.Workspace{})
 	if err != nil {
 		t.Fatalf("writeBnkFLPOverride: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestWriteBnkFLPOverride(t *testing.T) {
 
 func TestWriteBnkFLPOverride_MissingHandoffErrors(t *testing.T) {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
-	if _, err := writeBnkFLPOverride(t.TempDir(), "no-flp-here", &config.Workspace{}); err == nil {
+	if _, _, err := writeBnkFLPOverride(t.TempDir(), "no-flp-here", &config.Workspace{}); err == nil {
 		t.Fatal("expected an error when flp-outputs.json is absent")
 	}
 }
@@ -76,9 +76,14 @@ func TestWriteBnkFLPOverride_ExternalProxy(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	p, err := writeBnkFLPOverride(stateDir, ws, wsCfg)
+	p, src, err := writeBnkFLPOverride(stateDir, ws, wsCfg)
 	if err != nil {
 		t.Fatalf("a foreign proxy must not require a local flp up: %v", err)
+	}
+	// The reported source drives the on-camera message; it must say the proxy is
+	// FOREIGN, not "in-cluster (from flp-outputs.json)".
+	if !strings.Contains(src, "another cluster") {
+		t.Errorf("source = %q, want it to name the foreign proxy", src)
 	}
 	body, err := os.ReadFile(p)
 	if err != nil {
@@ -101,7 +106,7 @@ func TestWriteBnkFLPOverride_ExternalIncomplete(t *testing.T) {
 	wsCfg.BNK.FLP = &config.BNKFLPCfg{
 		External: &config.BNKFLPExternalCfg{URL: "https://10.240.64.5:30001"}, // no CA
 	}
-	_, err := writeBnkFLPOverride(t.TempDir(), "consumer", wsCfg)
+	_, _, err := writeBnkFLPOverride(t.TempDir(), "consumer", wsCfg)
 	if err == nil {
 		t.Fatal("want an error when bnk.flp.external has a url but no root_ca_b64")
 	}
