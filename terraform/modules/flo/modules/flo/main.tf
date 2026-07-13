@@ -472,12 +472,15 @@ resource "null_resource" "extract_flo_version" {
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
       # The f5-bigip-k8s-manifest is the BOM's SOURCE, not a BOM member, so it is
-      # never replicated into the mirror. It is a control-host build-time metadata
-      # read (to extract the FLO + CIS chart versions), and roksbnkctl's air-gap
-      # model has a CONNECTED control host (it must reach FAR to build the BOM and
-      # replicate) with an air-gapped CLUSTER. So always pull the manifest from FAR
-      # with the FAR credential, even in mirror mode — the cluster's runtime charts
-      # and images still come from the mirror (helm_release below).
+      # never replicated into the mirror. roksbnkctl's air-gap model has a
+      # CONNECTED control host (it must reach FAR to build the BOM and replicate)
+      # with an air-gapped CLUSTER, so pull it from FAR with the FAR credential
+      # even in mirror mode.
+      #
+      # This is a control-host read only. The CLUSTER gets the same BOM as the
+      # CNEManifest applied below — FLO must never have to fetch it, because the
+      # only registry it would fetch it from is spec.registry.uri (the mirror),
+      # which carries charts/ and images/ but no release/ manifest chart.
       echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_registry_hostname}
       $HELM_BIN pull oci://${local.far_registry_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
@@ -509,6 +512,137 @@ data "external" "versions" {
   ]
 
   depends_on = [null_resource.extract_flo_version]
+}
+
+# ---------------------------------------------------------------------------
+# CNEManifest — the release BOM, applied INTO the cluster.
+#
+# FLO resolves CNEInstance.spec.manifestVersion by LISTING CNEManifest CRs and
+# matching spec.version (GetManifest, cneinstance_controller.go). Only when no
+# CNEManifest matches does it fall back to fetching the manifest chart itself,
+# from oci://<spec.registry.uri>/release/f5-bigip-k8s-manifest — and
+# spec.registry.uri is the MIRROR in air-gap mode, which by construction holds
+# only the BOM's charts/ and images/, never the release/ manifest chart that
+# produced it. That fallback therefore cannot succeed here, and in mirror mode
+# it is not even authenticated (imagePullSecrets collapses to []).
+#
+# So hand FLO the BOM up front. With a matching CNEManifest present the operator
+# short-circuits before any registry call, and spec.registry.uri is left to do
+# the one job it can do — resolving charts and images (it rebuilds each ref as
+# spec.registry.uri + "/images/" + name) — which keeps the cluster air-gapped.
+data "local_file" "bnk_manifest_yaml" {
+  count = local.global_enabled ? 1 : 0
+
+  filename = "${var.manifest_download_dir}/f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml"
+
+  depends_on = [null_resource.extract_flo_version]
+}
+
+locals {
+  # try(): the file only exists after extract_flo_version has run, so a
+  # destroy-phase refresh in a fresh container must not abort here.
+  bnk_manifest_doc = try(yamldecode(data.local_file.bnk_manifest_yaml[0].content), null)
+
+  bnk_manifest_release = try(one([
+    for release in local.bnk_manifest_doc.releases : release
+    if release.version == var.f5_bigip_k8s_manifest_version
+  ]), null)
+
+  # The BOM names artifacts by repository path ("charts/f5ingress",
+  # "images/tmm-img"); a CNEManifest carries the bare name. Index [1] rather
+  # than a trim so a name that ever loses its prefix fails loudly here instead
+  # of silently reaching FLO, which splits on "/" and takes [1] the same way.
+  bnk_manifest_charts = [
+    for chart in try(local.bnk_manifest_release.helm_charts, []) : {
+      name    = split("/", chart.name)[1]
+      version = chart.version
+    }
+  ]
+
+  bnk_manifest_images = [
+    for image in try(local.bnk_manifest_release.docker_images, []) : {
+      name    = split("/", image.name)[1]
+      version = image.version
+    }
+  ]
+
+  # FLO names a manifest it fetched itself lower("<productType>-<version>").
+  # Reuse that name: if a CNEManifest from an earlier FAR-mode apply is still
+  # around, we overwrite it rather than adding a second CR for the same version,
+  # which would trip FLO's MultipleMatching guard and stall the CNEInstance.
+  cnemanifest_name = lower("bnk-${var.f5_bigip_k8s_manifest_version}")
+
+  cnemanifest_manifest = {
+    apiVersion = "k8s.f5.com/v1"
+    kind       = "CNEManifest"
+    metadata = {
+      # Cluster-scoped (CNEManifest CRD scope: Cluster) — no namespace.
+      name = local.cnemanifest_name
+      labels = {
+        "app.kubernetes.io/name"       = "f5-lifecycle-operator"
+        "app.kubernetes.io/managed-by" = "roksbnkctl"
+      }
+    }
+    spec = {
+      version = var.f5_bigip_k8s_manifest_version
+      images  = local.bnk_manifest_images
+      charts  = local.bnk_manifest_charts
+    }
+  }
+}
+
+resource "kubectl_manifest" "cnemanifest" {
+  count = local.use_kubectl ? 1 : 0
+
+  yaml_body         = yamlencode(local.cnemanifest_manifest)
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+
+  # helm_release.flo ships the cnemanifests CRD (the chart's crds subchart).
+  depends_on = [
+    helm_release.flo,
+    data.local_file.bnk_manifest_yaml,
+  ]
+}
+
+# Legacy curl server-side apply. CNEManifest is cluster-scoped, so the path
+# carries no /namespaces/<ns> segment.
+resource "null_resource" "cnemanifest" {
+  count = local.use_legacy ? 1 : 0
+
+  triggers = {
+    manifest  = jsonencode(local.cnemanifest_manifest)
+    kube_host = var.kube_host
+    token     = var.kube_token
+    name      = local.cnemanifest_name
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      printf '%s' "${base64encode(jsonencode(local.cnemanifest_manifest))}" | base64 -d | \
+      curl -f -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        -k "${var.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${local.cnemanifest_name}?fieldManager=terraform&force=true" \
+        --data-binary @-
+    EOT
+  }
+
+  # Tolerate a missing CRD/CR on teardown — the FLO release may already be gone.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [
+    null_resource.f5_lifecycle_operator,
+    data.local_file.bnk_manifest_yaml,
+  ]
 }
 
 # Create f5-utils namespace via curl server-side apply — idempotent; no provider
