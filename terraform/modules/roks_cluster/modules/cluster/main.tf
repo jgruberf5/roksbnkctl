@@ -77,10 +77,22 @@ locals {
   )
 }
 
-# Data source to look up existing cluster VPC (if using existing)
+# Look up the adopted cluster VPC.
+#
+# Resolve it by ID when one is supplied — `resources.cluster_vpc.existing` is
+# documented as (and rendered by roksbnkctl as) a VPC *ID*. Looking it up by NAME
+# instead used `cluster_vpc_name`, which is derived from the workspace PREFIX, so it
+# is the name of the VPC this workspace WOULD have created — never the name of a VPC
+# borrowed from somewhere else. Adopting an existing VPC therefore always failed with
+# "No VPC found with name <prefix>-cluster-vpc", even though the correct ID had been
+# passed and the ID is what every consumer actually wants.
+#
+# The by-name lookup is kept for the case where no ID is given (a VPC in this
+# workspace's own naming scheme, e.g. one the cluster phase created earlier).
 data "ibm_is_vpc" "existing_cluster_vpc" {
-  count = var.use_existing_cluster_vpc ? 1 : 0
-  name  = var.cluster_vpc_name
+  count      = var.use_existing_cluster_vpc ? 1 : 0
+  identifier = var.existing_cluster_vpc_id != "" ? var.existing_cluster_vpc_id : null
+  name       = var.existing_cluster_vpc_id == "" ? var.cluster_vpc_name : null
 }
 
 # Create Cluster VPC (only if not using existing)
