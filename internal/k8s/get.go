@@ -45,7 +45,41 @@ func asTable(obj runtime.Object) runtime.Object {
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, t); err != nil {
 		return obj
 	}
+
+	// Decode each row's embedded object, exactly as kubectl's decodeIntoTable
+	// does. FromUnstructured only fills RawExtension.Raw and leaves .Object nil,
+	// but cli-runtime's decorateTable reads per-row metadata via
+	// `row.Object.Object` — with it nil it cannot get an accessor and blanks the
+	// cell. That is what makes `k get pods -A` print an empty NAMESPACE column.
+	for i := range t.Rows {
+		row := &t.Rows[i]
+		if row.Object.Raw == nil || row.Object.Object != nil {
+			continue
+		}
+		decoded, err := runtime.Decode(unstructured.UnstructuredJSONScheme, row.Object.Raw)
+		if err != nil {
+			continue // leave the row undecorated rather than failing the whole get
+		}
+		row.Object.Object = decoded
+	}
 	return t
+}
+
+// tableRowCount reports how many rows the server-rendered Tables carry, and
+// whether every Info actually was a Table. An empty result now arrives as one
+// Table with zero rows (not zero Infos), so the "No resources found" path has to
+// be driven off the row count rather than len(infos).
+func tableRowCount(infos []*resource.Info) (rows int, allTables bool) {
+	allTables = true
+	for _, info := range infos {
+		t, ok := asTable(info.Object).(*metav1.Table)
+		if !ok {
+			allTables = false
+			continue
+		}
+		rows += len(t.Rows)
+	}
+	return rows, allTables
 }
 
 // GetOptions captures the flag-parsed inputs to `roksbnkctl k get`.
@@ -127,9 +161,18 @@ func (o *GetOptions) Run() error {
 		return err
 	}
 
-	// Empty result with no items: kubectl prints "No resources found"
-	// (with namespace if scoped). Match that behaviour.
-	if len(infos) == 0 {
+	// Empty result: kubectl prints "No resources found" (with the namespace if
+	// scoped). Zero Infos covers the non-table paths, but a server-rendered Table
+	// never yields zero Infos — an empty list comes back as ONE Table carrying zero
+	// rows, so that has to be detected on the row count or the message is dead code
+	// and the user gets silent, blank output.
+	empty := len(infos) == 0
+	if !empty && serverPrint {
+		if rows, allTables := tableRowCount(infos); allTables && rows == 0 {
+			empty = true
+		}
+	}
+	if empty {
 		if o.Namespace != "" && !o.AllNamespaces {
 			fmt.Fprintf(o.IOStreams.ErrOut, "No resources found in %s namespace.\n", o.Namespace)
 		} else {

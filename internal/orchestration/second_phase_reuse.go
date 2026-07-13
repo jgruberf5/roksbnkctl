@@ -217,29 +217,35 @@ func writeAndInitSecondPhase(ctx context.Context, tfws *tf.Workspace, ws *config
 				"(create_roks_cluster=false, reuse cluster VPC %s + transit gateway + jumphosts). "+
 				"The bnk phase deploys only the BNK trial layer onto the existing cluster.\n",
 			co.VPCID)
+	}
 
-		// FLP licensing: when the workspace opts into f5licenseproxy mode, point
-		// the BNK License CR at the deployed proxy. The endpoint + root CA come
-		// from the flp phase's flp-outputs.json (written by `flp up`); its absence
-		// is an actionable error. license_mode itself is already rendered from
-		// config (renderBNKFields); this override adds only the endpoint + CA and
-		// is appended AFTER the bnk override so it wins for those keys.
-		if ws.BNK.LicenseMode == "f5licenseproxy" {
-			flpOverride, ferr := writeBnkFLPOverride(tfws.StateDir(), workspace)
-			switch {
-			case ferr != nil && destroy:
-				// Teardown does not need the FLP endpoint/CA — the License CR is
-				// destroyed regardless, and the flp_* tfvars default to "". `flp
-				// down` may already have removed flp-outputs.json (it precedes the
-				// composite `down`), so a missing handoff here is expected, not an
-				// error. Skip the override and let the vars default.
-				fmt.Fprintln(w, "→ FLP licensing: no flp-outputs.json (FLP already down) — skipping the handoff for teardown.")
-			case ferr != nil:
-				return nil, ferr
-			default:
-				extra = append(extra, flpOverride)
-				fmt.Fprintln(w, "→ FLP licensing: BNK will license via the in-cluster F5 License Proxy (from flp-outputs.json).")
-			}
+	// FLP licensing: when the workspace opts into f5licenseproxy mode, point the
+	// BNK License CR at the deployed proxy. The endpoint + root CA come from the
+	// flp phase's flp-outputs.json (written by `flp up`); its absence is an
+	// actionable error. license_mode itself is already rendered from config
+	// (renderBNKFields); this override adds only the endpoint + CA and is appended
+	// LAST so it wins for those keys.
+	//
+	// Deliberately OUTSIDE the cluster-outputs.json block above. renderBNKFields
+	// emits license_mode from config regardless, so gating this on a
+	// cluster-outputs.json that a legacy single-state workspace never writes would
+	// hand terraform license_mode=f5licenseproxy with an EMPTY proxy URL and no
+	// root CA: the apply "succeeds", the CWC never gets the CA, and licensing hangs
+	// at LicenseActive with nothing pointing at the missing `flp up`.
+	if ws.BNK.LicenseMode == "f5licenseproxy" {
+		flpOverride, ferr := writeBnkFLPOverride(tfws.StateDir(), workspace)
+		switch {
+		case ferr != nil && destroy:
+			// Teardown does not need the FLP endpoint/CA — the License CR is
+			// destroyed regardless, and the flp_* tfvars default to "". `flp down`
+			// may already have removed flp-outputs.json (it precedes the composite
+			// `down`), so a missing handoff here is expected, not an error.
+			fmt.Fprintln(w, "→ FLP licensing: no flp-outputs.json (FLP already down) — skipping the handoff for teardown.")
+		case ferr != nil:
+			return nil, ferr
+		default:
+			extra = append(extra, flpOverride)
+			fmt.Fprintln(w, "→ FLP licensing: BNK will license via the in-cluster F5 License Proxy (from flp-outputs.json).")
 		}
 	}
 

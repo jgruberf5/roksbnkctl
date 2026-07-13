@@ -486,6 +486,9 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	if filepath.Base(w.stateDir) == "state-gateway" {
 		return "gateway"
 	}
+	if filepath.Base(w.stateDir) == "state-flp" {
+		return "flp"
+	}
 	return "trial"
 }
 

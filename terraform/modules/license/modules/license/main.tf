@@ -46,7 +46,15 @@ locals {
   # disconnected mode CWC ships it empty; in FLP mode we populate it with the FLP
   # root CA so CWC trusts the proxy's TLS. Written as a real Secret so a CWC
   # rollout picks it up.
-  write_flp_ca = local.use_kubectl && local.is_flp && var.license_server_root_ca != ""
+  #
+  # NOT gated on bnk_cr_mode. The FLP spec fields (teem*Url +
+  # licenseProxyServerRootCaPath) go onto the License CR whenever is_flp — on BOTH
+  # the kubectl and legacy_curl paths — so gating the CA Secret on kubectl mode left
+  # legacy_curl with a CR pointing at the proxy and an EMPTY licenseserver-rootca:
+  # the CWC's TLS handshake to the proxy fails cert verification and the license
+  # never reaches Active, while the apply looks successful. Both this Secret
+  # (kubectl provider) and the CWC rollout (curl) work in either CR mode.
+  write_flp_ca = local.global_enabled && local.is_flp && var.license_server_root_ca != ""
 
   # The CWC (f5-spk-cwc) is deployed by the CNEInstance BEFORE this module writes
   # the FLP CA, so it builds its TLS trust store at pod start with an empty
@@ -90,10 +98,16 @@ resource "kubectl_manifest" "licenseserver_rootca" {
 resource "null_resource" "cwc_flp_rollout" {
   count = local.write_flp_ca ? 1 : 0
 
+  # kube_token is deliberately NOT a trigger. It comes from
+  # data.ibm_container_cluster_config, which mints a fresh IAM token on every
+  # refresh — as a trigger it would replace this resource on EVERY apply, bouncing
+  # the CWC (and with it BNK licensing/telemetry) on what the operator expects to be
+  # a no-op re-apply. The create provisioner reads var.kube_token directly, and
+  # there is no destroy provisioner needing it from self.triggers. Only the CA hash
+  # should roll the CWC.
   triggers = {
     ca_hash   = local.flp_ca_hash
     kube_host = var.kube_host
-    token     = var.kube_token
     namespace = var.utils_namespace
   }
 

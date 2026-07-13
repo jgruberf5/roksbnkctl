@@ -748,6 +748,13 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	eng := registryEngine(target, in)
+	// Check the push credential once up front. Without this a wrong password is
+	// retried against every artifact in the BOM (401 is retryable — Harbor's token
+	// service genuinely flakes), so the command grinds for minutes and then reports
+	// ~100 failures instead of one clear "the mirror rejected the credential".
+	if err := eng.PreflightAuth(cmd.Context(), bom); err != nil {
+		return err
+	}
 	results := eng.Replicate(cmd.Context(), bom)
 
 	var failed int

@@ -154,7 +154,9 @@ func renderSparseBody(w io.Writer, ws *config.Workspace, mirror *config.Registry
 		}
 	}
 
-	renderBNKFields(w, ws, mirror)
+	if err := renderBNKFields(w, ws, mirror); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -280,7 +282,9 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "testing_cluster_jumphost_name_prefix = %q\n", plan.ClusterJumphostPrefix)
 	}
 
-	renderBNKFields(w, ws, mirror)
+	if err := renderBNKFields(w, ws, mirror); err != nil {
+		return err
+	}
 	renderGatewayFields(w, ws)
 	return nil
 }
@@ -326,7 +330,7 @@ func hclStringList(items []string) string {
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
 // Each is emitted only when set in config.yaml, so neither render path
 // duplicates a variable.
-func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
+func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -354,10 +358,19 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		// presenting the kube token. Absent for icr/in-cluster mirrors, which keep
 		// their IAM-key / kube-token auth.
 		if mirror.Target == "generic" && ws.Registry != nil && ws.Registry.GenericPasswordB64 != "" {
-			if raw, err := base64.StdEncoding.DecodeString(ws.Registry.GenericPasswordB64); err == nil {
-				fmt.Fprintf(w, "registry_mirror_username = %q\n", ws.Registry.GenericUsername)
-				fmt.Fprintf(w, "registry_mirror_password = %q\n", string(raw))
+			// Fail loudly. Swallowing the decode error silently drops BOTH mirror
+			// credential lines while still emitting use_registry_mirror = true, so the
+			// modules fall back to the kube token and the run dies mid-apply with an
+			// opaque 401 from `helm registry login` — with nothing anywhere saying the
+			// mirror password never made it through.
+			raw, derr := base64.StdEncoding.DecodeString(ws.Registry.GenericPasswordB64)
+			if derr != nil {
+				return fmt.Errorf("registry.generic_password_b64 is not valid base64 (%w) — "+
+					"set it with `roksbnkctl registry target generic_password --password-stdin`, "+
+					"which encodes it for you", derr)
 			}
+			fmt.Fprintf(w, "registry_mirror_username = %q\n", ws.Registry.GenericUsername)
+			fmt.Fprintf(w, "registry_mirror_password = %q\n", string(raw))
 		}
 	}
 	if ws.BNK.ManifestVersion != "" {
@@ -415,6 +428,7 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
+	return nil
 }
 
 // renderNetworkZones emits the cneinstance_network_zones HCL list-of-objects
