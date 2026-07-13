@@ -168,14 +168,20 @@ mv out/latest.fr.mp4 out/demo4-flp.fr.mp4
 
 Details:
 
-- **The install pulls from Harbor, not FAR.** `registry replicate` records a
-  `registry-mirror.json` whose `ChartHost`/`ImageHost` point at the Harbor project;
-  `renderBNKFields` turns that into `far_chart_repo_url` / `far_image_repo_url` +
-  `use_registry_mirror = true`, which both the FLP phase and the BNK install consume.
-  Because `use_registry_mirror` drops the FAR pull secret (`imagePullSecrets: []`),
-  the **Harbor project must allow anonymous pull** (public project) — otherwise the
-  in-cluster pulls have no credential. `deploy-far-registry.sh --project bnk-mirror`
-  creates a public project by default.
+- **The install pulls from Harbor, not FAR — and nothing else does either.**
+  `registry replicate` records a `registry-mirror.json` whose `ChartHost`/`ImageHost`
+  point at the Harbor project; `renderBNKFields` turns that into `far_chart_repo_url` /
+  `far_image_repo_url` + `use_registry_mirror = true`, and carries the Harbor
+  credentials through as `registry_mirror_username` / `registry_mirror_password` so
+  charts and images authenticate to the mirror with the same credentials replication
+  used (no anonymous-pull / public-project requirement). Two things make the install
+  genuinely disconnected:
+  - the **f5-bigip-k8s-manifest is itself mirrored** (it is a BOM artifact —
+    `bnkbom.ManifestChartName`), so the install never goes back to `repo.f5.com` for it;
+  - roksbnkctl applies the manifest to the cluster as a **`CNEManifest` CR**. FLO
+    resolves the BNK manifest by listing cluster-scoped `CNEManifest`s and matching
+    `spec.version`, and only falls back to pulling it from a registry when none
+    matches — so with the CR present, FLO never fetches a manifest at all.
 - **FLP licensing.** `bnk.license_mode: f5licenseproxy` + the `bnk.flp` block make
   the run install the in-cluster F5 License Proxy (`flp up`) and point BNK's License
   CR at it. The cluster-wide controller trusts the proxy's CA (written to the

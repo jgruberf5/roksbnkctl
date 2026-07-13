@@ -34,7 +34,10 @@ release — the same manifest `roksbnkctl` reads for version discovery. It
 enumerates every F5 chart and image (for BNK 2.3, that's 25 charts + 56 images),
 tag-pinned. `roksbnkctl` unions in the two dependencies the F5 manifest does not
 cover — **cert-manager** (the Jetstack chart + its quay.io images) and the
-**`bitnami/kubectl`** node-labeler image — so the mirror is complete:
+**`bitnami/kubectl`** node-labeler image — plus **the manifest chart itself**
+(`release/f5-bigip-k8s-manifest`), because the install needs to read it and a
+mirror that lacked it would send every install back to `repo.f5.com`. So the
+mirror is complete:
 
 ```console
 $ roksbnkctl registry bom
@@ -78,9 +81,28 @@ The target's own pull credential is wired in for you:
 
 - **ICR** — the cluster authenticates to `*.icr.io` with `iamapikey` + the
   workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.
-- **Generic OCI** — the cluster pulls with the basic-auth credential you set
-  (`registry target generic_username` / `generic_password`), or anonymously for a
-  read-open registry.
+- **Generic OCI** — chart and image pulls authenticate with the same basic-auth
+  credential replication used (`registry target generic_username` /
+  `generic_password`), so a private registry needs no anonymous/public project.
+
+### Why the install never phones home
+
+Two things have to be true for a mirrored install to be genuinely disconnected,
+and `roksbnkctl` handles both:
+
+1. **The manifest is mirrored.** `f5-bigip-k8s-manifest` is the BOM's own source,
+   so it is easy to overlook — but the install reads it to derive the FLO and CIS
+   chart versions. It is a normal OCI chart, so it is replicated like any other
+   artifact and pulled from the mirror.
+2. **FLO reads the manifest from the cluster, not a registry.** The F5 Lifecycle
+   Operator resolves the BNK manifest by listing cluster-scoped **`CNEManifest`**
+   CRs and matching `spec.version`; only when none matches does it fall back to
+   pulling the manifest chart from the CNEInstance's `spec.registry.uri`.
+   `roksbnkctl` converts the manifest into a `CNEManifest` CR and applies it before
+   the CNEInstance, so FLO finds it in the cluster and **never fetches a manifest at
+   all**. (Without the CR, that fallback is what breaks a mirrored install: FLO
+   reports *"No CNEManifest exists which contains expected manifestVersion"* and the
+   CNEInstance never reconciles.)
 
 The per-target host, namespace/repository, and credential specifics — including
 the ICR namespace and a full Artifactory walkthrough — are in
