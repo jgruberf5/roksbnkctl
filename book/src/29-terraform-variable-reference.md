@@ -40,6 +40,8 @@ Source: `terraform/variables.tf`
 | `far_chart_repo_url` | `string` | `""` | Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url. | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url. | no |
 | `use_registry_mirror` | `bool` | `false` | When true, pull from the in-cluster mirror via RBAC: drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list. | no |
+| `registry_mirror_username` | `string` | `""` | Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead. | no |
+| `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this) | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
 | `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket — used by flo and license | no |
@@ -74,6 +76,7 @@ Source: `terraform/variables.tf`
 | `deploy_flp` | `bool` | `false` | Master toggle for the F5 License Proxy phase. Off in every other phase's override; on only for `flp up`. | no |
 | `flp_namespace` | `string` | `"f5-license-proxy"` | Namespace the F5 License Proxy is installed into (FLP phase). | no |
 | `flp_chart_version` | `string` | `""` | Pin for the f5-license-proxy chart version (empty → registry latest). | no |
+| `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs (FLP phase). Default = ROKS VPC block. | no |
 | `gateway_app_namespace` | `string` | `"f5-app"` | Application namespace the Gateway + HTTPRoute serve (created by the gateway module) | no |
 | `gateway_backend_service` | `string` | `"nginx-service"` | HTTPRoute backend Service name in the app namespace | no |
 | `gateway_backend_port` | `number` | `80` | HTTPRoute backend Service port | no |
@@ -144,6 +147,8 @@ Source: `terraform/modules/flo/variables.tf`
 | `far_chart_repo_url` | `string` | `""` | Chart-pull host for the mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url. | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the mirror (image.repository). Empty falls back to far_repo_url. | no |
 | `use_registry_mirror` | `bool` | `false` | When true, drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list (RBAC handles pulls). | no |
+| `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror. | no |
+| `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this) | no |
 | `use_cos_bucket` | `bool` | `true` | Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
@@ -189,8 +194,12 @@ Source: `terraform/modules/flp/variables.tf`
 | `far_chart_repo_url` | `string` | `""` | Mirror host for chart pulls (empty → coalesces to far_repo_url). | no |
 | `far_image_repo_url` | `string` | `""` | Mirror host for image pulls (empty → coalesces to far_repo_url). | no |
 | `use_registry_mirror` | `bool` | `false` | When true, pull chart+images from the mirror and drop the FAR dockerconfig secret (RBAC handles pulls), matching the BNK install. | no |
+| `registry_mirror_username` | `string` | `""` | Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → in-cluster/ICR mirror (kube-token/IAM auth). | no |
+| `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart + image pulls authenticate with it instead of the kube token. | **yes** |
 | `flp_namespace` | `string` | `"f5-license-proxy"` | Namespace to install the F5 License Proxy into. | no |
-| `flp_chart_version` | `string` | `""` | f5-license-proxy chart version. Empty → the chart's latest in the registry. | no |
+| `flp_chart_version` | `string` | `""` | Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest. | no |
+| `f5_bigip_k8s_manifest_version` | `string` | `""` | BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty. | no |
+| `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 
 ## Module: `gateway`
 

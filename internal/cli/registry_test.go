@@ -94,11 +94,12 @@ func TestBOMRender_FromFixture(t *testing.T) {
 	if bom.ManifestVersion != "9.9.9-test.0" {
 		t.Errorf("ManifestVersion = %q", bom.ManifestVersion)
 	}
-	// 3 charts + 2 images from the fixture, plus deps (1 cert-manager chart, 5
-	// cert-manager images, 1 node-labeler image).
+	// 3 charts + 2 images from the fixture, plus the f5-bigip-k8s-manifest chart
+	// itself (mirrored so an air-gapped install can read it), plus deps (1
+	// cert-manager chart, 5 cert-manager images, 1 node-labeler image).
 	charts, images := bom.Counts()
-	if charts != 4 {
-		t.Errorf("charts = %d, want 4 (3 manifest + 1 cert-manager)", charts)
+	if charts != 5 {
+		t.Errorf("charts = %d, want 5 (3 manifest + 1 manifest-chart + 1 cert-manager)", charts)
 	}
 	if images != 8 {
 		t.Errorf("images = %d, want 8 (2 manifest + 5 cert-manager + 1 node-labeler)", images)

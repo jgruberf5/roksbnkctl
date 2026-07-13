@@ -110,19 +110,22 @@ phase has not been run.
 
 ## Flow B — an existing cluster registered in the workspace
 
-The same, but you [register](./09-registering-existing-cluster.md) a cluster you
-did not provision instead of creating one. Registration writes the same
-`cluster-outputs.json` the FLP and BNK phases consume, so from step 3 on the flow
-is identical:
+You do not have to let `roksbnkctl` build the cluster. If you already have a ROKS
+cluster, [register](./09-registering-existing-cluster.md) it into the workspace
+and install the proxy onto it. Registration looks the cluster up in your IBM Cloud
+account and writes the very same `cluster-outputs.json` that the `cluster up` path
+produces — and that is the *only* thing the FLP and BNK phases consume. So from
+step 3 on, the two flows are character-for-character identical:
 
 ```bash
-# 1. Seed the workspace with FLP mode.
+# 1. Seed the workspace with FLP mode, and do NOT create a cluster.
 roksbnkctl -w prod init          # answer "no" to "create a cluster?", "yes" to FLP
+#    (equivalently, in config.yaml: cluster.create: false + bnk.license_mode: f5licenseproxy)
 
-# 2. Register the existing cluster (or `cluster up` with cluster.create=false).
+# 2. Register the cluster you already have.
 roksbnkctl -w prod cluster register my-existing-roks
 
-# 3. (Optional) mirror BNK into your private registry.
+# 3. (Optional) mirror BNK — including the FLP — into your private registry.
 roksbnkctl -w prod registry replicate --target generic
 
 # 4. Install the F5 License Proxy into the registered cluster.
@@ -132,23 +135,49 @@ roksbnkctl -w prod flp up
 roksbnkctl -w prod bnk up
 ```
 
-`roksbnkctl` never owns the registered cluster's lifecycle — `flp up` adds only
-the proxy workload, and `flp down` removes just that. The cluster stays under its
-original owner.
+**`roksbnkctl` never takes ownership of a registered cluster.** `flp up` adds only
+the proxy workload (its namespace, secrets and Helm release); `flp down` removes
+exactly that and nothing else. The cluster itself is never created, modified at the
+infrastructure level, or destroyed — `cluster down` will not touch it.
+
+## FLP behind a private registry
+
+The FLP's chart and its four images are part of the standard BNK bill of
+materials, so [`registry replicate`](./10a-air-gapped-install.md) mirrors them
+along with everything else. Combining the two gives a genuinely disconnected,
+FLP-licensed install: `flp up` and `bnk up` pull **every** chart and image from
+your registry, and the CWC brokers licensing through the in-cluster proxy rather
+than reaching F5 itself.
+
+Nothing extra is required — point the workspace at the mirror and the FLP phase
+follows it automatically:
+
+```bash
+roksbnkctl -w prod registry target generic         # your Harbor/Artifactory/ICR
+roksbnkctl -w prod registry replicate              # mirrors BNK + the FLP
+roksbnkctl -w prod flp up                          # proxy, pulled from the mirror
+roksbnkctl -w prod bnk up                          # BNK, pulled from the mirror
+```
 
 ## Tearing down
 
-Remove the phases in reverse order; each leaves the others intact:
+The FLP is an opt-in phase, so — exactly like `gateway` — the composite `down`
+does **not** cover it. Tear it down **first**, while the cluster is still up:
 
 ```bash
-roksbnkctl -w prod bnk down     # remove BNK
 roksbnkctl -w prod flp down     # remove the proxy
-# then `cluster down` (created cluster) — registered clusters are left alone
+roksbnkctl -w prod down         # then BNK + the cluster (composite)
 ```
 
-`roksbnkctl down` (the composite) removes the phases it manages; run `flp down`
-explicitly, as with the other opt-in phases. `cluster down` refuses while an FLP
-phase still exists (it would orphan the proxy).
+Both `roksbnkctl down` and `cluster down` **refuse** while FLP state exists, and
+tell you to run `flp down` first. That guard is deliberate: the proxy's Helm
+release and secrets live *in* the cluster, so destroying the cluster out from
+under them would strand `state-flp/` pointing at resources that no longer exist,
+and a later `flp down` could never reconcile.
+
+`flp down` is a no-op success when there is no FLP state, so it is safe to put
+unconditionally in a teardown script. Registered clusters are never destroyed —
+`flp down` removes only the proxy workload.
 
 ## Reference
 
@@ -156,7 +185,7 @@ phase still exists (it would orphan the proxy).
 |---|---|
 | `bnk.license_mode` | `connected` (default), `disconnected`, or `f5licenseproxy` |
 | `bnk.flp.namespace` | namespace for the proxy (default `f5-license-proxy`) |
-| `bnk.flp.chart_version` | pin the `f5-license-proxy` chart version (optional) |
+| `bnk.flp.chart_version` | **optional** override. Left unset, the chart version is read from the BNK manifest (which lists `charts/f5-license-proxy` for the release), exactly like the FLO and CIS charts — you do not normally pin it. |
 
 | Environment variable | Overrides |
 |---|---|

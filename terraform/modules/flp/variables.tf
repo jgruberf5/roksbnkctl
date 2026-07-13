@@ -135,7 +135,13 @@ variable "flp_namespace" {
 }
 
 variable "flp_chart_version" {
-  description = "f5-license-proxy chart version. Empty → the chart's latest in the registry."
+  description = "Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest."
+  type        = string
+  default     = ""
+}
+
+variable "f5_bigip_k8s_manifest_version" {
+  description = "BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty."
   type        = string
   default     = ""
 }

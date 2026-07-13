@@ -4,6 +4,34 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.18.0 — 2026-07-13
+
+### Added
+
+- **License BNK with an in-cluster F5 License Proxy (FLP) — optional, opt-in.** A new `flp` lifecycle phase deploys the `f5-license-proxy` chart (the proxy plus its bundled Vault and PostgreSQL) into an existing cluster, and points BNK's `License` CR at it, so the cluster's workloads never talk to F5's licensing service directly. `roksbnkctl flp up` generates the proxy's CA and mTLS certificates, creates its secrets, installs the chart, and records the CA + service endpoint in `flp-outputs.json`; a subsequent `bnk up` reads that handoff and wires the License CR — no certificate is ever copied by hand.
+
+  **Both licensing modes are first-class.** Everything is gated behind `bnk.license_mode: f5licenseproxy`; leave it unset (the default) and BNK licenses with the subscription JWT exactly as before, rendering byte-identical tfvars. The subscription JWT is still required in FLP mode — the proxy presents it to F5.
+
+  Like `gateway`, the FLP is an independent phase with its own terraform state (`state-flp/`), run explicitly between the cluster and BNK; the composite `up`/`down` never runs it. Works against a cluster `roksbnkctl` creates **and** against an [existing cluster you register](book/src/09-registering-existing-cluster.md) — `flp up` adds only the proxy workload, and never takes ownership of a registered cluster's lifecycle. New `roksbnkctl flp up|down|output`, config keys `bnk.license_mode` / `bnk.flp.*`, and env overrides `ROKSBNKCTL_LICENSE_MODE` / `ROKSBNKCTL_FLP_NAMESPACE`. See [Licensing BNK with the F5 License Proxy](book/src/10c-flp-licensing.md).
+
+- **Install from an external OCI registry mirror (Harbor, Artifactory, …) using its own credentials.** Mirror-mode installs previously only knew how to authenticate to IBM Container Registry (`iamapikey`) or the in-cluster OpenShift registry (kube token). A private Harbor accepts neither, so replicating FAR into one worked but installing back *out* of it failed with `unauthorized`. Chart and image pulls now authenticate to the mirror with the same basic-auth credential `registry replicate` used (`registry target generic_username` / `generic_password`) — so a private registry needs no anonymous/public project. ICR and in-cluster mirrors are unaffected and keep their existing auth.
+
+- **`scripts/deploy-far-registry.sh`** — stands up a standard open-source Harbor on a fresh IBM Cloud VSI (own security group + floating IP, Let's Encrypt TLS via `sslip.io`) as a replication target, and optionally wires it straight into a workspace as `registry target generic`. Replaces the non-functional `deploy-artifactory.sh`, which is removed.
+
+### Fixed
+
+- **A "mirrored" BNK install no longer phones home.** Two gaps meant an air-gapped install still reached back to `repo.f5.com`, and on a mirror it could not complete at all:
+  - The **`f5-bigip-k8s-manifest` was never mirrored.** It is the bill-of-materials' own *source*, so it was not a BOM member — yet the install pulls it to derive the FLO and CIS chart versions. It is a normal OCI chart, so it is now a BOM artifact (`release/f5-bigip-k8s-manifest`); `registry replicate` copies it and the install reads it from the mirror.
+  - **FLO fetched the manifest from the registry at runtime.** The F5 Lifecycle Operator resolves the BNK manifest by listing cluster-scoped **`CNEManifest`** CRs and matching `spec.version`, and only falls back to pulling the manifest chart from the CNEInstance's `spec.registry.uri` when none matches. That fallback 404s against a mirror, so the CNEInstance never reconciled (*"No CNEManifest exists which contains expected manifestVersion"*). `roksbnkctl` now converts the manifest into a `CNEManifest` CR and applies it before the CNEInstance — FLO reads the manifest from the cluster and never contacts a registry for it.
+
+  Verified end-to-end: a clean `bnk down` + `bnk up` against a private Harbor makes **zero** `repo.f5.com` requests.
+
+- **`bnk.flp.chart_version` is now genuinely optional.** The BNK manifest lists `charts/f5-license-proxy` for the release, exactly as it lists the FLO and CIS charts, so the FLP chart version is resolved from it. Previously an unset version was a hard error (an OCI `helm pull` cannot resolve "latest"), which made the "optional" pin effectively mandatory. Set it only to override the manifest.
+
+- **`roksbnkctl down` refuses while the FLP phase has resources**, instead of destroying the cluster out from under it and stranding `state-flp/`. Mirrors the existing `gateway` and `cluster down` guards: run `flp down` first. Conversely, the BNK teardown no longer *requires* the FLP handoff — `flp down` legitimately removes `flp-outputs.json` before the composite `down` runs, and a destroy does not need the proxy's endpoint or CA.
+
+- **FLP on ROKS/OpenShift.** The `f5-license-proxy` chart ships `hostPath` PersistentVolumes (a single-node/dev model) that cannot bind on a multi-node, non-root ROKS cluster; a Helm post-renderer now drops them and repoints the PVCs at a dynamic StorageClass (`flp_storage_class`, default `ibmc-vpc-block-metro-10iops-tier`, which provisions in the consuming pod's zone). The proxy's service account is also bound to the `privileged` SCC (it needs `fsGroup` + `IPC_LOCK`), and the proxy's server certificate now carries its Kubernetes Service DNS names — without them the CWC rejected the TLS handshake with `bad certificate`.
+
 ## v1.17.5 — 2026-07-09
 
 ### Fixed

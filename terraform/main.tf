@@ -294,7 +294,8 @@ module "flp" {
   registry_mirror_username = var.registry_mirror_username
   registry_mirror_password = var.registry_mirror_password
 
-  flp_namespace     = var.flp_namespace
-  flp_chart_version = var.flp_chart_version
-  flp_storage_class = var.flp_storage_class
+  flp_namespace                 = var.flp_namespace
+  flp_chart_version             = var.flp_chart_version
+  f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
+  flp_storage_class             = var.flp_storage_class
 }

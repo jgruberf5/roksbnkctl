@@ -81,6 +81,18 @@ locals {
     local.has_mirror_creds ? "flp-mirror-pull" : ""
   )
 
+  # `helm registry login` takes a bare registry HOST; far_chart_hostname carries the
+  # mirror's repo-prefix path (host/bnk-mirror), so strip it or the credential lands
+  # under a host the subsequent `helm pull` never resolves.
+  chart_login_host = split("/", local.far_chart_hostname)[0]
+
+  # An explicit pin wins; otherwise take the version the BNK manifest lists for
+  # charts/f5-license-proxy (resolved by extract_flp_version below).
+  flp_chart_version = (
+    var.flp_chart_version != "" ? var.flp_chart_version :
+    try(data.external.flp_version[0].result.version, "")
+  )
+
   # mTLS leaf certs: name → SAN DNS list. postgresql/vault keep the chart's
   # in-pod SANs. The flp leaf is ALSO the FLP's public server cert, so it must
   # additionally cover the Service DNS the CWC connects to (the teem*Url) — else
@@ -372,6 +384,64 @@ resource "kubernetes_secret_v1" "mirror_pull" {
   depends_on = [kubernetes_namespace_v1.flp]
 }
 
+# ── chart version ─────────────────────────────────────────────────────────────
+# The BNK manifest lists charts/f5-license-proxy for the release, exactly as it
+# lists the FLO and CIS charts — so resolve the FLP chart version from it rather
+# than making the user pin one. (An OCI `helm pull` cannot resolve "latest", so an
+# empty version is not a usable default; before this it was a hard error.)
+# var.flp_chart_version, when set, overrides the manifest.
+resource "null_resource" "extract_flp_version" {
+  count = local.enabled && var.flp_chart_version == "" ? 1 : 0
+
+  triggers = {
+    manifest_version = var.f5_bigip_k8s_manifest_version
+    scratch_dir      = var.scratch_dir
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      # helm >= 3.8 is required for `helm registry` (OCI).
+      HELM_MIN="3.8.0"
+      HELM_BIN="helm"
+      helm_ok() {
+        local v
+        v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
+        printf '%s\n%s\n' "$HELM_MIN" "$v" | sort -V -c 2>/dev/null
+      }
+      if ! helm_ok; then
+        HELM_TMP=$(mktemp -d "$${TMPDIR:-/tmp}/helm-install-XXXXXX")
+        curl -fsSL -o "$HELM_TMP/helm.tar.gz" "https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz"
+        tar -xzf "$HELM_TMP/helm.tar.gz" -C "$HELM_TMP"
+        HELM_BIN="$HELM_TMP/linux-amd64/helm"
+      fi
+      mkdir -p "${var.scratch_dir}/f5-manifest"
+      cd "${var.scratch_dir}/f5-manifest"
+      # Same chart host + credential as the FLP chart itself: FAR off the mirror,
+      # the mirror under it (the manifest is a mirrored artifact — see bnkbom).
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
+      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
+      tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
+      V=$(grep -A 1 "charts/f5-license-proxy" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml \
+            | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
+      if [ -z "$V" ]; then
+        echo "ERROR: the BNK manifest ${var.f5_bigip_k8s_manifest_version} lists no charts/f5-license-proxy — pin one with bnk.flp.chart_version" >&2
+        exit 1
+      fi
+      printf '%s' "$V" > "${var.scratch_dir}/flp-version.txt"
+    EOT
+  }
+}
+
+data "external" "flp_version" {
+  count = local.enabled && var.flp_chart_version == "" ? 1 : 0
+  program = [
+    "bash", "-c",
+    "V=$(cat ${var.scratch_dir}/flp-version.txt 2>/dev/null | tr -d '[:space:]'); printf '{\"version\":\"%s\"}' \"$V\"",
+  ]
+  depends_on = [null_resource.extract_flp_version]
+}
+
 # ── the FLP chart ─────────────────────────────────────────────────────────────
 
 resource "helm_release" "flp" {
@@ -380,7 +450,7 @@ resource "helm_release" "flp" {
   name             = "f5-license-proxy"
   repository       = "oci://${local.far_chart_hostname}/charts"
   chart            = "f5-license-proxy"
-  version          = var.flp_chart_version != "" ? var.flp_chart_version : null
+  version          = local.flp_chart_version
   namespace        = var.flp_namespace
   create_namespace = false
 

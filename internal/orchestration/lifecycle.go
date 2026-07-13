@@ -493,6 +493,14 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if pres.Gateway {
 		return errors.New("the Gateway phase has resources — its CRs live in the BNK namespace and would block the BNK teardown. Run `roksbnkctl gateway down` first, then `roksbnkctl down`")
 	}
+	// The FLP is likewise a separate, optional phase the composite does not cover.
+	// Destroying the cluster out from under it would strand state-flp/ pointing at
+	// resources that no longer exist (its helm release + secrets live in the
+	// cluster), so a later `flp down` could never reconcile. Tear it down first —
+	// while the cluster is still up. Mirrors the Gateway guard and `cluster down`.
+	if pres.FLP {
+		return errors.New("the F5 License Proxy phase has resources — the composite `down` does not cover it, and destroying the cluster would orphan its state. Run `roksbnkctl flp down` first, then `roksbnkctl down`")
+	}
 
 	// Compose the confirmation copy from the present phases.
 	var phases []string
