@@ -179,6 +179,13 @@ func runInitFromConfigFile(cctx *config.Context) error {
 		return fmt.Errorf("reading --config-file: %w", err)
 	}
 	var ws config.Workspace
+	// Seed the standard resource toggles BEFORE the decode, for the same reason
+	// runInitFromEnv does: a config that touches ONE toggle (say
+	// `resources.transit_gateway.create: false`) would otherwise leave every other
+	// toggle at its bool zero value — silently disabling BNK, the registry COS and
+	// cert-manager. yaml.v3 decodes into the existing struct, so toggles the file
+	// does not mention keep these defaults.
+	ws.Resources = config.DefaultResources()
 	dec := yaml.NewDecoder(bytes.NewReader(body))
 	dec.KnownFields(true) // reject unknown fields rather than silently dropping
 	if derr := dec.Decode(&ws); derr != nil {

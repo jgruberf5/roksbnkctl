@@ -136,6 +136,13 @@ SEED="$HOME/${WS}-config.yaml"
   echo "  name: $CLUSTER_NAME"
   echo "  openshift_version: \"$OCP_VERSION\""
   echo "  workers_per_zone: $WORKERS_PER_ZONE"
+  # No transit gateway: it exists to give the TESTING phase's client VPC a path to
+  # the cluster, and this demo never runs that phase. Skipping it drops a chunk of
+  # build time and cost — and IBM Cloud caps an account at 10 transit gateways, so
+  # a demo that does not need one should not burn a slot.
+  echo "resources:"
+  echo "  transit_gateway:"
+  echo "    create: false"
   echo "tf_source:"
   echo "  type: embedded"
   echo "bnk:"
