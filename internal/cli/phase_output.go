@@ -79,6 +79,11 @@ var phaseOutputOwnership = map[string][]string{
 		"flp_root_ca",
 		"flp_endpoint",
 		"flp_namespace",
+		// Present only when the proxy is exposed outside its cluster
+		// (`flp up --add-node-port-access`); empty/0 otherwise.
+		"flp_external_endpoint",
+		"flp_external_endpoints",
+		"flp_node_port",
 	},
 }
 
