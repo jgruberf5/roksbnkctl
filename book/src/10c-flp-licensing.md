@@ -36,6 +36,19 @@ The FLP's charts and images are part of the standard BNK bill of materials, so
 private registry — an air-gapped, FLP-licensed install pulls everything,
 including the proxy, from a registry you control.
 
+### Three topologies
+
+The proxy is a **cluster-wide** broker, and it is the only component that needs to
+reach F5. That gives you three ways to arrange it:
+
+| | Where the proxy runs | Use it when |
+|---|---|---|
+| [**Flow A**](#flow-a--a-cluster-you-are-creating) | the cluster `roksbnkctl` creates | the normal case |
+| [**Flow B**](#flow-b--an-existing-cluster-registered-in-the-workspace) | a cluster you already own and register | you did not provision the cluster |
+| [**Flow C**](#flow-c--a-shared-licensing-cluster) | **a different cluster** — one proxy serving many | only one cluster may reach F5; the rest are air-gapped |
+
+Flows A and B are the same shape: proxy and BNK in one cluster. Flow C splits them.
+
 ## The `flp` phase
 
 Like [`testing`](./08a-three-phase-lifecycle.md) and `gateway`, the FLP is an
@@ -159,6 +172,102 @@ roksbnkctl -w prod flp up                          # proxy, pulled from the mirr
 roksbnkctl -w prod bnk up                          # BNK, pulled from the mirror
 ```
 
+## Flow C — a shared licensing cluster
+
+Flows A and B both put the proxy and BNK in the **same** cluster. But the proxy is a
+*cluster-wide* licensing broker, and it is the only thing that needs to reach F5. So
+you can run it **once**, in a cluster that has egress, and have BNK installs in
+**other** clusters license through it — clusters that reach nothing but your mirror
+and the proxy.
+
+```
+   ┌──────────────── services cluster (has egress to F5) ─────────────┐
+   │  F5 License Proxy  ──NodePort 30001──┐                           │
+   └──────────────────────────────────────┼───────────────────────────┘
+                                          │ same VPC, or a transit gateway
+   ┌──────────────────────────────────────┼── air-gapped cluster ─────┐
+   │  BNK + CWC  ─────────────────────────┘                           │
+   │      └── charts + images ── your private registry (Harbor/…)     │
+   └──────────────────────────────────────────────────────────────────┘
+```
+
+Neither cluster reaches `repo.f5.com`, and only the services cluster reaches F5's
+licensing service.
+
+### 1. The services cluster — expose the proxy
+
+```bash
+roksbnkctl -w services cluster up            # (or `cluster register` an existing one)
+roksbnkctl -w services registry replicate    # mirror BNK + the FLP into your registry
+roksbnkctl -w services flp up \
+    --add-node-port-access \
+    --node-port-source-cidr 10.242.0.0/18    # the consuming cluster's subnet
+```
+
+No BNK is installed here — this cluster exists to run the proxy.
+
+`--add-node-port-access` does three things you cannot do by hand afterwards:
+
+- **Makes every worker answer.** The chart's Service is already `type: NodePort`
+  (30001), but it hardcodes `externalTrafficPolicy: Local` and runs one replica — so
+  only the node currently hosting the pod answers, and that node changes when the pod
+  reschedules. This flips it to `Cluster`, so any worker IP is a valid endpoint.
+- **Puts the worker IPs in the proxy's certificate.** A remote CWC dials
+  `https://<node-ip>:30001` — a literal address, which DNS SANs do not cover. Without
+  IP SANs the TLS handshake fails with `bad certificate`.
+- **Opens the port.** ROKS workers sit in a `kube-<cluster-id>` security group that
+  does not admit another cluster. `--node-port-source-cidr` opens *only* 30001, and
+  *only* to the CIDR you name. Omit it if a path already exists.
+
+It prints the address to hand over, and records it in `flp-outputs.json`:
+
+```console
+→ FLP reachable from other clusters at https://10.242.0.9:30001
+```
+
+### 2. The consuming cluster — license against it
+
+Read the endpoint and CA out of the owning workspace:
+
+```bash
+roksbnkctl -w services flp output       # → external_endpoint, root_ca_b64
+```
+
+and point the other workspace at them. It **never runs `flp up`** — it does not own a
+proxy:
+
+```yaml
+# consuming workspace's config.yaml
+bnk:
+  license_mode: f5licenseproxy
+  flp:
+    external:
+      url: https://10.242.0.9:30001     # from `flp output` → external_endpoint
+      root_ca_b64: LS0tLS1CRUdJTi…      # from `flp output` → root_ca_b64
+```
+
+Then install normally. `bnk up` wires the License CR at the remote proxy and delivers
+its CA to the CWC, exactly as it would for a local one:
+
+```bash
+roksbnkctl -w app registry replicate    # same registry; everything is already there
+roksbnkctl -w app bnk up                # licenses via the proxy in the OTHER cluster
+```
+
+### What to watch out for
+
+- **The two clusters must be able to reach each other** — same VPC (simplest: give the
+  second cluster `resources.cluster_vpc.create: false` + `existing: <vpc-id>`), or a
+  transit gateway between their VPCs.
+- **Worker IPs change when a worker is replaced.** The certificate covers the IPs that
+  existed at `flp up` time, so replacing a node in the services cluster means re-running
+  `flp up` (which re-issues the cert) and updating the consuming workspace if you
+  pinned the URL of the node that went away. `flp output` lists **every** worker URL —
+  all are cert SANs — so you can point at another one. A stable VIP would avoid this
+  entirely; NodePort is the trade-off you accept for not needing a load balancer.
+- **The consuming workspace needs no `flp` phase at all** — no `state-flp/`, nothing to
+  tear down. `bnk down` there leaves the proxy untouched, serving its other clusters.
+
 ## Tearing down
 
 The FLP is an opt-in phase, so — exactly like `gateway` — the composite `down`
@@ -186,6 +295,15 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 | `bnk.license_mode` | `connected` (default), `disconnected`, or `f5licenseproxy` |
 | `bnk.flp.namespace` | namespace for the proxy (default `f5-license-proxy`) |
 | `bnk.flp.chart_version` | **optional** override. Left unset, the chart version is read from the BNK manifest (which lists `charts/f5-license-proxy` for the release), exactly like the FLO and CIS charts — you do not normally pin it. |
+| `bnk.flp.node_port_access` | expose the proxy outside its cluster (Flow C). Set by `flp up --add-node-port-access`; persisted so a later `flp up` does not tear the exposure down. |
+| `bnk.flp.node_port_source_cidr` | with the above: the CIDR allowed to reach the NodePort on the worker security group |
+| `bnk.flp.external.url` | license against a proxy in **another** cluster — its `external_endpoint`. This workspace never runs `flp up`. |
+| `bnk.flp.external.root_ca_b64` | that proxy's `root_ca_b64`, so the CWC can verify its certificate |
+
+| Flag (`flp up`) | Meaning |
+|---|---|
+| `--add-node-port-access` | expose the proxy for other clusters: `externalTrafficPolicy: Cluster`, worker IPs as cert SANs, external endpoint recorded |
+| `--node-port-source-cidr` | open the NodePort to this CIDR on the worker security group |
 
 | Environment variable | Overrides |
 |---|---|
@@ -194,4 +312,9 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 
 | File | Written by | Read by |
 |---|---|---|
-| `~/.roksbnkctl/<ws>/flp-outputs.json` | `flp up` | `bnk up` (FLP mode) |
+| `~/.roksbnkctl/<ws>/flp-outputs.json` | `flp up` | `bnk up` (FLP mode) — or copied into another workspace's `bnk.flp.external` |
+
+`flp-outputs.json` carries `endpoint` (in-cluster only) and, when exposed,
+`external_endpoint` plus `external_endpoints` — every worker URL the proxy answers on.
+All of them are IP SANs on its certificate, so any one is a valid
+`bnk.flp.external.url`.

@@ -8,6 +8,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **License a BNK install from a proxy in ANOTHER cluster — `flp up --add-node-port-access`.** The F5 License Proxy is a cluster-wide broker, and it is the only component that needs egress to F5. It can now run **once**, in a services cluster that has that egress, and license BNK installs in other clusters — same VPC, or across a transit gateway — that reach nothing but your private registry and the proxy. See [Flow C — a shared licensing cluster](book/src/10c-flp-licensing.md#flow-c--a-shared-licensing-cluster).
+
+  The chart already ships a `NodePort` Service, but three things stopped it being usable from outside, and the flag fixes all three: it hardcodes `externalTrafficPolicy: Local` with one replica (so only the node hosting the pod answers, and that node moves) — now flipped to `Cluster`; the proxy's certificate had no **IP SANs**, so a remote controller dialling `https://<node-ip>:30001` failed the handshake with `bad certificate` — the worker IPs are now SANs; and ROKS workers sit in a security group that does not admit another cluster — `--node-port-source-cidr` opens just that port, just to the CIDR you name.
+
+  The consuming workspace never runs `flp up`. It points at the foreign proxy with `bnk.flp.external` (`url` + `root_ca_b64`, both from `roksbnkctl -w <owner> flp output`), and `bnk up` wires its License CR and delivers the CA to the CWC exactly as it would for a local proxy.
+
 - **License BNK with an in-cluster F5 License Proxy (FLP) — optional, opt-in.** A new `flp` lifecycle phase deploys the `f5-license-proxy` chart (the proxy plus its bundled Vault and PostgreSQL) into an existing cluster, and points BNK's `License` CR at it, so the cluster's workloads never talk to F5's licensing service directly. `roksbnkctl flp up` generates the proxy's CA and mTLS certificates, creates its secrets, installs the chart, and records the CA + service endpoint in `flp-outputs.json`; a subsequent `bnk up` reads that handoff and wires the License CR — no certificate is ever copied by hand.
 
   **Both licensing modes are first-class.** Everything is gated behind `bnk.license_mode: f5licenseproxy`; leave it unset (the default) and BNK licenses with the subscription JWT exactly as before, rendering byte-identical tfvars. The subscription JWT is still required in FLP mode — the proxy presents it to F5.

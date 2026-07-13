@@ -84,6 +84,8 @@ Source: `terraform/variables.tf`
 | `gateway_client_subnet_local` | `list(string)` | `[]` | Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one route per entry × zone). Empty = no local client routes. `gateway up` auto-derives these from the cluster jumphost subnets when unset (PRD 12). | no |
 | `gateway_client_subnet_remote` | `list(string)` | `[]` | Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one route per entry × zone). Empty = no remote client routes. | no |
 | `gateway_vxlan_port` | `number` | `6789` | Egress VXLAN UDP port (also opened on the cluster security group) | no |
+| `flp_node_port_access` | `bool` | `false` | Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it. | no |
+| `flp_node_port_source_cidr` | `string` | `""` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). | no |
 
 ## Module: `cert_manager`
 
@@ -199,6 +201,8 @@ Source: `terraform/modules/flp/variables.tf`
 | `flp_namespace` | `string` | `"f5-license-proxy"` | Namespace to install the F5 License Proxy into. | no |
 | `flp_chart_version` | `string` | `""` | Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest. | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `""` | BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty. | no |
+| `flp_node_port_access` | `bool` | `false` | Expose the proxy OUTSIDE its own cluster so a BNK install in a different cluster can license through it. The chart's Service is already type NodePort (30001), but it hardcodes externalTrafficPolicy: Local — with one replica only the node running the pod answers — so this flips it to Cluster and adds the worker node IPs to the proxy's server certificate (without them the remote CWC rejects the TLS handshake). | no |
+| `flp_node_port_source_cidr` | `string` | `""` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). Empty leaves the security group untouched. | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 
 ## Module: `gateway`

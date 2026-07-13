@@ -810,11 +810,22 @@ cluster-outputs.json) in its own state (state-flp/), and writes flp-outputs.json
 
 Refuses when no cluster exists yet.
 
+With --add-node-port-access the proxy is also reachable from OUTSIDE its own
+cluster, so a BNK install in a DIFFERENT cluster (same VPC, or across a transit
+gateway) can license through it — a "shared licensing cluster", where only the
+cluster running the proxy needs egress to F5. That additionally puts the worker
+node IPs in the proxy's server certificate (without them the remote cluster's
+controller rejects the TLS handshake) and records an external endpoint in
+flp-outputs.json. Feed that endpoint + CA to the other workspace via its
+bnk.flp.external block.
+
 **Flags**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--add-node-port-access` | `bool` | `false` | expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it |
 | `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
+| `--node-port-source-cidr` | `string` | — | with --add-node-port-access: open the NodePort on the worker security group to this CIDR (the consuming cluster's subnet) |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl flp`](#roksbnkctl-flp)

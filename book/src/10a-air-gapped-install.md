@@ -104,6 +104,21 @@ and `roksbnkctl` handles both:
    reports *"No CNEManifest exists which contains expected manifestVersion"* and the
    CNEInstance never reconciles.)
 
+### One mirror, many clusters
+
+Nothing ties a mirror to a single cluster. `registry replicate` is a supply-chain
+step, not a cluster step — the record it writes (`registry-mirror.json`) just tells
+the install where to pull from. So several workspaces can point at the **same**
+registry: replicate once, then every cluster installs from it. A second workspace
+targeting an already-populated mirror copies nothing (every artifact is present and
+digest-matched) and simply records the redirect.
+
+That pairs naturally with a [shared licensing
+cluster](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster): one cluster
+holds the F5 License Proxy and reaches F5, one registry holds the artifacts, and any
+number of air-gapped clusters install from the registry and license through the
+proxy — reaching neither `repo.f5.com` nor F5's licensing service themselves.
+
 The per-target host, namespace/repository, and credential specifics — including
 the ICR namespace and a full Artifactory walkthrough — are in
 [Registry targets](./10b-registry-targets.md).

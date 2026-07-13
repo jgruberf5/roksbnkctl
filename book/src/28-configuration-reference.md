@@ -422,9 +422,13 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large`. |
 | `bnk.far_repo_url` | string | `repo.f5.com` | FAR image registry URL. |
 | `bnk.manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | f5-bigip-k8s-manifest chart version. |
-| `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the in-cluster [F5 License Proxy](./10c-flp-licensing.md) (`roksbnkctl flp up` must have run); empty/omitted keeps the JWT/connected default. |
+| `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the [F5 License Proxy](./10c-flp-licensing.md) — either one this workspace deployed (`roksbnkctl flp up`) or one in **another** cluster (`bnk.flp.external`). Empty/omitted keeps the JWT/connected default. |
 | `bnk.flp.namespace` | string | `f5-license-proxy` | Namespace the FLP phase installs into (FLP mode only). |
-| `bnk.flp.chart_version` | string | (empty ⇒ registry latest) | Pin the `f5-license-proxy` chart version (FLP mode only). |
+| `bnk.flp.chart_version` | string | (empty ⇒ from the BNK manifest) | Pin the `f5-license-proxy` chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts. |
+| `bnk.flp.node_port_access` | bool | `false` | Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it ([Flow C](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster)). Set by `flp up --add-node-port-access` and persisted, so a later `flp up` does not tear the exposure down. |
+| `bnk.flp.node_port_source_cidr` | string | (empty) | With `node_port_access`: open the proxy's NodePort to this CIDR (the consuming cluster's subnet) on the worker security group. |
+| `bnk.flp.external.url` | string | (empty) | License against a proxy in **another** cluster — its `external_endpoint` from `roksbnkctl -w <owner> flp output`. This workspace then needs no `flp up` of its own. |
+| `bnk.flp.external.root_ca_b64` | string | (empty) | That proxy's `root_ca_b64`, delivered to the CWC so it can verify the proxy's certificate. Required with `external.url`. |
 | `test.throughput.image` | string | `networkstatic/iperf3:latest` | iperf3 image. |
 | `test.throughput.duration` | integer | `30` | iperf3 `-t` (seconds). |
 | `test.throughput.streams` | integer | `8` | iperf3 `-P` (parallel streams). |
