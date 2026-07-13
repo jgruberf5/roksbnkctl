@@ -328,7 +328,7 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	// cluster-outputs.json → extraVF is nil and the run is byte-identical
 	// to the create path (fresh/legacy single-state unchanged) — Issue 2
 	// round 2, symmetric with cluster-phase-override.tfvars.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, false, in.errOut())
 	if err != nil {
 		return false, nil, err
 	}
@@ -419,7 +419,7 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// Second-phase preamble (Issue 2 round 2 — phase handoff). See
 	// RunTrialUp. extraVF is nil (byte-identical to the create path)
 	// when there is no cluster-outputs.json.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, false, in.errOut())
 	if err != nil {
 		return err
 	}
@@ -580,7 +580,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// final var-file is the deterministic fix. On a legacy single-state
 	// workspace (no cluster-outputs.json) this is a no-op, so the behaviour is
 	// unchanged there. Symmetric with RunTestingDown / RunGatewayDown.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, w)
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, true, w)
 	if err != nil {
 		return err
 	}

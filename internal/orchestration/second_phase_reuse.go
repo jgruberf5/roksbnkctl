@@ -189,7 +189,7 @@ license_server_root_ca = %q
 // usable cluster-outputs.json (with a vpc_id) exists; otherwise it is nil
 // and the run is byte-identical to the pre-Issue-2 second-phase flow
 // (which is itself identical to the create path).
-func writeAndInitSecondPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Workspace, workspace string, w io.Writer) ([]string, error) {
+func writeAndInitSecondPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Workspace, workspace string, destroy bool, w io.Writer) ([]string, error) {
 	if w == nil {
 		w = os.Stderr
 	}
@@ -226,11 +226,20 @@ func writeAndInitSecondPhase(ctx context.Context, tfws *tf.Workspace, ws *config
 		// is appended AFTER the bnk override so it wins for those keys.
 		if ws.BNK.LicenseMode == "f5licenseproxy" {
 			flpOverride, ferr := writeBnkFLPOverride(tfws.StateDir(), workspace)
-			if ferr != nil {
+			switch {
+			case ferr != nil && destroy:
+				// Teardown does not need the FLP endpoint/CA — the License CR is
+				// destroyed regardless, and the flp_* tfvars default to "". `flp
+				// down` may already have removed flp-outputs.json (it precedes the
+				// composite `down`), so a missing handoff here is expected, not an
+				// error. Skip the override and let the vars default.
+				fmt.Fprintln(w, "→ FLP licensing: no flp-outputs.json (FLP already down) — skipping the handoff for teardown.")
+			case ferr != nil:
 				return nil, ferr
+			default:
+				extra = append(extra, flpOverride)
+				fmt.Fprintln(w, "→ FLP licensing: BNK will license via the in-cluster F5 License Proxy (from flp-outputs.json).")
 			}
-			extra = append(extra, flpOverride)
-			fmt.Fprintln(w, "→ FLP licensing: BNK will license via the in-cluster F5 License Proxy (from flp-outputs.json).")
 		}
 	}
 
