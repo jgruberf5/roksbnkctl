@@ -1546,8 +1546,10 @@ resource "helm_release" "flo" {
 # The conversion mirrors FLO's own RetrieveRemoteManifest byte-for-byte: strip the
 # "images/" / "charts/" path prefix off each entry (split(name,"/")[1]) and name the
 # CR lower("<productType>-<version>") — productType is BNK.
+# Both install paths (kubectl + legacy curl) build the CR from this, so gate it on
+# the module being enabled at all — not on one path.
 data "local_file" "bnk_manifest" {
-  count      = local.use_kubectl ? 1 : 0
+  count      = local.global_enabled ? 1 : 0
   filename   = "${var.manifest_download_dir}/f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml"
   depends_on = [null_resource.extract_flo_version]
 }
@@ -1570,6 +1572,20 @@ locals {
       { name = split("/", c.name)[1], version = c.version }
     ]
   }
+
+  # Same name FLO would mint for a manifest it fetched itself
+  # (manifestName() = lower(productType + "-" + version), productType BNK), so a CR
+  # left by an earlier FAR-mode apply is OVERWRITTEN rather than duplicated — two
+  # CRs matching one version trips FLO's MultipleMatching guard and stalls the
+  # CNEInstance.
+  cnemanifest_name = lower("BNK-${var.f5_bigip_k8s_manifest_version}")
+
+  cnemanifest_body = {
+    apiVersion = "k8s.f5.com/v1"
+    kind       = "CNEManifest"
+    metadata   = { name = local.cnemanifest_name }
+    spec       = local.cnemanifest_spec
+  }
 }
 
 resource "kubectl_manifest" "cnemanifest" {
@@ -1578,19 +1594,48 @@ resource "kubectl_manifest" "cnemanifest" {
   field_manager     = "roksbnkctl"
   force_conflicts   = true
 
-  yaml_body = yamlencode({
-    apiVersion = "k8s.f5.com/v1"
-    kind       = "CNEManifest"
-    metadata = {
-      # Same name FLO would mint itself, so a later FLO-side apply is a no-op
-      # rather than a second CR (two matches → MultipleMatching → reconcile stops).
-      name = lower("BNK-${var.f5_bigip_k8s_manifest_version}")
-    }
-    spec = local.cnemanifest_spec
-  })
+  yaml_body = yamlencode(local.cnemanifest_body)
 
   # The CNEManifest CRD ships in the FLO chart's crds subchart.
   depends_on = [helm_release.flo]
+}
+
+# Legacy-curl parity for the CNEManifest. Same CR, same name, applied by
+# server-side-apply over the REST API — CNEManifest is CLUSTER-scoped, so the path
+# carries no /namespaces/ segment.
+resource "null_resource" "cnemanifest_legacy" {
+  count = local.use_legacy ? 1 : 0
+
+  triggers = {
+    manifest  = jsonencode(local.cnemanifest_body)
+    kube_host = var.kube_host
+    token     = var.kube_token
+    name      = local.cnemanifest_name
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      printf '%s' "${base64encode(jsonencode(local.cnemanifest_body))}" | base64 -d | \
+      curl -f -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        -k "${var.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${local.cnemanifest_name}?fieldManager=terraform&force=true" \
+        --data-binary @-
+    EOT
+  }
+
+  # Tolerate a missing CRD/CR on teardown — the FLO release may already be gone.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${self.triggers.name}" || true
+    EOT
+  }
+
+  # The CRD arrives with the FLO operator install (legacy path).
+  depends_on = [null_resource.f5_lifecycle_operator]
 }
 
 resource "helm_release" "cis" {
