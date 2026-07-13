@@ -4,16 +4,49 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/cli-runtime/pkg/resource"
+	"k8s.io/client-go/rest"
 	"k8s.io/kubectl/pkg/scheme"
 )
+
+// tableAcceptHeader asks the API server to return a metav1.Table instead of the
+// raw objects. This is how kubectl gets its columns: the server builds the table,
+// so a CRD's `additionalPrinterColumns` (License's STATE/MODE/ENTITLEMENT,
+// CNEInstance's, ...) come back as real columns. Without it the response is a
+// plain object list and the table printer can only fall back to NAME/AGE.
+func transformTableRequests(req *rest.Request) {
+	req.SetHeader("Accept", strings.Join([]string{
+		fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName),
+		fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1beta1.SchemeGroupVersion.Version, metav1beta1.GroupName),
+		"application/json",
+	}, ","))
+}
+
+// asTable converts the server's Table — which the Unstructured() builder hands
+// back as an *unstructured.Unstructured of kind "Table" — into the *metav1.Table
+// the cli-runtime table printer knows how to render. Anything that is not a Table
+// is returned untouched, so the NAME-column fallback still applies.
+func asTable(obj runtime.Object) runtime.Object {
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok || u.GetKind() != "Table" {
+		return obj
+	}
+	t := &metav1.Table{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, t); err != nil {
+		return obj
+	}
+	return t
+}
 
 // GetOptions captures the flag-parsed inputs to `roksbnkctl k get`.
 //
@@ -77,6 +110,13 @@ func (o *GetOptions) Run() error {
 		Latest().
 		Flatten()
 
+	// Only the human tabular outputs want a server-rendered Table; -o yaml/json/
+	// jsonpath/go-template must keep receiving the real objects.
+	serverPrint := o.Output == "" || o.Output == "wide"
+	if serverPrint {
+		b = b.TransformRequests(transformTableRequests)
+	}
+
 	r := b.Do()
 	if err := r.Err(); err != nil {
 		return err
@@ -112,7 +152,7 @@ func (o *GetOptions) Run() error {
 			Wide:          o.Output == "wide",
 		})
 		for _, info := range infos {
-			if err := tp.PrintObj(info.Object, o.IOStreams.Out); err != nil {
+			if err := tp.PrintObj(asTable(info.Object), o.IOStreams.Out); err != nil {
 				return err
 			}
 		}
