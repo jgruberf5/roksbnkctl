@@ -1,36 +1,40 @@
 #!/usr/bin/env bash
 #
-# flp-licensed-demo.sh — Demo #4: an end-to-end air-gap-style install where BNK
-# pulls every chart and image from a private Harbor and is licensed by an
-# in-cluster F5 License Proxy (FLP). Runs ON the demo VSI (copied there with
-# demo.env + demo-lib.sh by record.sh) and is captured by asciinema, exactly
-# like the other screenplays.
+# flp-licensed-demo.sh — Demo #4: a SHARED LICENSING CLUSTER.
 #
-# Story — start with nothing in IBM Cloud except a running Harbor (built
-# off-camera, empty). One workspace declares the Harbor mirror, FLP licensing,
-# and the cluster shape, then:
-#   replicate FAR → Harbor → build the ROKS cluster → install the FLP (from
-#   Harbor) → install BIG-IP Next for Kubernetes (from Harbor, licensed by the
-#   FLP) → confirm the License CR is Active via the proxy → down everything.
+# One cluster runs the F5 License Proxy and holds the only egress to F5. A second,
+# air-gapped cluster installs BIG-IP Next for Kubernetes entirely from a private
+# registry and licenses through that proxy — reaching neither repo.f5.com nor F5's
+# licensing service.
 #
-# No artifact is ever pulled from repo.f5.com after replication, and no
-# subscription call ever leaves the cluster — the FLP brokers licensing on the
-# cluster's behalf. The closing `down` destroys the cluster ON CAMERA.
+#     ┌──────── services cluster (the only egress to F5) ───────┐
+#     │  F5 License Proxy ──NodePort 30001──┐                   │
+#     └─────────────────────────────────────┼───────────────────┘
+#     ┌─────────────────────────────────────┼── app cluster ────┐
+#     │  BNK + CNEInstance + CWC ───────────┘                   │
+#     │      └── charts + images ── private registry (Harbor)   │
+#     └────────────────────────────────────────────────────────┘
 #
-#   ./flp-licensed-demo.sh            # run the full demonstration
-#   ./flp-licensed-demo.sh teardown   # emergency teardown (roksbnkctl down)
+# Story:
+#   1. replicate FAR into a private registry with roksbnkctl
+#   2. deploy the FLP into the services cluster, exposed as a NodePort service
+#   3. deploy BNK into the OTHER cluster — pulling from the private registry, and
+#      licensing through the proxy in the first cluster
 #
-# Inputs come from demo.env (written by prompt-inputs.sh): IBMCLOUD_API_KEY,
-# REGION, RESOURCE_GROUP, CLUSTER_NAME, OCP_VERSION, WORKERS_PER_ZONE,
-# BNK_VERSION, FAR_REPO_URL, REGISTRY_DOMAIN, REGISTRY_ADMIN_PASSWORD.
-# Optional: FLP_NAMESPACE (default f5-license-proxy), FLP_CHART_VERSION
-# (default 1.29.0-0.10.28), REGISTRY_PROJECT (default bnk-mirror),
-# COS_INSTANCE / COS_BUCKET / FAR_AUTH_FILE (COS coordinates for the FAR
-# credential + subscription JWT), SUBSCRIPTION_JWT_FILE (default trial.jwt),
-# PREFIX (default = CLUSTER_NAME), PACE.
+# BOTH ROKS CLUSTERS ARE ALREADY RUNNING and are `cluster register`ed, not created.
+# Cluster creation is ~40 minutes of nothing to watch and is not what this demo is
+# about; registering is instant and is a first-class roksbnkctl flow. The demo
+# therefore never destroys them — teardown removes only the workloads it installed.
 #
-# The FAR pull credential + subscription JWT are NOT inputs — roksbnkctl reads
-# them straight from the orchestration COS bucket (see far-replication-demo.sh).
+#   ./flp-licensed-demo.sh            # run the demonstration
+#   ./flp-licensed-demo.sh teardown   # emergency: remove FLP + BNK (clusters stay)
+#
+# Inputs from demo.env: IBMCLOUD_API_KEY, REGION, RESOURCE_GROUP, BNK_VERSION,
+# FAR_REPO_URL, REGISTRY_DOMAIN, REGISTRY_ADMIN_PASSWORD,
+# SERVICES_CLUSTER (the running cluster that will host the FLP),
+# APP_CLUSTER      (the running cluster that will get BNK),
+# APP_CLUSTER_CIDR (the app cluster's subnet CIDR — opened to the FLP's NodePort).
+# Optional: REGISTRY_PROJECT (default bnk-mirror), FLP_NAMESPACE, PACE.
 #
 # The "STAGE n/N · Title" cards (demo-lib.sh) double as chapter markers that
 # postprocess.sh greps to align the EN/FR voiceover; titles must contain the
@@ -47,43 +51,35 @@ ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/demo.env}"
 source "$SCRIPT_DIR/demo-lib.sh"
 
 : "${IBMCLOUD_API_KEY:?set via demo.env}"
-: "${REGION:?}"; : "${RESOURCE_GROUP:?}"; : "${CLUSTER_NAME:?}"
-: "${OCP_VERSION:?}"; : "${WORKERS_PER_ZONE:?}"; : "${BNK_VERSION:?}"
+: "${REGION:?}"; : "${RESOURCE_GROUP:?}"; : "${BNK_VERSION:?}"
 : "${FAR_REPO_URL:?set via demo.env — the source registry to mirror FROM}"
-: "${REGISTRY_DOMAIN:?set via demo.env — the private Harbor host (e.g. 1.2.3.4.sslip.io). Build one with scripts/deploy-far-registry.sh.}"
-: "${REGISTRY_ADMIN_PASSWORD:?set via demo.env — the Harbor admin password (deploy-far-registry.sh prints it)}"
+: "${REGISTRY_DOMAIN:?set via demo.env — the private registry host}"
+: "${REGISTRY_ADMIN_PASSWORD:?set via demo.env — its admin password}"
+: "${SERVICES_CLUSTER:?set via demo.env — the RUNNING cluster that will host the FLP}"
+: "${APP_CLUSTER:?set via demo.env — the RUNNING cluster that will get BNK}"
+: "${APP_CLUSTER_CIDR:?set via demo.env — the app cluster CIDR, opened to the FLP NodePort}"
 
-# The FAR credential + subscription JWT live in COS, not demo.env. roksbnkctl
-# downloads them itself (see far-replication-demo.sh). Override only if the COS
-# layout differs from the orchestration defaults.
-COS_INSTANCE="${COS_INSTANCE:-bnk-orchestration}"
-COS_BUCKET="${COS_BUCKET:-bnk-schematics-resources}"
-FAR_AUTH_FILE="${FAR_AUTH_FILE:-f5-far-auth-key.tgz}"
-SUBSCRIPTION_JWT_FILE="${SUBSCRIPTION_JWT_FILE:-trial.jwt}"
-
-FLP_NAMESPACE="${FLP_NAMESPACE:-f5-license-proxy}"
-FLP_CHART_VERSION="${FLP_CHART_VERSION:-1.29.0-0.10.28}"
 PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"
-
-WS="$CLUSTER_NAME"
-PREFIX="${PREFIX:-$CLUSTER_NAME}"
+FLP_NAMESPACE="${FLP_NAMESPACE:-f5-license-proxy}"
+SVC_WS="${SVC_WS:-services}"   # workspace for the FLP cluster
+APP_WS="${APP_WS:-app}"        # workspace for the BNK cluster
 export PATH="$HOME/.local/bin:$PATH"
 SUDO=""; [[ "$(id -u)" -eq 0 ]] || SUDO="sudo"
 
-# ── emergency teardown (a normal run ends with `down` on camera) ──────────────
-# The FLP is a standalone phase (state-flp/) the composite `down` does not touch,
-# and it must go before the cluster is destroyed, or its state is orphaned.
+# ── emergency teardown ───────────────────────────────────────────────────────
+# Removes only what the demo installed. The two clusters were REGISTERED, never
+# created, so roksbnkctl does not own them and must not destroy them.
 if [[ "${1:-}" == "teardown" ]]; then
-  stage "T" "Destroying the workspace"
-  roksbnkctl -w "$WS" flp down --auto || true
-  roksbnkctl -w "$WS" down --auto || true
-  echo; say "Teardown complete."
+  stage "T" "Removing the workloads"
+  roksbnkctl -w "$APP_WS" bnk down --auto || true
+  roksbnkctl -w "$SVC_WS" flp down --auto || true
+  echo; say "FLP + BNK removed. Both clusters are still running — the demo never owned them."
   exit 0
 fi
 
 # ── 1) host preparation ──────────────────────────────────────────────────────
-stage "1/9" "Prepare the host"
-say "roksbnkctl only needs terraform and helm installed locally — it internalises kubectl, oc, ibmcloud, and the mirror tooling."
+stage "1/8" "Prepare the host"
+say "roksbnkctl needs only terraform and helm locally — it internalises kubectl, oc, ibmcloud and the mirror tooling."
 export DEBIAN_FRONTEND=noninteractive
 run $SUDO apt-get update -qq
 run $SUDO apt-get install -y -qq curl jq tar gnupg lsb-release
@@ -94,112 +90,134 @@ if ! command -v terraform >/dev/null 2>&1; then
   run $SUDO apt-get update -qq
   run $SUDO apt-get install -y -qq terraform
 fi
-run terraform version
 if ! command -v helm >/dev/null 2>&1; then
   helm_ver="$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | jq -r .tag_name)"
   curl -fsSL "https://get.helm.sh/helm-${helm_ver}-linux-amd64.tar.gz" | tar -xz -C /tmp
   $SUDO install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
 fi
-run helm version --short
-
-# ── 2) install roksbnkctl ────────────────────────────────────────────────────
-stage "2/9" "Install roksbnkctl"
 if [[ -x "$SCRIPT_DIR/roksbnkctl.bin" ]]; then
-  say "Installing a locally-built roksbnkctl (source build under test)."
   run install -D -m 0755 "$SCRIPT_DIR/roksbnkctl.bin" "$HOME/.local/bin/roksbnkctl"
 else
-  say "One self-contained release binary — no Go toolchain required."
   REL_API="https://api.github.com/repos/jgruberf5/roksbnkctl/releases/latest"
-  DL_URL="$(curl -fsSL "$REL_API" | jq -r '.assets[].browser_download_url' \
-            | grep -iE 'linux.*(amd64|x86_64).*\.tar\.gz$' | head -1)"
-  [[ -n "$DL_URL" ]] || { echo "✗ could not resolve a linux/amd64 release asset." >&2; exit 1; }
-  run curl -fsSL "$DL_URL" -o /tmp/roksbnkctl.tgz
-  run tar -xzf /tmp/roksbnkctl.tgz -C /tmp
-  RB="$(find /tmp -maxdepth 2 -type f -name roksbnkctl | head -1)"
-  run "$RB" install
+  DL_URL="$(curl -fsSL "$REL_API" | jq -r '.assets[].browser_download_url' | grep -iE 'linux.*(amd64|x86_64).*\.tar\.gz$' | head -1)"
+  curl -fsSL "$DL_URL" -o /tmp/roksbnkctl.tgz && tar -xzf /tmp/roksbnkctl.tgz -C /tmp
+  run "$(find /tmp -maxdepth 2 -type f -name roksbnkctl | head -1)" install
 fi
 hash -r
-run roksbnkctl version 2>/dev/null || true
+run roksbnkctl version
 
-# ── 3) seed the workspace: Harbor mirror + FLP licensing ─────────────────────
-stage "3/9" "Configure the workspace for Harbor and the FLP"
-say "One declarative config describes the whole install: the cluster to build, the FAR repo to mirror, license_mode f5licenseproxy, and the FLP block. No secret is pasted in."
-rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS"
-SEED="$HOME/${WS}-config.yaml"
+# ── 2) register the services cluster (already running) ───────────────────────
+stage "2/8" "Register the services cluster"
+say "Both ROKS clusters are already running. roksbnkctl does not have to build them — it can adopt a cluster you already own."
+rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$SVC_WS"
+SVC_SEED="$HOME/${SVC_WS}-config.yaml"
 {
   echo "ibmcloud:"
   echo "  region: $REGION"
   echo "  resource_group: $RESOURCE_GROUP"
-  echo "prefix: $PREFIX"
+  echo "prefix: $SVC_WS"
   echo "cluster:"
-  echo "  create: true"
-  echo "  name: $CLUSTER_NAME"
-  echo "  openshift_version: \"$OCP_VERSION\""
-  echo "  workers_per_zone: $WORKERS_PER_ZONE"
-  # No transit gateway: it exists to give the TESTING phase's client VPC a path to
-  # the cluster, and this demo never runs that phase. Skipping it drops a chunk of
-  # build time and cost — and IBM Cloud caps an account at 10 transit gateways, so
-  # a demo that does not need one should not burn a slot.
-  echo "resources:"
-  echo "  transit_gateway:"
-  echo "    create: false"
+  echo "  create: false"          # ← adopt, do not build
+  echo "  name: $SERVICES_CLUSTER"
   echo "tf_source:"
   echo "  type: embedded"
   echo "bnk:"
   echo "  manifest_version: $BNK_VERSION"
   echo "  far_repo_url: $FAR_REPO_URL"
-  echo "  far_auth_file: $FAR_AUTH_FILE"
-  echo "  subscription_jwt_file: $SUBSCRIPTION_JWT_FILE"
-  echo "  license_mode: f5licenseproxy"
   echo "  flp:"
   echo "    namespace: $FLP_NAMESPACE"
-  echo "    chart_version: $FLP_CHART_VERSION"
-} > "$SEED"
-run cat "$SEED"
-run roksbnkctl -w "$WS" init --config-file "$SEED" --override-from-env
+} > "$SVC_SEED"
+run cat "$SVC_SEED"
+run roksbnkctl -w "$SVC_WS" init --config-file "$SVC_SEED" --override-from-env
+say "Register looks the cluster up in IBM Cloud and records its identity. Nothing is provisioned."
+run roksbnkctl -w "$SVC_WS" cluster register "$SERVICES_CLUSTER"
 
-# Point the workspace at the Harbor mirror (its four fields; password on stdin).
-say "Select the private Harbor as the mirror. The password is piped in on stdin, so it never lands in argv or shell history."
-run roksbnkctl -w "$WS" registry target generic
-run roksbnkctl -w "$WS" registry target generic_host "$REGISTRY_DOMAIN"
-run roksbnkctl -w "$WS" registry target generic_repo_prefix "$PROJECT"
-run roksbnkctl -w "$WS" registry target generic_username admin
-type_cmd "printf '%s' \"\$REGISTRY_PASSWORD\" | roksbnkctl -w $WS registry target generic_password --password-stdin"
-printf '%s' "$REGISTRY_ADMIN_PASSWORD" | roksbnkctl -w "$WS" registry target generic_password --password-stdin
+# ── 3) replicate FAR into the private registry ───────────────────────────────
+stage "3/8" "Replicate FAR into the private registry"
+say "Point the workspace at the private registry. The password is piped in on stdin, so it never lands in argv or shell history."
+run roksbnkctl -w "$SVC_WS" registry target generic
+run roksbnkctl -w "$SVC_WS" registry target generic_host "$REGISTRY_DOMAIN"
+run roksbnkctl -w "$SVC_WS" registry target generic_repo_prefix "$PROJECT"
+run roksbnkctl -w "$SVC_WS" registry target generic_username admin
+type_cmd "printf '%s' \"\$REGISTRY_PASSWORD\" | roksbnkctl -w $SVC_WS registry target generic_password --password-stdin"
+printf '%s' "$REGISTRY_ADMIN_PASSWORD" | roksbnkctl -w "$SVC_WS" registry target generic_password --password-stdin
 
-# ── 4) replicate FAR into the Harbor mirror ──────────────────────────────────
-stage "4/9" "Replicate FAR into the Harbor mirror"
-say "roksbnkctl reads the F5 manifest, derives every chart and image the install needs — the FLP chart and its four images included — and copies each into Harbor by digest."
-run roksbnkctl -w "$WS" registry replicate --target generic
-say "verify re-reads the bill of materials and confirms each artifact is present in Harbor and digest-matched. From here nothing is pulled from repo.f5.com."
-run roksbnkctl -w "$WS" registry verify
+say "roksbnkctl reads the F5 manifest and derives every chart and image the install needs — the License Proxy among them."
+run roksbnkctl -w "$SVC_WS" registry bom
+say "Each artifact is copied from the F5 Artifact Repository into the registry by digest. From here, nothing is pulled from F5."
+run roksbnkctl -w "$SVC_WS" registry replicate --target generic
+run roksbnkctl -w "$SVC_WS" registry verify
 
-# ── 5) build the ROKS cluster ────────────────────────────────────────────────
-stage "5/9" "Provision the ROKS cluster"
-say "Build the cluster phase on its own. You could instead point roksbnkctl at an existing ROKS cluster's name."
-run roksbnkctl -w "$WS" cluster up --auto
+# ── 4) the F5 License Proxy, exposed as a NodePort service ───────────────────
+stage "4/8" "Deploy the F5 License Proxy with NodePort access"
+say "The proxy is a cluster-wide licensing broker, and it is the only thing that needs to reach F5. Deploy it once, here."
+say "--add-node-port-access exposes it beyond this cluster: it puts the worker node IPs in the proxy's certificate, and opens the NodePort to the other cluster's CIDR."
+run roksbnkctl -w "$SVC_WS" flp up --auto \
+    --add-node-port-access --node-port-source-cidr "$APP_CLUSTER_CIDR"
+say "The proxy answers on every worker node, and every one of those addresses is in its certificate."
+run roksbnkctl -w "$SVC_WS" k get svc f5-license-proxy -n "$FLP_NAMESPACE"
+run roksbnkctl -w "$SVC_WS" flp output
 
-# ── 6) install the F5 License Proxy (from Harbor) ────────────────────────────
-stage "6/9" "Install the F5 License Proxy"
-say "The FLP phase deploys the in-cluster license proxy — proxy, vault, and postgresql — pulling every image from Harbor. It is optional: without license_mode f5licenseproxy this phase never runs."
-run roksbnkctl -w "$WS" flp up --auto
+# ── 5) register the application cluster ──────────────────────────────────────
+stage "5/8" "Register the application cluster"
+say "A second workspace, for the second cluster — also already running, also just registered."
+# The handoff between the two workspaces: the proxy's external address + its root CA.
+FLP_URL="$(roksbnkctl -w "$SVC_WS" flp output flp_external_endpoint)"
+FLP_CA="$(roksbnkctl -w "$SVC_WS" flp output flp_root_ca)"
+rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$APP_WS"
+APP_SEED="$HOME/${APP_WS}-config.yaml"
+{
+  echo "ibmcloud:"
+  echo "  region: $REGION"
+  echo "  resource_group: $RESOURCE_GROUP"
+  echo "prefix: $APP_WS"
+  echo "cluster:"
+  echo "  create: false"
+  echo "  name: $APP_CLUSTER"
+  echo "tf_source:"
+  echo "  type: embedded"
+  echo "bnk:"
+  echo "  manifest_version: $BNK_VERSION"
+  echo "  far_repo_url: $FAR_REPO_URL"
+  echo "  license_mode: f5licenseproxy"
+  echo "  flp:"
+  echo "    external:"
+  echo "      url: $FLP_URL"
+  echo "      root_ca_b64: $FLP_CA"
+} > "$APP_SEED"
+say "license_mode is f5licenseproxy, and flp.external points at the proxy in the OTHER cluster — its address and its root CA. This cluster never runs an FLP of its own."
+run cat "$APP_SEED"
+run roksbnkctl -w "$APP_WS" init --config-file "$APP_SEED" --override-from-env
+run roksbnkctl -w "$APP_WS" cluster register "$APP_CLUSTER"
 
-# ── 7) install BIG-IP Next for Kubernetes (from Harbor, licensed by the FLP) ──
-stage "7/9" "Deploy BIG-IP Next for Kubernetes from Harbor"
-say "The BNK phase installs BIG-IP Next for Kubernetes from Harbor and points its licensing at the FLP. The cluster-wide controller trusts the proxy's certificate and brokers the license through it — no subscription call leaves the cluster directly."
-run roksbnkctl -w "$WS" bnk up --auto
+say "The same private registry — already populated, so there is nothing left to copy."
+run roksbnkctl -w "$APP_WS" registry target generic
+run roksbnkctl -w "$APP_WS" registry target generic_host "$REGISTRY_DOMAIN"
+run roksbnkctl -w "$APP_WS" registry target generic_repo_prefix "$PROJECT"
+run roksbnkctl -w "$APP_WS" registry target generic_username admin
+printf '%s' "$REGISTRY_ADMIN_PASSWORD" | roksbnkctl -w "$APP_WS" registry target generic_password --password-stdin
+run roksbnkctl -w "$APP_WS" registry replicate --target generic
 
-# ── 8) confirm the FLP-brokered license ──────────────────────────────────────
-stage "8/9" "Confirm the FLP-brokered license"
-say "The License custom resource shows mode f5licenseproxy and state Active — the proxy verified the entitlement and BIG-IP Next for Kubernetes is licensed. kubectl is internalised, so no host binary is needed."
-run roksbnkctl -w "$WS" k get license -n f5-utils
-run roksbnkctl -w "$WS" k get pods -n "$FLP_NAMESPACE"
+# ── 6) install BNK from the registry, licensed by the remote proxy ───────────
+stage "6/8" "Deploy BIG-IP Next from the registry"
+say "Every chart and image comes from the private registry, and the CNEInstance is told to pull from it too. The cluster-wide controller licenses through the proxy in the other cluster."
+run roksbnkctl -w "$APP_WS" bnk up --auto
 
-# ── 9) remove every phase ────────────────────────────────────────────────────
-stage "9/9" "Tear down every phase"
-say "The FLP is a standalone phase, torn down first so the cluster destroy does not orphan its state. Then a single down removes BIG-IP Next for Kubernetes and the cluster itself."
-run roksbnkctl -w "$WS" flp down --auto
-run roksbnkctl -w "$WS" down --auto
+# ── 7) confirm ───────────────────────────────────────────────────────────────
+stage "7/8" "Confirm the remote FLP licensed the cluster"
+say "The License custom resource: mode f5licenseproxy, state Active — licensed by a proxy that is not even in this cluster."
+run roksbnkctl -w "$APP_WS" k get license -n f5-utils
+say "The CNEInstance is reconciled and the dataplane is up."
+run roksbnkctl -w "$APP_WS" k get cneinstance -A
+run roksbnkctl -w "$APP_WS" k get pods -n f5-bnk
+say "And there is no License Proxy here at all — this cluster only ever talked to the registry and to the proxy next door."
+run roksbnkctl -w "$APP_WS" k get pods -n "$FLP_NAMESPACE"
+
+# ── 8) teardown (the clusters are NOT ours to destroy) ───────────────────────
+stage "8/8" "Remove the workloads, leave the clusters"
+say "Both clusters were registered, never created — so roksbnkctl removes only what it installed, and leaves them running."
+run roksbnkctl -w "$APP_WS" bnk down --auto
+run roksbnkctl -w "$SVC_WS" flp down --auto
 
 echo
-printf '\033[1;32m✓ BIG-IP Next for Kubernetes installed entirely from a private Harbor and licensed by an in-cluster F5 License Proxy — then removed with one down.\033[0m\n'
+printf '\033[1;32m✓ BIG-IP Next installed from a private registry and licensed by an F5 License Proxy in a DIFFERENT cluster — neither cluster reached repo.f5.com, and only one of them can reach F5 at all.\033[0m\n'

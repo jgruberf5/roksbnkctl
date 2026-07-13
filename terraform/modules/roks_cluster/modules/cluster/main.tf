@@ -160,9 +160,42 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
   }
 }
 
-# Create public gateways for cluster subnets
+# Public gateways for the cluster subnets.
+#
+# IBM Cloud allows exactly ONE public gateway per zone per VPC. So a SECOND cluster
+# brought up in a VPC that already has them (the shared-VPC topology — e.g. an
+# air-gapped cluster sharing a VPC with the cluster running the F5 License Proxy)
+# must ATTACH to the existing gateways, not create its own. Creating unconditionally
+# fails the apply with:
+#
+#   CreatePublicGatewayWithContext failed: Creating a new public gateway will put the
+#   user over quota. Allocated: 1, Requested: 1, Quota: 1
+#
+# So: look the VPC's gateways up, reuse one when the zone already has it, and create
+# only for zones that do not.
+data "ibm_is_public_gateways" "vpc" {
+  count = var.create_cluster ? 1 : 0
+}
+
+locals {
+  # zone → id, for public gateways already in THIS cluster's VPC.
+  existing_pgw_by_zone = {
+    for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
+    g.zone => g.id if try(g.vpc, "") == local.cluster_vpc_id
+  }
+
+  pgw_existing_zone1 = lookup(local.existing_pgw_by_zone, local.zones[0], "")
+  pgw_existing_zone2 = lookup(local.existing_pgw_by_zone, local.zones[1], "")
+  pgw_existing_zone3 = lookup(local.existing_pgw_by_zone, local.zones[2], "")
+
+  # The gateway each subnet attaches to: the one already in the zone, else ours.
+  pgw_zone1 = local.pgw_existing_zone1 != "" ? local.pgw_existing_zone1 : try(ibm_is_public_gateway.cluster_gateway_zone1[0].id, "")
+  pgw_zone2 = local.pgw_existing_zone2 != "" ? local.pgw_existing_zone2 : try(ibm_is_public_gateway.cluster_gateway_zone2[0].id, "")
+  pgw_zone3 = local.pgw_existing_zone3 != "" ? local.pgw_existing_zone3 : try(ibm_is_public_gateway.cluster_gateway_zone3[0].id, "")
+}
+
 resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
-  count          = var.create_cluster ? 1 : 0
+  count          = var.create_cluster && local.pgw_existing_zone1 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone1"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[0]
@@ -175,7 +208,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
-  count          = var.create_cluster ? 1 : 0
+  count          = var.create_cluster && local.pgw_existing_zone2 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone2"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[1]
@@ -188,7 +221,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
-  count          = var.create_cluster ? 1 : 0
+  count          = var.create_cluster && local.pgw_existing_zone3 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone3"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[2]
@@ -200,23 +233,23 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
   }
 }
 
-# Attach public gateways to cluster subnets
+# Attach the cluster subnets to their zone's gateway (reused or freshly created).
 resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone1" {
   count          = var.create_cluster ? 1 : 0
   subnet         = ibm_is_subnet.cluster_subnet_zone1[0].id
-  public_gateway = ibm_is_public_gateway.cluster_gateway_zone1[0].id
+  public_gateway = local.pgw_zone1
 }
 
 resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone2" {
   count          = var.create_cluster ? 1 : 0
   subnet         = ibm_is_subnet.cluster_subnet_zone2[0].id
-  public_gateway = ibm_is_public_gateway.cluster_gateway_zone2[0].id
+  public_gateway = local.pgw_zone2
 }
 
 resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone3" {
   count          = var.create_cluster ? 1 : 0
   subnet         = ibm_is_subnet.cluster_subnet_zone3[0].id
-  public_gateway = ibm_is_public_gateway.cluster_gateway_zone3[0].id
+  public_gateway = local.pgw_zone3
 }
 
 # Allow TCP port 80 from any source (using cluster security group)

@@ -8,7 +8,7 @@ EN + FR narrated 1080p mp4s:
 | 1 | `cli-demo.sh` | The **roksbnkctl CLI lifecycle** — install on a fresh Ubuntu VSI, build a ROKS cluster, register it with BNK Forge, install BNK, run the testing framework, remove/rebuild BNK, then `down` everything. |
 | 2 | `ci-demo.sh` | The **tools-runner container as a CI pipeline** — the same story with *zero* host install; every step is a `docker run` of the all-in-one runner image, exactly what a CI job calls. |
 | 3 | `far-replication-demo.sh` | **FAR replication into a private registry** — pull the FAR credential from IBM COS, then mirror every BNK chart and image out of `repo.f5.com` into a private OCI registry and verify each artifact by digest. The registry (a standard open-source Harbor) is built beforehand, off-camera. |
-| 4 | `flp-licensed-demo.sh` | **Air-gap-style install, licensed by the F5 License Proxy** — one workspace declares a Harbor mirror + FLP licensing, then replicates FAR → Harbor, builds the cluster, installs the FLP (from Harbor), installs BNK (from Harbor, licensed by the in-cluster FLP), confirms the License CR is Active via the proxy, and `down`s everything. Nothing is pulled from `repo.f5.com` after replication. The Harbor is built beforehand, off-camera. |
+| 4 | `flp-licensed-demo.sh` | **A shared licensing cluster** — one cluster runs the F5 License Proxy (exposed as a NodePort service) and holds the only egress to F5; a second, air-gapped cluster installs BNK entirely from a private registry and licenses *through that proxy*. Replicate FAR → registry, `flp up --add-node-port-access`, then `bnk up` in the other cluster. **Both ROKS clusters are already running and are `cluster register`ed, not created** — cluster builds are ~40 min of nothing to watch. |
 
 All four share one pipeline. The raw asciinema `.cast` is the **master** — the
 mp4s are derived from it, so re-cuts (pacing, narration, language) never need
@@ -39,7 +39,7 @@ Pick the screenplay with the `SCREENPLAY` environment variable. It defaults to
 | `cli-demo.sh [teardown]` | **on the VSI** | Demo #1 — see the table above. |
 | `ci-demo.sh [teardown]` | **on the VSI** | Demo #2 — see the table above. |
 | `far-replication-demo.sh [teardown]` | **on the VSI** | Demo #3 — see the table above. Drives `../deploy-far-registry.sh`, which provisions a *second* VSI to host Harbor. |
-| `flp-licensed-demo.sh [teardown]` | **on the VSI** | Demo #4 — see the table above. Targets a pre-built Harbor (`REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD` in `demo.env`); builds a cluster, installs the FLP + BNK from Harbor, licenses via the FLP. |
+| `flp-licensed-demo.sh [teardown]` | **on the VSI** | Demo #4 — see the table above. Registers two ALREADY-RUNNING clusters (`SERVICES_CLUSTER` + `APP_CLUSTER` in `demo.env`) and a pre-built registry; installs the FLP in one and BNK in the other. Teardown removes only the workloads — it never destroys the clusters, because it never created them. |
 | `demo-lib.sh` | on the VSI | Shared presentation helpers: stage cards + framed commands. The `STAGE n/N · Title` line doubles as the chapter marker. |
 | `record.sh {run\|start\|wait\|fetch\|attach\|teardown}` | control host | Copies the screenplay + `demo.env` to the VSI, records it under `asciinema rec` in `tmux`, polls, and pulls the master `.cast` into `out/`. |
 | `postprocess.sh <cast>` | control host | Idle-compresses the cast (`MAX_IDLE`), renders `agg`→gif→`ffmpeg`→`*.silent.mp4`, and extracts `*.chapters.tsv`. |
@@ -142,58 +142,100 @@ Details:
 
 ---
 
-## Demo #4 — FLP-licensed install from Harbor
+## Demo #4 — a shared licensing cluster
 
-The full-length one: it **builds a ROKS cluster**, installs the FLP, and installs
-BNK, so budget roughly **90–120 min** of live cloud (and real IBM Cloud spend).
-The master `.cast` captures it once; re-cuts never need another run.
+**One cluster runs the F5 License Proxy and holds the only egress to F5. A second,
+air-gapped cluster installs BNK entirely from a private registry and licenses through
+that proxy.** Neither cluster reaches `repo.f5.com`; only one of them can reach F5 at all.
 
-**Same Harbor prerequisites as Demo #3** — build the registry off-camera with
-`scripts/deploy-far-registry.sh` and put `REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD`
-in `demo.env` (see Demo #3 above). The screenplay itself replicates FAR into it on
-camera, so start from an **empty** Harbor project (`registry delete --force`, or a
-fresh project) so the replication has real work to show.
+```
+   ┌──────── services cluster (the only egress to F5) ───────┐
+   │  F5 License Proxy ──NodePort 30001──┐                   │
+   └─────────────────────────────────────┼───────────────────┘
+   ┌─────────────────────────────────────┼── app cluster ────┐
+   │  BNK + CNEInstance + CWC ───────────┘                   │
+   │      └── charts + images ── private registry (Harbor)   │
+   └─────────────────────────────────────────────────────────┘
+```
 
-**Use `SRC_BUILD=1`** — FLP support is not in a public release yet, so the demo
-must install the source build (`record.sh` builds `roksbnkctl.bin` from this repo
-and ships it; the screenplay installs it in preference to any release).
+The demo shows exactly three things: **replicate FAR into a private registry**,
+**deploy the FLP with a NodePort service**, and **deploy BNK into the other cluster**
+using that registry and that proxy.
+
+### Both ROKS clusters must already be running
+
+They are `cluster register`ed, **not created**. Building a ROKS cluster is ~40 minutes
+of nothing to watch, twice over — and registering an existing cluster is a first-class
+roksbnkctl flow that is more representative anyway. Because the demo never creates the
+clusters, **it never destroys them**: teardown removes only the FLP and BNK it installed.
+
+That drops the shoot to roughly **50–70 min** (mostly `registry replicate` and
+`bnk up`), against 3+ hours if it built the clusters.
+
+Set both in `demo.env`, plus the app cluster's CIDR (opened to the FLP's NodePort):
+
+```bash
+printf 'export SERVICES_CLUSTER=%s\n'  "<running-cluster-that-gets-the-FLP>" >> demo.env
+printf 'export APP_CLUSTER=%s\n'       "<running-cluster-that-gets-BNK>"     >> demo.env
+printf 'export APP_CLUSTER_CIDR=%s\n'  "10.242.0.0/18"                       >> demo.env
+```
+
+The two clusters must be able to reach each other — same VPC (simplest), or a transit
+gateway between their VPCs.
+
+### The registry
+
+Same prerequisites as Demo #3 — build it off-camera with `scripts/deploy-far-registry.sh`
+and put `REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD` in `demo.env`. Start from an
+**empty** project (`roksbnkctl -w <ws> registry delete --force`) so the replication has
+real work to show on camera.
+
+### Record
+
+**Use `SRC_BUILD=1`** — the FLP work is not in a public release yet, so the demo must
+install the source build.
 
 ```bash
 SRC_BUILD=1 SCREENPLAY=flp-licensed-demo.sh ./record.sh run
-./postprocess.sh out/latest.cast
+```
+
+### Accelerate the long stretches
+
+`registry replicate` and `bnk up` are long stretches of *active* output — idle
+compression alone will not shorten them. Push `SPEED` (which time-compresses console
+output; lower = faster) well below its 0.25 default:
+
+```bash
+SPEED=0.10 MAX_IDLE=1.5 ./postprocess.sh out/latest.cast
 ./voiceover.sh out/latest.compressed.cast out/latest.chapters.tsv
-mv out/latest.en.mp4 out/demo4-flp.en.mp4   # keep it alongside the others
+mv out/latest.en.mp4 out/demo4-flp.en.mp4
 mv out/latest.fr.mp4 out/demo4-flp.fr.mp4
 ```
 
-Details:
+The raw `.cast` is never modified, so re-cut at a different `SPEED` freely — no
+further cloud run.
 
-- **The install pulls from Harbor, not FAR — and nothing else does either.**
-  `registry replicate` records a `registry-mirror.json` whose `ChartHost`/`ImageHost`
-  point at the Harbor project; `renderBNKFields` turns that into `far_chart_repo_url` /
-  `far_image_repo_url` + `use_registry_mirror = true`, and carries the Harbor
-  credentials through as `registry_mirror_username` / `registry_mirror_password` so
-  charts and images authenticate to the mirror with the same credentials replication
-  used (no anonymous-pull / public-project requirement). Two things make the install
-  genuinely disconnected:
-  - the **f5-bigip-k8s-manifest is itself mirrored** (it is a BOM artifact —
-    `bnkbom.ManifestChartName`), so the install never goes back to `repo.f5.com` for it;
-  - roksbnkctl applies the manifest to the cluster as a **`CNEManifest` CR**. FLO
-    resolves the BNK manifest by listing cluster-scoped `CNEManifest`s and matching
-    `spec.version`, and only falls back to pulling it from a registry when none
-    matches — so with the CR present, FLO never fetches a manifest at all.
-- **FLP licensing.** `bnk.license_mode: f5licenseproxy` + the `bnk.flp` block make
-  the run install the in-cluster F5 License Proxy (`flp up`) and point BNK's License
-  CR at it. The cluster-wide controller trusts the proxy's CA (written to the
-  `licenseserver-rootca` Secret) and brokers the entitlement through the proxy — see
-  `book/src/10c-flp-licensing.md`. A subscription JWT is still required
-  (`bnk.subscription_jwt_file`, default `trial.jwt`, pulled from COS like the FAR
-  credential).
-- **No FAR credential / JWT to supply** — same as Demo #3, roksbnkctl reads both from
-  the orchestration COS bucket.
-- **Teardown is two commands** (the screenplay's stage 9 does both): `flp down` first
-  (the FLP is a standalone phase the composite `down` does not touch), then `down`
-  removes BNK + the cluster. The closing `down` destroys the cluster on camera.
+### Details
+
+- **The install pulls from the registry, not FAR — and nothing else does either.**
+  `registry replicate` records a `registry-mirror.json`; `renderBNKFields` turns it into
+  `far_chart_repo_url` / `far_image_repo_url` + `use_registry_mirror = true`, and carries
+  the registry credentials through so charts and images authenticate with the same ones
+  replication used. Two further things make it genuinely disconnected: the
+  **f5-bigip-k8s-manifest is itself mirrored** (it is a BOM artifact), and roksbnkctl
+  applies the manifest to the cluster as a **`CNEManifest` CR** — FLO resolves the
+  manifest from that CR and never fetches one from a registry.
+- **`flp up --add-node-port-access`** is what makes the proxy usable from the other
+  cluster. The chart already ships a NodePort Service, but it hardcodes
+  `externalTrafficPolicy: Local` with one replica (so only the node hosting the pod
+  answers), its certificate has no **IP SANs** (so a remote controller dialling
+  `https://<node-ip>:30001` fails the handshake), and ROKS workers sit in a security
+  group that does not admit another cluster. The flag fixes all three.
+- **The app cluster never runs `flp up`.** It points at the foreign proxy with
+  `bnk.flp.external` (`url` + `root_ca_b64`, read straight out of the services
+  workspace with `roksbnkctl -w services flp output <name>`).
+
+See [Licensing BNK with the F5 License Proxy](../../book/src/10c-flp-licensing.md#flow-c--a-shared-licensing-cluster).
 
 ---
 
