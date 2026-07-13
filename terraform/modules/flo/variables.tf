@@ -70,6 +70,19 @@ variable "use_registry_mirror" {
   default     = false
 }
 
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "f5_bigip_k8s_manifest_version" {
   description = "Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)"
   type        = string

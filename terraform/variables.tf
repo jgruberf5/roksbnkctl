@@ -260,6 +260,19 @@ variable "use_registry_mirror" {
   default     = false
 }
 
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "f5_bigip_k8s_manifest_version" {
   description = "Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)"
   type        = string

@@ -346,6 +346,19 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		fmt.Fprintf(w, "far_chart_repo_url = %q\n", mirror.ChartHost)
 		fmt.Fprintf(w, "far_image_repo_url = %q\n", mirror.ImageHost)
 		fmt.Fprintln(w, "use_registry_mirror = true")
+
+		// An external "generic" mirror (e.g. Harbor) is neither ICR nor the
+		// in-cluster OpenShift registry, so chart+image pulls must authenticate
+		// with its own basic-auth credentials (the same ones `registry replicate`
+		// used). Emit them so the FLO/FLP modules log in to the mirror instead of
+		// presenting the kube token. Absent for icr/in-cluster mirrors, which keep
+		// their IAM-key / kube-token auth.
+		if mirror.Target == "generic" && ws.Registry != nil && ws.Registry.GenericPasswordB64 != "" {
+			if raw, err := base64.StdEncoding.DecodeString(ws.Registry.GenericPasswordB64); err == nil {
+				fmt.Fprintf(w, "registry_mirror_username = %q\n", ws.Registry.GenericUsername)
+				fmt.Fprintf(w, "registry_mirror_password = %q\n", string(raw))
+			}
+		}
 	}
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)

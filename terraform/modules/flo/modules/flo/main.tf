@@ -471,8 +471,15 @@ resource "null_resource" "extract_flo_version" {
       fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_chart_hostname}
-      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
+      # The f5-bigip-k8s-manifest is the BOM's SOURCE, not a BOM member, so it is
+      # never replicated into the mirror. It is a control-host build-time metadata
+      # read (to extract the FLO + CIS chart versions), and roksbnkctl's air-gap
+      # model has a CONNECTED control host (it must reach FAR to build the BOM and
+      # replicate) with an air-gapped CLUSTER. So always pull the manifest from FAR
+      # with the FAR credential, even in mirror mode — the cluster's runtime charts
+      # and images still come from the mirror (helm_release below).
+      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_registry_hostname}
+      $HELM_BIN pull oci://${local.far_registry_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
       FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
       echo "$FLO_VERSION" > ${var.manifest_download_dir}/flo-version.txt
@@ -818,9 +825,9 @@ resource "null_resource" "f5_lifecycle_operator" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       FLO_VERSION=$(cat ${var.manifest_download_dir}/flo-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.flo_helm_values))}" | base64 -d > /tmp/flo-helm-values.json
       $HELM_BIN upgrade --install flo \
         oci://${local.far_chart_hostname}/charts/f5-lifecycle-operator \
@@ -896,9 +903,9 @@ resource "null_resource" "f5_bnk_cis" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       CIS_VERSION=$(cat ${var.manifest_download_dir}/cis-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.cis_helm_values))}" | base64 -d > /tmp/cis-helm-values.json
       $HELM_BIN upgrade --install f5-bnk-cis \
         oci://${local.far_chart_hostname}/charts/f5-bnk-cis \
@@ -1468,14 +1475,26 @@ locals {
   #     rejected with "unable to validate token").
   is_icr_mirror = var.use_registry_mirror && can(regex("(^|[.])icr[.]io(/|$)", local.far_chart_hostname))
 
+  # An EXTERNAL mirror (e.g. Harbor) authenticates chart pulls with its own
+  # basic-auth credentials — not the kube token (in-cluster OpenShift registry) or
+  # an IAM key (ICR). Signalled by registry_mirror_password being set.
+  has_mirror_creds = var.use_registry_mirror && !local.is_icr_mirror && var.registry_mirror_password != ""
+
   chart_pull_username = (
     !var.use_registry_mirror ? "_json_key_base64" :
-    local.is_icr_mirror ? "iamapikey" : "unused"
+    local.is_icr_mirror ? "iamapikey" :
+    local.has_mirror_creds ? var.registry_mirror_username : "unused"
   )
   chart_pull_password = (
     !var.use_registry_mirror ? local.far_service_account_b64 :
-    local.is_icr_mirror ? var.ibmcloud_api_key : var.kube_token
+    local.is_icr_mirror ? var.ibmcloud_api_key :
+    local.has_mirror_creds ? var.registry_mirror_password : var.kube_token
   )
+
+  # `helm registry login` takes a bare registry HOST; far_chart_hostname carries a
+  # repo-prefix path for a mirror (e.g. host/bnk-mirror), so strip it — the
+  # credential must be stored under the host the subsequent `helm pull` resolves.
+  chart_login_host = split("/", local.far_chart_hostname)[0]
 }
 
 resource "helm_release" "flo" {
