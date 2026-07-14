@@ -177,7 +177,10 @@ Set both in `demo.env`, plus the app cluster's CIDR (opened to the FLP's NodePor
 ```bash
 printf 'export SERVICES_CLUSTER=%s\n'  "<running-cluster-that-gets-the-FLP>" >> demo.env
 printf 'export APP_CLUSTER=%s\n'       "<running-cluster-that-gets-BNK>"     >> demo.env
-printf 'export APP_CLUSTER_CIDR=%s\n'  "10.242.0.0/18"                       >> demo.env
+# EVERY zone prefix of the app cluster's VPC, comma-separated. One per zone —
+# omit one and a pod scheduled there is dropped at the security group.
+#   ibmcloud is vpc-address-prefixes <vpc> --output json | jq -r '[.[].cidr]|join(",")'
+printf 'export APP_CLUSTER_CIDR=%s\n'  "10.242.0.0/18,10.242.64.0/18,10.242.128.0/18" >> demo.env
 ```
 
 The two clusters must be able to reach each other — same VPC (simplest), or a transit

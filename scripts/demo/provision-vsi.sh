@@ -114,14 +114,25 @@ do_up() {
     ssh-rsa)     key_type=rsa ;;
     *)           key_type=rsa ;;
   esac
-  # If a key with this name already exists, reuse it only when its fingerprint
-  # matches our public key; otherwise delete the stale one and re-register.
-  existing_id="$(is keys | jq -r --arg n "$KEY_NAME" '.[]|select(.name==$n)|.id' | head -1)"
-  if [[ -n "$existing_id" ]]; then
-    existing_fp="$(is key "$existing_id" | jq -r '.fingerprint // empty')"
-    if [[ -n "$fp" && "$existing_fp" == *"$fp"* ]]; then
+  # Adopt an already-registered copy of THIS public key, whatever it is called.
+  # IBM Cloud rejects a duplicate FINGERPRINT regardless of name, so matching on
+  # the name alone is not enough: a previous shoot that registered the same
+  # keypair under a different prefix makes key-create fail with key_exists, and
+  # the provisioner is then not re-runnable. Match on the fingerprint first.
+  local keys_json adopted_name
+  keys_json="$(is keys)"
+  if [[ -n "$fp" ]]; then
+    existing_id="$(jq -r --arg f "$fp" '.[]|select((.fingerprint//"")|contains($f))|.id' <<<"$keys_json" | head -1)"
+    if [[ -n "$existing_id" ]]; then
+      adopted_name="$(jq -r --arg i "$existing_id" '.[]|select(.id==$i)|.name' <<<"$keys_json" | head -1)"
+      [[ "$adopted_name" != "$KEY_NAME" ]] && log "This keypair is already registered as '$adopted_name' — reusing it."
       key_id="$existing_id"
-    else
+    fi
+  fi
+  # A key squatting on our NAME with a different fingerprint is stale — drop it.
+  if [[ -z "$key_id" ]]; then
+    existing_id="$(jq -r --arg n "$KEY_NAME" '.[]|select(.name==$n)|.id' <<<"$keys_json" | head -1)"
+    if [[ -n "$existing_id" ]]; then
       log "Existing key $KEY_NAME has a different fingerprint — replacing it."
       ibmcloud is key-delete "$existing_id" -f >/dev/null 2>&1 || true
     fi

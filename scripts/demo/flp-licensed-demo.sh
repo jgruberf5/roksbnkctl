@@ -33,7 +33,10 @@
 # FAR_REPO_URL, REGISTRY_DOMAIN, REGISTRY_ADMIN_PASSWORD,
 # SERVICES_CLUSTER (the running cluster that will host the FLP),
 # APP_CLUSTER      (the running cluster that will get BNK),
-# APP_CLUSTER_CIDR (the app cluster's subnet CIDR — opened to the FLP's NodePort).
+# APP_CLUSTER_CIDR (the app cluster's zone prefixes — opened to the FLP's NodePort;
+#   COMMA-SEPARATED, and it must list EVERY zone: a multi-zone VPC carries one
+#   address prefix per zone, and a consuming pod scheduled in an omitted zone is
+#   silently dropped at the security group).
 # Optional: REGISTRY_PROJECT (default bnk-mirror), FLP_NAMESPACE, PACE.
 #
 # The "STAGE n/N · Title" cards (demo-lib.sh) double as chapter markers that
@@ -57,7 +60,7 @@ source "$SCRIPT_DIR/demo-lib.sh"
 : "${REGISTRY_ADMIN_PASSWORD:?set via demo.env — its admin password}"
 : "${SERVICES_CLUSTER:?set via demo.env — the RUNNING cluster that will host the FLP}"
 : "${APP_CLUSTER:?set via demo.env — the RUNNING cluster that will get BNK}"
-: "${APP_CLUSTER_CIDR:?set via demo.env — the app cluster CIDR, opened to the FLP NodePort}"
+: "${APP_CLUSTER_CIDR:?set via demo.env — the app cluster zone prefixes (comma-separated, ALL zones), opened to the FLP NodePort}"
 
 PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"
 FLP_NAMESPACE="${FLP_NAMESPACE:-f5-license-proxy}"
@@ -151,7 +154,8 @@ run roksbnkctl -w "$SVC_WS" registry verify
 # ── 4) the F5 License Proxy, exposed as a NodePort service ───────────────────
 stage "4/8" "Deploy the F5 License Proxy with NodePort access"
 say "The proxy is a cluster-wide licensing broker, and it is the only thing that needs to reach F5. Deploy it once, here."
-say "--add-node-port-access exposes it beyond this cluster: it puts the worker node IPs in the proxy's certificate, and opens the NodePort to the other cluster's CIDR."
+say "--add-node-port-access exposes it beyond this cluster: it puts the worker node IPs in the proxy's certificate, and opens the NodePort to the other cluster."
+say "Pass every zone's prefix. A multi-zone VPC has one per zone, and a pod scheduled in a zone you left out is dropped at the security group."
 run roksbnkctl -w "$SVC_WS" flp up --auto \
     --add-node-port-access --node-port-source-cidr "$APP_CLUSTER_CIDR"
 say "The proxy answers on every worker node, and every one of those addresses is in its certificate."
@@ -211,7 +215,10 @@ say "The CNEInstance is reconciled and the dataplane is up."
 run roksbnkctl -w "$APP_WS" k get cneinstance -A
 run roksbnkctl -w "$APP_WS" k get pods -n f5-bnk
 say "And there is no License Proxy here at all — this cluster only ever talked to the registry and to the proxy next door."
-run roksbnkctl -w "$APP_WS" k get pods -n "$FLP_NAMESPACE"
+# The point of this command is that it FAILS: the namespace does not exist in
+# the app cluster. Under `set -e` an honest failure would abort the demo one
+# line before the finale, so tolerate it — the error text IS the evidence.
+run roksbnkctl -w "$APP_WS" k get pods -n "$FLP_NAMESPACE" || true
 
 # ── 8) teardown (the clusters are NOT ours to destroy) ───────────────────────
 stage "8/8" "Remove the workloads, leave the clusters"

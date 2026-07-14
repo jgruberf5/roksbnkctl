@@ -58,10 +58,11 @@ Subsequent ` + "`roksbnkctl up`" + ` runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.
 
-By default the registry COS instance name follows the upstream HCL
-fallback formula "<cluster-name>-cos". Pass --registry-cos-name to
-override (e.g. if your tfvars sets roks_cos_instance_name to a different
-value).`,
+The registry COS instance is found by probing the names roksbnkctl and the
+upstream HCL actually use: "<prefix>-registry-cos" (what ` + "`cluster up`" + `
+creates), "<cluster>-registry-cos", then the upstream fallback
+"<cluster>-cos". Pass --registry-cos-name to override (e.g. if your tfvars
+sets roks_cos_instance_name to something else).`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runClusterRegister,
 }
@@ -106,7 +107,7 @@ with ` + "`roksbnkctl down`" + ` to avoid orphaned BNK resources.`,
 
 func init() {
 	clusterRegisterCmd.Flags().StringVar(&flagClusterRegisterCOSName, "registry-cos-name", "",
-		`expected registry COS instance name (default "<cluster>-cos" — matches the upstream HCL fallback)`)
+		`registry COS instance name (default: probe "<prefix>-registry-cos", "<cluster>-registry-cos", "<cluster>-cos")`)
 	clusterRegisterCmd.Flags().BoolVar(&flagClusterRegisterPrompt, "prompt", false,
 		"prompt for the cluster name even if one is given as an argument")
 
@@ -164,19 +165,38 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ VPC %s (resource group %s)\n", vpc, info.ResourceGroupName)
 
-	// 2. Registry COS instance verification. Default name follows the
-	//    upstream HCL fallback (`<cluster>-cos`); user can override via
-	//    --registry-cos-name to match a tfvars override of
-	//    roks_cos_instance_name.
-	cosName := flagClusterRegisterCOSName
-	if cosName == "" {
-		cosName = info.Name + "-cos"
+	// 2. Registry COS instance verification. There is no single name to guess:
+	//    roksbnkctl's OWN terraform names it "<prefix>-registry-cos"
+	//    (internal/naming), while the upstream HCL fallback is "<cluster>-cos".
+	//    Probing only the latter meant `cluster register` could never adopt a
+	//    cluster roksbnkctl itself had created — the common case. Try each
+	//    convention, and let --registry-cos-name override everything.
+	var cosCandidates []string
+	if flagClusterRegisterCOSName != "" {
+		cosCandidates = []string{flagClusterRegisterCOSName}
+	} else {
+		cosCandidates = []string{
+			cctx.Workspace.Prefix + "-registry-cos", // roksbnkctl convention
+			info.Name + "-registry-cos",             // ditto, when prefix != cluster name
+			info.Name + "-cos",                      // upstream HCL fallback
+		}
 	}
-	fmt.Fprintf(os.Stderr, "→ Verifying registry COS instance %q\n", cosName)
-	cos, err := ic.GetCOSInstanceByName(ctx, cosName)
-	if err != nil {
-		return fmt.Errorf("registry COS instance %q not found in account: %w\n  Either run `roksbnkctl cluster up` to create it, or pass --registry-cos-name <name> if your tfvars uses a different roks_cos_instance_name",
-			cosName, err)
+	var cos *ibm.COSInstance
+	for _, name := range cosCandidates {
+		if name == "-registry-cos" {
+			continue // empty prefix
+		}
+		fmt.Fprintf(os.Stderr, "→ Verifying registry COS instance %q\n", name)
+		c, cerr := ic.GetCOSInstanceByName(ctx, name)
+		if cerr == nil {
+			cos = c
+			break
+		}
+		err = cerr
+	}
+	if cos == nil {
+		return fmt.Errorf("no registry COS instance found in account (tried %s): %w\n  Either run `roksbnkctl cluster up` to create it, or pass --registry-cos-name <name> if your tfvars uses a different roks_cos_instance_name",
+			strings.Join(cosCandidates, ", "), err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ COS instance %s (%s)\n", cos.Name, cos.GUID)
 

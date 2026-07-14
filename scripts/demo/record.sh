@@ -37,6 +37,9 @@ REC_ROWS="${REC_ROWS:-50}"
 #   cli-demo.sh              demo #1 — the roksbnkctl CLI lifecycle (default)
 #   ci-demo.sh               demo #2 — the tools-runner container as a CI pipeline
 #   far-replication-demo.sh  demo #3 — replicating FAR into a private registry
+#   flp-licensed-demo.sh     demo #4 — a shared licensing cluster: the F5 License
+#                            Proxy in one cluster licenses BNK in another, which
+#                            installs entirely from a private registry
 SCREENPLAY="${SCREENPLAY:-cli-demo.sh}"
 POLL_SECS="${POLL_SECS:-30}"
 MAX_WAIT_SECS="${MAX_WAIT_SECS:-14400}"   # 4h ceiling

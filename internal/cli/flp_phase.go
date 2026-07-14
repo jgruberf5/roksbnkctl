@@ -104,8 +104,17 @@ func runFLPUp(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
+	// Presence.Cluster only sees a cluster roksbnkctl CREATED (a managed
+	// ibm_container_vpc_cluster in state-cluster/). A REGISTERED cluster has no
+	// terraform state at all — just cluster-outputs.json — so checking presence
+	// alone refused to install the FLP onto an adopted cluster, which is the
+	// main reason to run the FLP phase in the first place. Same fallback the
+	// composite `up` uses (orchestration/lifecycle.go).
 	if !pres.Cluster {
-		return errors.New("no cluster found — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`")
+		co, cerr := config.ReadClusterOutputs(cctx.WorkspaceName)
+		if cerr != nil || co == nil || co.ClusterID == "" {
+			return errors.New("no cluster found — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`")
+		}
 	}
 
 	// Persist the NodePort intent, so it survives a re-apply that omits the flag.

@@ -40,7 +40,15 @@ module "cluster" {
   use_existing_cluster_vpc = var.use_existing_cluster_vpc
   existing_cluster_vpc_id  = var.existing_cluster_vpc_id
 
-  openshift_cluster_name    = var.openshift_cluster_name
+  # Creating → the name to CREATE. Adopting → the identity to LOOK UP, which
+  # is carried by roks_cluster_id_or_name. The submodule resolves an adopted
+  # cluster with data.ibm_container_vpc_cluster.existing_cluster{ name = ... },
+  # and that data source reads THIS variable — nothing downstream ever read
+  # roks_cluster_id_or_name, so adopting a cluster looked up the variable's
+  # DEFAULT and 404'd ("The specified cluster could not be found"), breaking
+  # every phase against a REGISTERED cluster. Same coalesce outputs.tf already
+  # applies to roks_cluster_name; the data source accepts a name or an id.
+  openshift_cluster_name    = var.create_roks_cluster ? var.openshift_cluster_name : var.roks_cluster_id_or_name
   openshift_cluster_version = var.openshift_cluster_version
   workers_per_zone          = var.roks_workers_per_zone
   min_worker_vcpu_count     = var.roks_min_worker_vcpu_count
