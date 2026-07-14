@@ -28,6 +28,10 @@ type ExecOptions struct {
 	Command        []string
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	IOStreams genericiooptions.IOStreams
 
 	// SizeQueue is consulted when TTY is true so the remote PTY tracks
@@ -45,7 +49,7 @@ func (o *ExecOptions) Run(ctx context.Context) error {
 	if len(o.Command) == 0 {
 		return errors.New("command required after `--`")
 	}
-	cfg, err := BuildRESTConfig(o.KubeconfigPath)
+	cfg, err := BuildRESTConfigForContext(o.KubeconfigPath, o.KubeContext)
 	if err != nil {
 		return err
 	}

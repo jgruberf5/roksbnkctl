@@ -52,6 +52,45 @@ locals {
     "startupapicheck.image.repository" = "${var.image_repository}/jetstack/cert-manager-startupapicheck"
     "acmesolver.image.repository"      = "${var.image_repository}/jetstack/cert-manager-acmesolver"
   }
+
+  # A private external mirror needs a pull secret — redirecting the images at it is
+  # not enough, the pods still have to authenticate. Without this they pull
+  # anonymously and land in ImagePullBackOff unless the mirror is world-readable,
+  # which is not something to require of a registry holding F5's images.
+  has_mirror_creds        = var.image_repository != "" && var.registry_mirror_password != ""
+  mirror_pull_secret_name = "mirror-secret"
+  # kubelet matches image refs by registry HOST, so strip the repo-prefix path the
+  # image host may carry (harbor.example.com/bnk-mirror → harbor.example.com).
+  mirror_registry_host = split("/", var.image_repository)[0]
+  mirror_docker_config_json = replace(
+    jsonencode({
+      auths = {
+        (local.mirror_registry_host) = {
+          auth = base64encode("${var.registry_mirror_username}:${var.registry_mirror_password}")
+        }
+      }
+    }),
+    ":", ": "
+  )
+
+  # Every cert-manager component reads its own imagePullSecrets list.
+  cm_pull_secret_sets = local.has_mirror_creds ? {
+    "global.imagePullSecrets[0].name" = local.mirror_pull_secret_name
+  } : {}
+}
+
+# Pull secret for a private external mirror, in cert-manager's own namespace.
+resource "kubernetes_secret_v1" "mirror_pull" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = var.namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.cert_manager]
 }
 
 # ============================================================
@@ -96,6 +135,15 @@ resource "helm_release" "cert_manager" {
   # so the chart's public defaults stand.
   dynamic "set" {
     for_each = local.cm_image_sets
+    content {
+      name  = set.key
+      value = set.value
+    }
+  }
+
+  # …and, for a PRIVATE external mirror, the credential to pull them with.
+  dynamic "set" {
+    for_each = local.cm_pull_secret_sets
     content {
       name  = set.key
       value = set.value

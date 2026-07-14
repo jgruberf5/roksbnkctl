@@ -320,7 +320,7 @@ data "kubernetes_nodes" "workers" {
 # exposed, a CWC in a peer cluster is dropped at the SG. Open just the proxy's
 # NodePort, and only to the CIDR the operator names.
 locals {
-  open_node_port = local.enabled && var.flp_node_port_access && var.flp_node_port_source_cidr != ""
+  open_node_port = local.enabled && var.flp_node_port_access && length(var.flp_node_port_source_cidrs) > 0
 }
 
 data "ibm_container_vpc_cluster" "cluster" {
@@ -334,10 +334,10 @@ data "ibm_is_security_group" "cluster_workers" {
 }
 
 resource "ibm_is_security_group_rule" "flp_node_port" {
-  count     = local.open_node_port ? 1 : 0
+  for_each  = local.open_node_port ? toset(var.flp_node_port_source_cidrs) : toset([])
   group     = data.ibm_is_security_group.cluster_workers[0].id
   direction = "inbound"
-  remote    = var.flp_node_port_source_cidr
+  remote    = each.value
   protocol  = "tcp"
   port_min  = local.flp_node_port
   port_max  = local.flp_node_port

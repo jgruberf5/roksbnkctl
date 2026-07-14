@@ -44,12 +44,18 @@ func init() {
 }
 
 func runKDescribe(cmd *cobra.Command, args []string) error {
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.DescribeOptions{
-		Args:          args,
-		Namespace:     kDescribeNamespace,
-		AllNamespaces: kDescribeAllNamespaces,
-		LabelSelector: kDescribeLabelSelector,
-		ShowEvents:    kDescribeShowEvents,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		Args:           args,
+		Namespace:      kDescribeNamespace,
+		AllNamespaces:  kDescribeAllNamespaces,
+		LabelSelector:  kDescribeLabelSelector,
+		ShowEvents:     kDescribeShowEvents,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

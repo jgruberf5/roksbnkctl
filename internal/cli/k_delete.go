@@ -58,14 +58,20 @@ func runKDelete(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("invalid --cascade %q (orphan|background|foreground)", kDeleteCascade)
 	}
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.DeleteOptions{
-		Args:          args,
-		Namespace:     kDeleteNamespace,
-		AllNamespaces: kDeleteAllNamespaces,
-		LabelSelector: kDeleteLabelSelector,
-		Force:         kDeleteForce,
-		GracePeriod:   kDeleteGracePeriod,
-		Cascade:       cascade,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		Args:           args,
+		Namespace:      kDeleteNamespace,
+		AllNamespaces:  kDeleteAllNamespaces,
+		LabelSelector:  kDeleteLabelSelector,
+		Force:          kDeleteForce,
+		GracePeriod:    kDeleteGracePeriod,
+		Cascade:        cascade,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

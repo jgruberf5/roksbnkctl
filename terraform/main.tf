@@ -76,6 +76,8 @@ module "cert_manager" {
   bnk_cr_mode                   = var.bnk_cr_mode
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   kubeconfig_dir                = "${var.kubeconfig_dir}/cert_manager"
+  registry_mirror_username      = var.registry_mirror_username
+  registry_mirror_password      = var.registry_mirror_password
 }
 
 
@@ -173,6 +175,8 @@ module "cne_instance" {
   deploy_bnk                       = var.deploy_bnk
   bnk_cr_mode                      = var.bnk_cr_mode
   kubeconfig_dir                   = "${var.kubeconfig_dir}/cne_instance"
+  registry_mirror_username         = var.registry_mirror_username
+  registry_mirror_password         = var.registry_mirror_password
 }
 
 
@@ -299,5 +303,5 @@ module "flp" {
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flp_storage_class             = var.flp_storage_class
   flp_node_port_access          = var.flp_node_port_access
-  flp_node_port_source_cidr     = var.flp_node_port_source_cidr
+  flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
 }

@@ -40,6 +40,10 @@ type ApplyOptions struct {
 	Force          bool
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	IOStreams genericiooptions.IOStreams
 }
 
@@ -54,7 +58,7 @@ func (o *ApplyOptions) Run(ctx context.Context) error {
 		o.IOStreams.Out = io.Discard
 	}
 
-	cfg, err := BuildRESTConfig(o.KubeconfigPath)
+	cfg, err := BuildRESTConfigForContext(o.KubeconfigPath, o.KubeContext)
 	if err != nil {
 		return err
 	}

@@ -30,6 +30,10 @@ type LogsOptions struct {
 	TailLines      int64
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	IOStreams genericiooptions.IOStreams
 }
 
@@ -43,7 +47,7 @@ func (o *LogsOptions) Run(ctx context.Context) error {
 		o.IOStreams.Out = io.Discard
 	}
 
-	cs, err := BuildClientset(o.KubeconfigPath)
+	cs, err := BuildClientsetForContext(o.KubeconfigPath, o.KubeContext)
 	if err != nil {
 		return err
 	}

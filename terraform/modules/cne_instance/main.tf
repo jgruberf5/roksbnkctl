@@ -46,6 +46,8 @@ module "cneinstance" {
   far_repo_url                       = var.far_repo_url
   far_image_repo_url                 = var.far_image_repo_url
   use_registry_mirror                = var.use_registry_mirror
+  registry_mirror_username           = var.registry_mirror_username
+  registry_mirror_password           = var.registry_mirror_password
   f5_bigip_k8s_manifest_version      = var.f5_bigip_k8s_manifest_version
   cneinstance_ibm_trusted_profile_id = var.flo_trusted_profile_id
 

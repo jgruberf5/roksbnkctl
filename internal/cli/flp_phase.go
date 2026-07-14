@@ -45,7 +45,7 @@ var flagFLPNodePort bool
 
 // flagFLPNodePortCIDR backs `--node-port-source-cidr`, the consuming cluster's
 // subnet, opened on the worker security group. Also persisted.
-var flagFLPNodePortCIDR string
+var flagFLPNodePortCIDRs []string
 
 var flpUpCmd = &cobra.Command{
 	Use:   "up",
@@ -85,8 +85,8 @@ func init() {
 	flpUpCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 	flpUpCmd.Flags().BoolVar(&flagFLPNodePort, "add-node-port-access", false,
 		"expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it")
-	flpUpCmd.Flags().StringVar(&flagFLPNodePortCIDR, "node-port-source-cidr", "",
-		"with --add-node-port-access: open the NodePort on the worker security group to this CIDR (the consuming cluster's subnet)")
+	flpUpCmd.Flags().StringSliceVar(&flagFLPNodePortCIDRs, "node-port-source-cidr", nil,
+		"with --add-node-port-access: open the NodePort on the worker security group to this CIDR. REPEATABLE — a multi-zone VPC has one address prefix PER ZONE, and a consuming pod scheduled in an unlisted zone is silently dropped. Pass every zone's CIDR (or a supernet covering them).")
 	flpDownCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 	flpDownCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 
@@ -121,7 +121,7 @@ func runFLPUp(cmd *cobra.Command, _ []string) error {
 			cctx.Workspace.BNK.FLP.NodePortAccess = flagFLPNodePort
 		}
 		if cmd.Flags().Changed("node-port-source-cidr") {
-			cctx.Workspace.BNK.FLP.NodePortSourceCIDR = flagFLPNodePortCIDR
+			cctx.Workspace.BNK.FLP.NodePortSourceCIDRs = flagFLPNodePortCIDRs
 		}
 		if err := config.SaveWorkspace(cctx.WorkspaceName, cctx.Workspace); err != nil {
 			return fmt.Errorf("persisting FLP node-port settings: %w", err)

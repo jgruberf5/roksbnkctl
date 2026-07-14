@@ -258,3 +258,16 @@ variable "cneinstance_tmm_k8s_routes" {
   default     = "172.17.0.0/18"
 }
 
+
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (private Harbor/Artifactory)."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

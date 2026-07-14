@@ -20,11 +20,42 @@ locals {
   # controller appends "/images/<name>" itself.)
   image_repository = "${local.far_image_hostname}/images"
 
-  # Mirror mode: RBAC (system:image-puller) handles pulls, so the FAR
-  # dockerconfigjson secret is dropped and the chart/CR imagePullSecrets
-  # collapse to empty lists.
-  image_pull_secrets_flo = var.use_registry_mirror ? [] : [{ name = "far-secret" }]
-  image_pull_secrets_cis = var.use_registry_mirror ? [] : ["far-secret"]
+  # Which dockerconfig secret the pods pull with.
+  #
+  #   off the mirror  → far-secret (the FAR credential)
+  #   ICR / in-cluster mirror → none; RBAC (system:image-puller) authorizes the pull
+  #   EXTERNAL mirror with credentials → mirror-secret, built from them
+  #
+  # That last case is the one that was missing. Dropping the pull secret for ANY
+  # mirror assumed the mirror authorizes by RBAC — true for the in-cluster registry,
+  # false for a private Harbor/Artifactory, whose pods then pull anonymously and get
+  # 401/ImagePullBackOff. The only way that ever "worked" was to make the mirror
+  # project world-readable, which for a registry holding F5's proprietary images is
+  # not an acceptable requirement.
+  mirror_pull_secret_name = "mirror-secret"
+  image_pull_secrets_flo = (
+    local.has_mirror_creds ? [{ name = local.mirror_pull_secret_name }] :
+    var.use_registry_mirror ? [] : [{ name = "far-secret" }]
+  )
+  image_pull_secrets_cis = (
+    local.has_mirror_creds ? [local.mirror_pull_secret_name] :
+    var.use_registry_mirror ? [] : ["far-secret"]
+  )
+
+  # dockerconfigjson for the external mirror. The auth key is the bare registry host
+  # — kubelet matches image refs by host prefix — so strip any repo-prefix path the
+  # image host carries (e.g. harbor.example.com/bnk-mirror).
+  mirror_registry_host = split("/", local.far_image_hostname)[0]
+  mirror_docker_config_json = replace(
+    jsonencode({
+      auths = {
+        (local.mirror_registry_host) = {
+          auth = base64encode("${var.registry_mirror_username}:${var.registry_mirror_password}")
+        }
+      }
+    }),
+    ":", ": "
+  )
 
   # far-secret is provisioned only off the mirror path. In mirror mode the
   # secret is dropped (RBAC handles pulls), so the count gates collapse to 0.
@@ -1318,7 +1349,7 @@ locals {
       ttlSecondsAfterFinished = var.node_labeler_job_ttl_seconds
       template = {
         metadata = { name = "node-labeler" }
-        spec = {
+        spec = merge({
           serviceAccountName = "node-labeler"
           restartPolicy      = "Never"
           containers = [{
@@ -1326,7 +1357,12 @@ locals {
             image   = local.node_labeler_image
             command = ["/bin/sh", "-c", "kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully"]
           }]
-        }
+          # In mirror mode this image comes from the mirror too, so a PRIVATE external
+          # mirror needs the pull secret here as well — kube-system, not the FLO
+          # namespace. Absent off the mirror path (the image is public then).
+          }, local.has_mirror_creds ? {
+          imagePullSecrets = [{ name = local.mirror_pull_secret_name }]
+        } : {})
       }
     }
   }
@@ -1372,6 +1408,48 @@ resource "kubernetes_secret_v1" "far_secret_utils" {
   type = "kubernetes.io/dockerconfigjson"
   data = {
     ".dockerconfigjson" = local.far_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.f5_utils]
+}
+
+# Pull secret for an EXTERNAL registry mirror (a private Harbor/Artifactory), in the
+# same two namespaces far-secret covers. Without it the pods pull anonymously and get
+# ImagePullBackOff — and the only workaround was to make the mirror world-readable,
+# which is not something to ask of a registry holding F5's proprietary images.
+resource "kubernetes_secret_v1" "mirror_secret_flo" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = var.flo_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.flo]
+}
+
+resource "kubernetes_secret_v1" "mirror_secret_kube_system" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = "kube-system"
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+}
+
+resource "kubernetes_secret_v1" "mirror_secret_utils" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = var.utils_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
   }
   depends_on = [kubernetes_namespace_v1.f5_utils]
 }
@@ -1756,7 +1834,7 @@ resource "kubectl_manifest" "node_labeler_job" {
     }
   }
 
-  depends_on = [kubectl_manifest.node_labeler_binding]
+  depends_on = [kubectl_manifest.node_labeler_binding, kubernetes_secret_v1.mirror_secret_kube_system]
 }
 
 # ==============================================================================

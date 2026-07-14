@@ -101,6 +101,10 @@ type GetOptions struct {
 	Output         string
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	// IOStreams is the destination for printer output and human-only
 	// stderr noise. Defaults applied in Run() if zero-valued.
 	IOStreams genericiooptions.IOStreams
@@ -121,7 +125,7 @@ func (o *GetOptions) Run() error {
 		o.IOStreams.ErrOut = io.Discard
 	}
 
-	getter := newRESTClientGetter(o.KubeconfigPath, o.Namespace)
+	getter := newRESTClientGetter(o.KubeconfigPath, o.KubeContext, o.Namespace)
 
 	// Build a printer that matches the kubectl output flags. PrintFlags
 	// defaults to a no-op printer; we only set it for non-default

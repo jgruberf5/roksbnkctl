@@ -112,3 +112,16 @@ variable "kubeconfig_dir" {
   default     = "/work/.bnk/scratch/kubeconfig/cert_manager"
 }
 
+
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password for an external registry mirror. When set with image_repository, cert-manager's pods pull with a dockerconfig secret built from it instead of anonymously."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

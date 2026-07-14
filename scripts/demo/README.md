@@ -221,7 +221,8 @@ further cloud run.
   `registry replicate` records a `registry-mirror.json`; `renderBNKFields` turns it into
   `far_chart_repo_url` / `far_image_repo_url` + `use_registry_mirror = true`, and carries
   the registry credentials through so charts and images authenticate with the same ones
-  replication used. Two further things make it genuinely disconnected: the
+  replication used — the pods get a `mirror-secret` dockerconfig, so the registry stays
+  **private** (no world-readable project). Two further things make it genuinely disconnected: the
   **f5-bigip-k8s-manifest is itself mirrored** (it is a BOM artifact), and roksbnkctl
   applies the manifest to the cluster as a **`CNEManifest` CR** — FLO resolves the
   manifest from that CR and never fetches one from a registry.

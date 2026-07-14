@@ -152,10 +152,10 @@ variable "flp_node_port_access" {
   default     = false
 }
 
-variable "flp_node_port_source_cidr" {
-  description = "With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). Empty leaves the security group untouched."
-  type        = string
-  default     = ""
+variable "flp_node_port_source_cidrs" {
+  description = "With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to these CIDRs (the consuming cluster's subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched."
+  type        = list(string)
+  default     = []
 }
 
 variable "flp_storage_class" {

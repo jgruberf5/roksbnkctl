@@ -9,11 +9,15 @@ locals {
   # default). In mirror mode imagePullSecrets collapses to an empty list and
   # RBAC (system:image-puller) authorizes the pods' pulls.
   cneinstance_registry_uri = replace(coalesce(var.far_image_repo_url, var.far_repo_url), "https://", "")
-  cneinstance_image_pull_secrets = var.use_registry_mirror ? [] : [
-    {
-      name = "far-secret"
-    }
-  ]
+  # An EXTERNAL mirror (private Harbor/Artifactory) authorizes by credential, not by
+  # RBAC — so the component pods need a pull secret, not an empty list. The secret
+  # itself is created by the FLO module in this namespace (mirror-secret); dropping
+  # it here left the BNK images pulling anonymously against a private registry.
+  has_mirror_creds = var.use_registry_mirror && var.registry_mirror_password != ""
+  cneinstance_image_pull_secrets = (
+    local.has_mirror_creds ? [{ name = "mirror-secret" }] :
+    var.use_registry_mirror ? [] : [{ name = "far-secret" }]
+  )
 
   # Define all service accounts that require privileged SCC
   # These service accounts are created by CNEInstance and FLO deployment

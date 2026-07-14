@@ -24,6 +24,10 @@ type DescribeOptions struct {
 	ShowEvents     bool
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	IOStreams genericiooptions.IOStreams
 }
 
@@ -37,7 +41,7 @@ func (o *DescribeOptions) Run() error {
 		o.IOStreams.Out = io.Discard
 	}
 
-	getter := newRESTClientGetter(o.KubeconfigPath, o.Namespace)
+	getter := newRESTClientGetter(o.KubeconfigPath, o.KubeContext, o.Namespace)
 
 	settings := describe.DescriberSettings{
 		ShowEvents: o.ShowEvents,

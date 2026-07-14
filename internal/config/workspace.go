@@ -300,11 +300,17 @@ type BNKFLPCfg struct {
 	// externally-reachable endpoint in flp-outputs.json.
 	NodePortAccess bool `yaml:"node_port_access,omitempty"`
 
-	// NodePortSourceCIDR, when set with NodePortAccess, opens the proxy's NodePort
-	// on the cluster's worker security group to this CIDR — the consuming cluster's
-	// subnet. Empty leaves the security group alone (you are expected to have a path
-	// already, e.g. both clusters on one VPC with a permissive SG).
-	NodePortSourceCIDR string `yaml:"node_port_source_cidr,omitempty"`
+	// NodePortSourceCIDRs, when set with NodePortAccess, opens the proxy's NodePort
+	// on the cluster's worker security group to these CIDRs — the consuming cluster's
+	// subnets. Empty leaves the security group alone (you are expected to have a path
+	// already).
+	//
+	// A LIST, because a multi-zone VPC carries one address prefix PER ZONE (e.g.
+	// 10.242.0.0/18, 10.242.64.0/18, 10.242.128.0/18). Allowing only one of them
+	// silently works or fails depending on which zone the consuming pod happens to be
+	// scheduled in — the CWC lands in an unlisted zone and its connection to the proxy
+	// is dropped at the security group with a bare "connection timed out".
+	NodePortSourceCIDRs []string `yaml:"node_port_source_cidrs,omitempty"`
 
 	// External points a workspace at a FOREIGN proxy — one deployed by a DIFFERENT
 	// workspace/cluster. When set, `bnk up` licenses against it and does NOT require

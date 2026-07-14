@@ -412,8 +412,8 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		if flp.NodePortAccess {
 			fmt.Fprintln(w, "flp_node_port_access = true")
 		}
-		if flp.NodePortSourceCIDR != "" {
-			fmt.Fprintf(w, "flp_node_port_source_cidr = %q\n", flp.NodePortSourceCIDR)
+		if len(flp.NodePortSourceCIDRs) > 0 {
+			fmt.Fprintf(w, "flp_node_port_source_cidrs = %s\n", hclStringList(flp.NodePortSourceCIDRs))
 		}
 	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").

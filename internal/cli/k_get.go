@@ -49,12 +49,18 @@ func init() {
 }
 
 func runKGet(cmd *cobra.Command, args []string) error {
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.GetOptions{
-		Args:          args,
-		Namespace:     kGetNamespace,
-		AllNamespaces: kGetAllNamespaces,
-		LabelSelector: kGetLabelSelector,
-		Output:        kGetOutput,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		Args:           args,
+		Namespace:      kGetNamespace,
+		AllNamespaces:  kGetAllNamespaces,
+		LabelSelector:  kGetLabelSelector,
+		Output:         kGetOutput,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,
