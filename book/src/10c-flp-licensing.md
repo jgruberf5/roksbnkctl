@@ -201,8 +201,24 @@ roksbnkctl -w services cluster up            # (or `cluster register` an existin
 roksbnkctl -w services registry replicate    # mirror BNK + the FLP into your registry
 roksbnkctl -w services flp up \
     --add-node-port-access \
-    --node-port-source-cidr 10.242.0.0/18    # the consuming cluster's subnet
+    --node-port-source-cidr 10.242.0.0/18,10.242.64.0/18,10.242.128.0/18
 ```
+
+The CIDR flag is a **list, and it must name every zone**. A multi-zone VPC carries one
+address prefix *per zone*:
+
+```console
+$ ibmcloud is vpc-address-prefixes <vpc> --output json | jq -r '.[] | "\(.zone.name)  \(.cidr)"'
+eu-gb-1  10.242.0.0/18
+eu-gb-2  10.242.64.0/18
+eu-gb-3  10.242.128.0/18
+```
+
+List only the first and the proxy will appear to work — a pod you exec into for a test
+may well be scheduled in that zone and get an HTTP 200 — while the consuming cluster's
+CWC, scheduled in one of the other two, is dropped at the security group and reports
+`connect: connection timed out`. The symptom is a proxy that answers some pods and
+silently times out for others. Pass every prefix, or a supernet covering them.
 
 No BNK is installed here — this cluster exists to run the proxy.
 
@@ -217,7 +233,8 @@ No BNK is installed here — this cluster exists to run the proxy.
   IP SANs the TLS handshake fails with `bad certificate`.
 - **Opens the port.** ROKS workers sit in a `kube-<cluster-id>` security group that
   does not admit another cluster. `--node-port-source-cidr` opens *only* 30001, and
-  *only* to the CIDR you name. Omit it if a path already exists.
+  *only* to the CIDRs you name — one security-group rule per prefix. Omit it if a path
+  already exists.
 
 It prints the address to hand over, and records it in `flp-outputs.json`:
 
@@ -296,14 +313,14 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 | `bnk.flp.namespace` | namespace for the proxy (default `f5-license-proxy`) |
 | `bnk.flp.chart_version` | **optional** override. Left unset, the chart version is read from the BNK manifest (which lists `charts/f5-license-proxy` for the release), exactly like the FLO and CIS charts — you do not normally pin it. |
 | `bnk.flp.node_port_access` | expose the proxy outside its cluster (Flow C). Set by `flp up --add-node-port-access`; persisted so a later `flp up` does not tear the exposure down. |
-| `bnk.flp.node_port_source_cidr` | with the above: the CIDR allowed to reach the NodePort on the worker security group |
+| `bnk.flp.node_port_source_cidrs` | with the above: the CIDRs allowed to reach the NodePort on the worker security group. A **list** — one address prefix per zone |
 | `bnk.flp.external.url` | license against a proxy in **another** cluster — its `external_endpoint`. This workspace never runs `flp up`. |
 | `bnk.flp.external.root_ca_b64` | that proxy's `root_ca_b64`, so the CWC can verify its certificate |
 
 | Flag (`flp up`) | Meaning |
 |---|---|
 | `--add-node-port-access` | expose the proxy for other clusters: `externalTrafficPolicy: Cluster`, worker IPs as cert SANs, external endpoint recorded |
-| `--node-port-source-cidr` | open the NodePort to this CIDR on the worker security group |
+| `--node-port-source-cidr` | open the NodePort to these CIDRs on the worker security group. Repeatable / comma-separated — pass **every zone's** prefix |
 
 | Environment variable | Overrides |
 |---|---|
