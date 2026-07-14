@@ -23,7 +23,7 @@
 # ── Stage 1: build the roksbnkctl binary ─────────────────────────────────────
 # Reused VERBATIM from tools/docker/ibmcloud/Dockerfile's build stage — keep the
 # two identical so the runner's binary never drifts from the per-tool image's.
-FROM golang:1.25-bookworm AS roksbnkctl-build
+FROM golang:1.26-bookworm AS roksbnkctl-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

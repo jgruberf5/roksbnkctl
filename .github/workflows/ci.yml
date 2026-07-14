@@ -21,14 +21,16 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
-          # Track go.mod's `go` directive — testcontainers-go's
-          # transitive otel deps require Go 1.25+, and pinning here
-          # would diverge silently from go.mod. setup-go reads the
-          # directive and downloads a matching toolchain.
+          # Track go.mod's `go` directive rather than pinning a version
+          # here, which would diverge from it silently. The minimum is set
+          # by transitive deps (currently the k8s.io/* v0.36 modules, which
+          # declare go 1.26). setup-go reads the directive and downloads a
+          # matching toolchain. The runner images in tools/docker/ pin a
+          # base image by hand and DO have to be bumped alongside it.
           go-version-file: go.mod
           cache: true
 
@@ -91,7 +93,7 @@ jobs:
       # PLAN.md §"Sprint 9" code deliverable 4.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -120,7 +122,7 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -155,7 +157,7 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -191,7 +193,7 @@ jobs:
     name: windows build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -203,7 +205,7 @@ jobs:
     name: goreleaser config sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:

@@ -36,7 +36,7 @@
 # actually do that. e2e step LD5 (roksbnkctl test dns --backend k8s)
 # fail-stopped with "executable file /usr/local/bin/roksbnkctl not
 # found" — closed by this stage + the COPY below.
-FROM golang:1.25-bookworm AS roksbnkctl-build
+FROM golang:1.26-bookworm AS roksbnkctl-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

@@ -215,10 +215,16 @@ func (tpc *TrustedProfileClient) findByName(ctx context.Context, accountID, name
 // validates server-side based on the cluster CRN, so callers don't
 // need to pre-distinguish.
 func (tpc *TrustedProfileClient) ensureLink(ctx context.Context, profileID, clusterCRN, saNamespace, saName string) error {
-	link, err := tpc.c.iam.NewCreateProfileLinkRequestLink(clusterCRN, saNamespace)
+	// The constructor takes ONLY the CRN as of platform-services-go-sdk v0.101.0
+	// (it used to take the namespace too). Namespace is now an omitempty struct
+	// field — still required by the API for cr_type IKS_SA/ROKS_SA, which is
+	// exactly what we send — so it has to be set explicitly, like Name. Same
+	// request on the wire.
+	link, err := tpc.c.iam.NewCreateProfileLinkRequestLink(clusterCRN)
 	if err != nil {
 		return fmt.Errorf("building trusted profile link request: %w", err)
 	}
+	link.Namespace = core.StringPtr(saNamespace)
 	link.Name = core.StringPtr(saName)
 
 	opts := tpc.c.iam.NewCreateLinkOptions(profileID, "ROKS_SA", link).

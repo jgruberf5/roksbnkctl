@@ -2,7 +2,7 @@
 
 ## Setting up a contributor host
 
-This guide assumes a clone of the repo on a Linux or macOS host with Go 1.25+, git, make, and docker already installed (the "build tools" assumed-present prerequisites).
+This guide assumes a clone of the repo on a Linux or macOS host with Go 1.26+, git, make, and docker already installed (the "build tools" assumed-present prerequisites).
 
 For Ubuntu/Debian hosts, the repository ships a one-shot installer for everything else `make build` / `make release` / `scripts/e2e-test-full.sh` rely on:
 

@@ -60,6 +60,14 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 - **FLP on ROKS/OpenShift.** The `f5-license-proxy` chart ships `hostPath` PersistentVolumes (a single-node/dev model) that cannot bind on a multi-node, non-root ROKS cluster; a Helm post-renderer now drops them and repoints the PVCs at a dynamic StorageClass (`flp_storage_class`, default `ibmc-vpc-block-metro-10iops-tier`, which provisions in the consuming pod's zone). The proxy's service account is also bound to the `privileged` SCC (it needs `fsGroup` + `IPC_LOCK`), and the proxy's server certificate now carries its Kubernetes Service DNS names — without them the CWC rejected the TLS handshake with `bad certificate`.
 
+### Dependencies
+
+- **Go modules** — `IBM/go-sdk-core` 5.17.5→5.22.1, `IBM/ibm-cos-sdk-go` 1.11.0→1.14.1, `IBM/platform-services-go-sdk` 0.66.0→0.101.0, `google/go-containerregistry` 0.21.6→0.21.7, `hashicorp/terraform-exec` 0.21.0→0.25.2, `moby/moby/api` 1.54.2→1.55.0, `moby/moby/client` 0.4.1→0.5.0, `testcontainers/testcontainers-go` 0.42.0→0.43.0.
+
+  The platform-services bump is a **breaking API change**: `NewCreateProfileLinkRequestLink` went from `(crn, namespace)` to `(crn)`, and `Namespace` became an `omitempty` struct field. The API still requires it for `cr_type` `IKS_SA`/`ROKS_SA` — which is exactly what the ops-pod trusted-profile link sends — so *not* setting it still compiles and still marshals; it just silently omits `namespace` on the wire. The field is now set explicitly, and a test asserts the link request body carries `crn`, `namespace` and `name`, because nothing else would have caught it.
+
+- **GitHub Actions** — `actions/checkout` 6→7, `github/codeql-action` 3→4, `gitleaks/gitleaks-action` 2→3.
+
 ## v1.17.5 — 2026-07-09
 
 ### Fixed

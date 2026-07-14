@@ -36,7 +36,7 @@ That's the 4-command lifecycle (`init` → `up` → `test` → `down`). See [Cha
 
 | Option | How |
 |---|---|
-| **`go install`** | `go install github.com/jgruberf5/roksbnkctl/cmd/roksbnkctl@latest` (Go 1.25+) |
+| **`go install`** | `go install github.com/jgruberf5/roksbnkctl/cmd/roksbnkctl@latest` (Go 1.26+) |
 | **Pre-built binary** | Linux/macOS/Windows × amd64/arm64 archives + SHA256 checksums on every tagged release at <https://github.com/jgruberf5/roksbnkctl/releases>. Verify with `sha256sum -c checksums.txt`. |
 | **From source** | `git clone https://github.com/jgruberf5/roksbnkctl && cd roksbnkctl && make build` (output at `bin/roksbnkctl`; see [Chapter 31 — Building from source](https://jgruberf5.github.io/roksbnkctl/book/31-building-from-source.html)). |
 | **In-place upgrade** | `roksbnkctl self update` pulls the latest GitHub release, verifies the SHA256 against `checksums.txt`, and atomic-replaces the running binary. Linux/macOS only. |
