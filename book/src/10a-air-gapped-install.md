@@ -84,6 +84,16 @@ The target's own pull credential is wired in for you:
 - **Generic OCI** — chart and image pulls authenticate with the same basic-auth
   credential replication used (`registry target generic_username` /
   `generic_password`), so a private registry needs no anonymous/public project.
+  Concretely: chart pulls `helm registry login` with it, and the pods get a
+  `mirror-secret` dockerconfig built from it, created in **every namespace that pulls
+  images** — cert-manager, the FLO/BNK namespaces, and `kube-system` for the
+  node-labeler — and referenced from the CNEInstance. You do not create any of it.
+
+  This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
+  by RBAC and gets **no** pull secret; an external one (Harbor, Artifactory) gets
+  `mirror-secret`. Dropping the pull secret for *every* mirror is what used to force
+  people to make their Harbor project world-readable — for a registry holding F5's
+  proprietary images, not an acceptable requirement.
 
 ### Why the install never phones home
 

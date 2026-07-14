@@ -109,10 +109,21 @@ the Artifactory mirror automatically:
 roksbnkctl bnk up -w prod
 ```
 
-The install pulls images and charts from `acme.jfrog.io/bnk-mirror`. The cluster
-must be able to reach Artifactory and present the same credentials (an image
-pull secret for the registry); see your Artifactory + cluster networking for the
-pull-secret wiring.
+The install pulls images and charts from `acme.jfrog.io/bnk-mirror`, using the same
+credential you replicated with — **you do not wire the pull secret yourself**. Chart pulls
+log in with `generic_username` / `generic_password`, and the pods get a `mirror-secret`
+dockerconfig built from that credential, created in every namespace that pulls images
+(cert-manager, the FLO/BNK namespaces, and `kube-system` for the node-labeler) and
+referenced from the CNEInstance.
+
+So a **private** repository is fine — the registry does *not* need an anonymous or public
+project. The only requirement is network reachability from the cluster.
+
+**Licensing from the same mirror.** The mirror's BOM includes `charts/f5-license-proxy`,
+so the F5 License Proxy is replicated alongside BNK and can be installed from your
+registry too — including the shared-licensing topology, where one cluster runs the proxy
+and other clusters license through it while reaching nothing but this mirror. See
+[Licensing BNK with the F5 License Proxy](./10c-flp-licensing.md).
 
 ## Removing a mirror
 

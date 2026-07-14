@@ -39,7 +39,7 @@ Source: `terraform/variables.tf`
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository URL for Docker and Helm images | no |
 | `far_chart_repo_url` | `string` | `""` | Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url. | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url. | no |
-| `use_registry_mirror` | `bool` | `false` | When true, pull from the in-cluster mirror via RBAC: drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list. | no |
+| `use_registry_mirror` | `bool` | `false` | Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project. | no |
 | `registry_mirror_username` | `string` | `""` | Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead. | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this) | no |
@@ -85,7 +85,7 @@ Source: `terraform/variables.tf`
 | `gateway_client_subnet_remote` | `list(string)` | `[]` | Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one route per entry × zone). Empty = no remote client routes. | no |
 | `gateway_vxlan_port` | `number` | `6789` | Egress VXLAN UDP port (also opened on the cluster security group) | no |
 | `flp_node_port_access` | `bool` | `false` | Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it. | no |
-| `flp_node_port_source_cidr` | `string` | `""` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). | no |
+| `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped. | no |
 
 ## Module: `cert_manager`
 
@@ -105,6 +105,8 @@ Source: `terraform/modules/cert_manager/variables.tf`
 | `deploy_cert_manager` | `bool` | `true` | When true, manage the cert_manager helm/null_resource bring-up. Set false in the bnk-phase override when cluster-outputs.json exists — cluster phase already provisioned cert_manager and the second phase must NOT re-manage it (would attempt kubectl delete namespace cert-manager on a subsequent bnk down). | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/cert_manager"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
+| `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created. | no |
+| `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with image_repository, cert-manager's pods pull with a dockerconfig secret built from it instead of anonymously. | **yes** |
 
 ## Module: `cne_instance`
 
@@ -118,7 +120,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `roks_cluster_name_or_id` | `string` | _required_ | Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR Repository URL for Docker and Helm registry | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the mirror (CNEInstance spec.registry.uri). Empty falls back to far_repo_url. | no |
-| `use_registry_mirror` | `bool` | `false` | When true, render the CNEInstance with imagePullSecrets: [] (RBAC handles pulls). | no |
+| `use_registry_mirror` | `bool` | `false` | Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project. | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules | no |
@@ -134,6 +136,8 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_dependency_id` | `string` | `null` | flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/cne_instance"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
+| `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (private Harbor/Artifactory). | no |
+| `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously. | **yes** |
 
 ## Module: `flo`
 
@@ -148,7 +152,7 @@ Source: `terraform/modules/flo/variables.tf`
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR Repository URL for Docker and Helm registry | no |
 | `far_chart_repo_url` | `string` | `""` | Chart-pull host for the mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url. | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the mirror (image.repository). Empty falls back to far_repo_url. | no |
-| `use_registry_mirror` | `bool` | `false` | When true, drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list (RBAC handles pulls). | no |
+| `use_registry_mirror` | `bool` | `false` | Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project. | no |
 | `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror. | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this) | no |
@@ -195,14 +199,14 @@ Source: `terraform/modules/flp/variables.tf`
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR registry host (fallback when no mirror). | no |
 | `far_chart_repo_url` | `string` | `""` | Mirror host for chart pulls (empty → coalesces to far_repo_url). | no |
 | `far_image_repo_url` | `string` | `""` | Mirror host for image pulls (empty → coalesces to far_repo_url). | no |
-| `use_registry_mirror` | `bool` | `false` | When true, pull chart+images from the mirror and drop the FAR dockerconfig secret (RBAC handles pulls), matching the BNK install. | no |
+| `use_registry_mirror` | `bool` | `false` | Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project. | no |
 | `registry_mirror_username` | `string` | `""` | Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → in-cluster/ICR mirror (kube-token/IAM auth). | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart + image pulls authenticate with it instead of the kube token. | **yes** |
 | `flp_namespace` | `string` | `"f5-license-proxy"` | Namespace to install the F5 License Proxy into. | no |
 | `flp_chart_version` | `string` | `""` | Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest. | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `""` | BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty. | no |
 | `flp_node_port_access` | `bool` | `false` | Expose the proxy OUTSIDE its own cluster so a BNK install in a different cluster can license through it. The chart's Service is already type NodePort (30001), but it hardcodes externalTrafficPolicy: Local — with one replica only the node running the pod answers — so this flips it to Cluster and adds the worker node IPs to the proxy's server certificate (without them the remote CWC rejects the TLS handshake). | no |
-| `flp_node_port_source_cidr` | `string` | `""` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to this CIDR (the consuming cluster's subnet). Empty leaves the security group untouched. | no |
+| `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to these CIDRs (the consuming cluster's subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched. | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 
 ## Module: `gateway`

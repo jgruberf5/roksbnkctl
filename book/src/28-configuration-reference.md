@@ -25,6 +25,7 @@ ibmcloud:        # required
 cluster:         # required
 resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
+registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
 cos:             # optional; supply-chain auto-upload
@@ -248,6 +249,44 @@ A map of `name → { kind, … }`. The locality axis is implicit in which `vsi` 
 | `l7.mode` | `l7` | yes (`l7`) | `cps` \| `tps` \| `throughput` — h2load flag preset. |
 | `l7.clients` / `streams` / `threads` / `requests` / `duration` / `http1` | `l7` | no | h2load `-c` / `-m` / `-t` / `-n` / `-D` / `--h1`; override the mode preset. |
 
+## `registry:` block
+
+Selects the OCI registry `registry replicate` mirrors FAR into — and, once a mirror
+record exists, the registry the install pulls **out of**. See
+[Air-gapped install](./10a-air-gapped-install.md) and
+[Registry targets](./10b-registry-targets.md).
+
+```yaml
+registry:
+  target: generic                    # icr (default) | generic
+  # target: generic — any OCI registry (Harbor, Artifactory, Quay, registry:2)
+  generic_host: harbor.example.com
+  generic_repo_prefix: bnk-mirror
+  generic_username: admin
+  generic_password_b64: <base64>     # set via `registry target generic_password --password-stdin`
+  # target: icr — IBM Container Registry
+  # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
+  # icr_namespace: my-namespace      # empty → the workspace prefix
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `registry.target` | string | `icr` | `icr` (IBM Container Registry) or `generic` (any OCI-compliant registry — Harbor, Artifactory, Quay, `registry:2`). |
+| `registry.icr_host` | string | (from region) | ICR host for `target: icr`, e.g. `de.icr.io`. |
+| `registry.icr_namespace` | string | (the prefix) | ICR namespace artifacts nest under. |
+| `registry.generic_host` | string | (empty) | Registry host for `target: generic`, e.g. `harbor.example.com`. |
+| `registry.generic_repo_prefix` | string | (empty) | Repository path artifacts nest under — a Harbor **project**, or an Artifactory repo key. |
+| `registry.generic_username` | string | (empty) | Basic-auth user. Both credential fields empty ⇒ anonymous push/pull. |
+| `registry.generic_password_b64` | string | (empty) | Basic-auth password/token, base64. Like every `_b64` field this is **obfuscation, not encryption** — `chmod 600`, never commit. Set it with `registry target generic_password --password-stdin` so it never reaches your shell history; templatable from the environment via `init --override-from-env` (`ROKSBNKCTL_GENERIC_PASSWORD`). |
+
+**The same credential installs, not just replicates.** For an external private registry
+these fields authenticate *both* halves of the install: chart pulls log in with them, and
+pods get a `mirror-secret` dockerconfig built from them — created for you in every
+namespace that pulls (cert-manager, the FLO/BNK namespaces, and `kube-system` for the
+node-labeler) and referenced from the CNEInstance. **A private registry needs no
+anonymous or public project.** An in-cluster/ICR mirror authorizes by RBAC instead and
+needs no pull secret at all.
+
 ## `tf_source:` block
 
 ```yaml
@@ -426,7 +465,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.flp.namespace` | string | `f5-license-proxy` | Namespace the FLP phase installs into (FLP mode only). |
 | `bnk.flp.chart_version` | string | (empty ⇒ from the BNK manifest) | Pin the `f5-license-proxy` chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts. |
 | `bnk.flp.node_port_access` | bool | `false` | Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it ([Flow C](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster)). Set by `flp up --add-node-port-access` and persisted, so a later `flp up` does not tear the exposure down. |
-| `bnk.flp.node_port_source_cidr` | string | (empty) | With `node_port_access`: open the proxy's NodePort to this CIDR (the consuming cluster's subnet) on the worker security group. |
+| `bnk.flp.node_port_source_cidrs` | list of string | (empty) | With `node_port_access`: open the proxy's NodePort to these CIDRs on the worker security group. A **list**, and it must name **every zone** — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by `flp up --node-port-source-cidr` and persisted. |
 | `bnk.flp.external.url` | string | (empty) | License against a proxy in **another** cluster — its `external_endpoint` from `roksbnkctl -w <owner> flp output`. This workspace then needs no `flp up` of its own. |
 | `bnk.flp.external.root_ca_b64` | string | (empty) | That proxy's `root_ca_b64`, delivered to the CWC so it can verify the proxy's certificate. Required with `external.url`. |
 | `test.throughput.image` | string | `networkstatic/iperf3:latest` | iperf3 image. |

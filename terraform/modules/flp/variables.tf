@@ -108,7 +108,7 @@ variable "far_image_repo_url" {
 }
 
 variable "use_registry_mirror" {
-  description = "When true, pull chart+images from the mirror and drop the FAR dockerconfig secret (RBAC handles pulls), matching the BNK install."
+  description = "Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project."
   type        = bool
   default     = false
 }

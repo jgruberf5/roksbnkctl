@@ -426,17 +426,18 @@ Subsequent `roksbnkctl up` runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.
 
-By default the registry COS instance name follows the upstream HCL
-fallback formula "`<cluster-name>`-cos". Pass --registry-cos-name to
-override (e.g. if your tfvars sets roks_cos_instance_name to a different
-value).
+The registry COS instance is found by probing the names roksbnkctl and the
+upstream HCL actually use: "`<prefix>`-registry-cos" (what `cluster up`
+creates), "`<cluster>`-registry-cos", then the upstream fallback
+"`<cluster>`-cos". Pass --registry-cos-name to override (e.g. if your tfvars
+sets roks_cos_instance_name to something else).
 
 **Flags**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--prompt` | `bool` | `false` | prompt for the cluster name even if one is given as an argument |
-| `--registry-cos-name` | `string` | — | expected registry COS instance name (default "`<cluster>`-cos" — matches the upstream HCL fallback) |
+| `--registry-cos-name` | `string` | — | registry COS instance name (default: probe "`<prefix>`-registry-cos", "`<cluster>`-registry-cos", "`<cluster>`-cos") |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
@@ -825,7 +826,7 @@ bnk.flp.external block.
 |---|---|---|---|
 | `--add-node-port-access` | `bool` | `false` | expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it |
 | `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
-| `--node-port-source-cidr` | `string` | — | with --add-node-port-access: open the NodePort on the worker security group to this CIDR (the consuming cluster's subnet) |
+| `--node-port-source-cidr` | `stringSlice` | `[]` | with --add-node-port-access: open the NodePort on the worker security group to this CIDR. REPEATABLE — a multi-zone VPC has one address prefix PER ZONE, and a consuming pod scheduled in an unlisted zone is silently dropped. Pass every zone's CIDR (or a supernet covering them). |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl flp`](#roksbnkctl-flp)

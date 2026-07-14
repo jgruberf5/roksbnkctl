@@ -198,11 +198,28 @@ licensing service.
 
 ```bash
 roksbnkctl -w services cluster up            # (or `cluster register` an existing one)
-roksbnkctl -w services registry replicate    # mirror BNK + the FLP into your registry
+
+# point the workspace at your private registry, then mirror FAR into it
+roksbnkctl -w services registry target generic
+roksbnkctl -w services registry target generic_host        harbor.example.com
+roksbnkctl -w services registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w services registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w services registry target generic_password --password-stdin
+roksbnkctl -w services registry replicate    # BNK *and* the FLP chart — both are in the BOM
+
 roksbnkctl -w services flp up \
     --add-node-port-access \
     --node-port-source-cidr 10.242.0.0/18,10.242.64.0/18,10.242.128.0/18
 ```
+
+Set the registry target **before** replicating: with none set it defaults to `icr`, and
+you would mirror into IBM Container Registry rather than your own. The password is piped
+on stdin so it never lands in argv or your shell history. See
+[Registry targets](./10b-registry-targets.md) for the ICR and Artifactory variants.
+
+The proxy itself is installed **from that registry** — `charts/f5-license-proxy` is part
+of the mirror BOM, so even the licensing component does not come from `repo.f5.com`.
 
 The CIDR flag is a **list, and it must name every zone**. A multi-zone VPC carries one
 address prefix *per zone*:
@@ -263,13 +280,47 @@ bnk:
       root_ca_b64: LS0tLS1CRUdJTi…      # from `flp output` → root_ca_b64
 ```
 
-Then install normally. `bnk up` wires the License CR at the remote proxy and delivers
-its CA to the CWC, exactly as it would for a local one:
+Point that workspace at the **same private registry**, and install. `bnk up` wires the
+License CR at the remote proxy and delivers its CA to the CWC, exactly as it would for a
+local one:
 
 ```bash
-roksbnkctl -w app registry replicate    # same registry; everything is already there
-roksbnkctl -w app bnk up                # licenses via the proxy in the OTHER cluster
+roksbnkctl -w app cluster register my-app-cluster   # or `cluster up` to build one
+
+# the SAME registry as the services workspace
+roksbnkctl -w app registry target generic
+roksbnkctl -w app registry target generic_host        harbor.example.com
+roksbnkctl -w app registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w app registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w app registry target generic_password --password-stdin
+
+roksbnkctl -w app registry replicate   # copies nothing — the artifacts are already there
+roksbnkctl -w app bnk up               # licenses via the proxy in the OTHER cluster
 ```
+
+`registry replicate` in the second workspace has nothing left to copy. Run it anyway:
+its other job is to write `registry-mirror.json`, and **that record is what redirects the
+install off `repo.f5.com` onto your registry**. Without it, `bnk up` would go to FAR.
+(See [One mirror, many clusters](./10a-air-gapped-install.md#one-mirror-many-clusters).)
+
+### Why this cluster is genuinely disconnected
+
+Three things have to be true, and `bnk up` arranges all three — there is nothing to wire
+by hand:
+
+- **Charts and images come from your registry.** Chart pulls log in with the credential
+  above; the pods get a `mirror-secret` dockerconfig built from it, created in every
+  namespace that pulls (cert-manager, the FLO/BNK namespaces, `kube-system` for the
+  node-labeler) and referenced from the CNEInstance. Your registry stays **private** — it
+  needs no anonymous or public project.
+- **The manifest is already in the cluster.** The BNK manifest is mirrored too and
+  pre-applied as a `CNEManifest` CR, so the lifecycle operator resolves it locally instead
+  of fetching it from F5.
+- **Licensing goes to the proxy next door**, not to F5.
+
+The result: this cluster talks to your registry and to `https://<node-ip>:30001`. Nothing
+else.
 
 ### What to watch out for
 
