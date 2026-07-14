@@ -195,12 +195,17 @@ real work to show on camera.
 
 ### Record
 
-**Use `SRC_BUILD=1`** — the FLP work is not in a public release yet, so the demo must
-install the source build.
+FLP support ships in **v1.18.0**, so the demo installs the public release by default —
+which is what you want on camera: it shows a viewer exactly what they would get.
 
 ```bash
-SRC_BUILD=1 SCREENPLAY=flp-licensed-demo.sh ./record.sh run
+SCREENPLAY=flp-licensed-demo.sh ./record.sh run
 ```
+
+Add `SRC_BUILD=1` only to demo work that is **not yet released** — it builds the current
+branch and ships that binary to the VSI instead of downloading the release. Without it,
+`record.sh` deliberately deletes any stale `roksbnkctl.bin` from the VSI so the screenplay
+cannot silently install an old source build.
 
 ### Accelerate the long stretches
 
