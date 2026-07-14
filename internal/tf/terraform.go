@@ -207,6 +207,17 @@ func Open(
 			return nil, fmt.Errorf("setting TF_VAR_ibmcloud_api_key: %w", err)
 		}
 	}
+	// Hand terraform this binary's own path. helm invokes it as the
+	// f5-license-proxy chart's post-renderer (`roksbnkctl flp postrender`), so the
+	// FLP install needs no interpreter on the host — it used to generate a python
+	// script, which is why `flp up` died inside the tools-runner container, where
+	// there is no python at all. Passing the resolved path (not the bare name)
+	// guarantees helm post-renders with the exact build driving the apply.
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		if err := os.Setenv("TF_VAR_roksbnkctl_binary", exe); err != nil {
+			return nil, fmt.Errorf("setting TF_VAR_roksbnkctl_binary: %w", err)
+		}
+	}
 	if useS3 {
 		// COS HMAC keys for the s3 backend, injected as AWS_* env (the
 		// backend reads them) — never into the rendered HCL or state.

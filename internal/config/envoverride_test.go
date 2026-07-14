@@ -14,6 +14,9 @@ func TestOverrideFromEnv(t *testing.T) {
 			"IBMCLOUD_API_KEY", "ROKSBNKCTL_API_KEY_B64", "ROKSBNKCTL_PREFIX",
 			"ROKSBNKCTL_REGION", "ROKSBNKCTL_RESOURCE_GROUP", "ROKSBNKCTL_TESTING_SSH_KEY_NAME",
 			"ROKSBNKCTL_GENERIC_PASSWORD", "ROKSBNKCTL_LICENSE_MODE", "ROKSBNKCTL_FLP_NAMESPACE",
+			"ROKSBNKCTL_REGISTRY_TARGET", "ROKSBNKCTL_GENERIC_HOST",
+			"ROKSBNKCTL_GENERIC_REPO_PREFIX", "ROKSBNKCTL_GENERIC_USERNAME",
+			"ROKSBNKCTL_FLP_EXTERNAL_URL", "ROKSBNKCTL_FLP_ROOT_CA_B64",
 		} {
 			t.Setenv(e, "")
 		}
@@ -115,6 +118,85 @@ func TestOverrideFromEnv(t *testing.T) {
 		}
 		if ws.Prefix != "keep" {
 			t.Fatalf("prefix clobbered to %q", ws.Prefix)
+		}
+	})
+}
+
+// TestOverrideFromEnv_CIPipelineSurface covers the variables a CI pipeline needs
+// to run the shared-licensing topology with NO config file to template: where the
+// registry is, and the proxy handoff from the job that owns the proxy.
+func TestOverrideFromEnv_CIPipelineSurface(t *testing.T) {
+	t.Run("registry target comes entirely from env", func(t *testing.T) {
+		t.Setenv("ROKSBNKCTL_REGISTRY_TARGET", "generic")
+		t.Setenv("ROKSBNKCTL_GENERIC_HOST", "harbor.example.com")
+		t.Setenv("ROKSBNKCTL_GENERIC_REPO_PREFIX", "bnk-mirror")
+		t.Setenv("ROKSBNKCTL_GENERIC_USERNAME", "admin")
+		t.Setenv("ROKSBNKCTL_GENERIC_PASSWORD", "s3cret")
+
+		// A workspace with NO registry block at all — the normal CI case.
+		ws := &Workspace{}
+		applied := OverrideFromEnv(ws)
+
+		if ws.Registry == nil {
+			t.Fatal("registry block was not created")
+		}
+		if ws.Registry.Target != "generic" {
+			t.Errorf("target = %q, want generic", ws.Registry.Target)
+		}
+		if ws.Registry.GenericHost != "harbor.example.com" {
+			t.Errorf("generic_host = %q", ws.Registry.GenericHost)
+		}
+		if ws.Registry.GenericRepoPrefix != "bnk-mirror" {
+			t.Errorf("generic_repo_prefix = %q", ws.Registry.GenericRepoPrefix)
+		}
+		if ws.Registry.GenericUsername != "admin" {
+			t.Errorf("generic_username = %q", ws.Registry.GenericUsername)
+		}
+		want := base64.StdEncoding.EncodeToString([]byte("s3cret"))
+		if ws.Registry.GenericPasswordB64 != want {
+			t.Errorf("password not base64-encoded: %q", ws.Registry.GenericPasswordB64)
+		}
+		for _, a := range applied {
+			if strings.Contains(a, "s3cret") || strings.Contains(a, want) {
+				t.Errorf("override label leaks the registry password: %q", a)
+			}
+		}
+	})
+
+	t.Run("foreign-proxy handoff on a config that never mentioned the FLP", func(t *testing.T) {
+		// The nil-pointer case: bnk.flp and bnk.flp.external are both pointers, so
+		// a pipeline setting ONLY these two must not panic.
+		t.Setenv("ROKSBNKCTL_LICENSE_MODE", "f5licenseproxy")
+		t.Setenv("ROKSBNKCTL_FLP_EXTERNAL_URL", "https://10.242.0.9:30001")
+		t.Setenv("ROKSBNKCTL_FLP_ROOT_CA_B64", "TFMwdExTMUNSVWRK")
+
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+
+		if ws.BNK.LicenseMode != "f5licenseproxy" {
+			t.Fatalf("license_mode = %q", ws.BNK.LicenseMode)
+		}
+		if ws.BNK.FLP == nil || ws.BNK.FLP.External == nil {
+			t.Fatal("bnk.flp.external was not created")
+		}
+		if got := ws.BNK.FLP.External.URL; got != "https://10.242.0.9:30001" {
+			t.Errorf("external.url = %q", got)
+		}
+		// Already base64 (that is how `flp output flp_root_ca` emits it) — must be
+		// stored VERBATIM, not re-encoded, or the CA the CWC gets is garbage.
+		if got := ws.BNK.FLP.External.RootCAB64; got != "TFMwdExTMUNSVWRK" {
+			t.Errorf("root_ca_b64 = %q, want the value verbatim (double-encoding it corrupts the CA)", got)
+		}
+	})
+
+	t.Run("the handoff vars work with no license_mode set", func(t *testing.T) {
+		// Order-independence: flpExternal must create the blocks itself, not rely
+		// on ROKSBNKCTL_LICENSE_MODE having seeded them first.
+		t.Setenv("ROKSBNKCTL_FLP_EXTERNAL_URL", "https://10.0.0.1:30001")
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.BNK.FLP == nil || ws.BNK.FLP.External == nil {
+			t.Fatal("bnk.flp.external must be created without license_mode")
 		}
 	})
 }

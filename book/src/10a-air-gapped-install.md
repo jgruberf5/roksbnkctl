@@ -95,6 +95,32 @@ The target's own pull credential is wired in for you:
   people to make their Harbor project world-readable — for a registry holding F5's
   proprietary images, not an acceptable requirement.
 
+### Doing it all in CI, with nothing installed
+
+Every command in this chapter runs unchanged inside the
+[tools-runner container](./07b-github-actions-ci.md), so a pipeline can mirror the
+registry and install from it with no `roksbnkctl`, `terraform`, `helm`, `kubectl` or
+`ibmcloud` on the runner. The registry target itself comes from the environment —
+`ROKSBNKCTL_REGISTRY_TARGET`, `ROKSBNKCTL_GENERIC_HOST`,
+`ROKSBNKCTL_GENERIC_REPO_PREFIX`, `ROKSBNKCTL_GENERIC_USERNAME`,
+`ROKSBNKCTL_GENERIC_PASSWORD` — so nothing has to template a `config.yaml`:
+
+```bash
+docker run --rm -v "$PWD/state:/work" \
+  -e IBMCLOUD_API_KEY -e ROKSBNKCTL_REGION=eu-gb \
+  -e ROKSBNKCTL_PREFIX=ci -e ROKSBNKCTL_CLUSTER_NAME=my-cluster -e ROKSBNKCTL_CLUSTER_CREATE=false \
+  -e ROKSBNKCTL_REGISTRY_TARGET=generic \
+  -e ROKSBNKCTL_GENERIC_HOST=harbor.example.com \
+  -e ROKSBNKCTL_GENERIC_REPO_PREFIX=bnk-mirror \
+  -e ROKSBNKCTL_GENERIC_USERNAME=admin -e ROKSBNKCTL_GENERIC_PASSWORD \
+  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0 -w ci \
+  init --non-interactive --override-from-env
+```
+
+For the full **disconnected** picture — a private registry *and* licensing through a
+proxy in another cluster, as a two-job pipeline — see
+[Flow C in CI](./10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).
+
 ### Why the install never phones home
 
 Two things have to be true for a mirrored install to be genuinely disconnected,
