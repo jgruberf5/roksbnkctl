@@ -4,6 +4,20 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.19.0 — 2026-07-14
+
+### Added
+
+- **Run the disconnected install from CI, with nothing installed on the runner.** Licensing BNK through an F5 License Proxy in *another* cluster, with every chart and image from a private registry, now works end to end inside the [tools-runner container](book/src/07b-github-actions-ci.md) — no `roksbnkctl`, `terraform`, `helm`, `kubectl` or `ibmcloud` on the runner, and no `config.yaml` templated anywhere. See [Flow C in CI](book/src/10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).
+
+  Six new environment overrides make a pipeline able to describe the whole workspace: `ROKSBNKCTL_REGISTRY_TARGET`, `ROKSBNKCTL_GENERIC_HOST`, `ROKSBNKCTL_GENERIC_REPO_PREFIX`, `ROKSBNKCTL_GENERIC_USERNAME` say *where* the mirror is (only the password was settable before, so a job still had to shell out to four `registry target` subcommands), and `ROKSBNKCTL_FLP_EXTERNAL_URL` + `ROKSBNKCTL_FLP_ROOT_CA_B64` are the **cross-job handoff** — exactly what `flp output` prints, so the proxy's address and CA travel between CI jobs as ordinary job outputs. The CA variable is stored **verbatim** (it is already base64); re-encoding it hands the CWC a corrupt CA, so a test pins it.
+
+### Fixed
+
+- **`flp up` could not run in a container at all.** The `f5-license-proxy` chart is installed through a Helm post-renderer, and that post-renderer was a *generated python script* — which made `python3` an undeclared runtime dependency of the whole FLP phase. Invisible on a laptop that happens to have python; fatal in the tools-runner image, which has none, where `flp up` died with `error while running post render`.
+
+  A post-renderer is just "a binary Helm pipes manifests through", so roksbnkctl is now that binary (`roksbnkctl flp postrender`), with the transform as a plain tested function. Terraform points Helm at the *running* roksbnkctl, so the chart is always post-rendered by the exact build driving the apply. The hidden dependency is removed rather than documented, and the runner image still contains no python.
+
 ## v1.18.0 — 2026-07-14
 
 ### Added
