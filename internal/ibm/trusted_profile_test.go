@@ -387,3 +387,73 @@ func TestClassifyIAMErr(t *testing.T) {
 
 // silence-the-linter helper if fmt is unused on some build paths.
 var _ = fmt.Sprintf
+
+// TestTrustedProfile_LinkBody_CarriesNamespaceAndName pins the JSON the link
+// request puts on the wire.
+//
+// platform-services-go-sdk v0.101.0 changed NewCreateProfileLinkRequestLink from
+// (crn, namespace) to (crn): Namespace became an `omitempty` STRUCT FIELD. The API
+// still requires it for cr_type IKS_SA/ROKS_SA — which is exactly what we send — so
+// forgetting to set it still COMPILES and still marshals, it just silently omits
+// `namespace` and the link is rejected (or worse, mis-scoped) at runtime. Only an
+// assertion on the body catches that, so make it here.
+func TestTrustedProfile_LinkBody_CarriesNamespaceAndName(t *testing.T) {
+	const (
+		profileID   = "Profile-body-1"
+		profileName = "roksbnkctl-ops"
+		iamID       = "iam-id-body"
+		clusterCRN  = "crn:v1:bluemix:public:containers-kubernetes:eu-gb:a/acct::cluster:c123"
+		saNamespace = "roksbnkctl-ops-ns"
+		saName      = "roksbnkctl-ops-sa"
+	)
+
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/v1/profiles"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profiles": []map[string]any{{
+					"id": profileID, "crn": clusterCRN, "name": profileName,
+					"iam_id": iamID, "account_id": "acct-12345",
+				}},
+			})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/v1/profiles/"+profileID+"/links"):
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			w.WriteHeader(http.StatusConflict) // idempotent path; body is what we're after
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestProfileClient(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := c.TrustedProfiles().CreateForOpsPod(ctx, profileName, clusterCRN, saNamespace, saName); err != nil {
+		t.Fatalf("CreateForOpsPod: %v", err)
+	}
+
+	if gotBody == nil {
+		t.Fatal("link request never reached the server")
+	}
+	if got := gotBody["cr_type"]; got != "ROKS_SA" {
+		t.Errorf("cr_type = %v, want ROKS_SA", got)
+	}
+	link, ok := gotBody["link"].(map[string]any)
+	if !ok {
+		t.Fatalf("link object missing from body: %#v", gotBody)
+	}
+	for _, tc := range []struct{ field, want string }{
+		{"crn", clusterCRN},
+		{"namespace", saNamespace}, // the field the SDK bump silently dropped
+		{"name", saName},
+	} {
+		if got, _ := link[tc.field].(string); got != tc.want {
+			t.Errorf("link.%s = %q, want %q", tc.field, got, tc.want)
+		}
+	}
+}
