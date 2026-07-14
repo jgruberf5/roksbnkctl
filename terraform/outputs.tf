@@ -130,6 +130,27 @@ output "gateway_enabled" {
   value       = module.gateway.gateway_enabled
 }
 
+# ============================================================
+# F5 License Proxy (empty/placeholder unless the FLP phase is deployed).
+# The FLP phase persists these to flp-outputs.json; the BNK phase reads them
+# in f5licenseproxy mode.
+# ============================================================
+
+output "flp_root_ca" {
+  description = "Base64 PEM of the FLP root CA (for CWC's licenseserver-rootca Secret)"
+  value       = module.flp.flp_root_ca
+}
+
+output "flp_endpoint" {
+  description = "Base URL of the in-cluster F5 License Proxy service"
+  value       = module.flp.flp_endpoint
+}
+
+output "flp_namespace" {
+  description = "Namespace the F5 License Proxy was installed into"
+  value       = module.flp.flp_namespace
+}
+
 output "gateway_app_namespace" {
   description = "Namespace of the Gateway + HTTPRoute"
   value       = module.gateway.gateway_app_namespace
@@ -198,4 +219,19 @@ output "gateway_vxlan_port" {
 output "gateway_static_routes" {
   description = "F5SPKStaticRoute set: name => { destination, prefix_len, gateway }"
   value       = module.gateway.gateway_static_routes
+}
+
+output "flp_external_endpoint" {
+  description = "Externally-reachable FLP URL for a BNK install in another cluster (empty unless flp_node_port_access)."
+  value       = try(module.flp.flp_external_endpoint, "")
+}
+
+output "flp_external_endpoints" {
+  description = "Every worker-node URL the FLP answers on."
+  value       = try(module.flp.flp_external_endpoints, [])
+}
+
+output "flp_node_port" {
+  description = "NodePort the FLP Service listens on (0 unless flp_node_port_access)."
+  value       = try(module.flp.flp_node_port, 0)
 }

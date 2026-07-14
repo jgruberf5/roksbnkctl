@@ -26,6 +26,10 @@ type PortForwardOptions struct {
 	Ports          []string
 	KubeconfigPath string
 
+	// KubeContext pins which context in that file is used — the one naming
+	// the target workspace's cluster. Empty keeps the file's current-context.
+	KubeContext string
+
 	IOStreams genericiooptions.IOStreams
 
 	// StopCh + ReadyCh: optional. If StopCh is nil, the helper
@@ -50,7 +54,7 @@ func (o *PortForwardOptions) Run(ctx context.Context) error {
 		o.IOStreams.ErrOut = io.Discard
 	}
 
-	cfg, err := BuildRESTConfig(o.KubeconfigPath)
+	cfg, err := BuildRESTConfigForContext(o.KubeconfigPath, o.KubeContext)
 	if err != nil {
 		return err
 	}

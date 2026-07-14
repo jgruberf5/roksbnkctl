@@ -48,10 +48,16 @@ func runKPortForward(cmd *cobra.Command, args []string) error {
 	}
 	pod := args[0]
 	ports := args[1:]
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.PortForwardOptions{
-		PodName:   pod,
-		Namespace: kPortForwardNamespace,
-		Ports:     ports,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		PodName:        pod,
+		Namespace:      kPortForwardNamespace,
+		Ports:          ports,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

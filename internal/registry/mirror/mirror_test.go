@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -102,5 +103,32 @@ func TestOCIDir(t *testing.T) {
 	want := "oci://registry.example.com/bnk-mirror/charts"
 	if got != want {
 		t.Errorf("ociDir = %q, want %q", got, want)
+	}
+}
+
+// TestIsTransient pins the retry predicate: the 5xx/throttle/EOF classes the
+// OpenShift registry produced, plus the concurrent-push 401 Harbor emits. A
+// 404 or a 403 must NOT retry -- those are terminal.
+func TestIsTransient(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"500", errors.New("unexpected status code 500 Internal Server Error"), true},
+		{"503", errors.New("unexpected status code 503"), true},
+		{"throttle", errors.New("TOOMANYREQUESTS: rate limited"), true},
+		{"reset", errors.New("read tcp: connection reset by peer"), true},
+		{"harbor 401", errors.New("HEAD https://h/v2/p/c/manifests/1: unexpected status code 401 Unauthorized"), true},
+		{"404", errors.New("unexpected status code 404 Not Found"), false},
+		{"403", errors.New("unexpected status code 403 Forbidden"), false},
+		{"garbage", errors.New("no such host"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransient(tc.err); got != tc.want {
+				t.Fatalf("isTransient(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

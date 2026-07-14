@@ -80,9 +80,21 @@ variable "f5_cne_subscription_jwt_file" {
 }
 
 variable "license_mode" {
-  description = "License operation mode (connected or disconnected)"
+  description = "License operation mode (connected, disconnected, or f5licenseproxy)"
   type        = string
   default     = "connected"
+}
+
+variable "flp_license_server_url" {
+  description = "Base URL of the in-cluster F5 License Proxy (FLP mode only)"
+  type        = string
+  default     = ""
+}
+
+variable "license_server_root_ca" {
+  description = "PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only)"
+  type        = string
+  default     = ""
 }
 
 variable "create_roks_cluster" {

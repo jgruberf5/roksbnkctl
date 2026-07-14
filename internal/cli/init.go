@@ -236,6 +236,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
 		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
 		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
+		// Optional F5 License Proxy. Default no → BNK licenses with the
+		// subscription JWT as before (unchanged). Yes → set FLP mode + an flp
+		// block; the operator then runs `roksbnkctl flp up` before `bnk up`.
+		if promptYesNo("License via an in-cluster F5 License Proxy (FLP)?", false) {
+			ws.BNK.LicenseMode = "f5licenseproxy"
+			ns := promptString("FLP namespace", config.DefaultFLPNamespace)
+			ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
+		}
 	}
 
 	// --override-from-env (Sprint 30 Issue 4) on the interactive path too:

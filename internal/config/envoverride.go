@@ -36,6 +36,8 @@ import (
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
+//	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
+//	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //
 // ROKSBNKCTL_API_KEY_B64 takes precedence over IBMCLOUD_API_KEY when both are
 // set (an explicit pre-encoded value beats the raw-key convenience path).
@@ -139,6 +141,24 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 		ws.Registry.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "registry.generic_password_b64 (ROKSBNKCTL_GENERIC_PASSWORD)")
+	}
+
+	// License mode (optional; connected|disconnected|f5licenseproxy). f5licenseproxy
+	// also seeds an flp block so the FLP phase deploys into a namespace, overridable
+	// by ROKSBNKCTL_FLP_NAMESPACE. Empty → the JWT/connected default is unchanged.
+	if v := envValue("ROKSBNKCTL_LICENSE_MODE"); v != "" {
+		ws.BNK.LicenseMode = v
+		applied = append(applied, "bnk.license_mode (ROKSBNKCTL_LICENSE_MODE)")
+		if v == "f5licenseproxy" && ws.BNK.FLP == nil {
+			ws.BNK.FLP = &BNKFLPCfg{}
+		}
+	}
+	if v := envValue("ROKSBNKCTL_FLP_NAMESPACE"); v != "" {
+		if ws.BNK.FLP == nil {
+			ws.BNK.FLP = &BNKFLPCfg{}
+		}
+		ws.BNK.FLP.Namespace = v
+		applied = append(applied, "bnk.flp.namespace (ROKSBNKCTL_FLP_NAMESPACE)")
 	}
 
 	return applied

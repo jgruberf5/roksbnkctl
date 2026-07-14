@@ -10,6 +10,25 @@ locals {
   use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
   jwt_token      = local.global_enabled && var.use_cos_bucket ? trimspace(data.http.jwt_download[0].response_body) : var.jwt_token
 
+  # F5 License Proxy mode. In FLP mode the CWC talks to the in-cluster FLP instead
+  # of F5 directly, so the License CR carries the three teem*Url endpoints (the FLP
+  # service) plus licenseProxyServerRootCaPath — the fixed path where CWC mounts the
+  # FLP root CA (from the `licenseserver-rootca` Secret this module writes below).
+  # The JWT is STILL required in every mode (License CRD spec.required: [jwt]).
+  is_flp      = var.license_mode == "f5licenseproxy"
+  flp_ca_path = "/etc/cm20/licenseserver-rootca/licenseserver-rootca.txt"
+  # The FLP serves its licensing API under /license-proxy/v1 (its health endpoint
+  # is /license-proxy/v1/health) — NOT the /ee/v1 path the FLP uses toward F5
+  # upstream. The CWC appends its operations to this base.
+  flp_teem_url = "${var.flp_license_server_url}/license-proxy/v1"
+
+  flp_spec_fields = local.is_flp ? {
+    teemCertUrl                  = local.flp_teem_url
+    teemEntitlementUrl           = local.flp_teem_url
+    teemInitialConfigUrl         = local.flp_teem_url
+    licenseProxyServerRootCaPath = local.flp_ca_path
+  } : {}
+
   license_manifest = {
     apiVersion = "k8s.f5net.com/v1"
     kind       = "License"
@@ -17,11 +36,107 @@ locals {
       name      = "bnk-license"
       namespace = var.utils_namespace
     }
-    spec = {
+    spec = merge({
       jwt           = local.jwt_token
       operationMode = var.license_mode
-    }
+    }, local.flp_spec_fields)
   }
+
+  # The CWC chart mounts this Secret (non-optional) at flp_ca_path. In connected/
+  # disconnected mode CWC ships it empty; in FLP mode we populate it with the FLP
+  # root CA so CWC trusts the proxy's TLS. Written as a real Secret so a CWC
+  # rollout picks it up.
+  #
+  # NOT gated on bnk_cr_mode. The FLP spec fields (teem*Url +
+  # licenseProxyServerRootCaPath) go onto the License CR whenever is_flp — on BOTH
+  # the kubectl and legacy_curl paths — so gating the CA Secret on kubectl mode left
+  # legacy_curl with a CR pointing at the proxy and an EMPTY licenseserver-rootca:
+  # the CWC's TLS handshake to the proxy fails cert verification and the license
+  # never reaches Active, while the apply looks successful. Both this Secret
+  # (kubectl provider) and the CWC rollout (curl) work in either CR mode.
+  write_flp_ca = local.global_enabled && local.is_flp && var.license_server_root_ca != ""
+
+  # The CWC (f5-spk-cwc) is deployed by the CNEInstance BEFORE this module writes
+  # the FLP CA, so it builds its TLS trust store at pod start with an empty
+  # licenseserver-rootca mount. Merely overwriting the Secret does not re-trigger
+  # that trust build (the mounted file syncs eventually, but the running client
+  # keeps the startup config), so a fresh License CR verification hangs. We restart
+  # the CWC once the real CA is in place — keyed on the CA content hash so it only
+  # rolls when the CA actually changes (idempotent across re-applies).
+  cwc_deployment = "f5-spk-cwc"
+  flp_ca_hash    = local.write_flp_ca ? substr(sha256(var.license_server_root_ca), 0, 16) : ""
+}
+
+resource "kubectl_manifest" "licenseserver_rootca" {
+  count             = local.write_flp_ca ? 1 : 0
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  # The CWC (deployed by the CNEInstance) creates the f5-utils namespace + an empty
+  # licenseserver-rootca Secret and mounts it; we overwrite that Secret with the FLP
+  # root CA. So wait for the CNEInstance before applying, or the namespace won't
+  # exist yet.
+  depends_on = [var.cneinstance_dependency]
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    type       = "Opaque"
+    metadata = {
+      name      = "licenseserver-rootca"
+      namespace = var.utils_namespace
+    }
+    stringData = {
+      "licenseserver-rootca.txt" = trimspace(var.license_server_root_ca)
+    }
+  })
+}
+
+# Restart the CWC so it rebuilds its TLS trust with the freshly-written FLP CA.
+# Triggered on the CA hash → rolls only when the CA content changes. Runs after the
+# Secret is applied and before the License CR waits for LicenseActive, so the
+# reconciling CWC pod already trusts the proxy. FLP mode only (count 0 otherwise).
+resource "null_resource" "cwc_flp_rollout" {
+  count = local.write_flp_ca ? 1 : 0
+
+  # kube_token is deliberately NOT a trigger. It comes from
+  # data.ibm_container_cluster_config, which mints a fresh IAM token on every
+  # refresh — as a trigger it would replace this resource on EVERY apply, bouncing
+  # the CWC (and with it BNK licensing/telemetry) on what the operator expects to be
+  # a no-op re-apply. The create provisioner reads var.kube_token directly, and
+  # there is no destroy provisioner needing it from self.triggers. Only the CA hash
+  # should roll the CWC.
+  triggers = {
+    ca_hash   = local.flp_ca_hash
+    kube_host = var.kube_host
+    namespace = var.utils_namespace
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Patch the CWC pod template with the CA hash annotation → rolling restart.
+      # Retry: the CNEInstance may still be creating the Deployment.
+      patch='{"spec":{"template":{"metadata":{"annotations":{"roksbnkctl/flp-ca-hash":"${local.flp_ca_hash}"}}}}}'
+      url="${var.kube_host}/apis/apps/v1/namespaces/${var.utils_namespace}/deployments/${local.cwc_deployment}"
+      status=000
+      for i in $(seq 1 30); do
+        status=$(curl -sk -o /dev/null -w "%%{http_code}" -X PATCH \
+          -H "Authorization: Bearer ${var.kube_token}" \
+          -H "Content-Type: application/strategic-merge-patch+json" \
+          "$url" -d "$patch")
+        case "$status" in
+          2??) echo "CWC rollout triggered for new FLP CA (HTTP $status)"; break;;
+          404) echo "Waiting for CWC deployment (attempt $i/30, status=404)..."; sleep 10;;
+          *)   echo "CWC patch attempt $i/30 returned HTTP $status, retrying in 10s..." >&2; sleep 10;;
+        esac
+      done
+      case "$status" in
+        2??) : ;;
+        *)   echo "ERROR: CWC rollout patch failed after 30 attempts (last HTTP $status)" >&2; exit 1;;
+      esac
+    EOT
+  }
+
+  depends_on = [kubectl_manifest.licenseserver_rootca]
 }
 
 # Wait for License CRD to be available (legacy mode only — kubectl mode gates
@@ -125,7 +240,7 @@ resource "null_resource" "bnk_license" {
       # Apply the License CR. Retry on transient/admission-webhook-not-ready
       # errors (4xx/5xx) — the API group can be served before the FLO admission
       # webhook is reachable, producing 403/503 responses for ~30-60s.
-      patch_body='{"apiVersion":"k8s.f5net.com/v1","kind":"License","metadata":{"name":"bnk-license","namespace":"${var.utils_namespace}"},"spec":{"jwt":"${local.jwt_token}","operationMode":"${var.license_mode}"}}'
+      patch_body='${jsonencode(local.license_manifest)}'
       patch_url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.utils_namespace}/licenses/bnk-license?fieldManager=terraform&force=true"
       patch_status=000
       for i in $(seq 1 30); do
@@ -202,5 +317,7 @@ resource "kubectl_manifest" "bnk_license" {
     create = "15m"
   }
 
-  depends_on = [var.cneinstance_dependency]
+  # In FLP mode the CA Secret must exist AND the CWC must have restarted to trust it
+  # before the license can verify. In other modes those elements are absent (count 0).
+  depends_on = [var.cneinstance_dependency, kubectl_manifest.licenseserver_rootca, null_resource.cwc_flp_rollout]
 }

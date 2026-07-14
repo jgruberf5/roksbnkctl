@@ -31,6 +31,34 @@ These flags apply to every command. They are declared on the root command and in
 | `--verbose` / `-v` | `bool` | `false` | verbose output |
 | `--workspace` / `-w` | `string` | — | workspace name (default: current; first run creates 'default') |
 
+## `roksbnkctl agent`
+
+Drive this workspace with an agentic CLI (personas + AGENTS.md)
+
+```
+roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]
+```
+
+Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.
+
+  roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
+  roksbnkctl agent             List supported CLIs + this workspace's default
+  roksbnkctl agent `<cli>`       Print the invocation to launch `<cli>` against the workspace
+
+Personas (act as exactly one at a time): solution-architect (customer
+interface, owns scope), cloud-operator (runs the lifecycle), test-engineer
+(validation probes), doc-specialist (the report). See personas/ after init.
+
+### `roksbnkctl agent init`
+
+Scaffold the agentic-mode files into the workspace
+
+Copies AGENTS.md, CLAUDE.md, the persona role contracts, and a
+decisions.md seed into the workspace dir, and creates an empty journal/. Safe to
+re-run: existing files are left untouched (your edits survive).
+
+← back to [`roksbnkctl agent`](#roksbnkctl-agent)
+
 ## `roksbnkctl apikey`
 
 Print the workspace's resolved IBM Cloud API key to stdout (a secret)
@@ -210,16 +238,18 @@ provision takes ~30 min) before the trial apply.
 Configure + drive BNK Forge cluster registration
 
 Configure and drive registration of this workspace's cluster with a
-co-located BNK Forge install — without hand-editing config.yaml.
+co-located BNK Forge (v3) install — without hand-editing config.yaml.
 
   enable    turn on auto-registration on `cluster up` (writes config.yaml)
   disable   turn it back off
-  status    show the effective config + whether the bnk-forge CLI / cluster id are ready
+  status    show the effective config + readiness
   register  register this workspace's cluster with BNK Forge right now
 
-Registration is credential-backed: BNK Forge re-derives the kubeconfig on demand
-from an IBM Cloud credential template, so nothing perishable is stored. The
-`bnk-forge` CLI (which ships with BNK Forge, not roksbnkctl) must be on PATH.
+Registration uses BNK Forge v3's REST API (it has no CLI). It is credential-
+backed: an IBM Cloud credential template is stored in Forge so it re-derives the
+kubeconfig on demand — nothing perishable is stored. The password is read from
+BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
+session token is cached in the OS keychain.
 
 ### `roksbnkctl bnkforge disable`
 
@@ -239,8 +269,10 @@ roksbnkctl bnkforge enable [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--project` | `string` | — | target BNK Forge project id |
-| `--url` | `string` | — | BNK Forge server URL (overrides the bnk-forge CLI's stored-session URL) |
+| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--project` | `string` | — | target BNK Forge project name (ensured-or-created) |
+| `--url` | `string` | — | BNK Forge server URL (e.g. https://forge.example.com) |
+| `--username` | `string` | — | BNK Forge login username |
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -256,8 +288,11 @@ roksbnkctl bnkforge register [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--project` | `string` | — | target BNK Forge project id (overrides config) |
-| `--url` | `string` | — | BNK Forge server URL (overrides config + stored session) |
+| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
+| `--project` | `string` | — | target BNK Forge project name (overrides config) |
+| `--url` | `string` | — | BNK Forge server URL (overrides config) |
+| `--username` | `string` | — | BNK Forge login username (overrides config) |
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -391,17 +426,18 @@ Subsequent `roksbnkctl up` runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.
 
-By default the registry COS instance name follows the upstream HCL
-fallback formula "`<cluster-name>`-cos". Pass --registry-cos-name to
-override (e.g. if your tfvars sets roks_cos_instance_name to a different
-value).
+The registry COS instance is found by probing the names roksbnkctl and the
+upstream HCL actually use: "`<prefix>`-registry-cos" (what `cluster up`
+creates), "`<cluster>`-registry-cos", then the upstream fallback
+"`<cluster>`-cos". Pass --registry-cos-name to override (e.g. if your tfvars
+sets roks_cos_instance_name to something else).
 
 **Flags**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--prompt` | `bool` | `false` | prompt for the cluster name even if one is given as an argument |
-| `--registry-cos-name` | `string` | — | expected registry COS instance name (default "`<cluster>`-cos" — matches the upstream HCL fallback) |
+| `--registry-cos-name` | `string` | — | registry COS instance name (default: probe "`<prefix>`-registry-cos", "`<cluster>`-registry-cos", "`<cluster>`-cos") |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
 
@@ -699,6 +735,102 @@ Run a single command with cluster context loaded
 roksbnkctl exec [command...]
 ```
 
+## `roksbnkctl flp`
+
+F5 License Proxy phase — optional in-cluster licensing proxy
+
+Manage the F5 License Proxy (FLP) as an optional, independent phase on an
+existing cluster: it deploys the f5-license-proxy chart (vault + postgresql +
+proxy) pulling from the configured registry (Harbor mirror or FAR), and records
+its root CA + service endpoint so a subsequent BNK install can license in FLP
+mode. Runs in its own state (state-flp/), separate from cluster/BNK/testing/gateway.
+
+Commands:
+  roksbnkctl flp up     Install the F5 License Proxy (needs a cluster)
+  roksbnkctl flp down   Remove the F5 License Proxy, leaving the other phases intact
+
+Typical flow (FLP-licensed BNK):
+  roksbnkctl cluster up          # or `cluster register` for an existing cluster
+  roksbnkctl registry replicate  # mirror FAR into your registry (optional)
+  roksbnkctl flp up              # install the proxy
+  roksbnkctl bnk up              # with bnk.license_mode: f5licenseproxy
+
+FLP is opt-in: without it, BNK licenses with a subscription JWT as before.
+
+### `roksbnkctl flp down`
+
+Remove the F5 License Proxy, leaving the other phases
+
+```
+roksbnkctl flp down [flags]
+```
+
+Destroys only the FLP-phase resources (state-flp/), leaving cluster, BNK,
+testing and gateway intact, and clears flp-outputs.json.
+
+Exits 0 ("nothing to do") when there's no FLP state, so it's safe in a
+reverse-order teardown of every phase.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl flp`](#roksbnkctl-flp)
+
+### `roksbnkctl flp output`
+
+Print the FLP phase's own terraform outputs (text or --json; [name] = one raw value)
+
+```
+roksbnkctl flp output [name] [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | `bool` | `false` | output JSON (CI-friendly) |
+| `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl flp`](#roksbnkctl-flp)
+
+### `roksbnkctl flp up`
+
+Install the F5 License Proxy (a cluster must exist)
+
+```
+roksbnkctl flp up [flags]
+```
+
+Deploys the F5 License Proxy into the existing cluster (read from
+cluster-outputs.json) in its own state (state-flp/), and writes flp-outputs.json
+(root CA + endpoint) for a later `bnk up` in f5licenseproxy mode.
+
+Refuses when no cluster exists yet.
+
+With --add-node-port-access the proxy is also reachable from OUTSIDE its own
+cluster, so a BNK install in a DIFFERENT cluster (same VPC, or across a transit
+gateway) can license through it — a "shared licensing cluster", where only the
+cluster running the proxy needs egress to F5. That additionally puts the worker
+node IPs in the proxy's server certificate (without them the remote cluster's
+controller rejects the TLS handshake) and records an external endpoint in
+flp-outputs.json. Feed that endpoint + CA to the other workspace via its
+bnk.flp.external block.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--add-node-port-access` | `bool` | `false` | expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it |
+| `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
+| `--node-port-source-cidr` | `stringSlice` | `[]` | with --add-node-port-access: open the NodePort on the worker security group to this CIDR. REPEATABLE — a multi-zone VPC has one address prefix PER ZONE, and a consuming pod scheduled in an unlisted zone is silently dropped. Pass every zone's CIDR (or a supernet covering them). |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl flp`](#roksbnkctl-flp)
+
 ## `roksbnkctl gateway`
 
 Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup
@@ -915,6 +1047,39 @@ pulls the latest GitHub release tarball over the network.
 |---|---|---|---|
 | `--dir` | `string` | — | destination directory (default: ~/.local/bin or /usr/local/bin) |
 | `--force` | `bool` | `false` | overwrite even if destination resolves to the running binary |
+
+## `roksbnkctl journal`
+
+Append-only timeline + report for agentic-mode handoffs
+
+Manage the workspace journal (`<workspace>`/journal/), the append-only
+timeline the agentic-mode personas use to hand off to one another.
+
+  roksbnkctl journal add "`<note>`"   Append a note to today's journal
+  roksbnkctl journal list           List entries chronologically with summaries
+  roksbnkctl journal report         Assemble report.md from decisions + journal
+
+### `roksbnkctl journal add`
+
+Append a note to today's journal entry
+
+```
+roksbnkctl journal add <message>
+```
+
+← back to [`roksbnkctl journal`](#roksbnkctl-journal)
+
+### `roksbnkctl journal list`
+
+List journal entries (chronological) with one-line summaries
+
+← back to [`roksbnkctl journal`](#roksbnkctl-journal)
+
+### `roksbnkctl journal report`
+
+Assemble report.md from decisions.md + the journal timeline
+
+← back to [`roksbnkctl journal`](#roksbnkctl-journal)
 
 ## `roksbnkctl k`
 
@@ -1180,8 +1345,6 @@ roksbnkctl kubeconfig [flags]
 | `--export` | `bool` | `false` | print kubeconfig contents instead of path |
 | `--refresh` | `bool` | `false` | force-refresh the forge kubeconfig now (re-fetch the admin client certs) |
 
-By default `kubeconfig` (and the `kubectl` / `oc` / `shell` passthroughs) prefer the **cert-based forge kubeconfig** at `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`, which `cluster up` writes alongside the admin config. It carries the cluster's admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and **rejects raw IBM IAM bearer tokens (401)**, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it's a no-op local check. `--refresh` forces the re-fetch now — useful in CI/scripting. If there's no forge kubeconfig (or it can't be refreshed offline), the commands fall back to the admin config at `~/.kube/config`.
-
 ## `roksbnkctl kubectl`
 
 Passthrough to local kubectl with workspace KUBECONFIG loaded
@@ -1298,7 +1461,7 @@ roksbnkctl ops uninstall [flags]
 
 ## `roksbnkctl output`
 
-Print the merged outputs across all phases (cluster + bnk + testing + gateway)
+Print the merged outputs across all phases (cluster + bnk + testing + gateway + flp)
 
 ```
 roksbnkctl output [name] [flags]
@@ -2023,8 +2186,8 @@ roksbnkctl testing down [flags]
 
 Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of `bnk down`:
-each phase tears down independently. Exits 0 ("nothing to do") when there's
-no testing state, so it's safe in a reverse-order teardown of every phase.
+each phase tears down independently. Exits 0 ("nothing to do") when there's no
+testing state, so it's safe in a reverse-order teardown of every phase.
 
 **Flags**
 

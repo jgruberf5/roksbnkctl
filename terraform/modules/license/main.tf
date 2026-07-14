@@ -62,6 +62,8 @@ module "license" {
   utils_namespace              = var.flo_utils_namespace
   f5_cne_subscription_jwt_file = var.f5_cne_subscription_jwt_file
   license_mode                 = var.license_mode
+  flp_license_server_url       = var.flp_license_server_url
+  license_server_root_ca       = var.license_server_root_ca
 
   kube_host              = data.ibm_container_cluster_config.runtime_config.host
   kube_token             = data.ibm_container_cluster_config.runtime_config.token

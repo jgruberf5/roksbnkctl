@@ -78,7 +78,7 @@ func Open(
 	// "Path: ..., to download the config doesn't exist". Doing this
 	// here keeps it idempotent across plan/apply/destroy.
 	kcDir := filepath.Join(stateDir, "kubeconfig")
-	for _, sub := range []string{"cluster", "cert_manager", "cne_instance", "flo", "license", "gateway"} {
+	for _, sub := range []string{"cluster", "cert_manager", "cne_instance", "flo", "license", "gateway", "flp"} {
 		if err := os.MkdirAll(filepath.Join(kcDir, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("creating %s: %w", filepath.Join(kcDir, sub), err)
 		}
@@ -485,6 +485,9 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	}
 	if filepath.Base(w.stateDir) == "state-gateway" {
 		return "gateway"
+	}
+	if filepath.Base(w.stateDir) == "state-flp" {
+		return "flp"
 	}
 	return "trial"
 }

@@ -255,9 +255,22 @@ variable "far_image_repo_url" {
 }
 
 variable "use_registry_mirror" {
-  description = "When true, pull from the in-cluster mirror via RBAC: drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list."
+  description = "Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project."
   type        = bool
   default     = false
+}
+
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "f5_bigip_k8s_manifest_version" {
@@ -376,9 +389,21 @@ variable "cneinstance_network_zones" {
 # ============================================================
 
 variable "license_mode" {
-  description = "License operation mode (connected or disconnected)"
+  description = "License operation mode (connected, disconnected, or f5licenseproxy)"
   type        = string
   default     = "connected"
+}
+
+variable "flp_license_server_url" {
+  description = "Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.<ns>.svc.cluster.local:8443)"
+  type        = string
+  default     = ""
+}
+
+variable "license_server_root_ca" {
+  description = "PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only)"
+  type        = string
+  default     = ""
 }
 
 
@@ -505,6 +530,30 @@ variable "deploy_gateway" {
   default     = false
 }
 
+variable "deploy_flp" {
+  description = "Master toggle for the F5 License Proxy phase. Off in every other phase's override; on only for `flp up`."
+  type        = bool
+  default     = false
+}
+
+variable "flp_namespace" {
+  description = "Namespace the F5 License Proxy is installed into (FLP phase)."
+  type        = string
+  default     = "f5-license-proxy"
+}
+
+variable "flp_chart_version" {
+  description = "Pin for the f5-license-proxy chart version (empty → registry latest)."
+  type        = string
+  default     = ""
+}
+
+variable "flp_storage_class" {
+  description = "Dynamic StorageClass for the FLP's PVCs (FLP phase). Default = ROKS VPC block."
+  type        = string
+  default     = "ibmc-vpc-block-metro-10iops-tier"
+}
+
 variable "gateway_app_namespace" {
   description = "Application namespace the Gateway + HTTPRoute serve (created by the gateway module)"
   type        = string
@@ -545,4 +594,16 @@ variable "gateway_vxlan_port" {
   description = "Egress VXLAN UDP port (also opened on the cluster security group)"
   type        = number
   default     = 6789
+}
+
+variable "flp_node_port_access" {
+  description = "Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it."
+  type        = bool
+  default     = false
+}
+
+variable "flp_node_port_source_cidrs" {
+  description = "With flp_node_port_access: open the proxy's NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped."
+  type        = list(string)
+  default     = []
 }

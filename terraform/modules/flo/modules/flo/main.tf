@@ -20,11 +20,42 @@ locals {
   # controller appends "/images/<name>" itself.)
   image_repository = "${local.far_image_hostname}/images"
 
-  # Mirror mode: RBAC (system:image-puller) handles pulls, so the FAR
-  # dockerconfigjson secret is dropped and the chart/CR imagePullSecrets
-  # collapse to empty lists.
-  image_pull_secrets_flo = var.use_registry_mirror ? [] : [{ name = "far-secret" }]
-  image_pull_secrets_cis = var.use_registry_mirror ? [] : ["far-secret"]
+  # Which dockerconfig secret the pods pull with.
+  #
+  #   off the mirror  → far-secret (the FAR credential)
+  #   ICR / in-cluster mirror → none; RBAC (system:image-puller) authorizes the pull
+  #   EXTERNAL mirror with credentials → mirror-secret, built from them
+  #
+  # That last case is the one that was missing. Dropping the pull secret for ANY
+  # mirror assumed the mirror authorizes by RBAC — true for the in-cluster registry,
+  # false for a private Harbor/Artifactory, whose pods then pull anonymously and get
+  # 401/ImagePullBackOff. The only way that ever "worked" was to make the mirror
+  # project world-readable, which for a registry holding F5's proprietary images is
+  # not an acceptable requirement.
+  mirror_pull_secret_name = "mirror-secret"
+  image_pull_secrets_flo = (
+    local.has_mirror_creds ? [{ name = local.mirror_pull_secret_name }] :
+    var.use_registry_mirror ? [] : [{ name = "far-secret" }]
+  )
+  image_pull_secrets_cis = (
+    local.has_mirror_creds ? [local.mirror_pull_secret_name] :
+    var.use_registry_mirror ? [] : ["far-secret"]
+  )
+
+  # dockerconfigjson for the external mirror. The auth key is the bare registry host
+  # — kubelet matches image refs by host prefix — so strip any repo-prefix path the
+  # image host carries (e.g. harbor.example.com/bnk-mirror).
+  mirror_registry_host = split("/", local.far_image_hostname)[0]
+  mirror_docker_config_json = replace(
+    jsonencode({
+      auths = {
+        (local.mirror_registry_host) = {
+          auth = base64encode("${var.registry_mirror_username}:${var.registry_mirror_password}")
+        }
+      }
+    }),
+    ":", ": "
+  )
 
   # far-secret is provisioned only off the mirror path. In mirror mode the
   # secret is dropped (RBAC handles pulls), so the count gates collapse to 0.
@@ -471,7 +502,12 @@ resource "null_resource" "extract_flo_version" {
       fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${local.far_chart_hostname}
+      # The f5-bigip-k8s-manifest chart is mirrored like any other chart (it is a BOM
+      # artifact — see bnkbom.ManifestChartName), so pull it from the same chart host
+      # as everything else: FAR off the mirror, the mirror under it. That keeps a
+      # mirrored install fully disconnected — nothing reaches repo.f5.com after
+      # replication. Its FLO/CIS versions feed the CNEManifest CR applied below.
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
       $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
       FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
@@ -818,9 +854,9 @@ resource "null_resource" "f5_lifecycle_operator" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       FLO_VERSION=$(cat ${var.manifest_download_dir}/flo-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.flo_helm_values))}" | base64 -d > /tmp/flo-helm-values.json
       $HELM_BIN upgrade --install flo \
         oci://${local.far_chart_hostname}/charts/f5-lifecycle-operator \
@@ -896,9 +932,9 @@ resource "null_resource" "f5_bnk_cis" {
         HELM_BIN="$HELM_TMP/linux-amd64/helm"
       fi
       CIS_VERSION=$(cat ${var.manifest_download_dir}/cis-version.txt | tr -d '[:space:]')
-      echo "${local.far_service_account_b64}" | $HELM_BIN registry login \
-        -u _json_key_base64 --password-stdin \
-        ${local.far_chart_hostname}
+      echo "${local.chart_pull_password}" | $HELM_BIN registry login \
+        -u "${local.chart_pull_username}" --password-stdin \
+        ${local.chart_login_host}
       printf '%s' "${base64encode(jsonencode(local.cis_helm_values))}" | base64 -d > /tmp/cis-helm-values.json
       $HELM_BIN upgrade --install f5-bnk-cis \
         oci://${local.far_chart_hostname}/charts/f5-bnk-cis \
@@ -1313,7 +1349,7 @@ locals {
       ttlSecondsAfterFinished = var.node_labeler_job_ttl_seconds
       template = {
         metadata = { name = "node-labeler" }
-        spec = {
+        spec = merge({
           serviceAccountName = "node-labeler"
           restartPolicy      = "Never"
           containers = [{
@@ -1321,7 +1357,12 @@ locals {
             image   = local.node_labeler_image
             command = ["/bin/sh", "-c", "kubectl label nodes --all app=f5-tmm --overwrite && echo All nodes labeled successfully"]
           }]
-        }
+          # In mirror mode this image comes from the mirror too, so a PRIVATE external
+          # mirror needs the pull secret here as well — kube-system, not the FLO
+          # namespace. Absent off the mirror path (the image is public then).
+          }, local.has_mirror_creds ? {
+          imagePullSecrets = [{ name = local.mirror_pull_secret_name }]
+        } : {})
       }
     }
   }
@@ -1367,6 +1408,48 @@ resource "kubernetes_secret_v1" "far_secret_utils" {
   type = "kubernetes.io/dockerconfigjson"
   data = {
     ".dockerconfigjson" = local.far_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.f5_utils]
+}
+
+# Pull secret for an EXTERNAL registry mirror (a private Harbor/Artifactory), in the
+# same two namespaces far-secret covers. Without it the pods pull anonymously and get
+# ImagePullBackOff — and the only workaround was to make the mirror world-readable,
+# which is not something to ask of a registry holding F5's proprietary images.
+resource "kubernetes_secret_v1" "mirror_secret_flo" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = var.flo_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+  depends_on = [kubernetes_namespace_v1.flo]
+}
+
+resource "kubernetes_secret_v1" "mirror_secret_kube_system" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = "kube-system"
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
+  }
+}
+
+resource "kubernetes_secret_v1" "mirror_secret_utils" {
+  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  metadata {
+    name      = local.mirror_pull_secret_name
+    namespace = var.utils_namespace
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = local.mirror_docker_config_json
   }
   depends_on = [kubernetes_namespace_v1.f5_utils]
 }
@@ -1468,14 +1551,26 @@ locals {
   #     rejected with "unable to validate token").
   is_icr_mirror = var.use_registry_mirror && can(regex("(^|[.])icr[.]io(/|$)", local.far_chart_hostname))
 
+  # An EXTERNAL mirror (e.g. Harbor) authenticates chart pulls with its own
+  # basic-auth credentials — not the kube token (in-cluster OpenShift registry) or
+  # an IAM key (ICR). Signalled by registry_mirror_password being set.
+  has_mirror_creds = var.use_registry_mirror && !local.is_icr_mirror && var.registry_mirror_password != ""
+
   chart_pull_username = (
     !var.use_registry_mirror ? "_json_key_base64" :
-    local.is_icr_mirror ? "iamapikey" : "unused"
+    local.is_icr_mirror ? "iamapikey" :
+    local.has_mirror_creds ? var.registry_mirror_username : "unused"
   )
   chart_pull_password = (
     !var.use_registry_mirror ? local.far_service_account_b64 :
-    local.is_icr_mirror ? var.ibmcloud_api_key : var.kube_token
+    local.is_icr_mirror ? var.ibmcloud_api_key :
+    local.has_mirror_creds ? var.registry_mirror_password : var.kube_token
   )
+
+  # `helm registry login` takes a bare registry HOST; far_chart_hostname carries a
+  # repo-prefix path for a mirror (e.g. host/bnk-mirror), so strip it — the
+  # credential must be stored under the host the subsequent `helm pull` resolves.
+  chart_login_host = split("/", local.far_chart_hostname)[0]
 }
 
 resource "helm_release" "flo" {
@@ -1511,6 +1606,114 @@ resource "helm_release" "flo" {
     kubectl_manifest.ca_cluster_issuer,
     data.external.versions,
   ]
+}
+
+# ── CNEManifest CR — the disconnected FLO install ────────────────────────────
+# FLO resolves the BNK manifest by LISTING cluster-scoped CNEManifest CRs and
+# matching spec.version (GetManifest). Only when none matches does it fall back to
+# pulling the manifest chart from the CNEInstance's spec.registry.uri — i.e. the
+# MIRROR. But f5-bigip-k8s-manifest is the BOM's *source*, not a BOM member, so it
+# is never replicated into a mirror; that fallback therefore 404s on any mirrored
+# install and the CNEInstance never reconciles ("No CNEManifest exists which
+# contains expected manifestVersion").
+#
+# So convert the manifest roksbnkctl already downloaded into a CNEManifest CR and
+# apply it up front. FLO then reads the manifest from the CLUSTER and never reaches
+# out to a registry for it — the install is fully disconnected.
+#
+# The conversion mirrors FLO's own RetrieveRemoteManifest byte-for-byte: strip the
+# "images/" / "charts/" path prefix off each entry (split(name,"/")[1]) and name the
+# CR lower("<productType>-<version>") — productType is BNK.
+# Both install paths (kubectl + legacy curl) build the CR from this, so gate it on
+# the module being enabled at all — not on one path.
+data "local_file" "bnk_manifest" {
+  count      = local.global_enabled ? 1 : 0
+  filename   = "${var.manifest_download_dir}/f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml"
+  depends_on = [null_resource.extract_flo_version]
+}
+
+locals {
+  # The release stanza for the version we are installing.
+  bnk_manifest_release = one([
+    for r in try(yamldecode(data.local_file.bnk_manifest[0].content).releases, []) :
+    r if r.version == var.f5_bigip_k8s_manifest_version
+  ])
+
+  cnemanifest_spec = {
+    version = var.f5_bigip_k8s_manifest_version
+    images = [
+      for i in try(local.bnk_manifest_release.docker_images, []) :
+      { name = split("/", i.name)[1], version = i.version }
+    ]
+    charts = [
+      for c in try(local.bnk_manifest_release.helm_charts, []) :
+      { name = split("/", c.name)[1], version = c.version }
+    ]
+  }
+
+  # Same name FLO would mint for a manifest it fetched itself
+  # (manifestName() = lower(productType + "-" + version), productType BNK), so a CR
+  # left by an earlier FAR-mode apply is OVERWRITTEN rather than duplicated — two
+  # CRs matching one version trips FLO's MultipleMatching guard and stalls the
+  # CNEInstance.
+  cnemanifest_name = lower("BNK-${var.f5_bigip_k8s_manifest_version}")
+
+  cnemanifest_body = {
+    apiVersion = "k8s.f5.com/v1"
+    kind       = "CNEManifest"
+    metadata   = { name = local.cnemanifest_name }
+    spec       = local.cnemanifest_spec
+  }
+}
+
+resource "kubectl_manifest" "cnemanifest" {
+  count             = local.use_kubectl ? 1 : 0
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+
+  yaml_body = yamlencode(local.cnemanifest_body)
+
+  # The CNEManifest CRD ships in the FLO chart's crds subchart.
+  depends_on = [helm_release.flo]
+}
+
+# Legacy-curl parity for the CNEManifest. Same CR, same name, applied by
+# server-side-apply over the REST API — CNEManifest is CLUSTER-scoped, so the path
+# carries no /namespaces/ segment.
+resource "null_resource" "cnemanifest_legacy" {
+  count = local.use_legacy ? 1 : 0
+
+  triggers = {
+    manifest  = jsonencode(local.cnemanifest_body)
+    kube_host = var.kube_host
+    token     = var.kube_token
+    name      = local.cnemanifest_name
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      printf '%s' "${base64encode(jsonencode(local.cnemanifest_body))}" | base64 -d | \
+      curl -f -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        -k "${var.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${local.cnemanifest_name}?fieldManager=terraform&force=true" \
+        --data-binary @-
+    EOT
+  }
+
+  # Tolerate a missing CRD/CR on teardown — the FLO release may already be gone.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.kube_host}/apis/k8s.f5.com/v1/cnemanifests/${self.triggers.name}" || true
+    EOT
+  }
+
+  # The CRD arrives with the FLO operator install (legacy path).
+  depends_on = [null_resource.f5_lifecycle_operator]
 }
 
 resource "helm_release" "cis" {
@@ -1631,7 +1834,7 @@ resource "kubectl_manifest" "node_labeler_job" {
     }
   }
 
-  depends_on = [kubectl_manifest.node_labeler_binding]
+  depends_on = [kubectl_manifest.node_labeler_binding, kubernetes_secret_v1.mirror_secret_kube_system]
 }
 
 # ==============================================================================

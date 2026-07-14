@@ -236,11 +236,13 @@ func runStateMigrate(cmd *cobra.Command, _ []string) error {
 	bnkDir, _ := config.WorkspaceStateDir(cctx.WorkspaceName)
 	testingDir, _ := config.WorkspaceTestingStateDir(cctx.WorkspaceName)
 	gatewayDir, _ := config.WorkspaceGatewayStateDir(cctx.WorkspaceName)
+	flpDir, _ := config.WorkspaceFLPStateDir(cctx.WorkspaceName)
 	phases := []migratePhase{
 		{"cluster", pres.Cluster, clusterDir},
 		{"bnk", pres.BNK, bnkDir},
 		{"testing", pres.Testing, testingDir},
 		{"gateway", pres.Gateway, gatewayDir},
+		{"flp", pres.FLP, flpDir},
 	}
 
 	var migrated, skipped, failed int

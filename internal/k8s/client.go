@@ -163,6 +163,16 @@ func (c *Client) RESTConfig() *rest.Config { return c.config }
 //   - "in-cluster" (InClusterKubeconfigSentinel) → rest.InClusterConfig()
 //   - any other value → that file path on disk
 func BuildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
+	return BuildRESTConfigForContext(kubeconfigPath, "")
+}
+
+// BuildRESTConfigForContext is BuildRESTConfig with an explicit context
+// override. kubeContext == "" keeps the file's current-context (the
+// historical behaviour); a non-empty value pins the context, which is how
+// workspace-scoped callers guarantee they address the workspace's OWN
+// cluster even when the kubeconfig carries several and its current-context
+// selects a different one.
+func BuildRESTConfigForContext(kubeconfigPath, kubeContext string) (*rest.Config, error) {
 	if kubeconfigPath == InClusterKubeconfigSentinel {
 		cfg, err := rest.InClusterConfig()
 		if err != nil {
@@ -176,7 +186,10 @@ func BuildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 	if kubeconfigPath == "" {
 		return nil, errors.New("no kubeconfig found: set $KUBECONFIG or run `roksbnkctl kubeconfig --download`")
 	}
-	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{CurrentContext: kubeContext},
+	).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading kubeconfig %s: %w", kubeconfigPath, err)
 	}
@@ -193,7 +206,13 @@ func BuildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 // Returns the kubernetes.Interface so callers using fake clientsets in
 // tests can substitute drop-in.
 func BuildClientset(kubeconfigPath string) (kubernetes.Interface, error) {
-	cfg, err := BuildRESTConfig(kubeconfigPath)
+	return BuildClientsetForContext(kubeconfigPath, "")
+}
+
+// BuildClientsetForContext is BuildClientset with an explicit context
+// override (see BuildRESTConfigForContext).
+func BuildClientsetForContext(kubeconfigPath, kubeContext string) (kubernetes.Interface, error) {
+	cfg, err := BuildRESTConfigForContext(kubeconfigPath, kubeContext)
 	if err != nil {
 		return nil, err
 	}

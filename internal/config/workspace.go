@@ -225,6 +225,12 @@ const (
 	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
 	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
 	DefaultSubscriptionJWTFile = "trial.jwt"
+	// DefaultLicenseMode is the terraform License CR operationMode default; an
+	// empty bnk.license_mode leaves it unset (terraform defaults to "connected"),
+	// so JWT/connected licensing is unchanged unless FLP is opted into.
+	DefaultLicenseMode = "connected"
+	// DefaultFLPNamespace is where the `flp` phase installs the F5 License Proxy.
+	DefaultFLPNamespace = "f5-license-proxy"
 )
 
 type BNKCfg struct {
@@ -259,6 +265,69 @@ type BNKCfg struct {
 	// CIS (the bigip_* tfvars stay blank). Rendered as bigip_url / bigip_username
 	// / bigip_password.
 	CIS *BNKCISCfg `yaml:"cis,omitempty"`
+
+	// LicenseMode selects the License CR operationMode: "connected" (default when
+	// empty), "disconnected", or "f5licenseproxy". FLP mode additionally requires
+	// the `flp` phase to be up (roksbnkctl flp up) so the BNK install can point at
+	// the in-cluster F5 License Proxy. Empty → terraform default ("connected") →
+	// the JWT/connected path is unchanged. Rendered as license_mode.
+	LicenseMode string `yaml:"license_mode,omitempty"`
+
+	// FLP holds settings for the optional F5 License Proxy phase. nil → FLP is not
+	// deployed (and license_mode must not be f5licenseproxy). The proxy's root CA
+	// and service endpoint are NOT config — they are produced by `flp up` and read
+	// from flp-outputs.json when `bnk up` runs in FLP mode.
+	FLP *BNKFLPCfg `yaml:"flp,omitempty"`
+}
+
+// BNKFLPCfg configures the F5 License Proxy (FLP) phase deployment. All optional;
+// nil block means FLP is off. It never carries secrets — the FLP generates its own
+// certs, and its subscription JWT is the same one resolved from COS.
+type BNKFLPCfg struct {
+	// Namespace the FLP is installed into. Empty → DefaultFLPNamespace.
+	Namespace string `yaml:"namespace,omitempty"`
+	// ChartVersion pins the f5-license-proxy chart. Empty → the terraform default.
+	ChartVersion string `yaml:"chart_version,omitempty"`
+
+	// NodePortAccess exposes the proxy OUTSIDE its own cluster, so a BNK install in
+	// a DIFFERENT cluster (same VPC, or across a transit gateway) can license
+	// through it — the "shared licensing cluster" topology, where only the cluster
+	// running the proxy needs egress to F5.
+	//
+	// Set by `flp up --add-node-port-access` (persisted here, so re-applies are
+	// idempotent and the flag need not be repeated). Turning it on makes the proxy's
+	// server certificate additionally cover the worker node IPs, and records an
+	// externally-reachable endpoint in flp-outputs.json.
+	NodePortAccess bool `yaml:"node_port_access,omitempty"`
+
+	// NodePortSourceCIDRs, when set with NodePortAccess, opens the proxy's NodePort
+	// on the cluster's worker security group to these CIDRs — the consuming cluster's
+	// subnets. Empty leaves the security group alone (you are expected to have a path
+	// already).
+	//
+	// A LIST, because a multi-zone VPC carries one address prefix PER ZONE (e.g.
+	// 10.242.0.0/18, 10.242.64.0/18, 10.242.128.0/18). Allowing only one of them
+	// silently works or fails depending on which zone the consuming pod happens to be
+	// scheduled in — the CWC lands in an unlisted zone and its connection to the proxy
+	// is dropped at the security group with a bare "connection timed out".
+	NodePortSourceCIDRs []string `yaml:"node_port_source_cidrs,omitempty"`
+
+	// External points a workspace at a FOREIGN proxy — one deployed by a DIFFERENT
+	// workspace/cluster. When set, `bnk up` licenses against it and does NOT require
+	// an `flp up` (nor an flp-outputs.json) in this workspace.
+	External *BNKFLPExternalCfg `yaml:"external,omitempty"`
+}
+
+// BNKFLPExternalCfg addresses an F5 License Proxy that this workspace does not own.
+// Both fields come from the owning workspace's `roksbnkctl flp output` — the URL is
+// its externally-reachable endpoint and the CA is its (base64) root CA, which the
+// CWC must trust to complete the TLS handshake to the proxy.
+type BNKFLPExternalCfg struct {
+	// URL of the proxy, e.g. https://10.240.64.5:30001 — reachable from THIS
+	// cluster's pods. Must be one of the names/IPs in the proxy's certificate.
+	URL string `yaml:"url,omitempty"`
+	// RootCAB64 is the proxy's root CA, base64-encoded (as `flp output` emits it).
+	RootCAB64 string `yaml:"root_ca_b64,omitempty"`
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.

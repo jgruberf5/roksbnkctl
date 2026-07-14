@@ -50,14 +50,20 @@ func runKLogs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.LogsOptions{
-		PodName:      args[0],
-		Namespace:    kLogsNamespace,
-		Container:    kLogsContainer,
-		Follow:       kLogsFollow,
-		Previous:     kLogsPrevious,
-		SinceSeconds: since,
-		TailLines:    kLogsTail,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		PodName:        args[0],
+		Namespace:      kLogsNamespace,
+		Container:      kLogsContainer,
+		Follow:         kLogsFollow,
+		Previous:       kLogsPrevious,
+		SinceSeconds:   since,
+		TailLines:      kLogsTail,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

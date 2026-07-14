@@ -13,7 +13,7 @@ func TestOverrideFromEnv(t *testing.T) {
 		for _, e := range []string{
 			"IBMCLOUD_API_KEY", "ROKSBNKCTL_API_KEY_B64", "ROKSBNKCTL_PREFIX",
 			"ROKSBNKCTL_REGION", "ROKSBNKCTL_RESOURCE_GROUP", "ROKSBNKCTL_TESTING_SSH_KEY_NAME",
-			"ROKSBNKCTL_GENERIC_PASSWORD",
+			"ROKSBNKCTL_GENERIC_PASSWORD", "ROKSBNKCTL_LICENSE_MODE", "ROKSBNKCTL_FLP_NAMESPACE",
 		} {
 			t.Setenv(e, "")
 		}
@@ -70,6 +70,29 @@ func TestOverrideFromEnv(t *testing.T) {
 		want := base64.StdEncoding.EncodeToString([]byte("art-token"))
 		if ws.Registry == nil || ws.Registry.GenericPasswordB64 != want {
 			t.Fatalf("generic_password_b64 not applied: %+v", ws.Registry)
+		}
+	})
+
+	t.Run("license mode f5licenseproxy seeds an flp block", func(t *testing.T) {
+		clearAll(t)
+		t.Setenv("ROKSBNKCTL_LICENSE_MODE", "f5licenseproxy")
+		t.Setenv("ROKSBNKCTL_FLP_NAMESPACE", "flp-ns")
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.BNK.LicenseMode != "f5licenseproxy" {
+			t.Fatalf("license_mode = %q, want f5licenseproxy", ws.BNK.LicenseMode)
+		}
+		if ws.BNK.FLP == nil || ws.BNK.FLP.Namespace != "flp-ns" {
+			t.Fatalf("flp block not seeded: %+v", ws.BNK.FLP)
+		}
+	})
+
+	t.Run("no license-mode env leaves BNK untouched (JWT default)", func(t *testing.T) {
+		clearAll(t)
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.BNK.LicenseMode != "" || ws.BNK.FLP != nil {
+			t.Fatalf("absent env must not touch licensing: mode=%q flp=%+v", ws.BNK.LicenseMode, ws.BNK.FLP)
 		}
 	})
 

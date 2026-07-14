@@ -76,6 +76,8 @@ module "cert_manager" {
   bnk_cr_mode                   = var.bnk_cr_mode
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   kubeconfig_dir                = "${var.kubeconfig_dir}/cert_manager"
+  registry_mirror_username      = var.registry_mirror_username
+  registry_mirror_password      = var.registry_mirror_password
 }
 
 
@@ -105,6 +107,8 @@ module "flo" {
   far_chart_repo_url            = var.far_chart_repo_url
   far_image_repo_url            = var.far_image_repo_url
   use_registry_mirror           = var.use_registry_mirror
+  registry_mirror_username      = var.registry_mirror_username
+  registry_mirror_password      = var.registry_mirror_password
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   use_cos_bucket                = true
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
@@ -171,6 +175,8 @@ module "cne_instance" {
   deploy_bnk                       = var.deploy_bnk
   bnk_cr_mode                      = var.bnk_cr_mode
   kubeconfig_dir                   = "${var.kubeconfig_dir}/cne_instance"
+  registry_mirror_username         = var.registry_mirror_username
+  registry_mirror_password         = var.registry_mirror_password
 }
 
 
@@ -192,6 +198,8 @@ module "license" {
   flo_utils_namespace           = var.flo_utils_namespace
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   license_mode                  = var.license_mode
+  flp_license_server_url        = var.flp_license_server_url
+  license_server_root_ca        = var.license_server_root_ca
   create_roks_cluster           = var.create_roks_cluster
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cneinstance_dependency_id     = module.cne_instance.cneinstance_ready_id
@@ -258,4 +266,42 @@ module "gateway" {
   gateway_client_subnet_local  = var.gateway_client_subnet_local
   gateway_client_subnet_remote = var.gateway_client_subnet_remote
   gateway_vxlan_port           = var.gateway_vxlan_port
+}
+
+# F5 License Proxy — optional, deployed only by `roksbnkctl flp up` (deploy_flp).
+# A no-op in every other phase (its override forces deploy_flp=false). Reuses the
+# BNK install's registry/mirror + COS contract so it pulls from Harbor or FAR.
+module "flp" {
+  source = "./modules/flp"
+
+  deploy_flp                 = var.deploy_flp
+  create_roks_cluster        = var.create_roks_cluster
+  roks_cluster_name_or_id    = module.roks_cluster.roks_cluster_name
+  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
+  kubeconfig_dir             = "${var.kubeconfig_dir}/flp"
+
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+
+  ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
+  ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
+  ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  f5_cne_far_auth_file          = var.f5_cne_far_auth_file
+  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  scratch_dir                   = var.scratch_dir
+
+  far_repo_url             = var.far_repo_url
+  far_chart_repo_url       = var.far_chart_repo_url
+  far_image_repo_url       = var.far_image_repo_url
+  use_registry_mirror      = var.use_registry_mirror
+  registry_mirror_username = var.registry_mirror_username
+  registry_mirror_password = var.registry_mirror_password
+
+  flp_namespace                 = var.flp_namespace
+  flp_chart_version             = var.flp_chart_version
+  f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
+  flp_storage_class             = var.flp_storage_class
+  flp_node_port_access          = var.flp_node_port_access
+  flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
 }

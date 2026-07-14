@@ -65,9 +65,22 @@ variable "far_image_repo_url" {
 }
 
 variable "use_registry_mirror" {
-  description = "When true, drop the FAR dockerconfigjson secret and render imagePullSecrets as an empty list (RBAC handles pulls)."
+  description = "Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project."
   type        = bool
   default     = false
+}
+
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "f5_bigip_k8s_manifest_version" {

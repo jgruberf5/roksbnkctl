@@ -1,0 +1,9 @@
+demo.env
+vsi-state.env
+vsi-state.env.tmp
+out/
+voices/
+vsi_key
+vsi_key.pub
+roksbnkctl.bin
+demo_exit

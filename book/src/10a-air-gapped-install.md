@@ -34,7 +34,10 @@ release — the same manifest `roksbnkctl` reads for version discovery. It
 enumerates every F5 chart and image (for BNK 2.3, that's 25 charts + 56 images),
 tag-pinned. `roksbnkctl` unions in the two dependencies the F5 manifest does not
 cover — **cert-manager** (the Jetstack chart + its quay.io images) and the
-**`bitnami/kubectl`** node-labeler image — so the mirror is complete:
+**`bitnami/kubectl`** node-labeler image — plus **the manifest chart itself**
+(`release/f5-bigip-k8s-manifest`), because the install needs to read it and a
+mirror that lacked it would send every install back to `repo.f5.com`. So the
+mirror is complete:
 
 ```console
 $ roksbnkctl registry bom
@@ -78,9 +81,53 @@ The target's own pull credential is wired in for you:
 
 - **ICR** — the cluster authenticates to `*.icr.io` with `iamapikey` + the
   workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.
-- **Generic OCI** — the cluster pulls with the basic-auth credential you set
-  (`registry target generic_username` / `generic_password`), or anonymously for a
-  read-open registry.
+- **Generic OCI** — chart and image pulls authenticate with the same basic-auth
+  credential replication used (`registry target generic_username` /
+  `generic_password`), so a private registry needs no anonymous/public project.
+  Concretely: chart pulls `helm registry login` with it, and the pods get a
+  `mirror-secret` dockerconfig built from it, created in **every namespace that pulls
+  images** — cert-manager, the FLO/BNK namespaces, and `kube-system` for the
+  node-labeler — and referenced from the CNEInstance. You do not create any of it.
+
+  This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
+  by RBAC and gets **no** pull secret; an external one (Harbor, Artifactory) gets
+  `mirror-secret`. Dropping the pull secret for *every* mirror is what used to force
+  people to make their Harbor project world-readable — for a registry holding F5's
+  proprietary images, not an acceptable requirement.
+
+### Why the install never phones home
+
+Two things have to be true for a mirrored install to be genuinely disconnected,
+and `roksbnkctl` handles both:
+
+1. **The manifest is mirrored.** `f5-bigip-k8s-manifest` is the BOM's own source,
+   so it is easy to overlook — but the install reads it to derive the FLO and CIS
+   chart versions. It is a normal OCI chart, so it is replicated like any other
+   artifact and pulled from the mirror.
+2. **FLO reads the manifest from the cluster, not a registry.** The F5 Lifecycle
+   Operator resolves the BNK manifest by listing cluster-scoped **`CNEManifest`**
+   CRs and matching `spec.version`; only when none matches does it fall back to
+   pulling the manifest chart from the CNEInstance's `spec.registry.uri`.
+   `roksbnkctl` converts the manifest into a `CNEManifest` CR and applies it before
+   the CNEInstance, so FLO finds it in the cluster and **never fetches a manifest at
+   all**. (Without the CR, that fallback is what breaks a mirrored install: FLO
+   reports *"No CNEManifest exists which contains expected manifestVersion"* and the
+   CNEInstance never reconciles.)
+
+### One mirror, many clusters
+
+Nothing ties a mirror to a single cluster. `registry replicate` is a supply-chain
+step, not a cluster step — the record it writes (`registry-mirror.json`) just tells
+the install where to pull from. So several workspaces can point at the **same**
+registry: replicate once, then every cluster installs from it. A second workspace
+targeting an already-populated mirror copies nothing (every artifact is present and
+digest-matched) and simply records the redirect.
+
+That pairs naturally with a [shared licensing
+cluster](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster): one cluster
+holds the F5 License Proxy and reaches F5, one registry holds the artifacts, and any
+number of air-gapped clusters install from the registry and license through the
+proxy — reaching neither `repo.f5.com` nor F5's licensing service themselves.
 
 The per-target host, namespace/repository, and credential specifics — including
 the ICR namespace and a full Artifactory walkthrough — are in

@@ -83,13 +83,19 @@ func runKExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.ExecOptions{
-		PodName:   pod,
-		Namespace: kExecNamespace,
-		Container: kExecContainer,
-		Stdin:     kExecStdin,
-		TTY:       kExecTTY,
-		Command:   command,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		PodName:        pod,
+		Namespace:      kExecNamespace,
+		Container:      kExecContainer,
+		Stdin:          kExecStdin,
+		TTY:            kExecTTY,
+		Command:        command,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

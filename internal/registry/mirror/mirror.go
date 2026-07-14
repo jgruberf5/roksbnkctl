@@ -113,10 +113,63 @@ func (e *Engine) craneOpts(ctx context.Context) []crane.Option {
 	return opts
 }
 
+// PreflightAuth checks the target credential ONCE, before any copying starts.
+//
+// isTransient treats 401 as retryable, because Harbor's token service really does
+// intermittently 401 a single repository in an otherwise-healthy run. But that
+// makes a genuinely WRONG credential retryable too: every artifact in the BOM
+// would 401, be retried copyMaxAttempts times with a backoff, and the command
+// would grind for minutes before reporting a wall of failures — instead of saying
+// "your mirror password is wrong" in one second.
+//
+// A HEAD against a destination ref distinguishes the two cleanly: a VALID
+// credential answers 404/403 for an artifact that is not there yet, while an
+// INVALID one answers 401. So a 401 here means the credential itself is bad.
+// Nothing is pushed.
+//
+// Returns nil when the BOM is empty or the target is reachable+authorized.
+func (e *Engine) PreflightAuth(ctx context.Context, bom *bnkbom.BOM) error {
+	if bom == nil || len(bom.Artifacts) == 0 {
+		return nil
+	}
+	// Probe with a real destination ref so the auth scope matches the pushes.
+	probe := e.Target.PushRef(bom.Artifacts[0])
+	_, err := crane.Head(sanitizeRef(probe), e.craneOpts(ctx)...)
+	if err == nil {
+		return nil // already present + authorized
+	}
+	if isAuthRejection(err) {
+		return fmt.Errorf("the mirror rejected the credential for %s: %w\n"+
+			"  check `roksbnkctl registry target` — set the password with "+
+			"`registry target generic_password --password-stdin`", e.Target.PushHost(), err)
+	}
+	// 404 / "not found" / anything else: the credential worked (or the failure is
+	// not an auth failure). Let the copy path handle it with its own retries.
+	return nil
+}
+
+// isAuthRejection reports whether err is the registry refusing the credential, as
+// opposed to the artifact simply not being there yet.
+func isAuthRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, sig := range []string{
+		"status code 401", "401 Unauthorized", "UNAUTHORIZED", "unauthorized",
+		"authentication required", "incorrect username or password",
+	} {
+		if strings.Contains(s, sig) {
+			return true
+		}
+	}
+	return false
+}
+
 // Replicate copies every BOM artifact into the target, bounded by Concurrency,
 // and returns one Result per artifact (in BOM order). It never returns an error
 // itself; per-artifact failures are carried in Result.Err so a partial run is
-// fully reported.
+// fully reported. Call PreflightAuth first to fail fast on a bad credential.
 func (e *Engine) Replicate(ctx context.Context, bom *bnkbom.BOM) []Result {
 	results := make([]Result, len(bom.Artifacts))
 	sem := make(chan struct{}, e.concurrency())
@@ -162,8 +215,9 @@ func (e *Engine) copyOCI(ctx context.Context, a bnkbom.Artifact) Result {
 	if dstDigest, err := crane.Digest(dst, opts...); err == nil && dstDigest == srcDigest {
 		return Result{Artifact: a, Digest: srcDigest, Skipped: true}
 	}
-	// The OpenShift internal registry intermittently 500s under concurrent
-	// pushes; retry transient failures with a linear backoff.
+	// Registries intermittently fail under concurrent pushes (OpenShift 5xx,
+	// Harbor 401 from its token service); retry transient failures with a linear
+	// backoff.
 	var copyErr error
 	for attempt := 1; attempt <= copyMaxAttempts; attempt++ {
 		if copyErr = crane.Copy(src, dst, opts...); copyErr == nil {
@@ -188,7 +242,8 @@ const copyMaxAttempts = 4
 func sanitizeRef(ref string) string { return strings.ReplaceAll(ref, "+", "_") }
 
 // isTransient reports whether a copy error is worth retrying — the OpenShift
-// registry returns intermittent 5xx under concurrent pushes.
+// registry returns intermittent 5xx under concurrent pushes, and Harbor's token
+// service intermittently 401s one repository in an otherwise-succeeding run.
 func isTransient(err error) bool {
 	if err == nil {
 		return false
@@ -199,6 +254,11 @@ func isTransient(err error) bool {
 		"status code 503", "status code 504", "TOOMANYREQUESTS", "toomanyrequests",
 		"connection reset", "unexpected EOF", "i/o timeout",
 		"unexpected end of JSON input", "end of JSON input", "EOF",
+		// Harbor's token service intermittently 401s a single repository under
+		// concurrent pushes, while every other artifact in the same run succeeds
+		// on the same credential. A genuinely bad credential still fails: it just
+		// exhausts copyMaxAttempts first.
+		"status code 401", "401 Unauthorized",
 	} {
 		if strings.Contains(s, p) {
 			return true

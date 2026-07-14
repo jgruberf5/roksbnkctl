@@ -59,7 +59,7 @@ variable "far_image_repo_url" {
 }
 
 variable "use_registry_mirror" {
-  description = "When true, render the CNEInstance with imagePullSecrets: [] (RBAC handles pulls)."
+  description = "Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a `mirror-secret` dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project."
   type        = bool
   default     = false
 }
@@ -182,4 +182,16 @@ variable "kubeconfig_dir" {
   description = "Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch."
   type        = string
   default     = "/work/.bnk/scratch/kubeconfig/cne_instance"
+}
+variable "registry_mirror_username" {
+  description = "Basic-auth username for an external registry mirror (private Harbor/Artifactory)."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror_password" {
+  description = "Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously."
+  type        = string
+  sensitive   = true
+  default     = ""
 }

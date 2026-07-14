@@ -50,10 +50,16 @@ func init() {
 }
 
 func runKApply(cmd *cobra.Command, _ []string) error {
+	tgt, err := workspaceKubeTarget()
+	if err != nil {
+		return err
+	}
 	opts := &k8s.ApplyOptions{
-		Filename:  kApplyFilename,
-		Namespace: kApplyNamespace,
-		Force:     kApplyForce,
+		KubeconfigPath: tgt.Path,
+		KubeContext:    tgt.Context,
+		Filename:       kApplyFilename,
+		Namespace:      kApplyNamespace,
+		Force:          kApplyForce,
 		IOStreams: genericiooptions.IOStreams{
 			In:     os.Stdin,
 			Out:    os.Stdout,

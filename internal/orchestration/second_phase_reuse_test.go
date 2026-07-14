@@ -481,6 +481,44 @@ func TestWriteBnkPhaseOverride_Sprint28ByteUnchanged(t *testing.T) {
 // TestWriteGatewayPhaseOverride_ForcedBlock asserts the gateway-phase override
 // forces every OTHER phase's creation off and deploy_gateway on, reusing the
 // cluster VPC from cluster-outputs.json.
+func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterID: "crt-cluster-id",
+		VPCID:     "r038-ef6305af-vpc",
+		Source:    "cluster-up",
+	}
+	p, err := writeFLPPhaseOverrideAt(dir, co)
+	if err != nil {
+		t.Fatalf("writeFLPPhaseOverrideAt: %v", err)
+	}
+	if filepath.Base(p) != flpPhaseOverrideFile {
+		t.Fatalf("override path %q must end in %q", p, flpPhaseOverrideFile)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+	// FLP phase forces every OTHER phase off (incl. deploy_gateway) and deploy_flp on.
+	for _, want := range []string{
+		"create_roks_cluster = false\n",
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n",
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n",
+		"deploy_bnk = false\n",
+		"deploy_cert_manager = false\n",
+		"testing_create_tgw_jumphost = false\n",
+		"testing_create_cluster_jumphosts = false\n",
+		"testing_create_client_vpc = false\n",
+		"deploy_gateway = false\n",
+		"deploy_flp = true\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("flp override missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}
+
 func TestWriteGatewayPhaseOverride_ForcedBlock(t *testing.T) {
 	dir := t.TempDir()
 	co := &config.ClusterOutputs{

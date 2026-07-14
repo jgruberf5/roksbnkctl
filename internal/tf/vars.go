@@ -154,7 +154,9 @@ func renderSparseBody(w io.Writer, ws *config.Workspace, mirror *config.Registry
 		}
 	}
 
-	renderBNKFields(w, ws, mirror)
+	if err := renderBNKFields(w, ws, mirror); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -280,7 +282,9 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "testing_cluster_jumphost_name_prefix = %q\n", plan.ClusterJumphostPrefix)
 	}
 
-	renderBNKFields(w, ws, mirror)
+	if err := renderBNKFields(w, ws, mirror); err != nil {
+		return err
+	}
 	renderGatewayFields(w, ws)
 	return nil
 }
@@ -326,7 +330,7 @@ func hclStringList(items []string) string {
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
 // Each is emitted only when set in config.yaml, so neither render path
 // duplicates a variable.
-func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
+func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -346,6 +350,28 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		fmt.Fprintf(w, "far_chart_repo_url = %q\n", mirror.ChartHost)
 		fmt.Fprintf(w, "far_image_repo_url = %q\n", mirror.ImageHost)
 		fmt.Fprintln(w, "use_registry_mirror = true")
+
+		// An external "generic" mirror (e.g. Harbor) is neither ICR nor the
+		// in-cluster OpenShift registry, so chart+image pulls must authenticate
+		// with its own basic-auth credentials (the same ones `registry replicate`
+		// used). Emit them so the FLO/FLP modules log in to the mirror instead of
+		// presenting the kube token. Absent for icr/in-cluster mirrors, which keep
+		// their IAM-key / kube-token auth.
+		if mirror.Target == "generic" && ws.Registry != nil && ws.Registry.GenericPasswordB64 != "" {
+			// Fail loudly. Swallowing the decode error silently drops BOTH mirror
+			// credential lines while still emitting use_registry_mirror = true, so the
+			// modules fall back to the kube token and the run dies mid-apply with an
+			// opaque 401 from `helm registry login` — with nothing anywhere saying the
+			// mirror password never made it through.
+			raw, derr := base64.StdEncoding.DecodeString(ws.Registry.GenericPasswordB64)
+			if derr != nil {
+				return fmt.Errorf("registry.generic_password_b64 is not valid base64 (%w) — "+
+					"set it with `roksbnkctl registry target generic_password --password-stdin`, "+
+					"which encodes it for you", derr)
+			}
+			fmt.Fprintf(w, "registry_mirror_username = %q\n", ws.Registry.GenericUsername)
+			fmt.Fprintf(w, "registry_mirror_password = %q\n", string(raw))
+		}
 	}
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)
@@ -361,6 +387,34 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	// byte-identical. "legacy_curl" selects the null_resource baseline.
 	if ws.BNK.CRMode != "" {
 		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
+	}
+	// License operation mode. Emitted only when set; empty leaves the terraform
+	// default ("connected"), keeping existing JWT configs byte-identical. The FLP
+	// endpoint + root CA needed for "f5licenseproxy" mode are NOT rendered here —
+	// they come from the flp phase outputs (flp-outputs.json), layered into the
+	// bnk-phase override when `bnk up` runs in FLP mode.
+	if ws.BNK.LicenseMode != "" {
+		fmt.Fprintf(w, "license_mode = %q\n", ws.BNK.LicenseMode)
+	}
+	// F5 License Proxy phase settings. Emitted only when an flp block is present;
+	// deploy_flp itself is forced by the phase override (true for `flp up`, false
+	// everywhere else), so these lines are harmless no-ops in the other phases.
+	if flp := ws.BNK.FLP; flp != nil {
+		if flp.Namespace != "" {
+			fmt.Fprintf(w, "flp_namespace = %q\n", flp.Namespace)
+		}
+		if flp.ChartVersion != "" {
+			fmt.Fprintf(w, "flp_chart_version = %q\n", flp.ChartVersion)
+		}
+		// Expose the proxy outside its own cluster (the shared-licensing-cluster
+		// topology). Emitted only when opted in, so the single-cluster render is
+		// byte-identical.
+		if flp.NodePortAccess {
+			fmt.Fprintln(w, "flp_node_port_access = true")
+		}
+		if len(flp.NodePortSourceCIDRs) > 0 {
+			fmt.Fprintf(w, "flp_node_port_source_cidrs = %s\n", hclStringList(flp.NodePortSourceCIDRs))
+		}
 	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
 	// Emitted only when config.yaml supplies them; absent → the terraform
@@ -383,6 +437,7 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
+	return nil
 }
 
 // renderNetworkZones emits the cneinstance_network_zones HCL list-of-objects

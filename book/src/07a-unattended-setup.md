@@ -106,6 +106,8 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_ZONE<n>_EXT_VLAN_CIDR` … `_INTERNAL_SELFIP` | `bnk.network.zones[n-1]` | per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply) |
 | `ROKSBNKCTL_TESTING_SSH_KEY_NAME` | `resources.testing_ssh_key_name` | verbatim |
 | `ROKSBNKCTL_GENERIC_PASSWORD` | `registry.generic_password_b64` | raw, base64-encoded |
+| `ROKSBNKCTL_LICENSE_MODE` | `bnk.license_mode` | `connected` \| `disconnected` \| `f5licenseproxy` (see [Chapter 10c](./10c-flp-licensing.md)) |
+| `ROKSBNKCTL_FLP_NAMESPACE` | `bnk.flp.namespace` | verbatim (FLP mode only) |
 
 Notes:
 

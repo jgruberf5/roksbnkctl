@@ -16,7 +16,9 @@ const (
 	clusterStateSubdir  = "state-cluster"
 	testingStateSubdir  = "state-testing"
 	gatewayStateSubdir  = "state-gateway"
+	flpStateSubdir      = "state-flp"
 	clusterOutputsFile  = "cluster-outputs.json"
+	flpOutputsFile      = "flp-outputs.json"
 
 	// ROKSBNKCTLHomeEnv overrides the default ~/.roksbnkctl base. Used by tests
 	// (and power users who want non-home-dir state).
@@ -152,6 +154,28 @@ func WorkspaceGatewayStateDir(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, gatewayStateSubdir), nil
+}
+
+// WorkspaceFLPStateDir: ~/.roksbnkctl/<name>/state-flp/ — separate TF state tree
+// for the optional `roksbnkctl flp up/down` phase (the in-cluster F5 License
+// Proxy). Decoupled from cluster/BNK/testing/gateway so the FLP can be (re)applied
+// or torn down independently.
+func WorkspaceFLPStateDir(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, flpStateSubdir), nil
+}
+
+// WorkspaceFLPOutputsPath: ~/.roksbnkctl/<name>/flp-outputs.json — the FLP phase's
+// root CA + service endpoint handoff, read by `bnk up` in f5licenseproxy mode.
+func WorkspaceFLPOutputsPath(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, flpOutputsFile), nil
 }
 
 // WorkspaceClusterOutputsPath: ~/.roksbnkctl/<name>/cluster-outputs.json —

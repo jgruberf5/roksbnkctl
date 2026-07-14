@@ -328,7 +328,7 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	// cluster-outputs.json → extraVF is nil and the run is byte-identical
 	// to the create path (fresh/legacy single-state unchanged) — Issue 2
 	// round 2, symmetric with cluster-phase-override.tfvars.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, false, in.errOut())
 	if err != nil {
 		return false, nil, err
 	}
@@ -419,7 +419,7 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// Second-phase preamble (Issue 2 round 2 — phase handoff). See
 	// RunTrialUp. extraVF is nil (byte-identical to the create path)
 	// when there is no cluster-outputs.json.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, in.errOut())
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, false, in.errOut())
 	if err != nil {
 		return err
 	}
@@ -492,6 +492,14 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	// first. Mirrors the `bnk down` and `cluster down` guards.
 	if pres.Gateway {
 		return errors.New("the Gateway phase has resources — its CRs live in the BNK namespace and would block the BNK teardown. Run `roksbnkctl gateway down` first, then `roksbnkctl down`")
+	}
+	// The FLP is likewise a separate, optional phase the composite does not cover.
+	// Destroying the cluster out from under it would strand state-flp/ pointing at
+	// resources that no longer exist (its helm release + secrets live in the
+	// cluster), so a later `flp down` could never reconcile. Tear it down first —
+	// while the cluster is still up. Mirrors the Gateway guard and `cluster down`.
+	if pres.FLP {
+		return errors.New("the F5 License Proxy phase has resources — the composite `down` does not cover it, and destroying the cluster would orphan its state. Run `roksbnkctl flp down` first, then `roksbnkctl down`")
 	}
 
 	// Compose the confirmation copy from the present phases.
@@ -580,7 +588,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// final var-file is the deterministic fix. On a legacy single-state
 	// workspace (no cluster-outputs.json) this is a no-op, so the behaviour is
 	// unchanged there. Symmetric with RunTestingDown / RunGatewayDown.
-	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, w)
+	extraVF, err := writeAndInitSecondPhase(ctx, tfws, cctx.Workspace, in.Workspace, true, w)
 	if err != nil {
 		return err
 	}
