@@ -397,7 +397,7 @@ jobs:
       - run: roksbnkctl -w ci-app cluster register "$ROKSBNKCTL_CLUSTER_NAME"
       - run: roksbnkctl -w ci-app registry replicate --target generic   # records the mirror
       - run: roksbnkctl -w ci-app bnk up --auto
-      - name: Gate the pipeline on the licence
+      - name: Gate the pipeline on the license
         run: roksbnkctl -w ci-app k get license -n f5-utils
 ```
 
@@ -429,7 +429,7 @@ bnk-license   Active   f5licenseproxy   eval          test          2026-08-13T1
 ```
 
 `Active` + `f5licenseproxy`, in a cluster with no proxy of its own and no route to
-`repo.f5.com`. Fail the job on anything else and the pipeline gates on the licence.
+`repo.f5.com`. Fail the job on anything else and the pipeline gates on the license.
 
 ### What to watch out for
 
