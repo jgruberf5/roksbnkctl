@@ -607,3 +607,9 @@ variable "flp_node_port_source_cidrs" {
   type        = list(string)
   default     = []
 }
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart's post-renderer (`roksbnkctl flp postrender`), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}

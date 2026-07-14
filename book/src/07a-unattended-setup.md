@@ -105,9 +105,21 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |
 | `ROKSBNKCTL_ZONE<n>_EXT_VLAN_CIDR` … `_INTERNAL_SELFIP` | `bnk.network.zones[n-1]` | per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply) |
 | `ROKSBNKCTL_TESTING_SSH_KEY_NAME` | `resources.testing_ssh_key_name` | verbatim |
+| `ROKSBNKCTL_REGISTRY_TARGET` | `registry.target` | `icr` \| `generic` |
+| `ROKSBNKCTL_GENERIC_HOST` | `registry.generic_host` | verbatim, e.g. `harbor.example.com` |
+| `ROKSBNKCTL_GENERIC_REPO_PREFIX` | `registry.generic_repo_prefix` | verbatim — a Harbor project, an Artifactory repo key |
+| `ROKSBNKCTL_GENERIC_USERNAME` | `registry.generic_username` | verbatim |
 | `ROKSBNKCTL_GENERIC_PASSWORD` | `registry.generic_password_b64` | raw, base64-encoded |
 | `ROKSBNKCTL_LICENSE_MODE` | `bnk.license_mode` | `connected` \| `disconnected` \| `f5licenseproxy` (see [Chapter 10c](./10c-flp-licensing.md)) |
 | `ROKSBNKCTL_FLP_NAMESPACE` | `bnk.flp.namespace` | verbatim (FLP mode only) |
+| `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` | verbatim — license against a proxy in **another** cluster |
+| `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` | **verbatim; already base64** — re-encoding it hands the CWC a corrupt CA |
+
+The last six are what turn a CI pipeline into a workspace with no `config.yaml` to
+template. The registry four say *where* the mirror is; the FLP two are the **cross-job
+handoff** — the job that owns the proxy prints them with `flp output
+flp_external_endpoint` / `flp_root_ca`, and the job that installs BNK receives them as
+ordinary job outputs. See [Flow C in CI](./10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).
 
 Notes:
 

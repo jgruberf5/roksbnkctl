@@ -40,6 +40,10 @@ REC_ROWS="${REC_ROWS:-50}"
 #   flp-licensed-demo.sh     demo #4 — a shared licensing cluster: the F5 License
 #                            Proxy in one cluster licenses BNK in another, which
 #                            installs entirely from a private registry
+#   ci-flp-demo.sh           demo #5 — demo #4 as a CI PIPELINE: every step is a
+#                            docker run of the tools-runner image, the workspace
+#                            comes from env vars, and the proxy handoff between the
+#                            two jobs is two of them. Nothing installed on the host.
 SCREENPLAY="${SCREENPLAY:-cli-demo.sh}"
 POLL_SECS="${POLL_SECS:-30}"
 MAX_WAIT_SECS="${MAX_WAIT_SECS:-14400}"   # 4h ceiling

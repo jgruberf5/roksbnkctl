@@ -35,9 +35,20 @@ import (
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
+//	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
+//	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
+//	ROKSBNKCTL_GENERIC_REPO_PREFIX  → registry.generic_repo_prefix
+//	ROKSBNKCTL_GENERIC_USERNAME     → registry.generic_username
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
+//	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
+//	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
+//
+// The last two are the cross-job handoff: the CI job that owns the proxy emits
+// them with `flp output flp_external_endpoint` / `flp_root_ca`, and the job that
+// installs BNK consumes them as ordinary pipeline variables — no config file has
+// to be templated to carry two values between jobs.
 //
 // ROKSBNKCTL_API_KEY_B64 takes precedence over IBMCLOUD_API_KEY when both are
 // set (an explicit pre-encoded value beats the raw-key convenience path).
@@ -133,13 +144,31 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "resources.testing_ssh_key_name (ROKSBNKCTL_TESTING_SSH_KEY_NAME)")
 	}
 
+	// The registry mirror. A CI job needs to name its registry without a config
+	// file: these four plus ROKSBNKCTL_GENERIC_PASSWORD are the whole surface for
+	// `registry replicate --target generic` and the install that pulls back out of
+	// it. Setting only the password (the pre-v1.19 surface) meant a pipeline still
+	// had to shell out to four `registry target` subcommands to say WHERE.
+	if v := envValue("ROKSBNKCTL_REGISTRY_TARGET"); v != "" {
+		registryCfg(ws).Target = v
+		applied = append(applied, "registry.target (ROKSBNKCTL_REGISTRY_TARGET)")
+	}
+	if v := envValue("ROKSBNKCTL_GENERIC_HOST"); v != "" {
+		registryCfg(ws).GenericHost = v
+		applied = append(applied, "registry.generic_host (ROKSBNKCTL_GENERIC_HOST)")
+	}
+	if v := envValue("ROKSBNKCTL_GENERIC_REPO_PREFIX"); v != "" {
+		registryCfg(ws).GenericRepoPrefix = v
+		applied = append(applied, "registry.generic_repo_prefix (ROKSBNKCTL_GENERIC_REPO_PREFIX)")
+	}
+	if v := envValue("ROKSBNKCTL_GENERIC_USERNAME"); v != "" {
+		registryCfg(ws).GenericUsername = v
+		applied = append(applied, "registry.generic_username (ROKSBNKCTL_GENERIC_USERNAME)")
+	}
 	// Generic OCI registry password (e.g. an Artifactory access token) — raw in
 	// the env, base64-encoded into the config like the API key.
 	if v := envValue("ROKSBNKCTL_GENERIC_PASSWORD"); v != "" {
-		if ws.Registry == nil {
-			ws.Registry = &RegistryCfg{}
-		}
-		ws.Registry.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
+		registryCfg(ws).GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "registry.generic_password_b64 (ROKSBNKCTL_GENERIC_PASSWORD)")
 	}
 
@@ -161,7 +190,46 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "bnk.flp.namespace (ROKSBNKCTL_FLP_NAMESPACE)")
 	}
 
+	// The foreign-proxy handoff (the "shared licensing cluster" topology). These
+	// two are what one CI job hands the NEXT one: the job that owns the proxy
+	// emits `flp output flp_external_endpoint` + `flp_root_ca`, and the job that
+	// installs BNK receives them as ordinary pipeline variables. Without an env
+	// surface a pipeline would have to template a config.yaml just to pass two
+	// values between jobs.
+	if v := envValue("ROKSBNKCTL_FLP_EXTERNAL_URL"); v != "" {
+		flpExternal(ws).URL = v
+		applied = append(applied, "bnk.flp.external.url (ROKSBNKCTL_FLP_EXTERNAL_URL)")
+	}
+	// Already base64 (that is how `flp output flp_root_ca` emits it), so it is
+	// stored verbatim — unlike the raw-secret vars above, which get encoded here.
+	if v := envValue("ROKSBNKCTL_FLP_ROOT_CA_B64"); v != "" {
+		flpExternal(ws).RootCAB64 = v
+		applied = append(applied, "bnk.flp.external.root_ca_b64 (ROKSBNKCTL_FLP_ROOT_CA_B64)")
+	}
+
 	return applied
+}
+
+// registryCfg returns ws.Registry, creating it when the config never had a
+// registry block — the normal CI case, where the whole target comes from env.
+func registryCfg(ws *Workspace) *RegistryCfg {
+	if ws.Registry == nil {
+		ws.Registry = &RegistryCfg{}
+	}
+	return ws.Registry
+}
+
+// flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
+// are pointers, so a config that never mentioned the FLP would otherwise nil-panic
+// the moment CI sets only the handoff vars.
+func flpExternal(ws *Workspace) *BNKFLPExternalCfg {
+	if ws.BNK.FLP == nil {
+		ws.BNK.FLP = &BNKFLPCfg{}
+	}
+	if ws.BNK.FLP.External == nil {
+		ws.BNK.FLP.External = &BNKFLPExternalCfg{}
+	}
+	return ws.BNK.FLP.External
 }
 
 // overrideCISFromEnv overlays the BNK CIS BIG-IP target from

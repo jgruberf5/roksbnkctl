@@ -322,6 +322,115 @@ by hand:
 The result: this cluster talks to your registry and to `https://<node-ip>:30001`. Nothing
 else.
 
+### Flow C in CI — the runner container, no host install
+
+Everything above is a `roksbnkctl` you installed. The same topology runs as a **CI
+pipeline** with nothing installed at all: every step is the
+[tools-runner container](./07b-github-actions-ci.md), and the whole workspace is
+described by environment variables — the natural shape of CI, where the registry
+credential and the proxy handoff are already secrets and job outputs.
+
+Two jobs. **The first owns the proxy** and emits its address and CA; **the second
+installs BNK** into a cluster that reaches nothing but the registry and that proxy.
+
+```yaml
+# .github/workflows/bnk-disconnected.yml
+env:
+  RUNNER: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+
+jobs:
+  licensing-cluster:
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    outputs:
+      flp_url: ${{ steps.flp.outputs.url }}      # ← the handoff
+      flp_ca:  ${{ steps.flp.outputs.ca }}
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-svc
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.SERVICES_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"        # adopt it; do not build it
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+    steps:
+      - run: roksbnkctl -w ci-svc init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-svc cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-svc registry replicate --target generic
+      - run: roksbnkctl -w ci-svc registry verify
+      - name: Deploy the proxy, reachable from the other cluster
+        run: |
+          roksbnkctl -w ci-svc flp up --auto \
+            --add-node-port-access \
+            --node-port-source-cidr "${{ vars.APP_CLUSTER_CIDRS }}"
+      - id: flp
+        run: |
+          echo "url=$(roksbnkctl -w ci-svc flp output flp_external_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "ca=$(roksbnkctl -w ci-svc flp output flp_root_ca)"            >> "$GITHUB_OUTPUT"
+
+  application-cluster:
+    needs: licensing-cluster
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-app
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.APP_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+      # ── license through the proxy in the OTHER cluster ──
+      ROKSBNKCTL_LICENSE_MODE:       f5licenseproxy
+      ROKSBNKCTL_FLP_EXTERNAL_URL:   ${{ needs.licensing-cluster.outputs.flp_url }}
+      ROKSBNKCTL_FLP_ROOT_CA_B64:    ${{ needs.licensing-cluster.outputs.flp_ca }}
+    steps:
+      - run: roksbnkctl -w ci-app init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-app cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-app registry replicate --target generic   # records the mirror
+      - run: roksbnkctl -w ci-app bnk up --auto
+      - name: Gate the pipeline on the license
+        run: roksbnkctl -w ci-app k get license -n f5-utils
+```
+
+**The handoff is two environment variables.** `ROKSBNKCTL_FLP_EXTERNAL_URL` and
+`ROKSBNKCTL_FLP_ROOT_CA_B64` are exactly what `flp output` prints, so the proxy's
+address and CA travel between jobs as ordinary job outputs. Nothing templates a
+`config.yaml`; `init --override-from-env` builds the whole workspace from the
+environment. (`flp_root_ca` is already base64, and the variable takes it verbatim —
+re-encoding it hands the CWC a corrupt CA.)
+
+**Neither job installs anything.** No `roksbnkctl`, no `terraform`, no `helm`, no
+`kubectl`, no `ibmcloud` — the runner image carries them, and roksbnkctl runs the
+Kubernetes verbs in-process. That includes the FLP chart's post-render fix-ups, which
+roksbnkctl performs itself (`roksbnkctl flp postrender`) rather than shelling out to an
+interpreter the image does not have.
+
+**State lives in the workspace directory**, which in a container is ephemeral. For a
+pipeline that will run again — to upgrade, or to tear down — put the terraform state in
+COS/S3 (`roksbnkctl state migrate`); see
+[Remote state](./12a-remote-state.md) and
+[Ephemeral runners need remote state](./07b-github-actions-ci.md#ephemeral-runners-need-remote-state).
+The demo below mounts a volume instead, which is the same idea with a shorter lifetime.
+
+**What the last step proves.** `k get license` prints the CR the CWC wrote:
+
+```console
+NAME          STATE    MODE             ENTITLEMENT   ENVIRONMENT   EXPIRY
+bnk-license   Active   f5licenseproxy   eval          test          2026-08-13T16:11:06Z
+```
+
+`Active` + `f5licenseproxy`, in a cluster with no proxy of its own and no route to
+`repo.f5.com`. Fail the job on anything else and the pipeline gates on the license.
+
 ### What to watch out for
 
 - **The two clusters must be able to reach each other** — same VPC (simplest: give the

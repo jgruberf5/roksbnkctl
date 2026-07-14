@@ -163,3 +163,9 @@ variable "flp_storage_class" {
   type        = string
   default     = "ibmc-vpc-block-metro-10iops-tier"
 }
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart's POST-RENDERER (`roksbnkctl flp postrender`). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH for a direct `terraform apply`. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container."
+  type        = string
+  default     = ""
+}

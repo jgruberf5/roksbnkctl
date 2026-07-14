@@ -304,4 +304,7 @@ module "flp" {
   flp_storage_class             = var.flp_storage_class
   flp_node_port_access          = var.flp_node_port_access
   flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
+  # helm post-renders the chart through the roksbnkctl binary itself (no python).
+  roksbnkctl_binary = var.roksbnkctl_binary
+
 }

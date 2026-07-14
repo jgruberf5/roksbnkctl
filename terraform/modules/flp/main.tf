@@ -13,6 +13,12 @@
 locals {
   enabled = var.deploy_flp
 
+  # The binary helm pipes the rendered chart through. roksbnkctl passes its OWN
+  # absolute path (TF_VAR_roksbnkctl_binary), so the post-renderer is always the
+  # exact build that is driving the apply. The bare-name fallback keeps a direct
+  # `terraform apply` working, provided roksbnkctl is on PATH.
+  postrender_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+
   # Registry/mirror contract — IDENTICAL to the BNK install (renderBNKFields emits
   # far_chart_repo_url/far_image_repo_url/use_registry_mirror). Each empty input
   # coalesces back to far_repo_url, so an un-mirrored apply resolves both hosts to
@@ -163,37 +169,6 @@ locals {
 # provision from var.flp_storage_class — the CSI driver then chowns each volume to
 # fsGroup, so postgres/vault can write. The storage class is baked in so no
 # post-render args are needed (older helm providers don't pass them).
-resource "local_file" "postrender" {
-  count           = local.enabled ? 1 : 0
-  filename        = "${var.scratch_dir}/flp-postrender.py"
-  file_permission = "0755"
-  content         = <<-PY
-    #!/usr/bin/env python3
-    import sys, re
-    SC = "${var.flp_storage_class}"
-    # When the proxy must be reachable from OUTSIDE this cluster, the chart's
-    # Service is unusable as shipped: it hardcodes externalTrafficPolicy: Local
-    # and the deployment has replicas: 1, so ONLY the node currently running the
-    # pod answers on the NodePort — every other node refuses, and which node that
-    # is changes whenever the pod reschedules. Cluster policy makes every node
-    # forward to the pod, so any worker IP is a valid endpoint. (Local exists to
-    # preserve the client source IP; licensing does not care.)
-    EXTERNAL = ${var.flp_node_port_access ? "True" : "False"}
-    docs = sys.stdin.read().split("\n---\n")
-    out = []
-    for d in docs:
-        if re.search(r"^[ \t]*kind:[ \t]*PersistentVolume[ \t]*$", d, re.M) and "hostPath:" in d:
-            continue  # drop the chart's hostPath PVs
-        if re.search(r"^[ \t]*kind:[ \t]*PersistentVolumeClaim[ \t]*$", d, re.M):
-            d = re.sub(r"(storageClassName:[ \t]*).*", r"\g<1>" + SC, d)
-            d = re.sub(r"\n[ \t]*selector:[ \t]*\n[ \t]*matchLabels:[ \t]*\n[ \t]*volumeType:[^\n]*", "", d)
-        if EXTERNAL and re.search(r"^[ \t]*kind:[ \t]*Service[ \t]*$", d, re.M):
-            d = re.sub(r"(externalTrafficPolicy:[ \t]*)Local", r"\g<1>Cluster", d)
-        out.append(d)
-    sys.stdout.write("\n---\n".join(out))
-  PY
-}
-
 # ── COS: FAR auth tarball → _json_key_base64 SA ───────────────────────────────
 
 data "ibm_resource_groups" "all" {
@@ -535,9 +510,19 @@ resource "helm_release" "flp" {
 
   values = [yamlencode(local.flp_helm_values)]
 
-  # Rewrite the chart's hostPath storage to dynamic ROKS block storage.
+  # Rewrite the chart's hostPath storage to dynamic ROKS block storage (and, when
+  # the proxy is exposed outside its cluster, its externalTrafficPolicy). helm
+  # pipes the rendered manifests through this binary — which is roksbnkctl itself,
+  # so the fix-ups need no interpreter on the host. They used to be a generated
+  # python script, making python3 an undeclared dependency of `flp up`: present on
+  # most laptops, ABSENT in the tools-runner container, where the FLP phase died
+  # with "error while running post render".
   postrender {
-    binary_path = local_file.postrender[0].filename
+    binary_path = local.postrender_bin
+    args = concat(
+      ["flp", "postrender", "--storage-class", var.flp_storage_class],
+      var.flp_node_port_access ? ["--node-port-cluster"] : [],
+    )
   }
 
   depends_on = [
@@ -547,6 +532,5 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.far_secret,
     kubernetes_secret_v1.mirror_pull,
     kubernetes_role_binding_v1.flp_scc,
-    local_file.postrender,
   ]
 }
