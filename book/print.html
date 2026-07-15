@@ -16,8 +16,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -429,7 +429,7 @@ roksbnkctl down        # tear it all back down when you're done evaluating
 <tr><th>Method</th><th>You get</th><th>Host needs</th><th>Best for</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>A — native build / release binary</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Go 1.25+ (build) or nothing (release binary); the runtime tools you use (<a href="#installing-prerequisites">above</a>)</td><td>a developer laptop</td></tr>
+<tr><td><strong>A — native build / release binary</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Go 1.26+ (build) or nothing (release binary); the runtime tools you use (<a href="#installing-prerequisites">above</a>)</td><td>a developer laptop</td></tr>
 <tr><td><strong>B — Docker build</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Docker only (for the build)</td><td>a host without Go; CI that wants a binary artefact</td></tr>
 <tr><td><strong>C — runner container</strong></td><td>a container with roksbnkctl <strong>+ every tool</strong></td><td>Docker/Podman + a volume for state</td><td>CI runners, fleet provisioning, air-gapped sites</td></tr>
 </tbody>
@@ -440,7 +440,7 @@ roksbnkctl down        # tear it all back down when you're done evaluating
 <ul>
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
 <li><strong>Git</strong> to clone the repository (only if building from source — not needed if you grab a pre-built binary).</li>
-<li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
+<li><strong>Go 1.26 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>.</li>
 <li><strong>Helm 3 on PATH</strong> at runtime — <code>doctor</code> flags it as required during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, so without <code>helm</code> that path errors out with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead (in-process via the <code>hashicorp/helm</code> provider — see <a href="#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>). <strong>The default path still shells <code>helm</code> once, though</strong> — for FAR chart-version discovery (the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions), so <code>helm</code> is genuinely required in <em>both</em> modes, not only the legacy one. Keep <code>helm</code> installed to stay <code>doctor</code>-green.</li>
 </ul>
@@ -522,8 +522,8 @@ Expand-Archive oc.zip -DestinationPath "$env:USERPROFILE\bin\"
 ibmcloud plugin install cloud-object-storage -f
 </code></pre>
 <p>Windows TTY-bound SSH features (the <code>roksbnkctl shell --on &lt;target&gt;</code> interactive path) have known limitations on Windows; file-based SSH keys + non-interactive commands work, but <code>ssh-agent</code> named-pipe integration is a v1.x item. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
-<h2 id="path-a--native-build-requires-go-125"><a class="header" href="#path-a--native-build-requires-go-125">Path A — native build (requires Go 1.25+)</a></h2>
-<p>If <code>go version</code> reports <code>1.25</code> or newer, this is the simplest path:</p>
+<h2 id="path-a--native-build-requires-go-126"><a class="header" href="#path-a--native-build-requires-go-126">Path A — native build (requires Go 1.26+)</a></h2>
+<p>If <code>go version</code> reports <code>1.26</code> or newer, this is the simplest path:</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
@@ -541,15 +541,15 @@ make vet        # go vet ./...
 make tidy       # go mod tidy
 make clean      # rm -rf bin/
 </code></pre>
-<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.25.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.25</code>. Either upgrade Go or fall back to the Docker path below.</p>
+<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.26.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.26</code>. Either upgrade Go or fall back to the Docker path below.</p>
 <h2 id="path-b--docker-based-build-no-host-go-required"><a class="header" href="#path-b--docker-based-build-no-host-go-required">Path B — Docker-based build (no host Go required)</a></h2>
-<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.25-alpine</code> image has everything needed (Sprint 1 bumped the minimum Go version from 1.23 to 1.25 because of <code>testcontainers-go</code> and <code>gliderlabs/ssh</code> transitive dependencies); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
+<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.26-alpine</code> image has everything needed (the minimum tracks whatever the transitive dependencies demand — currently the <code>k8s.io/*</code> v0.36 modules, which declare <code>go 1.26</code>); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl install
 </code></pre>
@@ -564,7 +564,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 <tr><td><code>-w /work</code></td><td>Container working directory matches the mount.</td></tr>
 <tr><td><code>--user "$(id -u):$(id -g)"</code></td><td>Output binary is owned by your host user, not root.</td></tr>
 <tr><td><code>-e HOME=/tmp</code></td><td>Go writes its module cache under <code>$HOME</code>; <code>/tmp</code> is writable by any user. Without this, <code>go mod tidy</code> fails on a writable-<code>/root</code> permission error.</td></tr>
-<tr><td><code>golang:1.25-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
+<tr><td><code>golang:1.26-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
 </tbody>
 </table>
 </div>
@@ -574,13 +574,13 @@ docker run --rm -v "$PWD:/work" -w /work \
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64 (compile-only; not tested at runtime)
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 </code></pre>
 <p>Each binary is statically linked (Alpine + <code>CGO_ENABLED=0</code> is the cross-compile default) so the produced file has no runtime library dependencies.</p>
 <h2 id="path-c--run-from-the-all-in-one-container-image-no-install"><a class="header" href="#path-c--run-from-the-all-in-one-container-image-no-install">Path C — run from the all-in-one container image (no install)</a></h2>
@@ -1442,10 +1442,22 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>
 <tr><td><code>ROKSBNKCTL_ZONE&lt;n&gt;_EXT_VLAN_CIDR</code> … <code>_INTERNAL_SELFIP</code></td><td><code>bnk.network.zones[n-1]</code></td><td>per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply)</td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_SSH_KEY_NAME</code></td><td><code>resources.testing_ssh_key_name</code></td><td>verbatim</td></tr>
+<tr><td><code>ROKSBNKCTL_REGISTRY_TARGET</code></td><td><code>registry.target</code></td><td><code>icr</code> | <code>generic</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_HOST</code></td><td><code>registry.generic_host</code></td><td>verbatim, e.g. <code>harbor.example.com</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td><td><code>registry.generic_repo_prefix</code></td><td>verbatim — a Harbor project, an Artifactory repo key</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_USERNAME</code></td><td><code>registry.generic_username</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_PASSWORD</code></td><td><code>registry.generic_password_b64</code></td><td>raw, base64-encoded</td></tr>
+<tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code> (see <a href="#licensing-bnk-with-the-f5-license-proxy-flp">Chapter 10c</a>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
 </tbody>
 </table>
 </div>
+<p>The last six are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
+template. The registry four say <em>where</em> the mirror is; the FLP two are the <strong>cross-job
+handoff</strong> — the job that owns the proxy prints them with <code>flp output flp_external_endpoint</code> / <code>flp_root_ca</code>, and the job that installs BNK receives them as
+ordinary job outputs. See <a href="#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
 <p>Notes:</p>
 <ul>
 <li>For the API key, <code>IBMCLOUD_API_KEY</code> holds the <strong>raw</strong> key and <code>init</code>
@@ -1798,7 +1810,7 @@ Cluster:      2/2 nodes ready
 </code></pre>
 <p>See <a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> for the trial-phase walkthrough. You can run <code>up</code> / <code>down</code> many times against the same cluster — each cycle is ~5 minutes rather than the ~50 minutes of a fresh-cluster run.</p>
 <h3 id="step-5--roksbnkctl-cluster-down---auto"><a class="header" href="#step-5--roksbnkctl-cluster-down---auto">Step 5 — <code>roksbnkctl cluster down --auto</code></a></h3>
-<p>Tear down the cluster phase. In v1.1.0 <code>cluster down</code> is <strong>strictly</strong> scoped: it refuses with a hard error (rather than the v1.0.x warning-but-prompt) on any workspace whose trial state is non-empty, so an out-of-order destroy can’t accidentally orphan BNK resources. Destroy the trial first with <code>roksbnkctl bnk down</code> (or <code>roksbnkctl down</code> for both at once); see <a href="#tearing-down">Chapter 11</a> for the full refusal catalogue.</p>
+<p>Tear down the cluster phase. In v1.1.0 <code>cluster down</code> is <strong>strictly</strong> scoped: it refuses with a hard error (rather than the v1.0.x warning-but-prompt) on any workspace whose trial state is non-empty, so an out-of-order destroy can’t accidentally orphan BNK resources. Destroy the trial first with <code>roksbnkctl bnk down</code> (or <code>roksbnkctl down</code> for both at once); see <a href="#tearing-down-1">Chapter 11</a> for the full refusal catalogue.</p>
 <pre><code class="language-bash">roksbnkctl cluster down --auto
 </code></pre>
 <p>Sample output:</p>
@@ -1855,7 +1867,7 @@ this workspace is legacy single-state; `bnk down` can't isolate the trial phase.
 <ul>
 <li><a href="#registering-an-existing-cluster">Chapter 9 — Registering an existing cluster</a> — the alternative to <code>cluster up</code> when you already have a ROKS cluster you want <code>roksbnkctl</code> to manage.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — <code>roksbnkctl up</code> and the <code>bnk up</code> / <code>bnk down</code> command group; the dispatch matrix; iteration walkthrough.</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — phase-aware decision matrix and the refusal-message catalogue.</li>
+<li><a href="#tearing-down-1">Chapter 11 — Tearing down</a> — phase-aware decision matrix and the refusal-message catalogue.</li>
 <li><a href="#day-2-ops-status-logs-k-getapplyexec">Chapter 24 — Day-2 ops</a> — <code>roksbnkctl k get</code> / <code>apply</code> / <code>logs</code> for working against the cluster after either phase.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -2126,7 +2138,7 @@ in depth.</li>
 — the reuse-existing-cluster path.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — the BNK
 phase (<code>bnk up/down</code>) in depth.</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — the full destroy decision
+<li><a href="#tearing-down-1">Chapter 11 — Tearing down</a> — the full destroy decision
 tree and refusal catalogue.</li>
 <li><a href="#connectivity-testing">Chapter 20 — Connectivity testing</a> — what
 <code>roksbnkctl test</code> (not <code>testing</code>!) actually runs.</li>
@@ -2312,6 +2324,8 @@ roksbnkctl -w canada down --auto
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — the alternative when you want <code>roksbnkctl</code> to provision the cluster.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials</a> — what <code>roksbnkctl up</code> does on top of a registered (or <code>cluster up</code>’d) cluster.</li>
 <li><a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> — the COS instance and bucket layout that <code>--registry-cos-name</code> points at.</li>
+<li><a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a — Air-gapped install</a> — mirror BNK into your own registry; a registered cluster installs from it exactly like a created one.</li>
+<li><a href="#licensing-bnk-with-the-f5-license-proxy-flp">Chapter 10c — Licensing with the F5 License Proxy</a> — a registered cluster is a first-class base for the proxy (<a href="#flow-b--an-existing-cluster-registered-in-the-workspace">Flow B</a>), and <strong>both</strong> clusters in the shared-licensing topology (<a href="#flow-c--a-shared-licensing-cluster">Flow C</a>) can be registered rather than built.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deploying-bnk-trials-on-top"><a class="header" href="#deploying-bnk-trials-on-top">Deploying BNK trials on top</a></h1>
@@ -2655,7 +2669,7 @@ resource "kubectl_manifest" "license" {
 <ul>
 <li><a href="#quick-start-from-api-key-to-deployed-bnk">Chapter 7 — Quick start</a> — happy-path walkthrough end-to-end.</li>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — what <code>cluster up</code> provisions, the two state directories, and how to identify a legacy single-state workspace.</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — phase-aware decision matrix; full refusal-message catalogue; orphan recovery.</li>
+<li><a href="#tearing-down-1">Chapter 11 — Tearing down</a> — phase-aware decision matrix; full refusal-message catalogue; orphan recovery.</li>
 <li><a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> — full reference for what you can override via <code>--var-file</code>.</li>
 <li><a href="#throughput-testing">Chapter 22 — Throughput testing</a> — once BNK is deployed, validating its data plane.</li>
 <li><a href="#troubleshooting-1">Chapter 26 — Troubleshooting</a> — long-tail apply failures (SCC violations, propagation lag, kubeconfig 404s) and their fixes.</li>
@@ -2698,7 +2712,10 @@ release — the same manifest <code>roksbnkctl</code> reads for version discover
 enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
 tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
 cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
-<strong><code>bitnami/kubectl</code></strong> node-labeler image — so the mirror is complete:</p>
+<strong><code>bitnami/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
+(<code>release/f5-bigip-k8s-manifest</code>), because the install needs to read it and a
+mirror that lacked it would send every install back to <code>repo.f5.com</code>. So the
+mirror is complete:</p>
 <pre><code class="language-console">$ roksbnkctl registry bom
 charts  repo.f5.com/charts/f5-lifecycle-operator   v2.21.13-0.0.28
 charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
@@ -2731,12 +2748,76 @@ registry instead of FAR, so BNK comes up with no external pulls. The air-gap
 acceptance is exactly this, with egress to the external registries blocked.</p>
 <p>The target’s own pull credential is wired in for you:</p>
 <ul>
-<li><strong>ICR</strong> — the cluster authenticates to <code>*.icr.io</code> with <code>iamapikey</code> + the
-workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.</li>
-<li><strong>Generic OCI</strong> — the cluster pulls with the basic-auth credential you set
-(<code>registry target generic_username</code> / <code>generic_password</code>), or anonymously for a
-read-open registry.</li>
+<li>
+<p><strong>ICR</strong> — the cluster authenticates to <code>*.icr.io</code> with <code>iamapikey</code> + the
+workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.</p>
+</li>
+<li>
+<p><strong>Generic OCI</strong> — chart and image pulls authenticate with the same basic-auth
+credential replication used (<code>registry target generic_username</code> /
+<code>generic_password</code>), so a private registry needs no anonymous/public project.
+Concretely: chart pulls <code>helm registry login</code> with it, and the pods get a
+<code>mirror-secret</code> dockerconfig built from it, created in <strong>every namespace that pulls
+images</strong> — cert-manager, the FLO/BNK namespaces, and <code>kube-system</code> for the
+node-labeler — and referenced from the CNEInstance. You do not create any of it.</p>
+<p>This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
+by RBAC and gets <strong>no</strong> pull secret; an external one (Harbor, Artifactory) gets
+<code>mirror-secret</code>. Dropping the pull secret for <em>every</em> mirror is what used to force
+people to make their Harbor project world-readable — for a registry holding F5’s
+proprietary images, not an acceptable requirement.</p>
+</li>
 </ul>
+<h3 id="doing-it-all-in-ci-with-nothing-installed"><a class="header" href="#doing-it-all-in-ci-with-nothing-installed">Doing it all in CI, with nothing installed</a></h3>
+<p>Every command in this chapter runs unchanged inside the
+<a href="#github-actions-ci-as-an-example">tools-runner container</a>, so a pipeline can mirror the
+registry and install from it with no <code>roksbnkctl</code>, <code>terraform</code>, <code>helm</code>, <code>kubectl</code> or
+<code>ibmcloud</code> on the runner. The registry target itself comes from the environment —
+<code>ROKSBNKCTL_REGISTRY_TARGET</code>, <code>ROKSBNKCTL_GENERIC_HOST</code>,
+<code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code>, <code>ROKSBNKCTL_GENERIC_USERNAME</code>,
+<code>ROKSBNKCTL_GENERIC_PASSWORD</code> — so nothing has to template a <code>config.yaml</code>:</p>
+<pre><code class="language-bash">docker run --rm -v "$PWD/state:/work" \
+  -e IBMCLOUD_API_KEY -e ROKSBNKCTL_REGION=eu-gb \
+  -e ROKSBNKCTL_PREFIX=ci -e ROKSBNKCTL_CLUSTER_NAME=my-cluster -e ROKSBNKCTL_CLUSTER_CREATE=false \
+  -e ROKSBNKCTL_REGISTRY_TARGET=generic \
+  -e ROKSBNKCTL_GENERIC_HOST=harbor.example.com \
+  -e ROKSBNKCTL_GENERIC_REPO_PREFIX=bnk-mirror \
+  -e ROKSBNKCTL_GENERIC_USERNAME=admin -e ROKSBNKCTL_GENERIC_PASSWORD \
+  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0 -w ci \
+  init --non-interactive --override-from-env
+</code></pre>
+<p>For the full <strong>disconnected</strong> picture — a private registry <em>and</em> licensing through a
+proxy in another cluster, as a two-job pipeline — see
+<a href="#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
+<h3 id="why-the-install-never-phones-home"><a class="header" href="#why-the-install-never-phones-home">Why the install never phones home</a></h3>
+<p>Two things have to be true for a mirrored install to be genuinely disconnected,
+and <code>roksbnkctl</code> handles both:</p>
+<ol>
+<li><strong>The manifest is mirrored.</strong> <code>f5-bigip-k8s-manifest</code> is the BOM’s own source,
+so it is easy to overlook — but the install reads it to derive the FLO and CIS
+chart versions. It is a normal OCI chart, so it is replicated like any other
+artifact and pulled from the mirror.</li>
+<li><strong>FLO reads the manifest from the cluster, not a registry.</strong> The F5 Lifecycle
+Operator resolves the BNK manifest by listing cluster-scoped <strong><code>CNEManifest</code></strong>
+CRs and matching <code>spec.version</code>; only when none matches does it fall back to
+pulling the manifest chart from the CNEInstance’s <code>spec.registry.uri</code>.
+<code>roksbnkctl</code> converts the manifest into a <code>CNEManifest</code> CR and applies it before
+the CNEInstance, so FLO finds it in the cluster and <strong>never fetches a manifest at
+all</strong>. (Without the CR, that fallback is what breaks a mirrored install: FLO
+reports <em>“No CNEManifest exists which contains expected manifestVersion”</em> and the
+CNEInstance never reconciles.)</li>
+</ol>
+<h3 id="one-mirror-many-clusters"><a class="header" href="#one-mirror-many-clusters">One mirror, many clusters</a></h3>
+<p>Nothing ties a mirror to a single cluster. <code>registry replicate</code> is a supply-chain
+step, not a cluster step — the record it writes (<code>registry-mirror.json</code>) just tells
+the install where to pull from. So several workspaces can point at the <strong>same</strong>
+registry: replicate once, then every cluster installs from it. A second workspace
+targeting an already-populated mirror copies nothing (every artifact is present and
+digest-matched) and simply records the redirect.</p>
+<p>That pairs naturally with a <a href="#flow-c--a-shared-licensing-cluster">shared licensing
+cluster</a>: one cluster
+holds the F5 License Proxy and reaches F5, one registry holds the artifacts, and any
+number of air-gapped clusters install from the registry and license through the
+proxy — reaching neither <code>repo.f5.com</code> nor F5’s licensing service themselves.</p>
 <p>The per-target host, namespace/repository, and credential specifics — including
 the ICR namespace and a full Artifactory walkthrough — are in
 <a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a>.</p>
@@ -2839,10 +2920,19 @@ roksbnkctl registry verify -w prod      # every BOM artifact present + digest-ma
 the Artifactory mirror automatically:</p>
 <pre><code class="language-bash">roksbnkctl bnk up -w prod
 </code></pre>
-<p>The install pulls images and charts from <code>acme.jfrog.io/bnk-mirror</code>. The cluster
-must be able to reach Artifactory and present the same credentials (an image
-pull secret for the registry); see your Artifactory + cluster networking for the
-pull-secret wiring.</p>
+<p>The install pulls images and charts from <code>acme.jfrog.io/bnk-mirror</code>, using the same
+credential you replicated with — <strong>you do not wire the pull secret yourself</strong>. Chart pulls
+log in with <code>generic_username</code> / <code>generic_password</code>, and the pods get a <code>mirror-secret</code>
+dockerconfig built from that credential, created in every namespace that pulls images
+(cert-manager, the FLO/BNK namespaces, and <code>kube-system</code> for the node-labeler) and
+referenced from the CNEInstance.</p>
+<p>So a <strong>private</strong> repository is fine — the registry does <em>not</em> need an anonymous or public
+project. The only requirement is network reachability from the cluster.</p>
+<p><strong>Licensing from the same mirror.</strong> The mirror’s BOM includes <code>charts/f5-license-proxy</code>,
+so the F5 License Proxy is replicated alongside BNK and can be installed from your
+registry too — including the shared-licensing topology, where one cluster runs the proxy
+and other clusters license through it while reaching nothing but this mirror. See
+<a href="#licensing-bnk-with-the-f5-license-proxy-flp">Licensing BNK with the F5 License Proxy</a>.</p>
 <h2 id="removing-a-mirror"><a class="header" href="#removing-a-mirror">Removing a mirror</a></h2>
 <p>To wipe everything you replicated and revert the install to pulling from FAR:</p>
 <pre><code class="language-bash">roksbnkctl registry delete -w prod          # confirms first; --force to skip
@@ -2854,7 +2944,445 @@ kept in the record so a re-run retries exactly those. For <code>icr</code> the A
 have deletes enabled. (To remove only artifacts that are no longer in the current
 BOM, use <code>registry prune</code> instead.)</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h1>
+<h1 id="licensing-bnk-with-the-f5-license-proxy-flp"><a class="header" href="#licensing-bnk-with-the-f5-license-proxy-flp">Licensing BNK with the F5 License Proxy (FLP)</a></h1>
+<p>By default <code>roksbnkctl</code> licenses BIG-IP Next for Kubernetes (BNK) with a
+<strong>subscription JWT</strong> — the <code>trial.jwt</code> (or your production token) staged in the
+orchestration COS bucket. In that mode the cluster’s controller reaches F5’s
+licensing service directly. Nothing in this chapter changes that default.</p>
+<p>Some environments prefer (or require) an <strong>F5 License Proxy (FLP)</strong>: an in-cluster
+service that brokers licensing on behalf of every BNK instance in the cluster,
+so the workloads themselves never talk to F5 directly. <code>roksbnkctl</code> can deploy
+the FLP and point BNK at it, as an <strong>opt-in</strong> capability — a new <code>flp</code> lifecycle
+phase plus a one-line config switch. Both licensing modes are first-class; if you
+don’t opt in, the JWT path is byte-for-byte unchanged.</p>
+<blockquote>
+<p><strong>FLP is optional.</strong> Everything here is gated behind <code>bnk.license_mode: f5licenseproxy</code>. Leave it unset (the default) and BNK licenses with the
+subscription JWT exactly as before — no <code>flp</code> phase, no extra resources.</p>
+</blockquote>
+<h2 id="what-the-flp-is"><a class="header" href="#what-the-flp-is">What the FLP is</a></h2>
+<p>The FLP is a Helm-installed workload (the <code>f5-license-proxy</code> chart: the proxy
+itself plus a bundled Vault and PostgreSQL). It presents an in-cluster TLS
+endpoint that the BNK <strong>Cluster-Wide Controller (CWC)</strong> calls for licensing; the
+proxy forwards to F5’s licensing backend. Because the CWC must trust the proxy’s
+TLS, the proxy’s <strong>root CA</strong> is delivered to the CWC and the BNK <strong>License</strong>
+custom resource is set to <code>operationMode: f5licenseproxy</code> with the proxy’s
+service URL.</p>
+<p><code>roksbnkctl</code> automates all of that: <code>roksbnkctl flp up</code> generates the proxy’s CA
+and mTLS certs, creates its secrets, installs the chart (pulling from your
+registry mirror or FAR), and records the CA + endpoint. A later <code>bnk up</code> reads
+that handoff and wires the License CR — you never copy a certificate by hand.</p>
+<p>The FLP’s charts and images are part of the standard BNK bill of materials, so
+<a href="#air-gapped-install-mirroring-bnk-into-a-private-registry"><code>registry replicate</code></a> already mirrors them into a
+private registry — an air-gapped, FLP-licensed install pulls everything,
+including the proxy, from a registry you control.</p>
+<h3 id="three-topologies"><a class="header" href="#three-topologies">Three topologies</a></h3>
+<p>The proxy is a <strong>cluster-wide</strong> broker, and it is the only component that needs to
+reach F5. That gives you three ways to arrange it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Where the proxy runs</th><th>Use it when</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#flow-a--a-cluster-you-are-creating"><strong>Flow A</strong></a></td><td>the cluster <code>roksbnkctl</code> creates</td><td>the normal case</td></tr>
+<tr><td><a href="#flow-b--an-existing-cluster-registered-in-the-workspace"><strong>Flow B</strong></a></td><td>a cluster you already own and register</td><td>you did not provision the cluster</td></tr>
+<tr><td><a href="#flow-c--a-shared-licensing-cluster"><strong>Flow C</strong></a></td><td><strong>a different cluster</strong> — one proxy serving many</td><td>only one cluster may reach F5; the rest are air-gapped</td></tr>
+</tbody>
+</table>
+</div>
+<p>Flows A and B are the same shape: proxy and BNK in one cluster. Flow C splits them.</p>
+<h2 id="the-flp-phase"><a class="header" href="#the-flp-phase">The <code>flp</code> phase</a></h2>
+<p>Like <a href="#the-three-phase-lifecycle-cluster--bnk--testing"><code>testing</code></a> and <code>gateway</code>, the FLP is an
+<strong>independent, opt-in phase</strong> with its own terraform state (<code>state-flp/</code>). The
+composite <code>roksbnkctl up</code> never runs it; you run it explicitly, between the
+cluster and BNK:</p>
+<pre><code class="language-bash">roksbnkctl flp up      # install the proxy into an existing cluster
+roksbnkctl flp down    # remove it (leaves cluster / BNK / testing intact)
+roksbnkctl flp output  # print its terraform outputs (endpoint, namespace)
+</code></pre>
+<p><code>flp up</code> refuses if the workspace has no cluster yet, and records
+<code>flp-outputs.json</code> (the proxy’s root CA + service endpoint) on success. <code>flp down</code> is a no-op success when there is no FLP state, so it is safe in a
+reverse-order teardown of every phase.</p>
+<p>The proxy installs into the <code>f5-license-proxy</code> namespace by default; override
+with <code>bnk.flp.namespace</code> (or <code>ROKSBNKCTL_FLP_NAMESPACE</code>).</p>
+<h2 id="opting-in"><a class="header" href="#opting-in">Opting in</a></h2>
+<p>Set the license mode in the workspace <code>config.yaml</code>:</p>
+<pre><code class="language-yaml">bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  license_mode: f5licenseproxy   # connected (default) | disconnected | f5licenseproxy
+  flp:
+    namespace: f5-license-proxy  # optional; this is the default
+</code></pre>
+<p>Or answer <strong>yes</strong> to <em>License via an in-cluster F5 License Proxy (FLP)?</em> in the
+<code>roksbnkctl init</code> interview, or set it non-interactively:</p>
+<pre><code class="language-bash">export ROKSBNKCTL_LICENSE_MODE=f5licenseproxy
+export ROKSBNKCTL_FLP_NAMESPACE=f5-license-proxy   # optional
+</code></pre>
+<p>The subscription JWT is <strong>still required</strong> in FLP mode (the proxy presents it to
+F5); it is resolved from COS exactly as in the JWT path — no change to
+<code>bnk.subscription_jwt_file</code> or its credential.</p>
+<h2 id="flow-a--a-cluster-you-are-creating"><a class="header" href="#flow-a--a-cluster-you-are-creating">Flow A — a cluster you are creating</a></h2>
+<p>The full sequence when <code>roksbnkctl</code> provisions the cluster:</p>
+<pre><code class="language-bash"># 1. Seed the workspace with FLP mode (interview, config.yaml, or env).
+roksbnkctl -w prod init          # answer "yes" to the FLP prompt
+
+# 2. Create the cluster.
+roksbnkctl -w prod cluster up
+
+# 3. (Optional) mirror BNK — including the FLP — into your private registry.
+#    Skip this to pull from repo.f5.com directly.
+roksbnkctl -w prod registry replicate --target generic
+
+# 4. Install the F5 License Proxy.
+roksbnkctl -w prod flp up
+
+# 5. Install BNK — it licenses via the proxy automatically.
+roksbnkctl -w prod bnk up
+</code></pre>
+<p>Step 5 reads <code>flp-outputs.json</code> and sets the License CR to
+<code>operationMode: f5licenseproxy</code>, its <code>teem*Url</code> at the proxy service, and
+delivers the proxy root CA to the CWC. <code>bnk up</code> errors clearly if the <code>flp</code>
+phase has not been run.</p>
+<h2 id="flow-b--an-existing-cluster-registered-in-the-workspace"><a class="header" href="#flow-b--an-existing-cluster-registered-in-the-workspace">Flow B — an existing cluster registered in the workspace</a></h2>
+<p>You do not have to let <code>roksbnkctl</code> build the cluster. If you already have a ROKS
+cluster, <a href="#registering-an-existing-cluster">register</a> it into the workspace
+and install the proxy onto it. Registration looks the cluster up in your IBM Cloud
+account and writes the very same <code>cluster-outputs.json</code> that the <code>cluster up</code> path
+produces — and that is the <em>only</em> thing the FLP and BNK phases consume. So from
+step 3 on, the two flows are character-for-character identical:</p>
+<pre><code class="language-bash"># 1. Seed the workspace with FLP mode, and do NOT create a cluster.
+roksbnkctl -w prod init          # answer "no" to "create a cluster?", "yes" to FLP
+#    (equivalently, in config.yaml: cluster.create: false + bnk.license_mode: f5licenseproxy)
+
+# 2. Register the cluster you already have.
+roksbnkctl -w prod cluster register my-existing-roks
+
+# 3. (Optional) mirror BNK — including the FLP — into your private registry.
+roksbnkctl -w prod registry replicate --target generic
+
+# 4. Install the F5 License Proxy into the registered cluster.
+roksbnkctl -w prod flp up
+
+# 5. Install BNK, licensed via the proxy.
+roksbnkctl -w prod bnk up
+</code></pre>
+<p><strong><code>roksbnkctl</code> never takes ownership of a registered cluster.</strong> <code>flp up</code> adds only
+the proxy workload (its namespace, secrets and Helm release); <code>flp down</code> removes
+exactly that and nothing else. The cluster itself is never created, modified at the
+infrastructure level, or destroyed — <code>cluster down</code> will not touch it.</p>
+<h2 id="flp-behind-a-private-registry"><a class="header" href="#flp-behind-a-private-registry">FLP behind a private registry</a></h2>
+<p>The FLP’s chart and its four images are part of the standard BNK bill of
+materials, so <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry"><code>registry replicate</code></a> mirrors them
+along with everything else. Combining the two gives a genuinely disconnected,
+FLP-licensed install: <code>flp up</code> and <code>bnk up</code> pull <strong>every</strong> chart and image from
+your registry, and the CWC brokers licensing through the in-cluster proxy rather
+than reaching F5 itself.</p>
+<p>Nothing extra is required — point the workspace at the mirror and the FLP phase
+follows it automatically:</p>
+<pre><code class="language-bash">roksbnkctl -w prod registry target generic         # your Harbor/Artifactory/ICR
+roksbnkctl -w prod registry replicate              # mirrors BNK + the FLP
+roksbnkctl -w prod flp up                          # proxy, pulled from the mirror
+roksbnkctl -w prod bnk up                          # BNK, pulled from the mirror
+</code></pre>
+<h2 id="flow-c--a-shared-licensing-cluster"><a class="header" href="#flow-c--a-shared-licensing-cluster">Flow C — a shared licensing cluster</a></h2>
+<p>Flows A and B both put the proxy and BNK in the <strong>same</strong> cluster. But the proxy is a
+<em>cluster-wide</em> licensing broker, and it is the only thing that needs to reach F5. So
+you can run it <strong>once</strong>, in a cluster that has egress, and have BNK installs in
+<strong>other</strong> clusters license through it — clusters that reach nothing but your mirror
+and the proxy.</p>
+<pre><code>   ┌──────────────── services cluster (has egress to F5) ─────────────┐
+   │  F5 License Proxy  ──NodePort 30001──┐                           │
+   └──────────────────────────────────────┼───────────────────────────┘
+                                          │ same VPC, or a transit gateway
+   ┌──────────────────────────────────────┼── air-gapped cluster ─────┐
+   │  BNK + CWC  ─────────────────────────┘                           │
+   │      └── charts + images ── your private registry (Harbor/…)     │
+   └──────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Neither cluster reaches <code>repo.f5.com</code>, and only the services cluster reaches F5’s
+licensing service.</p>
+<h3 id="1-the-services-cluster--expose-the-proxy"><a class="header" href="#1-the-services-cluster--expose-the-proxy">1. The services cluster — expose the proxy</a></h3>
+<pre><code class="language-bash">roksbnkctl -w services cluster up            # (or `cluster register` an existing one)
+
+# point the workspace at your private registry, then mirror FAR into it
+roksbnkctl -w services registry target generic
+roksbnkctl -w services registry target generic_host        harbor.example.com
+roksbnkctl -w services registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w services registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w services registry target generic_password --password-stdin
+roksbnkctl -w services registry replicate    # BNK *and* the FLP chart — both are in the BOM
+
+roksbnkctl -w services flp up \
+    --add-node-port-access \
+    --node-port-source-cidr 10.242.0.0/18,10.242.64.0/18,10.242.128.0/18
+</code></pre>
+<p>Set the registry target <strong>before</strong> replicating: with none set it defaults to <code>icr</code>, and
+you would mirror into IBM Container Registry rather than your own. The password is piped
+on stdin so it never lands in argv or your shell history. See
+<a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a> for the ICR and Artifactory variants.</p>
+<p>The proxy itself is installed <strong>from that registry</strong> — <code>charts/f5-license-proxy</code> is part
+of the mirror BOM, so even the licensing component does not come from <code>repo.f5.com</code>.</p>
+<p>The CIDR flag is a <strong>list, and it must name every zone</strong>. A multi-zone VPC carries one
+address prefix <em>per zone</em>:</p>
+<pre><code class="language-console">$ ibmcloud is vpc-address-prefixes &lt;vpc&gt; --output json | jq -r '.[] | "\(.zone.name)  \(.cidr)"'
+eu-gb-1  10.242.0.0/18
+eu-gb-2  10.242.64.0/18
+eu-gb-3  10.242.128.0/18
+</code></pre>
+<p>List only the first and the proxy will appear to work — a pod you exec into for a test
+may well be scheduled in that zone and get an HTTP 200 — while the consuming cluster’s
+CWC, scheduled in one of the other two, is dropped at the security group and reports
+<code>connect: connection timed out</code>. The symptom is a proxy that answers some pods and
+silently times out for others. Pass every prefix, or a supernet covering them.</p>
+<p>No BNK is installed here — this cluster exists to run the proxy.</p>
+<p><code>--add-node-port-access</code> does three things you cannot do by hand afterwards:</p>
+<ul>
+<li><strong>Makes every worker answer.</strong> The chart’s Service is already <code>type: NodePort</code>
+(30001), but it hardcodes <code>externalTrafficPolicy: Local</code> and runs one replica — so
+only the node currently hosting the pod answers, and that node changes when the pod
+reschedules. This flips it to <code>Cluster</code>, so any worker IP is a valid endpoint.</li>
+<li><strong>Puts the worker IPs in the proxy’s certificate.</strong> A remote CWC dials
+<code>https://&lt;node-ip&gt;:30001</code> — a literal address, which DNS SANs do not cover. Without
+IP SANs the TLS handshake fails with <code>bad certificate</code>.</li>
+<li><strong>Opens the port.</strong> ROKS workers sit in a <code>kube-&lt;cluster-id&gt;</code> security group that
+does not admit another cluster. <code>--node-port-source-cidr</code> opens <em>only</em> 30001, and
+<em>only</em> to the CIDRs you name — one security-group rule per prefix. Omit it if a path
+already exists.</li>
+</ul>
+<p>It prints the address to hand over, and records it in <code>flp-outputs.json</code>:</p>
+<pre><code class="language-console">→ FLP reachable from other clusters at https://10.242.0.9:30001
+</code></pre>
+<h3 id="2-the-consuming-cluster--license-against-it"><a class="header" href="#2-the-consuming-cluster--license-against-it">2. The consuming cluster — license against it</a></h3>
+<p>Read the endpoint and CA out of the owning workspace:</p>
+<pre><code class="language-bash">roksbnkctl -w services flp output       # → external_endpoint, root_ca_b64
+</code></pre>
+<p>and point the other workspace at them. It <strong>never runs <code>flp up</code></strong> — it does not own a
+proxy:</p>
+<pre><code class="language-yaml"># consuming workspace's config.yaml
+bnk:
+  license_mode: f5licenseproxy
+  flp:
+    external:
+      url: https://10.242.0.9:30001     # from `flp output` → external_endpoint
+      root_ca_b64: LS0tLS1CRUdJTi…      # from `flp output` → root_ca_b64
+</code></pre>
+<p>Point that workspace at the <strong>same private registry</strong>, and install. <code>bnk up</code> wires the
+License CR at the remote proxy and delivers its CA to the CWC, exactly as it would for a
+local one:</p>
+<pre><code class="language-bash">roksbnkctl -w app cluster register my-app-cluster   # or `cluster up` to build one
+
+# the SAME registry as the services workspace
+roksbnkctl -w app registry target generic
+roksbnkctl -w app registry target generic_host        harbor.example.com
+roksbnkctl -w app registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w app registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w app registry target generic_password --password-stdin
+
+roksbnkctl -w app registry replicate   # copies nothing — the artifacts are already there
+roksbnkctl -w app bnk up               # licenses via the proxy in the OTHER cluster
+</code></pre>
+<p><code>registry replicate</code> in the second workspace has nothing left to copy. Run it anyway:
+its other job is to write <code>registry-mirror.json</code>, and <strong>that record is what redirects the
+install off <code>repo.f5.com</code> onto your registry</strong>. Without it, <code>bnk up</code> would go to FAR.
+(See <a href="#one-mirror-many-clusters">One mirror, many clusters</a>.)</p>
+<h3 id="why-this-cluster-is-genuinely-disconnected"><a class="header" href="#why-this-cluster-is-genuinely-disconnected">Why this cluster is genuinely disconnected</a></h3>
+<p>Three things have to be true, and <code>bnk up</code> arranges all three — there is nothing to wire
+by hand:</p>
+<ul>
+<li><strong>Charts and images come from your registry.</strong> Chart pulls log in with the credential
+above; the pods get a <code>mirror-secret</code> dockerconfig built from it, created in every
+namespace that pulls (cert-manager, the FLO/BNK namespaces, <code>kube-system</code> for the
+node-labeler) and referenced from the CNEInstance. Your registry stays <strong>private</strong> — it
+needs no anonymous or public project.</li>
+<li><strong>The manifest is already in the cluster.</strong> The BNK manifest is mirrored too and
+pre-applied as a <code>CNEManifest</code> CR, so the lifecycle operator resolves it locally instead
+of fetching it from F5.</li>
+<li><strong>Licensing goes to the proxy next door</strong>, not to F5.</li>
+</ul>
+<p>The result: this cluster talks to your registry and to <code>https://&lt;node-ip&gt;:30001</code>. Nothing
+else.</p>
+<h3 id="flow-c-in-ci--the-runner-container-no-host-install"><a class="header" href="#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI — the runner container, no host install</a></h3>
+<p>Everything above is a <code>roksbnkctl</code> you installed. The same topology runs as a <strong>CI
+pipeline</strong> with nothing installed at all: every step is the
+<a href="#github-actions-ci-as-an-example">tools-runner container</a>, and the whole workspace is
+described by environment variables — the natural shape of CI, where the registry
+credential and the proxy handoff are already secrets and job outputs.</p>
+<p>Two jobs. <strong>The first owns the proxy</strong> and emits its address and CA; <strong>the second
+installs BNK</strong> into a cluster that reaches nothing but the registry and that proxy.</p>
+<pre><code class="language-yaml"># .github/workflows/bnk-disconnected.yml
+env:
+  RUNNER: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+
+jobs:
+  licensing-cluster:
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    outputs:
+      flp_url: ${{ steps.flp.outputs.url }}      # ← the handoff
+      flp_ca:  ${{ steps.flp.outputs.ca }}
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-svc
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.SERVICES_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"        # adopt it; do not build it
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+    steps:
+      - run: roksbnkctl -w ci-svc init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-svc cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-svc registry replicate --target generic
+      - run: roksbnkctl -w ci-svc registry verify
+      - name: Deploy the proxy, reachable from the other cluster
+        run: |
+          roksbnkctl -w ci-svc flp up --auto \
+            --add-node-port-access \
+            --node-port-source-cidr "${{ vars.APP_CLUSTER_CIDRS }}"
+      - id: flp
+        run: |
+          echo "url=$(roksbnkctl -w ci-svc flp output flp_external_endpoint)" &gt;&gt; "$GITHUB_OUTPUT"
+          echo "ca=$(roksbnkctl -w ci-svc flp output flp_root_ca)"            &gt;&gt; "$GITHUB_OUTPUT"
+
+  application-cluster:
+    needs: licensing-cluster
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-app
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.APP_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+      # ── license through the proxy in the OTHER cluster ──
+      ROKSBNKCTL_LICENSE_MODE:       f5licenseproxy
+      ROKSBNKCTL_FLP_EXTERNAL_URL:   ${{ needs.licensing-cluster.outputs.flp_url }}
+      ROKSBNKCTL_FLP_ROOT_CA_B64:    ${{ needs.licensing-cluster.outputs.flp_ca }}
+    steps:
+      - run: roksbnkctl -w ci-app init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-app cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-app registry replicate --target generic   # records the mirror
+      - run: roksbnkctl -w ci-app bnk up --auto
+      - name: Gate the pipeline on the license
+        run: roksbnkctl -w ci-app k get license -n f5-utils
+</code></pre>
+<p><strong>The handoff is two environment variables.</strong> <code>ROKSBNKCTL_FLP_EXTERNAL_URL</code> and
+<code>ROKSBNKCTL_FLP_ROOT_CA_B64</code> are exactly what <code>flp output</code> prints, so the proxy’s
+address and CA travel between jobs as ordinary job outputs. Nothing templates a
+<code>config.yaml</code>; <code>init --override-from-env</code> builds the whole workspace from the
+environment. (<code>flp_root_ca</code> is already base64, and the variable takes it verbatim —
+re-encoding it hands the CWC a corrupt CA.)</p>
+<p><strong>Neither job installs anything.</strong> No <code>roksbnkctl</code>, no <code>terraform</code>, no <code>helm</code>, no
+<code>kubectl</code>, no <code>ibmcloud</code> — the runner image carries them, and roksbnkctl runs the
+Kubernetes verbs in-process. That includes the FLP chart’s post-render fix-ups, which
+roksbnkctl performs itself (<code>roksbnkctl flp postrender</code>) rather than shelling out to an
+interpreter the image does not have.</p>
+<p><strong>State lives in the workspace directory</strong>, which in a container is ephemeral. For a
+pipeline that will run again — to upgrade, or to tear down — put the terraform state in
+COS/S3 (<code>roksbnkctl state migrate</code>); see
+<a href="#remote-state-cos--s3">Remote state</a> and
+<a href="#ephemeral-runners-need-remote-state">Ephemeral runners need remote state</a>.
+The demo below mounts a volume instead, which is the same idea with a shorter lifetime.</p>
+<p><strong>What the last step proves.</strong> <code>k get license</code> prints the CR the CWC wrote:</p>
+<pre><code class="language-console">NAME          STATE    MODE             ENTITLEMENT   ENVIRONMENT   EXPIRY
+bnk-license   Active   f5licenseproxy   eval          test          2026-08-13T16:11:06Z
+</code></pre>
+<p><code>Active</code> + <code>f5licenseproxy</code>, in a cluster with no proxy of its own and no route to
+<code>repo.f5.com</code>. Fail the job on anything else and the pipeline gates on the license.</p>
+<h3 id="what-to-watch-out-for"><a class="header" href="#what-to-watch-out-for">What to watch out for</a></h3>
+<ul>
+<li><strong>The two clusters must be able to reach each other</strong> — same VPC (simplest: give the
+second cluster <code>resources.cluster_vpc.create: false</code> + <code>existing: &lt;vpc-id&gt;</code>), or a
+transit gateway between their VPCs.</li>
+<li><strong>Worker IPs change when a worker is replaced.</strong> The certificate covers the IPs that
+existed at <code>flp up</code> time, so replacing a node in the services cluster means re-running
+<code>flp up</code> (which re-issues the cert) and updating the consuming workspace if you
+pinned the URL of the node that went away. <code>flp output</code> lists <strong>every</strong> worker URL —
+all are cert SANs — so you can point at another one. A stable VIP would avoid this
+entirely; NodePort is the trade-off you accept for not needing a load balancer.</li>
+<li><strong>The consuming workspace needs no <code>flp</code> phase at all</strong> — no <code>state-flp/</code>, nothing to
+tear down. <code>bnk down</code> there leaves the proxy untouched, serving its other clusters.</li>
+</ul>
+<h2 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h2>
+<p>The FLP is an opt-in phase, so — exactly like <code>gateway</code> — the composite <code>down</code>
+does <strong>not</strong> cover it. Tear it down <strong>first</strong>, while the cluster is still up:</p>
+<pre><code class="language-bash">roksbnkctl -w prod flp down     # remove the proxy
+roksbnkctl -w prod down         # then BNK + the cluster (composite)
+</code></pre>
+<p>Both <code>roksbnkctl down</code> and <code>cluster down</code> <strong>refuse</strong> while FLP state exists, and
+tell you to run <code>flp down</code> first. That guard is deliberate: the proxy’s Helm
+release and secrets live <em>in</em> the cluster, so destroying the cluster out from
+under them would strand <code>state-flp/</code> pointing at resources that no longer exist,
+and a later <code>flp down</code> could never reconcile.</p>
+<p><code>flp down</code> is a no-op success when there is no FLP state, so it is safe to put
+unconditionally in a teardown script. Registered clusters are never destroyed —
+<code>flp down</code> removes only the proxy workload.</p>
+<h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Config key</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bnk.license_mode</code></td><td><code>connected</code> (default), <code>disconnected</code>, or <code>f5licenseproxy</code></td></tr>
+<tr><td><code>bnk.flp.namespace</code></td><td>namespace for the proxy (default <code>f5-license-proxy</code>)</td></tr>
+<tr><td><code>bnk.flp.chart_version</code></td><td><strong>optional</strong> override. Left unset, the chart version is read from the BNK manifest (which lists <code>charts/f5-license-proxy</code> for the release), exactly like the FLO and CIS charts — you do not normally pin it.</td></tr>
+<tr><td><code>bnk.flp.node_port_access</code></td><td>expose the proxy outside its cluster (Flow C). Set by <code>flp up --add-node-port-access</code>; persisted so a later <code>flp up</code> does not tear the exposure down.</td></tr>
+<tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>with the above: the CIDRs allowed to reach the NodePort on the worker security group. A <strong>list</strong> — one address prefix per zone</td></tr>
+<tr><td><code>bnk.flp.external.url</code></td><td>license against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code>. This workspace never runs <code>flp up</code>.</td></tr>
+<tr><td><code>bnk.flp.external.root_ca_b64</code></td><td>that proxy’s <code>root_ca_b64</code>, so the CWC can verify its certificate</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag (<code>flp up</code>)</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--add-node-port-access</code></td><td>expose the proxy for other clusters: <code>externalTrafficPolicy: Cluster</code>, worker IPs as cert SANs, external endpoint recorded</td></tr>
+<tr><td><code>--node-port-source-cidr</code></td><td>open the NodePort to these CIDRs on the worker security group. Repeatable / comma-separated — pass <strong>every zone’s</strong> prefix</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Environment variable</th><th>Overrides</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Written by</th><th>Read by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/flp-outputs.json</code></td><td><code>flp up</code></td><td><code>bnk up</code> (FLP mode) — or copied into another workspace’s <code>bnk.flp.external</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>flp-outputs.json</code> carries <code>endpoint</code> (in-cluster only) and, when exposed,
+<code>external_endpoint</code> plus <code>external_endpoints</code> — every worker URL the proxy answers on.
+All of them are IP SANs on its certificate, so any one is a valid
+<code>bnk.flp.external.url</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="tearing-down-1"><a class="header" href="#tearing-down-1">Tearing down</a></h1>
 <blockquote>
 <p><strong>Three-phase note.</strong> With the Cluster / BNK / Testing split there is now a
 fourth destroy verb, <code>roksbnkctl testing down</code> (destroys the jumphost rig,
@@ -7380,7 +7908,7 @@ BNK trial:        deployed (last apply 2026-05-13 14:15:01 MST)
 Kubeconfig:       /home/you/.kube/config
 Cluster:          2/2 nodes ready
 </code></pre>
-<p>Each phase has its own mtime; the timestamps move independently. Re-running <a href="#tearing-down"><code>roksbnkctl bnk down</code></a> then <a href="#deploying-bnk-trials-on-top"><code>roksbnkctl bnk up</code></a> updates the <code>BNK trial</code> line without touching the <code>Cluster phase</code> line — useful for confirming which phase you most recently exercised.</p>
+<p>Each phase has its own mtime; the timestamps move independently. Re-running <a href="#tearing-down-1"><code>roksbnkctl bnk down</code></a> then <a href="#deploying-bnk-trials-on-top"><code>roksbnkctl bnk up</code></a> updates the <code>BNK trial</code> line without touching the <code>Cluster phase</code> line — useful for confirming which phase you most recently exercised.</p>
 <h3 id="shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><a class="header" href="#shapelegacysingle--v10x-workspace-cluster--trial-in-one-tfstate"><code>ShapeLegacySingle</code> — v1.0.x workspace, cluster + trial in one tfstate</a></h3>
 <pre><code class="language-bash">$ roksbnkctl status
 Workspace:        legacy-canada
@@ -7643,7 +8171,7 @@ roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 <li><a href="#workspaces">Chapter 6 — Workspaces</a> — the <code>KUBECONFIG</code> resolution chain that powers every <code>k &lt;verb&gt;</code>.</li>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — Cluster/trial phase split</a> — the workspace-shape concept that drives the per-phase <code>status</code> lines.</li>
 <li><a href="#deploying-bnk-trials-on-top">Chapter 10 — Deploying BNK trials on top</a> — the verb that advances <code>ShapeClusterOnly</code> → <code>ShapeSplit</code> (and back via <code>bnk down</code>).</li>
-<li><a href="#tearing-down">Chapter 11 — Tearing down</a> — independent teardown of the cluster and trial phases.</li>
+<li><a href="#tearing-down-1">Chapter 11 — Tearing down</a> — independent teardown of the cluster and trial phases.</li>
 <li><a href="#the-on-flag-and-ssh-jumphosts">Chapter 16 — The <code>--on</code> flag</a> — <code>--on</code> plus the passthroughs for customer-firewalled scenarios.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md">PRD 02</a> — the design rationale and acceptance criteria for the work in this chapter.</li>
 <li><a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition">PRD 06 §“<code>status</code> command integration”</a> — the design rationale for the per-phase <code>status</code> output.</li>
@@ -8326,6 +8854,23 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-agent"><a class="header" href="#roksbnkctl-agent"><code>roksbnkctl agent</code></a></h2>
+<p>Drive this workspace with an agentic CLI (personas + AGENTS.md)</p>
+<pre><code>roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]
+</code></pre>
+<p>Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.</p>
+<p>roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
+roksbnkctl agent             List supported CLIs + this workspace’s default
+roksbnkctl agent <code>&lt;cli&gt;</code>       Print the invocation to launch <code>&lt;cli&gt;</code> against the workspace</p>
+<p>Personas (act as exactly one at a time): solution-architect (customer
+interface, owns scope), cloud-operator (runs the lifecycle), test-engineer
+(validation probes), doc-specialist (the report). See personas/ after init.</p>
+<h3 id="roksbnkctl-agent-init"><a class="header" href="#roksbnkctl-agent-init"><code>roksbnkctl agent init</code></a></h3>
+<p>Scaffold the agentic-mode files into the workspace</p>
+<p>Copies AGENTS.md, CLAUDE.md, the persona role contracts, and a
+decisions.md seed into the workspace dir, and creates an empty journal/. Safe to
+re-run: existing files are left untouched (your edits survive).</p>
+<p>← back to <a href="#roksbnkctl-agent"><code>roksbnkctl agent</code></a></p>
 <h2 id="roksbnkctl-apikey"><a class="header" href="#roksbnkctl-apikey"><code>roksbnkctl apikey</code></a></h2>
 <p>Print the workspace’s resolved IBM Cloud API key to stdout (a secret)</p>
 <p>Resolve the workspace’s IBM Cloud API key via the standard chain and print it
@@ -8472,14 +9017,16 @@ provision takes ~30 min) before the trial apply.</p>
 <h2 id="roksbnkctl-bnkforge"><a class="header" href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></h2>
 <p>Configure + drive BNK Forge cluster registration</p>
 <p>Configure and drive registration of this workspace’s cluster with a
-co-located BNK Forge install — without hand-editing config.yaml.</p>
+co-located BNK Forge (v3) install — without hand-editing config.yaml.</p>
 <p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
 disable   turn it back off
-status    show the effective config + whether the bnk-forge CLI / cluster id are ready
+status    show the effective config + readiness
 register  register this workspace’s cluster with BNK Forge right now</p>
-<p>Registration is credential-backed: BNK Forge re-derives the kubeconfig on demand
-from an IBM Cloud credential template, so nothing perishable is stored. The
-<code>bnk-forge</code> CLI (which ships with BNK Forge, not roksbnkctl) must be on PATH.</p>
+<p>Registration uses BNK Forge v3’s REST API (it has no CLI). It is credential-
+backed: an IBM Cloud credential template is stored in Forge so it re-derives the
+kubeconfig on demand — nothing perishable is stored. The password is read from
+BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
+session token is cached in the OS keychain.</p>
 <h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
 <p>Turn off BNK Forge auto-registration</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
@@ -8494,8 +9041,10 @@ from an IBM Cloud credential template, so nothing perishable is stored. The
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id</td></tr>
-<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides the bnk-forge CLI’s stored-session URL)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (ensured-or-created)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (e.g. https://forge.example.com)</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username</td></tr>
 </tbody>
 </table>
 </div>
@@ -8511,8 +9060,11 @@ from an IBM Cloud credential template, so nothing perishable is stored. The
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id (overrides config)</td></tr>
-<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config + stored session)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username (overrides config)</td></tr>
 </tbody>
 </table>
 </div>
@@ -8628,10 +9180,11 @@ identity to ~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json.</
 <p>Subsequent <code>roksbnkctl up</code> runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.</p>
-<p>By default the registry COS instance name follows the upstream HCL
-fallback formula “<code>&lt;cluster-name&gt;</code>-cos”. Pass –registry-cos-name to
-override (e.g. if your tfvars sets roks_cos_instance_name to a different
-value).</p>
+<p>The registry COS instance is found by probing the names roksbnkctl and the
+upstream HCL actually use: “<code>&lt;prefix&gt;</code>-registry-cos” (what <code>cluster up</code>
+creates), “<code>&lt;cluster&gt;</code>-registry-cos”, then the upstream fallback
+“<code>&lt;cluster&gt;</code>-cos”. Pass –registry-cos-name to override (e.g. if your tfvars
+sets roks_cos_instance_name to something else).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -8640,7 +9193,7 @@ value).</p>
 </thead>
 <tbody>
 <tr><td><code>--prompt</code></td><td><code>bool</code></td><td><code>false</code></td><td>prompt for the cluster name even if one is given as an argument</td></tr>
-<tr><td><code>--registry-cos-name</code></td><td><code>string</code></td><td>—</td><td>expected registry COS instance name (default “<code>&lt;cluster&gt;</code>-cos” — matches the upstream HCL fallback)</td></tr>
+<tr><td><code>--registry-cos-name</code></td><td><code>string</code></td><td>—</td><td>registry COS instance name (default: probe “<code>&lt;prefix&gt;</code>-registry-cos”, “<code>&lt;cluster&gt;</code>-registry-cos”, “<code>&lt;cluster&gt;</code>-cos”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -8894,6 +9447,91 @@ Pass –backend k8s | ssh:<code>&lt;target&gt;</code> for per-backend prereq che
 <p>Run a single command with cluster context loaded</p>
 <pre><code>roksbnkctl exec [command...]
 </code></pre>
+<h2 id="roksbnkctl-flp"><a class="header" href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></h2>
+<p>F5 License Proxy phase — optional in-cluster licensing proxy</p>
+<p>Manage the F5 License Proxy (FLP) as an optional, independent phase on an
+existing cluster: it deploys the f5-license-proxy chart (vault + postgresql +
+proxy) pulling from the configured registry (Harbor mirror or FAR), and records
+its root CA + service endpoint so a subsequent BNK install can license in FLP
+mode. Runs in its own state (state-flp/), separate from cluster/BNK/testing/gateway.</p>
+<p>Commands:
+roksbnkctl flp up     Install the F5 License Proxy (needs a cluster)
+roksbnkctl flp down   Remove the F5 License Proxy, leaving the other phases intact</p>
+<p>Typical flow (FLP-licensed BNK):
+roksbnkctl cluster up          # or <code>cluster register</code> for an existing cluster
+roksbnkctl registry replicate  # mirror FAR into your registry (optional)
+roksbnkctl flp up              # install the proxy
+roksbnkctl bnk up              # with bnk.license_mode: f5licenseproxy</p>
+<p>FLP is opt-in: without it, BNK licenses with a subscription JWT as before.</p>
+<h3 id="roksbnkctl-flp-down"><a class="header" href="#roksbnkctl-flp-down"><code>roksbnkctl flp down</code></a></h3>
+<p>Remove the F5 License Proxy, leaving the other phases</p>
+<pre><code>roksbnkctl flp down [flags]
+</code></pre>
+<p>Destroys only the FLP-phase resources (state-flp/), leaving cluster, BNK,
+testing and gateway intact, and clears flp-outputs.json.</p>
+<p>Exits 0 (“nothing to do”) when there’s no FLP state, so it’s safe in a
+reverse-order teardown of every phase.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
+<h3 id="roksbnkctl-flp-output"><a class="header" href="#roksbnkctl-flp-output"><code>roksbnkctl flp output</code></a></h3>
+<p>Print the FLP phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl flp output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
+<h3 id="roksbnkctl-flp-up"><a class="header" href="#roksbnkctl-flp-up"><code>roksbnkctl flp up</code></a></h3>
+<p>Install the F5 License Proxy (a cluster must exist)</p>
+<pre><code>roksbnkctl flp up [flags]
+</code></pre>
+<p>Deploys the F5 License Proxy into the existing cluster (read from
+cluster-outputs.json) in its own state (state-flp/), and writes flp-outputs.json
+(root CA + endpoint) for a later <code>bnk up</code> in f5licenseproxy mode.</p>
+<p>Refuses when no cluster exists yet.</p>
+<p>With –add-node-port-access the proxy is also reachable from OUTSIDE its own
+cluster, so a BNK install in a DIFFERENT cluster (same VPC, or across a transit
+gateway) can license through it — a “shared licensing cluster”, where only the
+cluster running the proxy needs egress to F5. That additionally puts the worker
+node IPs in the proxy’s server certificate (without them the remote cluster’s
+controller rejects the TLS handshake) and records an external endpoint in
+flp-outputs.json. Feed that endpoint + CA to the other workspace via its
+bnk.flp.external block.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--add-node-port-access</code></td><td><code>bool</code></td><td><code>false</code></td><td>expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it</td></tr>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--node-port-source-cidr</code></td><td><code>stringSlice</code></td><td><code>[]</code></td><td>with –add-node-port-access: open the NodePort on the worker security group to this CIDR. REPEATABLE — a multi-zone VPC has one address prefix PER ZONE, and a consuming pod scheduled in an unlisted zone is silently dropped. Pass every zone’s CIDR (or a supernet covering them).</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
 <h2 id="roksbnkctl-gateway"><a class="header" href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></h2>
 <p>Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup</p>
 <p>Manage the BNK data-plane configuration as an optional, independent phase
@@ -9082,6 +9720,24 @@ pulls the latest GitHub release tarball over the network.</p>
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-journal"><a class="header" href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></h2>
+<p>Append-only timeline + report for agentic-mode handoffs</p>
+<p>Manage the workspace journal (<code>&lt;workspace&gt;</code>/journal/), the append-only
+timeline the agentic-mode personas use to hand off to one another.</p>
+<p>roksbnkctl journal add “<code>&lt;note&gt;</code>”   Append a note to today’s journal
+roksbnkctl journal list           List entries chronologically with summaries
+roksbnkctl journal report         Assemble report.md from decisions + journal</p>
+<h3 id="roksbnkctl-journal-add"><a class="header" href="#roksbnkctl-journal-add"><code>roksbnkctl journal add</code></a></h3>
+<p>Append a note to today’s journal entry</p>
+<pre><code>roksbnkctl journal add &lt;message&gt;
+</code></pre>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
+<h3 id="roksbnkctl-journal-list"><a class="header" href="#roksbnkctl-journal-list"><code>roksbnkctl journal list</code></a></h3>
+<p>List journal entries (chronological) with one-line summaries</p>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
+<h3 id="roksbnkctl-journal-report"><a class="header" href="#roksbnkctl-journal-report"><code>roksbnkctl journal report</code></a></h3>
+<p>Assemble report.md from decisions.md + the journal timeline</p>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
 <h2 id="roksbnkctl-k"><a class="header" href="#roksbnkctl-k"><code>roksbnkctl k</code></a></h2>
 <p>Kubernetes verbs (kubectl-internalised; no host kubectl required)</p>
 <p>roksbnkctl k <code>&lt;verb&gt;</code> runs the BNK-relevant kubectl/oc verb subset
@@ -9314,7 +9970,6 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 </tbody>
 </table>
 </div>
-<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>cert-based forge kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. It carries the cluster’s admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and <strong>rejects raw IBM IAM bearer tokens (401)</strong>, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it’s a no-op local check. <code>--refresh</code> forces the re-fetch now — useful in CI/scripting. If there’s no forge kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]
@@ -9410,7 +10065,7 @@ static-key Secret.</p>
 </div>
 <p>← back to <a href="#roksbnkctl-ops"><code>roksbnkctl ops</code></a></p>
 <h2 id="roksbnkctl-output"><a class="header" href="#roksbnkctl-output"><code>roksbnkctl output</code></a></h2>
-<p>Print the merged outputs across all phases (cluster + bnk + testing + gateway)</p>
+<p>Print the merged outputs across all phases (cluster + bnk + testing + gateway + flp)</p>
 <pre><code>roksbnkctl output [name] [flags]
 </code></pre>
 <p>Print the union of every phase’s own outputs — each read from its owning
@@ -10015,8 +10670,8 @@ provision nothing.</p>
 </code></pre>
 <p>Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
-each phase tears down independently. Exits 0 (“nothing to do”) when there’s
-no testing state, so it’s safe in a reverse-order teardown of every phase.</p>
+each phase tears down independently. Exits 0 (“nothing to do”) when there’s no
+testing state, so it’s safe in a reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -10199,6 +10854,7 @@ ibmcloud:        # required
 cluster:         # required
 resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
+registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
 cos:             # optional; supply-chain auto-upload
@@ -10461,6 +11117,45 @@ cells:
 </tbody>
 </table>
 </div>
+<h2 id="registry-block"><a class="header" href="#registry-block"><code>registry:</code> block</a></h2>
+<p>Selects the OCI registry <code>registry replicate</code> mirrors FAR into — and, once a mirror
+record exists, the registry the install pulls <strong>out of</strong>. See
+<a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Air-gapped install</a> and
+<a href="#registry-targets-icr-and-a-private-artifactory">Registry targets</a>.</p>
+<pre><code class="language-yaml">registry:
+  target: generic                    # icr (default) | generic
+  # target: generic — any OCI registry (Harbor, Artifactory, Quay, registry:2)
+  generic_host: harbor.example.com
+  generic_repo_prefix: bnk-mirror
+  generic_username: admin
+  generic_password_b64: &lt;base64&gt;     # set via `registry target generic_password --password-stdin`
+  # target: icr — IBM Container Registry
+  # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
+  # icr_namespace: my-namespace      # empty → the workspace prefix
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>registry.target</code></td><td>string</td><td><code>icr</code></td><td><code>icr</code> (IBM Container Registry) or <code>generic</code> (any OCI-compliant registry — Harbor, Artifactory, Quay, <code>registry:2</code>).</td></tr>
+<tr><td><code>registry.icr_host</code></td><td>string</td><td>(from region)</td><td>ICR host for <code>target: icr</code>, e.g. <code>de.icr.io</code>.</td></tr>
+<tr><td><code>registry.icr_namespace</code></td><td>string</td><td>(the prefix)</td><td>ICR namespace artifacts nest under.</td></tr>
+<tr><td><code>registry.generic_host</code></td><td>string</td><td>(empty)</td><td>Registry host for <code>target: generic</code>, e.g. <code>harbor.example.com</code>.</td></tr>
+<tr><td><code>registry.generic_repo_prefix</code></td><td>string</td><td>(empty)</td><td>Repository path artifacts nest under — a Harbor <strong>project</strong>, or an Artifactory repo key.</td></tr>
+<tr><td><code>registry.generic_username</code></td><td>string</td><td>(empty)</td><td>Basic-auth user. Both credential fields empty ⇒ anonymous push/pull.</td></tr>
+<tr><td><code>registry.generic_password_b64</code></td><td>string</td><td>(empty)</td><td>Basic-auth password/token, base64. Like every <code>_b64</code> field this is <strong>obfuscation, not encryption</strong> — <code>chmod 600</code>, never commit. Set it with <code>registry target generic_password --password-stdin</code> so it never reaches your shell history; templatable from the environment via <code>init --override-from-env</code> (<code>ROKSBNKCTL_GENERIC_PASSWORD</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The same credential installs, not just replicates.</strong> For an external private registry
+these fields authenticate <em>both</em> halves of the install: chart pulls log in with them, and
+pods get a <code>mirror-secret</code> dockerconfig built from them — created for you in every
+namespace that pulls (cert-manager, the FLO/BNK namespaces, and <code>kube-system</code> for the
+node-labeler) and referenced from the CNEInstance. <strong>A private registry needs no
+anonymous or public project.</strong> An in-cluster/ICR mirror authorizes by RBAC instead and
+needs no pull secret at all.</p>
 <h2 id="tf_source-block"><a class="header" href="#tf_source-block"><code>tf_source:</code> block</a></h2>
 <pre><code class="language-yaml">tf_source:
   type: embedded         # or: github | local
@@ -10649,6 +11344,13 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
+<tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="#licensing-bnk-with-the-f5-license-proxy-flp">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
+<tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
+<tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
+<tr><td><code>bnk.flp.node_port_access</code></td><td>bool</td><td><code>false</code></td><td>Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it (<a href="#flow-c--a-shared-licensing-cluster">Flow C</a>). Set by <code>flp up --add-node-port-access</code> and persisted, so a later <code>flp up</code> does not tear the exposure down.</td></tr>
+<tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>list of string</td><td>(empty)</td><td>With <code>node_port_access</code>: open the proxy’s NodePort to these CIDRs on the worker security group. A <strong>list</strong>, and it must name <strong>every zone</strong> — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by <code>flp up --node-port-source-cidr</code> and persisted.</td></tr>
+<tr><td><code>bnk.flp.external.url</code></td><td>string</td><td>(empty)</td><td>License against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code> from <code>roksbnkctl -w &lt;owner&gt; flp output</code>. This workspace then needs no <code>flp up</code> of its own.</td></tr>
+<tr><td><code>bnk.flp.external.root_ca_b64</code></td><td>string</td><td>(empty)</td><td>That proxy’s <code>root_ca_b64</code>, delivered to the CWC so it can verify the proxy’s certificate. Required with <code>external.url</code>.</td></tr>
 <tr><td><code>test.throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image.</td></tr>
 <tr><td><code>test.throughput.duration</code></td><td>integer</td><td><code>30</code></td><td>iperf3 <code>-t</code> (seconds).</td></tr>
 <tr><td><code>test.throughput.streams</code></td><td>integer</td><td><code>8</code></td><td>iperf3 <code>-P</code> (parallel streams).</td></tr>
@@ -10735,6 +11437,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_cluster_id_or_name</code></td><td><code>string</code></td><td><code>""</code></td><td>ID or name of an existing ROKS cluster — used when create_roks_cluster = false</td><td>no</td></tr>
 <tr><td><code>create_roks_transit_gateway</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Transit Gateway and VPC connections</td><td>no</td></tr>
 <tr><td><code>create_roks_registry_cos_instance</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Cloud Object Storage instance for the OpenShift image registry</td><td>no</td></tr>
+<tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, the cert_manager module’s helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to "direct-apply").</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available.</td><td>no</td></tr>
@@ -10743,6 +11446,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
@@ -10750,8 +11455,13 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped.</td><td>no</td></tr>
-<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: <code>"kubectl"</code> (terraform-native — <code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>) or <code>"legacy_curl"</code> (the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline). <code>roksbnkctl</code> renders this from <code>bnk.cr_mode</code> / the <code>--legacy-bnk</code> flag. Validated to one of the two values.</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native) or "legacy_curl" (null_resource baseline).</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository URL for Docker and Helm images</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket — used by flo and license</td><td>no</td></tr>
@@ -10765,7 +11475,10 @@ values. The resulting block looks like:</p>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
-<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected or disconnected)</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)</td><td>no</td></tr>
+<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
+<tr><td><code>flp_license_server_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.<code>&lt;ns&gt;</code>.svc.cluster.local:8443)</td><td>no</td></tr>
+<tr><td><code>license_server_root_ca</code></td><td><code>string</code></td><td><code>""</code></td><td>PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only)</td><td>no</td></tr>
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create a jumphost in a client VPC connected to the cluster via the Transit Gateway</td><td>no</td></tr>
 <tr><td><code>testing_create_cluster_jumphosts</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create one jumphost per availability zone directly inside the cluster VPC</td><td>no</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name of the IBM Cloud SSH key to inject into all jumphosts</td><td>no</td></tr>
@@ -10779,6 +11492,21 @@ values. The resulting block looks like:</p>
 <tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<code>&lt;prefix&gt;</code>-<code>&lt;zone&gt;</code>)</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig"</code></td><td>Parent directory where ibm_container_cluster_config writes admin kubeconfigs. Each submodule appends its name as a subdir. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FLO’s FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
+<tr><td><code>deploy_gateway</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle for the Gateway phase. Off in every other phase’s override; on only for <code>gateway up</code>.</td><td>no</td></tr>
+<tr><td><code>deploy_flp</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle for the F5 License Proxy phase. Off in every other phase’s override; on only for <code>flp up</code>.</td><td>no</td></tr>
+<tr><td><code>flp_namespace</code></td><td><code>string</code></td><td><code>"f5-license-proxy"</code></td><td>Namespace the F5 License Proxy is installed into (FLP phase).</td><td>no</td></tr>
+<tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin for the f5-license-proxy chart version (empty → registry latest).</td><td>no</td></tr>
+<tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs (FLP phase). Default = ROKS VPC block.</td><td>no</td></tr>
+<tr><td><code>gateway_app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by the gateway module)</td><td>no</td></tr>
+<tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
+<tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default), automap, or both</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_local</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one route per entry × zone). Empty = no local client routes. <code>gateway up</code> auto-derives these from the cluster jumphost subnets when unset (PRD 12).</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_remote</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one route per entry × zone). Empty = no remote client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_vxlan_port</code></td><td><code>number</code></td><td><code>6789</code></td><td>Egress VXLAN UDP port (also opened on the cluster security group)</td><td>no</td></tr>
+<tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it.</td><td>no</td></tr>
+<tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped.</td><td>no</td></tr>
+<tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart’s post-renderer (<code>roksbnkctl flp postrender</code>), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -10796,9 +11524,14 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
+<tr><td><code>cert_manager_image_repository</code></td><td><code>string</code></td><td><code>""</code></td><td>Override the cert-manager controller image repository (air-gap mirror image host). Empty leaves the chart default.</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native helm_release + kubernetes_namespace + alekc/kubectl) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
+<tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, manage the cert_manager helm/null_resource bring-up. Set false in the bnk-phase override when cluster-outputs.json exists — cluster phase already provisioned cert_manager and the second phase must NOT re-manage it (would attempt kubectl delete namespace cert-manager on a subsequent bnk down).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/cert_manager"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with image_repository, cert-manager’s pods pull with a dockerconfig secret built from it instead of anonymously.</td><td><strong>yes</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -10815,6 +11548,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR Repository URL for Docker and Helm registry</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the mirror (CNEInstance spec.registry.uri). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules</td><td>no</td></tr>
@@ -10823,11 +11558,15 @@ values. The resulting block looks like:</p>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>The Multus Network Attachment Definitions for the CNEInstance TMM deployments</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native kubectl_manifest + wait_for) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>flo_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/cne_instance"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (private Harbor/Artifactory).</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously.</td><td><strong>yes</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -10844,6 +11583,11 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR Repository URL for Docker and Helm registry</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Chart-pull host for the mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the mirror (image.repository). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>use_cos_bucket</code></td><td><code>bool</code></td><td><code>true</code></td><td>Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
@@ -10858,11 +11602,93 @@ values. The resulting block looks like:</p>
 <tr><td><code>bigip_password</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP password for CIS controller login</td><td><strong>yes</strong></td></tr>
 <tr><td><code>bigip_url</code></td><td><code>string</code></td><td><code>"https://192.168.1.245"</code></td><td>BIG-IP URL for CIS controller login</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>cert_manager_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>cert_manager ready sentinel ID — when set, blocks flo inner module until cert-manager CRDs are available</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner flo module is disabled and no FLO resources are created</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/flo"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount.</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-flp"><a class="header" href="#module-flp">Module: <code>flp</code></a></h2>
+<p>Source: <code>terraform/modules/flp/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deploy_flp</code></td><td><code>bool</code></td><td><code>false</code></td><td>Deploy the F5 License Proxy. Off in every other phase’s override; on only for <code>flp up</code>. When false the module is a complete no-op.</td><td>no</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true the cluster is being created in this same apply (FLP never runs then); gates the plan-time cluster-config fetch.</td><td>no</td></tr>
+<tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><code>""</code></td><td>Name or id of the existing ROKS cluster to deploy the FLP into.</td><td>no</td></tr>
+<tr><td><code>roks_cluster_dependency_id</code></td><td><code>any</code></td><td><code>null</code></td><td>Dependency handle from the cluster phase, deferring apply until the cluster is ready.</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>""</code></td><td>Directory the ibm_container_cluster_config data source writes the kubeconfig into.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud API key (COS/IAM auth + provider config).</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the ROKS cluster (ibm provider).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group containing the COS instance (empty = default group).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>""</code></td><td>COS service instance holding the FAR auth tarball + subscription JWT.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>""</code></td><td>COS bucket holding the FAR auth tarball + subscription JWT.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the COS bucket.</td><td>no</td></tr>
+<tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth tarball object key in the COS bucket (the _json_key_base64 SA lives inside).</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT object key in the COS bucket — seeds flp-jwt-secret.</td><td>no</td></tr>
+<tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/tmp/roksbnkctl-flp"</code></td><td>Working directory for the FAR-auth download/extract.</td><td>no</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR registry host (fallback when no mirror).</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Mirror host for chart pulls (empty → coalesces to far_repo_url).</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Mirror host for image pulls (empty → coalesces to far_repo_url).</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → in-cluster/ICR mirror (kube-token/IAM auth).</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart + image pulls authenticate with it instead of the kube token.</td><td><strong>yes</strong></td></tr>
+<tr><td><code>flp_namespace</code></td><td><code>string</code></td><td><code>"f5-license-proxy"</code></td><td>Namespace to install the F5 License Proxy into.</td><td>no</td></tr>
+<tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest.</td><td>no</td></tr>
+<tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>""</code></td><td>BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty.</td><td>no</td></tr>
+<tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the proxy OUTSIDE its own cluster so a BNK install in a different cluster can license through it. The chart’s Service is already type NodePort (30001), but it hardcodes externalTrafficPolicy: Local — with one replica only the node running the pod answers — so this flips it to Cluster and adds the worker node IPs to the proxy’s server certificate (without them the remote CWC rejects the TLS handshake).</td><td>no</td></tr>
+<tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the cluster’s worker security group to these CIDRs (the consuming cluster’s subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched.</td><td>no</td></tr>
+<tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default.</td><td>no</td></tr>
+<tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart’s POST-RENDERER (<code>roksbnkctl flp postrender</code>). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH for a direct <code>terraform apply</code>. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container.</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-gateway"><a class="header" href="#module-gateway">Module: <code>gateway</code></a></h2>
+<p>Source: <code>terraform/modules/gateway/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API key</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud region the cluster runs in (zone names derive as <code>&lt;region&gt;</code>-1/2/3)</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud resource group</td><td>no</td></tr>
+<tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Existing ROKS cluster name or id the Gateway phase configures</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>""</code></td><td>Directory the IBM provider writes the cluster kubeconfig into</td><td>no</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Always false for the Gateway phase (it reuses an existing cluster)</td><td>no</td></tr>
+<tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>Cluster-ready handle (apply-time ordering); unused gate kept for symmetry</td><td>no</td></tr>
+<tr><td><code>deploy_gateway</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle — when false the whole Gateway phase is a no-op (count=0)</td><td>no</td></tr>
+<tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>BNK namespace (F5BnkGateway / SnatPool / Egress / StaticRoute live here)</td><td>no</td></tr>
+<tr><td><code>app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by this module)</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[ { ext_vlan_cidr   = "10.155.15.0/24" int_vlan_cidr   = "10.254.99.0/24" int_snat_cidr   = "10.10.11.0/24" int_vip_cidr    = "10.135.15.0/24" external_selfip = "10.155.15.101" internal_selfip = "10.254.99.101" }, { ext_vlan_cidr   = "10.156.16.0/24" int_vlan_cidr   = "10.254.100.0/24" int_snat_cidr   = "10.10.21.0/24" int_vip_cidr    = "10.136.16.0/24" external_selfip = "10.156.16.101" internal_selfip = "10.254.100.101" }, { ext_vlan_cidr   = "10.157.17.0/24" int_vlan_cidr   = "10.254.101.0/24" int_snat_cidr   = "10.10.31.0/24" int_vip_cidr    = "10.137.17.0/24" external_selfip = "10.157.17.101" internal_selfip = "10.254.101.101" }, ]</code></td><td>Per-zone subnet CIDRs (empty = install-guide defaults). Shared with the BNK phase.</td><td>no</td></tr>
+<tr><td><code>gateway_class_name</code></td><td><code>string</code></td><td><code>"gateway-class"</code></td><td>GatewayClass name</td><td>no</td></tr>
+<tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>"f5.com/f5-bnk-f5-cne-controller"</code></td><td>GatewayClass controllerName (the BNK CNE controller)</td><td>no</td></tr>
+<tr><td><code>gateway_bnkgateway_name</code></td><td><code>string</code></td><td><code>"bnkgateway-cloud1"</code></td><td>F5BnkGateway name (referenced by the Gateway parametersRef)</td><td>no</td></tr>
+<tr><td><code>gateway_name</code></td><td><code>string</code></td><td><code>"http-gw"</code></td><td>Gateway (gateway.networking.k8s.io) name</td><td>no</td></tr>
+<tr><td><code>gateway_listener_port</code></td><td><code>number</code></td><td><code>80</code></td><td>Gateway HTTP listener port</td><td>no</td></tr>
+<tr><td><code>gateway_vip_start_host</code></td><td><code>number</code></td><td><code>100</code></td><td>Host number in int_vip_cidr for F5BnkGateway listener startAddress</td><td>no</td></tr>
+<tr><td><code>gateway_vip_end_host</code></td><td><code>number</code></td><td><code>120</code></td><td>Host number in int_vip_cidr for F5BnkGateway listener endAddress</td><td>no</td></tr>
+<tr><td><code>gateway_route_name</code></td><td><code>string</code></td><td><code>"http-route"</code></td><td>HTTPRoute name</td><td>no</td></tr>
+<tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
+<tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default; creates the SnatPool + snatpool Egress), automap (automap Egress only), or both.</td><td>no</td></tr>
+<tr><td><code>gateway_snatpool_name</code></td><td><code>string</code></td><td><code>"egress-snat-vx102"</code></td><td>F5SPKSnatpool name</td><td>no</td></tr>
+<tr><td><code>gateway_snat_host</code></td><td><code>number</code></td><td><code>111</code></td><td>Host number in int_snat_cidr for each zone’s SNAT address</td><td>no</td></tr>
+<tr><td><code>gateway_egress_app_interface</code></td><td><code>string</code></td><td><code>"eth0"</code></td><td>Application pod interface the Egress intercepts</td><td>no</td></tr>
+<tr><td><code>gateway_egress_tmm_interface</code></td><td><code>string</code></td><td><code>"external-vlan"</code></td><td>TMM interface name the Egress VXLAN binds to (matches the external VLAN)</td><td>no</td></tr>
+<tr><td><code>gateway_egress_node_interface</code></td><td><code>string</code></td><td><code>"ens3"</code></td><td>Node interface name for the Egress VXLAN</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mtu</code></td><td><code>number</code></td><td><code>1460</code></td><td>Egress VXLAN MTU</td><td>no</td></tr>
+<tr><td><code>gateway_vxlan_port</code></td><td><code>number</code></td><td><code>6789</code></td><td>Egress VXLAN UDP port (also opened on the cluster security group)</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_local</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one F5SPKStaticRoute per entry × zone). Empty = no local client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_remote</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one F5SPKStaticRoute per entry × zone). Empty = no remote client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_static_route_gw_host</code></td><td><code>number</code></td><td><code>1</code></td><td>Host number in ext_vlan_cidr used as each zone’s static-route gateway</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -10883,8 +11709,11 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
-<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected or disconnected)</td><td>no</td></tr>
+<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
+<tr><td><code>flp_license_server_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Base URL of the in-cluster F5 License Proxy (FLP mode only)</td><td>no</td></tr>
+<tr><td><code>license_server_root_ca</code></td><td><code>string</code></td><td><code>""</code></td><td>PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only)</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native kubectl_manifest + wait_for) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>cneinstance_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>cneinstance_ready_id from ws4 — when set, ensures License CRD is available before applying License CR</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner license module is disabled and no License resources are created</td><td>no</td></tr>
@@ -10915,6 +11744,9 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster).</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><em>required</em></td><td>Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider’s HOME-derived default, which resolves empty under the roksbnkctl runner.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -11619,7 +12451,7 @@ gotchas).</p>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

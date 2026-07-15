@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -277,10 +277,22 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>
 <tr><td><code>ROKSBNKCTL_ZONE&lt;n&gt;_EXT_VLAN_CIDR</code> … <code>_INTERNAL_SELFIP</code></td><td><code>bnk.network.zones[n-1]</code></td><td>per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply)</td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_SSH_KEY_NAME</code></td><td><code>resources.testing_ssh_key_name</code></td><td>verbatim</td></tr>
+<tr><td><code>ROKSBNKCTL_REGISTRY_TARGET</code></td><td><code>registry.target</code></td><td><code>icr</code> | <code>generic</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_HOST</code></td><td><code>registry.generic_host</code></td><td>verbatim, e.g. <code>harbor.example.com</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td><td><code>registry.generic_repo_prefix</code></td><td>verbatim — a Harbor project, an Artifactory repo key</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_USERNAME</code></td><td><code>registry.generic_username</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_PASSWORD</code></td><td><code>registry.generic_password_b64</code></td><td>raw, base64-encoded</td></tr>
+<tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code> (see <a href="./10c-flp-licensing.html">Chapter 10c</a>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
 </tbody>
 </table>
 </div>
+<p>The last six are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
+template. The registry four say <em>where</em> the mirror is; the FLP two are the <strong>cross-job
+handoff</strong> — the job that owns the proxy prints them with <code>flp output flp_external_endpoint</code> / <code>flp_root_ca</code>, and the job that installs BNK receives them as
+ordinary job outputs. See <a href="./10c-flp-licensing.html#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
 <p>Notes:</p>
 <ul>
 <li>For the API key, <code>IBMCLOUD_API_KEY</code> holds the <strong>raw</strong> key and <code>init</code>
@@ -376,7 +388,7 @@ config supplied through the environment, and state persisted on the mounted
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

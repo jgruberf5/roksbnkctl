@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,7 +187,7 @@
 <tr><th>Method</th><th>You get</th><th>Host needs</th><th>Best for</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>A — native build / release binary</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Go 1.25+ (build) or nothing (release binary); the runtime tools you use (<a href="#installing-prerequisites">above</a>)</td><td>a developer laptop</td></tr>
+<tr><td><strong>A — native build / release binary</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Go 1.26+ (build) or nothing (release binary); the runtime tools you use (<a href="#installing-prerequisites">above</a>)</td><td>a developer laptop</td></tr>
 <tr><td><strong>B — Docker build</strong></td><td>a <code>roksbnkctl</code> binary</td><td>Docker only (for the build)</td><td>a host without Go; CI that wants a binary artefact</td></tr>
 <tr><td><strong>C — runner container</strong></td><td>a container with roksbnkctl <strong>+ every tool</strong></td><td>Docker/Podman + a volume for state</td><td>CI runners, fleet provisioning, air-gapped sites</td></tr>
 </tbody>
@@ -198,7 +198,7 @@
 <ul>
 <li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
 <li><strong>Git</strong> to clone the repository (only if building from source — not needed if you grab a pre-built binary).</li>
-<li><strong>Go 1.25 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
+<li><strong>Go 1.26 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>.</li>
 <li><strong>Helm 3 on PATH</strong> at runtime — <code>doctor</code> flags it as required during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, so without <code>helm</code> that path errors out with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead (in-process via the <code>hashicorp/helm</code> provider — see <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>). <strong>The default path still shells <code>helm</code> once, though</strong> — for FAR chart-version discovery (the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions), so <code>helm</code> is genuinely required in <em>both</em> modes, not only the legacy one. Keep <code>helm</code> installed to stay <code>doctor</code>-green.</li>
 </ul>
@@ -280,8 +280,8 @@ Expand-Archive oc.zip -DestinationPath "$env:USERPROFILE\bin\"
 ibmcloud plugin install cloud-object-storage -f
 </code></pre>
 <p>Windows TTY-bound SSH features (the <code>roksbnkctl shell --on &lt;target&gt;</code> interactive path) have known limitations on Windows; file-based SSH keys + non-interactive commands work, but <code>ssh-agent</code> named-pipe integration is a v1.x item. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”.</p>
-<h2 id="path-a--native-build-requires-go-125"><a class="header" href="#path-a--native-build-requires-go-125">Path A — native build (requires Go 1.25+)</a></h2>
-<p>If <code>go version</code> reports <code>1.25</code> or newer, this is the simplest path:</p>
+<h2 id="path-a--native-build-requires-go-126"><a class="header" href="#path-a--native-build-requires-go-126">Path A — native build (requires Go 1.26+)</a></h2>
+<p>If <code>go version</code> reports <code>1.26</code> or newer, this is the simplest path:</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
@@ -299,15 +299,15 @@ make vet        # go vet ./...
 make tidy       # go mod tidy
 make clean      # rm -rf bin/
 </code></pre>
-<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.25.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.25</code>. Either upgrade Go or fall back to the Docker path below.</p>
+<p>If <code>make build</code> fails, the most likely cause is <strong>Go too old</strong>. The module declares <code>go 1.26.0</code> in <code>go.mod</code> (forced by transitive deps from the SSH/integration test layers); older versions error out with <code>go: module requires Go 1.26</code>. Either upgrade Go or fall back to the Docker path below.</p>
 <h2 id="path-b--docker-based-build-no-host-go-required"><a class="header" href="#path-b--docker-based-build-no-host-go-required">Path B — Docker-based build (no host Go required)</a></h2>
-<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.25-alpine</code> image has everything needed (Sprint 1 bumped the minimum Go version from 1.23 to 1.25 because of <code>testcontainers-go</code> and <code>gliderlabs/ssh</code> transitive dependencies); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
+<p>This path is ideal for sealed CI workstations, custom VM images, or anywhere installing Go on the host is awkward. The official <code>golang:1.26-alpine</code> image has everything needed (the minimum tracks whatever the transitive dependencies demand — currently the <code>k8s.io/*</code> v0.36 modules, which declare <code>go 1.26</code>); the build artefact lands in <code>./bin/</code> owned by your host user.</p>
 <pre><code class="language-bash">git clone https://github.com/jgruberf5/roksbnkctl.git
 cd roksbnkctl
 
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl ./cmd/roksbnkctl'
 
 ./bin/roksbnkctl install
 </code></pre>
@@ -322,7 +322,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 <tr><td><code>-w /work</code></td><td>Container working directory matches the mount.</td></tr>
 <tr><td><code>--user "$(id -u):$(id -g)"</code></td><td>Output binary is owned by your host user, not root.</td></tr>
 <tr><td><code>-e HOME=/tmp</code></td><td>Go writes its module cache under <code>$HOME</code>; <code>/tmp</code> is writable by any user. Without this, <code>go mod tidy</code> fails on a writable-<code>/root</code> permission error.</td></tr>
-<tr><td><code>golang:1.25-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
+<tr><td><code>golang:1.26-alpine</code></td><td>Pinned major version; matches <code>go.mod</code>’s minimum.</td></tr>
 </tbody>
 </table>
 </div>
@@ -332,13 +332,13 @@ docker run --rm -v "$PWD:/work" -w /work \
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=darwin -e GOARCH=arm64 \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl-darwin-arm64 ./cmd/roksbnkctl'
 
 # Windows amd64 (compile-only; not tested at runtime)
 docker run --rm -v "$PWD:/work" -w /work \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e GOOS=windows -e GOARCH=amd64 \
-  golang:1.25-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
+  golang:1.26-alpine sh -c 'go mod tidy &amp;&amp; go build -o bin/roksbnkctl.exe ./cmd/roksbnkctl'
 </code></pre>
 <p>Each binary is statically linked (Alpine + <code>CGO_ENABLED=0</code> is the cross-compile default) so the produced file has no runtime library dependencies.</p>
 <h2 id="path-c--run-from-the-all-in-one-container-image-no-install"><a class="header" href="#path-c--run-from-the-all-in-one-container-image-no-install">Path C — run from the all-in-one container image (no install)</a></h2>
@@ -494,7 +494,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

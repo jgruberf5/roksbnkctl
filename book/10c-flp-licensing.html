@@ -1,0 +1,676 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Licensing BNK with the F5 License Proxy (FLP) - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "rust";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-6391257c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jgruberf5/roksbnkctl" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="licensing-bnk-with-the-f5-license-proxy-flp"><a class="header" href="#licensing-bnk-with-the-f5-license-proxy-flp">Licensing BNK with the F5 License Proxy (FLP)</a></h1>
+<p>By default <code>roksbnkctl</code> licenses BIG-IP Next for Kubernetes (BNK) with a
+<strong>subscription JWT</strong> — the <code>trial.jwt</code> (or your production token) staged in the
+orchestration COS bucket. In that mode the cluster’s controller reaches F5’s
+licensing service directly. Nothing in this chapter changes that default.</p>
+<p>Some environments prefer (or require) an <strong>F5 License Proxy (FLP)</strong>: an in-cluster
+service that brokers licensing on behalf of every BNK instance in the cluster,
+so the workloads themselves never talk to F5 directly. <code>roksbnkctl</code> can deploy
+the FLP and point BNK at it, as an <strong>opt-in</strong> capability — a new <code>flp</code> lifecycle
+phase plus a one-line config switch. Both licensing modes are first-class; if you
+don’t opt in, the JWT path is byte-for-byte unchanged.</p>
+<blockquote>
+<p><strong>FLP is optional.</strong> Everything here is gated behind <code>bnk.license_mode: f5licenseproxy</code>. Leave it unset (the default) and BNK licenses with the
+subscription JWT exactly as before — no <code>flp</code> phase, no extra resources.</p>
+</blockquote>
+<h2 id="what-the-flp-is"><a class="header" href="#what-the-flp-is">What the FLP is</a></h2>
+<p>The FLP is a Helm-installed workload (the <code>f5-license-proxy</code> chart: the proxy
+itself plus a bundled Vault and PostgreSQL). It presents an in-cluster TLS
+endpoint that the BNK <strong>Cluster-Wide Controller (CWC)</strong> calls for licensing; the
+proxy forwards to F5’s licensing backend. Because the CWC must trust the proxy’s
+TLS, the proxy’s <strong>root CA</strong> is delivered to the CWC and the BNK <strong>License</strong>
+custom resource is set to <code>operationMode: f5licenseproxy</code> with the proxy’s
+service URL.</p>
+<p><code>roksbnkctl</code> automates all of that: <code>roksbnkctl flp up</code> generates the proxy’s CA
+and mTLS certs, creates its secrets, installs the chart (pulling from your
+registry mirror or FAR), and records the CA + endpoint. A later <code>bnk up</code> reads
+that handoff and wires the License CR — you never copy a certificate by hand.</p>
+<p>The FLP’s charts and images are part of the standard BNK bill of materials, so
+<a href="./10a-air-gapped-install.html"><code>registry replicate</code></a> already mirrors them into a
+private registry — an air-gapped, FLP-licensed install pulls everything,
+including the proxy, from a registry you control.</p>
+<h3 id="three-topologies"><a class="header" href="#three-topologies">Three topologies</a></h3>
+<p>The proxy is a <strong>cluster-wide</strong> broker, and it is the only component that needs to
+reach F5. That gives you three ways to arrange it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Where the proxy runs</th><th>Use it when</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#flow-a--a-cluster-you-are-creating"><strong>Flow A</strong></a></td><td>the cluster <code>roksbnkctl</code> creates</td><td>the normal case</td></tr>
+<tr><td><a href="#flow-b--an-existing-cluster-registered-in-the-workspace"><strong>Flow B</strong></a></td><td>a cluster you already own and register</td><td>you did not provision the cluster</td></tr>
+<tr><td><a href="#flow-c--a-shared-licensing-cluster"><strong>Flow C</strong></a></td><td><strong>a different cluster</strong> — one proxy serving many</td><td>only one cluster may reach F5; the rest are air-gapped</td></tr>
+</tbody>
+</table>
+</div>
+<p>Flows A and B are the same shape: proxy and BNK in one cluster. Flow C splits them.</p>
+<h2 id="the-flp-phase"><a class="header" href="#the-flp-phase">The <code>flp</code> phase</a></h2>
+<p>Like <a href="./08a-three-phase-lifecycle.html"><code>testing</code></a> and <code>gateway</code>, the FLP is an
+<strong>independent, opt-in phase</strong> with its own terraform state (<code>state-flp/</code>). The
+composite <code>roksbnkctl up</code> never runs it; you run it explicitly, between the
+cluster and BNK:</p>
+<pre><code class="language-bash">roksbnkctl flp up      # install the proxy into an existing cluster
+roksbnkctl flp down    # remove it (leaves cluster / BNK / testing intact)
+roksbnkctl flp output  # print its terraform outputs (endpoint, namespace)
+</code></pre>
+<p><code>flp up</code> refuses if the workspace has no cluster yet, and records
+<code>flp-outputs.json</code> (the proxy’s root CA + service endpoint) on success. <code>flp down</code> is a no-op success when there is no FLP state, so it is safe in a
+reverse-order teardown of every phase.</p>
+<p>The proxy installs into the <code>f5-license-proxy</code> namespace by default; override
+with <code>bnk.flp.namespace</code> (or <code>ROKSBNKCTL_FLP_NAMESPACE</code>).</p>
+<h2 id="opting-in"><a class="header" href="#opting-in">Opting in</a></h2>
+<p>Set the license mode in the workspace <code>config.yaml</code>:</p>
+<pre><code class="language-yaml">bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  license_mode: f5licenseproxy   # connected (default) | disconnected | f5licenseproxy
+  flp:
+    namespace: f5-license-proxy  # optional; this is the default
+</code></pre>
+<p>Or answer <strong>yes</strong> to <em>License via an in-cluster F5 License Proxy (FLP)?</em> in the
+<code>roksbnkctl init</code> interview, or set it non-interactively:</p>
+<pre><code class="language-bash">export ROKSBNKCTL_LICENSE_MODE=f5licenseproxy
+export ROKSBNKCTL_FLP_NAMESPACE=f5-license-proxy   # optional
+</code></pre>
+<p>The subscription JWT is <strong>still required</strong> in FLP mode (the proxy presents it to
+F5); it is resolved from COS exactly as in the JWT path — no change to
+<code>bnk.subscription_jwt_file</code> or its credential.</p>
+<h2 id="flow-a--a-cluster-you-are-creating"><a class="header" href="#flow-a--a-cluster-you-are-creating">Flow A — a cluster you are creating</a></h2>
+<p>The full sequence when <code>roksbnkctl</code> provisions the cluster:</p>
+<pre><code class="language-bash"># 1. Seed the workspace with FLP mode (interview, config.yaml, or env).
+roksbnkctl -w prod init          # answer "yes" to the FLP prompt
+
+# 2. Create the cluster.
+roksbnkctl -w prod cluster up
+
+# 3. (Optional) mirror BNK — including the FLP — into your private registry.
+#    Skip this to pull from repo.f5.com directly.
+roksbnkctl -w prod registry replicate --target generic
+
+# 4. Install the F5 License Proxy.
+roksbnkctl -w prod flp up
+
+# 5. Install BNK — it licenses via the proxy automatically.
+roksbnkctl -w prod bnk up
+</code></pre>
+<p>Step 5 reads <code>flp-outputs.json</code> and sets the License CR to
+<code>operationMode: f5licenseproxy</code>, its <code>teem*Url</code> at the proxy service, and
+delivers the proxy root CA to the CWC. <code>bnk up</code> errors clearly if the <code>flp</code>
+phase has not been run.</p>
+<h2 id="flow-b--an-existing-cluster-registered-in-the-workspace"><a class="header" href="#flow-b--an-existing-cluster-registered-in-the-workspace">Flow B — an existing cluster registered in the workspace</a></h2>
+<p>You do not have to let <code>roksbnkctl</code> build the cluster. If you already have a ROKS
+cluster, <a href="./09-registering-existing-cluster.html">register</a> it into the workspace
+and install the proxy onto it. Registration looks the cluster up in your IBM Cloud
+account and writes the very same <code>cluster-outputs.json</code> that the <code>cluster up</code> path
+produces — and that is the <em>only</em> thing the FLP and BNK phases consume. So from
+step 3 on, the two flows are character-for-character identical:</p>
+<pre><code class="language-bash"># 1. Seed the workspace with FLP mode, and do NOT create a cluster.
+roksbnkctl -w prod init          # answer "no" to "create a cluster?", "yes" to FLP
+#    (equivalently, in config.yaml: cluster.create: false + bnk.license_mode: f5licenseproxy)
+
+# 2. Register the cluster you already have.
+roksbnkctl -w prod cluster register my-existing-roks
+
+# 3. (Optional) mirror BNK — including the FLP — into your private registry.
+roksbnkctl -w prod registry replicate --target generic
+
+# 4. Install the F5 License Proxy into the registered cluster.
+roksbnkctl -w prod flp up
+
+# 5. Install BNK, licensed via the proxy.
+roksbnkctl -w prod bnk up
+</code></pre>
+<p><strong><code>roksbnkctl</code> never takes ownership of a registered cluster.</strong> <code>flp up</code> adds only
+the proxy workload (its namespace, secrets and Helm release); <code>flp down</code> removes
+exactly that and nothing else. The cluster itself is never created, modified at the
+infrastructure level, or destroyed — <code>cluster down</code> will not touch it.</p>
+<h2 id="flp-behind-a-private-registry"><a class="header" href="#flp-behind-a-private-registry">FLP behind a private registry</a></h2>
+<p>The FLP’s chart and its four images are part of the standard BNK bill of
+materials, so <a href="./10a-air-gapped-install.html"><code>registry replicate</code></a> mirrors them
+along with everything else. Combining the two gives a genuinely disconnected,
+FLP-licensed install: <code>flp up</code> and <code>bnk up</code> pull <strong>every</strong> chart and image from
+your registry, and the CWC brokers licensing through the in-cluster proxy rather
+than reaching F5 itself.</p>
+<p>Nothing extra is required — point the workspace at the mirror and the FLP phase
+follows it automatically:</p>
+<pre><code class="language-bash">roksbnkctl -w prod registry target generic         # your Harbor/Artifactory/ICR
+roksbnkctl -w prod registry replicate              # mirrors BNK + the FLP
+roksbnkctl -w prod flp up                          # proxy, pulled from the mirror
+roksbnkctl -w prod bnk up                          # BNK, pulled from the mirror
+</code></pre>
+<h2 id="flow-c--a-shared-licensing-cluster"><a class="header" href="#flow-c--a-shared-licensing-cluster">Flow C — a shared licensing cluster</a></h2>
+<p>Flows A and B both put the proxy and BNK in the <strong>same</strong> cluster. But the proxy is a
+<em>cluster-wide</em> licensing broker, and it is the only thing that needs to reach F5. So
+you can run it <strong>once</strong>, in a cluster that has egress, and have BNK installs in
+<strong>other</strong> clusters license through it — clusters that reach nothing but your mirror
+and the proxy.</p>
+<pre><code>   ┌──────────────── services cluster (has egress to F5) ─────────────┐
+   │  F5 License Proxy  ──NodePort 30001──┐                           │
+   └──────────────────────────────────────┼───────────────────────────┘
+                                          │ same VPC, or a transit gateway
+   ┌──────────────────────────────────────┼── air-gapped cluster ─────┐
+   │  BNK + CWC  ─────────────────────────┘                           │
+   │      └── charts + images ── your private registry (Harbor/…)     │
+   └──────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Neither cluster reaches <code>repo.f5.com</code>, and only the services cluster reaches F5’s
+licensing service.</p>
+<h3 id="1-the-services-cluster--expose-the-proxy"><a class="header" href="#1-the-services-cluster--expose-the-proxy">1. The services cluster — expose the proxy</a></h3>
+<pre><code class="language-bash">roksbnkctl -w services cluster up            # (or `cluster register` an existing one)
+
+# point the workspace at your private registry, then mirror FAR into it
+roksbnkctl -w services registry target generic
+roksbnkctl -w services registry target generic_host        harbor.example.com
+roksbnkctl -w services registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w services registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w services registry target generic_password --password-stdin
+roksbnkctl -w services registry replicate    # BNK *and* the FLP chart — both are in the BOM
+
+roksbnkctl -w services flp up \
+    --add-node-port-access \
+    --node-port-source-cidr 10.242.0.0/18,10.242.64.0/18,10.242.128.0/18
+</code></pre>
+<p>Set the registry target <strong>before</strong> replicating: with none set it defaults to <code>icr</code>, and
+you would mirror into IBM Container Registry rather than your own. The password is piped
+on stdin so it never lands in argv or your shell history. See
+<a href="./10b-registry-targets.html">Registry targets</a> for the ICR and Artifactory variants.</p>
+<p>The proxy itself is installed <strong>from that registry</strong> — <code>charts/f5-license-proxy</code> is part
+of the mirror BOM, so even the licensing component does not come from <code>repo.f5.com</code>.</p>
+<p>The CIDR flag is a <strong>list, and it must name every zone</strong>. A multi-zone VPC carries one
+address prefix <em>per zone</em>:</p>
+<pre><code class="language-console">$ ibmcloud is vpc-address-prefixes &lt;vpc&gt; --output json | jq -r '.[] | "\(.zone.name)  \(.cidr)"'
+eu-gb-1  10.242.0.0/18
+eu-gb-2  10.242.64.0/18
+eu-gb-3  10.242.128.0/18
+</code></pre>
+<p>List only the first and the proxy will appear to work — a pod you exec into for a test
+may well be scheduled in that zone and get an HTTP 200 — while the consuming cluster’s
+CWC, scheduled in one of the other two, is dropped at the security group and reports
+<code>connect: connection timed out</code>. The symptom is a proxy that answers some pods and
+silently times out for others. Pass every prefix, or a supernet covering them.</p>
+<p>No BNK is installed here — this cluster exists to run the proxy.</p>
+<p><code>--add-node-port-access</code> does three things you cannot do by hand afterwards:</p>
+<ul>
+<li><strong>Makes every worker answer.</strong> The chart’s Service is already <code>type: NodePort</code>
+(30001), but it hardcodes <code>externalTrafficPolicy: Local</code> and runs one replica — so
+only the node currently hosting the pod answers, and that node changes when the pod
+reschedules. This flips it to <code>Cluster</code>, so any worker IP is a valid endpoint.</li>
+<li><strong>Puts the worker IPs in the proxy’s certificate.</strong> A remote CWC dials
+<code>https://&lt;node-ip&gt;:30001</code> — a literal address, which DNS SANs do not cover. Without
+IP SANs the TLS handshake fails with <code>bad certificate</code>.</li>
+<li><strong>Opens the port.</strong> ROKS workers sit in a <code>kube-&lt;cluster-id&gt;</code> security group that
+does not admit another cluster. <code>--node-port-source-cidr</code> opens <em>only</em> 30001, and
+<em>only</em> to the CIDRs you name — one security-group rule per prefix. Omit it if a path
+already exists.</li>
+</ul>
+<p>It prints the address to hand over, and records it in <code>flp-outputs.json</code>:</p>
+<pre><code class="language-console">→ FLP reachable from other clusters at https://10.242.0.9:30001
+</code></pre>
+<h3 id="2-the-consuming-cluster--license-against-it"><a class="header" href="#2-the-consuming-cluster--license-against-it">2. The consuming cluster — license against it</a></h3>
+<p>Read the endpoint and CA out of the owning workspace:</p>
+<pre><code class="language-bash">roksbnkctl -w services flp output       # → external_endpoint, root_ca_b64
+</code></pre>
+<p>and point the other workspace at them. It <strong>never runs <code>flp up</code></strong> — it does not own a
+proxy:</p>
+<pre><code class="language-yaml"># consuming workspace's config.yaml
+bnk:
+  license_mode: f5licenseproxy
+  flp:
+    external:
+      url: https://10.242.0.9:30001     # from `flp output` → external_endpoint
+      root_ca_b64: LS0tLS1CRUdJTi…      # from `flp output` → root_ca_b64
+</code></pre>
+<p>Point that workspace at the <strong>same private registry</strong>, and install. <code>bnk up</code> wires the
+License CR at the remote proxy and delivers its CA to the CWC, exactly as it would for a
+local one:</p>
+<pre><code class="language-bash">roksbnkctl -w app cluster register my-app-cluster   # or `cluster up` to build one
+
+# the SAME registry as the services workspace
+roksbnkctl -w app registry target generic
+roksbnkctl -w app registry target generic_host        harbor.example.com
+roksbnkctl -w app registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w app registry target generic_username    admin
+printf '%s' "$HARBOR_PASSWORD" | \
+  roksbnkctl -w app registry target generic_password --password-stdin
+
+roksbnkctl -w app registry replicate   # copies nothing — the artifacts are already there
+roksbnkctl -w app bnk up               # licenses via the proxy in the OTHER cluster
+</code></pre>
+<p><code>registry replicate</code> in the second workspace has nothing left to copy. Run it anyway:
+its other job is to write <code>registry-mirror.json</code>, and <strong>that record is what redirects the
+install off <code>repo.f5.com</code> onto your registry</strong>. Without it, <code>bnk up</code> would go to FAR.
+(See <a href="./10a-air-gapped-install.html#one-mirror-many-clusters">One mirror, many clusters</a>.)</p>
+<h3 id="why-this-cluster-is-genuinely-disconnected"><a class="header" href="#why-this-cluster-is-genuinely-disconnected">Why this cluster is genuinely disconnected</a></h3>
+<p>Three things have to be true, and <code>bnk up</code> arranges all three — there is nothing to wire
+by hand:</p>
+<ul>
+<li><strong>Charts and images come from your registry.</strong> Chart pulls log in with the credential
+above; the pods get a <code>mirror-secret</code> dockerconfig built from it, created in every
+namespace that pulls (cert-manager, the FLO/BNK namespaces, <code>kube-system</code> for the
+node-labeler) and referenced from the CNEInstance. Your registry stays <strong>private</strong> — it
+needs no anonymous or public project.</li>
+<li><strong>The manifest is already in the cluster.</strong> The BNK manifest is mirrored too and
+pre-applied as a <code>CNEManifest</code> CR, so the lifecycle operator resolves it locally instead
+of fetching it from F5.</li>
+<li><strong>Licensing goes to the proxy next door</strong>, not to F5.</li>
+</ul>
+<p>The result: this cluster talks to your registry and to <code>https://&lt;node-ip&gt;:30001</code>. Nothing
+else.</p>
+<h3 id="flow-c-in-ci--the-runner-container-no-host-install"><a class="header" href="#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI — the runner container, no host install</a></h3>
+<p>Everything above is a <code>roksbnkctl</code> you installed. The same topology runs as a <strong>CI
+pipeline</strong> with nothing installed at all: every step is the
+<a href="./07b-github-actions-ci.html">tools-runner container</a>, and the whole workspace is
+described by environment variables — the natural shape of CI, where the registry
+credential and the proxy handoff are already secrets and job outputs.</p>
+<p>Two jobs. <strong>The first owns the proxy</strong> and emits its address and CA; <strong>the second
+installs BNK</strong> into a cluster that reaches nothing but the registry and that proxy.</p>
+<pre><code class="language-yaml"># .github/workflows/bnk-disconnected.yml
+env:
+  RUNNER: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+
+jobs:
+  licensing-cluster:
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    outputs:
+      flp_url: ${{ steps.flp.outputs.url }}      # ← the handoff
+      flp_ca:  ${{ steps.flp.outputs.ca }}
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-svc
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.SERVICES_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"        # adopt it; do not build it
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+    steps:
+      - run: roksbnkctl -w ci-svc init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-svc cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-svc registry replicate --target generic
+      - run: roksbnkctl -w ci-svc registry verify
+      - name: Deploy the proxy, reachable from the other cluster
+        run: |
+          roksbnkctl -w ci-svc flp up --auto \
+            --add-node-port-access \
+            --node-port-source-cidr "${{ vars.APP_CLUSTER_CIDRS }}"
+      - id: flp
+        run: |
+          echo "url=$(roksbnkctl -w ci-svc flp output flp_external_endpoint)" &gt;&gt; "$GITHUB_OUTPUT"
+          echo "ca=$(roksbnkctl -w ci-svc flp output flp_root_ca)"            &gt;&gt; "$GITHUB_OUTPUT"
+
+  application-cluster:
+    needs: licensing-cluster
+    runs-on: ubuntu-latest
+    container: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0
+    env:
+      IBMCLOUD_API_KEY:              ${{ secrets.IBMCLOUD_API_KEY }}
+      ROKSBNKCTL_REGION:             eu-gb
+      ROKSBNKCTL_RESOURCE_GROUP:     default
+      ROKSBNKCTL_PREFIX:             ci-app
+      ROKSBNKCTL_CLUSTER_NAME:       ${{ vars.APP_CLUSTER }}
+      ROKSBNKCTL_CLUSTER_CREATE:     "false"
+      ROKSBNKCTL_REGISTRY_TARGET:    generic
+      ROKSBNKCTL_GENERIC_HOST:       ${{ vars.REGISTRY_HOST }}
+      ROKSBNKCTL_GENERIC_REPO_PREFIX: bnk-mirror
+      ROKSBNKCTL_GENERIC_USERNAME:   ${{ vars.REGISTRY_USER }}
+      ROKSBNKCTL_GENERIC_PASSWORD:   ${{ secrets.REGISTRY_PASSWORD }}
+      # ── license through the proxy in the OTHER cluster ──
+      ROKSBNKCTL_LICENSE_MODE:       f5licenseproxy
+      ROKSBNKCTL_FLP_EXTERNAL_URL:   ${{ needs.licensing-cluster.outputs.flp_url }}
+      ROKSBNKCTL_FLP_ROOT_CA_B64:    ${{ needs.licensing-cluster.outputs.flp_ca }}
+    steps:
+      - run: roksbnkctl -w ci-app init --non-interactive --override-from-env
+      - run: roksbnkctl -w ci-app cluster register "$ROKSBNKCTL_CLUSTER_NAME"
+      - run: roksbnkctl -w ci-app registry replicate --target generic   # records the mirror
+      - run: roksbnkctl -w ci-app bnk up --auto
+      - name: Gate the pipeline on the license
+        run: roksbnkctl -w ci-app k get license -n f5-utils
+</code></pre>
+<p><strong>The handoff is two environment variables.</strong> <code>ROKSBNKCTL_FLP_EXTERNAL_URL</code> and
+<code>ROKSBNKCTL_FLP_ROOT_CA_B64</code> are exactly what <code>flp output</code> prints, so the proxy’s
+address and CA travel between jobs as ordinary job outputs. Nothing templates a
+<code>config.yaml</code>; <code>init --override-from-env</code> builds the whole workspace from the
+environment. (<code>flp_root_ca</code> is already base64, and the variable takes it verbatim —
+re-encoding it hands the CWC a corrupt CA.)</p>
+<p><strong>Neither job installs anything.</strong> No <code>roksbnkctl</code>, no <code>terraform</code>, no <code>helm</code>, no
+<code>kubectl</code>, no <code>ibmcloud</code> — the runner image carries them, and roksbnkctl runs the
+Kubernetes verbs in-process. That includes the FLP chart’s post-render fix-ups, which
+roksbnkctl performs itself (<code>roksbnkctl flp postrender</code>) rather than shelling out to an
+interpreter the image does not have.</p>
+<p><strong>State lives in the workspace directory</strong>, which in a container is ephemeral. For a
+pipeline that will run again — to upgrade, or to tear down — put the terraform state in
+COS/S3 (<code>roksbnkctl state migrate</code>); see
+<a href="./12a-remote-state.html">Remote state</a> and
+<a href="./07b-github-actions-ci.html#ephemeral-runners-need-remote-state">Ephemeral runners need remote state</a>.
+The demo below mounts a volume instead, which is the same idea with a shorter lifetime.</p>
+<p><strong>What the last step proves.</strong> <code>k get license</code> prints the CR the CWC wrote:</p>
+<pre><code class="language-console">NAME          STATE    MODE             ENTITLEMENT   ENVIRONMENT   EXPIRY
+bnk-license   Active   f5licenseproxy   eval          test          2026-08-13T16:11:06Z
+</code></pre>
+<p><code>Active</code> + <code>f5licenseproxy</code>, in a cluster with no proxy of its own and no route to
+<code>repo.f5.com</code>. Fail the job on anything else and the pipeline gates on the license.</p>
+<h3 id="what-to-watch-out-for"><a class="header" href="#what-to-watch-out-for">What to watch out for</a></h3>
+<ul>
+<li><strong>The two clusters must be able to reach each other</strong> — same VPC (simplest: give the
+second cluster <code>resources.cluster_vpc.create: false</code> + <code>existing: &lt;vpc-id&gt;</code>), or a
+transit gateway between their VPCs.</li>
+<li><strong>Worker IPs change when a worker is replaced.</strong> The certificate covers the IPs that
+existed at <code>flp up</code> time, so replacing a node in the services cluster means re-running
+<code>flp up</code> (which re-issues the cert) and updating the consuming workspace if you
+pinned the URL of the node that went away. <code>flp output</code> lists <strong>every</strong> worker URL —
+all are cert SANs — so you can point at another one. A stable VIP would avoid this
+entirely; NodePort is the trade-off you accept for not needing a load balancer.</li>
+<li><strong>The consuming workspace needs no <code>flp</code> phase at all</strong> — no <code>state-flp/</code>, nothing to
+tear down. <code>bnk down</code> there leaves the proxy untouched, serving its other clusters.</li>
+</ul>
+<h2 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h2>
+<p>The FLP is an opt-in phase, so — exactly like <code>gateway</code> — the composite <code>down</code>
+does <strong>not</strong> cover it. Tear it down <strong>first</strong>, while the cluster is still up:</p>
+<pre><code class="language-bash">roksbnkctl -w prod flp down     # remove the proxy
+roksbnkctl -w prod down         # then BNK + the cluster (composite)
+</code></pre>
+<p>Both <code>roksbnkctl down</code> and <code>cluster down</code> <strong>refuse</strong> while FLP state exists, and
+tell you to run <code>flp down</code> first. That guard is deliberate: the proxy’s Helm
+release and secrets live <em>in</em> the cluster, so destroying the cluster out from
+under them would strand <code>state-flp/</code> pointing at resources that no longer exist,
+and a later <code>flp down</code> could never reconcile.</p>
+<p><code>flp down</code> is a no-op success when there is no FLP state, so it is safe to put
+unconditionally in a teardown script. Registered clusters are never destroyed —
+<code>flp down</code> removes only the proxy workload.</p>
+<h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Config key</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bnk.license_mode</code></td><td><code>connected</code> (default), <code>disconnected</code>, or <code>f5licenseproxy</code></td></tr>
+<tr><td><code>bnk.flp.namespace</code></td><td>namespace for the proxy (default <code>f5-license-proxy</code>)</td></tr>
+<tr><td><code>bnk.flp.chart_version</code></td><td><strong>optional</strong> override. Left unset, the chart version is read from the BNK manifest (which lists <code>charts/f5-license-proxy</code> for the release), exactly like the FLO and CIS charts — you do not normally pin it.</td></tr>
+<tr><td><code>bnk.flp.node_port_access</code></td><td>expose the proxy outside its cluster (Flow C). Set by <code>flp up --add-node-port-access</code>; persisted so a later <code>flp up</code> does not tear the exposure down.</td></tr>
+<tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>with the above: the CIDRs allowed to reach the NodePort on the worker security group. A <strong>list</strong> — one address prefix per zone</td></tr>
+<tr><td><code>bnk.flp.external.url</code></td><td>license against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code>. This workspace never runs <code>flp up</code>.</td></tr>
+<tr><td><code>bnk.flp.external.root_ca_b64</code></td><td>that proxy’s <code>root_ca_b64</code>, so the CWC can verify its certificate</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag (<code>flp up</code>)</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--add-node-port-access</code></td><td>expose the proxy for other clusters: <code>externalTrafficPolicy: Cluster</code>, worker IPs as cert SANs, external endpoint recorded</td></tr>
+<tr><td><code>--node-port-source-cidr</code></td><td>open the NodePort to these CIDRs on the worker security group. Repeatable / comma-separated — pass <strong>every zone’s</strong> prefix</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Environment variable</th><th>Overrides</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Written by</th><th>Read by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>~/.roksbnkctl/&lt;ws&gt;/flp-outputs.json</code></td><td><code>flp up</code></td><td><code>bnk up</code> (FLP mode) — or copied into another workspace’s <code>bnk.flp.external</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>flp-outputs.json</code> carries <code>endpoint</code> (in-cluster only) and, when exposed,
+<code>external_endpoint</code> plus <code>external_endpoints</code> — every worker URL the proxy answers on.
+All of them are IP SANs on its certificate, so any one is a valid
+<code>bnk.flp.external.url</code>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="10b-registry-targets.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="11-tearing-down.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="10b-registry-targets.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="11-tearing-down.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

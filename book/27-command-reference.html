@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -208,6 +208,23 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-agent"><a class="header" href="#roksbnkctl-agent"><code>roksbnkctl agent</code></a></h2>
+<p>Drive this workspace with an agentic CLI (personas + AGENTS.md)</p>
+<pre><code>roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]
+</code></pre>
+<p>Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.</p>
+<p>roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
+roksbnkctl agent             List supported CLIs + this workspace’s default
+roksbnkctl agent <code>&lt;cli&gt;</code>       Print the invocation to launch <code>&lt;cli&gt;</code> against the workspace</p>
+<p>Personas (act as exactly one at a time): solution-architect (customer
+interface, owns scope), cloud-operator (runs the lifecycle), test-engineer
+(validation probes), doc-specialist (the report). See personas/ after init.</p>
+<h3 id="roksbnkctl-agent-init"><a class="header" href="#roksbnkctl-agent-init"><code>roksbnkctl agent init</code></a></h3>
+<p>Scaffold the agentic-mode files into the workspace</p>
+<p>Copies AGENTS.md, CLAUDE.md, the persona role contracts, and a
+decisions.md seed into the workspace dir, and creates an empty journal/. Safe to
+re-run: existing files are left untouched (your edits survive).</p>
+<p>← back to <a href="#roksbnkctl-agent"><code>roksbnkctl agent</code></a></p>
 <h2 id="roksbnkctl-apikey"><a class="header" href="#roksbnkctl-apikey"><code>roksbnkctl apikey</code></a></h2>
 <p>Print the workspace’s resolved IBM Cloud API key to stdout (a secret)</p>
 <p>Resolve the workspace’s IBM Cloud API key via the standard chain and print it
@@ -354,14 +371,16 @@ provision takes ~30 min) before the trial apply.</p>
 <h2 id="roksbnkctl-bnkforge"><a class="header" href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></h2>
 <p>Configure + drive BNK Forge cluster registration</p>
 <p>Configure and drive registration of this workspace’s cluster with a
-co-located BNK Forge install — without hand-editing config.yaml.</p>
+co-located BNK Forge (v3) install — without hand-editing config.yaml.</p>
 <p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
 disable   turn it back off
-status    show the effective config + whether the bnk-forge CLI / cluster id are ready
+status    show the effective config + readiness
 register  register this workspace’s cluster with BNK Forge right now</p>
-<p>Registration is credential-backed: BNK Forge re-derives the kubeconfig on demand
-from an IBM Cloud credential template, so nothing perishable is stored. The
-<code>bnk-forge</code> CLI (which ships with BNK Forge, not roksbnkctl) must be on PATH.</p>
+<p>Registration uses BNK Forge v3’s REST API (it has no CLI). It is credential-
+backed: an IBM Cloud credential template is stored in Forge so it re-derives the
+kubeconfig on demand — nothing perishable is stored. The password is read from
+BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
+session token is cached in the OS keychain.</p>
 <h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
 <p>Turn off BNK Forge auto-registration</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
@@ -376,8 +395,10 @@ from an IBM Cloud credential template, so nothing perishable is stored. The
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id</td></tr>
-<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides the bnk-forge CLI’s stored-session URL)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (ensured-or-created)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (e.g. https://forge.example.com)</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username</td></tr>
 </tbody>
 </table>
 </div>
@@ -393,8 +414,11 @@ from an IBM Cloud credential template, so nothing perishable is stored. The
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project id (overrides config)</td></tr>
-<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config + stored session)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username (overrides config)</td></tr>
 </tbody>
 </table>
 </div>
@@ -510,10 +534,11 @@ identity to ~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json.</
 <p>Subsequent <code>roksbnkctl up</code> runs in this workspace will pick up the
 registered cluster automatically — no need to repeat its identity in
 trial tfvars.</p>
-<p>By default the registry COS instance name follows the upstream HCL
-fallback formula “<code>&lt;cluster-name&gt;</code>-cos”. Pass –registry-cos-name to
-override (e.g. if your tfvars sets roks_cos_instance_name to a different
-value).</p>
+<p>The registry COS instance is found by probing the names roksbnkctl and the
+upstream HCL actually use: “<code>&lt;prefix&gt;</code>-registry-cos” (what <code>cluster up</code>
+creates), “<code>&lt;cluster&gt;</code>-registry-cos”, then the upstream fallback
+“<code>&lt;cluster&gt;</code>-cos”. Pass –registry-cos-name to override (e.g. if your tfvars
+sets roks_cos_instance_name to something else).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -522,7 +547,7 @@ value).</p>
 </thead>
 <tbody>
 <tr><td><code>--prompt</code></td><td><code>bool</code></td><td><code>false</code></td><td>prompt for the cluster name even if one is given as an argument</td></tr>
-<tr><td><code>--registry-cos-name</code></td><td><code>string</code></td><td>—</td><td>expected registry COS instance name (default “<code>&lt;cluster&gt;</code>-cos” — matches the upstream HCL fallback)</td></tr>
+<tr><td><code>--registry-cos-name</code></td><td><code>string</code></td><td>—</td><td>registry COS instance name (default: probe “<code>&lt;prefix&gt;</code>-registry-cos”, “<code>&lt;cluster&gt;</code>-registry-cos”, “<code>&lt;cluster&gt;</code>-cos”)</td></tr>
 </tbody>
 </table>
 </div>
@@ -776,6 +801,91 @@ Pass –backend k8s | ssh:<code>&lt;target&gt;</code> for per-backend prereq che
 <p>Run a single command with cluster context loaded</p>
 <pre><code>roksbnkctl exec [command...]
 </code></pre>
+<h2 id="roksbnkctl-flp"><a class="header" href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></h2>
+<p>F5 License Proxy phase — optional in-cluster licensing proxy</p>
+<p>Manage the F5 License Proxy (FLP) as an optional, independent phase on an
+existing cluster: it deploys the f5-license-proxy chart (vault + postgresql +
+proxy) pulling from the configured registry (Harbor mirror or FAR), and records
+its root CA + service endpoint so a subsequent BNK install can license in FLP
+mode. Runs in its own state (state-flp/), separate from cluster/BNK/testing/gateway.</p>
+<p>Commands:
+roksbnkctl flp up     Install the F5 License Proxy (needs a cluster)
+roksbnkctl flp down   Remove the F5 License Proxy, leaving the other phases intact</p>
+<p>Typical flow (FLP-licensed BNK):
+roksbnkctl cluster up          # or <code>cluster register</code> for an existing cluster
+roksbnkctl registry replicate  # mirror FAR into your registry (optional)
+roksbnkctl flp up              # install the proxy
+roksbnkctl bnk up              # with bnk.license_mode: f5licenseproxy</p>
+<p>FLP is opt-in: without it, BNK licenses with a subscription JWT as before.</p>
+<h3 id="roksbnkctl-flp-down"><a class="header" href="#roksbnkctl-flp-down"><code>roksbnkctl flp down</code></a></h3>
+<p>Remove the F5 License Proxy, leaving the other phases</p>
+<pre><code>roksbnkctl flp down [flags]
+</code></pre>
+<p>Destroys only the FLP-phase resources (state-flp/), leaving cluster, BNK,
+testing and gateway intact, and clears flp-outputs.json.</p>
+<p>Exits 0 (“nothing to do”) when there’s no FLP state, so it’s safe in a
+reverse-order teardown of every phase.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
+<h3 id="roksbnkctl-flp-output"><a class="header" href="#roksbnkctl-flp-output"><code>roksbnkctl flp output</code></a></h3>
+<p>Print the FLP phase’s own terraform outputs (text or –json; [name] = one raw value)</p>
+<pre><code>roksbnkctl flp output [name] [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
+<tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
+<h3 id="roksbnkctl-flp-up"><a class="header" href="#roksbnkctl-flp-up"><code>roksbnkctl flp up</code></a></h3>
+<p>Install the F5 License Proxy (a cluster must exist)</p>
+<pre><code>roksbnkctl flp up [flags]
+</code></pre>
+<p>Deploys the F5 License Proxy into the existing cluster (read from
+cluster-outputs.json) in its own state (state-flp/), and writes flp-outputs.json
+(root CA + endpoint) for a later <code>bnk up</code> in f5licenseproxy mode.</p>
+<p>Refuses when no cluster exists yet.</p>
+<p>With –add-node-port-access the proxy is also reachable from OUTSIDE its own
+cluster, so a BNK install in a DIFFERENT cluster (same VPC, or across a transit
+gateway) can license through it — a “shared licensing cluster”, where only the
+cluster running the proxy needs egress to F5. That additionally puts the worker
+node IPs in the proxy’s server certificate (without them the remote cluster’s
+controller rejects the TLS handshake) and records an external endpoint in
+flp-outputs.json. Feed that endpoint + CA to the other workspace via its
+bnk.flp.external block.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--add-node-port-access</code></td><td><code>bool</code></td><td><code>false</code></td><td>expose the proxy outside its cluster (NodePort + node-IP cert SANs) so a BNK install in another cluster can license through it</td></tr>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--node-port-source-cidr</code></td><td><code>stringSlice</code></td><td><code>[]</code></td><td>with –add-node-port-access: open the NodePort on the worker security group to this CIDR. REPEATABLE — a multi-zone VPC has one address prefix PER ZONE, and a consuming pod scheduled in an unlisted zone is silently dropped. Pass every zone’s CIDR (or a supernet covering them).</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
 <h2 id="roksbnkctl-gateway"><a class="header" href="#roksbnkctl-gateway"><code>roksbnkctl gateway</code></a></h2>
 <p>Gateway-phase (data-plane config) lifecycle — optional ingress/egress setup</p>
 <p>Manage the BNK data-plane configuration as an optional, independent phase
@@ -964,6 +1074,24 @@ pulls the latest GitHub release tarball over the network.</p>
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-journal"><a class="header" href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></h2>
+<p>Append-only timeline + report for agentic-mode handoffs</p>
+<p>Manage the workspace journal (<code>&lt;workspace&gt;</code>/journal/), the append-only
+timeline the agentic-mode personas use to hand off to one another.</p>
+<p>roksbnkctl journal add “<code>&lt;note&gt;</code>”   Append a note to today’s journal
+roksbnkctl journal list           List entries chronologically with summaries
+roksbnkctl journal report         Assemble report.md from decisions + journal</p>
+<h3 id="roksbnkctl-journal-add"><a class="header" href="#roksbnkctl-journal-add"><code>roksbnkctl journal add</code></a></h3>
+<p>Append a note to today’s journal entry</p>
+<pre><code>roksbnkctl journal add &lt;message&gt;
+</code></pre>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
+<h3 id="roksbnkctl-journal-list"><a class="header" href="#roksbnkctl-journal-list"><code>roksbnkctl journal list</code></a></h3>
+<p>List journal entries (chronological) with one-line summaries</p>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
+<h3 id="roksbnkctl-journal-report"><a class="header" href="#roksbnkctl-journal-report"><code>roksbnkctl journal report</code></a></h3>
+<p>Assemble report.md from decisions.md + the journal timeline</p>
+<p>← back to <a href="#roksbnkctl-journal"><code>roksbnkctl journal</code></a></p>
 <h2 id="roksbnkctl-k"><a class="header" href="#roksbnkctl-k"><code>roksbnkctl k</code></a></h2>
 <p>Kubernetes verbs (kubectl-internalised; no host kubectl required)</p>
 <p>roksbnkctl k <code>&lt;verb&gt;</code> runs the BNK-relevant kubectl/oc verb subset
@@ -1196,7 +1324,6 @@ roksbnkctl k port-forward my-pod -n f5-bnk 9090:9090 8080:80</p>
 </tbody>
 </table>
 </div>
-<p>By default <code>kubeconfig</code> (and the <code>kubectl</code> / <code>oc</code> / <code>shell</code> passthroughs) prefer the <strong>cert-based forge kubeconfig</strong> at <code>$ROKSBNKCTL_HOME/forge/kubeconfig.yaml</code>, which <code>cluster up</code> writes alongside the admin config. It carries the cluster’s admin client certificate/key — ROKS is OpenShift, whose API server authenticates via client certs or OAuth tokens and <strong>rejects raw IBM IAM bearer tokens (401)</strong>, so a token-based kubeconfig would register but never connect. Before each use, roksbnkctl self-heals it: if the client cert is within ~2 days of expiry it re-fetches the admin kubeconfig and rewrites the file; otherwise it’s a no-op local check. <code>--refresh</code> forces the re-fetch now — useful in CI/scripting. If there’s no forge kubeconfig (or it can’t be refreshed offline), the commands fall back to the admin config at <code>~/.kube/config</code>.</p>
 <h2 id="roksbnkctl-kubectl"><a class="header" href="#roksbnkctl-kubectl"><code>roksbnkctl kubectl</code></a></h2>
 <p>Passthrough to local kubectl with workspace KUBECONFIG loaded</p>
 <pre><code>roksbnkctl kubectl [args...]
@@ -1292,7 +1419,7 @@ static-key Secret.</p>
 </div>
 <p>← back to <a href="#roksbnkctl-ops"><code>roksbnkctl ops</code></a></p>
 <h2 id="roksbnkctl-output"><a class="header" href="#roksbnkctl-output"><code>roksbnkctl output</code></a></h2>
-<p>Print the merged outputs across all phases (cluster + bnk + testing + gateway)</p>
+<p>Print the merged outputs across all phases (cluster + bnk + testing + gateway + flp)</p>
 <pre><code>roksbnkctl output [name] [flags]
 </code></pre>
 <p>Print the union of every phase’s own outputs — each read from its owning
@@ -1897,8 +2024,8 @@ provision nothing.</p>
 </code></pre>
 <p>Destroys only the testing jumphost resources (state-testing/), leaving
 the cluster phase and the BNK phase intact. The inverse of <code>bnk down</code>:
-each phase tears down independently. Exits 0 (“nothing to do”) when there’s
-no testing state, so it’s safe in a reverse-order teardown of every phase.</p>
+each phase tears down independently. Exits 0 (“nothing to do”) when there’s no
+testing state, so it’s safe in a reverse-order teardown of every phase.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -2103,7 +2230,7 @@ which one commands run against; -w/–workspace overrides for one invocation.</p
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

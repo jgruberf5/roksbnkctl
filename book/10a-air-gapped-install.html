@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -214,7 +214,10 @@ release — the same manifest <code>roksbnkctl</code> reads for version discover
 enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
 tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
 cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
-<strong><code>bitnami/kubectl</code></strong> node-labeler image — so the mirror is complete:</p>
+<strong><code>bitnami/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
+(<code>release/f5-bigip-k8s-manifest</code>), because the install needs to read it and a
+mirror that lacked it would send every install back to <code>repo.f5.com</code>. So the
+mirror is complete:</p>
 <pre><code class="language-console">$ roksbnkctl registry bom
 charts  repo.f5.com/charts/f5-lifecycle-operator   v2.21.13-0.0.28
 charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
@@ -247,12 +250,76 @@ registry instead of FAR, so BNK comes up with no external pulls. The air-gap
 acceptance is exactly this, with egress to the external registries blocked.</p>
 <p>The target’s own pull credential is wired in for you:</p>
 <ul>
-<li><strong>ICR</strong> — the cluster authenticates to <code>*.icr.io</code> with <code>iamapikey</code> + the
-workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.</li>
-<li><strong>Generic OCI</strong> — the cluster pulls with the basic-auth credential you set
-(<code>registry target generic_username</code> / <code>generic_password</code>), or anonymously for a
-read-open registry.</li>
+<li>
+<p><strong>ICR</strong> — the cluster authenticates to <code>*.icr.io</code> with <code>iamapikey</code> + the
+workspace IBM Cloud API key, for both the FLO chart pull and the image pulls.</p>
+</li>
+<li>
+<p><strong>Generic OCI</strong> — chart and image pulls authenticate with the same basic-auth
+credential replication used (<code>registry target generic_username</code> /
+<code>generic_password</code>), so a private registry needs no anonymous/public project.
+Concretely: chart pulls <code>helm registry login</code> with it, and the pods get a
+<code>mirror-secret</code> dockerconfig built from it, created in <strong>every namespace that pulls
+images</strong> — cert-manager, the FLO/BNK namespaces, and <code>kube-system</code> for the
+node-labeler — and referenced from the CNEInstance. You do not create any of it.</p>
+<p>This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
+by RBAC and gets <strong>no</strong> pull secret; an external one (Harbor, Artifactory) gets
+<code>mirror-secret</code>. Dropping the pull secret for <em>every</em> mirror is what used to force
+people to make their Harbor project world-readable — for a registry holding F5’s
+proprietary images, not an acceptable requirement.</p>
+</li>
 </ul>
+<h3 id="doing-it-all-in-ci-with-nothing-installed"><a class="header" href="#doing-it-all-in-ci-with-nothing-installed">Doing it all in CI, with nothing installed</a></h3>
+<p>Every command in this chapter runs unchanged inside the
+<a href="./07b-github-actions-ci.html">tools-runner container</a>, so a pipeline can mirror the
+registry and install from it with no <code>roksbnkctl</code>, <code>terraform</code>, <code>helm</code>, <code>kubectl</code> or
+<code>ibmcloud</code> on the runner. The registry target itself comes from the environment —
+<code>ROKSBNKCTL_REGISTRY_TARGET</code>, <code>ROKSBNKCTL_GENERIC_HOST</code>,
+<code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code>, <code>ROKSBNKCTL_GENERIC_USERNAME</code>,
+<code>ROKSBNKCTL_GENERIC_PASSWORD</code> — so nothing has to template a <code>config.yaml</code>:</p>
+<pre><code class="language-bash">docker run --rm -v "$PWD/state:/work" \
+  -e IBMCLOUD_API_KEY -e ROKSBNKCTL_REGION=eu-gb \
+  -e ROKSBNKCTL_PREFIX=ci -e ROKSBNKCTL_CLUSTER_NAME=my-cluster -e ROKSBNKCTL_CLUSTER_CREATE=false \
+  -e ROKSBNKCTL_REGISTRY_TARGET=generic \
+  -e ROKSBNKCTL_GENERIC_HOST=harbor.example.com \
+  -e ROKSBNKCTL_GENERIC_REPO_PREFIX=bnk-mirror \
+  -e ROKSBNKCTL_GENERIC_USERNAME=admin -e ROKSBNKCTL_GENERIC_PASSWORD \
+  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.19.0 -w ci \
+  init --non-interactive --override-from-env
+</code></pre>
+<p>For the full <strong>disconnected</strong> picture — a private registry <em>and</em> licensing through a
+proxy in another cluster, as a two-job pipeline — see
+<a href="./10c-flp-licensing.html#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
+<h3 id="why-the-install-never-phones-home"><a class="header" href="#why-the-install-never-phones-home">Why the install never phones home</a></h3>
+<p>Two things have to be true for a mirrored install to be genuinely disconnected,
+and <code>roksbnkctl</code> handles both:</p>
+<ol>
+<li><strong>The manifest is mirrored.</strong> <code>f5-bigip-k8s-manifest</code> is the BOM’s own source,
+so it is easy to overlook — but the install reads it to derive the FLO and CIS
+chart versions. It is a normal OCI chart, so it is replicated like any other
+artifact and pulled from the mirror.</li>
+<li><strong>FLO reads the manifest from the cluster, not a registry.</strong> The F5 Lifecycle
+Operator resolves the BNK manifest by listing cluster-scoped <strong><code>CNEManifest</code></strong>
+CRs and matching <code>spec.version</code>; only when none matches does it fall back to
+pulling the manifest chart from the CNEInstance’s <code>spec.registry.uri</code>.
+<code>roksbnkctl</code> converts the manifest into a <code>CNEManifest</code> CR and applies it before
+the CNEInstance, so FLO finds it in the cluster and <strong>never fetches a manifest at
+all</strong>. (Without the CR, that fallback is what breaks a mirrored install: FLO
+reports <em>“No CNEManifest exists which contains expected manifestVersion”</em> and the
+CNEInstance never reconciles.)</li>
+</ol>
+<h3 id="one-mirror-many-clusters"><a class="header" href="#one-mirror-many-clusters">One mirror, many clusters</a></h3>
+<p>Nothing ties a mirror to a single cluster. <code>registry replicate</code> is a supply-chain
+step, not a cluster step — the record it writes (<code>registry-mirror.json</code>) just tells
+the install where to pull from. So several workspaces can point at the <strong>same</strong>
+registry: replicate once, then every cluster installs from it. A second workspace
+targeting an already-populated mirror copies nothing (every artifact is present and
+digest-matched) and simply records the redirect.</p>
+<p>That pairs naturally with a <a href="./10c-flp-licensing.html#flow-c--a-shared-licensing-cluster">shared licensing
+cluster</a>: one cluster
+holds the F5 License Proxy and reaches F5, one registry holds the artifacts, and any
+number of air-gapped clusters install from the registry and license through the
+proxy — reaching neither <code>repo.f5.com</code> nor F5’s licensing service themselves.</p>
 <p>The per-target host, namespace/repository, and credential specifics — including
 the ICR namespace and a full Artifactory walkthrough — are in
 <a href="./10b-registry-targets.html">Registry targets</a>.</p>
@@ -312,7 +379,7 @@ before you replicate.</p>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

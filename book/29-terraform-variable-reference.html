@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,6 +195,7 @@
 <tr><td><code>roks_cluster_id_or_name</code></td><td><code>string</code></td><td><code>""</code></td><td>ID or name of an existing ROKS cluster — used when create_roks_cluster = false</td><td>no</td></tr>
 <tr><td><code>create_roks_transit_gateway</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Transit Gateway and VPC connections</td><td>no</td></tr>
 <tr><td><code>create_roks_registry_cos_instance</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Cloud Object Storage instance for the OpenShift image registry</td><td>no</td></tr>
+<tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, the cert_manager module’s helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to "direct-apply").</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available.</td><td>no</td></tr>
@@ -203,6 +204,8 @@
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
@@ -210,8 +213,13 @@
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped.</td><td>no</td></tr>
-<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: <code>"kubectl"</code> (terraform-native — <code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>) or <code>"legacy_curl"</code> (the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline). <code>roksbnkctl</code> renders this from <code>bnk.cr_mode</code> / the <code>--legacy-bnk</code> flag. Validated to one of the two values.</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native) or "legacy_curl" (null_resource baseline).</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository URL for Docker and Helm images</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → the mirror is the in-cluster/ICR registry, which authenticates via the kube token / IAM key instead.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket — used by flo and license</td><td>no</td></tr>
@@ -225,7 +233,10 @@
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
-<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected or disconnected)</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)</td><td>no</td></tr>
+<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
+<tr><td><code>flp_license_server_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.<code>&lt;ns&gt;</code>.svc.cluster.local:8443)</td><td>no</td></tr>
+<tr><td><code>license_server_root_ca</code></td><td><code>string</code></td><td><code>""</code></td><td>PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only)</td><td>no</td></tr>
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create a jumphost in a client VPC connected to the cluster via the Transit Gateway</td><td>no</td></tr>
 <tr><td><code>testing_create_cluster_jumphosts</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create one jumphost per availability zone directly inside the cluster VPC</td><td>no</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name of the IBM Cloud SSH key to inject into all jumphosts</td><td>no</td></tr>
@@ -239,6 +250,21 @@
 <tr><td><code>testing_cluster_jumphost_name_prefix</code></td><td><code>string</code></td><td><code>"tf-testing-jumphost-cluster"</code></td><td>Name prefix for cluster jumphosts — zone name is appended (<code>&lt;prefix&gt;</code>-<code>&lt;zone&gt;</code>)</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig"</code></td><td>Parent directory where ibm_container_cluster_config writes admin kubeconfigs. Each submodule appends its name as a subdir. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FLO’s FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount; override for direct-on-host runs.</td><td>no</td></tr>
+<tr><td><code>deploy_gateway</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle for the Gateway phase. Off in every other phase’s override; on only for <code>gateway up</code>.</td><td>no</td></tr>
+<tr><td><code>deploy_flp</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle for the F5 License Proxy phase. Off in every other phase’s override; on only for <code>flp up</code>.</td><td>no</td></tr>
+<tr><td><code>flp_namespace</code></td><td><code>string</code></td><td><code>"f5-license-proxy"</code></td><td>Namespace the F5 License Proxy is installed into (FLP phase).</td><td>no</td></tr>
+<tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin for the f5-license-proxy chart version (empty → registry latest).</td><td>no</td></tr>
+<tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs (FLP phase). Default = ROKS VPC block.</td><td>no</td></tr>
+<tr><td><code>gateway_app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by the gateway module)</td><td>no</td></tr>
+<tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
+<tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default), automap, or both</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_local</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one route per entry × zone). Empty = no local client routes. <code>gateway up</code> auto-derives these from the cluster jumphost subnets when unset (PRD 12).</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_remote</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one route per entry × zone). Empty = no remote client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_vxlan_port</code></td><td><code>number</code></td><td><code>6789</code></td><td>Egress VXLAN UDP port (also opened on the cluster security group)</td><td>no</td></tr>
+<tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it.</td><td>no</td></tr>
+<tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped.</td><td>no</td></tr>
+<tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart’s post-renderer (<code>roksbnkctl flp postrender</code>), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -256,9 +282,14 @@
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
+<tr><td><code>cert_manager_image_repository</code></td><td><code>string</code></td><td><code>""</code></td><td>Override the cert-manager controller image repository (air-gap mirror image host). Empty leaves the chart default.</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native helm_release + kubernetes_namespace + alekc/kubectl) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
+<tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, manage the cert_manager helm/null_resource bring-up. Set false in the bnk-phase override when cluster-outputs.json exists — cluster phase already provisioned cert_manager and the second phase must NOT re-manage it (would attempt kubectl delete namespace cert-manager on a subsequent bnk down).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/cert_manager"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with image_repository, cert-manager’s pods pull with a dockerconfig secret built from it instead of anonymously.</td><td><strong>yes</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -275,6 +306,8 @@
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR Repository URL for Docker and Helm registry</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the mirror (CNEInstance spec.registry.uri). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules</td><td>no</td></tr>
@@ -283,11 +316,15 @@
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>The Multus Network Attachment Definitions for the CNEInstance TMM deployments</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native kubectl_manifest + wait_for) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>flo_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/cne_instance"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (private Harbor/Artifactory).</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously.</td><td><strong>yes</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -304,6 +341,11 @@
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR Repository URL for Docker and Helm registry</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Chart-pull host for the mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Image-pull host for the mirror (image.repository). Empty falls back to far_repo_url.</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (Harbor). Empty → in-cluster/ICR mirror.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>use_cos_bucket</code></td><td><code>bool</code></td><td><code>true</code></td><td>Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
@@ -318,11 +360,93 @@
 <tr><td><code>bigip_password</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP password for CIS controller login</td><td><strong>yes</strong></td></tr>
 <tr><td><code>bigip_url</code></td><td><code>string</code></td><td><code>"https://192.168.1.245"</code></td><td>BIG-IP URL for CIS controller login</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>cert_manager_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>cert_manager ready sentinel ID — when set, blocks flo inner module until cert-manager CRDs are available</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner flo module is disabled and no FLO resources are created</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/flo"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount.</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-flp"><a class="header" href="#module-flp">Module: <code>flp</code></a></h2>
+<p>Source: <code>terraform/modules/flp/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deploy_flp</code></td><td><code>bool</code></td><td><code>false</code></td><td>Deploy the F5 License Proxy. Off in every other phase’s override; on only for <code>flp up</code>. When false the module is a complete no-op.</td><td>no</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true the cluster is being created in this same apply (FLP never runs then); gates the plan-time cluster-config fetch.</td><td>no</td></tr>
+<tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><code>""</code></td><td>Name or id of the existing ROKS cluster to deploy the FLP into.</td><td>no</td></tr>
+<tr><td><code>roks_cluster_dependency_id</code></td><td><code>any</code></td><td><code>null</code></td><td>Dependency handle from the cluster phase, deferring apply until the cluster is ready.</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>""</code></td><td>Directory the ibm_container_cluster_config data source writes the kubeconfig into.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud API key (COS/IAM auth + provider config).</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the ROKS cluster (ibm provider).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group containing the COS instance (empty = default group).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>""</code></td><td>COS service instance holding the FAR auth tarball + subscription JWT.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>""</code></td><td>COS bucket holding the FAR auth tarball + subscription JWT.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the COS bucket.</td><td>no</td></tr>
+<tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth tarball object key in the COS bucket (the _json_key_base64 SA lives inside).</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT object key in the COS bucket — seeds flp-jwt-secret.</td><td>no</td></tr>
+<tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/tmp/roksbnkctl-flp"</code></td><td>Working directory for the FAR-auth download/extract.</td><td>no</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR registry host (fallback when no mirror).</td><td>no</td></tr>
+<tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Mirror host for chart pulls (empty → coalesces to far_repo_url).</td><td>no</td></tr>
+<tr><td><code>far_image_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Mirror host for image pulls (empty → coalesces to far_repo_url).</td><td>no</td></tr>
+<tr><td><code>use_registry_mirror</code></td><td><code>bool</code></td><td><code>false</code></td><td>Pull charts + images from the registry mirror instead of FAR. The far-secret dockerconfig is dropped; how pods then authenticate depends on the mirror: an in-cluster/ICR mirror authorizes by RBAC and needs no pull secret, while an EXTERNAL mirror (Harbor, Artifactory) gets a <code>mirror-secret</code> dockerconfig built from registry_mirror_username/password. A private mirror therefore needs no anonymous/public project.</td><td>no</td></tr>
+<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an EXTERNAL registry mirror (e.g. a Harbor robot/admin). Empty → in-cluster/ICR mirror (kube-token/IAM auth).</td><td>no</td></tr>
+<tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart + image pulls authenticate with it instead of the kube token.</td><td><strong>yes</strong></td></tr>
+<tr><td><code>flp_namespace</code></td><td><code>string</code></td><td><code>"f5-license-proxy"</code></td><td>Namespace to install the F5 License Proxy into.</td><td>no</td></tr>
+<tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin the f5-license-proxy chart version. Empty (the default) → resolved from the BNK manifest, which lists charts/f5-license-proxy for the release — same as the FLO and CIS charts. Set this only to override the manifest.</td><td>no</td></tr>
+<tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>""</code></td><td>BNK manifest version. The f5-license-proxy chart version is read out of this manifest when flp_chart_version is empty.</td><td>no</td></tr>
+<tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the proxy OUTSIDE its own cluster so a BNK install in a different cluster can license through it. The chart’s Service is already type NodePort (30001), but it hardcodes externalTrafficPolicy: Local — with one replica only the node running the pod answers — so this flips it to Cluster and adds the worker node IPs to the proxy’s server certificate (without them the remote CWC rejects the TLS handshake).</td><td>no</td></tr>
+<tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the cluster’s worker security group to these CIDRs (the consuming cluster’s subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched.</td><td>no</td></tr>
+<tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default.</td><td>no</td></tr>
+<tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart’s POST-RENDERER (<code>roksbnkctl flp postrender</code>). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH for a direct <code>terraform apply</code>. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container.</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-gateway"><a class="header" href="#module-gateway">Module: <code>gateway</code></a></h2>
+<p>Source: <code>terraform/modules/gateway/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API key</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud region the cluster runs in (zone names derive as <code>&lt;region&gt;</code>-1/2/3)</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud resource group</td><td>no</td></tr>
+<tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Existing ROKS cluster name or id the Gateway phase configures</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>""</code></td><td>Directory the IBM provider writes the cluster kubeconfig into</td><td>no</td></tr>
+<tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Always false for the Gateway phase (it reuses an existing cluster)</td><td>no</td></tr>
+<tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>Cluster-ready handle (apply-time ordering); unused gate kept for symmetry</td><td>no</td></tr>
+<tr><td><code>deploy_gateway</code></td><td><code>bool</code></td><td><code>false</code></td><td>Master toggle — when false the whole Gateway phase is a no-op (count=0)</td><td>no</td></tr>
+<tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>BNK namespace (F5BnkGateway / SnatPool / Egress / StaticRoute live here)</td><td>no</td></tr>
+<tr><td><code>app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by this module)</td><td>no</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[ { ext_vlan_cidr   = "10.155.15.0/24" int_vlan_cidr   = "10.254.99.0/24" int_snat_cidr   = "10.10.11.0/24" int_vip_cidr    = "10.135.15.0/24" external_selfip = "10.155.15.101" internal_selfip = "10.254.99.101" }, { ext_vlan_cidr   = "10.156.16.0/24" int_vlan_cidr   = "10.254.100.0/24" int_snat_cidr   = "10.10.21.0/24" int_vip_cidr    = "10.136.16.0/24" external_selfip = "10.156.16.101" internal_selfip = "10.254.100.101" }, { ext_vlan_cidr   = "10.157.17.0/24" int_vlan_cidr   = "10.254.101.0/24" int_snat_cidr   = "10.10.31.0/24" int_vip_cidr    = "10.137.17.0/24" external_selfip = "10.157.17.101" internal_selfip = "10.254.101.101" }, ]</code></td><td>Per-zone subnet CIDRs (empty = install-guide defaults). Shared with the BNK phase.</td><td>no</td></tr>
+<tr><td><code>gateway_class_name</code></td><td><code>string</code></td><td><code>"gateway-class"</code></td><td>GatewayClass name</td><td>no</td></tr>
+<tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>"f5.com/f5-bnk-f5-cne-controller"</code></td><td>GatewayClass controllerName (the BNK CNE controller)</td><td>no</td></tr>
+<tr><td><code>gateway_bnkgateway_name</code></td><td><code>string</code></td><td><code>"bnkgateway-cloud1"</code></td><td>F5BnkGateway name (referenced by the Gateway parametersRef)</td><td>no</td></tr>
+<tr><td><code>gateway_name</code></td><td><code>string</code></td><td><code>"http-gw"</code></td><td>Gateway (gateway.networking.k8s.io) name</td><td>no</td></tr>
+<tr><td><code>gateway_listener_port</code></td><td><code>number</code></td><td><code>80</code></td><td>Gateway HTTP listener port</td><td>no</td></tr>
+<tr><td><code>gateway_vip_start_host</code></td><td><code>number</code></td><td><code>100</code></td><td>Host number in int_vip_cidr for F5BnkGateway listener startAddress</td><td>no</td></tr>
+<tr><td><code>gateway_vip_end_host</code></td><td><code>number</code></td><td><code>120</code></td><td>Host number in int_vip_cidr for F5BnkGateway listener endAddress</td><td>no</td></tr>
+<tr><td><code>gateway_route_name</code></td><td><code>string</code></td><td><code>"http-route"</code></td><td>HTTPRoute name</td><td>no</td></tr>
+<tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
+<tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default; creates the SnatPool + snatpool Egress), automap (automap Egress only), or both.</td><td>no</td></tr>
+<tr><td><code>gateway_snatpool_name</code></td><td><code>string</code></td><td><code>"egress-snat-vx102"</code></td><td>F5SPKSnatpool name</td><td>no</td></tr>
+<tr><td><code>gateway_snat_host</code></td><td><code>number</code></td><td><code>111</code></td><td>Host number in int_snat_cidr for each zone’s SNAT address</td><td>no</td></tr>
+<tr><td><code>gateway_egress_app_interface</code></td><td><code>string</code></td><td><code>"eth0"</code></td><td>Application pod interface the Egress intercepts</td><td>no</td></tr>
+<tr><td><code>gateway_egress_tmm_interface</code></td><td><code>string</code></td><td><code>"external-vlan"</code></td><td>TMM interface name the Egress VXLAN binds to (matches the external VLAN)</td><td>no</td></tr>
+<tr><td><code>gateway_egress_node_interface</code></td><td><code>string</code></td><td><code>"ens3"</code></td><td>Node interface name for the Egress VXLAN</td><td>no</td></tr>
+<tr><td><code>gateway_egress_mtu</code></td><td><code>number</code></td><td><code>1460</code></td><td>Egress VXLAN MTU</td><td>no</td></tr>
+<tr><td><code>gateway_vxlan_port</code></td><td><code>number</code></td><td><code>6789</code></td><td>Egress VXLAN UDP port (also opened on the cluster security group)</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_local</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one F5SPKStaticRoute per entry × zone). Empty = no local client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_client_subnet_remote</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one F5SPKStaticRoute per entry × zone). Empty = no remote client routes.</td><td>no</td></tr>
+<tr><td><code>gateway_static_route_gw_host</code></td><td><code>number</code></td><td><code>1</code></td><td>Host number in ext_vlan_cidr used as each zone’s static-route gateway</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -343,8 +467,11 @@
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
-<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected or disconnected)</td><td>no</td></tr>
+<tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
+<tr><td><code>flp_license_server_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Base URL of the in-cluster F5 License Proxy (FLP mode only)</td><td>no</td></tr>
+<tr><td><code>license_server_root_ca</code></td><td><code>string</code></td><td><code>""</code></td><td>PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only)</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
+<tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native kubectl_manifest + wait_for) or "legacy_curl" (null_resource local-exec baseline).</td><td>no</td></tr>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>cneinstance_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>cneinstance_ready_id from ws4 — when set, ensures License CRD is available before applying License CR</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner license module is disabled and no License resources are created</td><td>no</td></tr>
@@ -375,6 +502,9 @@
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster).</td><td>no</td></tr>
+<tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><em>required</em></td><td>Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider’s HOME-derived default, which resolves empty under the roksbnkctl runner.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -457,7 +587,7 @@
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>

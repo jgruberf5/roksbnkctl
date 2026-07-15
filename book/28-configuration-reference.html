@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-51ee9f37.js";
+            window.path_to_searchindex_js = "searchindex-39b843f8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-56c26472.js"></script>
+        <script src="toc-6391257c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -203,6 +203,7 @@ ibmcloud:        # required
 cluster:         # required
 resources:       # optional (since v1.8.0); per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
+registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
 tf_source:       # required (defaults to embedded if omitted)
 cos:             # optional; supply-chain auto-upload
@@ -465,6 +466,45 @@ cells:
 </tbody>
 </table>
 </div>
+<h2 id="registry-block"><a class="header" href="#registry-block"><code>registry:</code> block</a></h2>
+<p>Selects the OCI registry <code>registry replicate</code> mirrors FAR into — and, once a mirror
+record exists, the registry the install pulls <strong>out of</strong>. See
+<a href="./10a-air-gapped-install.html">Air-gapped install</a> and
+<a href="./10b-registry-targets.html">Registry targets</a>.</p>
+<pre><code class="language-yaml">registry:
+  target: generic                    # icr (default) | generic
+  # target: generic — any OCI registry (Harbor, Artifactory, Quay, registry:2)
+  generic_host: harbor.example.com
+  generic_repo_prefix: bnk-mirror
+  generic_username: admin
+  generic_password_b64: &lt;base64&gt;     # set via `registry target generic_password --password-stdin`
+  # target: icr — IBM Container Registry
+  # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
+  # icr_namespace: my-namespace      # empty → the workspace prefix
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>registry.target</code></td><td>string</td><td><code>icr</code></td><td><code>icr</code> (IBM Container Registry) or <code>generic</code> (any OCI-compliant registry — Harbor, Artifactory, Quay, <code>registry:2</code>).</td></tr>
+<tr><td><code>registry.icr_host</code></td><td>string</td><td>(from region)</td><td>ICR host for <code>target: icr</code>, e.g. <code>de.icr.io</code>.</td></tr>
+<tr><td><code>registry.icr_namespace</code></td><td>string</td><td>(the prefix)</td><td>ICR namespace artifacts nest under.</td></tr>
+<tr><td><code>registry.generic_host</code></td><td>string</td><td>(empty)</td><td>Registry host for <code>target: generic</code>, e.g. <code>harbor.example.com</code>.</td></tr>
+<tr><td><code>registry.generic_repo_prefix</code></td><td>string</td><td>(empty)</td><td>Repository path artifacts nest under — a Harbor <strong>project</strong>, or an Artifactory repo key.</td></tr>
+<tr><td><code>registry.generic_username</code></td><td>string</td><td>(empty)</td><td>Basic-auth user. Both credential fields empty ⇒ anonymous push/pull.</td></tr>
+<tr><td><code>registry.generic_password_b64</code></td><td>string</td><td>(empty)</td><td>Basic-auth password/token, base64. Like every <code>_b64</code> field this is <strong>obfuscation, not encryption</strong> — <code>chmod 600</code>, never commit. Set it with <code>registry target generic_password --password-stdin</code> so it never reaches your shell history; templatable from the environment via <code>init --override-from-env</code> (<code>ROKSBNKCTL_GENERIC_PASSWORD</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The same credential installs, not just replicates.</strong> For an external private registry
+these fields authenticate <em>both</em> halves of the install: chart pulls log in with them, and
+pods get a <code>mirror-secret</code> dockerconfig built from them — created for you in every
+namespace that pulls (cert-manager, the FLO/BNK namespaces, and <code>kube-system</code> for the
+node-labeler) and referenced from the CNEInstance. <strong>A private registry needs no
+anonymous or public project.</strong> An in-cluster/ICR mirror authorizes by RBAC instead and
+needs no pull secret at all.</p>
 <h2 id="tf_source-block"><a class="header" href="#tf_source-block"><code>tf_source:</code> block</a></h2>
 <pre><code class="language-yaml">tf_source:
   type: embedded         # or: github | local
@@ -653,6 +693,13 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
+<tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="./10c-flp-licensing.html">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
+<tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
+<tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
+<tr><td><code>bnk.flp.node_port_access</code></td><td>bool</td><td><code>false</code></td><td>Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it (<a href="./10c-flp-licensing.html#flow-c--a-shared-licensing-cluster">Flow C</a>). Set by <code>flp up --add-node-port-access</code> and persisted, so a later <code>flp up</code> does not tear the exposure down.</td></tr>
+<tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>list of string</td><td>(empty)</td><td>With <code>node_port_access</code>: open the proxy’s NodePort to these CIDRs on the worker security group. A <strong>list</strong>, and it must name <strong>every zone</strong> — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by <code>flp up --node-port-source-cidr</code> and persisted.</td></tr>
+<tr><td><code>bnk.flp.external.url</code></td><td>string</td><td>(empty)</td><td>License against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code> from <code>roksbnkctl -w &lt;owner&gt; flp output</code>. This workspace then needs no <code>flp up</code> of its own.</td></tr>
+<tr><td><code>bnk.flp.external.root_ca_b64</code></td><td>string</td><td>(empty)</td><td>That proxy’s <code>root_ca_b64</code>, delivered to the CWC so it can verify the proxy’s certificate. Required with <code>external.url</code>.</td></tr>
 <tr><td><code>test.throughput.image</code></td><td>string</td><td><code>networkstatic/iperf3:latest</code></td><td>iperf3 image.</td></tr>
 <tr><td><code>test.throughput.duration</code></td><td>integer</td><td><code>30</code></td><td>iperf3 <code>-t</code> (seconds).</td></tr>
 <tr><td><code>test.throughput.streams</code></td><td>integer</td><td><code>8</code></td><td>iperf3 <code>-P</code> (parallel streams).</td></tr>
@@ -769,7 +816,7 @@ values. The resulting block looks like:</p>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
         <script src="mermaid-eefea253.min.js"></script>
