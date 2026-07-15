@@ -247,6 +247,76 @@ further cloud run.
 
 See [Licensing BNK with the F5 License Proxy](../../book/src/10c-flp-licensing.md#flow-c--a-shared-licensing-cluster).
 
+## Demo #5 — the disconnected install as a CI pipeline
+
+**Demo #4, told the way it actually ships: as two CI jobs.** Every step is a `docker run`
+of the tools-runner image, the whole workspace comes from **environment variables**, and
+the handoff between the jobs — the proxy's address and its CA — is two of them, exactly
+what CI passes as job outputs. Nothing is installed on the host, and no `config.yaml` is
+templated anywhere.
+
+```
+   ┌─ JOB 1 · licensing cluster ─────────────┐
+   │  mirror FAR → private registry          │
+   │  F5 License Proxy ──NodePort 30001──┐    │
+   │  outputs: flp_url, flp_ca ──────────┼──┐ │
+   └─────────────────────────────────────┼──┼─┘
+   ┌─ JOB 2 · application cluster ───────┼──┼─┐
+   │  BNK ← charts + images ── registry  │  │ │
+   │  CWC ───────────────────────────────┘  │ │  licensed remotely
+   │  ROKSBNKCTL_FLP_EXTERNAL_URL / _ROOT_CA_B64 ←┘
+   └─────────────────────────────────────────┘
+```
+
+Same two-cluster prerequisites as Demo #4 — both `cluster register`ed, not created; the
+same `SERVICES_CLUSTER` / `APP_CLUSTER` / `APP_CLUSTER_CIDR` in `demo.env`; the same
+off-camera Harbor (`REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD`). The difference is
+entirely in *how* it drives roksbnkctl.
+
+### Record
+
+The CI/runner FLP support ships in **v1.19.0**, so the demo pulls the public runner image
+by default — which is the point on camera, since a viewer sees exactly what they would
+get. `RUNNER_TAG` pins which one:
+
+```bash
+SCREENPLAY=ci-flp-demo.sh RUNNER_TAG=v1.19.0 ./record.sh run
+```
+
+`ci-flp-demo.sh` runs everything through `ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG`,
+so — unlike Demo #4 — there is no `SRC_BUILD`; the binary under test *is* the image.
+
+### Accelerate + name the outputs
+
+Same long stretches as Demo #4 (`registry replicate`, `bnk up`), so push `SPEED` the same
+way:
+
+```bash
+SPEED=0.10 MAX_IDLE=1.5 ./postprocess.sh out/latest.cast
+./voiceover.sh out/latest.compressed.cast out/latest.chapters.tsv
+mv out/latest.en.mp4 out/demo5-ci-flp-disconnected.en.mp4
+mv out/latest.fr.mp4 out/demo5-ci-flp-disconnected.fr.mp4
+```
+
+### Details
+
+- **The whole workspace is environment variables.** `init --non-interactive
+  --override-from-env` builds it from `ROKSBNKCTL_*` — no file is templated. The registry
+  target is `ROKSBNKCTL_REGISTRY_TARGET` / `_GENERIC_HOST` / `_GENERIC_REPO_PREFIX` /
+  `_GENERIC_USERNAME` / `_GENERIC_PASSWORD`; the license mode is `ROKSBNKCTL_LICENSE_MODE`.
+- **The cross-job handoff is two variables.** Job 1 prints `flp output
+  flp_external_endpoint` and `flp_root_ca`; job 2 receives them as
+  `ROKSBNKCTL_FLP_EXTERNAL_URL` and `ROKSBNKCTL_FLP_ROOT_CA_B64`. The CA is passed
+  **verbatim** (it is already base64) — re-encoding it hands the CWC a corrupt CA.
+- **`flp up` runs *inside* the container**, which it could not do before v1.19.0: the
+  chart's Helm post-renderer was a generated python script, and the runner image has no
+  python. roksbnkctl now post-renders its own chart (`roksbnkctl flp postrender`), so the
+  container needs no interpreter.
+
+Recorded output: **`out/demo5-ci-flp-disconnected.{en,fr}.mp4`** (EN 3:32 / FR 3:48).
+
+See [Flow C in CI](../../book/src/10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).
+
 ---
 
 ## Finishing up
