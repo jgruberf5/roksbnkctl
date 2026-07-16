@@ -97,7 +97,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_CLUSTER_CREATE` | `cluster.create` | bool (`true`/`false`/`1`/`0`) |
 | `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
 | `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
-| `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | verbatim (adopt an existing TGW) |
+| `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | a Transit Gateway **name or id** — `cluster up`/`register` attaches the cluster VPC to it (see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md)) |
 | `ROKSBNKCTL_CLUSTER_VPC_ID` | `resources.cluster_vpc` (`create:false` + `existing`) | verbatim — adopt an existing cluster VPC by **ID** |
 | `ROKSBNKCTL_TESTING_VPC_NAME` | `resources.testing_client_vpc_name` | verbatim (names the client VPC to create) |
 | `ROKSBNKCTL_BIGIP_URL` | `bnk.cis.bigip_url` | verbatim |

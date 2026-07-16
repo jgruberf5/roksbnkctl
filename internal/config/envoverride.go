@@ -102,8 +102,9 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
-	// Adopt an existing Transit Gateway by name (create=false + existing). Lets a
-	// NEW cluster attach to a shared TGW. Preserves the other resource toggles.
+	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
+	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
+	// it. Preserves the other resource toggles.
 	if v := envValue("ROKSBNKCTL_TRANSIT_GATEWAY_NAME"); v != "" {
 		if ws.Resources == nil {
 			ws.Resources = &ResourcesCfg{}

@@ -613,3 +613,23 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+# ── Transit Gateway connection phase (roksbnkctl tgw connect) ─────────────────
+
+variable "deploy_tgw_connection" {
+  description = "Attach the cluster's VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else."
+  type        = bool
+  default     = false
+}
+
+variable "tgw_connection_target" {
+  description = "Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway."
+  type        = string
+  default     = ""
+}
+
+variable "tgw_connection_name" {
+  description = "Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide)."
+  type        = string
+  default     = ""
+}

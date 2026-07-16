@@ -4,6 +4,16 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.20.0 — 2026-07-16
+
+### Added
+
+- **Share a Transit Gateway across clusters — `roksbnkctl tgw connect/disconnect/status`.** Attach a cluster's VPC to an **existing** Transit Gateway, by name or by id, at create time or after, so several clusters can share one gateway. It's its own phase (`state-tgw/`) that reads the cluster VPC from `cluster-outputs.json`, so it works against a cluster roksbnkctl created **or one you registered** — each workspace owns its own connection. Decline to create a gateway in `init` and name an existing one, and `cluster up`/`cluster register` attach it automatically; `tgw connect <name-or-id>` does it afterward. `tgw status` (and `cluster config`) show the gateway id/name and the **live** connection state (attached / pending / detached), queried from IBM. See [Sharing a Transit Gateway across clusters](book/src/09a-transit-gateway-sharing.md).
+
+### Fixed
+
+- **Adopting an existing Transit Gateway now actually connects the cluster VPC.** Previously `create_roks_transit_gateway = false` created no connection at all — the only `ibm_tg_connection` was gated on *creating* the gateway and hard-referenced it, so a cluster pointed at an existing gateway was left unattached. The new `tgw` phase resolves the gateway (name **or** id, via the account's gateway list — an ambiguous name errors instead of picking one) and creates exactly one connection to the cluster VPC.
+
 ## v1.19.0 — 2026-07-14
 
 ### Added

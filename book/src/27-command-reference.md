@@ -2283,6 +2283,77 @@ Workflow:
 | `--force` | `bool` | `false` | overwrite the destination if it already exists |
 | `--output` / `-o` | `string` | `./terraform.tfvars` | destination file (or - for stdout) |
 
+## `roksbnkctl tgw`
+
+Attach the cluster to an existing Transit Gateway (share one across clusters)
+
+Connect this workspace's cluster VPC to an EXISTING IBM Transit Gateway,
+by name or id — at create time or after. Multiple workspaces can point at the
+same gateway; each owns its own connection.
+
+Commands:
+  roksbnkctl tgw connect `<name-or-id>`   Attach the cluster VPC to the gateway
+  roksbnkctl tgw disconnect             Detach (leaves the gateway + other clusters)
+  roksbnkctl tgw status                 Gateway id/name + live connection state
+
+Runs in its own state (state-tgw/), separate from cluster/BNK/testing/gateway/FLP,
+and works against a created OR a registered cluster.
+
+### `roksbnkctl tgw connect`
+
+Attach the cluster VPC to an existing Transit Gateway
+
+```
+roksbnkctl tgw connect [transit-gateway-name-or-id] [flags]
+```
+
+Attaches this workspace's cluster VPC to an existing Transit Gateway.
+
+The gateway may be given by NAME or by ID — either is resolved against your
+account. Pass it as the argument (persisted to config for later re-applies), or
+set resources.transit_gateway (create: false, existing: `<name-or-id>`) in
+config.yaml / the init interview.
+
+Idempotent and shareable: run it in several workspaces with the same gateway and
+each cluster gets its own connection to the one gateway.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the confirmation prompt before apply |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl tgw`](#roksbnkctl-tgw)
+
+### `roksbnkctl tgw disconnect`
+
+Detach the cluster VPC from its Transit Gateway
+
+```
+roksbnkctl tgw disconnect [flags]
+```
+
+Removes ONLY this cluster's connection to the Transit Gateway. The
+gateway itself and every other cluster's connection to it are left intact.
+
+Exits 0 ("nothing to do") when there's no connection.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto` | `bool` | `false` | skip the destroy confirmation |
+| `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+← back to [`roksbnkctl tgw`](#roksbnkctl-tgw)
+
+### `roksbnkctl tgw status`
+
+Show the Transit Gateway id/name and the live connection state
+
+← back to [`roksbnkctl tgw`](#roksbnkctl-tgw)
+
 ## `roksbnkctl up`
 
 Provision (or attach) and deploy BNK — terraform plan + apply

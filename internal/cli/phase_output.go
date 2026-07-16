@@ -85,6 +85,14 @@ var phaseOutputOwnership = map[string][]string{
 		"flp_external_endpoints",
 		"flp_node_port",
 	},
+	"tgw": {
+		"tgw_gateway_id",
+		"tgw_gateway_name",
+		"tgw_gateway_crn",
+		"tgw_connection_id",
+		"tgw_connection_name",
+		"tgw_vpc_crn",
+	},
 }
 
 // phaseStateDirs is the read order for the aggregate: each phase's owned outputs
@@ -98,6 +106,7 @@ var phaseStateDirs = []struct {
 	{"testing", config.WorkspaceTestingStateDir},
 	{"gateway", config.WorkspaceGatewayStateDir},
 	{"flp", config.WorkspaceFLPStateDir},
+	{"tgw", config.WorkspaceTGWStateDir},
 }
 
 // outputOwner returns the phase that manages output name, or "" if unowned.

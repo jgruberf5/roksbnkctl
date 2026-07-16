@@ -500,6 +500,9 @@ func (w *Workspace) phaseLabel(_ []string) string {
 	if filepath.Base(w.stateDir) == "state-flp" {
 		return "flp"
 	}
+	if filepath.Base(w.stateDir) == "state-tgw" {
+		return "tgw"
+	}
 	return "trial"
 }
 

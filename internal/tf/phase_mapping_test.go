@@ -21,6 +21,7 @@ func TestPhaseMappingsAreDistinctPerStateDir(t *testing.T) {
 		"state-testing": {"testing", "testing"},
 		"state-gateway": {"gateway", "gateway"},
 		"state-flp":     {"flp", "flp"},
+		"state-tgw":     {"tgw", "tgw"},
 		// The BNK phase's dir is plain "state"; its historic labels differ between
 		// the two tables ("bnk" for the backend key, "trial" for the tfvars snapshot).
 		"state": {"bnk", "trial"},

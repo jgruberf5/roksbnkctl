@@ -308,3 +308,19 @@ module "flp" {
   roksbnkctl_binary = var.roksbnkctl_binary
 
 }
+
+module "tgw_connection" {
+  source = "./modules/tgw_connection"
+
+  deploy_tgw_connection = var.deploy_tgw_connection
+
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+
+  # The cluster VPC to attach. In the tgw phase the override sets
+  # use_existing_cluster_vpc + existing_cluster_vpc_id from cluster-outputs.json,
+  # so this resolves for a created OR a registered cluster.
+  cluster_vpc_id  = var.existing_cluster_vpc_id
+  transit_gateway = var.tgw_connection_target
+  connection_name = var.tgw_connection_name
+}

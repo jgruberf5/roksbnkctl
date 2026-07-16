@@ -22,6 +22,7 @@
 - [The cluster phase (cluster up/down)](./08-cluster-phase.md)
 - [The three-phase lifecycle (Cluster / BNK / Testing)](./08a-three-phase-lifecycle.md)
 - [Registering an existing cluster](./09-registering-existing-cluster.md)
+- [Sharing a Transit Gateway across clusters](./09a-transit-gateway-sharing.md)
 - [Deploying BNK trials on top](./10-deploying-bnk-trials.md)
 - [Air-gapped install: mirroring BNK into a private registry](./10a-air-gapped-install.md)
 - [Registry targets: ICR and Artifactory](./10b-registry-targets.md)
