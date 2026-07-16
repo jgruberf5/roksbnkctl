@@ -29,7 +29,7 @@ jobs:
       # Scan against the latest stable Go (not just the go.mod minimum) so
       # stdlib vulns reflect a current build — they're fixed by the toolchain,
       # not a module bump. A current Go builds the older go.mod directive fine.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: govulncheck

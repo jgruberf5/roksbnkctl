@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Build releases with the latest stable Go, not just the go.mod
           # minimum (1.25.0), so the binaries ship current Go-stdlib security
