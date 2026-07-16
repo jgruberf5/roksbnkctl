@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39b843f8.js";
+            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6391257c.js"></script>
+        <script src="toc-14f30233.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1434,7 +1434,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_CLUSTER_CREATE</code></td><td><code>cluster.create</code></td><td>bool (<code>true</code>/<code>false</code>/<code>1</code>/<code>0</code>)</td></tr>
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
-<tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim (adopt an existing TGW)</td></tr>
+<tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>)</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_URL</code></td><td><code>bnk.cis.bigip_url</code></td><td>verbatim</td></tr>
@@ -2326,6 +2326,79 @@ roksbnkctl -w canada down --auto
 <li><a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> — the COS instance and bucket layout that <code>--registry-cos-name</code> points at.</li>
 <li><a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a — Air-gapped install</a> — mirror BNK into your own registry; a registered cluster installs from it exactly like a created one.</li>
 <li><a href="#licensing-bnk-with-the-f5-license-proxy-flp">Chapter 10c — Licensing with the F5 License Proxy</a> — a registered cluster is a first-class base for the proxy (<a href="#flow-b--an-existing-cluster-registered-in-the-workspace">Flow B</a>), and <strong>both</strong> clusters in the shared-licensing topology (<a href="#flow-c--a-shared-licensing-cluster">Flow C</a>) can be registered rather than built.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="sharing-a-transit-gateway-across-clusters"><a class="header" href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway across clusters</a></h1>
+<p>A Transit Gateway (TGW) routes between VPCs. By default <code>roksbnkctl cluster up</code>
+creates a prefix-named gateway for the cluster it builds. But you often want the
+opposite: <strong>one gateway that several clusters share</strong>, so they can reach each
+other — the shape behind a <a href="#flow-c--a-shared-licensing-cluster">shared licensing cluster</a>,
+a central services VPC, or cross-cluster testing.</p>
+<p>roksbnkctl attaches a cluster’s VPC to an <strong>existing</strong> Transit Gateway — by name
+or by id, at create time or after — as its own small phase. Each workspace owns
+its own connection, so N clusters can point at the one gateway.</p>
+<h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
+<p>Decline to create a gateway, then name an existing one:</p>
+<pre><code class="language-console">$ roksbnkctl -w prod init
+...
+Create Transit Gateway? [Y/n] n
+Existing Transit Gateway name or ID (blank = attach later with `tgw connect`): shared-tgw
+</code></pre>
+<p><code>cluster up</code> (or <code>cluster register</code>) then attaches the cluster’s VPC to
+<code>shared-tgw</code> automatically — no extra step. In config that is:</p>
+<pre><code class="language-yaml">resources:
+  transit_gateway:
+    create: false
+    existing: shared-tgw      # a NAME or an ID — either is resolved
+</code></pre>
+<p>or, for CI, the environment variable <code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME=shared-tgw</code>
+(it too accepts a name or an id).</p>
+<h2 id="attach-or-detach-after-the-fact"><a class="header" href="#attach-or-detach-after-the-fact">Attach (or detach) after the fact</a></h2>
+<p><code>tgw connect</code> works on a cluster that already exists — one roksbnkctl built, <strong>or
+one you registered</strong> — because it reads the cluster’s VPC from
+<code>cluster-outputs.json</code>, not from any terraform state:</p>
+<pre><code class="language-bash">roksbnkctl -w prod tgw connect shared-tgw       # by name
+roksbnkctl -w prod tgw connect 2f28a749-fcc0-…  # or by id
+</code></pre>
+<p>Run it in several workspaces with the same gateway and each cluster gets its own
+connection to it:</p>
+<pre><code class="language-bash">roksbnkctl -w app-a tgw connect shared-tgw
+roksbnkctl -w app-b tgw connect shared-tgw      # same gateway, second cluster
+</code></pre>
+<p>Detach removes <strong>only this cluster’s</strong> connection — the gateway and every other
+cluster’s connection stay:</p>
+<pre><code class="language-bash">roksbnkctl -w prod tgw disconnect
+</code></pre>
+<h2 id="status--the-connected-state-id-and-name"><a class="header" href="#status--the-connected-state-id-and-name">Status — the connected state, id, and name</a></h2>
+<p><code>tgw status</code> shows the gateway identity and the <strong>live</strong> connection state, queried
+from IBM (not just what was recorded at apply time):</p>
+<pre><code class="language-console">$ roksbnkctl -w prod tgw status
+transit_gateway_id:    2f28a749-fcc0-43d7-97dd-403a6b00b56f
+transit_gateway_name:  shared-tgw
+connection_name:       prod
+connection_id:         a1b2c3d4-…
+cluster_vpc:           r010-072ad88a-…
+connection_state:      attached
+</code></pre>
+<p><code>connection_state</code> is the live attachment: <code>attached</code>, <code>pending</code>, or <code>detached</code>
+(no connection for this VPC on the gateway). <code>roksbnkctl -w prod cluster config</code>
+shows the same block alongside the rest of the cluster identity.</p>
+<h2 id="how-it-works-and-what-to-know"><a class="header" href="#how-it-works-and-what-to-know">How it works, and what to know</a></h2>
+<ul>
+<li><strong>It’s its own phase</strong> (<code>state-tgw/</code>), separate from cluster / BNK / testing /
+gateway / FLP. So <code>tgw connect</code>/<code>disconnect</code> never touch anything else, and the
+connection survives a <code>bnk down</code> or a re-applied trial.</li>
+<li><strong>Name or id</strong> is resolved against your account’s gateway list, so an ambiguous
+name (two gateways sharing it) is an error, not an arbitrary pick — pass the id.</li>
+<li><strong>One VPC, one connection per gateway.</strong> Clusters that share a <em>VPC</em> (rare) can’t
+each hold a separate connection to the same gateway; clusters in <em>distinct</em> VPCs
+each get their own, which is the normal shared-gateway case.</li>
+<li><strong>A global gateway</strong> connects VPCs in any region; a local one only its own
+region. <code>tgw connect</code> attaches to whatever gateway you name — make sure it can
+reach the region your cluster VPC is in.</li>
+<li><strong><code>cluster down</code> refuses</strong> while a connection exists, so the cluster isn’t
+destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first (or
+<code>roksbnkctl down</code>, which sequences it).</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deploying-bnk-trials-on-top"><a class="header" href="#deploying-bnk-trials-on-top">Deploying BNK trials on top</a></h1>
@@ -10766,6 +10839,64 @@ roksbnkctl up –var-file ./terraform.tfvars</p>
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-tgw"><a class="header" href="#roksbnkctl-tgw"><code>roksbnkctl tgw</code></a></h2>
+<p>Attach the cluster to an existing Transit Gateway (share one across clusters)</p>
+<p>Connect this workspace’s cluster VPC to an EXISTING IBM Transit Gateway,
+by name or id — at create time or after. Multiple workspaces can point at the
+same gateway; each owns its own connection.</p>
+<p>Commands:
+roksbnkctl tgw connect <code>&lt;name-or-id&gt;</code>   Attach the cluster VPC to the gateway
+roksbnkctl tgw disconnect             Detach (leaves the gateway + other clusters)
+roksbnkctl tgw status                 Gateway id/name + live connection state</p>
+<p>Runs in its own state (state-tgw/), separate from cluster/BNK/testing/gateway/FLP,
+and works against a created OR a registered cluster.</p>
+<h3 id="roksbnkctl-tgw-connect"><a class="header" href="#roksbnkctl-tgw-connect"><code>roksbnkctl tgw connect</code></a></h3>
+<p>Attach the cluster VPC to an existing Transit Gateway</p>
+<pre><code>roksbnkctl tgw connect [transit-gateway-name-or-id] [flags]
+</code></pre>
+<p>Attaches this workspace’s cluster VPC to an existing Transit Gateway.</p>
+<p>The gateway may be given by NAME or by ID — either is resolved against your
+account. Pass it as the argument (persisted to config for later re-applies), or
+set resources.transit_gateway (create: false, existing: <code>&lt;name-or-id&gt;</code>) in
+config.yaml / the init interview.</p>
+<p>Idempotent and shareable: run it in several workspaces with the same gateway and
+each cluster gets its own connection to the one gateway.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt before apply</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-tgw"><code>roksbnkctl tgw</code></a></p>
+<h3 id="roksbnkctl-tgw-disconnect"><a class="header" href="#roksbnkctl-tgw-disconnect"><code>roksbnkctl tgw disconnect</code></a></h3>
+<p>Detach the cluster VPC from its Transit Gateway</p>
+<pre><code>roksbnkctl tgw disconnect [flags]
+</code></pre>
+<p>Removes ONLY this cluster’s connection to the Transit Gateway. The
+gateway itself and every other cluster’s connection to it are left intact.</p>
+<p>Exits 0 (“nothing to do”) when there’s no connection.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
+<tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-tgw"><code>roksbnkctl tgw</code></a></p>
+<h3 id="roksbnkctl-tgw-status"><a class="header" href="#roksbnkctl-tgw-status"><code>roksbnkctl tgw status</code></a></h3>
+<p>Show the Transit Gateway id/name and the live connection state</p>
+<p>← back to <a href="#roksbnkctl-tgw"><code>roksbnkctl tgw</code></a></p>
 <h2 id="roksbnkctl-up"><a class="header" href="#roksbnkctl-up"><code>roksbnkctl up</code></a></h2>
 <p>Provision (or attach) and deploy BNK — terraform plan + apply</p>
 <pre><code>roksbnkctl up [flags]
@@ -10935,7 +11066,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><th>Sub-block</th><th><code>create</code> default</th><th><code>existing</code> consumed by</th><th>Renders into</th></tr>
 </thead>
 <tbody>
-<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> → <code>roks_transit_gateway_name</code> when the TGW jumphost needs an existing TGW</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code></td></tr>
+<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> (name or id) attaches the cluster VPC to that gateway via the <code>tgw</code> phase</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code>, <code>tgw_connection_target</code></td></tr>
 <tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code>; <code>existing</code> → <code>roks_cos_instance_name</code></td><td><code>create_roks_registry_cos_instance</code>, <code>roks_cos_instance_name</code></td></tr>
 <tr><td><code>cert_manager</code></td><td><code>true</code></td><td>—</td><td><code>install_cert_manager</code></td></tr>
 <tr><td><code>bnk</code></td><td><code>true</code></td><td>—</td><td><code>deploy_bnk</code></td></tr>
@@ -11332,7 +11463,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
-<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing TGW name/ID when <code>create: false</code> and the TGW jumphost needs it.</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</td></tr>
 <tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
 <tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>
@@ -11507,6 +11638,9 @@ values. The resulting block looks like:</p>
 <tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it.</td><td>no</td></tr>
 <tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart’s post-renderer (<code>roksbnkctl flp postrender</code>), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
+<tr><td><code>deploy_tgw_connection</code></td><td><code>bool</code></td><td><code>false</code></td><td>Attach the cluster’s VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else.</td><td>no</td></tr>
+<tr><td><code>tgw_connection_target</code></td><td><code>string</code></td><td><code>""</code></td><td>Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway.</td><td>no</td></tr>
+<tr><td><code>tgw_connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for this cluster’s connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don’t collide).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -11777,6 +11911,23 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-tgw_connection"><a class="header" href="#module-tgw_connection">Module: <code>tgw_connection</code></a></h2>
+<p>Source: <code>terraform/modules/tgw_connection/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deploy_tgw_connection</code></td><td><code>bool</code></td><td><code>false</code></td><td>Attach the cluster’s VPC to an existing Transit Gateway. Off in every other phase’s override; on only for <code>tgw connect</code>. When false the module is a complete no-op.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud API key (IAM auth + provider config).</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the cluster VPC (ibm provider + the ibm_is_vpc lookup).</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster’s VPC — the network attached to the Transit Gateway. Resolved to a CRN here; the connection needs the CRN, but cluster-outputs.json records the id.</td><td>no</td></tr>
+<tr><td><code>transit_gateway</code></td><td><code>string</code></td><td><code>""</code></td><td>The EXISTING Transit Gateway to attach to, by NAME or by ID. Resolved against the account’s gateway list, so either works. Multiple clusters passing the same value share one gateway; each workspace owns its own connection.</td><td>no</td></tr>
+<tr><td><code>connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for THIS cluster’s connection on the gateway. Must be unique per gateway, so it is prefix-derived — two clusters sharing one Transit Gateway get distinct connection names.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>

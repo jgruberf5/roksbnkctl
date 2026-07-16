@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39b843f8.js";
+            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6391257c.js"></script>
+        <script src="toc-14f30233.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -284,7 +284,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><th>Sub-block</th><th><code>create</code> default</th><th><code>existing</code> consumed by</th><th>Renders into</th></tr>
 </thead>
 <tbody>
-<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> → <code>roks_transit_gateway_name</code> when the TGW jumphost needs an existing TGW</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code></td></tr>
+<tr><td><code>transit_gateway</code></td><td><code>true</code></td><td><code>create_roks_transit_gateway</code>; <code>existing</code> (name or id) attaches the cluster VPC to that gateway via the <code>tgw</code> phase</td><td><code>create_roks_transit_gateway</code>, <code>roks_transit_gateway_name</code>, <code>tgw_connection_target</code></td></tr>
 <tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code>; <code>existing</code> → <code>roks_cos_instance_name</code></td><td><code>create_roks_registry_cos_instance</code>, <code>roks_cos_instance_name</code></td></tr>
 <tr><td><code>cert_manager</code></td><td><code>true</code></td><td>—</td><td><code>install_cert_manager</code></td></tr>
 <tr><td><code>bnk</code></td><td><code>true</code></td><td>—</td><td><code>deploy_bnk</code></td></tr>
@@ -681,7 +681,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
-<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing TGW name/ID when <code>create: false</code> and the TGW jumphost needs it.</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>.</td></tr>
 <tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
 <tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39b843f8.js";
+            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-6391257c.js"></script>
+        <script src="toc-14f30233.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -265,6 +265,9 @@
 <tr><td><code>flp_node_port_access</code></td><td><code>bool</code></td><td><code>false</code></td><td>Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it.</td><td>no</td></tr>
 <tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart’s post-renderer (<code>roksbnkctl flp postrender</code>), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
+<tr><td><code>deploy_tgw_connection</code></td><td><code>bool</code></td><td><code>false</code></td><td>Attach the cluster’s VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else.</td><td>no</td></tr>
+<tr><td><code>tgw_connection_target</code></td><td><code>string</code></td><td><code>""</code></td><td>Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway.</td><td>no</td></tr>
+<tr><td><code>tgw_connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for this cluster’s connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don’t collide).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -535,6 +538,23 @@
 <tr><td><code>roks_cluster_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="module-tgw_connection"><a class="header" href="#module-tgw_connection">Module: <code>tgw_connection</code></a></h2>
+<p>Source: <code>terraform/modules/tgw_connection/variables.tf</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deploy_tgw_connection</code></td><td><code>bool</code></td><td><code>false</code></td><td>Attach the cluster’s VPC to an existing Transit Gateway. Off in every other phase’s override; on only for <code>tgw connect</code>. When false the module is a complete no-op.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud API key (IAM auth + provider config).</td><td><strong>yes</strong></td></tr>
+<tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the cluster VPC (ibm provider + the ibm_is_vpc lookup).</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster’s VPC — the network attached to the Transit Gateway. Resolved to a CRN here; the connection needs the CRN, but cluster-outputs.json records the id.</td><td>no</td></tr>
+<tr><td><code>transit_gateway</code></td><td><code>string</code></td><td><code>""</code></td><td>The EXISTING Transit Gateway to attach to, by NAME or by ID. Resolved against the account’s gateway list, so either works. Multiple clusters passing the same value share one gateway; each workspace owns its own connection.</td><td>no</td></tr>
+<tr><td><code>connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for THIS cluster’s connection on the gateway. Must be unique per gateway, so it is prefix-derived — two clusters sharing one Transit Gateway get distinct connection names.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>

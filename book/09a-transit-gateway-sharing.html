@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>GitHub Actions CI as an example - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>Sharing a Transit Gateway across clusters - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,157 +177,88 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="github-actions-ci-as-an-example"><a class="header" href="#github-actions-ci-as-an-example">GitHub Actions CI as an example</a></h1>
-<p>roksbnkctl is built to be driven from a pipeline: <strong>config is the input, the
-environment supplies the values, and one image carries every tool.</strong> This chapter
-is a worked GitHub Actions example — a single cluster, then a fleet — using the
-<a href="./07a-unattended-setup.html">unattended / <code>--non-interactive</code></a> flow and the
-<a href="./04-installation.html#path-c--run-from-the-all-in-one-container-image-no-install">all-in-one runner image</a>.</p>
-<p>The whole model in one breath: <strong>GitHub secrets → <code>ROKSBNKCTL_*</code> env →
-<code>init --non-interactive</code> builds <code>config.yaml</code> → <code>up</code> reconciles it.</strong> No API key
-in the repo, no hand-edited config, no interactive prompts.</p>
-<h2 id="the-runner-image-as-a-job-container"><a class="header" href="#the-runner-image-as-a-job-container">The runner image as a job container</a></h2>
-<p>Run the job <em>in</em> <code>roksbnkctl-tools-runner</code> — it has <code>roksbnkctl</code> plus terraform,
-helm, kubectl, oc, and the IBM Cloud CLI on <code>PATH</code>, so the workflow needs nothing
-installed:</p>
-<pre><code class="language-yaml">jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest
-    steps:
-      - run: roksbnkctl version
+                        <h1 id="sharing-a-transit-gateway-across-clusters"><a class="header" href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway across clusters</a></h1>
+<p>A Transit Gateway (TGW) routes between VPCs. By default <code>roksbnkctl cluster up</code>
+creates a prefix-named gateway for the cluster it builds. But you often want the
+opposite: <strong>one gateway that several clusters share</strong>, so they can reach each
+other — the shape behind a <a href="./10c-flp-licensing.html#flow-c--a-shared-licensing-cluster">shared licensing cluster</a>,
+a central services VPC, or cross-cluster testing.</p>
+<p>roksbnkctl attaches a cluster’s VPC to an <strong>existing</strong> Transit Gateway — by name
+or by id, at create time or after — as its own small phase. Each workspace owns
+its own connection, so N clusters can point at the one gateway.</p>
+<h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
+<p>Decline to create a gateway, then name an existing one:</p>
+<pre><code class="language-console">$ roksbnkctl -w prod init
+...
+Create Transit Gateway? [Y/n] n
+Existing Transit Gateway name or ID (blank = attach later with `tgw connect`): shared-tgw
 </code></pre>
-<h2 id="ephemeral-runners-need-remote-state"><a class="header" href="#ephemeral-runners-need-remote-state">Ephemeral runners need remote state</a></h2>
-<p>A GitHub-hosted runner is thrown away after the job, so a later <strong>teardown</strong> run
-can’t see the terraform state from the <strong>deploy</strong> run. Put the state in COS so it
-survives across runs (and across runners) — see <a href="./12a-remote-state.html">Remote state</a>:</p>
-<pre><code class="language-yaml">state: { backend: s3 }   # in config.yaml; HMAC keys come from env (below)
+<p><code>cluster up</code> (or <code>cluster register</code>) then attaches the cluster’s VPC to
+<code>shared-tgw</code> automatically — no extra step. In config that is:</p>
+<pre><code class="language-yaml">resources:
+  transit_gateway:
+    create: false
+    existing: shared-tgw      # a NAME or an ID — either is resolved
 </code></pre>
-<p>Supply the bucket via config and the HMAC keys via env
-(<code>ROKSBNKCTL_COS_HMAC_ACCESS_KEY</code> / <code>_SECRET_KEY</code>).</p>
-<h2 id="a-single-cluster-workflow"><a class="header" href="#a-single-cluster-workflow">A single-cluster workflow</a></h2>
-<pre><code class="language-yaml">name: Deploy BNK
-on:
-  workflow_dispatch:
-    inputs:
-      region:  { description: IBM Cloud region, default: eu-de }
-      prefix:  { description: Resource prefix,  default: ci }
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    env:
-      # secrets → the credential + cluster identity
-      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_REGION:              ${{ inputs.region }}
-      ROKSBNKCTL_RESOURCE_GROUP:      default
-      ROKSBNKCTL_PREFIX:              ${{ inputs.prefix }}
-      ROKSBNKCTL_CLUSTER_NAME:        ${{ inputs.prefix }}-roks
-      ROKSBNKCTL_CLUSTER_CREATE:      "true"
-      # adopt shared infrastructure (reuse is config — no extra commands)
-      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
-      # remote state so teardown works from a fresh runner
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - name: Seed config.yaml from the environment
-        run: roksbnkctl -w ci init --non-interactive
-
-      - name: Deploy (cluster + BNK + testing, per config)
-        run: roksbnkctl -w ci up --auto
-
-      - name: Publish cluster outputs
-        run: |
-          roksbnkctl -w ci cluster output --json | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "roks_cluster_id=$(roksbnkctl -w ci cluster output roks_cluster_id)" &gt;&gt; "$GITHUB_OUTPUT"
+<p>or, for CI, the environment variable <code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME=shared-tgw</code>
+(it too accepts a name or an id).</p>
+<h2 id="attach-or-detach-after-the-fact"><a class="header" href="#attach-or-detach-after-the-fact">Attach (or detach) after the fact</a></h2>
+<p><code>tgw connect</code> works on a cluster that already exists — one roksbnkctl built, <strong>or
+one you registered</strong> — because it reads the cluster’s VPC from
+<code>cluster-outputs.json</code>, not from any terraform state:</p>
+<pre><code class="language-bash">roksbnkctl -w prod tgw connect shared-tgw       # by name
+roksbnkctl -w prod tgw connect 2f28a749-fcc0-…  # or by id
 </code></pre>
-<p><code>init --non-interactive</code> logs which fields it pulled from the environment (never
-the values), then <code>up</code> brings up the cluster (create <em>or</em> attach, per
-<code>cluster.create</code>) and <strong>BNK ∥ Testing</strong> — exactly the phases the config enables.
-Add <code>roksbnkctl -w ci gateway up --auto</code> if the deployment includes the gateway
-phase.</p>
-<h2 id="a-fleet-deploy-many-clusters-with-a-matrix"><a class="header" href="#a-fleet-deploy-many-clusters-with-a-matrix">A fleet: deploy many clusters with a matrix</a></h2>
-<p>The thing that makes this a <em>CI</em> tool is that the same env-driven flow scales to a
-fleet — one workspace per cluster, varied by the matrix, all sharing one TGW:</p>
-<pre><code class="language-yaml">name: Deploy fleet
-on: { workflow_dispatch: {} }
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    strategy:
-      fail-fast: false
-      matrix:
-        cluster:
-          - { ws: eu,  region: eu-de,   prefix: acme-eu }
-          - { ws: us,  region: us-south, prefix: acme-us }
-          - { ws: jp,  region: jp-tok,   prefix: acme-jp }
-    env:
-      IBMCLOUD_API_KEY:                ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_RESOURCE_GROUP:       default
-      ROKSBNKCTL_CLUSTER_CREATE:       "true"
-      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY:  ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY:  ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - env:
-          ROKSBNKCTL_REGION:       ${{ matrix.cluster.region }}
-          ROKSBNKCTL_PREFIX:       ${{ matrix.cluster.prefix }}
-          ROKSBNKCTL_CLUSTER_NAME: ${{ matrix.cluster.prefix }}-roks
-        run: |
-          roksbnkctl -w ${{ matrix.cluster.ws }} init --non-interactive
-          roksbnkctl -w ${{ matrix.cluster.ws }} up --auto
+<p>Run it in several workspaces with the same gateway and each cluster gets its own
+connection to it:</p>
+<pre><code class="language-bash">roksbnkctl -w app-a tgw connect shared-tgw
+roksbnkctl -w app-b tgw connect shared-tgw      # same gateway, second cluster
 </code></pre>
-<p>Each matrix leg is one cluster; reuse-by-name (<code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code>)
-lets them share one network fabric. To dictate per-AZ addressing or attach a BIG-IP
-for CIS, add the matching env vars (<code>ROKSBNKCTL_ZONE&lt;n&gt;_*</code>, <code>ROKSBNKCTL_BIGIP_*</code>) —
-the full set is in <a href="./07a-unattended-setup.html#-override-from-env">Unattended setup</a>.</p>
-<h2 id="teardown"><a class="header" href="#teardown">Teardown</a></h2>
-<p>A separate manually-triggered (or PR-close) workflow tears a workspace down. Because
-the state lives in COS, it runs cleanly on a fresh runner:</p>
-<pre><code class="language-yaml">name: Teardown
-on: { workflow_dispatch: { inputs: { ws: { required: true } } } }
-jobs:
-  destroy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    env:
-      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - run: roksbnkctl -w ${{ inputs.ws }} down --auto
+<p>Detach removes <strong>only this cluster’s</strong> connection — the gateway and every other
+cluster’s connection stay:</p>
+<pre><code class="language-bash">roksbnkctl -w prod tgw disconnect
 </code></pre>
-<p>(An <em>attached</em> existing cluster — <code>ROKSBNKCTL_CLUSTER_CREATE=false</code> — is not
-destroyed; <code>down</code> tears down only what roksbnkctl created.)</p>
-<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<h2 id="status--the-connected-state-id-and-name"><a class="header" href="#status--the-connected-state-id-and-name">Status — the connected state, id, and name</a></h2>
+<p><code>tgw status</code> shows the gateway identity and the <strong>live</strong> connection state, queried
+from IBM (not just what was recorded at apply time):</p>
+<pre><code class="language-console">$ roksbnkctl -w prod tgw status
+transit_gateway_id:    2f28a749-fcc0-43d7-97dd-403a6b00b56f
+transit_gateway_name:  shared-tgw
+connection_name:       prod
+connection_id:         a1b2c3d4-…
+cluster_vpc:           r010-072ad88a-…
+connection_state:      attached
+</code></pre>
+<p><code>connection_state</code> is the live attachment: <code>attached</code>, <code>pending</code>, or <code>detached</code>
+(no connection for this VPC on the gateway). <code>roksbnkctl -w prod cluster config</code>
+shows the same block alongside the rest of the cluster identity.</p>
+<h2 id="how-it-works-and-what-to-know"><a class="header" href="#how-it-works-and-what-to-know">How it works, and what to know</a></h2>
 <ul>
-<li><strong>Pin the image by digest</strong> in production CI (<code>...-runner@sha256:…</code>), not
-<code>:latest</code>, so a run can’t silently change toolchains.</li>
-<li><strong>Secrets never reach the repo or the logs</strong> — they enter as job env from GitHub
-Secrets, and <code>init</code> redacts which fields it applied.</li>
-<li><strong>This is the same contract bnk-forge uses.</strong> The bnk-forge container step <em>is</em> a
-GitHub-Action-style invocation of this image with these env vars; this chapter is
-the do-it-yourself version of <a href="./24a-bnk-forge-registration.html">Registering with BNK Forge</a>.</li>
-<li><strong>Every phase has <code>status</code> + <code>output</code>.</strong> <code>roksbnkctl &lt;phase&gt; status [--json]</code> and <code>&lt;phase&gt; output [name]</code> (scoped to that phase’s own attributes) are CI stage gates; <code>roksbnkctl output</code> merges them all — e.g. <code>roksbnkctl testing output testing_tgw_jumphost_ip</code>.</li>
-<li><strong>Where this is heading.</strong> <code>up</code> already reconciles cluster + BNK + Testing from
-config; folding <code>gateway</code> in (so a single <code>up</code> is the whole deployment) plus
-<code>output -o json</code> / <code>validate</code> are the next step — see
-<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/17-DECLARATIVE-CLI.md">PRD 17 — Declarative CLI</a>.</li>
+<li><strong>It’s its own phase</strong> (<code>state-tgw/</code>), separate from cluster / BNK / testing /
+gateway / FLP. So <code>tgw connect</code>/<code>disconnect</code> never touch anything else, and the
+connection survives a <code>bnk down</code> or a re-applied trial.</li>
+<li><strong>Name or id</strong> is resolved against your account’s gateway list, so an ambiguous
+name (two gateways sharing it) is an error, not an arbitrary pick — pass the id.</li>
+<li><strong>One VPC, one connection per gateway.</strong> Clusters that share a <em>VPC</em> (rare) can’t
+each hold a separate connection to the same gateway; clusters in <em>distinct</em> VPCs
+each get their own, which is the normal shared-gateway case.</li>
+<li><strong>A global gateway</strong> connects VPCs in any region; a local one only its own
+region. <code>tgw connect</code> attaches to whatever gateway you name — make sure it can
+reach the region your cluster VPC is in.</li>
+<li><strong><code>cluster down</code> refuses</strong> while a connection exists, so the cluster isn’t
+destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first (or
+<code>roksbnkctl down</code>, which sequences it).</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="07a-unattended-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="09-registering-existing-cluster.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="08-cluster-phase.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="10-deploying-bnk-trials.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -337,11 +268,11 @@ config; folding <code>gateway</code> in (so a single <code>up</code> is the whol
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="07a-unattended-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="09-registering-existing-cluster.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="08-cluster-phase.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="10-deploying-bnk-trials.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
