@@ -87,6 +87,9 @@ Source: `terraform/variables.tf`
 | `flp_node_port_access` | `bool` | `false` | Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it. | no |
 | `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart's post-renderer (`roksbnkctl flp postrender`), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH. | no |
+| `deploy_tgw_connection` | `bool` | `false` | Attach the cluster's VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else. | no |
+| `tgw_connection_target` | `string` | `""` | Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway. | no |
+| `tgw_connection_name` | `string` | `""` | Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide). | no |
 
 ## Module: `cert_manager`
 
@@ -325,4 +328,17 @@ Source: `terraform/modules/testing/variables.tf`
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes | no |
 | `create_roks_cluster` | `bool` | `false` | Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster | no |
 | `cluster_vpc_id` | `string` | `""` | ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time | no |
+
+## Module: `tgw_connection`
+
+Source: `terraform/modules/tgw_connection/variables.tf`
+
+| Variable | Type | Default | Description | Sensitive |
+|---|---|---|---|---|
+| `deploy_tgw_connection` | `bool` | `false` | Attach the cluster's VPC to an existing Transit Gateway. Off in every other phase's override; on only for `tgw connect`. When false the module is a complete no-op. | no |
+| `ibmcloud_api_key` | `string` | `""` | IBM Cloud API key (IAM auth + provider config). | **yes** |
+| `ibmcloud_cluster_region` | `string` | `""` | Region of the cluster VPC (ibm provider + the ibm_is_vpc lookup). | no |
+| `cluster_vpc_id` | `string` | `""` | ID of the cluster's VPC — the network attached to the Transit Gateway. Resolved to a CRN here; the connection needs the CRN, but cluster-outputs.json records the id. | no |
+| `transit_gateway` | `string` | `""` | The EXISTING Transit Gateway to attach to, by NAME or by ID. Resolved against the account's gateway list, so either works. Multiple clusters passing the same value share one gateway; each workspace owns its own connection. | no |
+| `connection_name` | `string` | `""` | Name for THIS cluster's connection on the gateway. Must be unique per gateway, so it is prefix-derived — two clusters sharing one Transit Gateway get distinct connection names. | no |
 

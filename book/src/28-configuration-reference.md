@@ -100,7 +100,7 @@ resources:
 
 | Sub-block | `create` default | `existing` consumed by | Renders into |
 |---|---|---|---|
-| `transit_gateway` | `true` | `create_roks_transit_gateway`; `existing` → `roks_transit_gateway_name` when the TGW jumphost needs an existing TGW | `create_roks_transit_gateway`, `roks_transit_gateway_name` |
+| `transit_gateway` | `true` | `create_roks_transit_gateway`; `existing` (name or id) attaches the cluster VPC to that gateway via the `tgw` phase | `create_roks_transit_gateway`, `roks_transit_gateway_name`, `tgw_connection_target` |
 | `registry_cos` | `true` | `create_roks_registry_cos_instance`; `existing` → `roks_cos_instance_name` | `create_roks_registry_cos_instance`, `roks_cos_instance_name` |
 | `cert_manager` | `true` | — | `install_cert_manager` |
 | `bnk` | `true` | — | `deploy_bnk` |
@@ -449,7 +449,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
-| `resources.transit_gateway.existing` | string | (empty) | Existing TGW name/ID when `create: false` and the TGW jumphost needs it. |
+| `resources.transit_gateway.existing` | string | (empty) | Existing Transit Gateway to attach the cluster VPC to, by **name or id**, when `create: false`. `cluster up`/`register` connects it; `tgw connect` does it after the fact. See [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md). |
 | `resources.registry_cos.create` | bool | `true` | Create the registry COS instance vs adopt an existing one. |
 | `resources.registry_cos.existing` | string | (empty) | Existing COS instance name when `create: false`. |
 | `resources.cert_manager.create` | bool | `true` | Install cert-manager (`install_cert_manager`). |

@@ -17,8 +17,10 @@ const (
 	testingStateSubdir  = "state-testing"
 	gatewayStateSubdir  = "state-gateway"
 	flpStateSubdir      = "state-flp"
+	tgwStateSubdir      = "state-tgw"
 	clusterOutputsFile  = "cluster-outputs.json"
 	flpOutputsFile      = "flp-outputs.json"
+	tgwOutputsFile      = "tgw-outputs.json"
 
 	// ROKSBNKCTLHomeEnv overrides the default ~/.roksbnkctl base. Used by tests
 	// (and power users who want non-home-dir state).
@@ -176,6 +178,32 @@ func WorkspaceFLPOutputsPath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, flpOutputsFile), nil
+}
+
+// WorkspaceTGWStateDir: ~/.roksbnkctl/<name>/state-tgw/ — separate TF state tree
+// for the optional `roksbnkctl tgw connect/disconnect` phase, which attaches the
+// cluster's VPC to an existing Transit Gateway. Decoupled from every other phase
+// so the connection can be made or removed independently, and so it works against
+// a REGISTERED cluster (which has no cluster-phase state) just as well as a created
+// one — it reads the cluster VPC from cluster-outputs.json.
+func WorkspaceTGWStateDir(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, tgwStateSubdir), nil
+}
+
+// WorkspaceTGWOutputsPath: ~/.roksbnkctl/<name>/tgw-outputs.json — records the
+// gateway id/name/crn and this cluster's connection id/name after `tgw connect`,
+// so `tgw status` and `cluster config` can report the attachment without a live
+// call. Live connection STATE is queried separately from IBM.
+func WorkspaceTGWOutputsPath(name string) (string, error) {
+	dir, err := WorkspaceDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, tgwOutputsFile), nil
 }
 
 // WorkspaceClusterOutputsPath: ~/.roksbnkctl/<name>/cluster-outputs.json —

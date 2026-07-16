@@ -235,3 +235,33 @@ output "flp_node_port" {
   description = "NodePort the FLP Service listens on (0 unless flp_node_port_access)."
   value       = try(module.flp.flp_node_port, 0)
 }
+
+output "tgw_gateway_id" {
+  description = "ID of the Transit Gateway the cluster VPC is attached to (tgw phase)."
+  value       = try(module.tgw_connection.tgw_gateway_id, "")
+}
+
+output "tgw_gateway_name" {
+  description = "Name of the Transit Gateway the cluster VPC is attached to (tgw phase)."
+  value       = try(module.tgw_connection.tgw_gateway_name, "")
+}
+
+output "tgw_gateway_crn" {
+  description = "CRN of the Transit Gateway (tgw phase)."
+  value       = try(module.tgw_connection.tgw_gateway_crn, "")
+}
+
+output "tgw_connection_id" {
+  description = "ID of this cluster's connection on the gateway (tgw phase)."
+  value       = try(module.tgw_connection.tgw_connection_id, "")
+}
+
+output "tgw_connection_name" {
+  description = "Name of this cluster's connection on the gateway (tgw phase)."
+  value       = try(module.tgw_connection.tgw_connection_name, "")
+}
+
+output "tgw_vpc_crn" {
+  description = "CRN of the cluster VPC attached to the Transit Gateway (tgw phase)."
+  value       = try(module.tgw_connection.tgw_vpc_crn, "")
+}

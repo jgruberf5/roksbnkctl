@@ -110,6 +110,8 @@ func phaseFromStateDir(stateDir string) string {
 		return "gateway"
 	case "state-flp":
 		return "flp"
+	case "state-tgw":
+		return "tgw"
 	default:
 		return "bnk"
 	}

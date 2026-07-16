@@ -388,9 +388,14 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		}
 	}
 
-	// Transit gateway. When declined, an enabled TGW jumphost needs the
-	// existing gateway's name — captured below once the jumphost is decided.
+	// Transit gateway. When declined, capture an EXISTING gateway to attach the
+	// cluster to — by name or id — so multiple clusters can share one gateway.
+	// Blank is fine: the cluster is left unattached and can be connected later
+	// with `roksbnkctl tgw connect <name-or-id>`.
 	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
+	if !res.TransitGateway.Create {
+		res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (blank = attach later with `tgw connect`)", "")
+	}
 
 	// In-cluster services.
 	res.CertManager.Create = promptYesNo("Install cert-manager?", true)
@@ -405,8 +410,11 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		if !res.ClientVPC.Create {
 			res.ClientVPC.Existing = promptString("Existing client VPC name", "")
 		}
-		if !res.TransitGateway.Create {
-			res.TransitGateway.Existing = promptString("Existing Transit Gateway name", "")
+		// The TGW jumphost needs a gateway to reach the cluster across. If the
+		// operator declined to create one and didn't already name an existing one
+		// above, ask now — the jumphost can't work without it.
+		if !res.TransitGateway.Create && res.TransitGateway.Existing == "" {
+			res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (required for the testing jumphost)", "")
 		}
 	} else {
 		res.TGWJumphost.Create = false

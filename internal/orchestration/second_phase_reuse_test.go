@@ -555,3 +555,47 @@ func TestWriteGatewayPhaseOverride_ForcedBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteTGWPhaseOverride_ForcedBlock(t *testing.T) {
+	dir := t.TempDir()
+	co := &config.ClusterOutputs{
+		ClusterID: "crt-cluster-id",
+		VPCID:     "r038-ef6305af-vpc",
+		Source:    "cluster-register",
+	}
+	p, err := writeTGWPhaseOverrideAt(dir, co, "my-shared-tgw", "ws-prefix")
+	if err != nil {
+		t.Fatalf("writeTGWPhaseOverrideAt: %v", err)
+	}
+	if filepath.Base(p) != tgwPhaseOverrideFile {
+		t.Fatalf("override path %q must end in %q", p, tgwPhaseOverrideFile)
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading override: %v", err)
+	}
+	got := string(body)
+	// The TGW phase forces EVERY other phase off — including deploy_flp, which the
+	// FLP override does NOT (it's the newest gate). If a later phase is added and
+	// this override forgets to force it off, the tgw apply could touch it.
+	for _, want := range []string{
+		"create_roks_cluster = false\n",
+		"roks_cluster_id_or_name = \"crt-cluster-id\"\n",
+		"existing_cluster_vpc_id = \"r038-ef6305af-vpc\"\n",
+		"create_roks_transit_gateway = false\n",
+		"deploy_bnk = false\n",
+		"deploy_cert_manager = false\n",
+		"testing_create_tgw_jumphost = false\n",
+		"testing_create_cluster_jumphosts = false\n",
+		"testing_create_client_vpc = false\n",
+		"deploy_gateway = false\n",
+		"deploy_flp = false\n",
+		"deploy_tgw_connection = true\n",
+		"tgw_connection_target = \"my-shared-tgw\"\n",
+		"tgw_connection_name = \"ws-prefix\"\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tgw override missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}

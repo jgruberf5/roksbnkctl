@@ -219,6 +219,9 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 	}
 	p, _ := config.WorkspaceClusterOutputsPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", p)
+	// If the config names an existing Transit Gateway, attach the registered
+	// cluster to it now — the registered-cluster path to a shared gateway.
+	tryAutoConnectTGW(cmd, cctx)
 	return nil
 }
 
@@ -263,6 +266,17 @@ func runClusterShow(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("registry_cos:     %s\n", out.RegistryCOSName)
 	fmt.Printf("registry_cos_crn: %s\n", out.RegistryCOSCRN)
+
+	// Transit Gateway connection (the `tgw connect` phase). Shown for BOTH created
+	// and registered clusters — this is where a shared/adopted gateway shows up,
+	// with its live connection state.
+	if tgw, terr := config.ReadTGWOutputs(cctx.WorkspaceName); terr == nil {
+		fmt.Println()
+		fmt.Printf("tgw_connected:    %s\n", liveTGWConnectionState(ctxWithCmd(cmd), tgw))
+		fmt.Printf("tgw_gateway_id:   %s\n", tgw.GatewayID)
+		fmt.Printf("tgw_gateway_name: %s\n", tgw.GatewayName)
+		fmt.Printf("tgw_connection:   %s\n", tgw.ConnectionName)
+	}
 	return nil
 }
 
@@ -380,6 +394,7 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 		_ = persistClusterOutputs(ctx, cctx, tfws, "cluster-up")
 		tryAutoKubeconfig(ctx, cctx, tfws)
 		tryRegisterBNKForge(ctx, cctx)
+		tryAutoConnectTGW(cmd, cctx)
 		return nil
 	}
 	if !flagAuto && !promptYesNo("Apply this plan?", false) {
@@ -397,7 +412,29 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 	}
 	tryAutoKubeconfig(ctx, cctx, tfws)
 	tryRegisterBNKForge(ctx, cctx)
+	tryAutoConnectTGW(cmd, cctx)
 	return nil
+}
+
+// tryAutoConnectTGW attaches the cluster VPC to an existing Transit Gateway when
+// the config names one (resources.transit_gateway.create=false + existing set) —
+// so declining to create a gateway in the interview and pointing at an existing
+// one "just connects" on `cluster up` / `cluster register`, no separate command.
+// Best-effort: a failure prints how to retry with `tgw connect` and does NOT fail
+// the cluster operation, which already succeeded.
+func tryAutoConnectTGW(cmd *cobra.Command, cctx *config.Context) {
+	ws := cctx.Workspace
+	if ws.Resources == nil || ws.Resources.TransitGateway.Create || ws.Resources.TransitGateway.Existing == "" {
+		return // creating a gateway, or none named — nothing to attach to
+	}
+	target := ws.Resources.TransitGateway.Existing
+	fmt.Fprintf(os.Stderr, "→ Attaching the cluster VPC to Transit Gateway %q (resources.transit_gateway.existing)\n", target)
+	in := lifecycleInputs()
+	in.Auto = true // no prompt inside cluster up
+	if err := orchestration.RunTGWConnect(ctxWithCmd(cmd), in); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ could not attach to Transit Gateway %q: %v\n", target, err)
+		fmt.Fprintf(os.Stderr, "  the cluster is up; retry the attach with `roksbnkctl -w %s tgw connect %s`\n", cctx.WorkspaceName, target)
+	}
 }
 
 func runClusterDown(cmd *cobra.Command, _ []string) error {
@@ -418,7 +455,7 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
 	}
-	if pres.BNK || pres.Testing || pres.Gateway || pres.FLP {
+	if pres.BNK || pres.Testing || pres.Gateway || pres.FLP || pres.TGW {
 		var present []string
 		var verbs []string
 		if pres.Gateway {
@@ -428,6 +465,10 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 		if pres.FLP {
 			present = append(present, "FLP")
 			verbs = append(verbs, "`roksbnkctl flp down`")
+		}
+		if pres.TGW {
+			present = append(present, "Transit Gateway connection")
+			verbs = append(verbs, "`roksbnkctl tgw disconnect`")
 		}
 		if pres.BNK {
 			present = append(present, "BNK")
