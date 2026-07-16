@@ -167,13 +167,16 @@ func liveTGWConnectionState(ctx context.Context, out *config.TGWOutputs) string 
 	if out.GatewayID == "" || out.VPCCRN == "" {
 		return "(unknown)"
 	}
+	// Deliberately does NOT interpolate the openIBMClient error: it comes from
+	// credential resolution (which reads IBMCloud.APIKeySource), and echoing that
+	// into a status line is exactly the clear-text-logging pattern to avoid.
 	_, ic, err := openIBMClient()
 	if err != nil {
-		return fmt.Sprintf("(unknown: %v)", err)
+		return "(unknown: no IBM credentials configured)"
 	}
 	state, err := ic.TGWConnectionState(ctx, out.GatewayID, out.VPCCRN)
 	if err != nil {
-		return fmt.Sprintf("(unknown: %v)", err)
+		return "(unknown: could not reach the Transit Gateway API)"
 	}
 	if state == "" {
 		return "detached"
