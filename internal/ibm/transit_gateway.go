@@ -77,7 +77,7 @@ func matchTransitGateway(gws []TransitGateway, nameOrID string) (*TransitGateway
 	case 0:
 		return nil, fmt.Errorf("no Transit Gateway named or with id %q in this account", nameOrID)
 	default:
-		return nil, fmt.Errorf("Transit Gateway %q is ambiguous: matched %d gateways — pass the gateway id", nameOrID, len(matches))
+		return nil, fmt.Errorf("transit gateway %q is ambiguous: matched %d gateways — pass the gateway id", nameOrID, len(matches))
 	}
 }
 
