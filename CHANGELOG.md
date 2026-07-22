@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.23.0 — 2026-07-22
+
+### Added
+
+- **Run the F5 License Proxy on a standalone VSI instead of a Helm install — `bnk.flp.mode: vsi`.** The FLP phase gains a second deployment backend: rather than the `f5-license-proxy` Helm chart into the ROKS cluster, `mode: vsi` provisions a headless Ubuntu VSI in the cluster VPC that runs the same four containers (f5-license-proxy + postgresql + vault + vault-init) as a **podman pod** — no Kubernetes. Terraform generates the mTLS CA and injects it via cloud-init; the box signs the leaves and brings the pod up on 8443; the FAR pull key, subscription JWT, image tags, and F5 public JWKS are resolved from the same COS + BNK manifest the Helm path uses. It terminates in the **same** `flp-outputs.json` (endpoint + root CA) the Helm path produces, so `bnk up` in `f5licenseproxy` mode consumes the handoff **unchanged** — the BNK side is untouched.
+
+  Config lives under `bnk.flp.vsi` (`profile` — default `bx2-4x16`; `zone`; `boot_size_gb`; `reach` — `private` [default]; `allowed_cidrs`; optional `forward_proxy`). The CWC reaches the proxy over the VPC / a transit gateway (private reach). See [Licensing BNK with the F5 License Proxy](book/src/10c-flp-licensing.md).
+
 ## v1.22.0 — 2026-07-22
 
 ### Added
