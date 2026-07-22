@@ -4,6 +4,16 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.22.0 — 2026-07-22
+
+### Added
+
+- **`init` provisions the FAR supply chain when it's missing.** The interactive `roksbnkctl init` now checks that the orchestration COS actually holds what the BNK phase needs — the FAR auth tarball and the subscription JWT — and, when the instance, bucket, or either object is absent, offers to create them from local files: it provisions the COS instance and bucket if needed and uploads the two artefacts, then records the coordinates under `cos:` so the BNK phase and `registry` resolve from exactly what was created. Declining is non-fatal (it prints a warning and continues). Interactive path only — `--config-file` / `--non-interactive` are unchanged (they assume COS is already populated, as in CI).
+
+### Changed
+
+- **Generic default COS/FAR resource names.** The orchestration COS defaults, which previously named a specific test environment, are now generic: instance `bnk-supply-chain` (was `bnk-orchestration`), bucket `bnk-artifacts` (was `bnk-schematics-resources`), and the default subscription JWT `subscription.jwt` (was `trial.jwt`). The FAR auth tarball default (`f5-far-auth-key.tgz`) is unchanged. These are the fallbacks when the `cos:` block and `bnk.subscription_jwt_file` are unset, and they're centralized in `internal/config` so the Terraform render, the `registry` resolver, and the new init provisioning share one source of truth. **A workspace that relied on the old defaults** (no `cos:` block) should either set `cos: {instance: bnk-orchestration, bucket: bnk-schematics-resources}` + `bnk.subscription_jwt_file: trial.jwt` to keep the old target, or let the new `init` flow provision the new-named resources.
+
 ## v1.21.0 — 2026-07-22
 
 ### Added
