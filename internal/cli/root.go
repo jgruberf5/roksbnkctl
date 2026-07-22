@@ -88,6 +88,9 @@ var resolvedFlags *orchestration.ResolvedFlags
 // RunE) rather than at the RunE top — same error text, one step
 // earlier; the lifecycle `--on` reject is unaffected for valid inputs.
 func rootPersistentPreRunE(cmd *cobra.Command, args []string) error {
+	// Best-effort: clear a <self>.old sidecar left by a prior Windows
+	// `upgrade` (see installByMoveAside). No-op off Windows / when absent.
+	sweepStaleBinary()
 	if err := warnLegacyState(cmd, args); err != nil {
 		return err
 	}

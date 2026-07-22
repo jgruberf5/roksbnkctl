@@ -43,12 +43,12 @@ var selfCmd = &cobra.Command{
 var selfUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Pull the latest roksbnkctl release matching the host arch",
-	Long: `Downloads the latest GitHub release tarball for this platform,
-verifies its SHA256 against the release's checksums.txt, and replaces
-the running binary in place.
+	Long: `Downloads the latest GitHub release for this platform, verifies its SHA256
+against the release's checksums.txt, and replaces the running binary in place.
+Works on Linux, macOS, and Windows.
 
-Linux/macOS only — Windows can't replace a running .exe in place; use
-` + "`scoop update roksbnkctl`" + ` instead.
+This is the latest-only, interactive form; use ` + "`roksbnkctl upgrade`" + ` to pin a
+specific ` + "`--version`" + ` or to skip the prompt with ` + "`--yes`" + `.
 
 Requires write permission on the binary's directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own

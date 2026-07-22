@@ -1708,12 +1708,12 @@ Manage the roksbnkctl binary itself
 
 Pull the latest roksbnkctl release matching the host arch
 
-Downloads the latest GitHub release tarball for this platform,
-verifies its SHA256 against the release's checksums.txt, and replaces
-the running binary in place.
+Downloads the latest GitHub release for this platform, verifies its SHA256
+against the release's checksums.txt, and replaces the running binary in place.
+Works on Linux, macOS, and Windows.
 
-Linux/macOS only — Windows can't replace a running .exe in place; use
-`scoop update roksbnkctl` instead.
+This is the latest-only, interactive form; use `roksbnkctl upgrade` to pin a
+specific `--version` or to skip the prompt with `--yes`.
 
 Requires write permission on the binary's directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
@@ -2374,6 +2374,37 @@ resumable: a partial failure is recovered by re-running 'roksbnkctl up'.
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--tf-source` | `string` | — | override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD) |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+## `roksbnkctl upgrade`
+
+Upgrade (or pin) the roksbnkctl binary to a GitHub release
+
+```
+roksbnkctl upgrade [flags]
+```
+
+Downloads a roksbnkctl release for this OS/arch from GitHub, verifies its
+SHA256 against the release's checksums.txt, and replaces the running binary
+in place. With no --version it upgrades to the latest release; --version pins
+a specific release (and may downgrade or reinstall).
+
+Works on Linux, macOS, and Windows. On Windows the running .exe cannot be
+overwritten, so it is moved aside to `<binary>`.old and the new binary takes its
+place; the .old file is removed automatically on the next run.
+
+Requires write permission on the binary's directory (a /usr/local/bin install
+needs sudo; Homebrew/Scoop installs should use their own upgrade verb).
+
+Note: release binaries are not yet code-signed, so on a host with an
+application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly
+downloaded binary may be blocked until its hash is trusted.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--version` | `string` | — | release to install, e.g. v1.20.1 (default: latest) |
+| `--yes` / `-y` | `bool` | `false` | skip the confirmation prompt |
 
 ## `roksbnkctl version`
 
