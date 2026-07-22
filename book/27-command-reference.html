@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
+            window.path_to_searchindex_js = "searchindex-1950912d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -1647,11 +1647,11 @@ echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdi
 <p>Manage the roksbnkctl binary itself</p>
 <h3 id="roksbnkctl-self-update"><a class="header" href="#roksbnkctl-self-update"><code>roksbnkctl self update</code></a></h3>
 <p>Pull the latest roksbnkctl release matching the host arch</p>
-<p>Downloads the latest GitHub release tarball for this platform,
-verifies its SHA256 against the release’s checksums.txt, and replaces
-the running binary in place.</p>
-<p>Linux/macOS only — Windows can’t replace a running .exe in place; use
-<code>scoop update roksbnkctl</code> instead.</p>
+<p>Downloads the latest GitHub release for this platform, verifies its SHA256
+against the release’s checksums.txt, and replaces the running binary in place.
+Works on Linux, macOS, and Windows.</p>
+<p>This is the latest-only, interactive form; use <code>roksbnkctl upgrade</code> to pin a
+specific <code>--version</code> or to skip the prompt with <code>--yes</code>.</p>
 <p>Requires write permission on the binary’s directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
 upgrade verb).</p>
@@ -2196,6 +2196,34 @@ resumable: a partial failure is recovered by re-running ‘roksbnkctl up’.</p>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
 <tr><td><code>--tf-source</code></td><td><code>string</code></td><td>—</td><td>override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD)</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="roksbnkctl-upgrade"><a class="header" href="#roksbnkctl-upgrade"><code>roksbnkctl upgrade</code></a></h2>
+<p>Upgrade (or pin) the roksbnkctl binary to a GitHub release</p>
+<pre><code>roksbnkctl upgrade [flags]
+</code></pre>
+<p>Downloads a roksbnkctl release for this OS/arch from GitHub, verifies its
+SHA256 against the release’s checksums.txt, and replaces the running binary
+in place. With no –version it upgrades to the latest release; –version pins
+a specific release (and may downgrade or reinstall).</p>
+<p>Works on Linux, macOS, and Windows. On Windows the running .exe cannot be
+overwritten, so it is moved aside to <code>&lt;binary&gt;</code>.old and the new binary takes its
+place; the .old file is removed automatically on the next run.</p>
+<p>Requires write permission on the binary’s directory (a /usr/local/bin install
+needs sudo; Homebrew/Scoop installs should use their own upgrade verb).</p>
+<p>Note: release binaries are not yet code-signed, so on a host with an
+application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly
+downloaded binary may be blocked until its hash is trusted.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--version</code></td><td><code>string</code></td><td>—</td><td>release to install, e.g. v1.20.1 (default: latest)</td></tr>
+<tr><td><code>--yes</code> / <code>-y</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
 </tbody>
 </table>
 </div>

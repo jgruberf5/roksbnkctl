@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
+            window.path_to_searchindex_js = "searchindex-1950912d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -301,6 +301,8 @@ cos:             # optional COS supply-chain config
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 2
+  min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
+  min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -312,6 +314,8 @@ cos:             # optional COS supply-chain config
 <tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
 <tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
+<tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
+<tr><td><code>min_worker_memory_gb</code></td><td>int</td><td><code>64</code></td><td>Minimum memory (GB) for the same auto-select. <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_memory_gb</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -352,6 +356,14 @@ cos:             # optional COS supply-chain config
   cneinstance_size: Small
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
+  flo_namespace: f5-bnk               # optional; FLO namespace
+  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
+  cert_manager:                       # optional; cert-manager coordinates
+    namespace: cert-manager
+    version: v1.17.3
+  flp:
+    storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -362,10 +374,17 @@ cos:             # optional COS supply-chain config
 <tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td>upstream HCL default (<code>repo.f5.com</code>)</td><td>The FAR Docker/Helm repo. Override only for staging/internal repos.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
+<tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace. Sets <code>flo_namespace</code>.</td></tr>
+<tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace. Sets <code>flo_utils_namespace</code>.</td></tr>
+<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>Optional CNEInstance GSLB datacenter name. Sets <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace. Sets <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
+<tr><td><code>cert_manager.version</code></td><td>string</td><td>HCL default</td><td>Pin the cert-manager chart version. Sets <code>cert_manager_version</code>.</td></tr>
+<tr><td><code>license_mode</code></td><td>enum</td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Sets <code>license_mode</code>.</td></tr>
+<tr><td><code>flp.storage_class</code></td><td>string</td><td>HCL default</td><td>Dynamic StorageClass for the FLP’s PVCs. Sets <code>flp_storage_class</code>. Other <code>flp.*</code> fields: see <a href="./28-configuration-reference.html">Chapter 28</a>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults for all three.</p>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults.</p>
 <h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -451,6 +470,7 @@ cos:             # optional COS supply-chain config
 <pre><code class="language-yaml">cos:
   instance: bnk-orchestration
   bucket: bnk-schematics-resources
+  region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
@@ -463,12 +483,14 @@ cos:             # optional COS supply-chain config
 <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance.</td></tr>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT. Empty ⇒ <code>bnk-orchestration</code>. Sets <code>ibmcloud_cos_instance_name</code>.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ <code>bnk-schematics-resources</code>. Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
+<tr><td><code>region</code></td><td>string</td><td>Region the bucket lives in. Empty ⇒ <code>us-south</code>. Sets <code>ibmcloud_cos_bucket_region</code>.</td></tr>
 <tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
 </tbody>
 </table>
 </div>
+<p><code>instance</code> / <code>bucket</code> / <code>region</code> are honoured by <strong>both</strong> the terraform render and the <code>registry</code> FAR-file resolver, so a customer-owned COS bucket is used consistently across both.</p>
 <p>The block is optional — if you’ve already populated COS by hand or via the upstream HCL’s <code>roks_cos_instance_name</code> variable, you don’t need it. <a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> covers the full workflow.</p>
 <h2 id="behaviour-when-fields-are-missing"><a class="header" href="#behaviour-when-fields-are-missing">Behaviour when fields are missing</a></h2>
 <p><code>roksbnkctl</code> falls through three layers in order: <strong>workspace config → upstream HCL default → fail</strong>.</p>

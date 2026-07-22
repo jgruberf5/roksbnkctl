@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0ea4edb8.js";
+            window.path_to_searchindex_js = "searchindex-1950912d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -3886,6 +3886,8 @@ cos:             # optional COS supply-chain config
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 2
+  min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
+  min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -3897,6 +3899,8 @@ cos:             # optional COS supply-chain config
 <tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
 <tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
+<tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
+<tr><td><code>min_worker_memory_gb</code></td><td>int</td><td><code>64</code></td><td>Minimum memory (GB) for the same auto-select. <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_memory_gb</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -3937,6 +3941,14 @@ cos:             # optional COS supply-chain config
   cneinstance_size: Small
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
+  flo_namespace: f5-bnk               # optional; FLO namespace
+  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
+  cert_manager:                       # optional; cert-manager coordinates
+    namespace: cert-manager
+    version: v1.17.3
+  flp:
+    storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -3947,10 +3959,17 @@ cos:             # optional COS supply-chain config
 <tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td>upstream HCL default (<code>repo.f5.com</code>)</td><td>The FAR Docker/Helm repo. Override only for staging/internal repos.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
+<tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace. Sets <code>flo_namespace</code>.</td></tr>
+<tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace. Sets <code>flo_utils_namespace</code>.</td></tr>
+<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>Optional CNEInstance GSLB datacenter name. Sets <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace. Sets <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
+<tr><td><code>cert_manager.version</code></td><td>string</td><td>HCL default</td><td>Pin the cert-manager chart version. Sets <code>cert_manager_version</code>.</td></tr>
+<tr><td><code>license_mode</code></td><td>enum</td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Sets <code>license_mode</code>.</td></tr>
+<tr><td><code>flp.storage_class</code></td><td>string</td><td>HCL default</td><td>Dynamic StorageClass for the FLP’s PVCs. Sets <code>flp_storage_class</code>. Other <code>flp.*</code> fields: see <a href="#configuration-reference">Chapter 28</a>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults for all three.</p>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults.</p>
 <h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -4036,6 +4055,7 @@ cos:             # optional COS supply-chain config
 <pre><code class="language-yaml">cos:
   instance: bnk-orchestration
   bucket: bnk-schematics-resources
+  region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
@@ -4048,12 +4068,14 @@ cos:             # optional COS supply-chain config
 <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance.</td></tr>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT. Empty ⇒ <code>bnk-orchestration</code>. Sets <code>ibmcloud_cos_instance_name</code>.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ <code>bnk-schematics-resources</code>. Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
+<tr><td><code>region</code></td><td>string</td><td>Region the bucket lives in. Empty ⇒ <code>us-south</code>. Sets <code>ibmcloud_cos_bucket_region</code>.</td></tr>
 <tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
 </tbody>
 </table>
 </div>
+<p><code>instance</code> / <code>bucket</code> / <code>region</code> are honoured by <strong>both</strong> the terraform render and the <code>registry</code> FAR-file resolver, so a customer-owned COS bucket is used consistently across both.</p>
 <p>The block is optional — if you’ve already populated COS by hand or via the upstream HCL’s <code>roks_cos_instance_name</code> variable, you don’t need it. <a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> covers the full workflow.</p>
 <h2 id="behaviour-when-fields-are-missing"><a class="header" href="#behaviour-when-fields-are-missing">Behaviour when fields are missing</a></h2>
 <p><code>roksbnkctl</code> falls through three layers in order: <strong>workspace config → upstream HCL default → fail</strong>.</p>
@@ -10366,11 +10388,11 @@ echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdi
 <p>Manage the roksbnkctl binary itself</p>
 <h3 id="roksbnkctl-self-update"><a class="header" href="#roksbnkctl-self-update"><code>roksbnkctl self update</code></a></h3>
 <p>Pull the latest roksbnkctl release matching the host arch</p>
-<p>Downloads the latest GitHub release tarball for this platform,
-verifies its SHA256 against the release’s checksums.txt, and replaces
-the running binary in place.</p>
-<p>Linux/macOS only — Windows can’t replace a running .exe in place; use
-<code>scoop update roksbnkctl</code> instead.</p>
+<p>Downloads the latest GitHub release for this platform, verifies its SHA256
+against the release’s checksums.txt, and replaces the running binary in place.
+Works on Linux, macOS, and Windows.</p>
+<p>This is the latest-only, interactive form; use <code>roksbnkctl upgrade</code> to pin a
+specific <code>--version</code> or to skip the prompt with <code>--yes</code>.</p>
 <p>Requires write permission on the binary’s directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
 upgrade verb).</p>
@@ -10918,6 +10940,34 @@ resumable: a partial failure is recovered by re-running ‘roksbnkctl up’.</p>
 </tbody>
 </table>
 </div>
+<h2 id="roksbnkctl-upgrade"><a class="header" href="#roksbnkctl-upgrade"><code>roksbnkctl upgrade</code></a></h2>
+<p>Upgrade (or pin) the roksbnkctl binary to a GitHub release</p>
+<pre><code>roksbnkctl upgrade [flags]
+</code></pre>
+<p>Downloads a roksbnkctl release for this OS/arch from GitHub, verifies its
+SHA256 against the release’s checksums.txt, and replaces the running binary
+in place. With no –version it upgrades to the latest release; –version pins
+a specific release (and may downgrade or reinstall).</p>
+<p>Works on Linux, macOS, and Windows. On Windows the running .exe cannot be
+overwritten, so it is moved aside to <code>&lt;binary&gt;</code>.old and the new binary takes its
+place; the .old file is removed automatically on the next run.</p>
+<p>Requires write permission on the binary’s directory (a /usr/local/bin install
+needs sudo; Homebrew/Scoop installs should use their own upgrade verb).</p>
+<p>Note: release binaries are not yet code-signed, so on a host with an
+application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly
+downloaded binary may be blocked until its hash is trusted.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--version</code></td><td><code>string</code></td><td>—</td><td>release to install, e.g. v1.20.1 (default: latest)</td></tr>
+<tr><td><code>--yes</code> / <code>-y</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-version-1"><a class="header" href="#roksbnkctl-version-1"><code>roksbnkctl version</code></a></h2>
 <p>Print version, commit, and build date</p>
 <h2 id="roksbnkctl-workspaces"><a class="header" href="#roksbnkctl-workspaces"><code>roksbnkctl workspaces</code></a></h2>
@@ -11034,6 +11084,8 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 1
+  min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
+  min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -11045,6 +11097,8 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>name</code></td><td>string</td><td>— (prompted by <code>init</code>)</td><td>RFC 1123 DNS label</td><td>The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator.</td></tr>
 <tr><td><code>openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.18</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
+<tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
+<tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 </tbody>
 </table>
 </div>
@@ -11058,6 +11112,9 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
   client_region:     ca-tor               # since v1.9.0; testing-client region
+  testing_jumphost_profile: ""            # optional; pin a profile for ALL jumphosts
+  testing_min_vcpu_count:   4             # optional; jumphost auto-select floor
+  testing_min_memory_gb:    8             # optional; jumphost auto-select floor
 </code></pre>
 <p><em>(since <code>v1.8.0</code>)</em> Per-resource create/adopt toggles, written by the <code>init</code> interview. Each key is a <code>{create, existing}</code> pair: <code>create: true</code> provisions a new prefix-named resource; <code>create: false</code> declines it and (when a still-enabled resource depends on it) <code>existing:</code> names the pre-existing resource to consume instead.</p>
 <div class="table-wrapper">
@@ -11077,6 +11134,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 </table>
 </div>
 <p><code>client_region</code> <em>(since <code>v1.9.0</code>)</em> is the odd one out — a plain <strong>string</strong>, not a <code>{create, existing}</code> toggle. It’s the IBM Cloud region the testing client (TGW jumphost + client VPC) is installed in, letting the test client live in a <strong>different region from the cluster</strong>. The <code>init</code> interview sets it when you answer the <em>“Add a testing client?”</em> / region prompt; omitted, it renders nothing and the terraform default (<code>testing_client_vpc_region</code>) applies. It also seeds the regions <a href="#which-regions-it-scans"><code>roksbnkctl cleanup</code></a> scans. Renders into <code>testing_client_vpc_region</code>.</p>
+<p><code>testing_jumphost_profile</code> / <code>testing_min_vcpu_count</code> / <code>testing_min_memory_gb</code> are plain fields (like <code>client_region</code>) that size <strong>all</strong> the testing jumphosts (both the TGW jumphost and the per-zone cluster jumphosts). <code>testing_jumphost_profile</code> pins an explicit IBM Cloud instance profile; leave it empty to auto-select the smallest profile meeting the two minimums. They render into <code>testing_jumphost_profile</code> / <code>testing_min_vcpu_count</code> / <code>testing_min_memory_gb</code>; omitted, the terraform defaults (<code>4</code> vCPU / <code>8</code> GB, auto-select) apply.</p>
 <p>Each <code>{create, existing}</code> entry:</p>
 <div class="table-wrapper">
 <table>
@@ -11095,6 +11153,12 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
   cneinstance_size: Small
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
+  flo_namespace: f5-bnk               # optional; FLO namespace
+  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
+  cert_manager:                       # optional; cert-manager coordinates
+    namespace: cert-manager
+    version: v1.17.3
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -11106,10 +11170,15 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>URL of a Docker-compatible image registry</td><td>The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
 <tr><td><code>cr_mode</code></td><td>string</td><td>(empty ⇒ <code>kubectl</code>)</td><td><code>kubectl</code> | <code>legacy_curl</code></td><td><em>(since Sprint 27)</em> Selects the BNK custom-resource install mechanism, rendered as the <code>bnk_cr_mode</code> tfvar. Empty/omitted or <code>kubectl</code> ⇒ the terraform-native path (<code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>); <code>legacy_curl</code> ⇒ the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline. The <code>--legacy-bnk</code> flag on <code>bnk up</code>/<code>bnk down</code> overrides this to <code>legacy_curl</code> for a single run. See <a href="#the-install-mode-flag-bnk_cr_mode">Chapter 10 §“The install-mode flag”</a>.</td></tr>
+<tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>RFC 1123 namespace label</td><td>Namespace the F5 Lifecycle Operator installs into (<code>flo_namespace</code>). Set for multi-tenant clusters or to avoid a namespace collision.</td></tr>
+<tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>RFC 1123 namespace label</td><td>Namespace for the F5 utility components (<code>flo_utils_namespace</code>).</td></tr>
+<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>any string</td><td>Optional CNEInstance GSLB datacenter name (<code>cneinstance_gslb_datacenter_name</code>).</td></tr>
+<tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>RFC 1123 namespace label</td><td>Namespace cert-manager installs into (<code>cert_manager_namespace</code>). The install/skip toggle stays on <code>resources.cert_manager.create</code>.</td></tr>
+<tr><td><code>cert_manager.version</code></td><td>string</td><td>(HCL default)</td><td>a published cert-manager chart version</td><td>Pins the cert-manager Helm chart (<code>cert_manager_version</code>). Useful for air-gap / compliance version pinning.</td></tr>
 </tbody>
 </table>
 </div>
-<p>All four fields are optional; omitting renders the HCL’s own defaults. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the upstream defaults.</p>
+<p>All fields are optional; omitting renders the HCL’s own defaults. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the upstream defaults. FLP settings live under <code>bnk.flp</code> (see the master table below); <code>bnk.flp.storage_class</code> sets the FLP’s PVC StorageClass.</p>
 <h2 id="test-block"><a class="header" href="#test-block"><code>test:</code> block</a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -11312,6 +11381,7 @@ needs no pull secret at all.</p>
 <pre><code class="language-yaml">cos:
   instance: bnk-orchestration
   bucket: bnk-schematics-resources
+  region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
@@ -11324,13 +11394,14 @@ needs no pull secret at all.</p>
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td>string</td><td>—</td><td>COS instance name or CRN</td><td>The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>—</td><td>S3 bucket name</td><td>The bucket within the instance.</td></tr>
+<tr><td><code>instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-orchestration</code>)</td><td>COS instance name or CRN</td><td>The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-schematics-resources</code>)</td><td>S3 bucket name</td><td>The bucket within the instance that holds the FAR auth key + subscription JWT.</td></tr>
+<tr><td><code>region</code></td><td>string</td><td>(empty ⇒ <code>us-south</code>)</td><td>any IBM Cloud region</td><td>The region the bucket lives in.</td></tr>
 <tr><td><code>upload</code></td><td>list of <code>{source, key}</code></td><td>(empty)</td><td>host path → bucket key</td><td>Pre-flight uploads run before <code>roksbnkctl up</code>. Idempotent — re-running overwrites the bucket objects.</td></tr>
 </tbody>
 </table>
 </div>
-<p>See <a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> for the full surface.</p>
+<p><code>instance</code> / <code>bucket</code> / <code>region</code> point roksbnkctl at the orchestration COS holding the FAR auth key + subscription JWT. They are honoured <strong>both</strong> by the terraform render (<code>ibmcloud_cos_instance_name</code> / <code>ibmcloud_resources_cos_bucket</code> / <code>ibmcloud_cos_bucket_region</code>) <strong>and</strong> by the <code>registry</code> FAR-file resolver, so a customer-owned bucket is used consistently across both. Empty fields fall back to the built-in defaults. See <a href="#cos-supply-chain-management">Chapter 25 — COS supply chain management</a> for the full surface.</p>
 <h2 id="state-block"><a class="header" href="#state-block"><code>state:</code> block</a></h2>
 <p>Selects where terraform state lives. Absent (or <code>backend: local</code>) keeps per-phase local <code>terraform.tfstate</code> — byte-identical to before. <code>backend: s3</code> stores each phase’s state in an S3-compatible bucket (IBM COS). See <a href="#remote-state-cos--s3">Chapter 12a — Remote state</a> for the full walkthrough.</p>
 <pre><code class="language-yaml">state:
@@ -11462,6 +11533,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
+<tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</td></tr>
 <tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
@@ -11472,12 +11545,25 @@ values. The resulting block looks like:</p>
 <tr><td><code>resources.cluster_jumphosts.create</code></td><td>bool</td><td><code>false</code></td><td>Create per-zone cluster jumphosts.</td></tr>
 <tr><td><code>resources.client_vpc.create</code></td><td>bool</td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost.</td></tr>
 <tr><td><code>resources.client_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing client VPC name when <code>create: false</code>.</td></tr>
+<tr><td><code>resources.client_region</code></td><td>string</td><td>(empty)</td><td>Region the testing client (TGW jumphost + client VPC) lives in → <code>testing_client_vpc_region</code>. Since <code>v1.9.0</code>.</td></tr>
+<tr><td><code>resources.testing_client_vpc_name</code></td><td>string</td><td>(empty)</td><td>Name for the testing client VPC when <code>client_vpc.create: true</code> → <code>testing_client_vpc_name</code>.</td></tr>
+<tr><td><code>resources.testing_ssh_key_name</code></td><td>string</td><td>(empty)</td><td>Existing IBM Cloud VPC SSH key attached to the jumphosts → <code>testing_ssh_key_name</code>. Resolved by <code>init</code>.</td></tr>
+<tr><td><code>resources.testing_jumphost_profile</code></td><td>string</td><td>(empty ⇒ auto-select)</td><td>Pin an instance profile for <strong>all</strong> testing jumphosts → <code>testing_jumphost_profile</code>.</td></tr>
+<tr><td><code>resources.testing_min_vcpu_count</code></td><td>integer</td><td><code>4</code></td><td>Jumphost-profile auto-select floor (vCPUs) → <code>testing_min_vcpu_count</code>.</td></tr>
+<tr><td><code>resources.testing_min_memory_gb</code></td><td>integer</td><td><code>8</code></td><td>Jumphost-profile auto-select floor (GB) → <code>testing_min_memory_gb</code>.</td></tr>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
+<tr><td><code>bnk.cr_mode</code></td><td>string</td><td>(empty ⇒ <code>kubectl</code>)</td><td><code>kubectl</code> | <code>legacy_curl</code> → <code>bnk_cr_mode</code>. See the <code>bnk:</code> block above.</td></tr>
+<tr><td><code>bnk.flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace → <code>flo_namespace</code>.</td></tr>
+<tr><td><code>bnk.flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace → <code>flo_utils_namespace</code>.</td></tr>
+<tr><td><code>bnk.gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>Optional CNEInstance GSLB datacenter → <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>bnk.cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace → <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
+<tr><td><code>bnk.cert_manager.version</code></td><td>string</td><td>(HCL default)</td><td>cert-manager chart version → <code>cert_manager_version</code>.</td></tr>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="#licensing-bnk-with-the-f5-license-proxy-flp">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
 <tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
+<tr><td><code>bnk.flp.storage_class</code></td><td>string</td><td>(empty ⇒ HCL default)</td><td>Dynamic StorageClass for the FLP’s PVCs → <code>flp_storage_class</code>. Set it when the cluster/region exposes a different block-storage class.</td></tr>
 <tr><td><code>bnk.flp.node_port_access</code></td><td>bool</td><td><code>false</code></td><td>Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it (<a href="#flow-c--a-shared-licensing-cluster">Flow C</a>). Set by <code>flp up --add-node-port-access</code> and persisted, so a later <code>flp up</code> does not tear the exposure down.</td></tr>
 <tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>list of string</td><td>(empty)</td><td>With <code>node_port_access</code>: open the proxy’s NodePort to these CIDRs on the worker security group. A <strong>list</strong>, and it must name <strong>every zone</strong> — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by <code>flp up --node-port-source-cidr</code> and persisted.</td></tr>
 <tr><td><code>bnk.flp.external.url</code></td><td>string</td><td>(empty)</td><td>License against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code> from <code>roksbnkctl -w &lt;owner&gt; flp output</code>. This workspace then needs no <code>flp up</code> of its own.</td></tr>
@@ -11493,8 +11579,9 @@ values. The resulting block looks like:</p>
 <tr><td><code>tf_source.repo</code></td><td>string</td><td>(empty)</td><td>GitHub <code>owner/name</code>; required for <code>github</code>.</td></tr>
 <tr><td><code>tf_source.ref</code></td><td>string</td><td>(empty)</td><td>Git ref; required for <code>github</code>.</td></tr>
 <tr><td><code>tf_source.path</code></td><td>string</td><td>(empty)</td><td>Local directory; required for <code>local</code>.</td></tr>
-<tr><td><code>cos.instance</code></td><td>string</td><td>(empty)</td><td>COS instance name or CRN.</td></tr>
-<tr><td><code>cos.bucket</code></td><td>string</td><td>(empty)</td><td>Bucket name.</td></tr>
+<tr><td><code>cos.instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-orchestration</code>)</td><td>Orchestration COS instance name or CRN → <code>ibmcloud_cos_instance_name</code> + the <code>registry</code> FAR resolver.</td></tr>
+<tr><td><code>cos.bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-schematics-resources</code>)</td><td>Bucket holding the FAR auth key + JWT → <code>ibmcloud_resources_cos_bucket</code> + the <code>registry</code> FAR resolver.</td></tr>
+<tr><td><code>cos.region</code></td><td>string</td><td>(empty ⇒ <code>us-south</code>)</td><td>Region the orchestration COS bucket lives in → <code>ibmcloud_cos_bucket_region</code> + the <code>registry</code> FAR resolver.</td></tr>
 <tr><td><code>cos.upload[].source</code></td><td>string</td><td>—</td><td>Local file path.</td></tr>
 <tr><td><code>cos.upload[].key</code></td><td>string</td><td>—</td><td>Bucket key.</td></tr>
 <tr><td><code>targets.&lt;name&gt;.host</code></td><td>string</td><td>—</td><td>SSH host.</td></tr>
