@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1950912d.js";
+            window.path_to_searchindex_js = "searchindex-a54c19a1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -210,8 +210,8 @@
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
-<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
-<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-supply-chain"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped.</td><td>no</td></tr>
 <tr><td><code>bnk_cr_mode</code></td><td><code>string</code></td><td><code>"kubectl"</code></td><td>BNK install mechanism: "kubectl" (terraform-native) or "legacy_curl" (null_resource baseline).</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository URL for Docker and Helm images</td><td>no</td></tr>
@@ -222,7 +222,7 @@
 <tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
-<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket — used by flo and license</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT filename in the COS bucket — used by flo and license</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Kubernetes namespace for the F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license</td><td>no</td></tr>
 <tr><td><code>bigip_username</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP username for the CIS controller</td><td>no</td></tr>
@@ -352,10 +352,10 @@
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)</td><td>no</td></tr>
 <tr><td><code>use_cos_bucket</code></td><td><code>bool</code></td><td><code>true</code></td><td>Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
-<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
-<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-supply-chain"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
-<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager - used by cert-manager, flo modules</td><td>no</td></tr>
@@ -392,7 +392,7 @@
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>""</code></td><td>COS bucket holding the FAR auth tarball + subscription JWT.</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>""</code></td><td>Region of the COS bucket.</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth tarball object key in the COS bucket (the _json_key_base64 SA lives inside).</td><td>no</td></tr>
-<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT object key in the COS bucket — seeds flp-jwt-secret.</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT object key in the COS bucket — seeds flp-jwt-secret.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/tmp/roksbnkctl-flp"</code></td><td>Working directory for the FAR-auth download/extract.</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR registry host (fallback when no mirror).</td><td>no</td></tr>
 <tr><td><code>far_chart_repo_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Mirror host for chart pulls (empty → coalesces to far_repo_url).</td><td>no</td></tr>
@@ -465,11 +465,11 @@
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region where the cluster resides</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
-<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-orchestration"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
-<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-schematics-resources"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-supply-chain"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
+<tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
-<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"trial.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
+<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
 <tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
 <tr><td><code>flp_license_server_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Base URL of the in-cluster F5 License Proxy (FLP mode only)</td><td>no</td></tr>
 <tr><td><code>license_server_root_ca</code></td><td><code>string</code></td><td><code>""</code></td><td>PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only)</td><td>no</td></tr>

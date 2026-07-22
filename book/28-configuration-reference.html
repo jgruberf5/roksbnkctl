@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1950912d.js";
+            window.path_to_searchindex_js = "searchindex-a54c19a1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -547,14 +547,14 @@ needs no pull secret at all.</p>
 <p>Most users want <code>embedded</code> (the default). The <code>github</code> mode is for testing forks or pinning to an upstream tag that’s newer than the bundled one. The <code>local</code> mode is for active development on the HCL itself.</p>
 <h2 id="cos-block"><a class="header" href="#cos-block"><code>cos:</code> block</a></h2>
 <pre><code class="language-yaml">cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
   region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -562,8 +562,8 @@ needs no pull secret at all.</p>
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-orchestration</code>)</td><td>COS instance name or CRN</td><td>The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-schematics-resources</code>)</td><td>S3 bucket name</td><td>The bucket within the instance that holds the FAR auth key + subscription JWT.</td></tr>
+<tr><td><code>instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-supply-chain</code>)</td><td>COS instance name or CRN</td><td>The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-artifacts</code>)</td><td>S3 bucket name</td><td>The bucket within the instance that holds the FAR auth key + subscription JWT.</td></tr>
 <tr><td><code>region</code></td><td>string</td><td>(empty ⇒ <code>us-south</code>)</td><td>any IBM Cloud region</td><td>The region the bucket lives in.</td></tr>
 <tr><td><code>upload</code></td><td>list of <code>{source, key}</code></td><td>(empty)</td><td>host path → bucket key</td><td>Pre-flight uploads run before <code>roksbnkctl up</code>. Idempotent — re-running overwrites the bucket objects.</td></tr>
 </tbody>
@@ -747,8 +747,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>tf_source.repo</code></td><td>string</td><td>(empty)</td><td>GitHub <code>owner/name</code>; required for <code>github</code>.</td></tr>
 <tr><td><code>tf_source.ref</code></td><td>string</td><td>(empty)</td><td>Git ref; required for <code>github</code>.</td></tr>
 <tr><td><code>tf_source.path</code></td><td>string</td><td>(empty)</td><td>Local directory; required for <code>local</code>.</td></tr>
-<tr><td><code>cos.instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-orchestration</code>)</td><td>Orchestration COS instance name or CRN → <code>ibmcloud_cos_instance_name</code> + the <code>registry</code> FAR resolver.</td></tr>
-<tr><td><code>cos.bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-schematics-resources</code>)</td><td>Bucket holding the FAR auth key + JWT → <code>ibmcloud_resources_cos_bucket</code> + the <code>registry</code> FAR resolver.</td></tr>
+<tr><td><code>cos.instance</code></td><td>string</td><td>(empty ⇒ <code>bnk-supply-chain</code>)</td><td>Orchestration COS instance name or CRN → <code>ibmcloud_cos_instance_name</code> + the <code>registry</code> FAR resolver.</td></tr>
+<tr><td><code>cos.bucket</code></td><td>string</td><td>(empty ⇒ <code>bnk-artifacts</code>)</td><td>Bucket holding the FAR auth key + JWT → <code>ibmcloud_resources_cos_bucket</code> + the <code>registry</code> FAR resolver.</td></tr>
 <tr><td><code>cos.region</code></td><td>string</td><td>(empty ⇒ <code>us-south</code>)</td><td>Region the orchestration COS bucket lives in → <code>ibmcloud_cos_bucket_region</code> + the <code>registry</code> FAR resolver.</td></tr>
 <tr><td><code>cos.upload[].source</code></td><td>string</td><td>—</td><td>Local file path.</td></tr>
 <tr><td><code>cos.upload[].key</code></td><td>string</td><td>—</td><td>Bucket key.</td></tr>

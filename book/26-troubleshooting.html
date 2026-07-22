@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1950912d.js";
+            window.path_to_searchindex_js = "searchindex-a54c19a1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -310,9 +310,9 @@ roksbnkctl test dns --target www.example.com --type A --backend k8s --server clu
 <h3 id="symptom-flo-fails-to-start-with-failed-to-pull-far-image-403-forbidden"><a class="header" href="#symptom-flo-fails-to-start-with-failed-to-pull-far-image-403-forbidden">Symptom: FLO fails to start with <code>failed to pull FAR image: 403 Forbidden</code></a></h3>
 <p><strong>Root cause</strong>: the <code>f5-far-auth-key.tgz</code> object in the bucket has stale credentials (the F5-side pull key was rotated, but the bucket still has the old one).</p>
 <p><strong>Fix</strong>: re-issue the key on the F5 side and upload to COS:</p>
-<pre><code class="language-bash">roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+<pre><code class="language-bash">roksbnkctl cos object put bnk-artifacts/f5-far-auth-key.tgz \
   ./new-f5-far-auth-key.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # Restart FLO so it re-reads
 roksbnkctl k delete pod -n f5-bnk -l app=flo
@@ -324,11 +324,11 @@ roksbnkctl k delete pod -n f5-bnk -l app=flo
 <h3 id="symptom-cos-bucket-delete-errors-bucket-not-empty"><a class="header" href="#symptom-cos-bucket-delete-errors-bucket-not-empty">Symptom: <code>cos bucket delete</code> errors <code>Bucket not empty</code></a></h3>
 <p><strong>Root cause</strong>: COS requires buckets to be empty before delete; there’s no <code>--recursive</code> flag on bucket delete today.</p>
 <p><strong>Fix</strong>: list and delete each object, then delete the bucket:</p>
-<pre><code class="language-bash">roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration | \
+<pre><code class="language-bash">roksbnkctl cos object list bnk-artifacts --instance bnk-supply-chain | \
   awk 'NR&gt;1 {print $1}' | \
-  xargs -I{} roksbnkctl cos object delete "bnk-schematics-resources/{}" --instance bnk-orchestration
+  xargs -I{} roksbnkctl cos object delete "bnk-artifacts/{}" --instance bnk-supply-chain
 
-roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 </code></pre>
 <p>Don’t forget to abort any pending multipart uploads first — they don’t appear in the standard object list but they do prevent bucket deletion. The workaround for now is <code>ibmcloud cos list-multipart-uploads</code> followed by <code>ibmcloud cos abort-multipart-upload</code> until v1.x lands a native command.</p>
 <h2 id="networking"><a class="header" href="#networking">Networking</a></h2>

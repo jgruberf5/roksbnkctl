@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1950912d.js";
+            window.path_to_searchindex_js = "searchindex-a54c19a1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -255,8 +255,8 @@ exec:            # per-tool execution backend defaults (see Chapter 17)
   terraform: { backend: local }
 
 cos:             # optional COS supply-chain config
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
 </code></pre>
 <p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables. The <code>prefix:</code> field and <code>resources:</code> block (both since <code>v1.8.0</code>) are also optional — omit them and the workspace renders the legacy sparse <code>terraform.tfvars</code> (upstream module default names), which is exactly how pre-<code>v1.8.0</code> configs keep working.</p>
 <h2 id="prefix"><a class="header" href="#prefix"><code>prefix:</code></a></h2>
@@ -468,14 +468,14 @@ cos:             # optional COS supply-chain config
 <p><a href="./17-execution-backends.html">Chapter 17 — Execution backends</a> covers the full backend matrix; <a href="./18-choosing-backend.html">Chapter 18 — Choosing a backend per tool</a> is the decision tree.</p>
 <h2 id="cos--cos-supply-chain-optional"><a class="header" href="#cos--cos-supply-chain-optional"><code>cos:</code> — COS supply-chain (optional)</a></h2>
 <pre><code class="language-yaml">cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
   region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -483,8 +483,8 @@ cos:             # optional COS supply-chain config
 <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT. Empty ⇒ <code>bnk-orchestration</code>. Sets <code>ibmcloud_cos_instance_name</code>.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ <code>bnk-schematics-resources</code>. Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
+<tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT. Empty ⇒ <code>bnk-supply-chain</code>. Sets <code>ibmcloud_cos_instance_name</code>.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ <code>bnk-artifacts</code>. Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
 <tr><td><code>region</code></td><td>string</td><td>Region the bucket lives in. Empty ⇒ <code>us-south</code>. Sets <code>ibmcloud_cos_bucket_region</code>.</td></tr>
 <tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
 </tbody>
