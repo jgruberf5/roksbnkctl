@@ -31,7 +31,7 @@ ibmcloud ks clusters --provider vpc-gen2
 | -------- | ----------- | -------- | ------- |
 | `license_mode` | License operation mode (`connected` or `disconnected`) | REQUIRED with default | `connected` (default) |
 | `flo_utils_namespace` | Namespace where the License CR is deployed | REQUIRED with default | `f5-utils` (default) |
-| `license_f5_cne_subscription_jwt_file` | JWT filename in the COS bucket | REQUIRED with default | `trial.jwt` (default) |
+| `license_f5_cne_subscription_jwt_file` | JWT filename in the COS bucket | REQUIRED with default | `subscription.jwt` (default) |
 
 ### IBM COS Variables
 
@@ -40,36 +40,36 @@ The JWT license token is fetched from an IBM Cloud Object Storage (COS) bucket. 
 | Variable | Description | Required | Example |
 | -------- | ----------- | -------- | ------- |
 | `ibmcloud_cos_bucket_region` | IBM Cloud region where the COS bucket is located | REQUIRED with default | `us-south` (default) |
-| `ibmcloud_cos_instance_name` | IBM Cloud COS instance name | REQUIRED with default | `bnk-orchestration` (default) |
-| `ibmcloud_resources_cos_bucket` | IBM Cloud COS bucket containing the JWT file | REQUIRED with default | `bnk-schematics-resources` (default) |
+| `ibmcloud_cos_instance_name` | IBM Cloud COS instance name | REQUIRED with default | `bnk-supply-chain` (default) |
+| `ibmcloud_resources_cos_bucket` | IBM Cloud COS bucket containing the JWT file | REQUIRED with default | `bnk-artifacts` (default) |
 
 As an example using the variable defaults:
 
-1. Create an IBM COS instance named `bnk-orchestration`
-2. With a bucket named `bnk-schematics-resources`
-3. Upload the license JWT token file `trial.jwt`
+1. Create an IBM COS instance named `bnk-supply-chain`
+2. With a bucket named `bnk-artifacts`
+3. Upload the license JWT token file `subscription.jwt`
 
 ```
 bnk-orchestrator              # IBM COS Instance
-└── bnk-schematics-resources  # IBM COS Bucket
-    └── trial.jwt             # IBM COS Resource (key)
+└── bnk-artifacts  # IBM COS Bucket
+    └── subscription.jwt             # IBM COS Resource (key)
 ```
 
 ```bash
 # Create the COS instance
-ibmcloud resource service-instance-create bnk-orchestration cloud-object-storage standard global
+ibmcloud resource service-instance-create bnk-supply-chain cloud-object-storage standard global
 
 # Create the COS bucket (replace RESOURCE_INSTANCE_ID with the CRN from the previous command)
 ibmcloud cos bucket-create \
-  --bucket bnk-schematics-resources \
+  --bucket bnk-artifacts \
   --ibm-service-instance-id RESOURCE_INSTANCE_ID \
   --region us-south
 
 # Upload the license JWT token
 ibmcloud cos object-put \
-  --bucket bnk-schematics-resources \
-  --key trial.jwt \
-  --body ./trial.jwt \
+  --bucket bnk-artifacts \
+  --key subscription.jwt \
+  --body ./subscription.jwt \
   --region us-south
 ```
 
@@ -127,11 +127,11 @@ roks_cluster_name_or_id = "my-openshift-cluster"
 
 # COS Bucket — JWT fetched from IBM COS
 ibmcloud_cos_bucket_region    = "us-south"
-ibmcloud_cos_instance_name    = "bnk-orchestration"
-ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
+ibmcloud_cos_instance_name    = "bnk-supply-chain"
+ibmcloud_resources_cos_bucket = "bnk-artifacts"
 
 # License
-license_f5_cne_subscription_jwt_file = "trial.jwt"
+license_f5_cne_subscription_jwt_file = "subscription.jwt"
 license_mode                         = "connected"
 flo_utils_namespace                  = "f5-utils"
 ```

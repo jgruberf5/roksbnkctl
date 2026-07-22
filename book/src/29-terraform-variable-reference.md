@@ -32,8 +32,8 @@ Source: `terraform/variables.tf`
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager | no |
 | `cert_manager_version` | `string` | `"v1.17.3"` | cert-manager Helm chart version | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped. | no |
 | `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native) or \"legacy_curl\" (null_resource baseline). | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository URL for Docker and Helm images | no |
@@ -44,7 +44,7 @@ Source: `terraform/variables.tf`
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this) | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket — used by flo and license | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket — used by flo and license | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Kubernetes namespace for the F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license | no |
 | `bigip_username` | `string` | `"admin"` | BIG-IP username for the CIS controller | no |
@@ -162,10 +162,10 @@ Source: `terraform/modules/flo/variables.tf`
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this) | no |
 | `use_cos_bucket` | `bool` | `true` | Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager - used by cert-manager, flo modules | no |
@@ -198,7 +198,7 @@ Source: `terraform/modules/flp/variables.tf`
 | `ibmcloud_resources_cos_bucket` | `string` | `""` | COS bucket holding the FAR auth tarball + subscription JWT. | no |
 | `ibmcloud_cos_bucket_region` | `string` | `""` | Region of the COS bucket. | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth tarball object key in the COS bucket (the _json_key_base64 SA lives inside). | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT object key in the COS bucket — seeds flp-jwt-secret. | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT object key in the COS bucket — seeds flp-jwt-secret. | no |
 | `scratch_dir` | `string` | `"/tmp/roksbnkctl-flp"` | Working directory for the FAR-auth download/extract. | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR registry host (fallback when no mirror). | no |
 | `far_chart_repo_url` | `string` | `""` | Mirror host for chart pulls (empty → coalesces to far_repo_url). | no |
@@ -263,11 +263,11 @@ Source: `terraform/modules/license/variables.tf`
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region where the cluster resides | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud Resource Group name (leave empty to use account default) | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `roks_cluster_name_or_id` | `string` | _required_ | Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
 | `license_mode` | `string` | `"connected"` | License operation mode (connected, disconnected, or f5licenseproxy) | no |
 | `flp_license_server_url` | `string` | `""` | Base URL of the in-cluster F5 License Proxy (FLP mode only) | no |
 | `license_server_root_ca` | `string` | `""` | PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only) | no |

@@ -78,7 +78,7 @@ variable "f5_cne_far_auth_file" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT object key in the COS bucket — seeds flp-jwt-secret."
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
 }
 
 variable "scratch_dir" {

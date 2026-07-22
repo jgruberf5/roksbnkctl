@@ -239,7 +239,16 @@ type ResourceToggle struct {
 const (
 	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
 	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
-	DefaultSubscriptionJWTFile = "trial.jwt"
+	DefaultSubscriptionJWTFile = "subscription.jwt"
+	// Default{COSInstance,COSBucket,COSRegion} are the orchestration COS
+	// coordinates that hold the FAR auth tarball + the subscription JWT. They
+	// mirror the ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
+	// ibmcloud_cos_bucket_region terraform-variable defaults and back the cos:
+	// config block; the `registry` FAR resolver and the init supply-chain
+	// provisioning both fall back to these when cos: is unset.
+	DefaultCOSInstance = "bnk-supply-chain"
+	DefaultCOSBucket   = "bnk-artifacts"
+	DefaultCOSRegion   = "us-south"
 	// DefaultLicenseMode is the terraform License CR operationMode default; an
 	// empty bnk.license_mode leaves it unset (terraform defaults to "connected"),
 	// so JWT/connected licensing is unchanged unless FLP is opted into.
@@ -574,7 +583,7 @@ type TFSourceCfg struct {
 
 // COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR
 // auth key + subscription JWT (the "orchestration" COS). Empty fields fall back
-// to the built-in defaults (bnk-orchestration / bnk-schematics-resources /
+// to the built-in defaults (bnk-supply-chain / bnk-artifacts /
 // us-south). These are honoured BOTH by the terraform render
 // (ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
 // ibmcloud_cos_bucket_region) AND by the `registry` FAR-file resolver, so a

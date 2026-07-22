@@ -216,13 +216,13 @@ const (
 )
 
 // FAR-auth COS coordinates — the orchestration COS instance/bucket/region that
-// holds the FAR auth tarball + the license JWT. These mirror the terraform
-// ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
-// ibmcloud_cos_bucket_region defaults.
+// holds the FAR auth tarball + the license JWT. Centralised in internal/config
+// so the terraform render, the init supply-chain provisioning, and this
+// resolver all share one source of truth.
 const (
-	farOrchestrationCOSInstance = "bnk-orchestration"
-	farResourcesBucket          = "bnk-schematics-resources"
-	farCOSBucketRegion          = "us-south"
+	farOrchestrationCOSInstance = config.DefaultCOSInstance
+	farResourcesBucket          = config.DefaultCOSBucket
+	farCOSBucketRegion          = config.DefaultCOSRegion
 )
 
 // resolveFARServiceAccount downloads the workspace's FAR auth tarball

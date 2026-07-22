@@ -1,7 +1,7 @@
 # Licensing BNK with the F5 License Proxy (FLP)
 
 By default `roksbnkctl` licenses BIG-IP Next for Kubernetes (BNK) with a
-**subscription JWT** — the `trial.jwt` (or your production token) staged in the
+**subscription JWT** — the `subscription.jwt` (or your production token) staged in the
 orchestration COS bucket. In that mode the cluster's controller reaches F5's
 licensing service directly. Nothing in this chapter changes that default.
 

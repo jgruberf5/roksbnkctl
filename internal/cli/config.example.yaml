@@ -87,11 +87,11 @@ bnk:
 
 # ---- Orchestration COS (optional) ------------------------------------------
 # Where the FAR auth key + subscription JWT live. Blank fields fall back to the
-# built-in defaults (bnk-orchestration / bnk-schematics-resources / us-south).
+# built-in defaults (bnk-supply-chain / bnk-artifacts / us-south).
 # Honoured by BOTH the terraform render and the `registry` FAR resolver.
 # cos:
-#   instance: bnk-orchestration
-#   bucket: bnk-schematics-resources
+#   instance: bnk-supply-chain
+#   bucket: bnk-artifacts
 #   region: us-south
 
 # ---- Air-gap registry mirror (optional; PRD 11) ----------------------------

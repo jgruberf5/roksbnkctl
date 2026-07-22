@@ -35,13 +35,13 @@ variable "ibmcloud_cos_bucket_region" {
 variable "ibmcloud_cos_instance_name" {
   description = "IBM Cloud COS instance name"
   type        = string
-  default     = "bnk-orchestration"
+  default     = "bnk-supply-chain"
 }
 
 variable "ibmcloud_resources_cos_bucket" {
   description = "IBM Cloud COS bucket containing the FAR auth key and JWT files"
   type        = string
-  default     = "bnk-schematics-resources"
+  default     = "bnk-artifacts"
 }
 
 # ============================================================
@@ -76,7 +76,7 @@ variable "flo_utils_namespace" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT filename in the COS bucket"
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
 }
 
 variable "license_mode" {

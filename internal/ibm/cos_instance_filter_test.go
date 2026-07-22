@@ -64,7 +64,7 @@ func TestListCOSInstances_OptionsCarryCOSFilter(t *testing.T) {
 // TestGetCOSInstanceByName_OptionsCarryNameAndCOSFilter pins both
 // filters for the hot path that round-5 measured at 76.4s pre-fix.
 func TestGetCOSInstanceByName_OptionsCarryNameAndCOSFilter(t *testing.T) {
-	const wantName = "bnk-orchestration"
+	const wantName = "bnk-supply-chain"
 	rc := &resourcecontrollerv2.ResourceControllerV2{}
 	opts := rc.NewListResourceInstancesOptions()
 	opts.SetName(wantName)

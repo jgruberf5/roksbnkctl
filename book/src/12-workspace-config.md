@@ -83,8 +83,8 @@ exec:            # per-tool execution backend defaults (see Chapter 17)
   terraform: { backend: local }
 
 cos:             # optional COS supply-chain config
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
 ```
 
 Every block except `ibmcloud:`, `cluster:`, and `tf_source:` is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL's own default for terraform variables. The `prefix:` field and `resources:` block (both since `v1.8.0`) are also optional — omit them and the workspace renders the legacy sparse `terraform.tfvars` (upstream module default names), which is exactly how pre-`v1.8.0` configs keep working.
@@ -297,20 +297,20 @@ The `iperf3` default is `k8s` because measuring throughput from a laptop's inter
 
 ```yaml
 cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
   region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `instance` | string | COS instance name holding the FAR auth key + JWT. Empty ⇒ `bnk-orchestration`. Sets `ibmcloud_cos_instance_name`. |
-| `bucket` | string | COS bucket name within that instance. Empty ⇒ `bnk-schematics-resources`. Sets `ibmcloud_resources_cos_bucket`. |
+| `instance` | string | COS instance name holding the FAR auth key + JWT. Empty ⇒ `bnk-supply-chain`. Sets `ibmcloud_cos_instance_name`. |
+| `bucket` | string | COS bucket name within that instance. Empty ⇒ `bnk-artifacts`. Sets `ibmcloud_resources_cos_bucket`. |
 | `region` | string | Region the bucket lives in. Empty ⇒ `us-south`. Sets `ibmcloud_cos_bucket_region`. |
 | `upload` | []{source, key} | Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline. |
 

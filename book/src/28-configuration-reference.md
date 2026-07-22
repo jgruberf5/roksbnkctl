@@ -330,20 +330,20 @@ Most users want `embedded` (the default). The `github` mode is for testing forks
 
 ```yaml
 cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
   region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 ```
 
 | Field | Type | Default | Allowed | Notes |
 |---|---|---|---|---|
-| `instance` | string | (empty ⇒ `bnk-orchestration`) | COS instance name or CRN | The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime. |
-| `bucket` | string | (empty ⇒ `bnk-schematics-resources`) | S3 bucket name | The bucket within the instance that holds the FAR auth key + subscription JWT. |
+| `instance` | string | (empty ⇒ `bnk-supply-chain`) | COS instance name or CRN | The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime. |
+| `bucket` | string | (empty ⇒ `bnk-artifacts`) | S3 bucket name | The bucket within the instance that holds the FAR auth key + subscription JWT. |
 | `region` | string | (empty ⇒ `us-south`) | any IBM Cloud region | The region the bucket lives in. |
 | `upload` | list of `{source, key}` | (empty) | host path → bucket key | Pre-flight uploads run before `roksbnkctl up`. Idempotent — re-running overwrites the bucket objects. |
 
@@ -516,8 +516,8 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `tf_source.repo` | string | (empty) | GitHub `owner/name`; required for `github`. |
 | `tf_source.ref` | string | (empty) | Git ref; required for `github`. |
 | `tf_source.path` | string | (empty) | Local directory; required for `local`. |
-| `cos.instance` | string | (empty ⇒ `bnk-orchestration`) | Orchestration COS instance name or CRN → `ibmcloud_cos_instance_name` + the `registry` FAR resolver. |
-| `cos.bucket` | string | (empty ⇒ `bnk-schematics-resources`) | Bucket holding the FAR auth key + JWT → `ibmcloud_resources_cos_bucket` + the `registry` FAR resolver. |
+| `cos.instance` | string | (empty ⇒ `bnk-supply-chain`) | Orchestration COS instance name or CRN → `ibmcloud_cos_instance_name` + the `registry` FAR resolver. |
+| `cos.bucket` | string | (empty ⇒ `bnk-artifacts`) | Bucket holding the FAR auth key + JWT → `ibmcloud_resources_cos_bucket` + the `registry` FAR resolver. |
 | `cos.region` | string | (empty ⇒ `us-south`) | Region the orchestration COS bucket lives in → `ibmcloud_cos_bucket_region` + the `registry` FAR resolver. |
 | `cos.upload[].source` | string | — | Local file path. |
 | `cos.upload[].key` | string | — | Bucket key. |

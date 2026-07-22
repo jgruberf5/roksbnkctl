@@ -85,7 +85,7 @@ A Pod status indicating the image couldn't be pulled from the registry. Usually 
 The throughput-suite flag selecting `north-south` (LoadBalancer Service, client outside the cluster) or `east-west` (ClusterIP Service, client inside the cluster). See [Chapter 22 §"The two modes"](./22-throughput-testing.md#the-two-modes).
 
 **JWT**
-**JSON Web Token** — the signed-token format BNK uses for the subscription licence (`trial.jwt` in the COS supply-chain bucket).
+**JSON Web Token** — the signed-token format BNK uses for the subscription licence (`subscription.jwt` in the COS supply-chain bucket).
 
 ## K — N
 

@@ -231,9 +231,9 @@ The token refresh is automatic on every `up`/`apply`, but `register` against a c
 **Fix**: re-issue the key on the F5 side and upload to COS:
 
 ```bash
-roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+roksbnkctl cos object put bnk-artifacts/f5-far-auth-key.tgz \
   ./new-f5-far-auth-key.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # Restart FLO so it re-reads
 roksbnkctl k delete pod -n f5-bnk -l app=flo
@@ -254,11 +254,11 @@ See [Chapter 25 §"Worked example"](./25-cos-supply-chain.md#worked-example-rota
 **Fix**: list and delete each object, then delete the bucket:
 
 ```bash
-roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration | \
+roksbnkctl cos object list bnk-artifacts --instance bnk-supply-chain | \
   awk 'NR>1 {print $1}' | \
-  xargs -I{} roksbnkctl cos object delete "bnk-schematics-resources/{}" --instance bnk-orchestration
+  xargs -I{} roksbnkctl cos object delete "bnk-artifacts/{}" --instance bnk-supply-chain
 
-roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 ```
 
 Don't forget to abort any pending multipart uploads first — they don't appear in the standard object list but they do prevent bucket deletion. The workaround for now is `ibmcloud cos list-multipart-uploads` followed by `ibmcloud cos abort-multipart-upload` until v1.x lands a native command.

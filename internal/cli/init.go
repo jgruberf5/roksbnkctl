@@ -236,6 +236,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
 		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
 		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
+		// Verify the orchestration COS actually holds those artefacts; offer to
+		// provision the instance/bucket + upload from local files when it doesn't,
+		// so the BNK phase has what it needs. Interactive path only.
+		if err := ensureFARSupplyChain(ctx, ic, apiKey, rgID, ws); err != nil {
+			return err
+		}
 		// Optional F5 License Proxy. Default no → BNK licenses with the
 		// subscription JWT as before (unchanged). Yes → set FLP mode + an flp
 		// block; the operator then runs `roksbnkctl flp up` before `bnk up`.

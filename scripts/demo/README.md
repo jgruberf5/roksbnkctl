@@ -380,7 +380,7 @@ For `far-replication-demo.sh` (demo #3): the registry is built off-camera by
 `deploy-far-registry.sh`, so the recorded screenplay is pure `roksbnkctl`
 (`cos`, `registry bom/target/diff/replicate/verify/list`). Pre-flighted against
 the live account: `init` with the mirror-only seed config; `cos object list`
-against `bnk-orchestration`/`bnk-schematics-resources` (cross-region from
+against `bnk-supply-chain`/`bnk-artifacts` (cross-region from
 `eu-gb`); `registry bom` auto-resolving the FAR service account from COS — 88
 artifacts (62 images, 26 charts); and a full `replicate` + `verify` into a live
 Harbor.
