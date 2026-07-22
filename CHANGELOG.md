@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.21.0 — 2026-07-22
+
+### Added
+
+- **`roksbnkctl upgrade` — self-upgrade the binary, on Linux, macOS, and Windows.** `roksbnkctl upgrade` downloads the latest GitHub release for the host OS/arch, verifies its SHA256 against the release's `checksums.txt`, and replaces the running binary in place. `--version vX.Y.Z` pins a specific release (and may downgrade or reinstall); `--yes` skips the confirmation prompt. Windows is now supported: a running `.exe` can't be overwritten, so the old binary is moved aside to `<binary>.old` (which Windows permits) and the new one takes its place, with the sidecar swept on the next run. `roksbnkctl self update` remains as the latest-only interactive alias.
+
+  Release binaries are not yet code-signed, so on a host with an application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly downloaded binary may be blocked until its hash is trusted — the command's `--help` says so.
+
+### Fixed
+
+- **`self update` no longer always reported an update was available.** goreleaser stamps the version without a leading `v` (`1.21.0`) while GitHub tag names carry it (`v1.21.0`), so the old equality check never matched a real release. Version comparisons now ignore the `v`.
+
 ## v1.20.1 — 2026-07-22
 
 ### Fixed
