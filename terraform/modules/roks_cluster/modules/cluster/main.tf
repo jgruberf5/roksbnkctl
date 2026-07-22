@@ -173,16 +173,22 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
 #
 # So: look the VPC's gateways up, reuse one when the zone already has it, and create
 # only for zones that do not.
+#
+# Only relevant when ADOPTING an existing VPC. A freshly created VPC cannot already
+# have public gateways, and its id (ibm_is_vpc.cluster_vpc[0].id) is unknown until
+# apply — feeding that into the gateway `count` below breaks the plan with
+# "Invalid count argument". So gate the lookup on use_existing_cluster_vpc: for a new
+# VPC the reuse map is empty, the counts resolve at plan time, and we always create.
 data "ibm_is_public_gateways" "vpc" {
-  count = var.create_cluster ? 1 : 0
+  count = var.create_cluster && var.use_existing_cluster_vpc ? 1 : 0
 }
 
 locals {
   # zone → id, for public gateways already in THIS cluster's VPC.
-  existing_pgw_by_zone = {
+  existing_pgw_by_zone = var.use_existing_cluster_vpc ? {
     for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
     g.zone => g.id if try(g.vpc, "") == local.cluster_vpc_id
-  }
+  } : {}
 
   pgw_existing_zone1 = lookup(local.existing_pgw_by_zone, local.zones[0], "")
   pgw_existing_zone2 = lookup(local.existing_pgw_by_zone, local.zones[1], "")

@@ -11,7 +11,11 @@
 # carry it in the shared root config.
 
 locals {
-  enabled = var.deploy_flp
+  # Defense-in-depth: no-op while the cluster is being created (the module's
+  # provider is count=0 then; see providers.tf). The flp phase already runs with
+  # create_roks_cluster=false, so this is inert in every correct flow and only
+  # turns an accidental phase combination into a clean no-op, not a crash.
+  enabled = var.deploy_flp && !var.create_roks_cluster
 
   # The binary helm pipes the rendered chart through. roksbnkctl passes its OWN
   # absolute path (TF_VAR_roksbnkctl_binary), so the post-renderer is always the

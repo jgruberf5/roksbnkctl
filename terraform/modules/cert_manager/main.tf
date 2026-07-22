@@ -44,7 +44,13 @@ module "cert_manager" {
 
   depends_on = [data.ibm_container_cluster_config.runtime_config]
 
-  enabled                  = var.deploy_cert_manager
+  # Defense-in-depth: stay a no-op while the cluster is being created in the same
+  # apply — the provider + cluster-config data are count=0 then (see providers.tf),
+  # so live resources would crash the plan. Every correct phase already passes
+  # create_roks_cluster=false, so this changes nothing there; it only neutralises
+  # an accidental phase combination (e.g. a legacy monolithic apply) into a clean
+  # no-op instead of a plan-time failure.
+  enabled                  = var.deploy_cert_manager && !var.create_roks_cluster
   bnk_cr_mode              = var.bnk_cr_mode
   namespace                = var.cert_manager_namespace
   chart_version            = var.cert_manager_version
