@@ -4,6 +4,20 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.20.1 — 2026-07-22
+
+### Fixed
+
+- **`up`/`plan` on a new cluster VPC no longer fails at plan time with "Invalid count argument".** The public-gateway reuse logic (shared-VPC / air-gapped topology) fed the cluster VPC's id into the `ibm_is_public_gateway` `count`, but when the VPC is *created* in the same run that id is unknown until apply, so Terraform could not resolve the count. The lookup is now gated on `use_existing_cluster_vpc`: a freshly created VPC skips it entirely (it cannot already have gateways) and the counts resolve at plan time; an adopted VPC keeps reusing its existing gateways as before.
+
+- **Phase-combination hardening (defense-in-depth).** The cert-manager / FLO / CNE / license / gateway / FLP modules now gate their resources on `!create_roks_cluster` in addition to their `deploy_*` flag — matching the guard already on their provider + cluster-config data sources. In every correct phase these modules already run with `create_roks_cluster = false`, so this changes nothing there; it only turns an accidental phase combination (e.g. a legacy monolithic apply that enables BNK while the cluster is still being created) into a clean no-op instead of a plan-time crash.
+
+- **`roksbnkctl testing up` on a cluster-less workspace now errors instead of provisioning a cluster.** Like the Gateway / FLP / TGW phases, the Testing phase now requires `cluster-outputs.json` and hard-errors with an actionable message when it is missing, rather than silently rendering `create_roks_cluster = true` and planning a whole cluster into `state-testing/`.
+
+### Added
+
+- **More Terraform options are now settable from `config.yaml`.** Surfaced eleven knobs that previously only had their upstream HCL defaults: `cluster.min_worker_vcpu_count` / `min_worker_memory_gb` (worker-flavor auto-select floors), `bnk.flo_namespace` / `flo_utils_namespace` / `gslb_datacenter_name`, `bnk.cert_manager.namespace` / `version`, `bnk.flp.storage_class`, `cos.instance` / `bucket` / `region` (the orchestration COS — honoured by **both** the Terraform render and the `registry` FAR resolver), and `resources.testing_jumphost_profile` / `testing_min_vcpu_count` / `testing_min_memory_gb`. Each renders only when set, so existing configs are unchanged. See [Workspace config](book/src/12-workspace-config.md) and the [Configuration reference](book/src/28-configuration-reference.md).
+
 ## v1.20.0 — 2026-07-16
 
 ### Added

@@ -42,8 +42,16 @@ build-runner:
 	    -t $(IMG_PREFIX)-runner:$(TAG) \
 	    $(REPO_ROOT)
 
+# The mdbook Dockerfile COPYs tools/docker/mdbook/{puppeteer-config.json,
+# render-mermaid.lua} using repo-root-relative paths (matching how the
+# tools-images CI workflow builds it, with context = repo root). So it needs
+# the same -f/root-context form as ibmcloud/runner, NOT a `mdbook/` context —
+# otherwise the COPYs 404 and the build fails.
 build-mdbook:
-	docker build -t $(IMG_PREFIX)-mdbook:$(TAG) mdbook/
+	docker build \
+	    -f $(REPO_ROOT)/tools/docker/mdbook/Dockerfile \
+	    -t $(IMG_PREFIX)-mdbook:$(TAG) \
+	    $(REPO_ROOT)
 
 build-all: build-ibmcloud build-iperf3 build-h2load build-runner build-mdbook
 

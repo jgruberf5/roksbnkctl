@@ -88,6 +88,7 @@ header-includes = [
   "\\newunicodechar{≪}{\\ensuremath{\\ll}}",
   "\\newunicodechar{⇒}{\\ensuremath{\\Rightarrow}}",
   "\\newunicodechar{↔}{\\ensuremath{\\leftrightarrow}}",
+  "\\newunicodechar{∥}{\\ensuremath{\\parallel}}",
   "\\newunicodechar{≥}{\\ensuremath{\\geq}}",
   "\\newunicodechar{≤}{\\ensuremath{\\leq}}",
   "\\newunicodechar{≠}{\\ensuremath{\\neq}}",
