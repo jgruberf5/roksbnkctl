@@ -481,6 +481,36 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		if len(flp.NodePortSourceCIDRs) > 0 {
 			fmt.Fprintf(w, "flp_node_port_source_cidrs = %s\n", hclStringList(flp.NodePortSourceCIDRs))
 		}
+		// mode: vsi — the standalone-VSI backend. The deploy_flp_vsi toggle itself is
+		// forced by the FLP-phase override; these render the VSI's shape from config.
+		if vsi := flp.VSI; vsi != nil {
+			if vsi.Profile != "" {
+				fmt.Fprintf(w, "flp_vsi_profile = %q\n", vsi.Profile)
+			}
+			if vsi.Zone != "" {
+				fmt.Fprintf(w, "flp_vsi_zone = %q\n", vsi.Zone)
+			}
+			if vsi.BootSizeGB > 0 {
+				fmt.Fprintf(w, "flp_vsi_boot_size_gb = %d\n", vsi.BootSizeGB)
+			}
+			if vsi.Reach != "" {
+				fmt.Fprintf(w, "flp_vsi_reach = %q\n", vsi.Reach)
+			}
+			if len(vsi.AllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_allowed_cidrs = %s\n", hclStringList(vsi.AllowedCIDRs))
+			}
+			if fp := vsi.ForwardProxy; fp != nil {
+				if fp.Host != "" {
+					fmt.Fprintf(w, "flp_forward_proxy_host = %q\n", fp.Host)
+				}
+				if fp.Port > 0 {
+					fmt.Fprintf(w, "flp_forward_proxy_port = %d\n", fp.Port)
+				}
+				if fp.Protocol != "" {
+					fmt.Fprintf(w, "flp_forward_proxy_protocol = %q\n", fp.Protocol)
+				}
+			}
+		}
 	}
 	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
 	// Emitted only when config.yaml supplies them; absent → the terraform

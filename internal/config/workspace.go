@@ -255,6 +255,9 @@ const (
 	DefaultLicenseMode = "connected"
 	// DefaultFLPNamespace is where the `flp` phase installs the F5 License Proxy.
 	DefaultFLPNamespace = "f5-license-proxy"
+	// DefaultFLPVSIProfile is the VSI profile for mode: vsi (4 vCPU / 16 GB — meets
+	// the FLP appliance's 4 vCPU / 8 GB minimum with headroom).
+	DefaultFLPVSIProfile = "bx2-4x16"
 )
 
 type BNKCfg struct {
@@ -325,7 +328,19 @@ type BNKCfg struct {
 // nil block means FLP is off. It never carries secrets — the FLP generates its own
 // certs, and its subscription JWT is the same one resolved from COS.
 type BNKFLPCfg struct {
-	// Namespace the FLP is installed into. Empty → DefaultFLPNamespace.
+	// Mode selects HOW the FLP phase deploys the proxy:
+	//   "" | "helm" → the f5-license-proxy Helm chart into the ROKS cluster (default).
+	//   "vsi"       → a standalone IBM Cloud VSI running the same four containers as a
+	//                 podman pod (no Kubernetes). The VSI path reuses the cluster VPC so
+	//                 the CWC reaches it directly, and terminates in the SAME
+	//                 flp-outputs.json (endpoint + root CA) the helm path produces, so
+	//                 `bnk up` consumes it unchanged. VSI-specific knobs live under `vsi:`.
+	Mode string `yaml:"mode,omitempty"`
+
+	// VSI configures the mode: vsi deployment backend. Ignored for mode: helm.
+	VSI *BNKFLPVSICfg `yaml:"vsi,omitempty"`
+
+	// Namespace the FLP is installed into (helm mode). Empty → DefaultFLPNamespace.
 	Namespace string `yaml:"namespace,omitempty"`
 	// ChartVersion pins the f5-license-proxy chart. Empty → the terraform default.
 	ChartVersion string `yaml:"chart_version,omitempty"`
@@ -362,6 +377,36 @@ type BNKFLPCfg struct {
 	// workspace/cluster. When set, `bnk up` licenses against it and does NOT require
 	// an `flp up` (nor an flp-outputs.json) in this workspace.
 	External *BNKFLPExternalCfg `yaml:"external,omitempty"`
+}
+
+// BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running the
+// f5-license-proxy stack as a podman pod. All fields optional; sensible defaults apply.
+type BNKFLPVSICfg struct {
+	// Profile is the IBM Cloud VSI instance profile. Empty → DefaultFLPVSIProfile
+	// (bx2-4x16 — meets the FLP's 4 vCPU / 8 GB minimum).
+	Profile string `yaml:"profile,omitempty"`
+	// Zone the VSI lands in (e.g. us-south-1). Empty → the first zone of the cluster region.
+	Zone string `yaml:"zone,omitempty"`
+	// BootSizeGB is the boot volume size. 0 → 100 (clears the FLP's >80 GB requirement).
+	BootSizeGB int `yaml:"boot_size_gb,omitempty"`
+	// Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP,
+	// for a CWC in the same/peered VPC) or "floating" (a public floating IP).
+	Reach string `yaml:"reach,omitempty"`
+	// AllowedCIDRs are the source CIDRs permitted to reach the proxy's 8443 port on the
+	// VSI security group — the consuming cluster's worker subnets. Empty → open to the
+	// cluster VPC's address space.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
+	// ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP
+	// forward proxy (air-gapped/egress-controlled networks). nil → direct egress.
+	ForwardProxy *BNKFLPForwardProxyCfg `yaml:"forward_proxy,omitempty"`
+}
+
+// BNKFLPForwardProxyCfg describes an egress forward proxy for the FLP VSI's calls to
+// F5's licensing backend (product-s.apis.f5.com).
+type BNKFLPForwardProxyCfg struct {
+	Host     string `yaml:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"` // http (default) | https
 }
 
 // BNKFLPExternalCfg addresses an F5 License Proxy that this workspace does not own.

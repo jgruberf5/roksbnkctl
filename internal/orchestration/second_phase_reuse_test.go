@@ -488,7 +488,7 @@ func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 		VPCID:     "r038-ef6305af-vpc",
 		Source:    "cluster-up",
 	}
-	p, err := writeFLPPhaseOverrideAt(dir, co)
+	p, err := writeFLPPhaseOverrideAt(dir, co, false) // helm mode
 	if err != nil {
 		t.Fatalf("writeFLPPhaseOverrideAt: %v", err)
 	}
@@ -500,7 +500,8 @@ func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 		t.Fatalf("reading override: %v", err)
 	}
 	got := string(body)
-	// FLP phase forces every OTHER phase off (incl. deploy_gateway) and deploy_flp on.
+	// FLP phase forces every OTHER phase off (incl. deploy_gateway); helm mode ⇒
+	// deploy_flp on, the VSI backend off.
 	for _, want := range []string{
 		"create_roks_cluster = false\n",
 		"roks_cluster_id_or_name = \"crt-cluster-id\"\n",
@@ -512,9 +513,22 @@ func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 		"testing_create_client_vpc = false\n",
 		"deploy_gateway = false\n",
 		"deploy_flp = true\n",
+		"deploy_flp_vsi = false\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("flp override missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+
+	// mode: vsi ⇒ the toggles flip (VSI backend on, helm off).
+	pv, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true)
+	if err != nil {
+		t.Fatalf("writeFLPPhaseOverrideAt(vsi): %v", err)
+	}
+	vbody, _ := os.ReadFile(pv)
+	for _, want := range []string{"deploy_flp = false\n", "deploy_flp_vsi = true\n"} {
+		if !strings.Contains(string(vbody), want) {
+			t.Errorf("vsi-mode flp override missing %q\n--- got ---\n%s", want, string(vbody))
 		}
 	}
 }

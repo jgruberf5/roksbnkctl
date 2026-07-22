@@ -614,6 +614,55 @@ variable "roksbnkctl_binary" {
   default     = ""
 }
 
+# ── FLP as a VSI (bnk.flp.mode: vsi) ──────────────────────────────────────────
+variable "deploy_flp_vsi" {
+  description = "Deploy the F5 License Proxy as a standalone VSI (podman pod, no k8s) instead of the helm chart. Set true only by the FLP phase in mode: vsi."
+  type        = bool
+  default     = false
+}
+variable "flp_vsi_profile" {
+  description = "VSI instance profile for the FLP (>= 4 vCPU / 8 GB)."
+  type        = string
+  default     = "bx2-4x16"
+}
+variable "flp_vsi_zone" {
+  description = "Zone for the FLP VSI. Empty → <region>-1."
+  type        = string
+  default     = ""
+}
+variable "flp_vsi_boot_size_gb" {
+  description = "Boot volume size (GB) for the FLP VSI (>= 80)."
+  type        = number
+  default     = 100
+}
+variable "flp_vsi_reach" {
+  description = "How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating."
+  type        = string
+  default     = "private"
+}
+variable "flp_vsi_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach the FLP VSI's 8443 port (the consuming cluster's subnets). Empty → the cluster VPC address space."
+  type        = list(string)
+  default     = []
+}
+variable "flp_prod_jwks_b64" {
+  description = "Optional override: base64 of F5's public prod_jwks.txt. Empty → the flp_vsi module extracts it from the f5-license-proxy chart."
+  type        = string
+  default     = ""
+}
+variable "flp_forward_proxy_host" {
+  type    = string
+  default = ""
+}
+variable "flp_forward_proxy_port" {
+  type    = number
+  default = 0
+}
+variable "flp_forward_proxy_protocol" {
+  type    = string
+  default = "http"
+}
+
 # ── Transit Gateway connection phase (roksbnkctl tgw connect) ─────────────────
 
 variable "deploy_tgw_connection" {

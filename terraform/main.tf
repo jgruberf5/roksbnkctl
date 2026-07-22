@@ -309,6 +309,42 @@ module "flp" {
 
 }
 
+# F5 License Proxy as a standalone VSI (mode: vsi) — reconstructs the
+# f5-license-proxy stack as a podman pod (no Kubernetes) in the cluster VPC. Gated
+# entirely by deploy_flp_vsi (set true only by the FLP phase in mode: vsi); a no-op
+# otherwise. Terminates in the same flp_root_ca / flp_external_endpoint outputs the
+# helm flp module produces, so the BNK phase consumes the handoff unchanged.
+module "flp_vsi" {
+  source = "./modules/flp_vsi"
+
+  deploy_flp_vsi          = var.deploy_flp_vsi
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+  existing_cluster_vpc_id = var.existing_cluster_vpc_id
+
+  flp_vsi_profile       = var.flp_vsi_profile
+  flp_vsi_zone          = var.flp_vsi_zone
+  flp_vsi_boot_size_gb  = var.flp_vsi_boot_size_gb
+  flp_vsi_reach         = var.flp_vsi_reach
+  flp_vsi_allowed_cidrs = var.flp_vsi_allowed_cidrs
+
+  f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
+  flp_chart_version             = var.flp_chart_version
+  flp_prod_jwks_b64             = var.flp_prod_jwks_b64
+
+  ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
+  ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
+  ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  f5_cne_far_auth_file          = var.f5_cne_far_auth_file
+  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  scratch_dir                   = "${var.scratch_dir}/flp-vsi"
+
+  flp_forward_proxy_host     = var.flp_forward_proxy_host
+  flp_forward_proxy_port     = var.flp_forward_proxy_port
+  flp_forward_proxy_protocol = var.flp_forward_proxy_protocol
+}
+
 module "tgw_connection" {
   source = "./modules/tgw_connection"
 

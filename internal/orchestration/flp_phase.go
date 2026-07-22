@@ -70,7 +70,8 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`",
 			workspace)
 	}
-	overridePath, werr := writeFLPPhaseOverride(tfws, co)
+	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
+	overridePath, werr := writeFLPPhaseOverride(tfws, co, vsiMode)
 	if werr != nil {
 		return nil, werr
 	}
