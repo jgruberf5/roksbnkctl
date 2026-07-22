@@ -243,11 +243,27 @@ func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Works
 	if err != nil {
 		return "", err
 	}
-	inst, err := ic.GetCOSInstanceByName(ctx, farOrchestrationCOSInstance)
-	if err != nil {
-		return "", fmt.Errorf("finding the %q COS instance: %w", farOrchestrationCOSInstance, err)
+	// Honour a customer-owned orchestration COS from config.yaml (cos.instance /
+	// cos.bucket / cos.region), falling back to the built-in defaults. The
+	// terraform render reads the SAME cos block (ibmcloud_cos_* tfvars), so both
+	// paths resolve FAR files from the same place.
+	cosInstance, cosBucket, cosRegion := farOrchestrationCOSInstance, farResourcesBucket, farCOSBucketRegion
+	if ws.COS != nil {
+		if ws.COS.Instance != "" {
+			cosInstance = ws.COS.Instance
+		}
+		if ws.COS.Bucket != "" {
+			cosBucket = ws.COS.Bucket
+		}
+		if ws.COS.Region != "" {
+			cosRegion = ws.COS.Region
+		}
 	}
-	cosClient, err := cos.New(apiKey, farCOSBucketRegion, inst.CRN)
+	inst, err := ic.GetCOSInstanceByName(ctx, cosInstance)
+	if err != nil {
+		return "", fmt.Errorf("finding the %q COS instance: %w", cosInstance, err)
+	}
+	cosClient, err := cos.New(apiKey, cosRegion, inst.CRN)
 	if err != nil {
 		return "", err
 	}
@@ -257,8 +273,8 @@ func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Works
 	}
 	defer os.RemoveAll(tmp)
 	tgz := filepath.Join(tmp, "far-auth.tgz")
-	if err := cosClient.GetObjectToFile(ctx, farResourcesBucket, farAuthFile, tgz); err != nil {
-		return "", fmt.Errorf("downloading %s from COS %s/%s: %w", farAuthFile, farOrchestrationCOSInstance, farResourcesBucket, err)
+	if err := cosClient.GetObjectToFile(ctx, cosBucket, farAuthFile, tgz); err != nil {
+		return "", fmt.Errorf("downloading %s from COS %s/%s: %w", farAuthFile, cosInstance, cosBucket, err)
 	}
 	return source.ExtractServiceAccountFromTarball(tgz)
 }

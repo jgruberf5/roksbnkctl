@@ -130,6 +130,8 @@ cluster:
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 2
+  min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
+  min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 ```
 
 | Field | Type | Default | Notes |
@@ -138,6 +140,8 @@ cluster:
 | `name` | string | none — required | OpenShift cluster name when `create=true`; cluster ID-or-name to adopt when `create=false`. |
 | `openshift_version` | string | empty (latest) | E.g. `"4.18"`. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses `4.18` as a float. |
 | `workers_per_zone` | int | `1` | Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so `2` ⇒ 6 workers total. |
+| `min_worker_vcpu_count` | int | `16` | Minimum vCPUs when the cluster module auto-selects the `bx2` worker flavor (smallest profile meeting both minimums). `0`/omitted ⇒ HCL default. Sets `roks_min_worker_vcpu_count`. |
+| `min_worker_memory_gb` | int | `64` | Minimum memory (GB) for the same auto-select. `0`/omitted ⇒ HCL default. Sets `roks_min_worker_memory_gb`. |
 
 The `cluster:` block translates to terraform variables `create_roks_cluster`, `openshift_cluster_name`, `roks_cluster_id_or_name`, `openshift_cluster_version`, `roks_workers_per_zone` — see [Chapter 13](./13-terraform-variables.md) and [Chapter 29](./29-terraform-variable-reference.md) for the full mapping.
 
@@ -180,6 +184,14 @@ bnk:
   cneinstance_size: Small
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
+  flo_namespace: f5-bnk               # optional; FLO namespace
+  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
+  cert_manager:                       # optional; cert-manager coordinates
+    namespace: cert-manager
+    version: v1.17.3
+  flp:
+    storage_class: ""                 # optional; FLP PVC StorageClass
 ```
 
 | Field | Type | Default | Notes |
@@ -187,8 +199,15 @@ bnk:
 | `cneinstance_size` | enum | upstream HCL default (`Small`) | `Small` \| `Medium` \| `Large`. Sets `cneinstance_deployment_size`. |
 | `far_repo_url` | string | upstream HCL default (`repo.f5.com`) | The FAR Docker/Helm repo. Override only for staging/internal repos. |
 | `manifest_version` | string | upstream HCL default | Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL's pin. |
+| `flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace. Sets `flo_namespace`. |
+| `flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace. Sets `flo_utils_namespace`. |
+| `gslb_datacenter_name` | string | empty | Optional CNEInstance GSLB datacenter name. Sets `cneinstance_gslb_datacenter_name`. |
+| `cert_manager.namespace` | string | `cert-manager` | cert-manager namespace. Sets `cert_manager_namespace`. Install/skip stays on `resources.cert_manager.create`. |
+| `cert_manager.version` | string | HCL default | Pin the cert-manager chart version. Sets `cert_manager_version`. |
+| `license_mode` | enum | `connected` | `connected` \| `disconnected` \| `f5licenseproxy`. Sets `license_mode`. |
+| `flp.storage_class` | string | HCL default | Dynamic StorageClass for the FLP's PVCs. Sets `flp_storage_class`. Other `flp.*` fields: see [Chapter 28](./28-configuration-reference.md). |
 
-Every field here is optional — leave the block out entirely and you get the upstream HCL's defaults for all three.
+Every field here is optional — leave the block out entirely and you get the upstream HCL's defaults.
 
 ## `test:`
 
@@ -280,6 +299,7 @@ The `iperf3` default is `k8s` because measuring throughput from a laptop's inter
 cos:
   instance: bnk-orchestration
   bucket: bnk-schematics-resources
+  region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
@@ -289,9 +309,12 @@ cos:
 
 | Field | Type | Notes |
 |---|---|---|
-| `instance` | string | COS instance name holding the FAR auth key + JWT. |
-| `bucket` | string | COS bucket name within that instance. |
+| `instance` | string | COS instance name holding the FAR auth key + JWT. Empty ⇒ `bnk-orchestration`. Sets `ibmcloud_cos_instance_name`. |
+| `bucket` | string | COS bucket name within that instance. Empty ⇒ `bnk-schematics-resources`. Sets `ibmcloud_resources_cos_bucket`. |
+| `region` | string | Region the bucket lives in. Empty ⇒ `us-south`. Sets `ibmcloud_cos_bucket_region`. |
 | `upload` | []{source, key} | Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline. |
+
+`instance` / `bucket` / `region` are honoured by **both** the terraform render and the `registry` FAR-file resolver, so a customer-owned COS bucket is used consistently across both.
 
 The block is optional — if you've already populated COS by hand or via the upstream HCL's `roks_cos_instance_name` variable, you don't need it. [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) covers the full workflow.
 

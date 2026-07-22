@@ -145,6 +145,13 @@ type ClusterCfg struct {
 	Name             string `yaml:"name"`
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
 	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
+
+	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
+	// (the cluster module picks the smallest bx2 profile meeting both minimums).
+	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
+	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
+	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty"`
+	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty"`
 }
 
 // ResourcesCfg holds the per-resource create toggles for a prefix-driven
@@ -181,6 +188,14 @@ type ResourcesCfg struct {
 	// private key per-workspace, and uploads the public key. Empty → no named key
 	// (the jumphosts use only the generated cloud-init key).
 	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
+	// Jumphost sizing. TestingJumphostProfile pins an explicit instance profile for
+	// ALL jumphosts (rendered as testing_jumphost_profile); empty → auto-select the
+	// smallest profile meeting TestingMinVCPUCount / TestingMinMemoryGB (rendered as
+	// testing_min_vcpu_count / testing_min_memory_gb; 0 → the terraform defaults of
+	// 4 vCPU / 8 GB). An explicit profile wins over the minimums.
+	TestingJumphostProfile string `yaml:"testing_jumphost_profile,omitempty"`
+	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty"`
+	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty"`
 	// CopiedSSHKeyFiles lists the ~/.ssh basenames `roksbnkctl init` ACTUALLY
 	// wrote when the user accepted the "copy the private key to ~/.ssh" prompt
 	// (only files it created — pre-existing files are skipped, never recorded).
@@ -253,6 +268,23 @@ type BNKCfg struct {
 	// "legacy_curl" at runtime, overriding this config value.
 	CRMode string `yaml:"cr_mode,omitempty"`
 
+	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
+	// Operator and its utility components install into (rendered as flo_namespace /
+	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
+	// these for multi-tenant clusters or to avoid namespace collisions.
+	FLONamespace      string `yaml:"flo_namespace,omitempty"`
+	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
+
+	// GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name
+	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
+	// (unset).
+	GSLBDatacenterName string `yaml:"gslb_datacenter_name,omitempty"`
+
+	// CertManager overrides cert-manager's namespace + chart version. nil → the
+	// terraform defaults (cert-manager / the pinned chart version). The
+	// install/skip toggle stays on resources.cert_manager.create.
+	CertManager *BNKCertManagerCfg `yaml:"cert_manager,omitempty"`
+
 	// Network holds the optional per-zone subnet CIDRs + TMM self-IPs for the
 	// cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs
 	// (BNK install-guide "Configuration"). nil → the terraform module's
@@ -288,6 +320,11 @@ type BNKFLPCfg struct {
 	Namespace string `yaml:"namespace,omitempty"`
 	// ChartVersion pins the f5-license-proxy chart. Empty → the terraform default.
 	ChartVersion string `yaml:"chart_version,omitempty"`
+
+	// StorageClass is the dynamic StorageClass for the FLP's PVCs (rendered as
+	// flp_storage_class). Empty → the terraform default (an IBM VPC block class).
+	// Set it when the cluster/region exposes a different block-storage class.
+	StorageClass string `yaml:"storage_class,omitempty"`
 
 	// NodePortAccess exposes the proxy OUTSIDE its own cluster, so a BNK install in
 	// a DIFFERENT cluster (same VPC, or across a transit gateway) can license
@@ -328,6 +365,17 @@ type BNKFLPExternalCfg struct {
 	URL string `yaml:"url,omitempty"`
 	// RootCAB64 is the proxy's root CA, base64-encoded (as `flp output` emits it).
 	RootCAB64 string `yaml:"root_ca_b64,omitempty"`
+}
+
+// BNKCertManagerCfg overrides cert-manager's install coordinates. All optional;
+// the create/skip decision stays on resources.cert_manager.create.
+type BNKCertManagerCfg struct {
+	// Namespace cert-manager installs into (rendered as cert_manager_namespace).
+	// Empty → the terraform default ("cert-manager").
+	Namespace string `yaml:"namespace,omitempty"`
+	// Version pins the cert-manager Helm chart (rendered as cert_manager_version).
+	// Empty → the terraform default. Set for air-gap / compliance version pinning.
+	Version string `yaml:"version,omitempty"`
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
@@ -524,9 +572,17 @@ type TFSourceCfg struct {
 	Path string `yaml:"path,omitempty"` // populated for type=local
 }
 
+// COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR
+// auth key + subscription JWT (the "orchestration" COS). Empty fields fall back
+// to the built-in defaults (bnk-orchestration / bnk-schematics-resources /
+// us-south). These are honoured BOTH by the terraform render
+// (ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
+// ibmcloud_cos_bucket_region) AND by the `registry` FAR-file resolver, so a
+// customer-owned COS bucket is used consistently across both.
 type COSCfg struct {
 	Instance string      `yaml:"instance,omitempty"`
 	Bucket   string      `yaml:"bucket,omitempty"`
+	Region   string      `yaml:"region,omitempty"`
 	Upload   []COSUpload `yaml:"upload,omitempty"`
 }
 
