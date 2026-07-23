@@ -87,6 +87,49 @@ This file is layered onto the var-file chain *after* user-supplied `--var-file` 
 
 `roksbnkctl up` doesn't write this override file; its tfvars chain leaves `deploy_bnk` at the upstream default (`true`), so the trial modules run.
 
+## Reusing an existing VPC (multiple clusters in one VPC)
+
+By default the cluster phase creates a prefix-named VPC for the cluster it builds.
+But you can point a **new** cluster at a **VPC that already exists** — so several
+clusters (each its own workspace) live in **one shared VPC**: the shape behind a
+shared licensing cluster or a common services network.
+
+Decline "Create a new cluster VPC?" in `init` and it **discovers the VPCs in the
+chosen region** and lets you pick one by number (since `v1.26.0`):
+
+```console
+$ roksbnkctl -w app-b init
+...
+Create a new cluster VPC? [Y/n] n
+→ Discovering existing VPCs...
+  Existing VPCs in us-south:
+     1) shared-services-vpc       (available)
+     2) app-a-cluster-vpc         (available)
+Use an existing cluster VPC — pick a number (0 = none / create a new one): 1
+```
+
+Picking `0` (or a region with no VPCs) falls back to creating one — a cluster must
+have a VPC. In config that is (the value is the VPC **id**, unlike the
+transit-gateway adopt-by-name):
+
+```yaml
+resources:
+  cluster_vpc:
+    create: false
+    existing: r006-6fe0b20a-...   # the VPC id
+```
+
+which renders `use_existing_cluster_vpc = true` + `existing_cluster_vpc_id`. Two
+things make this safe for more than one cluster in a VPC: the cluster's subnets are
+named per-cluster (`<cluster>-subnet-zoneN`) so they don't collide, and per-zone
+**public gateways are reused** when the VPC already has them (IBM allows exactly
+one per zone per VPC). Make sure the VPC has free address-prefix space — each
+cluster adds three /24 subnets.
+
+Combine this with an [adopted Transit Gateway](./09a-transit-gateway-sharing.md):
+clusters that share a VPC share that VPC's single connection to the gateway, so N
+clusters can reach each other over one VPC and one gateway.
+
 ## `cluster-outputs.json` — the cluster identity record
 
 When `roksbnkctl cluster up` apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:

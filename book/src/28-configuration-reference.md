@@ -474,6 +474,8 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.min_worker_memory_gb` | integer | `64` | Worker-flavor auto-select floor (GB) → `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
 | `resources.transit_gateway.existing` | string | (empty) | Existing Transit Gateway to attach the cluster VPC to, by **name or id**, when `create: false`. `cluster up`/`register` connects it; `tgw connect` does it after the fact. See [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md). |
+| `resources.cluster_vpc.create` | bool | `true` | Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the `init` interview since `v1.26.0`. |
+| `resources.cluster_vpc.existing` | string | (empty) | Existing cluster VPC to build the new cluster into, by **id** (not name), when `create: false` — renders `use_existing_cluster_vpc` + `existing_cluster_vpc_id`. Lets multiple clusters share one VPC. See [Reusing an existing VPC](./08-cluster-phase.md#reusing-an-existing-vpc-multiple-clusters-in-one-vpc). |
 | `resources.registry_cos.create` | bool | `true` | Create the registry COS instance vs adopt an existing one. |
 | `resources.registry_cos.existing` | string | (empty) | Existing COS instance name when `create: false`. |
 | `resources.cert_manager.create` | bool | `true` | Install cert-manager (`install_cert_manager`). |

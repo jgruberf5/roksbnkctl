@@ -26,8 +26,8 @@ Source: `terraform/variables.tf`
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
 | `roks_cos_instance_name` | `string` | `"tf-openshift-cos-instance"` | Name of the COS instance for the OpenShift image registry | no |
 | `roks_transit_gateway_name` | `string` | `"tf-tgw"` | Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true. | no |
-| `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create). | no |
-| `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id. | no |
+| `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; since `v1.26.0` the cluster phase also sets it when you adopt an existing VPC in `init` (`resources.cluster_vpc`, letting multiple clusters share one VPC). | no |
+| `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — from the adopted `resources.cluster_vpc.existing` id, or the second phase's cluster-outputs.json vpc_id. | no |
 | `install_cert_manager` | `bool` | `true` | Install cert-manager. When false, cert_manager_namespace is passed directly to flo. | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager | no |
 | `cert_manager_version` | `string` | `"v1.17.3"` | cert-manager Helm chart version | no |
