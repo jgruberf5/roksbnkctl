@@ -139,7 +139,7 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 				}
 				rv = obj.GetResourceVersion()
 			case apierrors.IsNotFound(err):
-				fmt.Fprintf(logw, "tfx wait: %s not found yet — watching for it\n", name)
+				fmt.Fprintf(logw, "tfx wait: %s not found yet -- watching for it\n", name)
 			case wctx.Err() != nil && ctx.Err() == nil:
 				return errTFXWaitTimeout
 			default:
@@ -202,7 +202,7 @@ func tfxConsumeWatch(ctx context.Context, w watch.Interface, name string, m wait
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return true, nil
 			}
-			fmt.Fprintf(logw, "tfx wait: %s not ready — %s (want [%s])\n", name, desc, m)
+			fmt.Fprintf(logw, "tfx wait: %s not ready -- %s (want [%s])\n", name, desc, m)
 		}
 	}
 }
@@ -224,7 +224,7 @@ func runTFXWaitPoll(ctx context.Context, ri dynamic.ResourceInterface, name stri
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return nil
 			} else {
-				fmt.Fprintf(logw, "tfx wait: %s not ready — %s (want [%s], attempt %d)\n", name, desc, m, attempt)
+				fmt.Fprintf(logw, "tfx wait: %s not ready -- %s (want [%s], attempt %d)\n", name, desc, m, attempt)
 			}
 		case apierrors.IsNotFound(err):
 			fmt.Fprintf(logw, "tfx wait: %s not found yet (attempt %d)\n", name, attempt)
