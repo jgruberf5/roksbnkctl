@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 )
@@ -58,12 +60,12 @@ func init() {
 	rootCmd.AddCommand(tfxCmd)
 }
 
-// tfxDynamic builds the dynamic client every k8s-facing verb uses, from the
-// shared connection flags. Precedence: an explicit --kubeconfig (local/testing)
-// wins; otherwise host+token (the terraform contract).
-func tfxDynamic() (dynamic.Interface, error) {
+// tfxRESTConfig resolves the cluster connection from the shared flags. Precedence:
+// an explicit --kubeconfig (local/testing) wins; otherwise host+token (the
+// terraform contract — token from an env var, never the command line).
+func tfxRESTConfig() (*rest.Config, error) {
 	if flagTFXKubeconfig != "" {
-		return k8s.BuildDynamicClient(flagTFXKubeconfig)
+		return k8s.BuildRESTConfig(flagTFXKubeconfig)
 	}
 	host := flagTFXKubeHost
 	if host == "" {
@@ -83,7 +85,35 @@ func tfxDynamic() (dynamic.Interface, error) {
 		}
 		caData = b
 	}
-	return k8s.DynamicForHostToken(host, token, flagTFXInsecure, caData)
+	return k8s.RESTConfigFromHostToken(host, token, flagTFXInsecure, caData)
+}
+
+// tfxDynamic builds the dynamic client the wait/delete/patch verbs use (explicit
+// --gvr, no mapper needed).
+func tfxDynamic() (dynamic.Interface, error) {
+	cfg, err := tfxRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+	return k8s.DynamicClientForConfig(cfg)
+}
+
+// tfxDynamicAndMapper adds a discovery-backed REST mapper, for `tfx apply` where
+// the manifest carries a Kind that must be resolved to its resource.
+func tfxDynamicAndMapper() (dynamic.Interface, meta.RESTMapper, error) {
+	cfg, err := tfxRESTConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	dc, err := k8s.DynamicClientForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	mapper, err := k8s.RESTMapperForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dc, mapper, nil
 }
 
 // parseGVR parses a --gvr string into a GroupVersionResource. Accepts

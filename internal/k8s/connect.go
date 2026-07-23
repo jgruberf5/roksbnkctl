@@ -3,8 +3,11 @@ package k8s
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
 // Host+token connection helpers for the `tfx` command family (see PRD
@@ -51,4 +54,24 @@ func DynamicForHostToken(host, token string, insecure bool, caData []byte) (dyna
 		return nil, fmt.Errorf("creating dynamic client: %w", err)
 	}
 	return dc, nil
+}
+
+// DynamicClientForConfig builds a dynamic client from an already-resolved config.
+func DynamicClientForConfig(cfg *rest.Config) (dynamic.Interface, error) {
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating dynamic client: %w", err)
+	}
+	return dc, nil
+}
+
+// RESTMapperForConfig builds a discovery-backed REST mapper — needed to resolve a
+// manifest's Kind to its resource for `tfx apply` (server-side apply), where the
+// caller has an object, not an explicit GVR.
+func RESTMapperForConfig(cfg *rest.Config) (meta.RESTMapper, error) {
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating discovery client: %w", err)
+	}
+	return restmapper.NewDeferredDiscoveryRESTMapper(memCacheClient{disc}), nil
 }
