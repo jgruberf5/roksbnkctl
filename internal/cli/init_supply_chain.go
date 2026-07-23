@@ -218,6 +218,7 @@ func recordCOSCoords(ws *config.Workspace, instName, bucket, region string) {
 //   - STABLE and DISCOVERABLE across workspaces: every workspace run from the same
 //     account's API key derives the same name, so a second workspace finds and
 //     reuses the bucket the first one provisioned.
+//
 // Returns base unchanged when the account ID is unavailable.
 func uniqueBucketName(base, accountID string) string {
 	token := strings.Map(func(r rune) rune {
