@@ -33,6 +33,9 @@ type Workspace struct {
 	sourceDir string
 	stateDir  string
 	tf        *tfexec.Terraform
+	// stderrCap tees terraform's stderr for post-failure diagnostic summarization
+	// (nil when Open was given no stderr writer).
+	stderrCap *diagCapture
 }
 
 // Open prepares a Workspace for terraform operations:
@@ -156,8 +159,12 @@ func Open(
 	if stdout != nil {
 		tf.SetStdout(stdout)
 	}
+	// Tee terraform's stderr through a bounded capture so a failed apply/destroy
+	// can print a deduplicated diagnostic summary (live streaming is unchanged).
+	var stderrCap *diagCapture
 	if stderr != nil {
-		tf.SetStderr(stderr)
+		stderrCap = newDiagCapture(stderr, 128*1024)
+		tf.SetStderr(stderrCap)
 	}
 
 	// terraform-exec inherits the roksbnkctl process env when SetEnv is
@@ -236,6 +243,7 @@ func Open(
 		sourceDir: sourceDir,
 		stateDir:  stateDir,
 		tf:        tf,
+		stderrCap: stderrCap,
 	}, nil
 }
 
@@ -439,7 +447,31 @@ func (w *Workspace) Plan(ctx context.Context, extraVarFiles ...string) (bool, er
 	for _, p := range w.varFiles(extraVarFiles...) {
 		opts = append(opts, tfexec.VarFile(p))
 	}
-	return w.tf.Plan(ctx, opts...)
+	w.resetDiag()
+	changes, err := w.tf.Plan(ctx, opts...)
+	return changes, w.wrapDiag(err)
+}
+
+// resetDiag clears the captured-stderr tail so a subsequent wrapDiag summarizes
+// only THIS operation's output (each retry attempt starts clean).
+func (w *Workspace) resetDiag() {
+	if w.stderrCap != nil {
+		w.stderrCap.Reset()
+	}
+}
+
+// wrapDiag appends a deduplicated diagnostic summary (parsed from the captured
+// terraform stderr) to a non-nil error, so the user sees a short "N distinct
+// errors" digest instead of the raw walls of repeated provider blocks. A no-op
+// when there's no error, no capture, or nothing parseable.
+func (w *Workspace) wrapDiag(err error) error {
+	if err == nil || w.stderrCap == nil {
+		return err
+	}
+	if summary := summarizeTerraformDiagnostics(w.stderrCap.String()); summary != "" {
+		return fmt.Errorf("%w\n\n%s", err, summary)
+	}
+	return err
 }
 
 // Apply runs `terraform apply`. tfexec auto-passes -auto-approve since
@@ -458,8 +490,9 @@ func (w *Workspace) Apply(ctx context.Context, extraVarFiles ...string) error {
 	for _, p := range sources {
 		opts = append(opts, tfexec.VarFile(p))
 	}
+	w.resetDiag()
 	if err := w.tf.Apply(ctx, opts...); err != nil {
-		return err
+		return w.wrapDiag(err)
 	}
 	phase := w.phaseLabel(sources)
 	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
@@ -521,7 +554,8 @@ func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error 
 	for _, p := range w.varFiles(extraVarFiles...) {
 		opts = append(opts, tfexec.VarFile(p))
 	}
-	return w.tf.Destroy(ctx, opts...)
+	w.resetDiag()
+	return w.wrapDiag(w.tf.Destroy(ctx, opts...))
 }
 
 // StateMvTo moves resource address `src` out of this workspace's state
