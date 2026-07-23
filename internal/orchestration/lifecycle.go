@@ -356,7 +356,7 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	}
 	apply := func(actx context.Context) error {
 		fmt.Fprintln(w, "→ terraform apply")
-		if err := applyWithRetry(actx, tfws, varFiles); err != nil {
+		if err := applyBNKWithAdmissionSweep(actx, cctx, tfws, varFiles); err != nil {
 			return err
 		}
 		tryAutoKubeconfig(actx, in, cctx, tfws)
@@ -442,7 +442,7 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(os.Stderr, "→ terraform apply")
-	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
+	if err := applyBNKWithAdmissionSweep(ctx, cctx, tfws, varFiles); err != nil {
 		return err
 	}
 	tryAutoKubeconfig(ctx, in, cctx, tfws)

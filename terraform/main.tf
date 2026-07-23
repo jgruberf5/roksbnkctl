@@ -179,6 +179,7 @@ module "cne_instance" {
   kubeconfig_dir                   = "${var.kubeconfig_dir}/cne_instance"
   registry_mirror_username         = var.registry_mirror_username
   registry_mirror_password         = var.registry_mirror_password
+  roksbnkctl_binary                = var.roksbnkctl_binary
 }
 
 

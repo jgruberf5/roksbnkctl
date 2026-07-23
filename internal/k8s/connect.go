@@ -8,6 +8,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Host+token connection helpers for the `tfx` command family (see PRD
@@ -63,6 +64,16 @@ func DynamicClientForConfig(cfg *rest.Config) (dynamic.Interface, error) {
 		return nil, fmt.Errorf("creating dynamic client: %w", err)
 	}
 	return dc, nil
+}
+
+// DynamicFromKubeconfigBytes builds a dynamic client from raw kubeconfig bytes
+// (e.g. a freshly-fetched admin kubeconfig held only in memory) — no temp file.
+func DynamicFromKubeconfigBytes(b []byte) (dynamic.Interface, error) {
+	cfg, err := clientcmd.RESTConfigFromKubeConfig(b)
+	if err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
+	}
+	return DynamicClientForConfig(cfg)
 }
 
 // RESTMapperForConfig builds a discovery-backed REST mapper — needed to resolve a

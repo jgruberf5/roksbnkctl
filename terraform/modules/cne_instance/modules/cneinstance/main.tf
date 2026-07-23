@@ -4,6 +4,9 @@ locals {
 
   cneinstance_name = "${var.flo_namespace}-f5-cne-controller"
 
+  # roksbnkctl binary for the tfx-based local-exec conversions (empty => on PATH).
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+
   # Sprint 29 air-gap mirror — spec.registry.uri host. The image host
   # coalesces back to far_repo_url when no mirror is set (byte-identical
   # default). In mirror mode imagePullSecrets collapses to an empty list and
@@ -384,42 +387,17 @@ resource "time_sleep" "wait_for_scc_policies" {
 # parallelize. No time_sleep.
 
 # The OpenShift ingress operator installs a ValidatingAdmissionPolicyBinding
-# (openshift-ingress-operator-gatewayapi-crd-admission) that blocks
-# third-party Gateway API CRD creation. The FLO operator reconciles the
-# CNEInstance by running a crd-installer Job that creates the Gateway API CRDs
-# (e.g. backendtlspolicies.gateway.networking.k8s.io) at the version BNK
-# requires, so that binding must be gone WHEN the crd-installer runs — which is
-# ~1-3 minutes INTO the CNEInstance reconcile, not up-front. The ingress
-# operator reconciles the binding (and its policy) back within ~1 minute, so a
-# single up-front delete loses the race. Launch a DETACHED loop that keeps the
-# binding + policy deleted every 5s for ~5 minutes, covering the crd-installer
-# window. The loop survives the local-exec (nohup) and stays alive because
-# terraform is still applying — blocked on the CNEInstance wait_for below —
-# during this window. Runs on every apply (timestamp trigger); best-effort.
-resource "null_resource" "delete_gatewayapi_admission_policy" {
-  count = local.use_kubectl ? 1 : 0
-
-  triggers = {
-    always_run = timestamp()
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      nohup bash -c '
-        token="${var.kube_token}"
-        host="${var.kube_host}"
-        base="$host/apis/admissionregistration.k8s.io/v1"
-        for i in $(seq 1 60); do
-          curl -sk -X DELETE -H "Authorization: Bearer $token" "$base/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" -o /dev/null 2>/dev/null || true
-          curl -sk -X DELETE -H "Authorization: Bearer $token" "$base/validatingadmissionpolicies/openshift-ingress-operator-gatewayapi-crd-admission" -o /dev/null 2>/dev/null || true
-          sleep 5
-        done
-      ' >/dev/null 2>&1 &
-      echo "gateway-api admission-policy delete-loop launched (~5m, covers the crd-installer window)"
-    EOT
-  }
-}
+# (openshift-ingress-operator-gatewayapi-crd-admission) that blocks third-party
+# Gateway API CRD creation. The FLO crd-installer Job must see it (and its policy)
+# GONE ~1-3 min into the CNEInstance reconcile, and the ingress operator recreates
+# them within ~1 min, so a single delete loses the race.
+#
+# This used to be a DETACHED `nohup` bash loop (deleting every 5s for ~5m) — which
+# does not port to Windows. It has been lifted OUT of terraform into roksbnkctl's
+# bnk-up orchestration: a Go GOROUTINE runs the same delete-if-present sweep for the
+# duration of `terraform apply` (identical on Windows/Linux, no detached process).
+# See internal/orchestration/admission_sweep.go and the PRD
+# docs/prd/native-windows-tfx.md §"The one imperative case".
 
 # ── Cloud network mapping ConfigMap + external/internal F5SPKVlan CRs ──────────
 # (BNK 2.3 install-guide "Configuration"). The CNE controller reads
@@ -512,9 +490,11 @@ resource "kubectl_manifest" "cneinstance" {
   # entitlement. The readiness gate is now a deterministic API poll
   # (null_resource.cnecontroller_ready below), which drives cneinstance_ready_id.
   # SSA here just creates/updates the CR — fast, no wait.
+  # The gateway-api admission-policy sweep that used to be ordered here is now a Go
+  # goroutine in roksbnkctl's bnk-up (runs for the whole apply), so no dependency
+  # edge is needed — see internal/orchestration/admission_sweep.go.
   depends_on = [
     var.flo_deployment_dependency,
-    null_resource.delete_gatewayapi_admission_policy,
     kubectl_manifest.cloud_network_mapping,
   ]
 }
@@ -540,21 +520,14 @@ resource "null_resource" "cnecontroller_ready" {
     cneinstance = kubectl_manifest.cneinstance[0].id
   }
 
+  # tfx wait (watch-first, event-driven) replaces the curl+grep+tr poll: block until
+  # the CNEInstance reports condition CNEControllerAvailable=True. No interpreter =>
+  # cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
   provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      url="${var.kube_host}/apis/k8s.f5.com/v1/namespaces/${var.flo_namespace}/cneinstances/${local.cneinstance_name}"
-      for i in $(seq 1 90); do
-        body=$(curl -sk -H "Authorization: Bearer ${var.kube_token}" "$url" 2>/dev/null | tr -d '[:space:]')
-        if printf '%s' "$body" | tr '{}' '\n' | grep '"type":"CNEControllerAvailable"' | grep -q '"status":"True"'; then
-          echo "CNEControllerAvailable=True (attempt $i)"; exit 0
-        fi
-        echo "Waiting for CNEControllerAvailable (attempt $i/90)..."
-        sleep 10
-      done
-      echo "ERROR: CNEControllerAvailable not True after ~15m" >&2
-      exit 1
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=CNEControllerAvailable=True --timeout 15m"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
   }
 
   depends_on = [kubectl_manifest.cneinstance]
