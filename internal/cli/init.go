@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -201,6 +202,20 @@ func runInit(_ *cobra.Command, _ []string) error {
 			fmt.Fprintf(os.Stderr, "warning: could not pre-save workspace: %v\n\n", serr)
 		}
 	}
+
+	// From here on the workspace is persisted, so Ctrl-C exits cleanly and leaves it
+	// to finish later — rather than dropping the operator into a half-answered
+	// interview or a defaulted config. (A dedicated handler, so it fires only on a
+	// real SIGINT, not the root context's normal end-of-run cancel.)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		<-sigCh
+		fmt.Fprintf(os.Stderr, "\n\n^C interrupted — workspace %q is saved. Re-run `roksbnkctl init -w %s` to finish it.\n",
+			cctx.WorkspaceName, cctx.WorkspaceName)
+		os.Exit(130)
+	}()
 
 	// The account-aware interview: create-vs-reuse, region + existing-cluster
 	// menus pulled from the credentials, resource toggles, and the optional
@@ -427,7 +442,7 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 	// with `roksbnkctl tgw connect <name-or-id>`.
 	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
 	if !res.TransitGateway.Create {
-		res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (blank = attach later with `tgw connect`)", "")
+		res.TransitGateway.Existing = pickExistingTransitGateway(ctx, ic, "Attach an existing Transit Gateway")
 	}
 
 	// In-cluster services.
@@ -447,7 +462,7 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		// operator declined to create one and didn't already name an existing one
 		// above, ask now — the jumphost can't work without it.
 		if !res.TransitGateway.Create && res.TransitGateway.Existing == "" {
-			res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (required for the testing jumphost)", "")
+			res.TransitGateway.Existing = pickExistingTransitGateway(ctx, ic, "Attach an existing Transit Gateway (required for the testing jumphost)")
 		}
 	} else {
 		res.TGWJumphost.Create = false
@@ -618,6 +633,33 @@ func copyKeyToUserSSH(srcDir, name string) (created []string, err error) {
 // chosen name, defaulting to def. TTY-only: a non-interactive run returns def
 // without dialing the API (keeps init scriptable). On a list error it falls
 // back to the built-in region list so init never hard-fails offline.
+// pickExistingTransitGateway discovers the account's transit gateways and lets the
+// operator choose one to attach the cluster to (returns its name; "" = attach later
+// with `tgw connect`). Falls back to a free-text name/ID prompt when discovery
+// fails; reports (and skips) when the account has none.
+func pickExistingTransitGateway(ctx context.Context, ic *ibm.Client, label string) string {
+	lctx, cancel := apiCtx(ctx)
+	tgws, err := ic.ListTransitGateways(lctx)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list transit gateways: %v)\n", err)
+		return promptString(label+" — name or ID (blank = attach later)", "")
+	}
+	if len(tgws) == 0 {
+		fmt.Fprintln(os.Stderr, "  (no existing transit gateways in this account — attach one later with `tgw connect`)")
+		return ""
+	}
+	fmt.Fprintln(os.Stderr, "  Existing transit gateways in this account:")
+	for i, g := range tgws {
+		fmt.Fprintf(os.Stderr, "    %2d) %-28s (%s, %s)\n", i+1, g.Name, g.Location, g.Status)
+	}
+	choice := promptInt(label+" — pick a number (0 = none / attach later)", 0)
+	if choice <= 0 || choice > len(tgws) {
+		return ""
+	}
+	return tgws[choice-1].Name
+}
+
 func pickRegion(ctx context.Context, ic *ibm.Client, label, def string) string {
 	if !isTTY() {
 		return def
