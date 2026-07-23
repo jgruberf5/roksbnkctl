@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a196ee62.js";
+            window.path_to_searchindex_js = "searchindex-485ce194.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -1770,6 +1770,16 @@ cluster adds three /24 subnets.</p>
 <p>Combine this with an <a href="#sharing-a-transit-gateway-across-clusters">adopted Transit Gateway</a>:
 clusters that share a VPC share that VPC’s single connection to the gateway, so N
 clusters can reach each other over one VPC and one gateway.</p>
+<blockquote>
+<p><strong>Teardown order matters in a shared VPC.</strong> The cluster that <em>created</em> the VPC
+owns its per-zone public gateways (IBM allows only one gateway per zone per VPC,
+so the adopters attach to the owner’s). The owner must be destroyed <strong>last</strong> —
+tear the adopters down first. <code>roksbnkctl</code> enforces this: <code>cluster down</code> / <code>down</code>
+<strong>refuses</strong> to destroy a workspace whose VPC still holds another cluster’s
+subnets, naming them, rather than failing mid-destroy with <code>The VPC is in use</code>.
+(Since <code>v1.26.1</code>; subnets also attach their gateway inline now, so an adopter’s
+teardown no longer errors even if the owner’s gateway is already gone.)</p>
+</blockquote>
 <h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
 <p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json
