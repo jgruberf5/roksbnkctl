@@ -493,6 +493,10 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large`. |
 | `bnk.far_repo_url` | string | `repo.f5.com` | FAR image registry URL. |
 | `bnk.manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | f5-bigip-k8s-manifest chart version. |
+| `bnk.far_auth_file` | string | `f5-far-auth-key.tgz` | Object KEY the FAR auth tarball is read from in the COS bucket → `far_auth_file`. |
+| `bnk.subscription_jwt_file` | string | `subscription.jwt` | Object KEY the subscription JWT is read from in the COS bucket → `subscription_jwt_file`. |
+| `bnk.far_auth_local_file` | string | (empty) | Read the FAR auth tarball from this **local path** instead of COS. When set together with `subscription_jwt_local_file`, renders `use_cos_bucket = false` + injects the content directly (no bucket). Mutually required with the JWT local file. See [Local files instead of COS](./25-cos-supply-chain.md#local-files-instead-of-cos-no-bucket-needed). |
+| `bnk.subscription_jwt_local_file` | string | (empty) | Read the subscription JWT from this **local path** instead of COS (pairs with `far_auth_local_file`; both or neither). |
 | `bnk.cr_mode` | string | (empty ⇒ `kubectl`) | `kubectl` \| `legacy_curl` → `bnk_cr_mode`. See the `bnk:` block above. |
 | `bnk.flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace → `flo_namespace`. |
 | `bnk.flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace → `flo_utils_namespace`. |

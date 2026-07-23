@@ -71,8 +71,20 @@ var applyCmd = &cobra.Command{
 var downCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Destroy everything in the workspace — terraform destroy",
-	Args:  cobra.NoArgs,
-	RunE:  runDown,
+	Long: `Tears down the workspace's phases in reverse-dependency order: BNK and
+Testing in parallel, then the cluster. Two behaviours worth knowing:
+
+  - If the cluster was attached to an EXISTING (shared) Transit Gateway, down
+    auto-detaches that connection first — removing only this cluster's connection;
+    the shared gateway and every other cluster's connection are left intact.
+  - If this workspace CREATED a VPC that another cluster's subnets still live in
+    (the shared-VPC topology), down refuses: the VPC owner must be torn down LAST,
+    so tear the workspaces sharing the VPC down first.
+
+The Gateway and FLP phases are separate and optional; if present, tear them down
+first (down reports which command to run).`,
+	Args: cobra.NoArgs,
+	RunE: runDown,
 }
 
 func init() {

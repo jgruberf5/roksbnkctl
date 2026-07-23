@@ -30,6 +30,12 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 **Fix**: install terraform via your package manager (`brew install terraform`, `apt-get install terraform`, etc.) and re-source the shell, or set the `TERRAFORM_BIN` env var pointing at the binary explicitly.
 
+### Symptom (Windows): `roksbnkctl install` succeeds but `roksbnkctl version` says the command is not recognized
+
+**Root cause**: before v1.26.1 the Windows installer copied the binary into `~/.local/bin` — a Unix convention that is never on the Windows `%PATH%` — so the copy succeeded but `roksbnkctl` didn't resolve, and the follow-up hint was Unix `export PATH` / `.bashrc` advice.
+
+**Fix**: upgrade to v1.26.1+. `roksbnkctl install` (and the `install.ps1` one-liner) now install into a directory already on `%PATH%` — preferring `%LOCALAPPDATA%\Microsoft\WindowsApps` (on the per-user PATH by default, no admin) — so the binary resolves immediately in the same session. Remove a stray pre-v1.26.1 copy with `Remove-Item "$env:USERPROFILE\.local\bin\roksbnkctl.exe"`. If a run ever lands in a non-PATH directory, it prints the PowerShell one-liner (`[Environment]::SetEnvironmentVariable('Path', ...,'User')`) to add it.
+
 ## `roksbnkctl up` lifecycle
 
 ### Symptom: `terraform apply` errors `timeout while waiting for state to become 'normal'`
@@ -262,6 +268,32 @@ roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 ```
 
 Don't forget to abort any pending multipart uploads first — they don't appear in the standard object list but they do prevent bucket deletion. The workaround for now is `ibmcloud cos list-multipart-uploads` followed by `ibmcloud cos abort-multipart-upload` until v1.x lands a native command.
+
+## Shared VPC, Transit Gateway, and quotas
+
+### Symptom: `roksbnkctl up` fails at apply with a VPC or Transit Gateway quota error (`Quota: 20`, or `cannot add more than 10 gateways`)
+
+**Root cause**: IBM Cloud caps VPCs at **20 per region** and Transit Gateways at **10 per account** (defaults). A full region/account fails the create — often ~40 minutes into a cluster build.
+
+**Fix**: run `roksbnkctl doctor` first — the `ibm cloud quota` check reports VPCs-in-region and account-wide Transit Gateways vs the limits and **warns** when you're at the wall. The `init` interview shows the same count at the create-VPC / create-TGW prompts; answer **no** and **adopt an existing** VPC/gateway (the picker lists them), or request a quota increase from IBM. See [Reusing an existing VPC](./08-cluster-phase.md#reusing-an-existing-vpc-multiple-clusters-in-one-vpc) and [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md).
+
+### Symptom: `down` fails with `The VPC is in use and cannot be deleted. Subnets [...]`
+
+**Root cause**: this workspace **created** the VPC, and another workspace that **adopted** it still has a cluster (its subnets) inside. The VPC owner must be torn down **last** — deleting it first can't remove a non-empty VPC, and also deletes the shared per-zone public gateways the other cluster still depends on.
+
+**Fix (v1.26.1+)**: `down` refuses this up front, naming the foreign subnets. Tear down the workspace(s) sharing the VPC first, then re-run `down` on the owner. See the teardown-order note in [Reusing an existing VPC](./08-cluster-phase.md#reusing-an-existing-vpc-multiple-clusters-in-one-vpc).
+
+### Symptom: `down` fails with `UnsetSubnetPublicGateway ... the specified subnet has no public gateway`
+
+**Root cause**: an **adopter** cluster's teardown tried to detach its subnets from a shared public gateway that the VPC-owning cluster had **already deleted** (the owner was torn down first — see above).
+
+**Fix**: v1.26.1+ clusters can't hit this — subnets attach their gateway inline, so deleting the subnet detaches implicitly. For an older cluster stuck mid-teardown, drop the dead attachment from state and retry: `cd ~/.roksbnkctl/<ws>/state-cluster && terraform state rm 'module.roks_cluster.module.cluster.ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone1[0]'` (repeat for zone2/zone3), then `roksbnkctl -w <ws> cluster down`.
+
+### Symptom: `roksbnkctl bnk up` hangs on licensing / the License CR never reaches `Active`
+
+**Root cause**: BNK licensing completes only when the License CR reports `status.state: Active` (or the `LicenseActive` condition), which roksbnkctl polls for deterministically (~15-minute bound). A hang usually means the FAR supply chain is wrong — a missing/expired JWT, or the JWT uploaded under the wrong object key — or, in `f5licenseproxy` mode, the F5 License Proxy isn't reachable.
+
+**Fix**: confirm the JWT is present under the **exact** object key `subscription.jwt` (`roksbnkctl cos object list <bucket> --instance bnk-supply-chain`) and not expired; for FLP mode check `roksbnkctl flp status` before `bnk up`. See [Licensing BNK with the FLP](./10c-flp-licensing.md).
 
 ## Networking
 

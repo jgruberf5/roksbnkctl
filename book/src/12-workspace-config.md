@@ -310,7 +310,7 @@ cos:
 | Field | Type | Notes |
 |---|---|---|
 | `instance` | string | COS instance name holding the FAR auth key + JWT. Empty ⇒ `bnk-supply-chain`. Sets `ibmcloud_cos_instance_name`. |
-| `bucket` | string | COS bucket name within that instance. Empty ⇒ `bnk-artifacts`. Sets `ibmcloud_resources_cos_bucket`. |
+| `bucket` | string | COS bucket name within that instance. Empty ⇒ an **account-scoped** `bnk-artifacts-<first-12-of-account-id>` (COS bucket names are globally unique, so the account suffix keeps it collision-free; `init` provisions it, and a second workspace from the same account discovers and reuses it). Sets `ibmcloud_resources_cos_bucket`. |
 | `region` | string | Region the bucket lives in. Empty ⇒ `us-south`. Sets `ibmcloud_cos_bucket_region`. |
 | `upload` | []{source, key} | Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline. |
 

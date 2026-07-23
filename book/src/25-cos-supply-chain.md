@@ -20,7 +20,7 @@ The BNK supply chain reads from one COS bucket per cluster's BNK install. The bu
 | `schematic-<v>.json` | The deployer's schematic JSON for the deployed BNK version | informational, not directly mounted into the cluster |
 | (optional) FAR image tarballs | Pre-pulled FAR images for air-gapped installs | `flo` when running in disconnected mode |
 
-The bucket structure is defined by the upstream HCL — concretely by the `ibmcloud_resources_cos_bucket` variable, which defaults to `bnk-artifacts`. The instance defaults to `bnk-supply-chain`.
+The bucket structure is defined by the upstream HCL — concretely by the `ibmcloud_resources_cos_bucket` variable. When you leave `cos.bucket` unset, `init` provisions (or discovers and reuses) an **account-scoped** bucket named `bnk-artifacts-<first-12-of-account-id>`: COS bucket names share one global namespace (like S3), so the account suffix keeps the name unique and lets a second workspace run from the same account find the bucket the first one created — no duplicate, no re-upload. The instance defaults to `bnk-supply-chain`. (The bare `bnk-artifacts` used in the manual `cos` examples below is just an illustrative name; supply your own.)
 
 ## Local files instead of COS (no bucket needed)
 

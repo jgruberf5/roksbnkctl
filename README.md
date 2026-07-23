@@ -6,7 +6,7 @@ A single-binary CLI for deploying F5 BIG-IP Next for Kubernetes (BNK) onto IBM C
 
 > **Status:** v1.0 — first stable release.
 
-The book at <https://jgruberf5.github.io/roksbnkctl/book/> is the canonical user documentation: 32 chapters covering concepts, lifecycle, day-2 operations, execution backends, the GSLB-aware DNS probe, and full reference material. This README is a quickstart pointer — read the book for everything else.
+The book at <https://jgruberf5.github.io/roksbnkctl/book/> is the canonical user documentation, covering concepts, lifecycle, day-2 operations, execution backends, the GSLB-aware DNS probe, and full reference material. This README is a quickstart pointer — read the book for everything else.
 
 ## Quick start
 
@@ -36,10 +36,11 @@ That's the 4-command lifecycle (`init` → `up` → `test` → `down`). See [Cha
 
 | Option | How |
 |---|---|
+| **One-liner (recommended)** | Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.sh \| sh` · Windows (PowerShell): `irm https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.ps1 \| iex`. Downloads the release for your OS/arch, verifies its checksum, and installs it onto `PATH`. |
 | **`go install`** | `go install github.com/jgruberf5/roksbnkctl/cmd/roksbnkctl@latest` (Go 1.26+) |
 | **Pre-built binary** | Linux/macOS/Windows × amd64/arm64 archives + SHA256 checksums on every tagged release at <https://github.com/jgruberf5/roksbnkctl/releases>. Verify with `sha256sum -c checksums.txt`. |
 | **From source** | `git clone https://github.com/jgruberf5/roksbnkctl && cd roksbnkctl && make build` (output at `bin/roksbnkctl`; see [Chapter 31 — Building from source](https://jgruberf5.github.io/roksbnkctl/book/31-building-from-source.html)). |
-| **In-place upgrade** | `roksbnkctl self update` pulls the latest GitHub release, verifies the SHA256 against `checksums.txt`, and atomic-replaces the running binary. Linux/macOS only. |
+| **In-place upgrade** | `roksbnkctl upgrade` lists the releases newer than your binary and lets you pick one (or `--yes` for the latest), verifies the SHA256 against `checksums.txt`, and replaces the running binary. Works on Linux, macOS, and Windows. |
 
 A Homebrew tap is on the v1.x roadmap.
 

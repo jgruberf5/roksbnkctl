@@ -720,6 +720,19 @@ Destroy everything in the workspace — terraform destroy
 roksbnkctl down [flags]
 ```
 
+Tears down the workspace's phases in reverse-dependency order: BNK and
+Testing in parallel, then the cluster. Two behaviours worth knowing:
+
+  - If the cluster was attached to an EXISTING (shared) Transit Gateway, down
+    auto-detaches that connection first — removing only this cluster's connection;
+    the shared gateway and every other cluster's connection are left intact.
+  - If this workspace CREATED a VPC that another cluster's subnets still live in
+    (the shared-VPC topology), down refuses: the VPC owner must be torn down LAST,
+    so tear the workspaces sharing the VPC down first.
+
+The Gateway and FLP phases are separate and optional; if present, tear them down
+first (down reports which command to run).
+
 **Flags**
 
 | Flag | Type | Default | Description |
@@ -1022,10 +1035,16 @@ Install the roksbnkctl binary you're currently running into a directory
 on $PATH so you can invoke it as `roksbnkctl` from any working
 directory.
 
-Default destination, in order of preference:
-  $HOME/.local/bin  (preferred — typically writable without sudo)
-  $HOME/bin         (older convention; still on PATH for some setups)
-  /usr/local/bin    (system-wide; usually needs sudo)
+Default destination:
+  Linux/macOS, in order of preference:
+    $HOME/.local/bin  (preferred — typically writable without sudo)
+    $HOME/bin         (older convention; still on PATH for some setups)
+    /usr/local/bin    (system-wide; usually needs sudo)
+  Windows:
+    a writable directory already on %PATH% — preferring
+    %LOCALAPPDATA%\Microsoft\WindowsApps (on the per-user PATH by default,
+    no admin) — so the binary resolves immediately. Falls back to
+    %LOCALAPPDATA%\Programs\roksbnkctl (with a PATH hint) if none is usable.
 
 Override the destination with --dir.
 
@@ -1045,7 +1064,7 @@ pulls the latest GitHub release tarball over the network.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--dir` | `string` | — | destination directory (default: ~/.local/bin or /usr/local/bin) |
+| `--dir` | `string` | — | destination directory (default: a PATH dir — ~/.local/bin on Unix, %LOCALAPPDATA%\Microsoft\WindowsApps on Windows) |
 | `--force` | `bool` | `false` | overwrite even if destination resolves to the running binary |
 
 ## `roksbnkctl journal`
@@ -2353,6 +2372,35 @@ Exits 0 ("nothing to do") when there's no connection.
 Show the Transit Gateway id/name and the live connection state
 
 ← back to [`roksbnkctl tgw`](#roksbnkctl-tgw)
+
+## `roksbnkctl uninstall`
+
+Remove the installed roksbnkctl binary from ~/.local/bin (opposite of install)
+
+```
+roksbnkctl uninstall [flags]
+```
+
+Delete the roksbnkctl binary that `roksbnkctl install` copied onto $PATH.
+
+By default it removes `<install-dir>`/roksbnkctl, where `<install-dir>` is the same
+directory `install` uses (~/.local/bin, then ~/bin). Override with --dir.
+
+It refuses to delete the binary you are currently running on Windows (a running
+.exe cannot be removed there) — delete it manually or run uninstall from a
+different binary. On Linux/macOS removing the running (installed) binary is fine.
+
+Examples:
+  roksbnkctl uninstall                 # remove ~/.local/bin/roksbnkctl
+  roksbnkctl uninstall --dir ~/bin
+  sudo roksbnkctl uninstall --dir /usr/local/bin
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | `string` | — | directory to remove roksbnkctl from (default: ~/.local/bin or ~/bin) |
+| `--yes` / `-y` | `bool` | `false` | skip the confirmation prompt |
 
 ## `roksbnkctl up`
 

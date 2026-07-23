@@ -1,18 +1,21 @@
 # Native Windows support via a Go `tfx` helper (removing the shell/python runtime)
 
-**Status:** proposed
+**Status:** in progress — the `tfx` command foundation has landed (the hidden group
+plus the `wait` and `delete` verbs, `internal/cli/tfx*.go`); the remaining verbs and
+the module conversions are pending. See **Sequencing**.
 **Goal:** `roksbnkctl` runs a full deployment on a stock Windows machine with only
 `terraform` and `helm` on `PATH` — **no WSL, no Git-Bash, no curl/grep/python**.
 
 ## Problem
 
-The Terraform modules were authored as standalone **IBM Schematics** workspaces
-(the modules' original delivery vehicle; each still ships a `schematics_runner.py`
-and a "Deploying with Schematics" README). Schematics executes Terraform
-server-side in a Linux shell, so the modules lean on `local-exec` blocks that call
-`bash`/`curl`/`grep`/`tr`/`base64` and, historically, `python3`. On native Windows
-Terraform runs `local-exec` through `cmd.exe`, which cannot execute that toolchain,
-so today Windows requires WSL.
+The Terraform modules were originally authored as standalone **IBM Schematics**
+workspaces. Schematics executes Terraform server-side in a Linux shell, so the
+modules lean on `local-exec` blocks that call `bash`/`curl`/`grep`/`tr`/`base64`.
+On native Windows Terraform runs `local-exec` through `cmd.exe`, which cannot
+execute that toolchain, so today Windows requires WSL. (The `python3` dependency
+and the Schematics tooling itself are already **gone** — see "Removing Schematics"
+below — so the remaining barrier is purely the `bash`/`curl`/`grep` shell surface,
+~64 `local-exec` blocks.)
 
 Inventory of the host-runtime shell surface (embedded cloud-init / `flp-pod-up.sh`
 run **on the VSI**, not the host, and are out of scope):
@@ -114,17 +117,17 @@ precise 5m slice. That is harmless — an idempotent delete-if-present, a few hu
 no-op API calls over the apply — and it removes one `null_resource` + one `bash`
 interpreter. This makes the single hardest piece the easiest one.
 
-## Removing Schematics (dead weight)
+## Removing Schematics (dead weight) — DONE (v1.24.0)
 
-roksbnkctl is now the sole driver (no Go or `.tf` reference to Schematics). Remove:
+This is already complete and is recorded here for history. roksbnkctl is the sole
+driver (no Go or `.tf` reference to Schematics). Removed in v1.24.0:
 
-- `terraform/modules/*/schematics_runner.py` (5 files, ~5,000 lines).
+- `terraform/modules/*/schematics_runner.py` (5 files, ~5,300 lines).
 - The "Deploying with IBM Schematics" sections + `ibmcloud_schematics_*` naming in
   the module READMEs.
-- Any book/docs references to the Schematics deployment path (book ch. 09, 25 mention
-  it — reword to the roksbnkctl flow).
 
-This also deletes the last `python3` references in the tree.
+This also deleted the last live `python3` references in the tree — the only
+`python3` mentions that remain are prose comments asserting its *absence*.
 
 ## Sequencing
 
