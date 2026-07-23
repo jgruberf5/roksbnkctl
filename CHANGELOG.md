@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.26.1 — 2026-07-23
+
+### Fixed
+
+- **Windows `install` now lands on a directory that is actually on `%PATH%`.** `roksbnkctl install` (and the `install.ps1` one-liner) defaulted to the Unix `~/.local/bin`, which is never on the Windows PATH — so the copy succeeded but `roksbnkctl` didn't resolve, and the follow-up hint was Unix `export PATH` / `.bashrc` advice. On Windows it now installs into a writable directory already on `%PATH%` — preferring `%LOCALAPPDATA%\Microsoft\WindowsApps` (on the per-user PATH by default, no admin), so the binary resolves immediately in the same session — and the PATH hint (for the rare fallback dir) is now the PowerShell `SetEnvironmentVariable(...,'User')` one-liner. `isOnPATH` is also case-insensitive on Windows.
+
+- **Windows `uninstall` no longer refuses when removing the running binary.** Windows can't delete a running `.exe`, so `uninstall` used to error and tell you to delete it by hand. It now moves the running binary aside to `<name>.old` (renaming a running exe *is* allowed on Windows), freeing its install path; the `.old` remnant unlocks once the process exits. Unix behaviour (unlink the running file) is unchanged.
+
+- **Shared-VPC teardown is safe now (guardrail + tolerant detach).** When multiple clusters share one VPC (the `resources.cluster_vpc` adopt-existing feature), the cluster that **created** the VPC owns its per-zone public gateways and must be destroyed **last**. Two fixes make that correct:
+  - **Guardrail:** `cluster down` / `down` now refuses to destroy a workspace that created the VPC while the VPC still holds **another cluster's subnets**, naming them and telling you to tear the sharers down first — instead of failing mid-destroy with `The VPC is in use` after already deleting the shared gateways. (A correctness check; `--auto` does not bypass it. Best-effort — a discovery-API hiccup warns and proceeds.)
+  - **Tolerant detach:** cluster subnets now carry their public gateway **inline** (`ibm_is_subnet.public_gateway`) instead of via a separate `ibm_is_subnet_public_gateway_attachment`. Deleting the subnet removes the association implicitly, so an adopter's destroy no longer fails with `UnsetSubnetPublicGateway ... the specified subnet has no public gateway` when the owner's gateway was already gone.
+
 ## v1.26.0 — 2026-07-23
 
 ### Added

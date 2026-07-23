@@ -487,6 +487,14 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 		return errors.New("nothing to destroy in this workspace")
 	}
 
+	// Shared-VPC guard: if this workspace OWNS the cluster VPC and other clusters'
+	// subnets still live in it, refuse — the owner must be destroyed LAST, else the
+	// VPC delete fails and the shared public gateways are pulled out from under the
+	// adopters. Correctness check, not a prompt, so --auto does not bypass it.
+	if err := guardSharedVPCTeardown(ctx, cctx0.Workspace, cctx0.WorkspaceName); err != nil {
+		return err
+	}
+
 	cctx, tfws, varFiles, err := openClusterTF(ctx)
 	if err != nil {
 		return err

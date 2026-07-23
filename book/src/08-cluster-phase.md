@@ -130,6 +130,15 @@ Combine this with an [adopted Transit Gateway](./09a-transit-gateway-sharing.md)
 clusters that share a VPC share that VPC's single connection to the gateway, so N
 clusters can reach each other over one VPC and one gateway.
 
+> **Teardown order matters in a shared VPC.** The cluster that *created* the VPC
+> owns its per-zone public gateways (IBM allows only one gateway per zone per VPC,
+> so the adopters attach to the owner's). The owner must be destroyed **last** —
+> tear the adopters down first. `roksbnkctl` enforces this: `cluster down` / `down`
+> **refuses** to destroy a workspace whose VPC still holds another cluster's
+> subnets, naming them, rather than failing mid-destroy with `The VPC is in use`.
+> (Since `v1.26.1`; subnets also attach their gateway inline now, so an adopter's
+> teardown no longer errors even if the owner's gateway is already gone.)
+
 ## `cluster-outputs.json` — the cluster identity record
 
 When `roksbnkctl cluster up` apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:

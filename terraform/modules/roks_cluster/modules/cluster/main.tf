@@ -125,6 +125,12 @@ resource "ibm_is_subnet" "cluster_subnet_zone1" {
   zone                     = local.zones[0]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  # Attach the zone's public gateway INLINE (not via a separate
+  # ibm_is_subnet_public_gateway_attachment). Deleting the subnet then removes the
+  # association implicitly — no UnsetSubnetPublicGateway call that fails with "the
+  # specified subnet has no public gateway" when a SHARED gateway was already
+  # deleted by the VPC-owning cluster. See local.pgw_zone1 (reused or created).
+  public_gateway = local.pgw_zone1
 
   timeouts {
     create = "30m"
@@ -139,6 +145,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone2" {
   zone                     = local.zones[1]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  public_gateway           = local.pgw_zone2
 
   timeouts {
     create = "30m"
@@ -153,6 +160,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
   zone                     = local.zones[2]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  public_gateway           = local.pgw_zone3
 
   timeouts {
     create = "30m"
@@ -239,24 +247,12 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
   }
 }
 
-# Attach the cluster subnets to their zone's gateway (reused or freshly created).
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone1" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone1[0].id
-  public_gateway = local.pgw_zone1
-}
-
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone2" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone2[0].id
-  public_gateway = local.pgw_zone2
-}
-
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone3" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone3[0].id
-  public_gateway = local.pgw_zone3
-}
+# NOTE: subnet↔gateway attachment is now INLINE on each ibm_is_subnet
+# (public_gateway = local.pgw_zoneN) rather than a separate
+# ibm_is_subnet_public_gateway_attachment. This makes teardown tolerant in the
+# shared-VPC topology: deleting the subnet removes the association implicitly, so a
+# gateway already deleted by the VPC-owning cluster no longer breaks the adopter's
+# destroy with "the specified subnet has no public gateway".
 
 # Allow TCP port 80 from any source (using cluster security group)
 resource "ibm_is_security_group_rule" "cluster_tcp_80" {
@@ -337,13 +333,12 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
     delete = "90m"
   }
 
+  # The subnets carry their public gateway inline, so depending on the subnets is
+  # enough to guarantee egress is wired before the cluster comes up.
   depends_on = [
     ibm_is_subnet.cluster_subnet_zone1,
     ibm_is_subnet.cluster_subnet_zone2,
-    ibm_is_subnet.cluster_subnet_zone3,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone1,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone2,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone3
+    ibm_is_subnet.cluster_subnet_zone3
   ]
 }
 

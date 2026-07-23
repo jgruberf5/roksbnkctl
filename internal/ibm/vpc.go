@@ -45,3 +45,39 @@ func (c *Client) ListVPCs(ctx context.Context, region string) ([]VPC, error) {
 	}
 	return out, nil
 }
+
+// Subnet is a subnet with its parent VPC id — enough for the shared-VPC teardown
+// guard to tell whose subnets are still in a VPC.
+type Subnet struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	VPC  struct {
+		ID string `json:"id"`
+	} `json:"vpc"`
+}
+
+// ListSubnets returns every subnet in a region (paginated). The caller filters by
+// VPC id; the region-wide list is one call plus pagination, cheaper than N
+// per-VPC calls when only one VPC matters.
+func (c *Client) ListSubnets(ctx context.Context, region string) ([]Subnet, error) {
+	url := fmt.Sprintf("%s/v1/subnets?version=%s&generation=2&limit=100", vpcHost(region), vpcAPIVersion)
+	var out []Subnet
+	for url != "" {
+		body, err := c.authedGET(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Subnets []Subnet `json:"subnets"`
+			Next    struct {
+				Href string `json:"href"`
+			} `json:"next"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("parsing subnets: %w", err)
+		}
+		out = append(out, page.Subnets...)
+		url = page.Next.Href
+	}
+	return out, nil
+}
