@@ -156,3 +156,9 @@ variable "kubeconfig_dir" {
   type        = string
   default     = "/work/.bnk/scratch/kubeconfig/license"
 }
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the license phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}

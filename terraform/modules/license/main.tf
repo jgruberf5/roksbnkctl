@@ -72,4 +72,5 @@ module "license" {
   kube_host              = data.ibm_container_cluster_config.runtime_config.host
   kube_token             = data.ibm_container_cluster_config.runtime_config.token
   cneinstance_dependency = var.cneinstance_dependency_id
+  roksbnkctl_binary      = var.roksbnkctl_binary
 }

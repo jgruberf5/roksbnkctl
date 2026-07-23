@@ -65,6 +65,9 @@ locals {
   # rolls when the CA actually changes (idempotent across re-applies).
   cwc_deployment = "f5-spk-cwc"
   flp_ca_hash    = local.write_flp_ca ? substr(sha256(var.license_server_root_ca), 0, 16) : ""
+
+  # roksbnkctl binary for the tfx-based local-exec conversions (empty => on PATH).
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
 }
 
 resource "kubectl_manifest" "licenseserver_rootca" {
@@ -111,29 +114,27 @@ resource "null_resource" "cwc_flp_rollout" {
     namespace = var.utils_namespace
   }
 
+  # Rolling-restart the CWC so it picks up the new FLP CA: stamp a CA-hash
+  # annotation onto its pod template. The CNEInstance may still be creating the
+  # Deployment, so wait for it to EXIST first, then strategic-merge the annotation.
+  # Two ordered provisioners (no shell chaining); no interpreter → cmd.exe on Windows.
+
+  # 1. Wait for the CWC Deployment to appear (replaces the 404-retry loop).
   provisioner "local-exec" {
-    command = <<-EOT
-      # Patch the CWC pod template with the CA hash annotation → rolling restart.
-      # Retry: the CNEInstance may still be creating the Deployment.
-      patch='{"spec":{"template":{"metadata":{"annotations":{"roksbnkctl/flp-ca-hash":"${local.flp_ca_hash}"}}}}}'
-      url="${var.kube_host}/apis/apps/v1/namespaces/${var.utils_namespace}/deployments/${local.cwc_deployment}"
-      status=000
-      for i in $(seq 1 30); do
-        status=$(curl -sk -o /dev/null -w "%%{http_code}" -X PATCH \
-          -H "Authorization: Bearer ${var.kube_token}" \
-          -H "Content-Type: application/strategic-merge-patch+json" \
-          "$url" -d "$patch")
-        case "$status" in
-          2??) echo "CWC rollout triggered for new FLP CA (HTTP $status)"; break;;
-          404) echo "Waiting for CWC deployment (attempt $i/30, status=404)..."; sleep 10;;
-          *)   echo "CWC patch attempt $i/30 returned HTTP $status, retrying in 10s..." >&2; sleep 10;;
-        esac
-      done
-      case "$status" in
-        2??) : ;;
-        *)   echo "ERROR: CWC rollout patch failed after 30 attempts (last HTTP $status)" >&2; exit 1;;
-      esac
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --for jsonpath=metadata.name=${local.cwc_deployment} --timeout 5m"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
+  }
+
+  # 2. Strategic-merge the CA-hash annotation → rolling restart. The patch is passed
+  # base64-encoded (--patch-b64): no shell metacharacters, so it survives cmd.exe as
+  # well as sh (local-exec can't pipe stdin).
+  provisioner "local-exec" {
+    command = "\"${local.roksbnkctl_bin}\" tfx patch --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --type strategic --patch-b64 ${base64encode("{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"roksbnkctl/flp-ca-hash\":\"${local.flp_ca_hash}\"}}}}}")}"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
   }
 
   depends_on = [kubectl_manifest.licenseserver_rootca]
@@ -326,22 +327,14 @@ resource "null_resource" "license_active" {
     license = kubectl_manifest.bnk_license[0].id
   }
 
+  # tfx wait (watch-first, event-driven) replaces the curl+grep+tr poll: block until
+  # the License CR reports status.state=Active (BNK 2.3's terminal value). No
+  # interpreter → cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
   provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.utils_namespace}/licenses/bnk-license"
-      for i in $(seq 1 90); do
-        body=$(curl -sk -H "Authorization: Bearer ${var.kube_token}" "$url" 2>/dev/null | tr -d '[:space:]')
-        if printf '%s' "$body" | grep -q '"state":"Active"' \
-           || printf '%s' "$body" | tr '{}' '\n' | grep '"type":"LicenseActive"' | grep -q '"status":"True"'; then
-          echo "License Active (attempt $i)"; exit 0
-        fi
-        echo "Waiting for License to become Active (attempt $i/90)..."
-        sleep 10
-      done
-      echo "ERROR: License did not reach Active after ~15m" >&2
-      exit 1
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5net.com/v1/licenses --ns ${var.utils_namespace} --name bnk-license --for jsonpath=status.state=Active --timeout 15m"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
   }
 
   depends_on = [kubectl_manifest.bnk_license]

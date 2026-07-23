@@ -119,3 +119,9 @@ variable "kube_token" {
   sensitive   = true
   default     = ""
 }
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the license phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}

@@ -70,3 +70,17 @@ func TestRunTFXPatch_MissingErrors(t *testing.T) {
 		t.Fatalf("patching a missing object should error, got %v", err)
 	}
 }
+
+func TestReadPatchBody_B64(t *testing.T) {
+	flagPatchStdin, flagPatchFile, flagPatchInline = false, "", ""
+	flagPatchB64 = "eyJ4IjoxfQ==" // {"x":1}
+	b, err := readPatchBody(nil)
+	if err != nil || string(b) != `{"x":1}` {
+		t.Fatalf("b64 body = %q,%v want {\"x\":1}", b, err)
+	}
+	flagPatchB64 = "not-valid-base64!!"
+	if _, err := readPatchBody(nil); err == nil {
+		t.Error("invalid base64 should error")
+	}
+	flagPatchB64 = ""
+}

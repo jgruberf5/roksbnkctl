@@ -210,6 +210,7 @@ module "license" {
   deploy_bnk                    = var.deploy_bnk
   bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/license"
+  roksbnkctl_binary             = var.roksbnkctl_binary
 }
 
 

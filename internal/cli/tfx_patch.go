@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ var (
 	flagPatchType        string
 	flagPatchInline      string
 	flagPatchFile        string
+	flagPatchB64         string
 	flagPatchStdin       bool
 	flagPatchSubresource string
 	flagPatchFieldMgr    string
@@ -54,9 +56,10 @@ func init() {
 	f.StringVar(&flagPatchNS, "ns", "", "namespace (empty = cluster-scoped)")
 	f.StringVar(&flagPatchName, "name", "", "resource name (required)")
 	f.StringVar(&flagPatchType, "type", "strategic", "patch type: strategic|merge|json|apply")
-	f.StringVar(&flagPatchInline, "patch", "", "patch body inline (or use --patch-stdin / --patch-file)")
+	f.StringVar(&flagPatchInline, "patch", "", "patch body inline (or use --patch-stdin / --patch-file / --patch-b64)")
 	f.BoolVar(&flagPatchStdin, "patch-stdin", false, "read the patch body from stdin")
 	f.StringVar(&flagPatchFile, "patch-file", "", "read the patch body from a file")
+	f.StringVar(&flagPatchB64, "patch-b64", "", "base64-encoded patch body (cmd.exe-safe for terraform local-exec: no shell metacharacters)")
 	f.StringVar(&flagPatchSubresource, "subresource", "", "subresource to patch (e.g. status)")
 	f.StringVar(&flagPatchFieldMgr, "field-manager", "roksbnkctl", "field manager (used by --type apply)")
 	f.BoolVar(&flagPatchForce, "force", false, "force ownership on conflict (--type apply)")
@@ -123,16 +126,22 @@ func parsePatchType(s string) (types.PatchType, error) {
 	}
 }
 
-// readPatchBody resolves the patch bytes from exactly one of stdin/file/inline.
+// readPatchBody resolves the patch bytes from exactly one of stdin/file/inline/b64.
 func readPatchBody(stdin io.Reader) ([]byte, error) {
 	switch {
 	case flagPatchStdin:
 		return io.ReadAll(stdin)
 	case flagPatchFile != "":
 		return os.ReadFile(flagPatchFile)
+	case flagPatchB64 != "":
+		b, err := base64.StdEncoding.DecodeString(flagPatchB64)
+		if err != nil {
+			return nil, fmt.Errorf("decoding --patch-b64: %w", err)
+		}
+		return b, nil
 	case flagPatchInline != "":
 		return []byte(flagPatchInline), nil
 	default:
-		return nil, fmt.Errorf("no patch body: pass --patch, --patch-stdin, or --patch-file")
+		return nil, fmt.Errorf("no patch body: pass --patch, --patch-stdin, --patch-file, or --patch-b64")
 	}
 }
