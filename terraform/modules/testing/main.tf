@@ -567,8 +567,8 @@ resource "ibm_is_floating_ip" "cluster_jumphost_fip" {
 # making the provisioner idempotent on re-apply.
 #
 # NOTE: requires network access from the Terraform runner to
-# each floating IP on port 22. For IBM Schematics, run
-# terraform apply locally or use a VPN-connected runner.
+# each floating IP on port 22. Run terraform apply from a host with
+# that reachability (e.g. locally, or a VPN-connected runner).
 # ============================================================
 
 resource "null_resource" "cluster_jumphost_hosts" {

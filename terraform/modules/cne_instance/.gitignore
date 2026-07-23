@@ -14,9 +14,6 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Schematics lifecycle test artifacts
-workspace.json
-test-reports/
 
 # Python
 __pycache__/

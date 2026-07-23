@@ -445,8 +445,8 @@ data "ibm_container_cluster_config" "cluster_config" {
 # ============================================================
 # Removes the OpenShift ingress operator's validating admission policy
 # binding that can block Gateway API CRD operations.
-# Uses curl against the Kubernetes API for Schematics compatibility
-# (kubectl is not available in Schematics runtime).
+# Uses curl against the Kubernetes API so no kubectl/oc CLI is required on the
+# terraform runner (they aren't always on PATH — e.g. the tools-runner container).
 
 resource "null_resource" "delete_gatewayapi_admission_policy" {
   count = var.create_cluster ? 1 : 0

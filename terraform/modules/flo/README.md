@@ -2,112 +2,7 @@
 
 ## About This Workspace
 
-This Schematics-ready Terraform workspace deploys F5 Lifecycle Operator onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs all BNK components in the correct dependency order.
-
-## Deploying with IBM Schematics
-
-### Required IBM Provider and IAM Variables
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `ibmcloud_api_key` | API Key used to authorize all deployment resources | REQUIRED | `0q7N3CzUn6oKxEsr7fLc1mxkukBeAEcsjNRQOg1kdDSY` (note: not a real API key) |
-| `ibmcloud_cluster_region` | IBM Cloud region where the target cluster resides | REQUIRED with default defined | `ca-tor` (default) |
-| `ibmcloud_resource_group` | IBM Cloud resource group name (leave empty to use account default) | Optional | `default` |
-
-### Target Cluster Variables
-
-This workspace deploys BNK onto an existing cluster. Cluster VPC information is discovered automatically from the cluster data source.
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `roks_cluster_name_or_id` | Name or ID of the existing OpenShift ROKS cluster | REQUIRED | `my-openshift-cluster` |
-
-Get your existing cluster name or ID:
-```bash
-ibmcloud ks clusters --provider vpc-gen2
-```
-
-### Deployment Variables for BIG-IP Next for Kubernetes
-
-Deploying BIG-IP Next for Kubernetes requires access to the F5 Artifact Repository (FAR software download) and a license JWT token (subscription license).
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `far_repo_url` | FAR Repository URL for Docker and Helm registry | REQUIRED with default defined | repo.f5.com (default) |
-| `f5_bigip_k8s_manifest_version` | Version of f5-bigip-k8s-manifest chart to install | REQUIRED with default defined | 2.3.0-3.2598.3-0.0.170 (default) |
-| `license_mode` | License operation mode (connected or disconnected) | REQUIRED with default defined | connected (default) |
-
-#### IBM COS for F5 Artifact Repository and License JWT Token
-
-The FAR container pull credentials and JWT license token are fetched from an IBM Cloud Object Storage (COS) instance. Download these items from myf5.com and place them in a COS bucket before deploying.
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `ibmcloud_cos_bucket_region` | IBM Cloud region where the COS bucket is located | REQUIRED with default defined | us-south (default) |
-| `ibmcloud_cos_instance_name` | IBM Cloud COS instance name | REQUIRED with default defined | bnk-supply-chain (default) |
-| `ibmcloud_resources_cos_bucket` | IBM Cloud COS bucket for file resources | REQUIRED with default defined | bnk-artifacts (default) |
-| `f5_cne_far_auth_file` | FAR auth key filename in COS bucket (.tgz file from myf5.com) | REQUIRED with default defined | f5-far-auth-key.tgz (default) |
-| `f5_cne_subscription_jwt_file` | Subscription JWT filename in COS bucket (.jwt file from myf5.com) | REQUIRED with default defined | subscription.jwt (default) |
-
-As an example using the variable defaults:
-
-1. Create an IBM COS instance named `bnk-supply-chain`
-2. With a bucket named `bnk-artifacts` and then
-3. Upload the FAR pull secret archive file `f5-far-auth-key.tgz` and
-4. Upload the license JWT token file `subscription.jwt`
-
-```
-bnk-orchestrator # IBM COS Instance
-├── bnk-artifacts  # IBM COS Bucket
-│   ├── f5-far-auth-key.tgz   # IBM COS Resource (key)
-│   └── subscription.jwt             # IBM COS Resource (key)
-```
-
-```bash
-# Create the COS instance
-ibmcloud resource service-instance-create bnk-supply-chain cloud-object-storage standard global
-
-# Create the COS bucket (replace RESOURCE_INSTANCE_ID with the CRN from the previous command)
-ibmcloud cos bucket-create \
-  --bucket bnk-artifacts \
-  --ibm-service-instance-id RESOURCE_INSTANCE_ID \
-  --region us-south
-
-# Upload the FAR auth key archive
-ibmcloud cos object-put \
-  --bucket bnk-artifacts \
-  --key f5-far-auth-key.tgz \
-  --body ./f5-far-auth-key.tgz \
-  --region us-south
-
-# Upload the license JWT token
-ibmcloud cos object-put \
-  --bucket bnk-artifacts \
-  --key subscription.jwt \
-  --body ./subscription.jwt \
-  --region us-south
-```
-
-
-#### F5 Lifecycle Operator (FLO) Installer
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `flo_namespace` | Namespace for F5 Lifecycle Operator | Optional | f5-bnk (default) |
-
-#### F5 Control Plane Shared Utilities
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `utils_namespace` | Namespace for F5 utility components | Optional | f5-utils (default) |
-
-#### F5 CIS Controller
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `bigip_username` | BIG-IP username for CIS controller login | Optional | admin (default) |
-| `bigip_password` | BIG-IP password for CIS controller login | Optional | (sensitive) |
-| `bigip_url` | BIG-IP URL for CIS controller login | Optional | https://10.100.100.1 |
+This Terraform workspace deploys F5 Lifecycle Operator onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs all BNK components in the correct dependency order.
 
 ## OCP Security Context Constraints Bindings Detail
 
@@ -120,7 +15,7 @@ BIG-IP Next for Kubernetes required bindings grant `system:openshift:scc:privile
 ## Project Directory Structure
 
 ```
-ibmcloud_schematics_bigip_next_for_kubernetes_2_3_roks_single_nic/
+roks_single_nic/
 ├── main.tf                    # Root module configuration
 ├── variables.tf               # Root module variables
 ├── outputs.tf                 # Root module outputs

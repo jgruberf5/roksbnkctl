@@ -2,7 +2,7 @@
 
 ## About This Workspace
 
-This Schematics-ready Terraform workspace deploys CNEInstance Gateway API Class onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs the CNEInstance component. cert-manager and FLO (F5 Lifecycle Operator) must already be deployed on the cluster before applying this workspace.
+This Terraform workspace deploys CNEInstance Gateway API Class onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs the CNEInstance component. cert-manager and FLO (F5 Lifecycle Operator) must already be deployed on the cluster before applying this workspace.
 
 ### Target Cluster Variables
 
@@ -41,7 +41,7 @@ These variables pass FLO deployment outputs into the CNEInstance configuration.
 ## Project Directory Structure
 
 ```
-ibmcloud_schematics_bigip_next_for_kubernetes_2_3_cneinstance/
+cneinstance/
 ├── main.tf                    # Root module configuration
 ├── variables.tf               # Root module variables
 ├── outputs.tf                 # Root module outputs

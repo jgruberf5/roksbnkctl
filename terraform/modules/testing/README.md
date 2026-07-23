@@ -2,7 +2,7 @@
 
 ## About This Workspace
 
-This Schematics-ready Terraform workspace deploys testing jumphosts for validating BIG-IP Next for Kubernetes deployments in IBM Cloud. Two independent jumphost types can be enabled in any combination:
+This Terraform workspace deploys testing jumphosts for validating BIG-IP Next for Kubernetes deployments in IBM Cloud. Two independent jumphost types can be enabled in any combination:
 
 | Feature Flag | Jumphost Type | Placement |
 |---|---|---|
@@ -54,7 +54,7 @@ After all floating IPs are assigned, Terraform connects to each jumphost via the
 | Cluster jumphost in zone `us-south-2` | `cluster-us-south-2` |
 | TGW jumphost | `tgw-jumphost` |
 
-The block is idempotent — re-applying removes the previous block before writing a fresh one. This requires SSH access from the Terraform runner to each floating IP on port 22. For IBM Schematics, run `terraform apply` locally or through a VPN-connected runner.
+The block is idempotent — re-applying removes the previous block before writing a fresh one. This requires SSH access from the Terraform runner to each floating IP on port 22 — run from a host with that reachability (e.g. locally, or a VPN-connected runner).
 
 ## TGW Jumphost
 
@@ -82,62 +82,10 @@ All cluster jumphosts share a single security group (inbound SSH, all outbound) 
 
 The SSH key must exist in `ibmcloud_cluster_region` for cluster jumphosts and in `testing_client_vpc_region` for the TGW jumphost. If both types are enabled with different regions, the key must be present in both regions under the same name.
 
-## Deploying with IBM Schematics
-
-### IBM Provider and IAM Variables
-
-| Variable | Description | Required | Example |
-|----------|-------------|----------|---------|
-| `ibmcloud_api_key` | API key used to authorize all deployment resources | REQUIRED | `0q7N3CzUn6oKxEsr7fLc1mxkukBeAEcsjNRQOg1kdDSY` (not a real key) |
-| `ibmcloud_cluster_region` | IBM Cloud region where the referenced cluster resides | REQUIRED with default | `ca-tor` (default) |
-| `ibmcloud_resource_group` | IBM Cloud resource group name (leave empty for account default) | Optional | `default` |
-
-### Referenced Cluster
-
-The workspace always looks up the referenced ROKS cluster to derive its VPC and zone topology.
-
-| Variable | Description | Required | Example |
-|----------|-------------|----------|---------|
-| `roks_cluster_name_or_id` | Name or ID of the existing OpenShift ROKS cluster | REQUIRED | `my-openshift-cluster` |
-
-### Feature Flags
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `testing_create_tgw_jumphost` | Create a jumphost in a client VPC connected via Transit Gateway | `true` |
-| `testing_create_cluster_jumphosts` | Create one jumphost per availability zone in the cluster VPC | `false` |
-
-### Shared Jumphost Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `testing_ssh_key_name` | Name of an existing IBM Cloud SSH key to inject into all jumphosts (must exist in each relevant region) | `""` |
-| `testing_jumphost_profile` | VPC instance profile for all jumphosts (leave empty to auto-select) | `""` |
-| `testing_min_vcpu_count` | Minimum vCPU count when auto-selecting the instance profile | `4` |
-| `testing_min_memory_gb` | Minimum memory in GB when auto-selecting the instance profile | `8` |
-
-When `testing_jumphost_profile` is empty, the workspace queries available VPC instance profiles in the relevant region and picks the first profile meeting the `testing_min_vcpu_count` and `testing_min_memory_gb` thresholds. Falls back to `bx2-4x16` if no match is found.
-
-### TGW Jumphost Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `testing_create_client_vpc` | Create a new client VPC (`true`) or look up an existing one (`false`) | `false` |
-| `testing_client_vpc_name` | Name of the client VPC to create or look up | `"tf-testing-vpc"` |
-| `testing_client_vpc_region` | IBM Cloud region for the client VPC and TGW jumphost | `"ca-tor"` |
-| `testing_transit_gateway_name` | Name of an existing Transit Gateway to connect the client VPC to (leave empty to skip) | `""` |
-| `testing_tgw_jumphost_name` | Name prefix for the TGW jumphost instance, subnet, gateway, security group, and floating IP | `"tf-testing-jumphost-tgw"` |
-
-### Cluster Jumphosts Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `testing_cluster_jumphost_name_prefix` | Name prefix for cluster jumphosts — zone is appended as `<prefix>-<zone>` | `"tf-testing-jumphost-cluster"` |
-
 ## Project Directory Structure
 
 ```
-ibmcloud_schematics_bigip_next_for_kubernetes_2_3_testing/
+testing/
 ├── main.tf                    # TGW jumphost and cluster jumphost resources
 ├── variables.tf               # All input variable declarations
 ├── outputs.tf                 # Cluster, TGW jumphost, and cluster jumphost outputs
