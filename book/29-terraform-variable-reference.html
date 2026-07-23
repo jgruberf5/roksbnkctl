@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
+            window.path_to_searchindex_js = "searchindex-a196ee62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -204,8 +204,8 @@
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
-<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
-<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; since <code>v1.26.0</code> the cluster phase also sets it when you adopt an existing VPC in <code>init</code> (<code>resources.cluster_vpc</code>, letting multiple clusters share one VPC).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — from the adopted <code>resources.cluster_vpc.existing</code> id, or the second phase’s cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>

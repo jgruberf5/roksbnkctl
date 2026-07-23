@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
+            window.path_to_searchindex_js = "searchindex-a196ee62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -247,6 +247,39 @@ deploy_bnk = false
 </code></pre>
 <p>This file is layered onto the var-file chain <em>after</em> user-supplied <code>--var-file</code> flags so the override always wins. The user’s <code>terraform.tfvars</code> and <code>--var-file &lt;path&gt;</code> arguments still apply for everything else (region, RG, cluster name, worker count, …) — only <code>deploy_bnk</code> is forced.</p>
 <p><code>roksbnkctl up</code> doesn’t write this override file; its tfvars chain leaves <code>deploy_bnk</code> at the upstream default (<code>true</code>), so the trial modules run.</p>
+<h2 id="reusing-an-existing-vpc-multiple-clusters-in-one-vpc"><a class="header" href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC (multiple clusters in one VPC)</a></h2>
+<p>By default the cluster phase creates a prefix-named VPC for the cluster it builds.
+But you can point a <strong>new</strong> cluster at a <strong>VPC that already exists</strong> — so several
+clusters (each its own workspace) live in <strong>one shared VPC</strong>: the shape behind a
+shared licensing cluster or a common services network.</p>
+<p>Decline “Create a new cluster VPC?” in <code>init</code> and it <strong>discovers the VPCs in the
+chosen region</strong> and lets you pick one by number (since <code>v1.26.0</code>):</p>
+<pre><code class="language-console">$ roksbnkctl -w app-b init
+...
+Create a new cluster VPC? [Y/n] n
+→ Discovering existing VPCs...
+  Existing VPCs in us-south:
+     1) shared-services-vpc       (available)
+     2) app-a-cluster-vpc         (available)
+Use an existing cluster VPC — pick a number (0 = none / create a new one): 1
+</code></pre>
+<p>Picking <code>0</code> (or a region with no VPCs) falls back to creating one — a cluster must
+have a VPC. In config that is (the value is the VPC <strong>id</strong>, unlike the
+transit-gateway adopt-by-name):</p>
+<pre><code class="language-yaml">resources:
+  cluster_vpc:
+    create: false
+    existing: r006-6fe0b20a-...   # the VPC id
+</code></pre>
+<p>which renders <code>use_existing_cluster_vpc = true</code> + <code>existing_cluster_vpc_id</code>. Two
+things make this safe for more than one cluster in a VPC: the cluster’s subnets are
+named per-cluster (<code>&lt;cluster&gt;-subnet-zoneN</code>) so they don’t collide, and per-zone
+<strong>public gateways are reused</strong> when the VPC already has them (IBM allows exactly
+one per zone per VPC). Make sure the VPC has free address-prefix space — each
+cluster adds three /24 subnets.</p>
+<p>Combine this with an <a href="./09a-transit-gateway-sharing.html">adopted Transit Gateway</a>:
+clusters that share a VPC share that VPC’s single connection to the gateway, so N
+clusters can reach each other over one VPC and one gateway.</p>
 <h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
 <p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json

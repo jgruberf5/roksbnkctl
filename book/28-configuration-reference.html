@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
+            window.path_to_searchindex_js = "searchindex-a196ee62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -705,6 +705,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>.</td></tr>
+<tr><td><code>resources.cluster_vpc.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the <code>init</code> interview since <code>v1.26.0</code>.</td></tr>
+<tr><td><code>resources.cluster_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing cluster VPC to build the new cluster into, by <strong>id</strong> (not name), when <code>create: false</code> — renders <code>use_existing_cluster_vpc</code> + <code>existing_cluster_vpc_id</code>. Lets multiple clusters share one VPC. See <a href="./08-cluster-phase.html#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</td></tr>
 <tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
 <tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>

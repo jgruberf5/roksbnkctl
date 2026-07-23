@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
+            window.path_to_searchindex_js = "searchindex-a196ee62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -187,12 +187,21 @@ a central services VPC, or cross-cluster testing.</p>
 or by id, at create time or after — as its own small phase. Each workspace owns
 its own connection, so N clusters can point at the one gateway.</p>
 <h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
-<p>Decline to create a gateway, then name an existing one:</p>
+<p>Decline to create a gateway, and <code>init</code> <strong>discovers the transit gateways already
+in your account</strong> and lets you pick one by number — name, location, and status —
+so you don’t have to remember a name or id (since <code>v1.25.0</code>):</p>
 <pre><code class="language-console">$ roksbnkctl -w prod init
 ...
 Create Transit Gateway? [Y/n] n
-Existing Transit Gateway name or ID (blank = attach later with `tgw connect`): shared-tgw
+→ Discovering existing transit gateways...
+  Existing transit gateways in this account:
+     1) shared-tgw            (us-south, available)
+     2) prod-tgw-eu           (eu-de, available)
+Attach an existing Transit Gateway — pick a number (0 = none / attach later): 1
 </code></pre>
+<p>Picking <code>0</code> (or if the account has none) leaves the cluster unattached, to connect
+later with <code>tgw connect</code>; if the discovery call fails it falls back to a free-text
+name/ID prompt.</p>
 <p><code>cluster up</code> (or <code>cluster register</code>) then attaches the cluster’s VPC to
 <code>shared-tgw</code> automatically — no extra step. In config that is:</p>
 <pre><code class="language-yaml">resources:
@@ -246,8 +255,12 @@ each get their own, which is the normal shared-gateway case.</li>
 region. <code>tgw connect</code> attaches to whatever gateway you name — make sure it can
 reach the region your cluster VPC is in.</li>
 <li><strong><code>cluster down</code> refuses</strong> while a connection exists, so the cluster isn’t
-destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first (or
-<code>roksbnkctl down</code>, which sequences it).</li>
+destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first.
+<strong><code>roksbnkctl down</code> (the composite) auto-detaches for you</strong> (since <code>v1.26.0</code>):
+it removes this cluster’s connection <em>after</em> the BNK/Testing teardown and
+<em>before</em> the cluster, because the connection pins the VPC’s CRN and the VPC
+delete would otherwise fail (<code>VPC still has an attached transit gateway connection</code>). Only <em>this</em> cluster’s connection is removed — the shared gateway
+and every other cluster’s connection stay.</li>
 </ul>
 
                     </main>

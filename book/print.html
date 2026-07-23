@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
+            window.path_to_searchindex_js = "searchindex-a196ee62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -1737,6 +1737,39 @@ deploy_bnk = false
 </code></pre>
 <p>This file is layered onto the var-file chain <em>after</em> user-supplied <code>--var-file</code> flags so the override always wins. The user’s <code>terraform.tfvars</code> and <code>--var-file &lt;path&gt;</code> arguments still apply for everything else (region, RG, cluster name, worker count, …) — only <code>deploy_bnk</code> is forced.</p>
 <p><code>roksbnkctl up</code> doesn’t write this override file; its tfvars chain leaves <code>deploy_bnk</code> at the upstream default (<code>true</code>), so the trial modules run.</p>
+<h2 id="reusing-an-existing-vpc-multiple-clusters-in-one-vpc"><a class="header" href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC (multiple clusters in one VPC)</a></h2>
+<p>By default the cluster phase creates a prefix-named VPC for the cluster it builds.
+But you can point a <strong>new</strong> cluster at a <strong>VPC that already exists</strong> — so several
+clusters (each its own workspace) live in <strong>one shared VPC</strong>: the shape behind a
+shared licensing cluster or a common services network.</p>
+<p>Decline “Create a new cluster VPC?” in <code>init</code> and it <strong>discovers the VPCs in the
+chosen region</strong> and lets you pick one by number (since <code>v1.26.0</code>):</p>
+<pre><code class="language-console">$ roksbnkctl -w app-b init
+...
+Create a new cluster VPC? [Y/n] n
+→ Discovering existing VPCs...
+  Existing VPCs in us-south:
+     1) shared-services-vpc       (available)
+     2) app-a-cluster-vpc         (available)
+Use an existing cluster VPC — pick a number (0 = none / create a new one): 1
+</code></pre>
+<p>Picking <code>0</code> (or a region with no VPCs) falls back to creating one — a cluster must
+have a VPC. In config that is (the value is the VPC <strong>id</strong>, unlike the
+transit-gateway adopt-by-name):</p>
+<pre><code class="language-yaml">resources:
+  cluster_vpc:
+    create: false
+    existing: r006-6fe0b20a-...   # the VPC id
+</code></pre>
+<p>which renders <code>use_existing_cluster_vpc = true</code> + <code>existing_cluster_vpc_id</code>. Two
+things make this safe for more than one cluster in a VPC: the cluster’s subnets are
+named per-cluster (<code>&lt;cluster&gt;-subnet-zoneN</code>) so they don’t collide, and per-zone
+<strong>public gateways are reused</strong> when the VPC already has them (IBM allows exactly
+one per zone per VPC). Make sure the VPC has free address-prefix space — each
+cluster adds three /24 subnets.</p>
+<p>Combine this with an <a href="#sharing-a-transit-gateway-across-clusters">adopted Transit Gateway</a>:
+clusters that share a VPC share that VPC’s single connection to the gateway, so N
+clusters can reach each other over one VPC and one gateway.</p>
 <h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
 <p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json
@@ -2358,12 +2391,21 @@ a central services VPC, or cross-cluster testing.</p>
 or by id, at create time or after — as its own small phase. Each workspace owns
 its own connection, so N clusters can point at the one gateway.</p>
 <h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
-<p>Decline to create a gateway, then name an existing one:</p>
+<p>Decline to create a gateway, and <code>init</code> <strong>discovers the transit gateways already
+in your account</strong> and lets you pick one by number — name, location, and status —
+so you don’t have to remember a name or id (since <code>v1.25.0</code>):</p>
 <pre><code class="language-console">$ roksbnkctl -w prod init
 ...
 Create Transit Gateway? [Y/n] n
-Existing Transit Gateway name or ID (blank = attach later with `tgw connect`): shared-tgw
+→ Discovering existing transit gateways...
+  Existing transit gateways in this account:
+     1) shared-tgw            (us-south, available)
+     2) prod-tgw-eu           (eu-de, available)
+Attach an existing Transit Gateway — pick a number (0 = none / attach later): 1
 </code></pre>
+<p>Picking <code>0</code> (or if the account has none) leaves the cluster unattached, to connect
+later with <code>tgw connect</code>; if the discovery call fails it falls back to a free-text
+name/ID prompt.</p>
 <p><code>cluster up</code> (or <code>cluster register</code>) then attaches the cluster’s VPC to
 <code>shared-tgw</code> automatically — no extra step. In config that is:</p>
 <pre><code class="language-yaml">resources:
@@ -2417,8 +2459,12 @@ each get their own, which is the normal shared-gateway case.</li>
 region. <code>tgw connect</code> attaches to whatever gateway you name — make sure it can
 reach the region your cluster VPC is in.</li>
 <li><strong><code>cluster down</code> refuses</strong> while a connection exists, so the cluster isn’t
-destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first (or
-<code>roksbnkctl down</code>, which sequences it).</li>
+destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first.
+<strong><code>roksbnkctl down</code> (the composite) auto-detaches for you</strong> (since <code>v1.26.0</code>):
+it removes this cluster’s connection <em>after</em> the BNK/Testing teardown and
+<em>before</em> the cluster, because the connection pins the VPC’s CRN and the VPC
+delete would otherwise fail (<code>VPC still has an attached transit gateway connection</code>). Only <em>this</em> cluster’s connection is removed — the shared gateway
+and every other cluster’s connection stay.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deploying-bnk-trials-on-top"><a class="header" href="#deploying-bnk-trials-on-top">Deploying BNK trials on top</a></h1>
@@ -11565,6 +11611,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</td></tr>
+<tr><td><code>resources.cluster_vpc.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the <code>init</code> interview since <code>v1.26.0</code>.</td></tr>
+<tr><td><code>resources.cluster_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing cluster VPC to build the new cluster into, by <strong>id</strong> (not name), when <code>create: false</code> — renders <code>use_existing_cluster_vpc</code> + <code>existing_cluster_vpc_id</code>. Lets multiple clusters share one VPC. See <a href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</td></tr>
 <tr><td><code>resources.registry_cos.create</code></td><td>bool</td><td><code>true</code></td><td>Create the registry COS instance vs adopt an existing one.</td></tr>
 <tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>
@@ -11699,8 +11747,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
-<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
-<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; since <code>v1.26.0</code> the cluster phase also sets it when you adopt an existing VPC in <code>init</code> (<code>resources.cluster_vpc</code>, letting multiple clusters share one VPC).</td><td>no</td></tr>
+<tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — from the adopted <code>resources.cluster_vpc.existing</code> id, or the second phase’s cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
