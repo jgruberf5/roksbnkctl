@@ -4,6 +4,33 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.24.0 — 2026-07-23
+
+### Added
+
+- **One-line installers for Linux/macOS and Windows.** `install.sh` (`curl -fsSL https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.sh | sh`) and `install.ps1` (`irm …/install.ps1 | iex`) download a release archive for the host OS/arch, verify its checksum, extract the binary, hand off to the binary's own `roksbnkctl install` (which copies it onto `PATH`, replacing any existing copy), then delete the archive — leaving only the installed binary. `VERSION=vX.Y.Z` pins a release; `ROKSBNKCTL_INSTALL_ARGS` passes flags to `install`.
+- **`roksbnkctl uninstall`** — removes the installed binary from `~/.local/bin` (or `--dir`), the opposite of `roksbnkctl install`. On Windows it refuses to delete the currently-running `.exe`.
+- **`roksbnkctl upgrade` interactive version picker** — with no `--version` on a terminal it now lists the releases newer than the running binary and lets you pick one (a `dev` build is offered every release). `--version vX.Y.Z` still pins a specific release; `--yes` still takes the latest non-interactively.
+- **Local-file FAR supply chain (no COS) — `bnk.far_auth_local_file` + `bnk.subscription_jwt_local_file`.** The BNK phase can now read the FAR auth tarball and the subscription JWT from **local files** instead of an IBM COS bucket. When both are set, roksbnkctl reads them at render time — extracting the FAR `_json_key_base64` service account from the tarball **in Go** (no `curl`/`tar`/`grep`) — and injects the content as `far_service_account_b64` / `f5_cne_subscription_jwt`, setting `use_cos_bucket = false` so the `flo` and `license` modules skip the COS download entirely. `init` sets these automatically (see below); they can also be set by hand. When unset, the COS path is unchanged.
+
+### Changed
+
+- **`init` checks COS, then falls back to local files.** The interactive supply-chain check now treats any COS error (transport/DNS/auth) as **non-fatal**: instead of aborting, it offers to use local files for the FAR tarball + JWT and records them on the workspace (`bnk.*_local_file`). When COS is reachable but an artefact is missing, it prefers local files (no COS) but still offers to provision + upload. This unblocks accounts whose COS is unreachable.
+
+### Removed
+
+- **IBM Cloud Schematics deployment path (~5,300 lines).** The Terraform modules were originally authored as standalone IBM Schematics workspaces; roksbnkctl is now the sole driver, so the Schematics tooling is dead weight. Removed the five `terraform/modules/*/schematics_runner.py` lifecycle scripts, the "Deploying with IBM Schematics" sections + `ibmcloud_schematics_*` workspace naming in the module READMEs, and the Schematics-lifecycle `.gitignore` entries; the remaining `local-exec` rationale comments that cited "Schematics compatibility" now cite lean runtimes (the tools-runner) generally. No functional change to any deployment — nothing in the Go or `.tf` code referenced Schematics. (This also deletes the last `python3` scripts in the tree; the two remaining `python3` uses are the deterministic-poll `null_resource`s, which are being converted to `tfx` — see `docs/prd/native-windows-tfx.md`.)
+
+### Fixed
+
+- **`roksbnkctl version` shows the release as `vX.Y.Z`.** Release binaries are now stamped `v{{.Version}}` (goreleaser), so `version` prints `v1.23.2` rather than `1.23.2` — and it matches the `v`-prefixed tag the bundled tool images are published under (previously `Version` was `1.23.2` while the images were `:v1.23.2`, so a release binary's `ops`/docker-backend pulls could miss). Local `make build` derives the version from `git describe` (e.g. `v1.23.1-3-g<sha>-dirty`), so a locally-built binary is clearly a build, not a release.
+
+- **`init` no longer leaves NO workspace when it fails partway.** Previously the only `SaveWorkspace` was at the very end of the interview, so any earlier failure (cluster listing, the COS supply-chain check) aborted with **nothing persisted** — and manual commands like `roksbnkctl cos …` then had no workspace to resolve. `init` now persists a **partial workspace** (region + a resolvable API key) as soon as credentials verify, before the fallible steps. A failed init leaves a usable workspace, and re-running `init` completes it.
+
+- **`roksbnkctl init -w <existing-workspace>` resumes to complete/update the workspace** rather than only offering a destructive "Overwrite config? → abort". The prompt is reframed to "Continue and update this workspace?" (default yes) and the interview pre-fills from the saved config — the intended way to finish a partial workspace left by a failed first init.
+
+- **Orchestration-COS region no longer defaults to the cluster region.** `init`'s supply-chain check derived the COS S3 endpoint region from `ibmcloud.region`; a VPC-only region like `eu-fr2` has **no COS S3 endpoint**, so the check failed with `dial tcp: lookup s3.eu-fr2.cloud-object-storage.appdomain.cloud: no such host`. It now defaults to `DefaultCOSRegion` (`us-south`), overridden only by an explicit `cos.region`.
+
 ## v1.23.1 — 2026-07-23
 
 ### Fixed
