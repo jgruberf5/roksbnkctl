@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.24.1 — 2026-07-23
+
+### Fixed
+
+- **`init` provisions a globally-unique COS bucket (was `BucketAlreadyExists`).** COS bucket names share ONE global namespace (like S3), so provisioning the generic default `bnk-artifacts` failed with `BucketAlreadyExists: Container bnk-artifacts exists with a different storage location than requested` whenever another account already owned that name. `init` now provisions under an account-scoped name, `bnk-artifacts-<first-12-of-account-id>`, which is globally unique. An explicitly-configured `cos.bucket` is still used as-is.
+
+  The name is **deterministic per account and discoverable**: `init`'s supply-chain check looks for both the plain default and the account-suffixed name, so a **second workspace run from the same account's API key finds and reuses the bucket the first one provisioned** (and records the resolved coordinates on the workspace so the BNK phase pulls from exactly that bucket) — no duplicate bucket, no re-upload. An interrupted run that already created the bucket is reused rather than re-created.
+
 ## v1.24.0 — 2026-07-23
 
 ### Added
