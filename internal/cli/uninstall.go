@@ -69,8 +69,10 @@ func runUninstall(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("checking %s: %w", dest, err)
 	}
 
-	// Guard: removing the currently-running binary. Impossible on Windows;
-	// allowed (with a note) on Unix, where unlinking a running file is fine.
+	// Detect whether the target IS the binary we're running from. On Unix,
+	// unlinking a running file is fine. On Windows a running .exe can't be
+	// deleted — but it CAN be renamed, so we move it aside to free its path.
+	runningSelf := false
 	if self, err := os.Executable(); err == nil {
 		if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
 			self = resolved
@@ -78,15 +80,29 @@ func runUninstall(_ *cobra.Command, _ []string) error {
 		absSelf, e1 := filepath.Abs(self)
 		absDest, e2 := filepath.Abs(dest)
 		if e1 == nil && e2 == nil && absSelf == absDest {
-			if runtime.GOOS == "windows" {
-				return fmt.Errorf("cannot remove %s while it is the running binary on Windows — delete it manually or run uninstall from a different roksbnkctl", dest)
+			runningSelf = true
+			if runtime.GOOS != "windows" {
+				fmt.Fprintf(os.Stderr, "note: removing the currently-running binary (%s)\n", dest)
 			}
-			fmt.Fprintf(os.Stderr, "note: removing the currently-running binary (%s)\n", dest)
 		}
 	}
 
 	if !flagUninstallYes && !promptYesNo(fmt.Sprintf("Remove %s?", dest), true) {
 		return errors.New("aborted")
+	}
+
+	// Windows: can't delete a running .exe, so move it aside to <name>.old. The
+	// install path is freed (effectively uninstalled); the .old remnant unlocks
+	// once this process exits and can be deleted any time (a later install/upgrade
+	// also sweeps its own .old).
+	if runningSelf && runtime.GOOS == "windows" {
+		old := dest + ".old"
+		_ = os.Remove(old) // clear a stale .old from a prior upgrade (best-effort)
+		if err := os.Rename(dest, old); err != nil {
+			return fmt.Errorf("cannot delete %s while it is running, and moving it aside failed: %w\n  close roksbnkctl, then delete it manually (PowerShell: Remove-Item %q)", dest, err, dest)
+		}
+		fmt.Fprintf(os.Stderr, "✓ Removed %s\n  (Windows can't delete a running .exe, so it was moved to %s — unlocked once this process exits; delete it any time)\n", dest, old)
+		return nil
 	}
 
 	if err := os.Remove(dest); err != nil {
