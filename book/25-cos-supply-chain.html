@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-edc2dbce.js";
+            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -201,6 +201,14 @@
 </table>
 </div>
 <p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable, which defaults to <code>bnk-artifacts</code>. The instance defaults to <code>bnk-supply-chain</code>.</p>
+<h2 id="local-files-instead-of-cos-no-bucket-needed"><a class="header" href="#local-files-instead-of-cos-no-bucket-needed">Local files instead of COS (no bucket needed)</a></h2>
+<p>COS is not mandatory for the two artefacts the BNK phase actually needs at apply time — the FAR auth tarball and the subscription JWT. You can point the workspace at <strong>local files</strong> and skip COS entirely:</p>
+<pre><code class="language-yaml">bnk:
+  far_auth_local_file: /path/to/f5-far-auth-key.tgz
+  subscription_jwt_local_file: /path/to/subscription.jwt
+</code></pre>
+<p>When both are set, roksbnkctl reads them at render time — extracting the FAR <code>_json_key_base64</code> service account from the tarball in Go — and injects the content directly into the <code>flo</code> and <code>license</code> modules (<code>use_cos_bucket = false</code>), so no COS instance, bucket, or S3 endpoint is contacted. This is useful when the account has no orchestration COS, or when the COS S3 endpoint isn’t reachable from where you run <code>roksbnkctl</code>.</p>
+<p><code>roksbnkctl init</code> wires this up automatically: it checks COS first, and on <strong>any</strong> COS error (including the <code>dial tcp … no such host</code> you get when a cluster region such as <code>eu-fr2</code> has no COS S3 endpoint) it falls back to prompting for these local files and records them on the workspace. You can also set them by hand. When they’re unset, the COS path below is used unchanged.</p>
 <h2 id="the-three-command-levels"><a class="header" href="#the-three-command-levels">The three command levels</a></h2>
 <pre><code class="language-bash">roksbnkctl cos instance {create|delete|list}
 roksbnkctl cos bucket   {create|delete|list|get} --instance &lt;name-or-CRN&gt;

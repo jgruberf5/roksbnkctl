@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-edc2dbce.js";
+            window.path_to_searchindex_js = "searchindex-80be1c8d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -180,6 +180,26 @@
                         <h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
 <p>This chapter gets <code>roksbnkctl</code> onto your machine and verifies it works. Three install paths are covered: build-from-source (native Go), build-with-Docker (no host Go required), and the <strong>all-in-one container image</strong> (no install at all — run roksbnkctl and every tool it needs from one container).</p>
 <p>Pre-built binaries are attached to every <a href="https://github.com/jgruberf5/roksbnkctl/releases">GitHub Release</a> (Linux, macOS, Windows × amd64, arm64). The book also ships as an offline PDF (<code>roksbnkctl-book-&lt;tag&gt;.pdf</code>) on the same release page. A Homebrew tap is on the v1.x roadmap; until then macOS users grab the binary from the release page or build from source.</p>
+<h2 id="quick-install-one-line"><a class="header" href="#quick-install-one-line">Quick install (one line)</a></h2>
+<p>The fastest path — downloads the latest release for your OS/arch and puts it on <code>PATH</code>:</p>
+<p><strong>Linux / macOS:</strong></p>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.sh | sh
+</code></pre>
+<p><strong>Windows (PowerShell):</strong></p>
+<pre><code class="language-powershell">irm https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.ps1 | iex
+</code></pre>
+<p>Each script downloads the release archive, verifies its checksum, extracts the binary, runs <code>roksbnkctl install</code> to copy it into <code>~/.local/bin</code> (Linux/macOS) or a <code>PATH</code> directory (Windows) — <strong>replacing</strong> any existing copy — then deletes the archive, leaving only the installed binary. Options:</p>
+<ul>
+<li><strong>Pin a version:</strong> set <code>VERSION=v1.23.1</code> before the command (e.g. <code>curl -fsSL … | VERSION=v1.23.1 sh</code>, or <code>$env:VERSION='v1.23.1'</code> on Windows).</li>
+<li><strong>Change the install directory / pass install flags:</strong> set <code>ROKSBNKCTL_INSTALL_ARGS="--dir $HOME/bin"</code>.</li>
+</ul>
+<p>Manage the installed binary with the built-in verbs:</p>
+<ul>
+<li><code>roksbnkctl version</code> — prints the release (e.g. <code>v1.23.1</code>) for a release binary, or a git-derived build string for a local build.</li>
+<li><code>roksbnkctl upgrade</code> — on a terminal, lists the newer releases on GitHub and lets you pick one; <code>--version vX.Y.Z</code> pins a specific release; <code>--yes</code> takes the latest non-interactively.</li>
+<li><code>roksbnkctl uninstall</code> — removes the installed binary (the opposite of <code>install</code>).</li>
+</ul>
+<p>The manual methods below (build-from-source, Docker build, runner container) remain available.</p>
 <h3 id="choosing-an-install-method"><a class="header" href="#choosing-an-install-method">Choosing an install method</a></h3>
 <div class="table-wrapper">
 <table>
