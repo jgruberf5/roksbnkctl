@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a54c19a1.js";
+            window.path_to_searchindex_js = "searchindex-edc2dbce.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-14f30233.js"></script>
@@ -11563,7 +11563,14 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="#licensing-bnk-with-the-f5-license-proxy-flp">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
 <tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
-<tr><td><code>bnk.flp.storage_class</code></td><td>string</td><td>(empty ⇒ HCL default)</td><td>Dynamic StorageClass for the FLP’s PVCs → <code>flp_storage_class</code>. Set it when the cluster/region exposes a different block-storage class.</td></tr>
+<tr><td><code>bnk.flp.storage_class</code></td><td>string</td><td>(empty ⇒ HCL default)</td><td>Dynamic StorageClass for the FLP’s PVCs → <code>flp_storage_class</code>. Set it when the cluster/region exposes a different block-storage class. (helm mode)</td></tr>
+<tr><td><code>bnk.flp.mode</code></td><td>string</td><td>(empty ⇒ <code>helm</code>)</td><td><code>helm</code> | <code>vsi</code>. <code>vsi</code> deploys the proxy on a standalone VSI (podman pod, no k8s) in the cluster VPC instead of the helm chart; both terminate in the same endpoint + root CA handoff.</td></tr>
+<tr><td><code>bnk.flp.vsi.profile</code></td><td>string</td><td><code>bx2-4x16</code></td><td>VSI instance profile (≥ 4 vCPU / 8 GB) → <code>flp_vsi_profile</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.zone</code></td><td>string</td><td>(empty ⇒ <code>&lt;region&gt;-1</code>)</td><td>Zone for the FLP VSI → <code>flp_vsi_zone</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.boot_size_gb</code></td><td>integer</td><td><code>100</code></td><td>Boot volume size (≥ 80) → <code>flp_vsi_boot_size_gb</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.reach</code></td><td>string</td><td><code>private</code></td><td>How the CWC reaches the VSI: <code>private</code> (VPC / transit gateway) or <code>floating</code> → <code>flp_vsi_reach</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.allowed_cidrs</code></td><td>list of string</td><td>(empty ⇒ VPC space)</td><td>Source CIDRs allowed to reach the VSI’s 8443 → <code>flp_vsi_allowed_cidrs</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.forward_proxy.{host,port,protocol}</code></td><td>—</td><td>(none)</td><td>Optional egress forward proxy for the VSI’s calls to F5 licensing → <code>flp_forward_proxy_*</code>.</td></tr>
 <tr><td><code>bnk.flp.node_port_access</code></td><td>bool</td><td><code>false</code></td><td>Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it (<a href="#flow-c--a-shared-licensing-cluster">Flow C</a>). Set by <code>flp up --add-node-port-access</code> and persisted, so a later <code>flp up</code> does not tear the exposure down.</td></tr>
 <tr><td><code>bnk.flp.node_port_source_cidrs</code></td><td>list of string</td><td>(empty)</td><td>With <code>node_port_access</code>: open the proxy’s NodePort to these CIDRs on the worker security group. A <strong>list</strong>, and it must name <strong>every zone</strong> — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by <code>flp up --node-port-source-cidr</code> and persisted.</td></tr>
 <tr><td><code>bnk.flp.external.url</code></td><td>string</td><td>(empty)</td><td>License against a proxy in <strong>another</strong> cluster — its <code>external_endpoint</code> from <code>roksbnkctl -w &lt;owner&gt; flp output</code>. This workspace then needs no <code>flp up</code> of its own.</td></tr>
