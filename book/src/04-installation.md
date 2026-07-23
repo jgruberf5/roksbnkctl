@@ -4,6 +4,35 @@ This chapter gets `roksbnkctl` onto your machine and verifies it works. Three in
 
 Pre-built binaries are attached to every [GitHub Release](https://github.com/jgruberf5/roksbnkctl/releases) (Linux, macOS, Windows × amd64, arm64). The book also ships as an offline PDF (`roksbnkctl-book-<tag>.pdf`) on the same release page. A Homebrew tap is on the v1.x roadmap; until then macOS users grab the binary from the release page or build from source.
 
+## Quick install (one line)
+
+The fastest path — downloads the latest release for your OS/arch and puts it on `PATH`:
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.ps1 | iex
+```
+
+Each script downloads the release archive, verifies its checksum, extracts the binary, runs `roksbnkctl install` to copy it into `~/.local/bin` (Linux/macOS) or a `PATH` directory (Windows) — **replacing** any existing copy — then deletes the archive, leaving only the installed binary. Options:
+
+- **Pin a version:** set `VERSION=v1.23.1` before the command (e.g. `curl -fsSL … | VERSION=v1.23.1 sh`, or `$env:VERSION='v1.23.1'` on Windows).
+- **Change the install directory / pass install flags:** set `ROKSBNKCTL_INSTALL_ARGS="--dir $HOME/bin"`.
+
+Manage the installed binary with the built-in verbs:
+
+- `roksbnkctl version` — prints the release (e.g. `v1.23.1`) for a release binary, or a git-derived build string for a local build.
+- `roksbnkctl upgrade` — on a terminal, lists the newer releases on GitHub and lets you pick one; `--version vX.Y.Z` pins a specific release; `--yes` takes the latest non-interactively.
+- `roksbnkctl uninstall` — removes the installed binary (the opposite of `install`).
+
+The manual methods below (build-from-source, Docker build, runner container) remain available.
+
 ### Choosing an install method
 
 | Method | You get | Host needs | Best for |

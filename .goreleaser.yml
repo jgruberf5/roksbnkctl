@@ -36,7 +36,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version={{.Version}}
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version=v{{.Version}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Commit={{.ShortCommit}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
 

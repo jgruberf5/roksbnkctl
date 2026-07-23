@@ -1,6 +1,9 @@
 .PHONY: build test vet tidy run clean
 
-VERSION ?= dev
+# Local builds derive a version from git so `roksbnkctl version` is meaningful:
+# a tagged commit -> vX.Y.Z, ahead of a tag -> vX.Y.Z-<n>-g<sha>[-dirty], no git
+# -> dev. Release binaries are stamped v{{.Version}} by goreleaser instead.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BIN     := bin/roksbnkctl

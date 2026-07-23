@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	version "github.com/hashicorp/go-version"
 	"github.com/spf13/cobra"
 )
 
@@ -61,11 +62,70 @@ func init() {
 	rootCmd.AddCommand(upgradeCmd)
 }
 
-// runUpgrade backs `roksbnkctl upgrade [--version vX.Y.Z] [--yes]`.
+// runUpgrade backs `roksbnkctl upgrade [--version vX.Y.Z] [--yes]`. With no
+// --version on an interactive terminal it lists the releases newer than the
+// running binary and lets the operator pick one; --version or --yes keep the
+// non-interactive behaviour (pin, or latest).
 func runUpgrade(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), selfUpdateTimeout)
 	defer cancel()
-	return selfUpdate(ctx, os.Stderr, flagUpgradeVersion, flagUpgradeYes)
+	pinned := strings.TrimSpace(flagUpgradeVersion)
+	if pinned == "" && !flagUpgradeYes && isTTY() {
+		picked, err := pickNewerRelease(ctx, os.Stderr)
+		if err != nil {
+			return err
+		}
+		if picked == "" {
+			fmt.Fprintln(os.Stderr, "Nothing to install (already up to date, or cancelled).")
+			return nil
+		}
+		pinned = picked
+	}
+	return selfUpdate(ctx, os.Stderr, pinned, flagUpgradeYes)
+}
+
+// pickNewerRelease lists the releases strictly newer than the running Version
+// (all of them when the running Version is a non-release build like "dev") and
+// prompts the operator to choose. Returns the chosen tag, or "" when there is
+// nothing newer or the operator cancels.
+func pickNewerRelease(ctx context.Context, w io.Writer) (string, error) {
+	rels, err := fetchReleases(ctx)
+	if err != nil {
+		return "", err
+	}
+	var cur *version.Version
+	if v, verr := version.NewVersion(strings.TrimPrefix(Version, "v")); verr == nil {
+		cur = v
+	}
+	var newer []string
+	for _, r := range rels {
+		if r.TagName == "" {
+			continue
+		}
+		v, verr := version.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if verr != nil {
+			continue
+		}
+		if cur == nil || v.GreaterThan(cur) {
+			newer = append(newer, r.TagName)
+		}
+	}
+	if len(newer) == 0 {
+		return "", nil
+	}
+	fmt.Fprintf(w, "Current version: %s\n\nNewer releases available:\n", Version)
+	for i, t := range newer {
+		suffix := ""
+		if i == 0 {
+			suffix = "  (latest)"
+		}
+		fmt.Fprintf(w, "  %d) %s%s\n", i+1, t, suffix)
+	}
+	choice := promptInt("Pick a release to install (0 to cancel)", 1)
+	if choice <= 0 || choice > len(newer) {
+		return "", nil
+	}
+	return newer[choice-1], nil
 }
 
 // runSelfUpdate backs the legacy `roksbnkctl self update` — always latest,
@@ -209,6 +269,34 @@ type ghRelease struct {
 func fetchLatestRelease(ctx context.Context) (*ghRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", roksbnkctlRepo)
 	return getRelease(ctx, url, fmt.Sprintf("no releases for %s yet", roksbnkctlRepo))
+}
+
+// fetchReleases lists the repo's releases (GitHub returns them newest-first).
+// Backs the interactive `upgrade` version picker.
+func fetchReleases(ctx context.Context) ([]ghRelease, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=50", roksbnkctlRepo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "roksbnkctl")
+	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github returned %s listing releases", resp.Status)
+	}
+	var rels []ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+		return nil, err
+	}
+	return rels, nil
 }
 
 // fetchReleaseByTag resolves a specific release (the --version pin). The tag
