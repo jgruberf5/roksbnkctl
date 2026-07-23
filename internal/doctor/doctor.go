@@ -130,6 +130,7 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	if cctx.Workspace != nil {
 		out = append(out, checkAPIKey(cctx))
 		out = append(out, checkIBMAuth(ctx, cctx))
+		out = append(out, checkQuota(ctx, cctx))
 	}
 
 	return out
@@ -299,6 +300,64 @@ func checkIBMAuth(ctx context.Context, cctx *config.Context) withWhy {
 	c.Status = StatusOK
 	c.Detail = id.String()
 	return withWhy{Check: c, Why: "verifies API key works against IBM IAM"}
+}
+
+// checkQuota surfaces current VPC-per-region and Transit-Gateway-per-account usage
+// against the account DEFAULT limits, so a user is warned about the walls
+// (VPC 20/region, TGW 10/account) BEFORE they hit them mid-apply — rather than
+// after ~40 minutes of cluster build. Informational: an account with a raised
+// quota may legitimately exceed the defaults, so being at the limit is a warning,
+// not an error. Best-effort — skips quietly if the API can't be reached.
+func checkQuota(ctx context.Context, cctx *config.Context) withWhy {
+	const why = "warns before the VPC-per-region / TGW-per-account walls fail an apply"
+	c := Check{Name: "ibm cloud quota", Optional: true, Status: StatusSkipped}
+
+	region := cctx.Workspace.IBMCloud.Region
+	resolver := &cred.Resolver{
+		Workspace:      cctx.WorkspaceName,
+		Source:         cctx.Workspace.IBMCloud.APIKeySource,
+		NonInteractive: true,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
+	if err != nil {
+		c.Detail = "skipped (no api key)"
+		return withWhy{Check: c, Why: why}
+	}
+	cl, err := ibm.New(apiKey, region)
+	if err != nil {
+		c.Detail = "skipped (" + err.Error() + ")"
+		return withWhy{Check: c, Why: why}
+	}
+	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	var notes []string
+	atLimit := false
+	if region != "" {
+		if vpcs, err := cl.ListVPCs(tctx, region); err == nil {
+			n := len(vpcs)
+			notes = append(notes, fmt.Sprintf("VPCs %s: %d/%d", region, n, ibm.VPCQuotaPerRegion))
+			atLimit = atLimit || n >= ibm.VPCQuotaPerRegion
+		}
+	}
+	if tgws, err := cl.ListTransitGateways(tctx); err == nil {
+		n := len(tgws)
+		notes = append(notes, fmt.Sprintf("Transit Gateways: %d/%d (account)", n, ibm.TGWQuotaPerAccount))
+		atLimit = atLimit || n >= ibm.TGWQuotaPerAccount
+	}
+	if len(notes) == 0 {
+		c.Detail = "skipped (could not query usage)"
+		return withWhy{Check: c, Why: why}
+	}
+
+	c.Detail = strings.Join(notes, "; ")
+	if atLimit {
+		c.Status = StatusWarning
+		c.Detail += " — at the default limit; new resources in a full region/account will fail. Adopt an existing VPC/TGW (init offers this) or request a quota increase."
+	} else {
+		c.Status = StatusOK
+	}
+	return withWhy{Check: c, Why: why}
 }
 
 // PrintResults writes a tabular human-readable rendering to w.

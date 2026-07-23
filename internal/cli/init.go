@@ -412,6 +412,7 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		// The recorded value is the VPC id (ResourcesCfg.ClusterVPC.Existing), which
 		// renders as use_existing_cluster_vpc + existing_cluster_vpc_id. A new cluster
 		// must have a VPC, so if none is selected we fall back to creating one.
+		vpcQuotaHint(ctx, ic, out.Region)
 		res.ClusterVPC.Create = promptYesNo("Create a new cluster VPC?", true)
 		if !res.ClusterVPC.Create {
 			res.ClusterVPC.Existing = pickExistingVPC(ctx, ic, out.Region, "Use an existing cluster VPC")
@@ -454,6 +455,7 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 	// cluster to — by name or id — so multiple clusters can share one gateway.
 	// Blank is fine: the cluster is left unattached and can be connected later
 	// with `roksbnkctl tgw connect <name-or-id>`.
+	tgwQuotaHint(ctx, ic)
 	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
 	if !res.TransitGateway.Create {
 		res.TransitGateway.Existing = pickExistingTransitGateway(ctx, ic, "Attach an existing Transit Gateway")
@@ -702,6 +704,45 @@ func pickExistingVPC(ctx context.Context, ic *ibm.Client, region, label string) 
 		return ""
 	}
 	return vpcs[choice-1].ID
+}
+
+// vpcQuotaHint / tgwQuotaHint print current usage vs the default IBM quota just
+// before the create-VPC / create-TGW prompts, so the operator can choose "adopt
+// existing" BEFORE a full region/account fails the apply ~40 minutes into a cluster
+// build. Best-effort and silent on error (the interview already dials the API for
+// its pickers, so the extra call is cheap and TTY-only).
+func vpcQuotaHint(ctx context.Context, ic *ibm.Client, region string) {
+	if ic == nil || region == "" || !isTTY() {
+		return
+	}
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		return
+	}
+	if n := len(vpcs); n >= ibm.VPCQuotaPerRegion {
+		fmt.Fprintf(os.Stderr, "  VPCs in %s: %d/%d -- at the default limit; a new one will FAIL. Answer 'n' to adopt an existing VPC.\n", region, n, ibm.VPCQuotaPerRegion)
+	} else {
+		fmt.Fprintf(os.Stderr, "  VPCs in %s: %d/%d\n", region, n, ibm.VPCQuotaPerRegion)
+	}
+}
+
+func tgwQuotaHint(ctx context.Context, ic *ibm.Client) {
+	if ic == nil || !isTTY() {
+		return
+	}
+	lctx, cancel := apiCtx(ctx)
+	tgws, err := ic.ListTransitGateways(lctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	if n := len(tgws); n >= ibm.TGWQuotaPerAccount {
+		fmt.Fprintf(os.Stderr, "  Transit Gateways: %d/%d (account-wide) -- at the default limit; a new one will FAIL. Answer 'n' to attach an existing gateway.\n", n, ibm.TGWQuotaPerAccount)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Transit Gateways: %d/%d (account-wide)\n", n, ibm.TGWQuotaPerAccount)
+	}
 }
 
 func pickRegion(ctx context.Context, ic *ibm.Client, label, def string) string {

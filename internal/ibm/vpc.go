@@ -11,6 +11,15 @@ import (
 // discovery, so the operator picks from the account's live VPCs rather than
 // pasting an id by hand.
 
+// Default IBM Cloud quotas, used for PRE-flight warnings. These are the account
+// defaults; an account with an approved increase may exceed them — so callers gate
+// a warning ("at the default limit"), never a hard failure. The two the user hits
+// in practice are VPCs-per-region and Transit-Gateways-per-account.
+const (
+	VPCQuotaPerRegion  = 20 // VPCs per region (default)
+	TGWQuotaPerAccount = 10 // Transit Gateways per account, global (default)
+)
+
 // VPC is a resolved VPC in a region.
 type VPC struct {
 	ID     string `json:"id"`
