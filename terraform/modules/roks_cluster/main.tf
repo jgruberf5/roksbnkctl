@@ -53,6 +53,7 @@ module "cluster" {
   workers_per_zone          = var.roks_workers_per_zone
   min_worker_vcpu_count     = var.roks_min_worker_vcpu_count
   min_worker_memory_gb      = var.roks_min_worker_memory_gb
+  roksbnkctl_binary         = var.roksbnkctl_binary
 }
 
 # Sentinel: captures apply-time IDs so downstream modules can declare a real

@@ -440,20 +440,25 @@ data "ibm_container_cluster_config" "cluster_config" {
 # ============================================================
 # Removes the OpenShift ingress operator's validating admission policy
 # binding that can block Gateway API CRD operations.
-# Uses curl against the Kubernetes API so no kubectl/oc CLI is required on the
-# terraform runner (they aren't always on PATH — e.g. the tools-runner container).
+#
+# Converted from a host `curl -X DELETE ... || true` to `roksbnkctl tfx delete`
+# (the Windows-native terraform helper): NO interpreter is set, so on Windows
+# terraform execs roksbnkctl.exe via `cmd.exe /C` directly — no bash/curl needed.
+# The command is flags-only (no pipes, no shell builtins); the kube token is passed
+# via the environment (KUBE_TOKEN), never on the command line. --ignore-not-found
+# keeps it idempotent, matching the old `|| true`. --insecure matches `curl -sk`.
+locals {
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+}
 
 resource "null_resource" "delete_gatewayapi_admission_policy" {
   count = var.create_cluster ? 1 : 0
 
   provisioner "local-exec" {
-    command = <<-EOT
-      curl -sk \
-        -X DELETE \
-        -H "Authorization: Bearer ${data.ibm_container_cluster_config.cluster_config[0].token}" \
-        "${data.ibm_container_cluster_config.cluster_config[0].host}/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" \
-        -o /dev/null -w "%%{http_code}" || true
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx delete --kube-host ${data.ibm_container_cluster_config.cluster_config[0].host} --insecure --gvr admissionregistration.k8s.io/v1/validatingadmissionpolicybindings --name openshift-ingress-operator-gatewayapi-crd-admission --ignore-not-found"
+    environment = {
+      KUBE_TOKEN = data.ibm_container_cluster_config.cluster_config[0].token
+    }
   }
 
   depends_on = [data.ibm_container_cluster_config.cluster_config]

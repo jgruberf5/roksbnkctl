@@ -107,3 +107,9 @@ variable "kubeconfig_dir" {
   description = "Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner."
   type        = string
 }
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the cluster phase invokes `roksbnkctl tfx <verb>` in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}

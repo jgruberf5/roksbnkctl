@@ -50,6 +50,7 @@ module "roks_cluster" {
   use_existing_cluster_vpc          = var.use_existing_cluster_vpc
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
   kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
+  roksbnkctl_binary                 = var.roksbnkctl_binary
 }
 
 
