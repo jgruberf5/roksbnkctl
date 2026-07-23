@@ -21,6 +21,12 @@ type Client struct {
 	apiKey string
 	region string
 
+	// auth is the ONE shared IAM authenticator. core.IamAuthenticator caches
+	// the bearer token internally (and refreshes near expiry), so reusing this
+	// across every raw-REST helper collapses what used to be a fresh token
+	// exchange per call into a single exchange per command.
+	auth *core.IamAuthenticator
+
 	iam *iamidentityv1.IamIdentityV1
 	rmg *resourcemanagerv2.ResourceManagerV2
 	rc  *resourcecontrollerv2.ResourceControllerV2 // lazily constructed by ensureRC
@@ -61,6 +67,7 @@ func New(apiKey, region string) (*Client, error) {
 	return &Client{
 		apiKey: apiKey,
 		region: region,
+		auth:   auth,
 		iam:    iam,
 		rmg:    rmg,
 	}, nil

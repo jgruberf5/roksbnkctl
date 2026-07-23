@@ -13,9 +13,15 @@ import (
 
 // authToken fetches an IAM bearer token for the client's API key. Factors out
 // the token dance shared by every raw-REST helper (GetCluster, ListRegions,
-// ListClusters, the orphan sweep).
+// ListClusters, the orphan sweep). Reuses the client's ONE cached authenticator
+// so repeated calls within a command hit the SDK's internal token cache instead
+// of doing a fresh IAM exchange each time; falls back to a throwaway
+// authenticator for a Client not built via New (e.g. hand-constructed in a test).
 func (c *Client) authToken() (string, error) {
-	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
+	auth := c.auth
+	if auth == nil {
+		auth = &core.IamAuthenticator{ApiKey: c.apiKey}
+	}
 	token, err := auth.GetToken()
 	if err != nil {
 		return "", fmt.Errorf("getting IAM token: %w", err)

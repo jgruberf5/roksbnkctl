@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/go-sdk-core/v5/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,12 +40,7 @@ var kubeconfigHTTPClient = &http.Client{Timeout: 60 * time.Second}
 // no cluster round-trip, just the IAM exchange. The returned token is
 // short-lived (~1h); callers re-mint as needed.
 func (c *Client) IAMToken() (string, error) {
-	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
-	token, err := auth.GetToken()
-	if err != nil {
-		return "", fmt.Errorf("getting IAM token: %w", err)
-	}
-	return token, nil
+	return c.authToken()
 }
 
 // FetchClusterConfig downloads the admin kubeconfig for the given
@@ -66,10 +60,9 @@ func (c *Client) FetchClusterConfig(ctx context.Context, clusterIDOrName string)
 		return nil, errors.New("cluster name/id is empty")
 	}
 
-	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
-	token, err := auth.GetToken()
+	token, err := c.authToken()
 	if err != nil {
-		return nil, fmt.Errorf("getting IAM token: %w", err)
+		return nil, err
 	}
 
 	var lastErr error

@@ -28,7 +28,12 @@ func (c *Client) ensureRC() (*resourcecontrollerv2.ResourceControllerV2, error) 
 	if c.rc != nil {
 		return c.rc, nil
 	}
-	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
+	// Share the client's ONE authenticator (one token cache across the SDK +
+	// raw-REST helpers); fall back for a hand-constructed Client (tests).
+	auth := c.auth
+	if auth == nil {
+		auth = &core.IamAuthenticator{ApiKey: c.apiKey}
+	}
 	rc, err := resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
 		Authenticator: auth,
 	})
