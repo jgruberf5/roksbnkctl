@@ -87,10 +87,12 @@ resource "ibm_is_security_group_rule" "flp_in" {
   group     = ibm_is_security_group.flp[0].id
   direction = "inbound"
   remote    = each.value
-  tcp {
-    port_min = 8443
-    port_max = 8443
-  }
+  # Top-level protocol/port_min/port_max — the nested `tcp {}` block form is
+  # deprecated ("tcp is deprecated, use 'protocol', 'code', and 'type' instead").
+  # Matches the flat form already used in modules/flp and modules/testing.
+  protocol = "tcp"
+  port_min = 8443
+  port_max = 8443
 }
 resource "ibm_is_security_group_rule" "egress" {
   count     = local.enabled ? 1 : 0

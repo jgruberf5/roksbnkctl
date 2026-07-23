@@ -406,6 +406,20 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		if !res.RegistryCOS.Create {
 			res.RegistryCOS.Existing = promptString("Existing COS instance name", "")
 		}
+
+		// Cluster VPC. Declining discovers the region's existing VPCs to build the
+		// new cluster into — so multiple clusters (workspaces) can share one VPC.
+		// The recorded value is the VPC id (ResourcesCfg.ClusterVPC.Existing), which
+		// renders as use_existing_cluster_vpc + existing_cluster_vpc_id. A new cluster
+		// must have a VPC, so if none is selected we fall back to creating one.
+		res.ClusterVPC.Create = promptYesNo("Create a new cluster VPC?", true)
+		if !res.ClusterVPC.Create {
+			res.ClusterVPC.Existing = pickExistingVPC(ctx, ic, out.Region, "Use an existing cluster VPC")
+			if res.ClusterVPC.Existing == "" {
+				fmt.Fprintln(os.Stderr, "  (no VPC selected — a new cluster needs a VPC, so one will be created)")
+				res.ClusterVPC.Create = true
+			}
+		}
 	} else {
 		fmt.Fprintln(os.Stderr, "\n→ Listing running OpenShift clusters...")
 		clusters, err := ic.ListClusters(ctx)
@@ -660,6 +674,36 @@ func pickExistingTransitGateway(ctx context.Context, ic *ibm.Client, label strin
 	return tgws[choice-1].Name
 }
 
+// pickExistingVPC discovers the VPCs in a region and lets the operator choose one
+// for the new cluster to build into — enabling multiple clusters (workspaces) to
+// share one VPC. Mirrors pickExistingTransitGateway, with two differences: VPCs
+// are regional (so it takes a region), and it returns the VPC *ID* (not name),
+// because ResourcesCfg.ClusterVPC.Existing is rendered as existing_cluster_vpc_id.
+// Returns "" for none/skip. Falls back to a free-text VPC-id prompt when discovery
+// fails; reports (and skips) when the region has none.
+func pickExistingVPC(ctx context.Context, ic *ibm.Client, region, label string) string {
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list VPCs: %v)\n", err)
+		return promptString(label+" — VPC id (blank = create a new one)", "")
+	}
+	if len(vpcs) == 0 {
+		fmt.Fprintf(os.Stderr, "  (no existing VPCs in %s — a new one will be created)\n", region)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "  Existing VPCs in %s:\n", region)
+	for i, v := range vpcs {
+		fmt.Fprintf(os.Stderr, "    %2d) %-28s (%s)\n", i+1, v.Name, v.Status)
+	}
+	choice := promptInt(label+" — pick a number (0 = none / create a new one)", 0)
+	if choice <= 0 || choice > len(vpcs) {
+		return ""
+	}
+	return vpcs[choice-1].ID
+}
+
 func pickRegion(ctx context.Context, ic *ibm.Client, label, def string) string {
 	if !isTTY() {
 		return def
@@ -771,7 +815,14 @@ func printNamePlan(w io.Writer, ws *config.Workspace) {
 		clusterName = ws.Cluster.Name + "  (existing)"
 	}
 	fmt.Fprintf(w, "  cluster                %s\n", clusterName)
-	fmt.Fprintf(w, "  cluster VPC            %s\n", plan.ClusterVPCName)
+	// The cluster VPC is created under the derived name by default; it is adopted
+	// only when Create=false AND an id is given (the exact render condition in
+	// tf/vars.go), so a zero-value toggle still means "create", not "not managed".
+	clusterVPC := plan.ClusterVPCName
+	if !res.ClusterVPC.Create && res.ClusterVPC.Existing != "" {
+		clusterVPC = res.ClusterVPC.Existing + "  (existing)"
+	}
+	fmt.Fprintf(w, "  cluster VPC            %s\n", clusterVPC)
 	fmt.Fprintf(w, "  registry COS instance  %s\n", planNameOrExisting(res.RegistryCOS, plan.COSInstanceName))
 	fmt.Fprintf(w, "  transit gateway        %s\n", planNameOrExisting(res.TransitGateway, plan.TransitGatewayName))
 	if res.TGWJumphost.Create {

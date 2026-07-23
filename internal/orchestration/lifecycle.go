@@ -510,6 +510,9 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if pres.Testing {
 		phases = append(phases, "testing jumphosts")
 	}
+	if pres.TGW {
+		phases = append(phases, "transit gateway connection (detach only)")
+	}
 	if pres.Cluster || pres.ClusterResidual {
 		phases = append(phases, "cluster (ROKS + transit gateway + registry COS)")
 	}
@@ -544,6 +547,24 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 		}
 		if err := g.Wait(); err != nil {
 			return err
+		}
+	}
+
+	// The Transit Gateway connection (state-tgw/) attaches the cluster VPC to an
+	// EXISTING shared gateway — its own phase the composite otherwise wouldn't
+	// touch. But the connection references the cluster VPC's CRN, so the
+	// cluster-phase VPC delete FAILS while it exists ("VPC still has an attached
+	// transit gateway connection"). Auto-disconnect it here, after BNK/Testing and
+	// BEFORE the cluster, removing ONLY this cluster's connection (the gateway and
+	// every other cluster's connection stay). Unlike the Gateway/FLP phases —
+	// guarded because their teardown has cluster-namespace finalizer ordering the
+	// composite won't automate — a TGW connection is a pure IBM resource with a
+	// deterministic ordering, so automating it is safe. in.Auto is already true
+	// here (set after the combined confirmation, or via --auto), so RunTGWDisconnect
+	// won't re-prompt.
+	if pres.TGW {
+		if err := RunTGWDisconnect(ctx, in); err != nil {
+			return fmt.Errorf("detaching the transit gateway before cluster teardown: %w", err)
 		}
 	}
 

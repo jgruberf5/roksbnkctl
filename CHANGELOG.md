@@ -4,6 +4,21 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.26.0 — 2026-07-23
+
+### Added
+
+- **`init` discovers an existing VPC for the new cluster to build into.**
+ In the interactive interview, when creating a new ROKS cluster, declining "Create a new cluster VPC?" now lists the account's existing VPCs **in the chosen region** (name + status) and lets you pick one by number — mirroring the transit-gateway discovery. Picking one records it as `resources.cluster_vpc { create: false, existing: <vpc-id> }`, which renders `use_existing_cluster_vpc` + `existing_cluster_vpc_id`, so the cluster's subnets (and reused per-zone public gateways) land in the adopted VPC. This lets **multiple workspaces put different clusters in the same VPC**. Picking `0` (or if the region has none) falls back to creating a new VPC, since a cluster must have one. Falls back to a free-text VPC-id prompt if the listing call fails. (The Terraform, config model, and tfvars rendering for BYO cluster VPC already existed — this exposes it in the interview instead of requiring a hand-edited `config.yaml`.)
+
+### Changed
+
+- **`roksbnkctl down` auto-detaches an existing Transit Gateway before tearing down the cluster.** When a workspace **created** its VPC but attached it to an **existing** (shared) Transit Gateway — via `tgw connect` or the init interview — that connection lives in its own phase (`state-tgw/`) the composite `down` previously ignored. Because the connection pins the cluster VPC's CRN, the cluster-phase VPC delete would fail (`VPC still has an attached transit gateway connection`) until you manually ran `tgw disconnect`. `down` now detects the connection (`Presence.TGW`) and disconnects it automatically — **after** the BNK/Testing teardown and **before** the cluster — removing only this cluster's connection (the gateway and every other cluster's connection stay intact). A detach, never a delete of the shared gateway. Unlike the Gateway/FLP phases (guarded with "run `X down` first" because their teardown has cluster-namespace finalizer ordering), a TGW connection is a pure IBM resource with deterministic ordering, so automating it is safe.
+
+### Fixed
+
+- **Removed the deprecated `tcp {}` block from the FLP-VSI security group rule.** `modules/flp_vsi`'s inbound-8443 rule used the nested `tcp { port_min port_max }` form, which the IBM provider now warns is deprecated (`tcp is deprecated, use 'protocol', 'code', and 'type' instead`). Rewrote it to the flat `protocol = "tcp"` / `port_min` / `port_max` form already used in `modules/flp` and `modules/testing` — same rule, no more warning on every plan/apply/destroy.
+
 ## v1.25.0 — 2026-07-23
 
 ### Added
