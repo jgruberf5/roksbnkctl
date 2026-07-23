@@ -23,6 +23,14 @@ import (
 // It never blocks init: declining (or a resolvable-but-empty check) just prints
 // a warning and returns nil, leaving the operator to populate COS by hand.
 func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID string, ws *config.Workspace) error {
+	// Already pinned to local files (a prior init, or set by hand): honour them and
+	// skip COS entirely — no instance/bucket/DNS needed.
+	if ws.BNK.FarAuthLocalFile != "" && ws.BNK.SubscriptionJWTLocalFile != "" {
+		fmt.Fprintf(os.Stderr, "\n→ FAR supply chain: using local files (COS not consulted)\n    FAR: %s\n    JWT: %s\n",
+			ws.BNK.FarAuthLocalFile, ws.BNK.SubscriptionJWTLocalFile)
+		return nil
+	}
+
 	farFile := ws.BNK.FarAuthFile
 	if farFile == "" {
 		farFile = config.DefaultFARAuthFile
@@ -32,7 +40,11 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 		jwtFile = config.DefaultSubscriptionJWTFile
 	}
 
-	instName, bucket, bucketRegion := config.DefaultCOSInstance, config.DefaultCOSBucket, ws.IBMCloud.Region
+	// The orchestration COS lives in a fixed region (DefaultCOSRegion), NOT the
+	// cluster's region — a cluster region like eu-fr2 has no COS S3 endpoint, so
+	// defaulting the bucket region to it produced "no such host". Only an explicit
+	// cos.region overrides the default.
+	instName, bucket, bucketRegion := config.DefaultCOSInstance, config.DefaultCOSBucket, config.DefaultCOSRegion
 	if ws.COS != nil {
 		if ws.COS.Instance != "" {
 			instName = ws.COS.Instance
@@ -44,64 +56,26 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 			bucketRegion = ws.COS.Region
 		}
 	}
-	if bucketRegion == "" {
-		bucketRegion = config.DefaultCOSRegion
-	}
 
 	fmt.Fprintf(os.Stderr, "\n→ Checking the FAR supply chain (COS instance %q / bucket %q → %s + %s)\n",
 		instName, bucket, farFile, jwtFile)
 
-	// Instance: list rather than get-by-name so "absent" is a clean nil, not an
-	// error we'd have to distinguish from a real failure.
-	lctx, lcancel := apiCtx(ctx)
-	insts, err := ic.ListCOSInstances(lctx)
-	lcancel()
-	if err != nil {
-		return fmt.Errorf("listing COS instances: %w", err)
-	}
-	var inst *ibm.COSInstance
-	for i := range insts {
-		if insts[i].Name == instName {
-			inst = &insts[i]
-			break
-		}
-	}
-
-	var cc *cos.Client
-	bucketOK, farOK, jwtOK := false, false, false
-	if inst != nil {
-		cc, err = cos.New(apiKey, bucketRegion, inst.CRN)
-		if err != nil {
-			return fmt.Errorf("opening COS client: %w", err)
-		}
-		cc.WithResolver(cos.DefaultBucketRegionResolver(cc))
-
-		bctx, bcancel := apiCtx(ctx)
-		buckets, berr := cc.ListBuckets(bctx)
-		bcancel()
-		if berr != nil {
-			return fmt.Errorf("listing buckets in %q: %w", instName, berr)
-		}
-		for _, b := range buckets {
-			if b == bucket {
-				bucketOK = true
-				break
-			}
-		}
-		if bucketOK {
-			octx, ocancel := apiCtx(ctx)
-			farOK = objectExists(octx, cc, bucket, farFile)
-			jwtOK = objectExists(octx, cc, bucket, jwtFile)
-			ocancel()
-		}
-	}
-
-	if inst != nil && bucketOK && farOK && jwtOK {
+	// Probe COS. Any transport/DNS/auth error is NON-FATAL: we fall back to local
+	// files rather than aborting init (which used to leave no workspace at all).
+	inst, cc, bucketOK, farOK, jwtOK, cosErr := checkCOSSupplyChain(ctx, ic, apiKey, instName, bucket, bucketRegion, farFile, jwtFile)
+	if cosErr == nil && inst != nil && bucketOK && farOK && jwtOK {
 		fmt.Fprintln(os.Stderr, "✓ FAR supply chain is available")
 		return nil
 	}
 
-	// Report exactly what's missing.
+	if cosErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ COS supply-chain check failed: %v\n", cosErr)
+		fmt.Fprintln(os.Stderr, "  Falling back to local files (no COS needed).")
+		return promptLocalSupplyChain(ws, farFile, jwtFile)
+	}
+
+	// COS reachable but something is missing — report it, then prefer local files
+	// (avoids COS entirely); the operator can still choose to provision + upload.
 	var missing []string
 	if inst == nil {
 		missing = append(missing, fmt.Sprintf("COS instance %q", instName))
@@ -116,8 +90,11 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 	}
 	fmt.Fprintf(os.Stderr, "  Missing: %s\n", strings.Join(missing, ", "))
 
-	if !promptYesNo("Create the FAR supply chain now from local files?", true) {
-		fmt.Fprintln(os.Stderr, "  Skipped — the BNK phase will fail until the FAR auth tarball and JWT are in COS.")
+	if promptYesNo("Use local files for the FAR auth tarball + subscription JWT (no COS)?", true) {
+		return promptLocalSupplyChain(ws, farFile, jwtFile)
+	}
+	if !promptYesNo("Provision the COS supply chain instead (create instance/bucket + upload)?", false) {
+		fmt.Fprintln(os.Stderr, "  Skipped — the BNK phase will fail until the FAR auth tarball and JWT are available.")
 		return nil
 	}
 
@@ -133,10 +110,11 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 			return fmt.Errorf("creating COS instance %q: %w", instName, cerr)
 		}
 		inst = created
-		cc, err = cos.New(apiKey, bucketRegion, inst.CRN)
-		if err != nil {
-			return fmt.Errorf("opening COS client: %w", err)
+		newCC, nerr := cos.New(apiKey, bucketRegion, inst.CRN)
+		if nerr != nil {
+			return fmt.Errorf("opening COS client: %w", nerr)
 		}
+		cc = newCC
 		cc.WithResolver(cos.DefaultBucketRegionResolver(cc))
 		bucketOK = false
 	}
@@ -177,6 +155,67 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 	}
 
 	fmt.Fprintln(os.Stderr, "✓ FAR supply chain ready")
+	return nil
+}
+
+// checkCOSSupplyChain probes the orchestration COS for the instance, bucket, and
+// the two objects. A non-nil error means COS itself was unreachable/unusable
+// (transport, DNS, auth) — the caller falls back to local files. A nil error with
+// a false flag means COS is reachable but the artefact is simply absent.
+func checkCOSSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, instName, bucket, bucketRegion, farFile, jwtFile string) (inst *ibm.COSInstance, cc *cos.Client, bucketOK, farOK, jwtOK bool, cosErr error) {
+	lctx, lcancel := apiCtx(ctx)
+	insts, err := ic.ListCOSInstances(lctx)
+	lcancel()
+	if err != nil {
+		return nil, nil, false, false, false, fmt.Errorf("listing COS instances: %w", err)
+	}
+	for i := range insts {
+		if insts[i].Name == instName {
+			inst = &insts[i]
+			break
+		}
+	}
+	if inst == nil {
+		return nil, nil, false, false, false, nil // reachable, instance simply absent
+	}
+
+	cc, err = cos.New(apiKey, bucketRegion, inst.CRN)
+	if err != nil {
+		return inst, nil, false, false, false, fmt.Errorf("opening COS client: %w", err)
+	}
+	cc.WithResolver(cos.DefaultBucketRegionResolver(cc))
+
+	bctx, bcancel := apiCtx(ctx)
+	buckets, berr := cc.ListBuckets(bctx)
+	bcancel()
+	if berr != nil {
+		return inst, cc, false, false, false, fmt.Errorf("listing buckets in %q: %w", instName, berr)
+	}
+	for _, b := range buckets {
+		if b == bucket {
+			bucketOK = true
+			break
+		}
+	}
+	if bucketOK {
+		octx, ocancel := apiCtx(ctx)
+		farOK = objectExists(octx, cc, bucket, farFile)
+		jwtOK = objectExists(octx, cc, bucket, jwtFile)
+		ocancel()
+	}
+	return inst, cc, bucketOK, farOK, jwtOK, nil
+}
+
+// promptLocalSupplyChain records LOCAL file paths for the FAR tarball + JWT on the
+// workspace (bnk.far_auth_local_file / subscription_jwt_local_file). The BNK phase
+// then reads them directly — no COS. Suggested filenames match the COS keys so the
+// operator recognises the artefacts.
+func promptLocalSupplyChain(ws *config.Workspace, farFile, jwtFile string) error {
+	farPath := promptExistingFile(fmt.Sprintf("Path to the local FAR auth tarball (%s)", farFile))
+	jwtPath := promptExistingFile(fmt.Sprintf("Path to the local subscription JWT (%s)", jwtFile))
+	ws.BNK.FarAuthLocalFile = farPath
+	ws.BNK.SubscriptionJWTLocalFile = jwtPath
+	fmt.Fprintf(os.Stderr, "✓ FAR supply chain: using local files\n    FAR: %s\n    JWT: %s\n", farPath, jwtPath)
 	return nil
 }
 

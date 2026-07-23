@@ -73,6 +73,7 @@ module "flo" {
 
   # COS Bucket Configuration
   use_cos_bucket                = var.use_cos_bucket
+  far_service_account_b64       = var.far_service_account_b64
   ibmcloud_api_key              = var.ibmcloud_api_key
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
   ibmcloud_resource_group       = var.ibmcloud_resource_group

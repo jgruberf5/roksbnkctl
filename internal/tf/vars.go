@@ -9,6 +9,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
+	"github.com/jgruberf5/roksbnkctl/internal/registry/source"
 )
 
 // WriteTFVars renders the workspace config into terraform.tfvars at path.
@@ -444,6 +445,24 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	}
 	if ws.BNK.SubscriptionJWTFile != "" {
 		fmt.Fprintf(w, "f5_cne_subscription_jwt_file = %q\n", ws.BNK.SubscriptionJWTFile)
+	}
+	// Local-file supply chain (no COS). When both local files are set, read them
+	// HERE (Go — no curl/tar/grep) and inject the FAR service account + JWT
+	// content directly, disabling the COS download path. Fail loudly: the operator
+	// explicitly pointed at these files, so an unreadable path is a config error,
+	// not a silent fall-through to a COS bucket that may not exist.
+	if far, jwt := ws.BNK.FarAuthLocalFile, ws.BNK.SubscriptionJWTLocalFile; far != "" && jwt != "" {
+		saB64, err := source.ExtractServiceAccountFromTarball(far)
+		if err != nil {
+			return fmt.Errorf("reading FAR auth tarball %q (bnk.far_auth_local_file): %w", far, err)
+		}
+		jwtBytes, err := os.ReadFile(jwt)
+		if err != nil {
+			return fmt.Errorf("reading subscription JWT %q (bnk.subscription_jwt_local_file): %w", jwt, err)
+		}
+		fmt.Fprintln(w, "use_cos_bucket = false")
+		fmt.Fprintf(w, "far_service_account_b64 = %q\n", strings.TrimSpace(saB64))
+		fmt.Fprintf(w, "f5_cne_subscription_jwt = %q\n", strings.TrimSpace(string(jwtBytes)))
 	}
 	// Sprint 27 install-mode flag. Emitted only when set; an unset value
 	// lets the upstream TF default (kubectl) stand, keeping older configs

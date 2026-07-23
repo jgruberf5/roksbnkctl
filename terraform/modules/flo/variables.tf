@@ -100,6 +100,13 @@ variable "use_cos_bucket" {
   default     = true
 }
 
+variable "far_service_account_b64" {
+  description = "FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "ibmcloud_cos_bucket_region" {
   description = "IBM Cloud region where the COS bucket is located"
   type        = string

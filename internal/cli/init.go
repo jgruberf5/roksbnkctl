@@ -121,10 +121,13 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return runUpgradeTF(ctx, cctx)
 	}
 
-	// Existing workspace + interactive overwrite confirmation.
+	// Existing workspace: re-init RESUMES the interview to complete/update it,
+	// pre-filling defaults from the saved config (initDefaults reads it below).
+	// This is how a PARTIAL workspace — one left by a failed first init — gets
+	// finished, so the framing is "complete/update", not "overwrite".
 	if cctx.Workspace != nil {
-		fmt.Fprintf(os.Stderr, "Workspace %q already exists.\n", cctx.WorkspaceName)
-		if !promptYesNo("Overwrite config?", false) {
+		fmt.Fprintf(os.Stderr, "Workspace %q already exists — re-running setup to complete/update it.\n", cctx.WorkspaceName)
+		if !promptYesNo("Continue and update this workspace?", true) {
 			return errors.New("aborted")
 		}
 	}
@@ -182,6 +185,22 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "✓ %s\n\n", id)
+
+	// Persist a PARTIAL workspace now (region + a resolvable API key), BEFORE the
+	// interview's fallible steps (cluster listing, the FAR/COS check). Historically
+	// the only save was at the very end, so any earlier failure left NO workspace
+	// and manual commands like `roksbnkctl cos` had nothing to resolve. With this,
+	// a failed init still leaves a usable workspace, and re-running `init` completes
+	// it. Skipped on a re-init (the workspace already exists). Best-effort.
+	if cctx.Workspace == nil {
+		partial := &config.Workspace{IBMCloud: config.IBMCloudCfg{Region: region}}
+		if serr := config.SaveWorkspace(cctx.WorkspaceName, partial); serr == nil {
+			persistAPIKey(cctx.WorkspaceName, apiKey)
+			fmt.Fprintf(os.Stderr, "✓ Partial workspace saved (%q) — completes on a successful init\n\n", cctx.WorkspaceName)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: could not pre-save workspace: %v\n\n", serr)
+		}
+	}
 
 	// The account-aware interview: create-vs-reuse, region + existing-cluster
 	// menus pulled from the credentials, resource toggles, and the optional
@@ -269,19 +288,9 @@ func runInit(_ *cobra.Command, _ []string) error {
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "\n✓ Wrote %s\n", cfgPath)
 
-	// Persist the API key for future runs. ResolveAPIKey may have
-	// already saved to the keychain during the prompt path, but if it
-	// couldn't (e.g. WSL2 without libsecret) the workspace didn't yet
-	// exist for the config.yaml fallback. Now it does — try again.
-	if !envHasAPIKey() && !config.APIKeyInKeychain(cctx.WorkspaceName) {
-		dest, perr := config.SaveAPIKeyForWorkspace(cctx.WorkspaceName, apiKey)
-		if perr == nil {
-			fmt.Fprintf(os.Stderr, "✓ API key persisted in %s\n", dest)
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: could not persist API key: %v\n", perr)
-			fmt.Fprintln(os.Stderr, "  set IBMCLOUD_API_KEY in a .env file or shell to skip the prompt next run")
-		}
-	}
+	// Persist the API key for future runs (idempotent — no-op if the partial-save
+	// path above already stored it, or it's in env/keychain).
+	persistAPIKey(cctx.WorkspaceName, apiKey)
 
 	// Initialising a workspace selects it — the user's environment follows the
 	// freshly-configured workspace without a separate `ws use`.
@@ -293,6 +302,24 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
 	return nil
+}
+
+// persistAPIKey saves the API key to the workspace keychain (or the config.yaml
+// fallback) when it isn't already resolvable from the environment or keychain.
+// Best-effort and idempotent, so it is safe to call early — right after the
+// partial-workspace save, so `roksbnkctl cos` on a half-finished workspace can
+// authenticate — and again at the end of init.
+func persistAPIKey(workspace, apiKey string) {
+	if envHasAPIKey() || config.APIKeyInKeychain(workspace) {
+		return
+	}
+	dest, perr := config.SaveAPIKeyForWorkspace(workspace, apiKey)
+	if perr == nil {
+		fmt.Fprintf(os.Stderr, "✓ API key persisted in %s\n", dest)
+	} else {
+		fmt.Fprintf(os.Stderr, "warning: could not persist API key: %v\n", perr)
+		fmt.Fprintln(os.Stderr, "  set IBMCLOUD_API_KEY in a .env file or shell to skip the prompt next run")
+	}
 }
 
 // allCreateResources returns a ResourcesCfg with every toggle set to

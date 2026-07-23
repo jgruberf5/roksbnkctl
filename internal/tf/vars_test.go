@@ -1,13 +1,71 @@
 package tf
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
 )
+
+// TestRenderTFVars_LocalSupplyChain verifies that setting local FAR/JWT files
+// injects their content and disables the COS download path.
+func TestRenderTFVars_LocalSupplyChain(t *testing.T) {
+	dir := t.TempDir()
+
+	// A FAR tarball whose single .json entry is the base64 service account.
+	const saB64 = "eyJ0eXAiOiJKV1QifQ=="
+	tgz := filepath.Join(dir, "f5-far-auth-key.tgz")
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	body := []byte("  " + saB64 + "  \n") // surrounding whitespace is trimmed
+	if err := tw.WriteHeader(&tar.Header{Name: "cne_pull_64.json", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gz.Close()
+	if err := os.WriteFile(tgz, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const jwt = "eyJhbGciOiJSUzI1NiJ9.subscription"
+	jwtPath := filepath.Join(dir, "subscription.jwt")
+	if err := os.WriteFile(jwtPath, []byte(jwt+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := &config.Workspace{
+		Prefix:   "tf",
+		IBMCloud: config.IBMCloudCfg{Region: "us-south"},
+	}
+	ws.BNK.FarAuthLocalFile = tgz
+	ws.BNK.SubscriptionJWTLocalFile = jwtPath
+
+	var out bytes.Buffer
+	if err := RenderTFVars(&out, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"use_cos_bucket = false",
+		`far_service_account_b64 = "` + saB64 + `"`,
+		`f5_cne_subscription_jwt = "` + jwt + `"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered tfvars missing %q\n---\n%s", want, got)
+		}
+	}
+}
 
 func TestRenderTFVars_GatewayClientSubnetLists(t *testing.T) {
 	// Gateway fields render in the prefix-driven body (real workspaces all

@@ -291,6 +291,31 @@ variable "f5_cne_subscription_jwt_file" {
   default     = "subscription.jwt"
 }
 
+# ---- Local-file supply chain (no COS) --------------------------------------
+# When use_cos_bucket = false, the FAR service account + subscription JWT are
+# injected directly (roksbnkctl reads local files and passes them here), so the
+# BNK phase needs no orchestration COS instance/bucket. Empty defaults keep the
+# COS path (use_cos_bucket = true) byte-identical.
+variable "use_cos_bucket" {
+  description = "Download the FAR auth tarball + subscription JWT from the orchestration COS. false = use the injected far_service_account_b64 / f5_cne_subscription_jwt content instead (local files)."
+  type        = bool
+  default     = true
+}
+
+variable "far_service_account_b64" {
+  description = "FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "f5_cne_subscription_jwt" {
+  description = "Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "flo_namespace" {
   description = "Kubernetes namespace for the F5 Lifecycle Operator"
   type        = string

@@ -272,6 +272,15 @@ type BNKCfg struct {
 	// orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.
 	SubscriptionJWTFile string `yaml:"subscription_jwt_file,omitempty"`
 
+	// FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of
+	// COS objects. When both are set, the BNK phase reads them directly (roksbnkctl
+	// injects the FAR service account + the JWT as tfvars and sets use_cos_bucket=
+	// false), so no orchestration COS instance/bucket is needed. `init` sets these
+	// automatically when the COS supply-chain check fails or is declined. When empty,
+	// the phase falls back to COS (FarAuthFile / SubscriptionJWTFile).
+	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
+	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
+
 	// CRMode selects the BNK custom-resource install mechanism rendered as
 	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
 	// helm_release + alekc/kubectl kubectl_manifest + wait_for path (default);

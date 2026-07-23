@@ -110,7 +110,8 @@ module "flo" {
   registry_mirror_username      = var.registry_mirror_username
   registry_mirror_password      = var.registry_mirror_password
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
-  use_cos_bucket                = true
+  use_cos_bucket                = var.use_cos_bucket
+  far_service_account_b64       = var.far_service_account_b64
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
@@ -197,6 +198,8 @@ module "license" {
   roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
   flo_utils_namespace           = var.flo_utils_namespace
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  use_cos_bucket                = var.use_cos_bucket
+  jwt_token                     = var.f5_cne_subscription_jwt
   license_mode                  = var.license_mode
   flp_license_server_url        = var.flp_license_server_url
   license_server_root_ca        = var.license_server_root_ca

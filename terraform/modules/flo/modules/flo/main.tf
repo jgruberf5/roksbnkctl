@@ -67,7 +67,7 @@ locals {
   # from the in-cluster image host (the BOM mirrors bitnami/kubectl:latest
   # under the mirror namespace) so the air-gapped cluster needs no public pull.
   node_labeler_image      = var.use_registry_mirror ? "${local.far_image_hostname}/bitnami/kubectl:latest" : "bitnami/kubectl:latest"
-  far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : ""
+  far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : var.far_service_account_b64
   far_auth_value          = base64encode("_json_key_base64:${local.far_service_account_b64}")
   far_docker_config_json = replace(
     jsonencode({
@@ -476,8 +476,8 @@ resource "null_resource" "extract_flo_version" {
     command = <<-EOT
       set -e
       # Ensure Helm >= 3.8.0 is available (helm registry requires 3.8+).
-      # Schematics runtime ships an older version. Download directly for linux/amd64
-      # instead of using get-helm-3, which requires uname (not available in Schematics).
+      # Some minimal runtimes ship an older version. Download directly for linux/amd64
+      # instead of using get-helm-3, which requires uname (absent in lean containers).
       HELM_MIN="3.8.0"
       HELM_BIN="helm"
       helm_ok() {
@@ -973,7 +973,7 @@ resource "null_resource" "f5_bnk_cis" {
 }
 
 # Apply privileged SCC to flo-f5-lifecycle-operator service account using Kubernetes RBAC
-# This approach works with IBM Schematics and doesn't require 'oc' CLI
+# This approach uses Kubernetes RBAC directly and doesn't require the 'oc' CLI
 resource "null_resource" "flo_scc_privileged" {
   count = local.use_legacy ? 1 : 0
 

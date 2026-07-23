@@ -22,6 +22,20 @@ The BNK supply chain reads from one COS bucket per cluster's BNK install. The bu
 
 The bucket structure is defined by the upstream HCL — concretely by the `ibmcloud_resources_cos_bucket` variable, which defaults to `bnk-artifacts`. The instance defaults to `bnk-supply-chain`.
 
+## Local files instead of COS (no bucket needed)
+
+COS is not mandatory for the two artefacts the BNK phase actually needs at apply time — the FAR auth tarball and the subscription JWT. You can point the workspace at **local files** and skip COS entirely:
+
+```yaml
+bnk:
+  far_auth_local_file: /path/to/f5-far-auth-key.tgz
+  subscription_jwt_local_file: /path/to/subscription.jwt
+```
+
+When both are set, roksbnkctl reads them at render time — extracting the FAR `_json_key_base64` service account from the tarball in Go — and injects the content directly into the `flo` and `license` modules (`use_cos_bucket = false`), so no COS instance, bucket, or S3 endpoint is contacted. This is useful when the account has no orchestration COS, or when the COS S3 endpoint isn't reachable from where you run `roksbnkctl`.
+
+`roksbnkctl init` wires this up automatically: it checks COS first, and on **any** COS error (including the `dial tcp … no such host` you get when a cluster region such as `eu-fr2` has no COS S3 endpoint) it falls back to prompting for these local files and records them on the workspace. You can also set them by hand. When they're unset, the COS path below is used unchanged.
+
 ## The three command levels
 
 ```bash

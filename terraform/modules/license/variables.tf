@@ -79,6 +79,19 @@ variable "f5_cne_subscription_jwt_file" {
   default     = "subscription.jwt"
 }
 
+variable "use_cos_bucket" {
+  description = "Download the subscription JWT from COS. false = use the injected jwt_token content (local file)."
+  type        = bool
+  default     = true
+}
+
+variable "jwt_token" {
+  description = "Subscription/license JWT content, injected when use_cos_bucket = false. Empty on the COS path."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "license_mode" {
   description = "License operation mode (connected, disconnected, or f5licenseproxy)"
   type        = string

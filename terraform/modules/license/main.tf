@@ -54,8 +54,8 @@ module "license" {
   enabled     = var.deploy_bnk && !var.create_roks_cluster
   bnk_cr_mode = var.bnk_cr_mode
 
-  use_cos_bucket = true
-  jwt_token      = ""
+  use_cos_bucket = var.use_cos_bucket
+  jwt_token      = var.jwt_token
 
   ibmcloud_api_key              = var.ibmcloud_api_key
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
