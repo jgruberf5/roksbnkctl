@@ -2,6 +2,7 @@ package ibm
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/iamidentityv1"
@@ -26,6 +27,11 @@ type Client struct {
 	// across every raw-REST helper collapses what used to be a fresh token
 	// exchange per call into a single exchange per command.
 	auth *core.IamAuthenticator
+
+	// httpClient backs the raw-REST helpers (authedGET/POST/DELETE). Defaults to
+	// kubeconfigHTTPClient; injectable so tests can serve canned responses via a
+	// fake RoundTripper without reaching the network.
+	httpClient *http.Client
 
 	iam *iamidentityv1.IamIdentityV1
 	rmg *resourcemanagerv2.ResourceManagerV2
@@ -65,12 +71,22 @@ func New(apiKey, region string) (*Client, error) {
 	}
 
 	return &Client{
-		apiKey: apiKey,
-		region: region,
-		auth:   auth,
-		iam:    iam,
-		rmg:    rmg,
+		apiKey:     apiKey,
+		region:     region,
+		auth:       auth,
+		httpClient: kubeconfigHTTPClient,
+		iam:        iam,
+		rmg:        rmg,
 	}, nil
+}
+
+// client returns the HTTP client the raw-REST helpers use (the injected one, or
+// the shared 60s-timeout default for a hand-constructed Client).
+func (c *Client) client() *http.Client {
+	if c.httpClient != nil {
+		return c.httpClient
+	}
+	return kubeconfigHTTPClient
 }
 
 // Region returns the region the client was constructed with.

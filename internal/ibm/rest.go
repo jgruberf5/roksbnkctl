@@ -46,7 +46,7 @@ func (c *Client) authedGET(ctx context.Context, url string) ([]byte, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "roksbnkctl")
 
-	resp, err := kubeconfigHTTPClient.Do(req)
+	resp, err := c.client().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (c *Client) authedPOST(ctx context.Context, url string, body []byte) ([]byt
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "roksbnkctl")
 
-	resp, err := kubeconfigHTTPClient.Do(req)
+	resp, err := c.client().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (c *Client) authedDELETE(ctx context.Context, url string) error {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "roksbnkctl")
 
-	resp, err := kubeconfigHTTPClient.Do(req)
+	resp, err := c.client().Do(req)
 	if err != nil {
 		return err
 	}
