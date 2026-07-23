@@ -68,9 +68,9 @@ output "pod_deployment_status" {
 }
 
 output "cneinstance_ready_id" {
-  description = "ID — (known after apply) until CNEInstance + SCC are ready. kubectl mode: the CNEInstance kubectl_manifest id (only set once the Available condition is met); legacy mode: the wait_for_scc_policies time_sleep id."
+  description = "ID — (known after apply) until the CNE controller is ready. kubectl mode: the null_resource.cnecontroller_ready id (set once CNEControllerAvailable=True via the deterministic API poll); legacy mode: the wait_for_scc_policies time_sleep id."
   value = (
-    local.use_kubectl ? kubectl_manifest.cneinstance[0].id :
+    local.use_kubectl ? null_resource.cnecontroller_ready[0].id :
     local.use_legacy ? time_sleep.wait_for_scc_policies[0].id :
     null
   )

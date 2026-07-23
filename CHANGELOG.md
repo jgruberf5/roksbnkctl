@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.23.1 — 2026-07-23
+
+### Fixed
+
+- **`f5licenseproxy` licensing no longer deadlocks — BNK now licenses through the FLP reliably.** On a from-scratch `bnk up` in `f5licenseproxy` mode, the apply would hang indefinitely (observed 3+ hours) and the CNEInstance never licensed: the CWC polled the proxy forever with an empty entitlement (`GetBackLater`). Root cause: the CNEInstance `kubectl_manifest` gated on the `alekc/kubectl` provider's `wait_for { condition = CNEControllerAvailable }`, which did not clear even after that condition was `True` (it hung past its own timeout). Because the License CR — and the FLP CA Secret + CWC restart it needs — is gated on the CNEInstance's ready-id, none of the FLP wiring ever applied, so the CWC licensed against nothing. The two fragile provider `wait_for`s (CNEInstance `CNEControllerAvailable`, License `LicenseActive`) are replaced with **deterministic Kubernetes-API polls** (`null_resource` running `curl` + coreutils `grep`/`tr` — **no `python3`, no `jq`**, so it runs in the tools-runner container where python is absent): each clears as soon as its condition is met (seconds), is bounded (~15 min), and **fails loudly instead of hanging**. The change is mode-agnostic — `connected`/`disconnected` (direct licensing, no FLP) get the same deterministic gating with no FLP Secret or CWC rollout written. Validated across repeated from-scratch cycles: each licensed through the FLP in 2–5 minutes with zero hangs.
+
+- **FLP VSI reuses the cluster VPC's existing zone gateway instead of failing the per-zone quota.** With `bnk.flp.mode: vsi`, `flp up` into an existing cluster VPC failed with `CreatePublicGatewayWithContext failed: … over quota. Quota: 1` — the module always created its own public gateway, but IBM Cloud allows exactly one public gateway per zone per VPC and the cluster phase already attached one to every zone. The `flp_vsi` module now looks the VPC's gateways up and **reuses** the one already in the FLP VSI's zone, creating its own only when the zone has none (the same reuse pattern the cluster module uses).
+
 ## v1.23.0 — 2026-07-22
 
 ### Added

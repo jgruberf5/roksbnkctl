@@ -502,35 +502,62 @@ resource "kubectl_manifest" "cneinstance" {
   field_manager     = "roksbnkctl"
   force_conflicts   = true
 
-  # Gate on CNEControllerAvailable, NOT the terminal Available. Available also
-  # requires F5TmmAvailable, and TMM can't reach ConfigurationDone until it is
-  # LICENSED — but the License CR applies AFTER this resource (it depends on
-  # cneinstance_ready_id = this resource's id, set only once wait_for clears).
-  # Waiting on Available here is therefore a deadlock:
-  #   License ← cneinstance.id ← Available ← F5TmmAvailable ← ConfigurationDone ← License.
-  # CNEControllerAvailable flips as soon as the CNE controller is up (before TMM
-  # needs its license), so the apply proceeds to the License, which licenses
-  # TMM, which then reaches Available on its own. The License's own wait_for
-  # ("Verification Complete") is the meaningful licensing gate downstream.
-  wait_for {
-    condition {
-      type   = "CNEControllerAvailable"
-      status = "True"
-    }
-  }
-
-  # Generous create timeout: the controller bring-up runs the crd-installer
-  # (Gateway API CRDs) which the admission-policy delete-loop has to shepherd
-  # through, so first-time reconciles can take well past the provider default.
-  timeouts {
-    create = "30m"
-  }
-
+  # We deliberately do NOT use the provider's `wait_for { condition }` here.
+  # With alekc/kubectl 2.4.1 + server_side_apply, the wait on the custom
+  # CNEControllerAvailable condition did not clear even after the condition was
+  # True — it hung for hours, past the timeout — which DEADLOCKED the apply: the
+  # License CR is gated on cneinstance_ready_id (this resource), so with the wait
+  # stuck the License never applied, TMM never got its license, and in
+  # f5licenseproxy mode the CWC polled the proxy forever with an empty
+  # entitlement. The readiness gate is now a deterministic API poll
+  # (null_resource.cnecontroller_ready below), which drives cneinstance_ready_id.
+  # SSA here just creates/updates the CR — fast, no wait.
   depends_on = [
     var.flo_deployment_dependency,
     null_resource.delete_gatewayapi_admission_policy,
     kubectl_manifest.cloud_network_mapping,
   ]
+}
+
+# Deterministic replacement for the provider wait_for above: poll the CNEInstance
+# status via the K8s REST API and clear as soon as CNEControllerAvailable=True.
+# This is the gate the License CR waits on (cneinstance_ready_id).
+# CNEControllerAvailable flips when the CNE controller is up — BEFORE TMM needs its
+# license — so licensing (which the License CR drives) can proceed and TMM then
+# reaches Available on its own. Bounded (~15m) and fails loudly rather than hanging.
+#
+# Parsing is pure bash + curl + coreutils (grep/tr) — NO python3 and NO jq. python3
+# is deliberately avoided: it is absent in the tools-runner container (the FLP phase
+# was reworked for exactly this reason). We first strip ALL whitespace (`tr -d
+# '[:space:]'`) so the parse works whether the API server returns pretty-printed or
+# compact JSON; then `tr '{}' '\n'` splits the status.conditions array so each
+# condition object lands on its own line, and we require the CNEControllerAvailable
+# object to also carry status=True (order-independent, no interior spaces).
+resource "null_resource" "cnecontroller_ready" {
+  count = local.use_kubectl ? 1 : 0
+
+  triggers = {
+    cneinstance = kubectl_manifest.cneinstance[0].id
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      url="${var.kube_host}/apis/k8s.f5.com/v1/namespaces/${var.flo_namespace}/cneinstances/${local.cneinstance_name}"
+      for i in $(seq 1 90); do
+        body=$(curl -sk -H "Authorization: Bearer ${var.kube_token}" "$url" 2>/dev/null | tr -d '[:space:]')
+        if printf '%s' "$body" | tr '{}' '\n' | grep '"type":"CNEControllerAvailable"' | grep -q '"status":"True"'; then
+          echo "CNEControllerAvailable=True (attempt $i)"; exit 0
+        fi
+        echo "Waiting for CNEControllerAvailable (attempt $i/90)..."
+        sleep 10
+      done
+      echo "ERROR: CNEControllerAvailable not True after ~15m" >&2
+      exit 1
+    EOT
+  }
+
+  depends_on = [kubectl_manifest.cneinstance]
 }
 
 resource "kubectl_manifest" "external_vlan" {
@@ -539,7 +566,7 @@ resource "kubectl_manifest" "external_vlan" {
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [kubectl_manifest.cneinstance]
+  depends_on        = [null_resource.cnecontroller_ready]
 }
 
 resource "kubectl_manifest" "internal_vlan" {
@@ -548,7 +575,7 @@ resource "kubectl_manifest" "internal_vlan" {
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [kubectl_manifest.cneinstance]
+  depends_on        = [null_resource.cnecontroller_ready]
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {

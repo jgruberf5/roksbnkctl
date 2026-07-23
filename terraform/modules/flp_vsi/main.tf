@@ -43,8 +43,24 @@ data "ibm_is_vpc" "cluster" {
   count      = local.enabled ? 1 : 0
   identifier = var.existing_cluster_vpc_id
 }
+# IBM Cloud allows exactly ONE public gateway per zone per VPC. The cluster phase
+# already attached a gateway to every zone of the cluster VPC, so creating a
+# second one in the FLP VSI's zone fails ("over quota. Quota: 1"). Look the VPC's
+# gateways up and REUSE the one already in this zone; create ours only if absent.
+data "ibm_is_public_gateways" "vpc" {
+  count = local.enabled ? 1 : 0
+}
+locals {
+  existing_pgw_id = local.enabled ? lookup({
+    for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
+    g.zone => g.id if try(g.vpc, "") == data.ibm_is_vpc.cluster[0].id
+  }, local.zone, "") : ""
+  create_pgw = local.enabled && local.existing_pgw_id == ""
+  # The gateway the subnet attaches to: the one already in the zone, else ours.
+  pgw_id = local.existing_pgw_id != "" ? local.existing_pgw_id : try(ibm_is_public_gateway.egress[0].id, "")
+}
 resource "ibm_is_public_gateway" "egress" {
-  count          = local.enabled ? 1 : 0
+  count          = local.create_pgw ? 1 : 0
   name           = "flp-vsi-egress"
   vpc            = data.ibm_is_vpc.cluster[0].id
   zone           = local.zone
@@ -56,7 +72,7 @@ resource "ibm_is_subnet" "flp" {
   vpc                      = data.ibm_is_vpc.cluster[0].id
   zone                     = local.zone
   total_ipv4_address_count = 16
-  public_gateway           = ibm_is_public_gateway.egress[0].id
+  public_gateway           = local.pgw_id
   resource_group           = data.ibm_resource_group.rg[0].id
 }
 resource "ibm_is_security_group" "flp" {

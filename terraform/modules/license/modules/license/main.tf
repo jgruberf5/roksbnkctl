@@ -297,27 +297,52 @@ resource "kubectl_manifest" "bnk_license" {
   field_manager     = "roksbnkctl"
   force_conflicts   = true
 
-  # Wait on the LicenseActive CONDITION, not status.state == "Verification
-  # Complete". In BNK 2.3 (controller 14.59.x) a successfully verified license
-  # settles to status.state = "Active" (with stateDescription "License
-  # verification complete") and condition LicenseActive=True — the literal
-  # "Verification Complete" is never a terminal state value, so a field match on
-  # it hangs until the timeout even though the license is live. The condition is
-  # version-independent and is the real "TMM is licensed" gate.
-  wait_for {
-    condition {
-      type   = "LicenseActive"
-      status = "True"
-    }
-  }
-
-  # The controller must license TMM and verify the subscription JWT; allow well
-  # past the provider default so a cold first-time verification doesn't trip.
-  timeouts {
-    create = "15m"
-  }
-
+  # SSA only — no provider wait_for. As with the CNEInstance gate, alekc/kubectl
+  # 2.4.1's wait_for on a custom condition (here LicenseActive) is unreliable, so
+  # the "license is live" gate is a deterministic API poll below
+  # (null_resource.license_active).
+  #
   # In FLP mode the CA Secret must exist AND the CWC must have restarted to trust it
   # before the license can verify. In other modes those elements are absent (count 0).
   depends_on = [var.cneinstance_dependency, kubectl_manifest.licenseserver_rootca, null_resource.cwc_flp_rollout]
+}
+
+# Deterministic "TMM is licensed" gate: poll the License CR until it reports
+# licensed — status.state == "Active" (BNK 2.3's terminal value, description
+# "License verification complete") OR condition LicenseActive=True. Replaces the
+# provider wait_for. This is the gate that makes `bnk up` return success only once
+# licensing has actually completed — in connected/disconnected mode (direct to F5)
+# and f5licenseproxy mode (through the in-cluster proxy) alike.
+#
+# Pure bash + curl + coreutils (grep/tr) — NO python3 and NO jq (python3 is absent
+# in the tools-runner container). We strip ALL whitespace first (`tr -d '[:space:]'`)
+# so the parse works against pretty-printed OR compact API JSON; then match either
+# status.state == "Active" or the LicenseActive condition (isolated per-object with
+# `tr '{}' '\n'`). Bounded (~15m) and fails loudly rather than hanging.
+resource "null_resource" "license_active" {
+  count = local.use_kubectl ? 1 : 0
+
+  triggers = {
+    license = kubectl_manifest.bnk_license[0].id
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.utils_namespace}/licenses/bnk-license"
+      for i in $(seq 1 90); do
+        body=$(curl -sk -H "Authorization: Bearer ${var.kube_token}" "$url" 2>/dev/null | tr -d '[:space:]')
+        if printf '%s' "$body" | grep -q '"state":"Active"' \
+           || printf '%s' "$body" | tr '{}' '\n' | grep '"type":"LicenseActive"' | grep -q '"status":"True"'; then
+          echo "License Active (attempt $i)"; exit 0
+        fi
+        echo "Waiting for License to become Active (attempt $i/90)..."
+        sleep 10
+      done
+      echo "ERROR: License did not reach Active after ~15m" >&2
+      exit 1
+    EOT
+  }
+
+  depends_on = [kubectl_manifest.bnk_license]
 }
