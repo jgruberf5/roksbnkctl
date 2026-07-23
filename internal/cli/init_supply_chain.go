@@ -56,14 +56,35 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 			bucketRegion = ws.COS.Region
 		}
 	}
+	// Whether the operator pinned an exact bucket name. A pinned name is respected
+	// as-is; the generic default gets a global-uniqueness suffix when provisioned.
+	bucketExplicit := ws.COS != nil && ws.COS.Bucket != ""
+
+	// Account-scoped unique-bucket candidate. Every workspace run from the same
+	// account's API key derives the SAME name, so a second workspace discovers +
+	// reuses the bucket the first one provisioned. Empty for an explicit name.
+	acctID := ""
+	if id := ic.Identity(); id != nil {
+		acctID = id.AccountID
+	}
+	altBucket := ""
+	if !bucketExplicit {
+		altBucket = uniqueBucketName(bucket, acctID)
+	}
 
 	fmt.Fprintf(os.Stderr, "\n→ Checking the FAR supply chain (COS instance %q / bucket %q → %s + %s)\n",
 		instName, bucket, farFile, jwtFile)
 
 	// Probe COS. Any transport/DNS/auth error is NON-FATAL: we fall back to local
 	// files rather than aborting init (which used to leave no workspace at all).
-	inst, cc, bucketOK, farOK, jwtOK, cosErr := checkCOSSupplyChain(ctx, ic, apiKey, instName, bucket, bucketRegion, farFile, jwtFile)
+	// resolvedBucket is whichever candidate (the plain name or the account-suffixed
+	// one) actually exists — so a workspace discovers a previously-provisioned bucket.
+	inst, cc, resolvedBucket, bucketOK, farOK, jwtOK, cosErr := checkCOSSupplyChain(ctx, ic, apiKey, instName, bucket, altBucket, bucketRegion, farFile, jwtFile)
+	bucket = resolvedBucket
 	if cosErr == nil && inst != nil && bucketOK && farOK && jwtOK {
+		// Record the DISCOVERED coordinates so the BNK phase resolves from exactly
+		// this bucket (the suffixed name, not the bare default).
+		recordCOSCoords(ws, instName, bucket, bucketRegion)
 		fmt.Fprintln(os.Stderr, "✓ FAR supply chain is available")
 		return nil
 	}
@@ -120,12 +141,35 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 	}
 
 	if !bucketOK {
-		fmt.Fprintf(os.Stderr, "→ Creating bucket %q (class standard, region %s)\n", bucket, bucketRegion)
-		bctx, bcancel := apiCtx(ctx)
-		berr := cc.CreateBucket(bctx, bucket, "standard")
-		bcancel()
-		if berr != nil {
-			return fmt.Errorf("creating bucket %q: %w", bucket, berr)
+		// COS bucket names share ONE global namespace (like S3), so the generic
+		// default ("bnk-artifacts") frequently collides with a bucket another
+		// account already owns ("BucketAlreadyExists"). Provision under a
+		// globally-unique, account-stable name derived from the instance; an
+		// explicitly-configured bucket name is used as-is.
+		if !bucketExplicit {
+			bucket = uniqueBucketName(bucket, acctID)
+		}
+		// A prior interrupted run may already have created it (ours) — reuse it.
+		lctx, lcancel := apiCtx(ctx)
+		buckets, _ := cc.ListBuckets(lctx)
+		lcancel()
+		exists := false
+		for _, b := range buckets {
+			if b == bucket {
+				exists = true
+				break
+			}
+		}
+		if exists {
+			fmt.Fprintf(os.Stderr, "→ Reusing existing bucket %q\n", bucket)
+		} else {
+			fmt.Fprintf(os.Stderr, "→ Creating bucket %q (class standard, region %s)\n", bucket, bucketRegion)
+			bctx, bcancel := apiCtx(ctx)
+			berr := cc.CreateBucket(bctx, bucket, "standard")
+			bcancel()
+			if berr != nil {
+				return fmt.Errorf("creating bucket %q: %w", bucket, berr)
+			}
 		}
 	}
 
@@ -140,7 +184,17 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 	}
 
 	// Record the coordinates we provisioned so the BNK phase + `registry` resolve
-	// from exactly here (the region in particular may differ from the default).
+	// from exactly here (the bucket name in particular is the account-suffixed one).
+	recordCOSCoords(ws, instName, bucket, bucketRegion)
+
+	fmt.Fprintln(os.Stderr, "✓ FAR supply chain ready")
+	return nil
+}
+
+// recordCOSCoords persists the resolved orchestration-COS coordinates on the
+// workspace (only filling empty fields, so an explicit cos: block wins), so the
+// BNK phase + `registry` resolve from exactly the instance/bucket/region used here.
+func recordCOSCoords(ws *config.Workspace, instName, bucket, region string) {
 	if ws.COS == nil {
 		ws.COS = &config.COSCfg{}
 	}
@@ -151,23 +205,54 @@ func ensureFARSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, rgID stri
 		ws.COS.Bucket = bucket
 	}
 	if ws.COS.Region == "" {
-		ws.COS.Region = bucketRegion
+		ws.COS.Region = region
 	}
-
-	fmt.Fprintln(os.Stderr, "✓ FAR supply chain ready")
-	return nil
 }
 
-// checkCOSSupplyChain probes the orchestration COS for the instance, bucket, and
-// the two objects. A non-nil error means COS itself was unreachable/unusable
-// (transport, DNS, auth) — the caller falls back to local files. A nil error with
-// a false flag means COS is reachable but the artefact is simply absent.
-func checkCOSSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, instName, bucket, bucketRegion, farFile, jwtFile string) (inst *ibm.COSInstance, cc *cos.Client, bucketOK, farOK, jwtOK bool, cosErr error) {
+// uniqueBucketName derives a globally-unique bucket name from base by appending a
+// short suffix from the ACCOUNT ID. IBM COS bucket names share one global namespace
+// (like S3), so a generic base such as "bnk-artifacts" often collides with a bucket
+// another account already owns. Keying the suffix off the account ID (not the
+// instance) makes it:
+//   - globally unique (account IDs are unique), and
+//   - STABLE and DISCOVERABLE across workspaces: every workspace run from the same
+//     account's API key derives the same name, so a second workspace finds and
+//     reuses the bucket the first one provisioned.
+// Returns base unchanged when the account ID is unavailable.
+func uniqueBucketName(base, accountID string) string {
+	token := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		default:
+			return -1
+		}
+	}, accountID)
+	if len(token) > 12 {
+		token = token[:12]
+	}
+	if token == "" {
+		return base
+	}
+	return base + "-" + token
+}
+
+// checkCOSSupplyChain probes the orchestration COS for the instance, the bucket
+// (either the plain name OR the account-suffixed altBucket — whichever exists, so
+// a previously-provisioned bucket is DISCOVERED), and the two objects. It returns
+// the resolvedBucket actually found. A non-nil error means COS itself was
+// unreachable/unusable (transport, DNS, auth) — the caller falls back to local
+// files. A nil error with a false flag means COS is reachable but the artefact is
+// simply absent.
+func checkCOSSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, instName, bucket, altBucket, bucketRegion, farFile, jwtFile string) (inst *ibm.COSInstance, cc *cos.Client, resolvedBucket string, bucketOK, farOK, jwtOK bool, cosErr error) {
+	resolvedBucket = bucket
 	lctx, lcancel := apiCtx(ctx)
 	insts, err := ic.ListCOSInstances(lctx)
 	lcancel()
 	if err != nil {
-		return nil, nil, false, false, false, fmt.Errorf("listing COS instances: %w", err)
+		return nil, nil, resolvedBucket, false, false, false, fmt.Errorf("listing COS instances: %w", err)
 	}
 	for i := range insts {
 		if insts[i].Name == instName {
@@ -176,12 +261,12 @@ func checkCOSSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, instName, 
 		}
 	}
 	if inst == nil {
-		return nil, nil, false, false, false, nil // reachable, instance simply absent
+		return nil, nil, resolvedBucket, false, false, false, nil // reachable, instance simply absent
 	}
 
 	cc, err = cos.New(apiKey, bucketRegion, inst.CRN)
 	if err != nil {
-		return inst, nil, false, false, false, fmt.Errorf("opening COS client: %w", err)
+		return inst, nil, resolvedBucket, false, false, false, fmt.Errorf("opening COS client: %w", err)
 	}
 	cc.WithResolver(cos.DefaultBucketRegionResolver(cc))
 
@@ -189,21 +274,33 @@ func checkCOSSupplyChain(ctx context.Context, ic *ibm.Client, apiKey, instName, 
 	buckets, berr := cc.ListBuckets(bctx)
 	bcancel()
 	if berr != nil {
-		return inst, cc, false, false, false, fmt.Errorf("listing buckets in %q: %w", instName, berr)
+		return inst, cc, resolvedBucket, false, false, false, fmt.Errorf("listing buckets in %q: %w", instName, berr)
 	}
-	for _, b := range buckets {
-		if b == bucket {
-			bucketOK = true
-			break
+	inList := func(name string) bool {
+		if name == "" {
+			return false
 		}
+		for _, b := range buckets {
+			if b == name {
+				return true
+			}
+		}
+		return false
+	}
+	// Prefer the plain name; otherwise discover the account-suffixed one.
+	switch {
+	case inList(bucket):
+		resolvedBucket, bucketOK = bucket, true
+	case inList(altBucket):
+		resolvedBucket, bucketOK = altBucket, true
 	}
 	if bucketOK {
 		octx, ocancel := apiCtx(ctx)
-		farOK = objectExists(octx, cc, bucket, farFile)
-		jwtOK = objectExists(octx, cc, bucket, jwtFile)
+		farOK = objectExists(octx, cc, resolvedBucket, farFile)
+		jwtOK = objectExists(octx, cc, resolvedBucket, jwtFile)
 		ocancel()
 	}
-	return inst, cc, bucketOK, farOK, jwtOK, nil
+	return inst, cc, resolvedBucket, bucketOK, farOK, jwtOK, nil
 }
 
 // promptLocalSupplyChain records LOCAL file paths for the FAR tarball + JWT on the
