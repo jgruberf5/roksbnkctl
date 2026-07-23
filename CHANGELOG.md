@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.25.0 — 2026-07-23
+
+### Added
+
+- **`init` discovers existing transit gateways to attach.** When the interactive interview's "Create Transit Gateway?" is declined, `init` now lists the account's existing transit gateways (name, location, status) and lets you pick one by number to attach the cluster to — instead of typing a name/ID from memory. Picking `0` (or none present) leaves the cluster unattached to connect later with `tgw connect`. Falls back to the free-text name/ID prompt if the listing call fails.
+
+- **Ctrl-C exits the interactive `init` cleanly.** From the point the partial workspace is persisted, `SIGINT` prints `^C interrupted — workspace "X" is saved. Re-run roksbnkctl init -w X to finish it.` and exits (130), leaving the saved (partial) workspace intact to resume — rather than dropping into a half-answered interview or a defaulted config. A dedicated handler, so it fires only on a real Ctrl-C, not the normal end-of-run.
+
 ## v1.24.1 — 2026-07-23
 
 ### Fixed
