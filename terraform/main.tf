@@ -349,6 +349,7 @@ module "flp_vsi" {
   flp_forward_proxy_host     = var.flp_forward_proxy_host
   flp_forward_proxy_port     = var.flp_forward_proxy_port
   flp_forward_proxy_protocol = var.flp_forward_proxy_protocol
+  roksbnkctl_binary          = var.roksbnkctl_binary
 }
 
 module "tgw_connection" {

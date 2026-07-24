@@ -5,9 +5,10 @@
 # a private VPC IP for the CWC to dial.
 
 locals {
-  enabled  = var.deploy_flp_vsi
-  zone     = var.flp_vsi_zone != "" ? var.flp_vsi_zone : "${var.ibmcloud_cluster_region}-1"
-  reach_ip = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ipv4_address : ""
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+  enabled        = var.deploy_flp_vsi
+  zone           = var.flp_vsi_zone != "" ? var.flp_vsi_zone : "${var.ibmcloud_cluster_region}-1"
+  reach_ip       = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ipv4_address : ""
   # FLP chart/image tag: pinned, else resolved from the BNK manifest.
   flp_tag = var.flp_chart_version != "" ? var.flp_chart_version : try(data.external.flp_version[0].result.v, "")
 }
@@ -143,26 +144,23 @@ resource "null_resource" "far_download" {
     region = var.ibmcloud_cos_bucket_region
     dir    = var.scratch_dir
   }
+  # 1. cos-get: download the FAR auth tarball (binary → a file, via the COS SDK).
+  # No interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = <<-EOT
-      mkdir -p "${var.scratch_dir}"
-      curl -s -f -o "${var.scratch_dir}/${var.f5_cne_far_auth_file}" \
-        -H "Authorization: Bearer ${jsondecode(data.http.iam_token[0].response_body).access_token}" \
-        -H "ibm-service-instance-id: ${data.ibm_resource_instance.cos[0].guid}" \
-        "https://s3.${var.ibmcloud_cos_bucket_region}.cloud-object-storage.appdomain.cloud/${var.ibmcloud_resources_cos_bucket}/${var.f5_cne_far_auth_file}"
-      tar -xzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" -C "${var.scratch_dir}/"
-      tar -tzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" | grep '\.json$' | head -1 > "${var.scratch_dir}/far_sa_name.txt"
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    environment = {
+      IBMCLOUD_API_KEY = var.ibmcloud_api_key
+    }
   }
-}
-data "local_file" "far_sa_name" {
-  count      = local.enabled ? 1 : 0
-  filename   = "${var.scratch_dir}/far_sa_name.txt"
-  depends_on = [null_resource.far_download]
+  # 2. far-extract: write the single _json_key_base64 service-account JSON (Go
+  # tar-extract, no host tar/grep).
+  provisioner "local-exec" {
+    command = "\"${local.roksbnkctl_bin}\" tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
+  }
 }
 data "local_file" "far_sa" {
   count      = local.enabled ? 1 : 0
-  filename   = "${var.scratch_dir}/${trimspace(data.local_file.far_sa_name[0].content)}"
+  filename   = "${var.scratch_dir}/far-sa.json"
   depends_on = [null_resource.far_download]
 }
 data "http" "jwt" {
