@@ -130,6 +130,7 @@ module "flo" {
   bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/flo"
   scratch_dir                   = var.scratch_dir
+  roksbnkctl_binary             = var.roksbnkctl_binary
 }
 
 locals {

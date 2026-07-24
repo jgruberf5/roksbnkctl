@@ -110,6 +110,7 @@ module "flo" {
 
   # Certificate Manager
   cert_manager_namespace = var.cert_manager_namespace
+  roksbnkctl_binary      = var.roksbnkctl_binary
 }
 
 # Sentinel: token rotates on every apply, so this null_resource is replaced every apply.

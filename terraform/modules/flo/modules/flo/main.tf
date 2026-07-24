@@ -209,18 +209,6 @@ data "ibm_cos_bucket" "cos_bucket" {
   bucket_type          = "region_location"
 }
 
-# Exchange API key for a short-lived IAM bearer token
-data "http" "iam_token" {
-  count  = local.global_enabled && var.use_cos_bucket ? 1 : 0
-  url    = "https://iam.cloud.ibm.com/identity/token"
-  method = "POST"
-  request_headers = {
-    "Content-Type" = "application/x-www-form-urlencoded"
-    "Accept"       = "application/json"
-  }
-  request_body = "grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${var.ibmcloud_api_key}"
-}
-
 resource "null_resource" "far_archive_download" {
   count = local.global_enabled && var.use_cos_bucket ? 1 : 0
 
@@ -234,14 +222,13 @@ resource "null_resource" "far_archive_download" {
     scratch_dir = var.scratch_dir
   }
 
+  # cos-get: download the FAR auth tarball (binary → a file, via the COS SDK). No
+  # interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = <<-EOT
-      mkdir -p "${var.scratch_dir}"
-      curl -s -f -o "${var.scratch_dir}/${var.f5_cne_far_auth_file}" \
-        -H "Authorization: Bearer ${jsondecode(data.http.iam_token[0].response_body).access_token}" \
-        -H "ibm-service-instance-id: ${data.ibm_resource_instance.cos_instance[0].guid}" \
-        "https://s3.${var.ibmcloud_cos_bucket_region}.cloud-object-storage.appdomain.cloud/${var.ibmcloud_resources_cos_bucket}/${var.f5_cne_far_auth_file}"
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx cos-get --instance-crn ${data.ibm_resource_instance.cos_instance[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    environment = {
+      IBMCLOUD_API_KEY = var.ibmcloud_api_key
+    }
   }
 }
 
@@ -253,23 +240,17 @@ resource "null_resource" "cne_far_tgz_extractor" {
     scratch_dir = var.scratch_dir
   }
 
+  # far-extract: write the single _json_key_base64 service-account JSON (Go
+  # tar-extract, no host tar/grep).
   provisioner "local-exec" {
-    command = <<-EOT
-      mkdir -p "${var.scratch_dir}"
-      tar -xzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" -C "${var.scratch_dir}/"
-      tar -tzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" | grep '\.json$' | head -1 > "${var.scratch_dir}/far_extracted_filename.txt"
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
 }
 
-data "local_file" "far_extracted_filename" {
-  count      = local.global_enabled && var.use_cos_bucket ? 1 : 0
-  filename   = "${var.scratch_dir}/far_extracted_filename.txt"
-  depends_on = [null_resource.cne_far_tgz_extractor]
-}
-
 locals {
-  far_extracted_filename = var.use_cos_bucket && local.global_enabled ? trimspace(data.local_file.far_extracted_filename[0].content) : ""
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+  # far-extract writes the service-account JSON to a fixed path (far-sa.json), so
+  # the old "find the .json filename inside the tarball" indirection is gone.
 }
 
 locals {
@@ -297,7 +278,7 @@ locals {
 
 data "local_file" "cne_pull_64_json_file" {
   count      = local.global_enabled && var.use_cos_bucket ? 1 : 0
-  filename   = "${var.scratch_dir}/${local.far_extracted_filename}"
+  filename   = "${var.scratch_dir}/far-sa.json"
   depends_on = [null_resource.cne_far_tgz_extractor]
 }
 
