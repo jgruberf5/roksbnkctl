@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -111,6 +113,21 @@ func RunTGWConnect(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+
+	// Shared-VPC idempotency: an IBM VPC holds exactly one Transit Gateway
+	// attachment, so when a second cluster shares the first cluster's VPC, that VPC
+	// is ALREADY attached to the target gateway (the first cluster connected it).
+	// Detect that up front and record the live connection instead of running an
+	// apply that IBM rejects with "the requested network is already connected to an
+	// existing transit gateway". Best-effort: any lookup error falls through to the
+	// normal plan/apply, which surfaces a genuine conflict (VPC on a DIFFERENT
+	// gateway) loudly.
+	if target, terr := tgwTarget(cctx.Workspace); terr == nil {
+		if done, aerr := recordIfVPCAlreadyAttached(ctx, cctx, in.Workspace, target, in.errOut()); aerr == nil && done {
+			return nil
+		}
+	}
+
 	extraVF, target, err := writeAndInitTGWPhase(ctx, tfws, cctx.Workspace, in.Workspace)
 	if err != nil {
 		return err
@@ -135,6 +152,84 @@ func RunTGWConnect(ctx context.Context, in *LifecycleInputs) error {
 		return err
 	}
 	return persistTGWOutputs(ctx, tfws, in.Workspace, target, w)
+}
+
+// recordIfVPCAlreadyAttached checks whether this workspace's cluster VPC is
+// already attached to the target Transit Gateway (the shared-VPC case). When it is,
+// it records the LIVE connection to tgw-outputs.json and returns (true, nil) so the
+// caller skips the apply entirely. Returns (false, nil) when the VPC is not
+// attached to this gateway (the normal first-cluster path — apply proceeds), and
+// (false, err) on a lookup failure so the caller can fall through resiliently.
+func recordIfVPCAlreadyAttached(ctx context.Context, cctx *config.Context, workspace, target string, w io.Writer) (bool, error) {
+	co, err := loadReuseClusterOutputs(workspace)
+	if err != nil || co == nil || co.VPCID == "" {
+		return false, fmt.Errorf("no cluster VPC to check")
+	}
+	ic, err := tgwIBMClient(ctx, cctx)
+	if err != nil {
+		return false, err
+	}
+	gw, err := ic.ResolveTransitGateway(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	conns, err := ic.ListTGWConnections(ctx, gw.ID)
+	if err != nil {
+		return false, err
+	}
+	conn := tgwConnectionForVPC(conns, co.VPCID)
+	if conn == nil {
+		return false, nil // not attached to THIS gateway — let the apply create it
+	}
+	out := &config.TGWOutputs{
+		GatewayID:      gw.ID,
+		GatewayName:    gw.Name,
+		GatewayCRN:     gw.CRN,
+		ConnectionID:   conn.ID,
+		ConnectionName: conn.Name,
+		VPCID:          co.VPCID,
+		VPCCRN:         conn.NetworkID,
+	}
+	if err := config.WriteTGWOutputs(workspace, out); err != nil {
+		return false, fmt.Errorf("writing tgw-outputs.json: %w", err)
+	}
+	fmt.Fprintf(w, "✓ cluster VPC %s is already attached to Transit Gateway %s (%s) as connection %q.\n"+
+		"  A VPC holds one TGW attachment, so this shared-VPC cluster reuses the existing one — recorded tgw-outputs.json.\n",
+		co.VPCID, gw.Name, gw.ID, conn.Name)
+	return true, nil
+}
+
+// tgwIBMClient builds an IBM client from the workspace's resolved API key + region.
+func tgwIBMClient(ctx context.Context, cctx *config.Context) (*ibm.Client, error) {
+	resolver := &cred.Resolver{
+		Workspace: cctx.WorkspaceName,
+		Source:    cctx.Workspace.IBMCloud.APIKeySource,
+	}
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ibm.New(apiKey, cctx.Workspace.IBMCloud.Region)
+}
+
+// tgwConnectionForVPC returns the gateway's live VPC connection for vpcID, or nil.
+// A connection's NetworkID is the attached VPC's CRN (…:vpc:<id>), so a substring
+// match on the unique VPC id identifies it. Only attached/pending connections
+// count as "already connected"; a failed/deleting one should be re-created.
+func tgwConnectionForVPC(conns []ibm.TGWConnection, vpcID string) *ibm.TGWConnection {
+	for i := range conns {
+		c := &conns[i]
+		if c.NetworkType != "" && c.NetworkType != "vpc" {
+			continue
+		}
+		if !strings.Contains(c.NetworkID, vpcID) {
+			continue
+		}
+		if c.Status == "attached" || c.Status == "pending" {
+			return c
+		}
+	}
+	return nil
 }
 
 // persistTGWOutputs reads the tgw_* root outputs and records tgw-outputs.json.
