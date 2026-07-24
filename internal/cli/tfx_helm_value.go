@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -58,8 +61,17 @@ var tfxHelmPullFileCmd = &cobra.Command{
 	RunE:          runTFXHelmPullFile,
 }
 
+var tfxHelmProdJWKSCmd = &cobra.Command{
+	Use:           "prod-jwks",
+	Short:         "Extract and base64-decode the prod_jwks keyset bundled in a chart (internal)",
+	Args:          cobra.NoArgs,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runTFXHelmProdJWKS,
+}
+
 func init() {
-	for _, c := range []*cobra.Command{tfxHelmChartVersionCmd, tfxHelmPullFileCmd} {
+	for _, c := range []*cobra.Command{tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd} {
 		f := c.Flags()
 		f.StringVar(&flagHelmChart, "chart", "", "chart ref (OCI url or repo/chart) (required)")
 		f.StringVar(&flagHelmVersion, "version", "", "chart version to pull")
@@ -71,7 +83,7 @@ func init() {
 		f.StringVar(&flagHelmPasswordEnv, "password-env", "", "env var holding the registry password (with --registry-login)")
 	}
 	tfxHelmChartVersionCmd.Flags().StringVar(&flagHelmSubchart, "subchart", "", "sub-chart path to resolve the version for (required)")
-	tfxHelmValueCmd.AddCommand(tfxHelmChartVersionCmd, tfxHelmPullFileCmd)
+	tfxHelmValueCmd.AddCommand(tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd)
 	tfxCmd.AddCommand(tfxHelmValueCmd)
 }
 
@@ -84,7 +96,11 @@ func runTFXHelmChartVersion(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer cleanup()
-	manifest, err := os.ReadFile(filepath.Join(dir, flagHelmFile))
+	manifestPath, err := findChartFile(dir, flagHelmFile)
+	if err != nil {
+		return err
+	}
+	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("reading manifest %s in the chart: %w", flagHelmFile, err)
 	}
@@ -108,7 +124,10 @@ func runTFXHelmPullFile(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer cleanup()
-	src := filepath.Join(dir, flagHelmFile)
+	src, err := findChartFile(dir, flagHelmFile)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(flagHelmOut), 0o755); err != nil {
 		return fmt.Errorf("creating out dir: %w", err)
 	}
@@ -117,6 +136,99 @@ func runTFXHelmPullFile(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "tfx helm-value: extracted %s -> %s\n", flagHelmFile, flagHelmOut)
 	return nil
+}
+
+// prodJWKSRe matches the `prod_jwks.txt: <base64>` entry F5 embeds in the license
+// proxy chart's template YAML (a ConfigMap/Secret value carrying the public
+// signature-verification keyset).
+var prodJWKSRe = regexp.MustCompile(`prod_jwks\.txt:\s*([A-Za-z0-9+/=]+)`)
+
+func runTFXHelmProdJWKS(cmd *cobra.Command, _ []string) error {
+	if flagHelmChart == "" || flagHelmOut == "" {
+		return fmt.Errorf("--chart and --out are required")
+	}
+	dir, cleanup, err := tfxHelmPull(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	decoded, err := extractProdJWKS(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(flagHelmOut), 0o755); err != nil {
+		return fmt.Errorf("creating out dir: %w", err)
+	}
+	if err := os.WriteFile(flagHelmOut, decoded, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", flagHelmOut, err)
+	}
+	fmt.Fprintf(os.Stderr, "tfx helm-value: prod_jwks -> %s\n", flagHelmOut)
+	return nil
+}
+
+// extractProdJWKS walks the chart's template YAMLs for a `prod_jwks.txt: <base64>`
+// entry and returns the decoded bytes — the Go form of the module's
+// `grep -ohE 'prod_jwks.txt: <b64>' templates/*.yaml | awk '{print $2}' | base64 -d`.
+func extractProdJWKS(root string) ([]byte, error) {
+	var b64 string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || b64 != "" {
+			return nil
+		}
+		if ext := strings.ToLower(filepath.Ext(p)); ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		if m := prodJWKSRe.FindSubmatch(data); m != nil {
+			b64 = string(m[1])
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if b64 == "" {
+		return nil, fmt.Errorf("no prod_jwks.txt entry found in the chart templates")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, fmt.Errorf("decoding prod_jwks base64: %w", err)
+	}
+	return decoded, nil
+}
+
+// findChartFile resolves want within the untarred chart tree tolerantly. helm's
+// `pull --untar` names the top-level directory after the chart, which for the F5
+// manifest charts can be versioned (f5-bigip-k8s-manifest-<v>/) or not depending
+// on how the artifact was packaged — the one path detail we can't pin without the
+// real OCI chart in hand. So try the literal join first, then fall back to matching
+// the basename anywhere in the tree rather than hardcoding the top-dir shape.
+func findChartFile(root, want string) (string, error) {
+	if p := filepath.Join(root, want); fileExists(p) {
+		return p, nil
+	}
+	base := filepath.Base(want)
+	var found string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || found != "" {
+			return nil
+		}
+		if d.Name() == base {
+			found = p
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if found == "" {
+		return "", fmt.Errorf("file %q not found anywhere in the pulled chart", want)
+	}
+	return found, nil
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }
 
 // tfxHelmPull runs `helm pull --untar` into a temp dir (after an optional registry

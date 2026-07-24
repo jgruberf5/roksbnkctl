@@ -439,47 +439,24 @@ resource "null_resource" "extract_flp_version" {
     scratch_dir      = var.scratch_dir
   }
 
+  # helm-value chart-version: pull the BNK manifest chart (same host + FAR/mirror
+  # credential as the FLP chart) and read the f5-license-proxy sub-chart version out
+  # of it — helm binary for the OCI pull, Go for the tar-extract + version grep. A
+  # manifest that lists no charts/f5-license-proxy makes the verb exit non-zero, so
+  # the provisioner still fails loudly (pin one with bnk.flp.chart_version). --file
+  # is the basename; the verb walks the untarred tree to find it. No interpreter →
+  # cmd.exe execs roksbnkctl.exe on Windows.
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      # helm >= 3.8 is required for `helm registry` (OCI).
-      HELM_MIN="3.8.0"
-      HELM_BIN="helm"
-      helm_ok() {
-        local v
-        v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
-        printf '%s\n%s\n' "$HELM_MIN" "$v" | sort -V -c 2>/dev/null
-      }
-      if ! helm_ok; then
-        HELM_TMP=$(mktemp -d "$${TMPDIR:-/tmp}/helm-install-XXXXXX")
-        curl -fsSL -o "$HELM_TMP/helm.tar.gz" "https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz"
-        tar -xzf "$HELM_TMP/helm.tar.gz" -C "$HELM_TMP"
-        HELM_BIN="$HELM_TMP/linux-amd64/helm"
-      fi
-      mkdir -p "${var.scratch_dir}/f5-manifest"
-      cd "${var.scratch_dir}/f5-manifest"
-      # Same chart host + credential as the FLP chart itself: FAR off the mirror,
-      # the mirror under it (the manifest is a mirrored artifact — see bnkbom).
-      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
-      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
-      tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
-      V=$(grep -A 1 "charts/f5-license-proxy" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml \
-            | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
-      if [ -z "$V" ]; then
-        echo "ERROR: the BNK manifest ${var.f5_bigip_k8s_manifest_version} lists no charts/f5-license-proxy — pin one with bnk.flp.chart_version" >&2
-        exit 1
-      fi
-      printf '%s' "$V" > "${var.scratch_dir}/flp-version.txt"
-    EOT
+    command = "\"${local.postrender_bin}\" tfx helm-value chart-version --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    environment = {
+      HELM_REGISTRY_PW = local.chart_pull_password
+    }
   }
 }
 
 data "external" "flp_version" {
-  count = local.enabled && var.flp_chart_version == "" ? 1 : 0
-  program = [
-    "bash", "-c",
-    "V=$(cat ${var.scratch_dir}/flp-version.txt 2>/dev/null | tr -d '[:space:]'); printf '{\"version\":\"%s\"}' \"$V\"",
-  ]
+  count      = local.enabled && var.flp_chart_version == "" ? 1 : 0
+  program    = [local.postrender_bin, "tfx", "read-json", "--file", "${var.scratch_dir}/flp-version.txt", "--key", "version"]
   depends_on = [null_resource.extract_flp_version]
 }
 

@@ -16,9 +16,10 @@ import (
 // data source's `result`. This reads a file and emits {<key>: <trimmed contents>}.
 
 var (
-	flagReadJSONFile string
-	flagReadJSONKey  string
-	flagReadJSONRaw  bool
+	flagReadJSONFile  string
+	flagReadJSONKey   string
+	flagReadJSONRaw   bool
+	flagReadJSONPairs []string
 )
 
 var tfxReadJSONCmd = &cobra.Command{
@@ -35,18 +36,46 @@ unless --raw.`,
 
 func init() {
 	f := tfxReadJSONCmd.Flags()
-	f.StringVar(&flagReadJSONFile, "file", "", "file whose contents become the value (required)")
-	f.StringVar(&flagReadJSONKey, "key", "v", "JSON key to emit the contents under")
+	f.StringVar(&flagReadJSONFile, "file", "", "file whose contents become the value (single-key mode)")
+	f.StringVar(&flagReadJSONKey, "key", "v", "JSON key to emit the contents under (single-key mode)")
 	f.BoolVar(&flagReadJSONRaw, "raw", false, "do not trim surrounding whitespace")
+	f.StringArrayVar(&flagReadJSONPairs, "pair", nil, "key=file mapping, repeatable — emit {key: file-contents, ...} (multi-key mode)")
 	tfxCmd.AddCommand(tfxReadJSONCmd)
 }
 
 func runTFXReadJSONCmd(cmd *cobra.Command, _ []string) error {
+	// Multi-key mode: one --pair key=file per output key. A missing file yields an
+	// empty string (like the modules' `cat … 2>/dev/null`) so a destroy-phase
+	// refresh in a fresh container still emits a well-formed object.
+	if len(flagReadJSONPairs) > 0 {
+		out := make(map[string]string, len(flagReadJSONPairs))
+		for _, p := range flagReadJSONPairs {
+			key, path, ok := strings.Cut(p, "=")
+			if !ok || key == "" {
+				return fmt.Errorf("--pair %q must be key=file", p)
+			}
+			v := ""
+			if b, err := os.ReadFile(path); err == nil {
+				v = string(b)
+				if !flagReadJSONRaw {
+					v = strings.TrimSpace(v)
+				}
+			}
+			out[key] = v
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+	}
 	if flagReadJSONFile == "" {
-		return fmt.Errorf("--file is required")
+		return fmt.Errorf("--file (or --pair) is required")
 	}
 	b, err := os.ReadFile(flagReadJSONFile)
 	if err != nil {
+		// A missing file emits an empty value (like the modules' `cat … 2>/dev/null`)
+		// so a destroy-phase data.external refresh in a fresh container still emits a
+		// well-formed object instead of aborting the plan.
+		if os.IsNotExist(err) {
+			return writeReadJSON(cmd.OutOrStdout(), flagReadJSONKey, "", flagReadJSONRaw)
+		}
 		return fmt.Errorf("reading %s: %w", flagReadJSONFile, err)
 	}
 	return writeReadJSON(cmd.OutOrStdout(), flagReadJSONKey, string(b), flagReadJSONRaw)

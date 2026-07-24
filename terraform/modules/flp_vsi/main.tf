@@ -180,26 +180,20 @@ resource "null_resource" "resolve_flp_version" {
     manifest = var.f5_bigip_k8s_manifest_version
     dir      = var.scratch_dir
   }
+  # helm-value chart-version: pull the BNK manifest chart and read the
+  # f5-license-proxy sub-chart version out of it (helm binary for the OCI pull, Go
+  # for the extract — no host tar/grep/awk). --file is the basename; the verb walks
+  # the untarred tree to find it. No interpreter → cmd.exe execs roksbnkctl.exe.
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      HELM_BIN=helm
-      command -v helm >/dev/null 2>&1 || {
-        T=$(mktemp -d); curl -fsSL -o "$T/h.tgz" https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz
-        tar -xzf "$T/h.tgz" -C "$T"; HELM_BIN="$T/linux-amd64/helm"; }
-      mkdir -p "${var.scratch_dir}/manifest"; cd "${var.scratch_dir}/manifest"
-      echo "${trimspace(data.local_file.far_sa[0].content)}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin repo.f5.com
-      $HELM_BIN pull oci://repo.f5.com/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
-      tar -xzf "f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz"
-      V=$(grep -A1 "charts/f5-license-proxy" "f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml" \
-            | grep "version:" | awk '{print $2}' | tr -d "\"'" | head -1)
-      printf '%s' "$V" > "${var.scratch_dir}/flp-version.txt"
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --chart oci://repo.f5.com/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    environment = {
+      HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
+    }
   }
 }
 data "external" "flp_version" {
   count      = local.enabled && var.flp_chart_version == "" ? 1 : 0
-  program    = ["bash", "-c", "printf '{\"v\":\"%s\"}' \"$(cat ${var.scratch_dir}/flp-version.txt 2>/dev/null | tr -d '[:space:]')\""]
+  program    = [local.roksbnkctl_bin, "tfx", "read-json", "--file", "${var.scratch_dir}/flp-version.txt", "--key", "v"]
   depends_on = [null_resource.resolve_flp_version]
 }
 
@@ -212,20 +206,13 @@ resource "null_resource" "extract_prod_jwks" {
     tag = local.flp_tag
     dir = var.scratch_dir
   }
+  # helm-value prod-jwks: pull the FLP chart and extract + base64-decode the
+  # bundled prod_jwks keyset (Go scan of the template YAMLs — no host tar/grep/awk).
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      HELM_BIN=helm
-      command -v helm >/dev/null 2>&1 || {
-        T=$(mktemp -d); curl -fsSL -o "$T/h.tgz" https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz
-        tar -xzf "$T/h.tgz" -C "$T"; HELM_BIN="$T/linux-amd64/helm"; }
-      mkdir -p "${var.scratch_dir}/flp-chart"; cd "${var.scratch_dir}/flp-chart"
-      echo "${trimspace(data.local_file.far_sa[0].content)}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin repo.f5.com
-      $HELM_BIN pull oci://repo.f5.com/charts/f5-license-proxy --version "${local.flp_tag}" -d .
-      tar -xzf "f5-license-proxy-${local.flp_tag}.tgz"
-      grep -ohE 'prod_jwks.txt: [A-Za-z0-9+/=]+' "f5-license-proxy-${local.flp_tag}"/templates/*.yaml \
-        | awk '{print $2}' | base64 -d > "${var.scratch_dir}/prod_jwks.txt"
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx helm-value prod-jwks --chart oci://repo.f5.com/charts/f5-license-proxy --version ${local.flp_tag} --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/prod_jwks.txt"
+    environment = {
+      HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
+    }
   }
 }
 data "local_file" "prod_jwks" {
