@@ -4,6 +4,29 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.0 — 2026-07-24
+
+### Added
+
+- **The FAR + FLO/FLP deploy phases now run on native Windows — no WSL.** The last Windows-blocking shell glue in the default (non-legacy) deploy path is gone: every `curl` / `tar` / `grep` / `awk` / `helm pull` `local-exec` in the `flo`, `flp`, and `flp_vsi` modules is replaced by a native `roksbnkctl tfx <verb>` the terraform provisioner execs directly (no `interpreter`, so `cmd.exe` runs `roksbnkctl.exe`). New internal verbs back this:
+  - **`tfx cos-get`** — downloads the FAR-auth tarball via the COS SDK (was `curl` + a hand-rolled IAM bearer-token exchange).
+  - **`tfx far-extract`** — writes the FAR service-account JSON via a Go tar-extract to a fixed path (was `tar -xzf … | grep '\.json$'`).
+  - **`tfx helm-value`** — `chart-version` resolves a sub-chart version out of the pulled BNK manifest (helm binary for the OCI pull, Go for the extract), `pull-file` extracts a bundled file, `prod-jwks` extracts + base64-decodes the license-proxy keyset, and `--manifest-file` reads a version from an already-pulled manifest so one pull feeds several reads. In-chart file lookup walks the untarred tree tolerantly, so helm `--untar`'s top-dir naming doesn't matter.
+  - **`tfx read-json`** — emits `data.external` JSON from a file, with a repeatable `--pair key=file` for multi-key outputs and a missing-file→empty tolerance so a fresh-container destroy refresh stays well-formed.
+  - Rounding out the surface added earlier in this cycle: **`tfx apply`** (server-side apply from a manifest stream), **`tfx wait`** (client-go watch + poll), **`tfx patch`** (strategic/merge/json/apply, `--patch-b64`), and **`tfx delete`** (`--ignore-not-found`). The cne_instance admission-policy delete loop moved from a detached `nohup bash` into an in-process Go goroutine (identical on Windows and Linux).
+
+- **Quota preflight for the VPC-per-region and TGW-per-account walls.** `doctor` now reports VPCs-in-region and account transit-gateway counts against their limits (warns at the wall), and the `init` interview surfaces the same headroom before you commit to a create — so an apply fails fast with a clear message instead of deep in a `terraform apply`.
+
+### Changed
+
+- **Terraform error output is summarized and de-duplicated.** A failed plan/apply/destroy now collapses the repeated per-resource IBM `Error: --- summary: ---` blocks into a single deduplicated diagnostic (`x3 …`) instead of scrolling the same error once per affected resource.
+
+- **One shared IAM authenticator instead of a token exchange per call.** The IBM client now reuses a single `core.IamAuthenticator` (and one injectable `http.Client`) across every raw-REST helper, rather than exchanging the API key for a fresh bearer token on each request.
+
+### Fixed
+
+- **Idempotent Transit Gateway attach when a shared VPC is already on the target gateway.** An IBM VPC holds exactly one Transit Gateway attachment, so when a second cluster is created in a first cluster's VPC (the shared-VPC path) and both point at the same gateway, the second `up`'s TGW-connect phase hit `the requested network is already connected to an existing transit gateway` and surfaced it as an error (non-fatal — the cluster/BNK still deployed — but `tgw status` then reported "not connected" even though the shared VPC *was* attached via the first cluster's connection). The connect phase now pre-checks: if this workspace's cluster VPC is already attached to the target gateway, it records the live connection and returns success, skipping the apply. The normal first-cluster path (VPC not yet attached) is unchanged, and a genuine conflict (VPC on a *different* gateway) still surfaces loudly. This is the attach-side analogue of the tolerant-detach `down` already does for shared infra.
+
 ## v1.26.1 — 2026-07-23
 
 ### Fixed
