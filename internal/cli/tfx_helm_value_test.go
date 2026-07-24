@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,40 @@ func TestRunTFXHelmChartVersion_ManifestFile(t *testing.T) {
 	}
 	if strings.TrimSpace(string(got)) != "2.3.10" {
 		t.Errorf("flo version = %q want 2.3.10", got)
+	}
+}
+
+func TestWriteHelmRegistryConfig(t *testing.T) {
+	dir := t.TempDir()
+	// A multi-KB password (like the FAR _json_key_base64 SA) that overflows the
+	// Windows Credential Manager — the whole reason we use a config file.
+	pw := strings.Repeat("A", 4096)
+	p, err := writeHelmRegistryConfig(dir, "repo.f5.com", "_json_key_base64", pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(b, &conf); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
+	}
+	entry, ok := conf.Auths["repo.f5.com"]
+	if !ok {
+		t.Fatalf("no auth entry for repo.f5.com in %s", b)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(entry.Auth)
+	if err != nil {
+		t.Fatalf("auth is not base64: %v", err)
+	}
+	if want := "_json_key_base64:" + pw; string(decoded) != want {
+		t.Errorf("decoded auth = %q..., want _json_key_base64:<pw>", string(decoded)[:32])
 	}
 }
 

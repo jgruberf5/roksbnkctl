@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.2 — 2026-07-24
+
+### Fixed
+
+- **`tfx helm-value` authenticates the OCI chart pull via a config file, not `helm registry login` (Windows Credential Manager fix).** The helm-value verbs (`pull-file`, `chart-version` pull mode, `prod-jwks`) ran `helm registry login <host> --password <far-sa>` before pulling. On Windows `helm registry login` stores the credential in the Windows Credential Manager, whose credential blob is capped at ~2.5 KB — the FAR `_json_key_base64` service-account password is a multi-KB base64 blob, so the store failed with `Error: The stub received bad data` and the FLO/FLP version-resolution provisioners errored at apply time. tfx now writes a temporary docker-style registry-config file with the auth and passes `helm pull --registry-config <file>` instead — no credential store, no size cap, the password never touches the command line (so helm's insecure-`--password` warning is gone too), and the behaviour is identical on Linux. The temp file lives in the same scratch dir the pull cleans up.
+
 ## v1.27.1 — 2026-07-24
 
 ### Fixed

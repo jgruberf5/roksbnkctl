@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -266,21 +267,28 @@ func tfxHelmPull(ctx context.Context) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	if flagHelmRegistryLogin != "" {
-		pw := os.Getenv(flagHelmPasswordEnv)
-		login := exec.CommandContext(ctx, helmBin, "registry", "login", flagHelmRegistryLogin,
-			"--username", flagHelmUsername, "--password", pw)
-		login.Stderr = os.Stderr
-		if err := login.Run(); err != nil {
-			cleanup()
-			return "", func() {}, fmt.Errorf("helm registry login %s: %w", flagHelmRegistryLogin, err)
-		}
-	}
-
 	args := []string{"pull", flagHelmChart, "--untar", "--untardir", dir}
 	if flagHelmVersion != "" {
 		args = append(args, "--version", flagHelmVersion)
 	}
+
+	// Authenticate the OCI pull via a temp registry-config file rather than
+	// `helm registry login`. On Windows, `helm registry login` writes the credential
+	// to the Windows Credential Manager, whose blob is capped (~2.5 KB) — the FAR
+	// `_json_key_base64` password is a multi-KB base64 blob, so the store fails with
+	// "The stub received bad data". A docker-style config file has no such limit, is
+	// what `helm pull --registry-config` reads for auth, keeps the password off the
+	// command line (no insecure-`--password` warning), and works identically on
+	// Linux. The file lives in the same temp dir the cleanup func removes.
+	if flagHelmRegistryLogin != "" {
+		regConf, werr := writeHelmRegistryConfig(dir, flagHelmRegistryLogin, flagHelmUsername, os.Getenv(flagHelmPasswordEnv))
+		if werr != nil {
+			cleanup()
+			return "", func() {}, werr
+		}
+		args = append(args, "--registry-config", regConf)
+	}
+
 	pull := exec.CommandContext(ctx, helmBin, args...)
 	pull.Stderr = os.Stderr
 	if err := pull.Run(); err != nil {
@@ -288,6 +296,26 @@ func tfxHelmPull(ctx context.Context) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("helm pull %s: %w", flagHelmChart, err)
 	}
 	return dir, cleanup, nil
+}
+
+// writeHelmRegistryConfig writes a docker-style registry auth file (the format
+// `helm pull --registry-config` consumes) for host, and returns its path.
+func writeHelmRegistryConfig(dir, host, user, pw string) (string, error) {
+	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pw))
+	conf := map[string]any{
+		"auths": map[string]any{
+			host: map[string]string{"auth": auth},
+		},
+	}
+	b, err := json.Marshal(conf)
+	if err != nil {
+		return "", fmt.Errorf("building helm registry config: %w", err)
+	}
+	p := filepath.Join(dir, "registry-config.json")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		return "", fmt.Errorf("writing helm registry config: %w", err)
+	}
+	return p, nil
 }
 
 // extractChartVersion finds the version associated with subchart in the manifest
