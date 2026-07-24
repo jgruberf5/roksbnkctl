@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.1 — 2026-07-24
+
+### Fixed
+
+- **`tfx` deploy phases run on native Windows (`cmd.exe` quoting fix).** The v1.27.0 tfx `local-exec` commands wrapped the binary path in escaped quotes (`"\"${roksbnkctl}\" tfx …"`). That parses fine under `/bin/sh` on WSL/Linux, but on Windows terraform runs `local-exec` via `cmd /C <command>` and Go's arg-escaping turned the inner quotes into `\"`, so `cmd.exe` tried to execute a program literally named `\"C:\…\roksbnkctl.exe\"` and failed with *"is not recognized as an internal or external command"* — breaking every FAR/FLO/FLP/license/cne provisioner at apply time. (The verbs themselves were fine; only the terraform-to-`cmd.exe` handoff was — and it was never exercised on Windows before, since the tfx validation harness invoked the verbs directly rather than through a `local-exec`.) All 17 tfx `local-exec` command strings now pass the binary unquoted, which `cmd.exe` and `/bin/sh` both execute correctly (the Windows install dir and the tfx arguments contain no spaces). The `data.external` programs were already argv lists and were never affected.
+
 ## v1.27.0 — 2026-07-24
 
 ### Added

@@ -524,7 +524,7 @@ resource "null_resource" "cnecontroller_ready" {
   # the CNEInstance reports condition CNEControllerAvailable=True. No interpreter =>
   # cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=CNEControllerAvailable=True --timeout 15m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=CNEControllerAvailable=True --timeout 15m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }

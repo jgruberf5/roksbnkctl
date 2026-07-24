@@ -121,7 +121,7 @@ resource "null_resource" "cwc_flp_rollout" {
 
   # 1. Wait for the CWC Deployment to appear (replaces the 404-retry loop).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --for jsonpath=metadata.name=${local.cwc_deployment} --timeout 5m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --for jsonpath=metadata.name=${local.cwc_deployment} --timeout 5m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }
@@ -131,7 +131,7 @@ resource "null_resource" "cwc_flp_rollout" {
   # base64-encoded (--patch-b64): no shell metacharacters, so it survives cmd.exe as
   # well as sh (local-exec can't pipe stdin).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx patch --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --type strategic --patch-b64 ${base64encode("{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"roksbnkctl/flp-ca-hash\":\"${local.flp_ca_hash}\"}}}}}")}"
+    command = "${local.roksbnkctl_bin} tfx patch --kube-host ${var.kube_host} --insecure --gvr apps/v1/deployments --ns ${var.utils_namespace} --name ${local.cwc_deployment} --type strategic --patch-b64 ${base64encode("{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"roksbnkctl/flp-ca-hash\":\"${local.flp_ca_hash}\"}}}}}")}"
     environment = {
       KUBE_TOKEN = var.kube_token
     }
@@ -331,7 +331,7 @@ resource "null_resource" "license_active" {
   # the License CR reports status.state=Active (BNK 2.3's terminal value). No
   # interpreter → cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5net.com/v1/licenses --ns ${var.utils_namespace} --name bnk-license --for jsonpath=status.state=Active --timeout 15m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5net.com/v1/licenses --ns ${var.utils_namespace} --name bnk-license --for jsonpath=status.state=Active --timeout 15m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }

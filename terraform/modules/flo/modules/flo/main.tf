@@ -225,7 +225,7 @@ resource "null_resource" "far_archive_download" {
   # cos-get: download the FAR auth tarball (binary → a file, via the COS SDK). No
   # interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx cos-get --instance-crn ${data.ibm_resource_instance.cos_instance[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    command = "${local.roksbnkctl_bin} tfx cos-get --instance-crn ${data.ibm_resource_instance.cos_instance[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
     environment = {
       IBMCLOUD_API_KEY = var.ibmcloud_api_key
     }
@@ -243,7 +243,7 @@ resource "null_resource" "cne_far_tgz_extractor" {
   # far-extract: write the single _json_key_base64 service-account JSON (Go
   # tar-extract, no host tar/grep).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
+    command = "${local.roksbnkctl_bin} tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
 }
 
@@ -466,7 +466,7 @@ resource "null_resource" "extract_flo_version" {
   # 1. pull the manifest chart once → a stable path both this resource and
   #    data.local_file.bnk_manifest read.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx helm-value pull-file --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.manifest_download_dir}/bnk-manifest.yaml"
+    command = "${local.roksbnkctl_bin} tfx helm-value pull-file --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.manifest_download_dir}/bnk-manifest.yaml"
     environment = {
       HELM_REGISTRY_PW = local.chart_pull_password
     }
@@ -474,12 +474,12 @@ resource "null_resource" "extract_flo_version" {
 
   # 2. FLO version from the already-pulled manifest (no network).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-lifecycle-operator --out ${var.manifest_download_dir}/flo-version.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-lifecycle-operator --out ${var.manifest_download_dir}/flo-version.txt"
   }
 
   # 3. CIS version from the same manifest.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-bnk-cis --out ${var.manifest_download_dir}/cis-version.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-bnk-cis --out ${var.manifest_download_dir}/cis-version.txt"
   }
 
   triggers = {

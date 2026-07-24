@@ -455,7 +455,7 @@ resource "null_resource" "delete_gatewayapi_admission_policy" {
   count = var.create_cluster ? 1 : 0
 
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx delete --kube-host ${data.ibm_container_cluster_config.cluster_config[0].host} --insecure --gvr admissionregistration.k8s.io/v1/validatingadmissionpolicybindings --name openshift-ingress-operator-gatewayapi-crd-admission --ignore-not-found"
+    command = "${local.roksbnkctl_bin} tfx delete --kube-host ${data.ibm_container_cluster_config.cluster_config[0].host} --insecure --gvr admissionregistration.k8s.io/v1/validatingadmissionpolicybindings --name openshift-ingress-operator-gatewayapi-crd-admission --ignore-not-found"
     environment = {
       KUBE_TOKEN = data.ibm_container_cluster_config.cluster_config[0].token
     }

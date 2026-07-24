@@ -215,7 +215,7 @@ resource "null_resource" "far_archive_download" {
   # cos-get: download the FAR auth tarball (binary → a file, via the COS SDK). No
   # interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = "\"${local.postrender_bin}\" tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    command = "${local.postrender_bin} tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
     environment = {
       IBMCLOUD_API_KEY = var.ibmcloud_api_key
     }
@@ -231,7 +231,7 @@ resource "null_resource" "far_tgz_extractor" {
   # far-extract: write the single _json_key_base64 service-account JSON (Go
   # tar-extract, no host tar/grep).
   provisioner "local-exec" {
-    command = "\"${local.postrender_bin}\" tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
+    command = "${local.postrender_bin} tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
 }
 
@@ -447,7 +447,7 @@ resource "null_resource" "extract_flp_version" {
   # is the basename; the verb walks the untarred tree to find it. No interpreter →
   # cmd.exe execs roksbnkctl.exe on Windows.
   provisioner "local-exec" {
-    command = "\"${local.postrender_bin}\" tfx helm-value chart-version --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    command = "${local.postrender_bin} tfx helm-value chart-version --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
     environment = {
       HELM_REGISTRY_PW = local.chart_pull_password
     }

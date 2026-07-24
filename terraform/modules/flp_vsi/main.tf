@@ -147,7 +147,7 @@ resource "null_resource" "far_download" {
   # 1. cos-get: download the FAR auth tarball (binary → a file, via the COS SDK).
   # No interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    command = "${local.roksbnkctl_bin} tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
     environment = {
       IBMCLOUD_API_KEY = var.ibmcloud_api_key
     }
@@ -155,7 +155,7 @@ resource "null_resource" "far_download" {
   # 2. far-extract: write the single _json_key_base64 service-account JSON (Go
   # tar-extract, no host tar/grep).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
+    command = "${local.roksbnkctl_bin} tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
 }
 data "local_file" "far_sa" {
@@ -185,7 +185,7 @@ resource "null_resource" "resolve_flp_version" {
   # for the extract — no host tar/grep/awk). --file is the basename; the verb walks
   # the untarred tree to find it. No interpreter → cmd.exe execs roksbnkctl.exe.
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --chart oci://repo.f5.com/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value chart-version --chart oci://repo.f5.com/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
     environment = {
       HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
     }
@@ -209,7 +209,7 @@ resource "null_resource" "extract_prod_jwks" {
   # helm-value prod-jwks: pull the FLP chart and extract + base64-decode the
   # bundled prod_jwks keyset (Go scan of the template YAMLs — no host tar/grep/awk).
   provisioner "local-exec" {
-    command = "\"${local.roksbnkctl_bin}\" tfx helm-value prod-jwks --chart oci://repo.f5.com/charts/f5-license-proxy --version ${local.flp_tag} --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/prod_jwks.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value prod-jwks --chart oci://repo.f5.com/charts/f5-license-proxy --version ${local.flp_tag} --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/prod_jwks.txt"
     environment = {
       HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
     }
