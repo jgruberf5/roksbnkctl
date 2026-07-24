@@ -99,6 +99,38 @@ func TestExtractProdJWKS(t *testing.T) {
 	}
 }
 
+func TestRunTFXHelmChartVersion_ManifestFile(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "bnk-manifest.yaml")
+	if err := os.WriteFile(manifest, []byte(`charts:
+  - name: charts/f5-lifecycle-operator
+    version: 2.3.10
+  - name: charts/f5-bnk-cis
+    version: 2.19.1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "flo-version.txt")
+
+	// no-pull mode: --manifest-file set, no --chart/--file needed
+	flagHelmManifestFile = manifest
+	flagHelmSubchart = "charts/f5-lifecycle-operator"
+	flagHelmOut = out
+	flagHelmChart, flagHelmFile = "", ""
+	t.Cleanup(func() { flagHelmManifestFile, flagHelmSubchart, flagHelmOut = "", "", "" })
+
+	if err := runTFXHelmChartVersion(tfxHelmChartVersionCmd, nil); err != nil {
+		t.Fatalf("chart-version --manifest-file: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != "2.3.10" {
+		t.Errorf("flo version = %q want 2.3.10", got)
+	}
+}
+
 func TestCopyFileContents(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")

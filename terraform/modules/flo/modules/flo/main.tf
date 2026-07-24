@@ -453,49 +453,33 @@ resource "null_resource" "ca_cluster_issuer" {
 # Pull f5-bigip-k8s-manifest chart to extract FLO and CIS versions
 resource "null_resource" "extract_flo_version" {
   count = local.global_enabled ? 1 : 0
+
+  # The f5-bigip-k8s-manifest chart is mirrored like any other chart (it is a BOM
+  # artifact — see bnkbom.ManifestChartName), so pull it from the same chart host as
+  # everything else: FAR off the mirror, the mirror under it. That keeps a mirrored
+  # install fully disconnected. Unlike the FLP phase, the FLO default path also
+  # yamldecodes the whole manifest (data.local_file.bnk_manifest → the CNEManifest
+  # CR), so we pull-file it to a FIXED on-disk path (bnk-manifest.yaml) rather than a
+  # throwaway temp dir, then resolve both sub-chart versions from that local file
+  # (--manifest-file, no second pull). No interpreter → cmd.exe execs roksbnkctl.exe.
+
+  # 1. pull the manifest chart once → a stable path both this resource and
+  #    data.local_file.bnk_manifest read.
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      # Ensure Helm >= 3.8.0 is available (helm registry requires 3.8+).
-      # Some minimal runtimes ship an older version. Download directly for linux/amd64
-      # instead of using get-helm-3, which requires uname (absent in lean containers).
-      HELM_MIN="3.8.0"
-      HELM_BIN="helm"
-      helm_ok() {
-        local v
-        v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
-        # busybox sort (Alpine) lacks -C; -c is portable across busybox + GNU.
-        # 2>/dev/null suppresses the "sort: line N: disorder:" diagnostic so
-        # only the exit code matters.
-        printf '%s\n%s\n' "$HELM_MIN" "$v" | sort -V -c 2>/dev/null
-      }
-      if ! helm_ok; then
-        HELM_VERSION="3.17.2"
-        # Per-resource scratch dir — terraform runs provisioners in
-        # parallel by default, so a shared /tmp/helm-install path
-        # races ("Text file busy" when one process writes while
-        # another extracts).
-        HELM_TMP=$(mktemp -d "$${TMPDIR:-/tmp}/helm-install-XXXXXX")
-        curl -fsSL -o "$HELM_TMP/helm.tar.gz" \
-          "https://get.helm.sh/helm-v$HELM_VERSION-linux-amd64.tar.gz"
-        tar -xzf "$HELM_TMP/helm.tar.gz" -C "$HELM_TMP"
-        HELM_BIN="$HELM_TMP/linux-amd64/helm"
-      fi
-      mkdir -p ${var.manifest_download_dir}
-      cd ${var.manifest_download_dir}
-      # The f5-bigip-k8s-manifest chart is mirrored like any other chart (it is a BOM
-      # artifact — see bnkbom.ManifestChartName), so pull it from the same chart host
-      # as everything else: FAR off the mirror, the mirror under it. That keeps a
-      # mirrored install fully disconnected — nothing reaches repo.f5.com after
-      # replication. Its FLO/CIS versions feed the CNEManifest CR applied below.
-      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
-      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
-      tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
-      FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
-      echo "$FLO_VERSION" > ${var.manifest_download_dir}/flo-version.txt
-      CIS_VERSION=$(grep -A 1 "charts/f5-bnk-cis" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
-      echo "$CIS_VERSION" > ${var.manifest_download_dir}/cis-version.txt
-    EOT
+    command = "\"${local.roksbnkctl_bin}\" tfx helm-value pull-file --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.manifest_download_dir}/bnk-manifest.yaml"
+    environment = {
+      HELM_REGISTRY_PW = local.chart_pull_password
+    }
+  }
+
+  # 2. FLO version from the already-pulled manifest (no network).
+  provisioner "local-exec" {
+    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-lifecycle-operator --out ${var.manifest_download_dir}/flo-version.txt"
+  }
+
+  # 3. CIS version from the same manifest.
+  provisioner "local-exec" {
+    command = "\"${local.roksbnkctl_bin}\" tfx helm-value chart-version --manifest-file ${var.manifest_download_dir}/bnk-manifest.yaml --subchart charts/f5-bnk-cis --out ${var.manifest_download_dir}/cis-version.txt"
   }
 
   triggers = {
@@ -508,14 +492,16 @@ resource "null_resource" "extract_flo_version" {
 
 # Read extracted FLO/CIS versions after extract_flo_version provisioner runs.
 # depends_on defers evaluation to apply time (file exists) rather than plan time
-# (file absent). The bash program returns "" gracefully when files are missing,
-# so destroy-phase refresh does not abort even in a fresh ephemeral container.
+# (file absent). tfx read-json emits "" for a missing file (like the shell's
+# `cat … 2>/dev/null`), so a destroy-phase refresh does not abort even in a fresh
+# ephemeral container.
 data "external" "versions" {
   count = local.global_enabled ? 1 : 0
 
   program = [
-    "bash", "-c",
-    "F=$(cat ${var.manifest_download_dir}/flo-version.txt 2>/dev/null | tr -d '[:space:]'); C=$(cat ${var.manifest_download_dir}/cis-version.txt 2>/dev/null | tr -d '[:space:]'); printf '{\"flo\":\"%s\",\"cis\":\"%s\"}' \"$F\" \"$C\"",
+    local.roksbnkctl_bin, "tfx", "read-json",
+    "--pair", "flo=${var.manifest_download_dir}/flo-version.txt",
+    "--pair", "cis=${var.manifest_download_dir}/cis-version.txt",
   ]
 
   depends_on = [null_resource.extract_flo_version]
@@ -1609,7 +1595,7 @@ resource "helm_release" "flo" {
 # the module being enabled at all — not on one path.
 data "local_file" "bnk_manifest" {
   count      = local.global_enabled ? 1 : 0
-  filename   = "${var.manifest_download_dir}/f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml"
+  filename   = "${var.manifest_download_dir}/bnk-manifest.yaml"
   depends_on = [null_resource.extract_flo_version]
 }
 

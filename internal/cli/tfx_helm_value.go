@@ -26,6 +26,7 @@ var (
 	flagHelmVersion       string
 	flagHelmFile          string
 	flagHelmSubchart      string
+	flagHelmManifestFile  string
 	flagHelmOut           string
 	flagHelmBin           string
 	flagHelmRegistryLogin string
@@ -83,26 +84,43 @@ func init() {
 		f.StringVar(&flagHelmPasswordEnv, "password-env", "", "env var holding the registry password (with --registry-login)")
 	}
 	tfxHelmChartVersionCmd.Flags().StringVar(&flagHelmSubchart, "subchart", "", "sub-chart path to resolve the version for (required)")
+	tfxHelmChartVersionCmd.Flags().StringVar(&flagHelmManifestFile, "manifest-file", "", "read the version from this local manifest file instead of pulling the chart (no-pull mode)")
 	tfxHelmValueCmd.AddCommand(tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd)
 	tfxCmd.AddCommand(tfxHelmValueCmd)
 }
 
 func runTFXHelmChartVersion(cmd *cobra.Command, _ []string) error {
-	if flagHelmChart == "" || flagHelmFile == "" || flagHelmSubchart == "" {
-		return fmt.Errorf("--chart, --file and --subchart are required")
+	if flagHelmSubchart == "" {
+		return fmt.Errorf("--subchart is required")
 	}
-	dir, cleanup, err := tfxHelmPull(cmd.Context())
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	manifestPath, err := findChartFile(dir, flagHelmFile)
-	if err != nil {
-		return err
-	}
-	manifest, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fmt.Errorf("reading manifest %s in the chart: %w", flagHelmFile, err)
+	var manifest []byte
+	if flagHelmManifestFile != "" {
+		// No-pull mode: read a manifest already on disk (e.g. left by a prior
+		// `pull-file`). Lets one chart pull feed multiple sub-chart version reads —
+		// the FLO phase resolves both the operator and the CIS version this way.
+		b, err := os.ReadFile(flagHelmManifestFile)
+		if err != nil {
+			return fmt.Errorf("reading manifest file %s: %w", flagHelmManifestFile, err)
+		}
+		manifest = b
+	} else {
+		if flagHelmChart == "" || flagHelmFile == "" {
+			return fmt.Errorf("--chart and --file are required (or use --manifest-file)")
+		}
+		dir, cleanup, err := tfxHelmPull(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		manifestPath, err := findChartFile(dir, flagHelmFile)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("reading manifest %s in the chart: %w", flagHelmFile, err)
+		}
+		manifest = b
 	}
 	version, err := extractChartVersion(manifest, flagHelmSubchart)
 	if err != nil {
