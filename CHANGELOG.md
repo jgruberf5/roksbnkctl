@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.3 — 2026-07-24
+
+### Fixed
+
+- **The helm provider's OCI login stores credentials inline, not via a native helper (Windows fix, part 2).** With the tfx helm-value pull fixed in v1.27.2, the FLO/FLP deploy reached the in-process terraform **helm provider**'s `helm_release`, which does its own OCI registry login-and-store. On Windows a `credsStore` in the docker config (Docker Desktop sets `"desktop"` in `~/.docker/config.json`) makes that store shell out to a native credential helper — which fails on the multi-KB FAR `_json_key_base64` password with `error storing credentials … The stub received bad data` (the Windows Credential Manager blob cap), erroring `helm_release.flo`. `prepareToolEnv` now writes the isolated `HELM_REGISTRY_CONFIG` and a redirected `DOCKER_CONFIG` as fresh `{"auths":{}}` files with **no** `credsStore`/`credHelpers`, so the provider's login stores the credential as inline base64 in the file (no helper). Overwritten each run (the login re-populates it) and a no-op on Linux, where the store was already inline. tfx helm-value is unaffected — it passes its own `--registry-config`.
+
 ## v1.27.2 — 2026-07-24
 
 ### Fixed

@@ -7,6 +7,7 @@ package tf
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,43 @@ func TestPrepareToolEnv_SetsHelmAndPrecreates(t *testing.T) {
 	}
 	if got, want := os.Getenv("HELM_REPOSITORY_CACHE"), repoDir; got != want {
 		t.Errorf("HELM_REPOSITORY_CACHE = %q, want %q", got, want)
+	}
+}
+
+// TestPrepareToolEnv_CleanRegistryConfigs — the helm registry config and
+// DOCKER_CONFIG must be fresh files with an empty `auths` and NO credsStore, so the
+// helm provider's OCI login stores inline (the Windows credential-helper fix).
+func TestPrepareToolEnv_CleanRegistryConfigs(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("ROKSBNKCTL_HOME", base)
+	for _, k := range []string{"HELM_REGISTRY_CONFIG", "DOCKER_CONFIG"} {
+		t.Setenv(k, "")
+	}
+	if err := prepareToolEnv(); err != nil {
+		t.Fatalf("prepareToolEnv: %v", err)
+	}
+
+	reg := os.Getenv("HELM_REGISTRY_CONFIG")
+	if reg == "" {
+		t.Fatal("HELM_REGISTRY_CONFIG not set")
+	}
+	dockerDir := os.Getenv("DOCKER_CONFIG")
+	if dockerDir == "" {
+		t.Fatal("DOCKER_CONFIG not set")
+	}
+	for _, p := range []string{reg, filepath.Join(dockerDir, "config.json")} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("reading %s: %v", p, err)
+		}
+		s := string(b)
+		if !strings.Contains(s, `"auths"`) {
+			t.Errorf("%s missing auths: %q", p, s)
+		}
+		// The whole point: no credsStore/credHelpers, so storage stays inline.
+		if strings.Contains(s, "credsStore") || strings.Contains(s, "credHelpers") {
+			t.Errorf("%s must not configure a credential helper: %q", p, s)
+		}
 	}
 }
 

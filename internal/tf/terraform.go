@@ -304,7 +304,27 @@ func prepareToolEnv() error {
 	setEnvIfEmpty("HELM_DATA_HOME", helmDataHome)
 	setEnvIfEmpty("HELM_REPOSITORY_CACHE", filepath.Join(helmCacheHome, "repository"))
 	setEnvIfEmpty("HELM_REPOSITORY_CONFIG", filepath.Join(helmConfigHome, "repositories.yaml"))
-	setEnvIfEmpty("HELM_REGISTRY_CONFIG", filepath.Join(helmConfigHome, "registry", "config.json"))
+	// OCI credential storage must be INLINE, never via a native credential helper.
+	// On Windows a `credsStore` in the docker/helm registry config (Docker Desktop
+	// sets "desktop" in ~/.docker/config.json) makes the terraform helm provider's
+	// OCI `Login` store the credential through that helper — which fails on the
+	// multi-KB FAR `_json_key_base64` password with "error storing credentials … The
+	// stub received bad data" (the Windows Credential Manager blob cap), breaking the
+	// FLO/FLP `helm_release` pulls. Point the helm registry config AND DOCKER_CONFIG
+	// at fresh files with an empty `auths` and NO credsStore, so the provider's login
+	// stores the auth as inline base64 in the file (no helper). Overwritten each run
+	// (the login re-populates it), and harmless on Linux where the store was already
+	// inline. tfx helm-value is unaffected — it passes its own --registry-config.
+	regConfig := filepath.Join(helmConfigHome, "registry", "config.json")
+	if err := writeCleanRegistryConfig(regConfig); err != nil {
+		return err
+	}
+	setEnvIfEmpty("HELM_REGISTRY_CONFIG", regConfig)
+	dockerConfigDir := filepath.Join(helmBase, "docker")
+	if err := writeCleanRegistryConfig(filepath.Join(dockerConfigDir, "config.json")); err != nil {
+		return err
+	}
+	setEnvIfEmpty("DOCKER_CONFIG", dockerConfigDir)
 
 	// Kubeconfig: only redirect $KUBECONFIG to the workspace tree when the
 	// standard $HOME/.kube location ISN'T writable (the runner case). On a
@@ -354,6 +374,19 @@ func setEnvIfEmpty(key, val string) {
 	if os.Getenv(key) == "" {
 		_ = os.Setenv(key, val)
 	}
+}
+
+// writeCleanRegistryConfig writes `{"auths":{}}` to path (creating parents). No
+// credsStore/credHelpers, so OCI credential storage (the helm provider's login) is
+// inline base64 rather than via a native credential helper — the Windows fix.
+func writeCleanRegistryConfig(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(`{"auths":{}}`), 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }
 
 // SourceDir is the path containing the resolved .tf files.
