@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 
@@ -325,6 +326,17 @@ func prepareToolEnv() error {
 		return err
 	}
 	setEnvIfEmpty("DOCKER_CONFIG", dockerConfigDir)
+	// Expose the helm registry-config path to the modules ON WINDOWS ONLY. There the
+	// FLO/FLP helm_release resources write the OCI pull credential INLINE here
+	// (local_file) and drop repository_username/password, so the helm provider READS
+	// the auth for its pull instead of doing a login-and-STORE — which on Windows
+	// shells out to a docker credential helper that fails on the multi-KB FAR
+	// password ("The stub received bad data"). The provider reads this same file via
+	// HELM_REGISTRY_CONFIG. Left empty elsewhere so Linux/macOS keep the proven
+	// repository_username/password login path unchanged.
+	if runtime.GOOS == "windows" {
+		_ = os.Setenv("TF_VAR_helm_registry_config", regConfig)
+	}
 
 	// Kubeconfig: only redirect $KUBECONFIG to the workspace tree when the
 	// standard $HOME/.kube location ISN'T writable (the runner case). On a

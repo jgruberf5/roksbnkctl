@@ -1540,6 +1540,27 @@ locals {
   chart_login_host = split("/", local.far_chart_hostname)[0]
 }
 
+# The OCI pull credential, written INLINE into the registry config the helm
+# provider reads (var.helm_registry_config = HELM_REGISTRY_CONFIG, set by
+# roksbnkctl). The helm_release resources below therefore DROP
+# repository_username/password: those make the provider do an OCI login-and-STORE,
+# and on Windows that store shells out to a docker credential helper that fails on
+# the multi-KB FAR password ("The stub received bad data"). With the auth pre-placed
+# inline and no login, the provider's chart pull just READS it. Empty path (a direct
+# `terraform apply`, no roksbnkctl) falls back to repository_username/password.
+resource "local_file" "helm_registry_config" {
+  count           = local.use_kubectl && var.helm_registry_config != "" ? 1 : 0
+  filename        = var.helm_registry_config
+  file_permission = "0600"
+  content = jsonencode({
+    auths = {
+      (local.chart_login_host) = {
+        auth = base64encode("${local.chart_pull_username}:${local.chart_pull_password}")
+      }
+    }
+  })
+}
+
 resource "helm_release" "flo" {
   count = local.use_kubectl ? 1 : 0
 
@@ -1550,10 +1571,11 @@ resource "helm_release" "flo" {
   namespace        = var.flo_namespace
   create_namespace = false
 
-  # Authenticate the in-process helm provider's OCI chart pull — FAR creds off
-  # the mirror, the OpenShift cluster token under it (see local.chart_pull_*).
-  repository_username = local.chart_pull_username
-  repository_password = local.chart_pull_password
+  # See local_file.helm_registry_config: when roksbnkctl provides the registry
+  # config path the auth is inline there (no login/store); a direct apply falls
+  # back to the provider's own OCI login.
+  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
+  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # Match the legacy `helm upgrade --install ... --wait=false`: deploy the FLO
   # operator chart WITHOUT blocking on helm-level pod readiness. Real
@@ -1572,6 +1594,7 @@ resource "helm_release" "flo" {
     kubernetes_secret_v1.far_secret_flo,
     kubectl_manifest.ca_cluster_issuer,
     data.external.versions,
+    local_file.helm_registry_config,
   ]
 }
 
@@ -1693,10 +1716,11 @@ resource "helm_release" "cis" {
   namespace        = var.flo_namespace
   create_namespace = false
 
-  # Same chart-pull auth as helm_release.flo above (FAR creds off the mirror,
-  # the OpenShift cluster token under it).
-  repository_username = local.chart_pull_username
-  repository_password = local.chart_pull_password
+  # Same chart-pull auth as helm_release.flo above — inline via
+  # local_file.helm_registry_config (no login/store), or the provider's OCI login
+  # on a direct apply.
+  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
+  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # Legacy parity: `--wait=false`. CIS readiness is not helm-gated here either.
   wait    = false
@@ -1707,6 +1731,7 @@ resource "helm_release" "cis" {
   depends_on = [
     helm_release.flo,
     kubernetes_secret_v1.bigip_ctlr_login,
+    local_file.helm_registry_config,
   ]
 }
 

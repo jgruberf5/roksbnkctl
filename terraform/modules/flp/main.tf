@@ -462,6 +462,25 @@ data "external" "flp_version" {
 
 # ── the FLP chart ─────────────────────────────────────────────────────────────
 
+# OCI pull credential written INLINE into the registry config the helm provider
+# reads (var.helm_registry_config = HELM_REGISTRY_CONFIG, set by roksbnkctl), so the
+# helm_release below DROPS repository_username/password: those make the provider do
+# an OCI login-and-STORE, and on Windows that store shells out to a docker
+# credential helper that fails on the multi-KB FAR password ("The stub received bad
+# data"). Empty path (direct terraform apply) falls back to the provider's login.
+resource "local_file" "helm_registry_config" {
+  count           = local.enabled && var.helm_registry_config != "" ? 1 : 0
+  filename        = var.helm_registry_config
+  file_permission = "0600"
+  content = jsonencode({
+    auths = {
+      (local.chart_login_host) = {
+        auth = base64encode("${local.chart_pull_username}:${local.chart_pull_password}")
+      }
+    }
+  })
+}
+
 resource "helm_release" "flp" {
   count = local.enabled ? 1 : 0
 
@@ -472,8 +491,10 @@ resource "helm_release" "flp" {
   namespace        = var.flp_namespace
   create_namespace = false
 
-  repository_username = local.chart_pull_username
-  repository_password = local.chart_pull_password
+  # Inline via local_file.helm_registry_config (no login/store), or the provider's
+  # OCI login on a direct apply.
+  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
+  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # FLP readiness (vault unseal → postgres → proxy) IS the meaningful signal here,
   # so block on it — unlike the FLO operator whose readiness is gated downstream.
@@ -504,5 +525,6 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.far_secret,
     kubernetes_secret_v1.mirror_pull,
     kubernetes_role_binding_v1.flp_scc,
+    local_file.helm_registry_config,
   ]
 }

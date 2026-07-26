@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.4 — 2026-07-25
+
+### Fixed
+
+- **The FLO/FLP `helm_release` OCI pull authenticates inline instead of via the provider's login-and-store (Windows fix, part 3).** v1.27.3's env redirect (`HELM_REGISTRY_CONFIG`/`DOCKER_CONFIG`) did not stop the terraform helm provider's OCI **login** from storing the credential through a docker credential helper — helm's registry client falls back to the docker config for helpers, and the store still failed on the multi-KB FAR password with `The stub received bad data`. On Windows, roksbnkctl now writes the pull credential **inline** into the registry config the provider reads (via a `local_file` resource keyed on the new `helm_registry_config` path roksbnkctl exports), and the `helm_release.flo` / `.cis` / `.flp` resources drop `repository_username`/`repository_password` — so the provider performs **no** OCI login-and-store at all; its chart pull simply reads the inline auth. Confined to Windows (`runtime.GOOS`); Linux/macOS keep the proven `repository_username`/`password` login path unchanged.
+
 ## v1.27.3 — 2026-07-24
 
 ### Fixed

@@ -169,3 +169,9 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+variable "helm_registry_config" {
+  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
+  type        = string
+  default     = ""
+}

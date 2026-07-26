@@ -131,6 +131,7 @@ module "flo" {
   kubeconfig_dir                = "${var.kubeconfig_dir}/flo"
   scratch_dir                   = var.scratch_dir
   roksbnkctl_binary             = var.roksbnkctl_binary
+  helm_registry_config          = var.helm_registry_config
 }
 
 locals {
@@ -312,7 +313,8 @@ module "flp" {
   flp_node_port_access          = var.flp_node_port_access
   flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
   # helm post-renders the chart through the roksbnkctl binary itself (no python).
-  roksbnkctl_binary = var.roksbnkctl_binary
+  roksbnkctl_binary    = var.roksbnkctl_binary
+  helm_registry_config = var.helm_registry_config
 
 }
 
