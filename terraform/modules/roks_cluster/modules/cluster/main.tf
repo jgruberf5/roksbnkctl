@@ -203,13 +203,16 @@ locals {
   pgw_existing_zone3 = lookup(local.existing_pgw_by_zone, local.zones[2], "")
 
   # The gateway each subnet attaches to: the one already in the zone, else ours.
-  pgw_zone1 = local.pgw_existing_zone1 != "" ? local.pgw_existing_zone1 : try(ibm_is_public_gateway.cluster_gateway_zone1[0].id, "")
-  pgw_zone2 = local.pgw_existing_zone2 != "" ? local.pgw_existing_zone2 : try(ibm_is_public_gateway.cluster_gateway_zone2[0].id, "")
-  pgw_zone3 = local.pgw_existing_zone3 != "" ? local.pgw_existing_zone3 : try(ibm_is_public_gateway.cluster_gateway_zone3[0].id, "")
+  # cluster_public_gateway = false → null on every subnet: no worker Internet egress
+  # (a private/disconnected cluster; the operator must provide private connectivity —
+  # VPEs / private service endpoints — for image pulls and IBM Cloud services).
+  pgw_zone1 = var.cluster_public_gateway ? (local.pgw_existing_zone1 != "" ? local.pgw_existing_zone1 : try(ibm_is_public_gateway.cluster_gateway_zone1[0].id, null)) : null
+  pgw_zone2 = var.cluster_public_gateway ? (local.pgw_existing_zone2 != "" ? local.pgw_existing_zone2 : try(ibm_is_public_gateway.cluster_gateway_zone2[0].id, null)) : null
+  pgw_zone3 = var.cluster_public_gateway ? (local.pgw_existing_zone3 != "" ? local.pgw_existing_zone3 : try(ibm_is_public_gateway.cluster_gateway_zone3[0].id, null)) : null
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
-  count          = var.create_cluster && local.pgw_existing_zone1 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone1 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone1"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[0]
@@ -222,7 +225,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
-  count          = var.create_cluster && local.pgw_existing_zone2 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone2 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone2"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[1]
@@ -235,7 +238,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
-  count          = var.create_cluster && local.pgw_existing_zone3 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone3 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone3"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[2]
@@ -342,9 +345,12 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
   ]
 }
 
-# Look up existing cluster when not creating a new one
+# Look up existing cluster when not creating a new one — but ONLY when a cluster
+# name/id was supplied. A cluster-less phase (e.g. a standalone FLP VSI that joins an
+# existing VPC without any ROKS cluster) passes create_cluster=false with an empty
+# name; skip the lookup then so it doesn't error resolving a cluster named "".
 data "ibm_container_vpc_cluster" "existing_cluster" {
-  count             = var.create_cluster ? 0 : 1
+  count             = !var.create_cluster && var.openshift_cluster_name != "" ? 1 : 0
   name              = var.openshift_cluster_name
   resource_group_id = data.ibm_resource_group.resource_group.id
 }

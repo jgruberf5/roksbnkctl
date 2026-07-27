@@ -57,6 +57,12 @@ variable "create_cluster" {
   default     = false
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach a public gateway to each cluster subnet for worker Internet egress. true (default) = current behavior. false = no public gateways / no egress (a private, disconnected cluster — the operator must supply private connectivity, e.g. VPEs, for image pulls + IBM Cloud services)."
+  type        = bool
+  default     = true
+}
+
 variable "create_cos_instance" {
   description = "Enable creation of Cloud Object Storage instance for OpenShift registry"
   type        = bool

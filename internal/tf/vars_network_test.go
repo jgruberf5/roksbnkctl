@@ -19,6 +19,38 @@ func baseWS() *config.Workspace {
 	}
 }
 
+func TestRenderTFVars_PublicGateway(t *testing.T) {
+	// nil → omit (terraform default true, current behavior).
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, baseWS(), "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	if strings.Contains(buf.String(), "cluster_public_gateway") {
+		t.Errorf("unset cluster.public_gateway must NOT emit the tfvar\n%s", buf.String())
+	}
+	// false → private/disconnected cluster.
+	f := false
+	ws := baseWS()
+	ws.Cluster.PublicGateway = &f
+	buf.Reset()
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	if !strings.Contains(buf.String(), "cluster_public_gateway = false") {
+		t.Errorf("public_gateway=false must emit cluster_public_gateway = false\n%s", buf.String())
+	}
+	// true → explicit current behavior.
+	tr := true
+	ws.Cluster.PublicGateway = &tr
+	buf.Reset()
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	if !strings.Contains(buf.String(), "cluster_public_gateway = true") {
+		t.Errorf("public_gateway=true must emit cluster_public_gateway = true\n%s", buf.String())
+	}
+}
+
 func TestRenderTFVars_Network_UnsetOmitsAll(t *testing.T) {
 	var buf bytes.Buffer
 	if err := RenderTFVars(&buf, baseWS(), "", ""); err != nil {

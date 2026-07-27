@@ -53,6 +53,7 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `openshift_cluster_name` | `tf-openshift-cluster` | Cluster name. Mirrors `config.yaml`'s `cluster.name`. |
 | `roks_workers_per_zone` | `1` | Worker nodes per AZ. `2` ⇒ 6 workers in a 3-AZ MZR region. |
 | `create_roks_cluster` | `true` | Set `false` to adopt an existing cluster. Pair with `roks_cluster_id_or_name`. |
+| `cluster_public_gateway` | `true` | `false` = private/disconnected cluster (no public gateways, no worker egress). `config.yaml`'s `cluster.public_gateway`. Expert — needs private connectivity you provide. |
 | `openshift_cluster_version` | `"4.18"` | OpenShift minor. Quote it — YAML/HCL parses `4.18` as float otherwise. |
 | `cneinstance_deployment_size` | `Small` | `Small`/`Medium`/`Large`. CNEInstance sizing. |
 | `f5_bigip_k8s_manifest_version` | upstream pin | Pin a specific BNK manifest chart version. |

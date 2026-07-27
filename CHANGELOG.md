@@ -4,6 +4,23 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.29.0 — 2026-07-27
+
+### Added
+
+- **`cluster.public_gateway` — build a private, disconnected cluster with no worker egress.** ROKS clusters were always created with a public gateway on every subnet (workers had Internet egress). A new `cluster.public_gateway` config toggle (rendered as the `cluster_public_gateway` terraform variable) defaults to `true` (unchanged behavior); set it to `false` and no `ibm_is_public_gateway` is created and no subnet attaches one — a genuinely private cluster. `roksbnkctl init` prompts for it ("Attach public gateways for worker Internet egress?") and warns when you choose private. **Expert topology:** a no-egress cluster needs private connectivity you provide (VPEs / private service endpoints for IBM Cloud services, plus a privately-reachable mirror registry); the toggle removes the egress path but does not build those paths, and the cluster master keeps its public API endpoint. See the new Appendix A.
+
+- **Standalone `flp up` (VSI mode) — an F5 License Proxy appliance with no cluster.** `flp up` in VSI mode previously required a `cluster-outputs.json` and deployed the proxy into the cluster's own VPC. A new `bnk.flp.vsi.vpc` config field names an existing VPC to deploy the FLP VSI into **without any cluster** — a licensing appliance you can place in a services VPC that has controlled egress to F5, which a disconnected cluster in another VPC then reaches over a Transit Gateway (via `bnk.flp.external`). The cluster-adopt terraform lookup is now gated on a non-empty cluster name (with `try()`-guarded outputs) so a cluster-less apply doesn't fail resolving a cluster named `""`; normal adopt is unchanged. This is the piece that makes a clean "services-VPC" disconnected topology native — see Appendix A and Chapter 10c.
+
+### Fixed
+
+- **`registry replicate` is documented truthfully — it needs no cluster.** The help text said the mirror verbs "need a live cluster." They don't: `replicate` is a purely host-side, registry-to-registry copy (go-containerregistry) that pulls from the FAR source and pushes to the target from wherever roksbnkctl runs. The help now states the real requirements (a configured `registry:` block, the FAR source credential, and host reachability to both endpoints) and that the mirror can be pre-seeded as a standalone supply-chain step before any cluster exists.
+
+### Documentation
+
+- **New Appendix A — "A disconnected ROKS cluster"**: a manual, end-to-end runbook for the services-VPC topology (Harbor mirror + standalone FLP appliance in a VPC with egress; a `public_gateway: false` cluster in another VPC with none; joined by a Transit Gateway), mirroring the `disconnected_deployment_demo.sh` script.
+- Chapter 10a documents standalone `registry replicate` and adds a "truly disconnected cluster" section; Chapter 10c adds "Running the FLP as a VSI" + the standalone-appliance flow; the config/tfvars references (Ch. 12/13/28) cover `cluster.public_gateway`, `cluster_public_gateway`, and `bnk.flp.vsi.vpc`.
+
 ## v1.28.0 — 2026-07-27
 
 ### Added

@@ -146,6 +146,14 @@ type ClusterCfg struct {
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
 	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
 
+	// PublicGateway controls whether the cluster subnets attach a public gateway
+	// for worker Internet egress. nil → the terraform default (true, current
+	// behavior). false → a private/disconnected cluster with NO egress — the
+	// operator must supply private connectivity (VPEs / private service endpoints)
+	// for image pulls and IBM Cloud services. A pointer so "unset" is distinct from
+	// an explicit false. Rendered as cluster_public_gateway.
+	PublicGateway *bool `yaml:"public_gateway,omitempty"`
+
 	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
 	// (the cluster module picks the smallest bx2 profile meeting both minimums).
 	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
@@ -412,6 +420,13 @@ type BNKFLPCfg struct {
 // BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running the
 // f5-license-proxy stack as a podman pod. All fields optional; sensible defaults apply.
 type BNKFLPVSICfg struct {
+	// VPC is an existing VPC id to deploy the standalone FLP VSI into, WITHOUT any
+	// ROKS cluster. Set it to run `flp up` (vsi mode) as a standalone licensing
+	// appliance — e.g. in a services VPC that a disconnected cluster reaches over a
+	// Transit Gateway (the cluster then references it via bnk.flp.external). Empty →
+	// the FLP VSI joins the workspace's cluster VPC (from cluster-outputs.json), the
+	// original behavior which requires a cluster.
+	VPC string `yaml:"vpc,omitempty"`
 	// Profile is the IBM Cloud VSI instance profile. Empty → DefaultFLPVSIProfile
 	// (bx2-4x16 — meets the FLP's 4 vCPU / 8 GB minimum).
 	Profile string `yaml:"profile,omitempty"`

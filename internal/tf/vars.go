@@ -353,6 +353,12 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 	if c.MinWorkerMemoryGB > 0 {
 		fmt.Fprintf(w, "roks_min_worker_memory_gb = %d\n", c.MinWorkerMemoryGB)
 	}
+	// Public-gateway toggle. Emitted only when explicitly set: nil → the terraform
+	// default (true, current behavior); false → a private/disconnected cluster with
+	// no worker Internet egress.
+	if c.PublicGateway != nil {
+		fmt.Fprintf(w, "cluster_public_gateway = %v\n", *c.PublicGateway)
+	}
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.

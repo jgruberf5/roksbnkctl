@@ -54,14 +54,17 @@ Commands:
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what ` + "`replicate`" + ` would copy (BOM vs. mirror)
-  roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+  roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
-` + "`registry bom`" + ` works offline against the FAR manifest; the cluster-touching
-verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
-registry: block in the workspace config.`,
+` + "`registry bom`" + ` works entirely offline against the FAR manifest. The other verbs
+need a configured registry: block and network reachability to the target registry —
+` + "`replicate`" + ` also needs the FAR source (repo.f5.com). NONE require a Kubernetes
+cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
+roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
+any cluster exists.`,
 }
 
 // registry-group flag values.
@@ -105,10 +108,18 @@ var registryDiffCmd = &cobra.Command{
 
 var registryReplicateCmd = &cobra.Command{
 	Use:   "replicate",
-	Short: "Copy the BOM into the mirror (needs a live cluster)",
+	Short: "Copy the BOM into the mirror (registry-to-registry; no cluster needed)",
 	Long: `Prepares the target registry (auth + repository namespace), then copies every
 BOM artifact into it, idempotently. Records the result in registry-mirror.json so
-the BNK install can be redirected to the mirror.`,
+the BNK install can be redirected to the mirror.
+
+Runs entirely host-side: it pulls each artifact by digest from the FAR source
+(repo.f5.com) and pushes to the target registry via go-containerregistry — no
+Kubernetes cluster is involved. So you can pre-seed the mirror as a standalone
+supply-chain step, before creating any cluster, from any host that can reach both
+the FAR source and the target registry. Requires a configured registry: block and
+the FAR source credential (registry.source_service_account_b64, the workspace FAR
+auth, or --source-sa-b64).`,
 	Args: cobra.NoArgs,
 	RunE: runRegistryReplicate,
 }

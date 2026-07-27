@@ -470,6 +470,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.name` | string | (prompted) | Cluster name. |
 | `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
+| `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). |
 | `cluster.min_worker_vcpu_count` | integer | `16` | Worker-flavor auto-select floor (vCPUs) → `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. |
 | `cluster.min_worker_memory_gb` | integer | `64` | Worker-flavor auto-select floor (GB) → `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
@@ -510,7 +511,8 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.flp.namespace` | string | `f5-license-proxy` | Namespace the FLP phase installs into (FLP mode only). |
 | `bnk.flp.chart_version` | string | (empty ⇒ from the BNK manifest) | Pin the `f5-license-proxy` chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts. |
 | `bnk.flp.storage_class` | string | (empty ⇒ HCL default) | Dynamic StorageClass for the FLP's PVCs → `flp_storage_class`. Set it when the cluster/region exposes a different block-storage class. (helm mode) |
-| `bnk.flp.mode` | string | (empty ⇒ `helm`) | `helm` \| `vsi`. `vsi` deploys the proxy on a standalone VSI (podman pod, no k8s) in the cluster VPC instead of the helm chart; both terminate in the same endpoint + root CA handoff. |
+| `bnk.flp.mode` | string | (empty ⇒ `helm`) | `helm` \| `vsi`. `vsi` deploys the proxy on a standalone VSI (podman pod, no k8s) instead of the helm chart; both terminate in the same endpoint + root CA handoff. |
+| `bnk.flp.vsi.vpc` | string | (empty ⇒ the cluster VPC) | Existing VPC id to deploy the standalone FLP VSI into **without any cluster** — a licensing appliance in a services VPC. Empty ⇒ joins the workspace's cluster VPC (requires a cluster). See [Chapter 10c §"Standalone"](./10c-flp-licensing.md). |
 | `bnk.flp.vsi.profile` | string | `bx2-4x16` | VSI instance profile (≥ 4 vCPU / 8 GB) → `flp_vsi_profile`. |
 | `bnk.flp.vsi.zone` | string | (empty ⇒ `<region>-1`) | Zone for the FLP VSI → `flp_vsi_zone`. |
 | `bnk.flp.vsi.boot_size_gb` | integer | `100` | Boot volume size (≥ 80) → `flp_vsi_boot_size_gb`. |

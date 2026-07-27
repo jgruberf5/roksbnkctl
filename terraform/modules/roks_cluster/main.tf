@@ -25,6 +25,7 @@ module "cluster" {
   kubeconfig_dir   = var.kubeconfig_dir
 
   create_cluster         = var.create_roks_cluster
+  cluster_public_gateway = var.cluster_public_gateway
   create_transit_gateway = var.create_roks_transit_gateway
   create_cos_instance    = var.create_roks_registry_cos_instance
 

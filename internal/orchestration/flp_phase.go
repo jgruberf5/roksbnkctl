@@ -61,13 +61,33 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	if tfws.HasUserTFVars() {
 		fmt.Fprintf(w, "→ Layering user tfvars from %s (overrides config.yaml-derived values)\n", tfws.UserTFVarsPath())
 	}
+	// Standalone VSI FLP: bnk.flp.vsi.vpc names an existing VPC to deploy the proxy
+	// into WITHOUT any ROKS cluster — a licensing appliance in (say) a services VPC
+	// that a disconnected cluster reaches over a Transit Gateway (that cluster then
+	// references it via bnk.flp.external). Skip the cluster-outputs requirement and
+	// target the VPC directly. The override renders roks_cluster_id_or_name = "" (an
+	// empty synthetic identity), so the cluster-adopt lookup is gated off.
+	if standaloneFLPVSI(ws) {
+		vpcID := ws.BNK.FLP.VSI.VPC
+		overridePath, werr := writeFLPPhaseOverride(tfws, &config.ClusterOutputs{VPCID: vpcID}, true)
+		if werr != nil {
+			return nil, werr
+		}
+		fmt.Fprintf(w, "→ FLP-phase (standalone VSI): deploying the F5 License Proxy into VPC %s — no cluster.\n", vpcID)
+		fmt.Fprintln(w, "→ terraform init")
+		if err := tfws.Init(ctx); err != nil {
+			return nil, err
+		}
+		return []string{overridePath}, nil
+	}
 	co, err := loadReuseClusterOutputs(workspace)
 	if err != nil {
 		return nil, err
 	}
 	if co == nil || co.VPCID == "" {
 		return nil, fmt.Errorf(
-			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`",
+			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. "+
+				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and bnk.flp.vsi.vpc: <existing-vpc-id>",
 			workspace)
 	}
 	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
@@ -83,6 +103,13 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 		return nil, err
 	}
 	return []string{overridePath}, nil
+}
+
+// standaloneFLPVSI reports whether the workspace deploys the FLP as a standalone
+// VSI into a named VPC with NO cluster (bnk.flp.mode: vsi + bnk.flp.vsi.vpc set).
+func standaloneFLPVSI(ws *config.Workspace) bool {
+	return ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi" &&
+		ws.BNK.FLP.VSI != nil && ws.BNK.FLP.VSI.VPC != ""
 }
 
 // RunFLPUp = plan + confirm + apply against state-flp/, then persist

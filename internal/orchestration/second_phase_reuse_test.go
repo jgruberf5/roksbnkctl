@@ -481,6 +481,50 @@ func TestWriteBnkPhaseOverride_Sprint28ByteUnchanged(t *testing.T) {
 // TestWriteGatewayPhaseOverride_ForcedBlock asserts the gateway-phase override
 // forces every OTHER phase's creation off and deploy_gateway on, reusing the
 // cluster VPC from cluster-outputs.json.
+func TestStandaloneFLPVSI(t *testing.T) {
+	vpc := func(mode, vpc string) *config.Workspace {
+		w := &config.Workspace{}
+		w.BNK.FLP = &config.BNKFLPCfg{Mode: mode, VSI: &config.BNKFLPVSICfg{VPC: vpc}}
+		return w
+	}
+	if !standaloneFLPVSI(vpc("vsi", "r006-abc")) {
+		t.Error("vsi mode + vsi.vpc set must be standalone")
+	}
+	if standaloneFLPVSI(vpc("vsi", "")) {
+		t.Error("vsi mode without vsi.vpc is NOT standalone (joins the cluster VPC)")
+	}
+	if standaloneFLPVSI(vpc("", "r006-abc")) {
+		t.Error("helm mode is never standalone")
+	}
+	if standaloneFLPVSI(&config.Workspace{}) {
+		t.Error("no flp config is not standalone")
+	}
+}
+
+func TestWriteFLPPhaseOverride_StandaloneNoCluster(t *testing.T) {
+	// The standalone-VSI path passes a synthetic co with only a VPC (no cluster
+	// id/name), so the override adopts NO cluster: roks_cluster_id_or_name = "" and
+	// the cluster-adopt data source is gated off (terraform side).
+	co := &config.ClusterOutputs{VPCID: "r006-services-vpc"}
+	p, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true) // vsi
+	if err != nil {
+		t.Fatalf("writeFLPPhaseOverrideAt: %v", err)
+	}
+	got, _ := os.ReadFile(p)
+	for _, want := range []string{
+		"create_roks_cluster = false\n",
+		"roks_cluster_id_or_name = \"\"\n",
+		"existing_cluster_vpc_id = \"r006-services-vpc\"\n",
+		"use_existing_cluster_vpc = true\n",
+		"deploy_flp_vsi = true\n",
+		"deploy_flp = false\n",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("standalone flp override missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}
+
 func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 	dir := t.TempDir()
 	co := &config.ClusterOutputs{

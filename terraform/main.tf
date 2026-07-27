@@ -36,6 +36,7 @@ module "roks_cluster" {
   ibmcloud_cluster_region           = var.ibmcloud_cluster_region
   ibmcloud_resource_group           = var.ibmcloud_resource_group
   create_roks_cluster               = var.create_roks_cluster
+  cluster_public_gateway            = var.cluster_public_gateway
   roks_cluster_id_or_name           = var.roks_cluster_id_or_name
   create_roks_transit_gateway       = var.create_roks_transit_gateway
   create_roks_registry_cos_instance = var.create_roks_registry_cos_instance

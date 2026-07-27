@@ -450,11 +450,22 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 			fmt.Fprintln(os.Stderr, "  (minimum is 1 worker per zone — a ROKS cluster spans 3 AZs, so 3 workers total)")
 			workers = 1
 		}
+		// Public gateways = worker Internet egress. Default yes (current behavior).
+		// No → a private, disconnected cluster: no egress, so the operator must supply
+		// private connectivity (VPEs / private service endpoints) for image pulls and
+		// IBM Cloud services. Recorded explicitly so the choice is visible in config.yaml.
+		pubGW := promptYesNo("Attach public gateways for worker Internet egress? (No = private/disconnected cluster)", true)
+		if !pubGW {
+			fmt.Fprintln(os.Stderr, "  ⚠ private cluster: no worker egress — you must provide private connectivity (VPEs / private")
+			fmt.Fprintln(os.Stderr, "    service endpoints) for image pulls + IBM Cloud services, and mirror BNK into a registry")
+			fmt.Fprintln(os.Stderr, "    the cluster can reach privately (roksbnkctl registry replicate).")
+		}
 		out.Cluster = config.ClusterCfg{
 			Create:           true,
 			Name:             naming.Derive(prefix).ClusterName,
 			OpenShiftVersion: promptString("OpenShift version", dOCP),
 			WorkersPerZone:   workers,
+			PublicGateway:    &pubGW,
 		}
 		res.RegistryCOS.Create = promptYesNo("Create registry COS instance?", true)
 		if !res.RegistryCOS.Create {

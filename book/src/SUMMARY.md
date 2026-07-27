@@ -74,3 +74,7 @@
 # Part X — Agentic mode
 
 - [Agentic mode](./33-agentic-mode.md)
+
+# Appendices
+
+- [A — A disconnected ROKS cluster](./appendix-a-disconnected-roks-cluster.md)

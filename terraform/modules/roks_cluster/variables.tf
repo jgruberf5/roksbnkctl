@@ -21,6 +21,12 @@ variable "create_roks_cluster" {
   default     = true
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach public gateways for worker Internet egress. true (default) = current behavior; false = private/disconnected cluster (no egress)."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_id_or_name" {
   description = "ID or name of an existing ROKS cluster — used when create_roks_cluster = false"
   type        = string

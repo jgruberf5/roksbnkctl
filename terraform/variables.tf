@@ -53,6 +53,12 @@ variable "create_roks_cluster" {
   default     = true
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach a public gateway to each cluster subnet for worker Internet egress. true (default) keeps current behavior; false builds a private, disconnected cluster with no egress (operator must supply private connectivity — VPEs / private service endpoints — for image pulls and IBM Cloud services)."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_id_or_name" {
   description = "ID or name of an existing ROKS cluster — used when create_roks_cluster = false"
   type        = string
