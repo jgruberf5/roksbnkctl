@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.7 — 2026-07-27
+
+### Fixed
+
+- **Console output no longer mojibakes on Windows.** roksbnkctl's UTF-8 glyphs (`✓ ⚠ ✗ → ─` in `doctor`, phase progress, separators) rendered as cp1252 garbage (`Γ£ô ΓÜá ΓÇö`) on the Windows console, whose default output code page is the legacy OEM/ANSI page rather than UTF-8. A Windows-only `init` now sets the console output code page to UTF-8 (`SetConsoleOutputCP(65001)`) at startup, so the whole surface displays correctly without changing a single output string. Best-effort (a no-op when stdout is redirected/piped, failures ignored — cosmetics only), stdlib `syscall` (no new dependency), and a strict no-op on Linux/macOS via build tag. A UTF-8 console is a superset of ASCII, so plain output and child processes (terraform/helm) are unaffected.
+
 ## v1.27.6 — 2026-07-27
 
 ### Fixed
