@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.6 — 2026-07-27
+
+### Fixed
+
+- **The gateway-api admission-policy sweep now targets the deploying cluster by ID, and fails loudly instead of silently sweeping nothing.** The tfx migration (v1.27.0) replaced the FLO crd-installer's Linux-only `nohup bash` delete-loop — which targeted the cluster *directly* via `var.kube_host`/`var.kube_token` — with an in-process Go goroutine that **re-resolved** the cluster from the *BNK* workspace's terraform outputs, falling back to the cluster **name**. Two problems compounded: (a) on a first apply the BNK outputs don't exist yet at sweep-start, forcing the name fallback; and (b) a ROKS cluster name is **not unique** in an account, so with a duplicate-named (or orphaned) cluster present the name resolved to the wrong — even a dead — endpoint. Every delete then silently no-op'd against that cluster (errors were discarded), so the real cluster's `openshift-ingress-operator-gatewayapi-crd-admission` policy was never removed; FLO's `backendtlspolicies` CRD create stayed blocked, and the *only* visible symptom — 15 minutes later — was the CNEInstance never reporting `CNEControllerAvailable`. The sweep now (1) resolves the cluster by **ID** from `cluster-outputs.json` (written by the cluster phase, so it exists before the BNK phase and is immune to a duplicate name), then `roks_cluster_id`, only falling back to a name as a last resort; (2) **warns** when it must resolve by name; (3) logs a delete failure once per resource instead of discarding it; and (4) reports how many deletes actually landed on stop — **zero** now prints a loud red-flag line instead of looking like success. Platform-independent (helps Linux too), but it's what unblocks the CNEInstance on a native-Windows deploy where a stale same-named cluster exists.
+
 ## v1.27.5 — 2026-07-27
 
 ### Fixed

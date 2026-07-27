@@ -793,7 +793,7 @@ func tryAutoKubeconfig(ctx context.Context, in *LifecycleInputs, cctx *config.Co
 	if cctx == nil || cctx.Workspace == nil {
 		return
 	}
-	cluster := resolveClusterIdentity(ctx, cctx, tfws)
+	cluster, _ := resolveClusterIdentity(ctx, cctx, tfws)
 	if cluster == "" {
 		return
 	}
@@ -1011,36 +1011,48 @@ func tryAutoClusterJumphosts(ctx context.Context, in *LifecycleInputs, cctx *con
 		len(registered), strings.Join(registered, ", "))
 }
 
-// resolveClusterIdentity figures out which cluster to fetch the
-// kubeconfig for. Order:
+// resolveClusterIdentity figures out which cluster to fetch the kubeconfig for, and
+// reports whether the identity is a cluster ID (unambiguous) or a NAME (which a
+// duplicate-named cluster makes ambiguous). Order — IDs first, because a ROKS cluster
+// name is NOT unique in an account, so a bare name can resolve to the wrong (even a
+// dead orphan) cluster:
 //
-//  1. Terraform output `roks_cluster_id` — post-apply truth, the actual
-//     ID provisioned. Beats config.yaml when the user's --var-file
-//     overrides cluster.name.
-//  2. Terraform output `roks_cluster_name` — same idea, slightly less
-//     stable if the cluster was renamed.
-//  3. cctx.Workspace.Cluster.Name — config.yaml fallback (pre-apply or
-//     if outputs aren't reachable).
+//  1. cluster-outputs.json `cluster_id` — authoritative, unambiguous, and written by
+//     the CLUSTER phase, so it exists BEFORE the BNK phase (whose own outputs are not
+//     yet written at sweep-start on a first apply). This is the identity that must be
+//     preferred: it is immune to a duplicate cluster NAME.
+//  2. This workspace's terraform output `roks_cluster_id` — also a real ID, but only
+//     present post-apply.
+//  3. `roks_cluster_name` output, then cctx.Workspace.Cluster.Name — NAME fallbacks,
+//     usable but ambiguous if a duplicate-named cluster exists. byID=false so callers
+//     that need a guaranteed-correct cluster (the admission sweep) can warn.
 //
-// Returns "" if no source produced a usable identity — caller skips
-// auto-fetch silently.
-func resolveClusterIdentity(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) string {
+// Returns ("", false) if no source produced a usable identity.
+func resolveClusterIdentity(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) (identity string, byID bool) {
+	if cctx != nil {
+		if out, err := config.ReadClusterOutputs(cctx.WorkspaceName); err == nil && out != nil && out.ClusterID != "" {
+			return out.ClusterID, true
+		}
+	}
 	if tfws != nil {
 		if outputs, err := tfws.Output(ctx); err == nil {
-			for _, key := range []string{"roks_cluster_id", "roks_cluster_name"} {
-				if om, ok := outputs[key]; ok && len(om.Value) > 0 {
+			for _, k := range []struct {
+				key  string
+				isID bool
+			}{{"roks_cluster_id", true}, {"roks_cluster_name", false}} {
+				if om, ok := outputs[k.key]; ok && len(om.Value) > 0 {
 					var s string
 					if json.Unmarshal(om.Value, &s) == nil && s != "" {
-						return s
+						return s, k.isID
 					}
 				}
 			}
 		}
 	}
-	if cctx != nil && cctx.Workspace != nil {
-		return cctx.Workspace.Cluster.Name
+	if cctx != nil && cctx.Workspace != nil && cctx.Workspace.Cluster.Name != "" {
+		return cctx.Workspace.Cluster.Name, false
 	}
-	return ""
+	return "", false
 }
 
 // applyWithRetry wraps tfws.Apply with bounded retries on transient

@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -49,11 +50,16 @@ func applyBNKWithAdmissionSweep(ctx context.Context, cctx *config.Context, tfws 
 
 // startAdmissionPolicySweep resolves a dynamic client (fresh admin kubeconfig) and
 // launches the sweep goroutine, returning a stop func that cancels it and waits for
-// it to drain. A no-op stop when the cluster can't be reached.
+// it to drain. A no-op stop when the client can't be built — but LOUDLY, because a
+// silent skip here is exactly how a misdirected sweep hid a CNEInstance timeout: the
+// FLO crd-installer stayed blocked by the gateway-api admission policy and the only
+// visible symptom, 15m later, was `CNEControllerAvailable` never appearing.
 func startAdmissionPolicySweep(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) func() {
-	dc := admissionSweepClient(ctx, cctx, tfws)
-	if dc == nil {
-		fmt.Fprintln(os.Stderr, "  (gateway-api admission-policy sweep skipped: cluster not reachable yet — best-effort)")
+	dc, err := admissionSweepClient(ctx, cctx, tfws)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ gateway-api admission-policy sweep NOT running: %v\n", err)
+		fmt.Fprintln(os.Stderr, "    → the FLO crd-installer may be blocked by the OpenShift ingress-operator gateway-api")
+		fmt.Fprintln(os.Stderr, "      admission policy; if the CNEInstance later times out on CNEControllerAvailable, this is why.")
 		return func() {}
 	}
 	fmt.Fprintln(os.Stderr, "→ gateway-api admission-policy sweep running for the duration of the apply (crd-installer window)")
@@ -69,17 +75,37 @@ func startAdmissionPolicySweep(ctx context.Context, cctx *config.Context, tfws *
 	}
 }
 
-// runAdmissionSweepLoop deletes the policy + binding (if present) every interval
-// until ctx is cancelled. Deletes are best-effort (NotFound is the normal case).
+// runAdmissionSweepLoop deletes the policy + binding (if present) every interval until
+// ctx is cancelled. A NotFound is the normal, healthy case (the binding is already
+// gone); any OTHER error means the deletes are not landing (wrong/dead cluster, RBAC)
+// — logged once per resource so a broken sweep is visible instead of silent. On stop
+// it reports how many deletes actually succeeded: zero is the red flag that the sweep
+// swept nothing (e.g. an unreachable cluster), the precise failure this replaces.
 func runAdmissionSweepLoop(ctx context.Context, dc dynamic.Interface, interval time.Duration) {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
+	deletes := 0
+	loggedErr := map[string]bool{}
 	for {
 		for _, gvr := range admissionSweepGVRs {
-			_ = dc.Resource(gvr).Delete(ctx, admissionSweepName, metav1.DeleteOptions{})
+			err := dc.Resource(gvr).Delete(ctx, admissionSweepName, metav1.DeleteOptions{})
+			switch {
+			case err == nil:
+				deletes++
+			case apierrors.IsNotFound(err):
+				// healthy — nothing to delete this tick
+			case !loggedErr[gvr.Resource]:
+				loggedErr[gvr.Resource] = true
+				fmt.Fprintf(os.Stderr, "  ⚠ admission-policy sweep: deleting %s/%s is failing (will keep retrying): %v\n", gvr.Resource, admissionSweepName, err)
+			}
 		}
 		select {
 		case <-ctx.Done():
+			if deletes == 0 {
+				fmt.Fprintln(os.Stderr, "  ⚠ gateway-api admission-policy sweep landed ZERO deletes — it swept nothing reachable; the FLO crd-installer was likely NOT unblocked.")
+			} else {
+				fmt.Fprintf(os.Stderr, "→ gateway-api admission-policy sweep stopped (%d deletes landed over the apply)\n", deletes)
+			}
 			return
 		case <-tick.C:
 		}
@@ -87,15 +113,21 @@ func runAdmissionSweepLoop(ctx context.Context, dc dynamic.Interface, interval t
 }
 
 // admissionSweepClient fetches a fresh admin kubeconfig for the workspace's cluster
-// and builds a dynamic client. Returns nil (skip the sweep) on any failure — the
-// sweep is defensive, so a transient cluster-access issue must never fail the apply.
-func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) dynamic.Interface {
+// and builds a dynamic client. Returns a descriptive error (never fails the apply —
+// the caller logs and continues) so a skipped sweep is explained, not silent. Resolves
+// the cluster by ID wherever possible: a bare cluster NAME is not unique in an IBM
+// account, so a duplicate-named (or orphaned) cluster can otherwise misdirect every
+// delete to the wrong endpoint — which is exactly how the sweep landed zero deletes.
+func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) (dynamic.Interface, error) {
 	if cctx == nil || cctx.Workspace == nil {
-		return nil
+		return nil, fmt.Errorf("no workspace context")
 	}
-	cluster := resolveClusterIdentity(ctx, cctx, tfws)
+	cluster, byID := resolveClusterIdentity(ctx, cctx, tfws)
 	if cluster == "" {
-		return nil
+		return nil, fmt.Errorf("could not resolve the cluster identity (no cluster-outputs.json cluster_id and no roks_cluster_id output)")
+	}
+	if !byID {
+		fmt.Fprintf(os.Stderr, "  ⚠ admission-policy sweep resolving cluster by NAME %q (no recorded cluster_id) — ambiguous if a duplicate-named cluster exists.\n", cluster)
 	}
 	resolver := &cred.Resolver{
 		Workspace: cctx.WorkspaceName,
@@ -103,19 +135,19 @@ func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Wo
 	}
 	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("resolving IBM Cloud API key: %w", err)
 	}
 	ic, err := ibm.New(apiKey, cctx.Workspace.IBMCloud.Region)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("building IBM client: %w", err)
 	}
 	body, err := ic.FetchClusterConfig(ctx, cluster)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("fetching admin kubeconfig for cluster %q: %w", cluster, err)
 	}
 	dc, err := k8s.DynamicFromKubeconfigBytes(body)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("building k8s client from kubeconfig: %w", err)
 	}
-	return dc
+	return dc, nil
 }
