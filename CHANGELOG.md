@@ -4,6 +4,12 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.27.5 — 2026-07-27
+
+### Fixed
+
+- **The FLO/CIS/FLP `helm_release` charts install from a locally-staged archive — the helm provider does no OCI login at all (Windows fix, definitive).** v1.27.4's premise was wrong: the terraform helm provider (`hashicorp/helm` 2.x) does **not** read `HELM_REGISTRY_CONFIG` per-resource for an `oci://` `helm_release` — it loads registry config once at provider-init (before any `local_file` writes), and the resource's only auth path is `repository_username`/`repository_password`, which triggers the login-and-**store** that fails on Windows (`The stub received bad data`). Dropping those creds made it fetch an anonymous token → `403 Forbidden`. There is no file the provider re-reads to hit. So the provider is now taken out of the OCI-pull business entirely: a new `tfx helm-value pull-chart` verb stages the chart `.tgz` on disk (authenticating inline via `helm pull --registry-config`, the mechanism that already works on Windows for the manifest/version pulls), and `helm_release.flo` / `.cis` / `.flp` set `chart` to that **local archive path** — no `repository`, no `version`, no `repository_username`/`password`. A local chart path does zero registry auth, so every Windows credential-store and anonymous-token failure disappears at once. Identical on Linux/macOS (same staged-archive install), so the platform-specific `local_file`/`repository_*` branching from v1.27.4 is gone.
+
 ## v1.27.4 — 2026-07-25
 
 ### Fixed

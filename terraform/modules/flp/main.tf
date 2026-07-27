@@ -103,6 +103,11 @@ locals {
     try(data.external.flp_version[0].result.version, "")
   )
 
+  # Local chart archive staged by null_resource.flp_chart_pull below. helm_release
+  # installs from this LOCAL path so the helm PROVIDER does no OCI login (whose
+  # credential-store step breaks on Windows). See the flo module for the full story.
+  flp_chart_archive = "${var.scratch_dir}/f5-license-proxy-${local.flp_chart_version}.tgz"
+
   # mTLS leaf certs: name → SAN DNS list. postgresql/vault keep the chart's
   # in-pod SANs. The flp leaf is ALSO the FLP's public server cert, so it must
   # additionally cover the Service DNS the CWC connects to (the teem*Url) — else
@@ -462,39 +467,33 @@ data "external" "flp_version" {
 
 # ── the FLP chart ─────────────────────────────────────────────────────────────
 
-# OCI pull credential written INLINE into the registry config the helm provider
-# reads (var.helm_registry_config = HELM_REGISTRY_CONFIG, set by roksbnkctl), so the
-# helm_release below DROPS repository_username/password: those make the provider do
-# an OCI login-and-STORE, and on Windows that store shells out to a docker
-# credential helper that fails on the multi-KB FAR password ("The stub received bad
-# data"). Empty path (direct terraform apply) falls back to the provider's login.
-resource "local_file" "helm_registry_config" {
-  count           = local.enabled && var.helm_registry_config != "" ? 1 : 0
-  filename        = var.helm_registry_config
-  file_permission = "0600"
-  content = jsonencode({
-    auths = {
-      (local.chart_login_host) = {
-        auth = base64encode("${local.chart_pull_username}:${local.chart_pull_password}")
-      }
-    }
-  })
+# Stage the FLP chart archive on disk via tfx (inline auth, no login/store). The
+# helm_release below installs from this LOCAL path so the helm PROVIDER does no OCI
+# login — that login's credential-store step fails on Windows ("The stub received bad
+# data"), and dropping the provider creds pulls anonymously (403). No interpreter →
+# cmd.exe execs roksbnkctl.exe directly on Windows.
+resource "null_resource" "flp_chart_pull" {
+  count = local.enabled ? 1 : 0
+  triggers = {
+    version = local.flp_chart_version
+    archive = local.flp_chart_archive
+  }
+  provisioner "local-exec" {
+    command     = "${local.postrender_bin} tfx helm-value pull-chart --chart oci://${local.far_chart_hostname}/charts/f5-license-proxy --version ${local.flp_chart_version} --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${local.flp_chart_archive}"
+    environment = { HELM_REGISTRY_PW = local.chart_pull_password }
+  }
+  depends_on = [data.external.flp_version]
 }
 
 resource "helm_release" "flp" {
   count = local.enabled ? 1 : 0
 
-  name             = "f5-license-proxy"
-  repository       = "oci://${local.far_chart_hostname}/charts"
-  chart            = "f5-license-proxy"
-  version          = local.flp_chart_version
+  name = "f5-license-proxy"
+  # Install from the locally-staged archive (see null_resource.flp_chart_pull) — no
+  # provider OCI login.
+  chart            = local.flp_chart_archive
   namespace        = var.flp_namespace
   create_namespace = false
-
-  # Inline via local_file.helm_registry_config (no login/store), or the provider's
-  # OCI login on a direct apply.
-  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
-  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # FLP readiness (vault unseal → postgres → proxy) IS the meaningful signal here,
   # so block on it — unlike the FLO operator whose readiness is gated downstream.
@@ -525,6 +524,6 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.far_secret,
     kubernetes_secret_v1.mirror_pull,
     kubernetes_role_binding_v1.flp_scc,
-    local_file.helm_registry_config,
+    null_resource.flp_chart_pull,
   ]
 }

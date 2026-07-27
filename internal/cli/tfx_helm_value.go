@@ -72,8 +72,17 @@ var tfxHelmProdJWKSCmd = &cobra.Command{
 	RunE:          runTFXHelmProdJWKS,
 }
 
+var tfxHelmPullChartCmd = &cobra.Command{
+	Use:           "pull-chart",
+	Short:         "Pull a chart archive (.tgz) to --out (internal)",
+	Args:          cobra.NoArgs,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE:          runTFXHelmPullChart,
+}
+
 func init() {
-	for _, c := range []*cobra.Command{tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd} {
+	for _, c := range []*cobra.Command{tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd, tfxHelmPullChartCmd} {
 		f := c.Flags()
 		f.StringVar(&flagHelmChart, "chart", "", "chart ref (OCI url or repo/chart) (required)")
 		f.StringVar(&flagHelmVersion, "version", "", "chart version to pull")
@@ -86,8 +95,35 @@ func init() {
 	}
 	tfxHelmChartVersionCmd.Flags().StringVar(&flagHelmSubchart, "subchart", "", "sub-chart path to resolve the version for (required)")
 	tfxHelmChartVersionCmd.Flags().StringVar(&flagHelmManifestFile, "manifest-file", "", "read the version from this local manifest file instead of pulling the chart (no-pull mode)")
-	tfxHelmValueCmd.AddCommand(tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd)
+	tfxHelmValueCmd.AddCommand(tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd, tfxHelmPullChartCmd)
 	tfxCmd.AddCommand(tfxHelmValueCmd)
+}
+
+// runTFXHelmPullChart stages a chart archive (.tgz) on disk at --out, using the
+// same inline-registry-config auth as every other tfx pull. A helm_release then
+// installs from that LOCAL path (chart = the .tgz) instead of an oci:// repository,
+// which makes the terraform helm PROVIDER do NO OCI login at all. That is the whole
+// point: the provider's own OCI login stores the credential via a docker credential
+// helper, and on Windows the multi-KB FAR password overflows the Credential Manager
+// blob ("The stub received bad data"); dropping the provider's creds instead made it
+// pull anonymously (403). Pulling the archive ourselves sidesteps both.
+func runTFXHelmPullChart(cmd *cobra.Command, _ []string) error {
+	if flagHelmChart == "" || flagHelmOut == "" {
+		return fmt.Errorf("--chart and --out are required")
+	}
+	tgz, cleanup, err := tfxHelmPullArchive(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := os.MkdirAll(filepath.Dir(flagHelmOut), 0o755); err != nil {
+		return fmt.Errorf("creating out dir: %w", err)
+	}
+	if err := copyFileContents(tgz, flagHelmOut); err != nil {
+		return fmt.Errorf("staging chart archive to %s: %w", flagHelmOut, err)
+	}
+	fmt.Fprintf(os.Stderr, "tfx helm-value: pulled chart -> %s\n", flagHelmOut)
+	return nil
 }
 
 func runTFXHelmChartVersion(cmd *cobra.Command, _ []string) error {
@@ -250,16 +286,75 @@ func fileExists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// resolveHelmBin returns the helm binary to shell to: --helm-bin if set, else helm
+// on PATH.
+func resolveHelmBin() (string, error) {
+	if flagHelmBin != "" {
+		return flagHelmBin, nil
+	}
+	p, err := exec.LookPath("helm")
+	if err != nil {
+		return "", fmt.Errorf("helm not found on PATH (required for tfx helm-value)")
+	}
+	return p, nil
+}
+
+// tfxHelmPullArchive runs `helm pull` (NO --untar) into a temp dir and returns the
+// produced .tgz path + a cleanup func. Lets a helm_release install from a local
+// archive so the terraform helm PROVIDER performs no OCI login (see
+// runTFXHelmPullChart). Auth is the same inline registry-config file as tfxHelmPull.
+func tfxHelmPullArchive(ctx context.Context) (string, func(), error) {
+	helmBin, err := resolveHelmBin()
+	if err != nil {
+		return "", func() {}, err
+	}
+	dir, err := os.MkdirTemp("", "tfx-helm-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+
+	args := []string{"pull", flagHelmChart, "--destination", dir}
+	if flagHelmVersion != "" {
+		args = append(args, "--version", flagHelmVersion)
+	}
+	if flagHelmRegistryLogin != "" {
+		regConf, werr := writeHelmRegistryConfig(dir, flagHelmRegistryLogin, flagHelmUsername, os.Getenv(flagHelmPasswordEnv))
+		if werr != nil {
+			cleanup()
+			return "", func() {}, werr
+		}
+		args = append(args, "--registry-config", regConf)
+	}
+
+	pull := exec.CommandContext(ctx, helmBin, args...)
+	pull.Stderr = os.Stderr
+	if err := pull.Run(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("helm pull %s: %w", flagHelmChart, err)
+	}
+
+	// helm pull writes exactly one <name>-<version>.tgz into the destination dir.
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("reading pull dir: %w", rerr)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tgz") {
+			return filepath.Join(dir, e.Name()), cleanup, nil
+		}
+	}
+	cleanup()
+	return "", func() {}, fmt.Errorf("helm pull %s produced no .tgz archive", flagHelmChart)
+}
+
 // tfxHelmPull runs `helm pull --untar` into a temp dir (after an optional registry
 // login) and returns the untar dir + a cleanup func.
 func tfxHelmPull(ctx context.Context) (string, func(), error) {
-	helmBin := flagHelmBin
-	if helmBin == "" {
-		p, err := exec.LookPath("helm")
-		if err != nil {
-			return "", func() {}, fmt.Errorf("helm not found on PATH (required for tfx helm-value)")
-		}
-		helmBin = p
+	helmBin, err := resolveHelmBin()
+	if err != nil {
+		return "", func() {}, err
 	}
 	dir, err := os.MkdirTemp("", "tfx-helm-*")
 	if err != nil {

@@ -1538,44 +1538,57 @@ locals {
   # repo-prefix path for a mirror (e.g. host/bnk-mirror), so strip it — the
   # credential must be stored under the host the subsequent `helm pull` resolves.
   chart_login_host = split("/", local.far_chart_hostname)[0]
+
+  # Local chart archives, staged by the tfx pull-chart provisioners below. The
+  # helm_release resources install from these LOCAL paths (chart = the .tgz) rather
+  # than an oci:// repository, so the terraform helm PROVIDER performs no OCI login.
+  # The provider's login stores the credential via a docker credential helper, and
+  # on Windows the multi-KB FAR password overflows the Credential Manager blob ("The
+  # stub received bad data"); dropping the provider creds instead made it pull
+  # anonymously (403). tfx pull-chart authenticates inline (helm pull
+  # --registry-config), the same mechanism the manifest/version pulls already use.
+  flo_chart_archive = "${var.manifest_download_dir}/f5-lifecycle-operator-${local.flo_chart_version}.tgz"
+  cis_chart_archive = "${var.manifest_download_dir}/f5-bnk-cis-${local.cis_chart_version}.tgz"
 }
 
-# The OCI pull credential, written INLINE into the registry config the helm
-# provider reads (var.helm_registry_config = HELM_REGISTRY_CONFIG, set by
-# roksbnkctl). The helm_release resources below therefore DROP
-# repository_username/password: those make the provider do an OCI login-and-STORE,
-# and on Windows that store shells out to a docker credential helper that fails on
-# the multi-KB FAR password ("The stub received bad data"). With the auth pre-placed
-# inline and no login, the provider's chart pull just READS it. Empty path (a direct
-# `terraform apply`, no roksbnkctl) falls back to repository_username/password.
-resource "local_file" "helm_registry_config" {
-  count           = local.use_kubectl && var.helm_registry_config != "" ? 1 : 0
-  filename        = var.helm_registry_config
-  file_permission = "0600"
-  content = jsonencode({
-    auths = {
-      (local.chart_login_host) = {
-        auth = base64encode("${local.chart_pull_username}:${local.chart_pull_password}")
-      }
-    }
-  })
+# Stage the FLO and CIS chart archives on disk via tfx (inline auth, no login/store).
+# No interpreter → cmd.exe execs roksbnkctl.exe directly on Windows.
+resource "null_resource" "flo_chart_pull" {
+  count = local.use_kubectl ? 1 : 0
+  triggers = {
+    version = local.flo_chart_version
+    archive = local.flo_chart_archive
+  }
+  provisioner "local-exec" {
+    command     = "${local.roksbnkctl_bin} tfx helm-value pull-chart --chart oci://${local.far_chart_hostname}/charts/f5-lifecycle-operator --version ${local.flo_chart_version} --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${local.flo_chart_archive}"
+    environment = { HELM_REGISTRY_PW = local.chart_pull_password }
+  }
+  depends_on = [data.external.versions]
+}
+
+resource "null_resource" "cis_chart_pull" {
+  count = local.use_kubectl ? 1 : 0
+  triggers = {
+    version = local.cis_chart_version
+    archive = local.cis_chart_archive
+  }
+  provisioner "local-exec" {
+    command     = "${local.roksbnkctl_bin} tfx helm-value pull-chart --chart oci://${local.far_chart_hostname}/charts/f5-bnk-cis --version ${local.cis_chart_version} --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${local.cis_chart_archive}"
+    environment = { HELM_REGISTRY_PW = local.chart_pull_password }
+  }
+  depends_on = [data.external.versions]
 }
 
 resource "helm_release" "flo" {
   count = local.use_kubectl ? 1 : 0
 
-  name             = "flo"
-  repository       = "oci://${local.far_chart_hostname}/charts"
-  chart            = "f5-lifecycle-operator"
-  version          = local.flo_chart_version
+  name = "flo"
+  # Install from the locally-staged archive (see null_resource.flo_chart_pull):
+  # the helm provider loads it from disk and does NO OCI login — the login's
+  # credential-store step fails on Windows, and dropping the creds pulls anonymously.
+  chart            = local.flo_chart_archive
   namespace        = var.flo_namespace
   create_namespace = false
-
-  # See local_file.helm_registry_config: when roksbnkctl provides the registry
-  # config path the auth is inline there (no login/store); a direct apply falls
-  # back to the provider's own OCI login.
-  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
-  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # Match the legacy `helm upgrade --install ... --wait=false`: deploy the FLO
   # operator chart WITHOUT blocking on helm-level pod readiness. Real
@@ -1594,7 +1607,7 @@ resource "helm_release" "flo" {
     kubernetes_secret_v1.far_secret_flo,
     kubectl_manifest.ca_cluster_issuer,
     data.external.versions,
-    local_file.helm_registry_config,
+    null_resource.flo_chart_pull,
   ]
 }
 
@@ -1709,18 +1722,12 @@ resource "null_resource" "cnemanifest_legacy" {
 resource "helm_release" "cis" {
   count = local.use_kubectl ? 1 : 0
 
-  name             = "f5-bnk-cis"
-  repository       = "oci://${local.far_chart_hostname}/charts"
-  chart            = "f5-bnk-cis"
-  version          = local.cis_chart_version
+  name = "f5-bnk-cis"
+  # Install from the locally-staged archive (see null_resource.cis_chart_pull) — no
+  # provider OCI login, same as helm_release.flo above.
+  chart            = local.cis_chart_archive
   namespace        = var.flo_namespace
   create_namespace = false
-
-  # Same chart-pull auth as helm_release.flo above — inline via
-  # local_file.helm_registry_config (no login/store), or the provider's OCI login
-  # on a direct apply.
-  repository_username = var.helm_registry_config != "" ? null : local.chart_pull_username
-  repository_password = var.helm_registry_config != "" ? null : local.chart_pull_password
 
   # Legacy parity: `--wait=false`. CIS readiness is not helm-gated here either.
   wait    = false
@@ -1731,7 +1738,7 @@ resource "helm_release" "cis" {
   depends_on = [
     helm_release.flo,
     kubernetes_secret_v1.bigip_ctlr_login,
-    local_file.helm_registry_config,
+    null_resource.cis_chart_pull,
   ]
 }
 
