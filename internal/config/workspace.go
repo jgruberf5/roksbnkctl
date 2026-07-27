@@ -258,7 +258,28 @@ const (
 	// DefaultFLPVSIProfile is the VSI profile for mode: vsi (4 vCPU / 16 GB — meets
 	// the FLP appliance's 4 vCPU / 8 GB minimum with headroom).
 	DefaultFLPVSIProfile = "bx2-4x16"
+	// DefaultVLANPrefixLen and DefaultTMMK8SRoutes mirror the
+	// cneinstance_vlan_prefixlen / cneinstance_tmm_k8s_routes terraform defaults
+	// (the F5SPKVlan self-IP prefix length, and the ROKS pod CIDR TMM routes to).
+	// They seed the interactive `init` networking prompts; an unset bnk.network
+	// value still falls back to the terraform default.
+	DefaultVLANPrefixLen = 24
+	DefaultTMMK8SRoutes  = "172.17.0.0/18"
 )
+
+// DefaultBNKNetworkZones mirrors the cneinstance_network_zones install-guide
+// default in terraform/modules/cne_instance/modules/cneinstance/variables.tf
+// (three availability zones). It seeds the interactive `init` networking prompts
+// so the operator edits only what differs from the guide. KEEP IN SYNC with that
+// terraform default — the module is the source of truth; this is the Go mirror used
+// only to pre-fill the interview (an unset bnk.network still falls back to the
+// module default, so drift here changes only the prompt seed, never the applied
+// value when the operator accepts a zone unchanged).
+var DefaultBNKNetworkZones = []BNKZoneCfg{
+	{ExtVLANCIDR: "10.155.15.0/24", IntVLANCIDR: "10.254.99.0/24", IntSNATCIDR: "10.10.11.0/24", IntVIPCIDR: "10.135.15.0/24", ExternalSelfIP: "10.155.15.101", InternalSelfIP: "10.254.99.101"},
+	{ExtVLANCIDR: "10.156.16.0/24", IntVLANCIDR: "10.254.100.0/24", IntSNATCIDR: "10.10.21.0/24", IntVIPCIDR: "10.136.16.0/24", ExternalSelfIP: "10.156.16.101", InternalSelfIP: "10.254.100.101"},
+	{ExtVLANCIDR: "10.157.17.0/24", IntVLANCIDR: "10.254.101.0/24", IntSNATCIDR: "10.10.31.0/24", IntVIPCIDR: "10.137.17.0/24", ExternalSelfIP: "10.157.17.101", InternalSelfIP: "10.254.101.101"},
+}
 
 type BNKCfg struct {
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
@@ -454,6 +475,18 @@ type BNKCISCfg struct {
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 type BNKNetworkCfg struct {
 	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
+	// VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to
+	// its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2
+	// subnet TMM treats as directly connected on each VLAN. nil → the terraform
+	// default (24); set only when the VLAN subnets aren't /24. A pointer so "unset"
+	// (fall back to the default) is distinct from a literal 0. Rendered as
+	// cneinstance_vlan_prefixlen.
+	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty"`
+	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
+	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
+	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
+	// only for a non-default cluster pod CIDR. Rendered as cneinstance_tmm_k8s_routes.
+	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty"`
 }
 
 // GatewayCfg carries optional overrides for the Gateway phase (the BNK

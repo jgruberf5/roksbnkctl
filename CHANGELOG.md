@@ -4,6 +4,22 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.28.0 — 2026-07-27
+
+### Added
+
+- **Customize BNK data-plane networking from `config.yaml` and the `init` interview.** The per-availability-zone subnet CIDRs and TMM self-IPs — `ext_vlan_cidr`, `int_vlan_cidr`, `int_snat_cidr`, `int_vip_cidr`, `external_selfip`, `internal_selfip` — plus the two network-wide TMM knobs (`vlan_prefixlen`, `tmm_k8s_routes`) are now first-class `bnk.network` config, and `roksbnkctl init` prompts for all of them (opt in at *"Customize BNK networking?"*, seeded with the install-guide defaults so you edit only what your fabric differs on; re-init pre-fills from the saved config). Supplying zones replaces the install-guide defaults entirely; they render `cneinstance_network_zones` (driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). `vlan_prefixlen` (F5SPKVlan `spec.prefixlen_v4` — the self-IP subnet mask) and `tmm_k8s_routes` (the pod CIDR TMM routes to, `TMM_K8S_ROUTES`) were previously reachable only by forking the embedded Terraform; they are now plumbed root → `cne_instance` → `cneinstance` and settable via config or a `--var-file` (`cneinstance_vlan_prefixlen` / `cneinstance_tmm_k8s_routes`). An unset `bnk.network` is byte-identical to before — the module's defaults stand.
+
+- **`plan --out <file>` / `apply --plan <file>` — review a plan, then apply exactly it.** `plan` and `apply` were already separate commands, but `apply` re-planned and applied fresh, so the applied change wasn't guaranteed to equal the reviewed one. `roksbnkctl plan --out <file>` now saves a binary Terraform plan file (plus a human-readable `<file>.txt` — so the full diff lands in a file instead of scrolling off the terminal), and `roksbnkctl apply --plan <file>` applies that saved plan **verbatim** — no re-plan, no var-files (the plan captured them). If state or config drifted since the plan was saved, Terraform refuses the stale plan rather than applying something un-reviewed — the change-control guarantee. The gateway-api admission-policy sweep still runs on the plan-apply path. Requires the local backend (a docker/remote backend errors clearly).
+
+### Fixed
+
+- **`staticcheck` is clean again (CI's lint job goes green).** A pre-existing ST1005 in `cluster_vpc_guard.go` (a multi-line actionable operator message ending in a period) is now explicitly suppressed with a documented `//lint:ignore`, so the CI staticcheck job — red for several releases — passes.
+
+### Documentation
+
+- Book updated for the above: `bnk.network` in the workspace-config and configuration-reference chapters, the new networking Terraform variables in Chapter 13, a "Reviewing a plan before applying" section in Chapter 10 (cross-linked from the three-phase-lifecycle chapter), and an installation-prerequisites rewrite noting the full deploy path now runs on **native Windows without WSL** (validated end-to-end — see v1.27.5–v1.27.7).
+
 ## v1.27.7 — 2026-07-27
 
 ### Fixed

@@ -29,6 +29,8 @@ var (
 	flagNoKubeconfig bool
 	flagLegacyBnk    bool     // --legacy-bnk: render bnk_cr_mode = "legacy_curl" (Sprint 27)
 	flagVarFiles     []string // -var-file (repeatable; matches terraform's flag)
+	flagPlanOut      string   // plan --out <file>: save the plan for `apply --plan`
+	flagPlanFile     string   // apply --plan <file>: apply exactly that saved plan
 )
 
 var initCmd = &cobra.Command{
@@ -99,6 +101,10 @@ func init() {
 	applyCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
 	downCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
 
+	// Reviewable plan → apply-exactly-that-plan (dissociated plan/apply).
+	planCmd.Flags().StringVar(&flagPlanOut, "out", "", "save the plan to <file> (binary plan + a readable <file>.txt) for later `apply --plan`")
+	applyCmd.Flags().StringVar(&flagPlanFile, "plan", "", "apply exactly this saved plan file (from `plan --out`) instead of re-planning")
+
 	// --var-file matches terraform's own flag: repeatable, later wins.
 	// Layered after the roksbnkctl-generated tfvars and the workspace's
 	// optional terraform.tfvars.user override.
@@ -151,6 +157,8 @@ func lifecycleInputs() *orchestration.LifecycleInputs {
 		Auto:         flagAuto,
 		NoKubeconfig: flagNoKubeconfig,
 		LegacyBNK:    flagLegacyBnk,
+		PlanOut:      flagPlanOut,
+		PlanFile:     flagPlanFile,
 		VarFiles:     flagVarFiles,
 
 		PromptYesNo:  promptYesNo,

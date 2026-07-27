@@ -173,6 +173,8 @@ module "cne_instance" {
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = local.cneinstance_network_attachments
   cneinstance_network_zones        = var.cneinstance_network_zones
+  cneinstance_vlan_prefixlen       = var.cneinstance_vlan_prefixlen
+  cneinstance_tmm_k8s_routes       = var.cneinstance_tmm_k8s_routes
   create_roks_cluster              = var.create_roks_cluster
   roks_cluster_dependency_id       = module.roks_cluster.cluster_ready_id
   flo_dependency_id                = module.flo.flo_ready_id

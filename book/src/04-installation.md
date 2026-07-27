@@ -45,7 +45,7 @@ Methods A and B put a binary on `PATH` and assume the runtime tools are installe
 
 ## Prerequisites
 
-- **Linux or macOS** for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.
+- **Linux, macOS, or native Windows.** The full deploy path — cluster, BNK, and testing phases — runs on **native Windows without WSL**: roksbnkctl drives Terraform's provisioning glue itself (no `curl`/`tar`/`grep`/`bash` on the host), and the whole `up` → shared-Transit-Gateway → `down` flow is validated on Windows PowerShell. A few *interactive* conveniences (the TTY-bound SSH shell, ssh-agent integration) are still not first-class on Windows; use `--on`/backends or a Linux/macOS host for those.
 - **Git** to clone the repository (only if building from source — not needed if you grab a pre-built binary).
 - **Go 1.26 or newer** if you want a native build. If you don't have Go (or have an older version), use the Docker-based build or a pre-built release binary.
 - **Terraform >= 1.5 on PATH** at runtime — required for `roksbnkctl up` / `plan` / `apply` / `down`.

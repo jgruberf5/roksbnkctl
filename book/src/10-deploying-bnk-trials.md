@@ -158,6 +158,29 @@ The var-file chain is, in order:
 
 Later wins on conflict — same as Terraform's own ordering. If you find yourself passing the same `--var-file` on every `up` / `plan` / `apply` / `down`, drop it once at `~/.roksbnkctl/<ws>/terraform.tfvars.user` (sibling to `config.yaml`) — the lifecycle auto-layers that file on every subsequent call, so you can drop the flag.
 
+## Reviewing a plan before applying (`plan --out` / `apply --plan`)
+
+`plan` and `apply` are separate commands, so you can review a change in full before it touches the cluster — useful for change-control sign-off, or simply when the diff is larger than your terminal scrollback. Save the plan to a file, review it, then apply **exactly that plan**:
+
+```bash
+# 1. Save the plan: a binary plan file + a human-readable .txt copy
+roksbnkctl plan -w dev --out ./bnk.plan
+#   ✓ Saved plan: /…/bnk.plan (reviewable copy: /…/bnk.plan.txt)
+#     Review it, then apply EXACTLY this plan:
+#       roksbnkctl apply -w dev --plan /…/bnk.plan
+
+# 2. Review bnk.plan.txt (the complete terraform diff — no scrollback limit)
+
+# 3. Apply exactly the reviewed plan — no re-plan
+roksbnkctl apply -w dev --plan ./bnk.plan
+```
+
+`apply --plan` applies the saved plan **verbatim**: it does not re-plan, and it passes no var-files (the plan already captured every variable). If state or config has drifted since the plan was saved, Terraform **refuses** the stale plan rather than applying something you didn't review — that is the change-control guarantee.
+
+Without `--plan`, a bare `roksbnkctl apply` re-plans and applies fresh. That is fine for iteration, but it does **not** guarantee the applied change equals the one you reviewed with `plan`. Use `--out` / `--plan` whenever "what I reviewed is exactly what applied" matters.
+
+> The saved-plan flow requires the **local** execution backend; on a `docker` or remote backend, `--out` / `--plan` error clearly rather than being silently ignored.
+
 ## Apply retries on transient errors
 
 ROKS master endpoints take 1-5 minutes to fully propagate after the cluster reaches `Ready`. The `helm`, `kubernetes`, and `alekc/kubectl` providers all talk to the master directly; on a fresh cluster, they sometimes race propagation and fail with a connection error (`Connection refused`, `i/o timeout`, `TLS handshake timeout`).

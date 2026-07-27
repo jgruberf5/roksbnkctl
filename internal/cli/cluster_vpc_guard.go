@@ -56,6 +56,7 @@ func guardSharedVPCTeardown(ctx context.Context, ws *config.Workspace, workspace
 	if label == "" {
 		label = co.VPCID
 	}
+	//lint:ignore ST1005 multi-line actionable operator message; trailing period is intentional and matches the internal sentences
 	return fmt.Errorf(
 		"cluster VPC %q still holds %d subnet(s) from other clusters: %s\n"+
 			"  This workspace CREATED the VPC (and its per-zone public gateways), so it must be torn\n"+

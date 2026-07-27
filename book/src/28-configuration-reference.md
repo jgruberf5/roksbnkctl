@@ -155,7 +155,7 @@ bnk:
 | `cert_manager.namespace` | string | `cert-manager` | RFC 1123 namespace label | Namespace cert-manager installs into (`cert_manager_namespace`). The install/skip toggle stays on `resources.cert_manager.create`. |
 | `cert_manager.version` | string | (HCL default) | a published cert-manager chart version | Pins the cert-manager Helm chart (`cert_manager_version`). Useful for air-gap / compliance version pinning. |
 
-All fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults. FLP settings live under `bnk.flp` (see the master table below); `bnk.flp.storage_class` sets the FLP's PVC StorageClass.
+All fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under `bnk.network` — `roksbnkctl init` prompts for it (opt in at *"Customize BNK networking?"*), or see [Chapter 12 §`bnk.network`](./12-workspace-config.md). FLP settings live under `bnk.flp` (see the master table below); `bnk.flp.storage_class` sets the FLP's PVC StorageClass.
 
 ## `test:` block
 
@@ -501,6 +501,9 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace → `flo_namespace`. |
 | `bnk.flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace → `flo_utils_namespace`. |
 | `bnk.gslb_datacenter_name` | string | (empty) | Optional CNEInstance GSLB datacenter → `cneinstance_gslb_datacenter_name`. |
+| `bnk.network.zones[]` | list | (install-guide defaults) | Per-AZ data-plane subnets (`ext_vlan_cidr`, `int_vlan_cidr`, `int_snat_cidr`, `int_vip_cidr`) + TMM self-IPs (`external_selfip`, `internal_selfip`) → `cneinstance_network_zones`. Supply all 3 zones or none. See [Chapter 12 §`bnk.network`](./12-workspace-config.md). |
+| `bnk.network.vlan_prefixlen` | int | `24` | TMM self-IP prefix length (F5SPKVlan `spec.prefixlen_v4`) → `cneinstance_vlan_prefixlen`. Match your VLAN CIDRs. |
+| `bnk.network.tmm_k8s_routes` | string | `172.17.0.0/18` | Pod CIDR TMM routes to (`TMM_K8S_ROUTES`) → `cneinstance_tmm_k8s_routes`. Your cluster's pod subnet if non-default. |
 | `bnk.cert_manager.namespace` | string | `cert-manager` | cert-manager namespace → `cert_manager_namespace`. Install/skip stays on `resources.cert_manager.create`. |
 | `bnk.cert_manager.version` | string | (HCL default) | cert-manager chart version → `cert_manager_version`. |
 | `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the [F5 License Proxy](./10c-flp-licensing.md) — either one this workspace deployed (`roksbnkctl flp up`) or one in **another** cluster (`bnk.flp.external`). Empty/omitted keeps the JWT/connected default. |

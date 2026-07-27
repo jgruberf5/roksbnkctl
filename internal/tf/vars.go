@@ -531,11 +531,19 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
-	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
-	// Emitted only when config.yaml supplies them; absent → the terraform
-	// module's install-guide defaults apply (existing configs unchanged).
-	if ws.BNK.Network != nil && len(ws.BNK.Network.Zones) > 0 {
-		renderNetworkZones(w, ws.BNK.Network.Zones)
+	// Cloud-network-mapping + VLAN zones + TMM VLAN/route knobs (BNK install-guide
+	// "Configuration"). Each is emitted only when config.yaml supplies it; absent →
+	// the terraform module's install-guide defaults apply (existing configs unchanged).
+	if net := ws.BNK.Network; net != nil {
+		if len(net.Zones) > 0 {
+			renderNetworkZones(w, net.Zones)
+		}
+		if net.VLANPrefixLen != nil {
+			fmt.Fprintf(w, "cneinstance_vlan_prefixlen = %d\n", *net.VLANPrefixLen)
+		}
+		if net.TMMK8SRoutes != "" {
+			fmt.Fprintf(w, "cneinstance_tmm_k8s_routes = %q\n", net.TMMK8SRoutes)
+		}
 	}
 	// BNK CIS controller's BIG-IP target. Emitted only when configured; absent →
 	// the bigip_* vars stay at their terraform defaults (blank = BNK without CIS).

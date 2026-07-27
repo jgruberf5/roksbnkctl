@@ -497,6 +497,26 @@ func (w *Workspace) Plan(ctx context.Context, extraVarFiles ...string) (bool, er
 	return changes, w.wrapDiag(err)
 }
 
+// PlanTo is Plan with `-out=<planPath>`: it saves a binary plan file that ApplyPlan
+// can later consume verbatim, so the plan a user reviews is exactly the plan that
+// applies — no re-plan, no drift between review and apply. Same var-file precedence
+// as Plan. Returns whether the plan has changes.
+func (w *Workspace) PlanTo(ctx context.Context, planPath string, extraVarFiles ...string) (bool, error) {
+	opts := []tfexec.PlanOption{tfexec.Out(planPath)}
+	for _, p := range w.varFiles(extraVarFiles...) {
+		opts = append(opts, tfexec.VarFile(p))
+	}
+	w.resetDiag()
+	changes, err := w.tf.Plan(ctx, opts...)
+	return changes, w.wrapDiag(err)
+}
+
+// ShowPlan returns the human-readable rendering of a saved plan file (the text
+// `terraform show <planfile>` prints), for writing a reviewable copy to disk.
+func (w *Workspace) ShowPlan(ctx context.Context, planPath string) (string, error) {
+	return w.tf.ShowPlanFileRaw(ctx, planPath)
+}
+
 // resetDiag clears the captured-stderr tail so a subsequent wrapDiag summarizes
 // only THIS operation's output (each retry attempt starts clean).
 func (w *Workspace) resetDiag() {
@@ -539,6 +559,25 @@ func (w *Workspace) Apply(ctx context.Context, extraVarFiles ...string) error {
 	if err := w.tf.Apply(ctx, opts...); err != nil {
 		return w.wrapDiag(err)
 	}
+	phase := w.phaseLabel(sources)
+	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write terraform.applied.tfvars: %v\n", err)
+	}
+	return nil
+}
+
+// ApplyPlan runs `terraform apply <planPath>`, applying a plan file saved by PlanTo
+// EXACTLY as reviewed. terraform rejects -var-file when applying a saved plan (the
+// plan already captured every variable), so none are passed — recordVarFiles is used
+// only to write the applied-tfvars snapshot. If state or config drifted since the
+// plan was saved, terraform refuses with a stale-plan error rather than applying
+// something the operator didn't review — which is the whole point of the flow.
+func (w *Workspace) ApplyPlan(ctx context.Context, planPath string, recordVarFiles ...string) error {
+	w.resetDiag()
+	if err := w.tf.Apply(ctx, tfexec.DirOrPlan(planPath)); err != nil {
+		return w.wrapDiag(err)
+	}
+	sources := w.varFiles(recordVarFiles...)
 	phase := w.phaseLabel(sources)
 	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write terraform.applied.tfvars: %v\n", err)

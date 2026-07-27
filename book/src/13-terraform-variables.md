@@ -61,6 +61,9 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `testing_create_tgw_jumphost` | `true` | Create the testing jumphost in a client VPC over Transit Gateway. |
 | `testing_ssh_key_name` | `""` (must set) | Existing IBM Cloud SSH key name for jumphost provisioning. |
 | `cneinstance_gslb_datacenter_name` | `""` | Set when wiring BNK into an F5 BIG-IP GSLB datacenter. |
+| `cneinstance_network_zones` | `[]` (install-guide defaults) | Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors `config.yaml`'s `bnk.network.zones`. Supply all three zones or none. |
+| `cneinstance_vlan_prefixlen` | `24` | TMM self-IP prefix length (F5SPKVlan `spec.prefixlen_v4`). `bnk.network.vlan_prefixlen`. Match your VLAN CIDRs. |
+| `cneinstance_tmm_k8s_routes` | `172.17.0.0/18` | Pod CIDR TMM routes to (`TMM_K8S_ROUTES`). `bnk.network.tmm_k8s_routes`. Set to your cluster's pod subnet if non-default. |
 | `license_mode` | `connected` | `connected` \| `disconnected`. |
 
 For the full list with types and per-field descriptions, see `terraform/variables.tf` directly — link [here](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf) — or the auto-generated [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md).

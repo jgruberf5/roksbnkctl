@@ -190,6 +190,17 @@ bnk:
   cert_manager:                       # optional; cert-manager coordinates
     namespace: cert-manager
     version: v1.17.3
+  network:                            # optional; data-plane subnets + TMM self-IPs
+    vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
+    tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
+    zones:                            #   one entry per AZ (3 total)
+      - ext_vlan_cidr: 10.155.15.0/24
+        int_vlan_cidr: 10.254.99.0/24
+        int_snat_cidr: 10.10.11.0/24
+        int_vip_cidr: 10.135.15.0/24
+        external_selfip: 10.155.15.101
+        internal_selfip: 10.254.99.101
+      # …zones 2 and 3
   flp:
     storage_class: ""                 # optional; FLP PVC StorageClass
 ```
@@ -208,6 +219,23 @@ bnk:
 | `flp.storage_class` | string | HCL default | Dynamic StorageClass for the FLP's PVCs. Sets `flp_storage_class`. Other `flp.*` fields: see [Chapter 28](./28-configuration-reference.md). |
 
 Every field here is optional — leave the block out entirely and you get the upstream HCL's defaults.
+
+### `bnk.network:` — data-plane subnets + TMM self-IPs
+
+BNK's data plane (TMM) needs per-availability-zone VLAN subnets, SNAT/VIP ranges, and self-IPs. Leave `bnk.network` out entirely and the BNK install-guide defaults apply. Set it to match your cluster's fabric — `roksbnkctl init` prompts for every field (opt in at *"Customize BNK networking?"*, seeded with these defaults), or hand-write the block.
+
+| Field | Default (AZ1) | Notes |
+|---|---|---|
+| `zones[].ext_vlan_cidr` | `10.155.15.0/24` | External VLAN subnet CIDR. |
+| `zones[].int_vlan_cidr` | `10.254.99.0/24` | Internal VLAN subnet CIDR. |
+| `zones[].int_snat_cidr` | `10.10.11.0/24` | Internal SNAT-pool CIDR. |
+| `zones[].int_vip_cidr` | `10.135.15.0/24` | Internal VIP CIDR. |
+| `zones[].external_selfip` | `10.155.15.101` | External TMM self-IP. |
+| `zones[].internal_selfip` | `10.254.99.101` | Internal TMM self-IP. |
+| `vlan_prefixlen` | `24` | Self-IP prefix length (`spec.prefixlen_v4` on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs. Sets `cneinstance_vlan_prefixlen`. |
+| `tmm_k8s_routes` | `172.17.0.0/18` | Pod CIDR TMM installs a route toward (`TMM_K8S_ROUTES`) so it can reach backend pods. Set to your cluster's pod subnet if it isn't the ROKS default. Sets `cneinstance_tmm_k8s_routes`. |
+
+Provide **all three zones** when you set `zones` — supplying zones replaces the defaults entirely (they render `cneinstance_network_zones`, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone *names* are derived from the region and aren't configurable. `vlan_prefixlen` and `tmm_k8s_routes` are network-wide (shared across all zones). Unset either scalar to keep the terraform default.
 
 ## `test:`
 

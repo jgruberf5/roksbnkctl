@@ -77,6 +77,8 @@ module "cneinstance" {
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = var.cneinstance_network_attachments
   # null when unset → the inner module's install-guide zone defaults apply.
-  cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
-  roksbnkctl_binary         = var.roksbnkctl_binary
+  cneinstance_network_zones  = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
+  cneinstance_vlan_prefixlen = var.cneinstance_vlan_prefixlen
+  cneinstance_tmm_k8s_routes = var.cneinstance_tmm_k8s_routes
+  roksbnkctl_binary          = var.roksbnkctl_binary
 }

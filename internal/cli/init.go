@@ -284,6 +284,19 @@ func runInit(_ *cobra.Command, _ []string) error {
 			ns := promptString("FLP namespace", config.DefaultFLPNamespace)
 			ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
 		}
+
+		// Optional per-zone data-plane networking. Default no → the module's
+		// install-guide defaults apply (bnk.network stays unset). Yes → interview the
+		// six subnet CIDRs + TMM self-IPs per AZ, seeded from the saved config
+		// (re-init) or the guide defaults, so accepting every prompt reproduces the
+		// default layout and the operator changes only what their fabric requires.
+		if promptYesNo("Customize BNK networking (per-zone subnets + TMM self-IPs)?", false) {
+			var prior *config.BNKNetworkCfg
+			if cctx.Workspace != nil {
+				prior = cctx.Workspace.BNK.Network
+			}
+			ws.BNK.Network = promptBNKNetwork(prior)
+		}
 	}
 
 	// --override-from-env (Sprint 30 Issue 4) on the interactive path too:
@@ -317,6 +330,47 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
 	return nil
+}
+
+// promptBNKNetwork interviews the per-zone BNK data-plane networking: the external
+// and internal VLAN subnet CIDRs, the internal SNAT and VIP CIDRs, and the external
+// and internal TMM self-IPs. These render as cneinstance_network_zones and drive the
+// cloud-network-mapping ConfigMap plus the external/internal F5SPKVlan CRs' selfip_v4s.
+// Each field is seeded from the saved config (re-init) or the install-guide default,
+// so accepting every prompt reproduces the guide layout for that AZ.
+func promptBNKNetwork(prior *config.BNKNetworkCfg) *config.BNKNetworkCfg {
+	seed := config.DefaultBNKNetworkZones
+	if prior != nil && len(prior.Zones) == len(seed) {
+		seed = prior.Zones
+	}
+	// Network-wide TMM knobs (shared across all zones): the self-IP prefix length
+	// TMM applies on the F5SPKVlan CRs (match your VLAN subnet mask), and the pod
+	// CIDR TMM installs a route toward (your cluster's pod subnet).
+	prefixDef, routesDef := config.DefaultVLANPrefixLen, config.DefaultTMMK8SRoutes
+	if prior != nil {
+		if prior.VLANPrefixLen != nil {
+			prefixDef = *prior.VLANPrefixLen
+		}
+		if prior.TMMK8SRoutes != "" {
+			routesDef = prior.TMMK8SRoutes
+		}
+	}
+	prefixLen := promptInt("  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; match your VLAN CIDRs)", prefixDef)
+	tmmRoutes := promptString("  Kubernetes pod CIDR TMM routes to (TMM_K8S_ROUTES; the cluster's pod subnet)", routesDef)
+
+	zones := make([]config.BNKZoneCfg, len(seed))
+	for i, d := range seed {
+		fmt.Fprintf(os.Stderr, "\n  Availability zone %d of %d:\n", i+1, len(seed))
+		zones[i] = config.BNKZoneCfg{
+			ExtVLANCIDR:    promptString(fmt.Sprintf("  zone %d external VLAN subnet CIDR", i+1), d.ExtVLANCIDR),
+			IntVLANCIDR:    promptString(fmt.Sprintf("  zone %d internal VLAN subnet CIDR", i+1), d.IntVLANCIDR),
+			IntSNATCIDR:    promptString(fmt.Sprintf("  zone %d internal SNAT CIDR", i+1), d.IntSNATCIDR),
+			IntVIPCIDR:     promptString(fmt.Sprintf("  zone %d internal VIP CIDR", i+1), d.IntVIPCIDR),
+			ExternalSelfIP: promptString(fmt.Sprintf("  zone %d external TMM self-IP", i+1), d.ExternalSelfIP),
+			InternalSelfIP: promptString(fmt.Sprintf("  zone %d internal TMM self-IP", i+1), d.InternalSelfIP),
+		}
+	}
+	return &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
 }
 
 // persistAPIKey saves the API key to the workspace keychain (or the config.yaml

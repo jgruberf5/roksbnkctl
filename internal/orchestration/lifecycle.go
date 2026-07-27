@@ -91,6 +91,13 @@ type LifecycleInputs struct {
 	// (absolute, os.Stat-checked) — the former flagVarFiles global.
 	VarFiles []string
 
+	// PlanOut is `plan --out <file>`: save the plan to a binary plan file (plus a
+	// human-readable <file>.txt) so `apply --plan <file>` applies exactly it.
+	PlanOut string
+	// PlanFile is `apply --plan <file>`: apply that saved plan verbatim instead of
+	// re-planning — closing the review-then-apply-exactly gap.
+	PlanFile string
+
 	// Stderr, when non-nil, is the writer the BNK/trial-phase leaf helpers
 	// (and the underlying terraform handle) print to instead of os.Stderr.
 	// Sprint 28 parallel up/down sets it to a line-prefixed ([bnk] )
@@ -374,6 +381,9 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	}
 	// VarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
+		if in.PlanOut != "" {
+			return fmt.Errorf("plan --out requires the local backend (this workspace uses %q)", spec)
+		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "plan")
 	}
 	cctx, tfws, err := openTF(ctx, in, true)
@@ -398,8 +408,55 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform plan")
+	if in.PlanOut != "" {
+		return planToFile(ctx, tfws, in, varFiles)
+	}
 	_, err = tfws.Plan(ctx, varFiles...)
 	return err
+}
+
+// planToFile saves the plan to a binary plan file (for `apply --plan`) plus a
+// human-readable <file>.txt copy (Mame's "get the plan's result output in a file").
+// The path is resolved to absolute so the artifacts land where the operator runs
+// from, not inside the embedded terraform source dir.
+func planToFile(ctx context.Context, tfws *tf.Workspace, in *LifecycleInputs, varFiles []string) error {
+	planPath, err := filepath.Abs(in.PlanOut)
+	if err != nil {
+		return err
+	}
+	changes, err := tfws.PlanTo(ctx, planPath, varFiles...)
+	if err != nil {
+		return err
+	}
+	if raw, serr := tfws.ShowPlan(ctx, planPath); serr == nil {
+		txt := planPath + ".txt"
+		if werr := os.WriteFile(txt, []byte(raw), 0o644); werr == nil {
+			fmt.Fprintf(os.Stderr, "✓ Saved plan: %s (reviewable copy: %s)\n", planPath, txt)
+		}
+	}
+	if changes {
+		fmt.Fprintf(os.Stderr, "  Review it, then apply EXACTLY this plan:\n    roksbnkctl apply -w %s --plan %s\n", in.Workspace, planPath)
+	} else {
+		fmt.Fprintln(os.Stderr, "  No changes — nothing to apply.")
+	}
+	return nil
+}
+
+// applyReviewedPlan applies a saved plan file EXACTLY (from `plan --out`), closing the
+// gap where a bare apply re-plans and could apply something other than what was
+// reviewed. No re-plan, no var-files (the plan captured them), no retry — a saved plan
+// that no longer matches state/config is refused by terraform, which is the safety the
+// review flow wants. The gateway-api admission-policy sweep still runs for the
+// crd-installer window, exactly as the normal apply path.
+func applyReviewedPlan(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, in *LifecycleInputs, recordVarFiles []string) error {
+	planPath, err := filepath.Abs(in.PlanFile)
+	if err != nil {
+		return err
+	}
+	stop := startAdmissionPolicySweep(ctx, cctx, tfws)
+	defer stop()
+	fmt.Fprintf(os.Stderr, "→ terraform apply %s (reviewed plan)\n", planPath)
+	return tfws.ApplyPlan(ctx, planPath, recordVarFiles...)
 }
 
 // RunApply = direct apply, no plan-and-confirm gate. For users who know
@@ -410,6 +467,9 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	}
 	// VarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
+		if in.PlanFile != "" {
+			return fmt.Errorf("apply --plan requires the local backend (this workspace uses %q)", spec)
+		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "apply")
 	}
 	cctx, tfws, err := openTF(ctx, in, true)
@@ -437,13 +497,23 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// only exists on the *second* phase of a `up` and contains no
 	// secrets / user inputs, so it doesn't count as "the user supplied
 	// the inputs" for this gate.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "apply"); err != nil {
-		return err
+	// A saved plan (`--plan`) already captured every variable, so the missing-var
+	// gate doesn't apply — skip it for that path.
+	if in.PlanFile == "" {
+		if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "apply"); err != nil {
+			return err
+		}
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
-	fmt.Fprintln(os.Stderr, "→ terraform apply")
-	if err := applyBNKWithAdmissionSweep(ctx, cctx, tfws, varFiles); err != nil {
-		return err
+	if in.PlanFile != "" {
+		if err := applyReviewedPlan(ctx, cctx, tfws, in, varFiles); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "→ terraform apply")
+		if err := applyBNKWithAdmissionSweep(ctx, cctx, tfws, varFiles); err != nil {
+			return err
+		}
 	}
 	tryAutoKubeconfig(ctx, in, cctx, tfws)
 	tryAutoJumphost(ctx, in, cctx, tfws)

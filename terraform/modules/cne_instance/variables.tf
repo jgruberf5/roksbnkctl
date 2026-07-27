@@ -137,6 +137,18 @@ variable "cneinstance_network_zones" {
   default = []
 }
 
+variable "cneinstance_vlan_prefixlen" {
+  description = "TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs"
+  type        = number
+  default     = 24
+}
+
+variable "cneinstance_tmm_k8s_routes" {
+  description = "Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet."
+  type        = string
+  default     = "172.17.0.0/18"
+}
+
 variable "create_roks_cluster" {
   description = "When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch"
   type        = bool
