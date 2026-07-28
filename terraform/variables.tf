@@ -663,6 +663,24 @@ variable "deploy_flp_vsi" {
   type        = bool
   default     = false
 }
+variable "flp_status_image" {
+  description = "Optional flp-status web UI image for the standalone FLP VSI (mirror/public ref). Empty = no status UI."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_host" {
+  description = "Registry host:port whose CA to trust so the FLP VSI can pull flp_status_image (e.g. Harbor's <ip>)."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_ca_b64" {
+  description = "Base64 CA cert for flp_status_registry_host."
+  type        = string
+  default     = ""
+}
+
 variable "flp_vsi_ssh_key" {
   description = "Existing IBM Cloud VPC SSH key name to attach to the standalone FLP VSI (operator access). Empty = no key."
   type        = string

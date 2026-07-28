@@ -343,6 +343,9 @@ module "flp_vsi" {
 
   flp_vsi_profile       = var.flp_vsi_profile
   flp_vsi_ssh_key       = var.flp_vsi_ssh_key
+  flp_status_image           = var.flp_status_image
+  flp_status_registry_host   = var.flp_status_registry_host
+  flp_status_registry_ca_b64 = var.flp_status_registry_ca_b64
   flp_vsi_zone          = var.flp_vsi_zone
   flp_vsi_boot_size_gb  = var.flp_vsi_boot_size_gb
   flp_vsi_reach         = var.flp_vsi_reach

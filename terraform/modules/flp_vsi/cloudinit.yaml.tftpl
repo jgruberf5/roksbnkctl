@@ -22,6 +22,9 @@ write_files:
       PROXY_HOST=${proxy_host}
       PROXY_PORT=${proxy_port}
       PROXY_PROTOCOL=${proxy_protocol}
+      FLP_STATUS_IMAGE=${flp_status_image}
+      FLP_REGISTRY_HOST=${flp_registry_host}
+      FLP_REGISTRY_CA_B64=${flp_registry_ca_b64}
   - path: /opt/flp/cne_pull_64.json
     permissions: '0600'
     content: |
@@ -97,6 +100,9 @@ write_files:
       WantedBy=timers.target
 
 runcmd:
+  # Trust the mirror's cert so podman can pull the flp-status image from Harbor
+  # (only when both are set). Runs BEFORE flp.service, which pulls the image.
+  - [ bash, -lc, "set -a; . /opt/flp/answer.env; set +a; if [ -n \"$FLP_REGISTRY_HOST\" ] && [ -n \"$FLP_REGISTRY_CA_B64\" ]; then mkdir -p /etc/containers/certs.d/$FLP_REGISTRY_HOST; echo \"$FLP_REGISTRY_CA_B64\" | base64 -d > /etc/containers/certs.d/$FLP_REGISTRY_HOST/ca.crt; fi" ]
   # podman-restart.service is a RHEL/Fedora unit — it is NOT shipped on Ubuntu, so
   # do not rely on it. flp.service brings the pod up on first boot; flp-pod-up.sh
   # then generates systemd pod units (reboot survival) and flp-health.timer is the

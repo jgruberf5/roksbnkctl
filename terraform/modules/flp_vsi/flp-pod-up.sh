@@ -48,7 +48,9 @@ HCL
 
 PGUSER=llm; PGPASSWORD="$(openssl rand -hex 16)"
 echo "== pod =="
-podman pod create --name flp --publish 8443:8443 >/dev/null
+# Publish :80 too when the flp-status web UI is enabled (FLP_STATUS_IMAGE set).
+PUB80=""; [ -n "${FLP_STATUS_IMAGE:-}" ] && PUB80="--publish 80:80"
+podman pod create --name flp --publish 8443:8443 $PUB80 >/dev/null
 podman run -d --restart=always --pod flp --name postgresql \
   -e POSTGRES_DB=llm_db -e POSTGRES_USER="$PGUSER" -e POSTGRES_PASSWORD="$PGPASSWORD" -e PGUSER="$PGUSER" -e PGPASSWORD="$PGPASSWORD" \
   -v "$PGSSL":/etc/pg/ssl:Z -v "$PGDATA":/var/lib/postgresql/data:Z "$REG/postgresql:$TAG"
@@ -73,6 +75,20 @@ podman run -d --restart=always --pod flp --name f5-license-proxy \
   -e JWT_TOKEN="$JWT_TOKEN" \
   -v "$VOL":/vol/local:Z -v "$LLM":/llm:Z -v "$VSSL":/etc/vault/ssl:Z -v "$VCL":/etc/vault/ssl/llm:Z \
   "$REG/f5-license-proxy:$TAG"
+# ── Optional flp-status web UI (mobile status page + /api/status + logs) ──────
+# Runs as a container IN the pod, reading the other containers' state over the
+# podman socket (CONTAINER_HOST). Serves :80, no auth (private read-only status).
+# The image is pulled from FLP_STATUS_IMAGE (mirror or public); Harbor trust for
+# the mirror is set up by cloud-init (certs.d) when FLP_REGISTRY_HOST is given.
+if [ -n "${FLP_STATUS_IMAGE:-}" ]; then
+  systemctl enable --now podman.socket >/dev/null 2>&1 || true
+  podman run -d --restart=always --pod flp --name flp-status \
+    -v /run/podman/podman.sock:/run/podman/podman.sock \
+    -e CONTAINER_HOST=unix:///run/podman/podman.sock \
+    -e FLP_BACKEND=podman -e PORT=80 \
+    -e FLP_ENDPOINT="https://$PRIV_IP:8443" \
+    "$FLP_STATUS_IMAGE" >/dev/null 2>&1 || echo "warning: flp-status container failed to start" >&2
+fi
 touch /opt/flp/.provisioned
 
 # ── Reboot durability ────────────────────────────────────────────────────────

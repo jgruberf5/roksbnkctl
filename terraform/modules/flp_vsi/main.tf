@@ -106,6 +106,17 @@ resource "ibm_is_security_group_rule" "flp_ssh" {
   port_min  = 22
   port_max  = 22
 }
+# ingress to 80 (flp-status web UI) — ONLY when the status UI is enabled, scoped
+# to the same allowed CIDRs as 8443 (operator/consuming subnets).
+resource "ibm_is_security_group_rule" "flp_status" {
+  for_each  = local.enabled && var.flp_status_image != "" ? toset(length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]) : toset([])
+  group     = ibm_is_security_group.flp[0].id
+  direction = "inbound"
+  remote    = each.value
+  protocol  = "tcp"
+  port_min  = 80
+  port_max  = 80
+}
 resource "ibm_is_security_group_rule" "egress" {
   count     = local.enabled ? 1 : 0
   group     = ibm_is_security_group.flp[0].id
@@ -263,7 +274,29 @@ locals {
     proxy_host            = var.flp_forward_proxy_host
     proxy_port            = var.flp_forward_proxy_port > 0 ? tostring(var.flp_forward_proxy_port) : ""
     proxy_protocol        = var.flp_forward_proxy_protocol
+    # Optional flp-status web UI (a container in the pod, served on :80).
+    flp_status_image      = var.flp_status_image
+    flp_registry_host     = var.flp_status_registry_host
+    flp_registry_ca_b64   = var.flp_status_registry_ca_b64
   }) : ""
+}
+
+variable "flp_status_image" {
+  description = "Optional flp-status web UI image (mirror or public ref). Empty = no status UI. When set, the FLP pod publishes :80 and runs the flp-status container."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_host" {
+  description = "Registry host:port whose CA to trust so podman can pull flp_status_image (e.g. Harbor's <ip>). Empty = no extra trust (public image)."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_ca_b64" {
+  description = "Base64 CA cert for flp_status_registry_host, dropped into the VSI's /etc/containers/certs.d."
+  type        = string
+  default     = ""
 }
 
 data "ibm_is_ssh_key" "flp" {
