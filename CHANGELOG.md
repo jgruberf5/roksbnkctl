@@ -4,6 +4,14 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.31.0 — 2026-07-28
+
+### Added
+
+- **F5 License Proxy status service + `roksbnkctl flp status`.** A new `flp-status` web service reports the live state of an FLP appliance: a status indicator for **every dependent service** (postgresql, vault, vault-init, f5-license-proxy), the `:8443` listener, and the F5/TEEM connection — plus the CNEInstance CR fields (endpoint + root CA, ready to paste into `bnk.flp.external`) and a **live `f5-license-proxy` log stream** (SSE). It serves a **mobile-first, self-contained page on plain HTTP with NO authentication** — the FLP is a private endpoint and the page is read-only. The **same binary runs for either deployment type** (a container in the podman pod on a standalone VSI, or a Deployment in a ROKS cluster), auto-selecting its data source (the podman socket vs. the Kubernetes API) or honoring `FLP_BACKEND`. **`roksbnkctl flp status`** renders the same information in the terminal — including the browsable web-UI link — deriving the service URL from the workspace's `flp-outputs.json` (or `--url`), with `-o json` for scripting.
+
+  This release ships the service binary (`flp-status`) + the CLI, both validated live against a running proxy. The turnkey deployment wiring — building + mirroring the `flp-status` image into the air-gap supply chain, running it in the FLP podman pod (`--publish 80`) on the VSI, and as an in-cluster NodePort Deployment (reusing the `flp_node_port_access` pattern, with a ServiceAccount/RBAC for pods + logs) — is the next increment.
+
 ## v1.30.0 — 2026-07-28
 
 ### Added

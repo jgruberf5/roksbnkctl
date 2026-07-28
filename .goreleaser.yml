@@ -39,6 +39,21 @@ builds:
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version=v{{.Version}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Commit={{.ShortCommit}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
+  # flp-status: the FLP status web service (backs the mobile UI + `flp status`
+  # CLI). Linux-only — it runs as a container/service alongside the proxy (podman
+  # pod on the VSI, or a Deployment in-cluster).
+  - id: flp-status
+    main: ./cmd/flp-status
+    binary: flp-status
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
 
 archives:
   # The name_template here is load-bearing: `internal/cli/self.go`
