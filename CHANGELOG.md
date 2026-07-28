@@ -4,6 +4,27 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.30.0 — 2026-07-28
+
+### Added
+
+- **`bnk.flp.vsi.ssh_key` — operator SSH access to the standalone FLP appliance.** The FLP VSI attached no SSH key, so the licensing appliance could not be inspected or recovered into (a real operational hole). A new `bnk.flp.vsi.ssh_key` names an existing IBM Cloud VPC SSH key to attach, and a scoped port-22 security-group rule (limited to `allowed_cidrs`) is opened **only** when a key is set.
+- **`roksbnkctl init` — a full F5 License Proxy interview.** Interactive init now asks whether to license via an FLP and, if so, whether to deploy it **in-cluster** (helm) or as a **standalone VSI appliance**. For the VSI it collects the region, lets you **pick an existing VPC or create a new one** (a new `CreateVPC` client call), the zone, and an **SSH key** (generate + upload, or reuse an existing one). For in-cluster it asks whether to use this workspace's cluster or **pick + adopt a running ROKS cluster** to license.
+
+### Fixed
+
+- **A genuinely air-gapped (`public_gateway: false`) deployment now works end-to-end** — validated by building a real disconnected cluster (us-south) whose entire BNK supply chain is served privately from a services VPC (us-east) over a Transit Gateway, with roksbnkctl driven from the Harbor VSI itself. Several gaps were closed:
+  - **Standalone FLP VSI + cluster-less modules.** `flp up` refused a cluster-less VSI (a CLI precondition), and the standalone FLP phase ran the full BNK root where `cert_manager`/`flo`/`cne_instance`/`license`/`testing` resolved cluster data sources against a nonexistent cluster. A new `cluster_absent` gate skips every cluster lookup + kube provider + the adopt data source when there is no cluster (default `false`; every existing path is unchanged, the `[0]`-indexed references resolve identically when a cluster is present).
+  - **FLP VSI local supply chain.** The FLP VSI forced its FAR auth + subscription JWT from COS; it now honors local files (`use_cos_bucket=false`), matching the cluster path.
+  - **flo chart versions on the mirror path.** `flo` discarded the chart versions it resolved from the manifest unless `use_cos_bucket` was true, emitting an empty `--version` (and a mangled `pull-chart`) on the disconnected mirror path. Versions now resolve whenever the mirror is used.
+  - **`zone_worker_map` duplicate key.** With `workers_per_zone > 1` (all workers in a zone share a subnet) the zone→worker-IP map collided on the subnet key and failed the apply. Grouped by subnet with one representative IP per zone.
+  - **`registry_cos: { create: true }` is required** for a ROKS-on-VPC cluster — its internal image registry needs a backing COS instance (provisioning error `E7278`) even in a disconnected deployment. Documented.
+- **The standalone FLP VSI survives reboots.** The appliance relied on `podman-restart.service`, which Ubuntu's podman package does **not** ship, so a host reboot left the pod's infra container (and its `:8443` publish) dead. `flp-pod-up.sh` now generates + enables systemd pod units (`podman generate systemd --new`) so systemd rebuilds the whole pod on boot with its data volumes (Vault/postgres) intact, and a conservative `flp-health.timer` — which acts only **after** the proxy has served at least once, and only issues a single gentle `systemctl restart` (never a destructive re-stage) — self-heals residual failures without ever looping or interrupting the ~3–5 min initial bring-up.
+
+### Documentation
+
+- **Appendix A rewritten as a validated air-gap runbook.** Co-located operator on the Harbor VSI (Harbor addressed by its **private IP everywhere** — no split-horizon DNS, no jumphost); a reachability diagram showing **only the Harbor + FLP VSIs reach the Internet** (FAR pulls + F5 TEEM telemetry); the ROKS-specific **CA-trust DaemonSet** (OpenShift `image.config` is HostedCluster-managed and blocked, so drop the CA into each node's `certs.d` via a privileged DaemonSet using a **node-cached** installer image); the private **CSE-range routing** (`161.26.0.0/16` + `166.8.0.0/14` — a no-egress ROKS cluster reaches private ICR/IAM/COS/master without operator-built VPEs); and the `bnk up` convergence re-run.
+
 ## v1.29.0 — 2026-07-27
 
 ### Added

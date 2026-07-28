@@ -138,3 +138,9 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0)."
+  type        = bool
+  default     = false
+}

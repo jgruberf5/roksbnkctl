@@ -69,8 +69,8 @@ module "license" {
   flp_license_server_url       = var.flp_license_server_url
   license_server_root_ca       = var.license_server_root_ca
 
-  kube_host              = data.ibm_container_cluster_config.runtime_config.host
-  kube_token             = data.ibm_container_cluster_config.runtime_config.token
+  kube_host              = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
+  kube_token             = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
   cneinstance_dependency = var.cneinstance_dependency_id
   roksbnkctl_binary      = var.roksbnkctl_binary
 }

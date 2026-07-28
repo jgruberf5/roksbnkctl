@@ -74,4 +74,18 @@ podman run -d --restart=always --pod flp --name f5-license-proxy \
   -v "$VOL":/vol/local:Z -v "$LLM":/llm:Z -v "$VSSL":/etc/vault/ssl:Z -v "$VCL":/etc/vault/ssl/llm:Z \
   "$REG/f5-license-proxy:$TAG"
 touch /opt/flp/.provisioned
+
+# ── Reboot durability ────────────────────────────────────────────────────────
+# Ubuntu's podman ships NO podman-restart.service, and podman is daemonless, so
+# --restart=always does NOT survive a host reboot on its own — the pod (and its
+# :8443 publish, which lives on the infra container) simply never comes back.
+# Generate systemd units for the pod so systemd recreates it on every boot; the
+# data volumes persist, so Vault/postgres state carries over. The flp-health
+# timer (see cloud-init) is the catch-all that re-stages if this fast path can't
+# recover (e.g. a sealed Vault after an unclean reboot).
+if command -v podman >/dev/null 2>&1; then
+  ( cd /etc/systemd/system && podman generate systemd --new --files --name flp >/dev/null 2>&1 ) || true
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable pod-flp.service >/dev/null 2>&1 || true
+fi
 echo "== FLP pod up on :8443 =="

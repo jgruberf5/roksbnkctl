@@ -524,6 +524,9 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			if len(vsi.AllowedCIDRs) > 0 {
 				fmt.Fprintf(w, "flp_vsi_allowed_cidrs = %s\n", hclStringList(vsi.AllowedCIDRs))
 			}
+			if vsi.SSHKey != "" {
+				fmt.Fprintf(w, "flp_vsi_ssh_key = %q\n", vsi.SSHKey)
+			}
 			if fp := vsi.ForwardProxy; fp != nil {
 				if fp.Host != "" {
 					fmt.Fprintf(w, "flp_forward_proxy_host = %q\n", fp.Host)

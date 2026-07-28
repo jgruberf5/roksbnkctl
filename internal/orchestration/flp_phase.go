@@ -69,7 +69,7 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	// empty synthetic identity), so the cluster-adopt lookup is gated off.
 	if standaloneFLPVSI(ws) {
 		vpcID := ws.BNK.FLP.VSI.VPC
-		overridePath, werr := writeFLPPhaseOverride(tfws, &config.ClusterOutputs{VPCID: vpcID}, true)
+		overridePath, werr := writeFLPPhaseOverride(tfws, &config.ClusterOutputs{VPCID: vpcID}, true, true)
 		if werr != nil {
 			return nil, werr
 		}
@@ -91,7 +91,7 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 			workspace)
 	}
 	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
-	overridePath, werr := writeFLPPhaseOverride(tfws, co, vsiMode)
+	overridePath, werr := writeFLPPhaseOverride(tfws, co, vsiMode, false)
 	if werr != nil {
 		return nil, werr
 	}
@@ -107,7 +107,11 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 
 // standaloneFLPVSI reports whether the workspace deploys the FLP as a standalone
 // VSI into a named VPC with NO cluster (bnk.flp.mode: vsi + bnk.flp.vsi.vpc set).
-func standaloneFLPVSI(ws *config.Workspace) bool {
+func standaloneFLPVSI(ws *config.Workspace) bool { return StandaloneFLPVSI(ws) }
+
+// StandaloneFLPVSI is the exported form so the CLI layer can waive its
+// cluster-required precondition for a standalone FLP VSI deployment.
+func StandaloneFLPVSI(ws *config.Workspace) bool {
 	return ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi" &&
 		ws.BNK.FLP.VSI != nil && ws.BNK.FLP.VSI.VPC != ""
 }

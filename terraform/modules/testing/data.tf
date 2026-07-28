@@ -16,6 +16,7 @@ data "ibm_resource_group" "resource_group" {
 # ============================================================
 
 data "ibm_container_vpc_cluster" "cluster" {
+  count             = var.cluster_absent ? 0 : 1
   name              = var.roks_cluster_name_or_id
   resource_group_id = data.ibm_resource_group.resource_group.id
   depends_on        = [null_resource.roks_cluster_gate]

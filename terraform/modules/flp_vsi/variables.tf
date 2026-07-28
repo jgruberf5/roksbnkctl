@@ -154,3 +154,27 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+variable "use_cos_bucket" {
+  description = "True: pull the FAR tarball + subscription JWT from COS. False (disconnected): use far_service_account_b64 + f5_cne_subscription_jwt supplied by the root from local files."
+  type        = bool
+  default     = true
+}
+
+variable "far_service_account_b64" {
+  description = "Base64 FAR service account (from bnk.far_auth_local_file), used when use_cos_bucket=false."
+  type        = string
+  default     = ""
+}
+
+variable "f5_cne_subscription_jwt" {
+  description = "Subscription JWT contents (from bnk.subscription_jwt_local_file), used when use_cos_bucket=false."
+  type        = string
+  default     = ""
+}
+
+variable "flp_vsi_ssh_key" {
+  description = "Existing VPC SSH key name to attach to the FLP VSI (operator access). Empty = no key."
+  type        = string
+  default     = ""
+}

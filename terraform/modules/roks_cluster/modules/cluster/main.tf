@@ -350,7 +350,7 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
 # existing VPC without any ROKS cluster) passes create_cluster=false with an empty
 # name; skip the lookup then so it doesn't error resolving a cluster named "".
 data "ibm_container_vpc_cluster" "existing_cluster" {
-  count             = !var.create_cluster && var.openshift_cluster_name != "" ? 1 : 0
+  count             = !var.create_cluster && var.openshift_cluster_name != "" && !var.cluster_absent ? 1 : 0
   name              = var.openshift_cluster_name
   resource_group_id = data.ibm_resource_group.resource_group.id
 }
@@ -372,7 +372,7 @@ data "ibm_is_security_group" "cluster_sg" {
 
 # Get worker node IPs from cluster workers
 data "ibm_container_vpc_cluster_worker" "cluster_workers" {
-  count             = var.create_cluster ? 3 : 0
+  count             = var.create_cluster ? 3 * var.workers_per_zone : 0
   cluster_name_id   = ibm_container_vpc_cluster.openshift_cluster[0].id
   worker_id         = element(data.ibm_container_vpc_cluster.cluster_info[0].workers, count.index)
   resource_group_id = data.ibm_resource_group.resource_group.id
@@ -383,13 +383,13 @@ locals {
   # Create a map of zone to worker IP (only when cluster is created)
   zone_worker_map = var.create_cluster && length(data.ibm_container_vpc_cluster_worker.cluster_workers) > 0 ? {
     for worker in data.ibm_container_vpc_cluster_worker.cluster_workers :
-    worker.network_interfaces[0].subnet_id => worker.network_interfaces[0].ip_address
+    worker.network_interfaces[0].subnet_id => worker.network_interfaces[0].ip_address...
   } : {}
 
   # Get zone-specific worker IPs
-  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone1[0].id] : null
-  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone2[0].id] : null
-  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone3[0].id] : null
+  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone1[0].id][0], null) : null
+  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone2[0].id][0], null) : null
+  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone3[0].id][0], null) : null
 
   # Get cluster security group from data source
   cluster_security_group = var.create_cluster && length(data.ibm_is_security_group.cluster_sg) > 0 ? data.ibm_is_security_group.cluster_sg[0].id : null

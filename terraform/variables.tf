@@ -663,6 +663,12 @@ variable "deploy_flp_vsi" {
   type        = bool
   default     = false
 }
+variable "flp_vsi_ssh_key" {
+  description = "Existing IBM Cloud VPC SSH key name to attach to the standalone FLP VSI (operator access). Empty = no key."
+  type        = string
+  default     = ""
+}
+
 variable "flp_vsi_profile" {
   description = "VSI instance profile for the FLP (>= 4 vCPU / 8 GB)."
   type        = string
@@ -730,4 +736,10 @@ variable "helm_registry_config" {
   description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
   type        = string
   default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0)."
+  type        = bool
+  default     = false
 }

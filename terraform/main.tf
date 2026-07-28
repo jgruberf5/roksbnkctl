@@ -31,6 +31,7 @@
 
 module "roks_cluster" {
   source = "./modules/roks_cluster"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                  = var.ibmcloud_api_key
   ibmcloud_cluster_region           = var.ibmcloud_cluster_region
@@ -61,6 +62,7 @@ module "roks_cluster" {
 
 module "cert_manager" {
   source = "./modules/cert_manager"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key        = var.ibmcloud_api_key
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
@@ -89,6 +91,7 @@ module "cert_manager" {
 
 module "flo" {
   source = "./modules/flo"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key        = var.ibmcloud_api_key
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
@@ -157,6 +160,7 @@ locals {
 
 module "cne_instance" {
   source = "./modules/cne_instance"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                 = var.ibmcloud_api_key
   ibmcloud_cluster_region          = var.ibmcloud_cluster_region
@@ -194,6 +198,7 @@ module "cne_instance" {
 
 module "license" {
   source    = "./modules/license"
+  cluster_absent = var.cluster_absent
   providers = { http = http }
 
   ibmcloud_api_key              = var.ibmcloud_api_key
@@ -226,6 +231,7 @@ module "license" {
 
 module "testing" {
   source = "./modules/testing"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                     = var.ibmcloud_api_key
   ibmcloud_cluster_region              = var.ibmcloud_cluster_region
@@ -336,6 +342,7 @@ module "flp_vsi" {
   existing_cluster_vpc_id = var.existing_cluster_vpc_id
 
   flp_vsi_profile       = var.flp_vsi_profile
+  flp_vsi_ssh_key       = var.flp_vsi_ssh_key
   flp_vsi_zone          = var.flp_vsi_zone
   flp_vsi_boot_size_gb  = var.flp_vsi_boot_size_gb
   flp_vsi_reach         = var.flp_vsi_reach
@@ -350,6 +357,9 @@ module "flp_vsi" {
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  use_cos_bucket                = var.use_cos_bucket
+  far_service_account_b64       = var.far_service_account_b64
+  f5_cne_subscription_jwt       = var.f5_cne_subscription_jwt
   scratch_dir                   = "${var.scratch_dir}/flp-vsi"
 
   flp_forward_proxy_host     = var.flp_forward_proxy_host

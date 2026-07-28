@@ -58,6 +58,6 @@ module "cert_manager" {
   registry_mirror_password = var.registry_mirror_password
   image_repository         = var.cert_manager_image_repository
   post_deployment_delay    = 30
-  kube_host                = data.ibm_container_cluster_config.runtime_config.host
-  kube_token               = data.ibm_container_cluster_config.runtime_config.token
+  kube_host                = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
+  kube_token               = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
 }

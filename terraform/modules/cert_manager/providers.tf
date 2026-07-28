@@ -8,7 +8,7 @@ provider "ibm" {
 # When create_roks_cluster = true the cluster doesn't exist yet at plan time, so count=0
 # and the kubernetes/helm providers receive empty strings — safe for planning new objects.
 data "ibm_container_cluster_config" "cluster_config" {
-  count           = var.create_roks_cluster ? 0 : 1
+  count           = (var.create_roks_cluster || var.cluster_absent) ? 0 : 1
   cluster_name_id = var.roks_cluster_name_or_id
   config_dir      = var.kubeconfig_dir
 }
@@ -48,6 +48,7 @@ resource "null_resource" "roks_cluster_gate" {
 }
 
 data "ibm_container_cluster_config" "runtime_config" {
+  count           = var.cluster_absent ? 0 : 1
   cluster_name_id = var.roks_cluster_name_or_id
   config_dir      = var.kubeconfig_dir
   depends_on      = [null_resource.roks_cluster_gate]

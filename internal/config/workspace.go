@@ -441,6 +441,11 @@ type BNKFLPVSICfg struct {
 	// VSI security group — the consuming cluster's worker subnets. Empty → open to the
 	// cluster VPC's address space.
 	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
+	// SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP
+	// VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman
+	// pod, Vault, logs). Empty → no key attached (the VSI is unreachable by SSH). Port 22
+	// is NOT opened by default; scope it via your own security-group rules if you need it.
+	SSHKey string `yaml:"ssh_key,omitempty"`
 	// ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP
 	// forward proxy (air-gapped/egress-controlled networks). nil → direct egress.
 	ForwardProxy *BNKFLPForwardProxyCfg `yaml:"forward_proxy,omitempty"`

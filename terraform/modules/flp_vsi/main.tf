@@ -95,6 +95,17 @@ resource "ibm_is_security_group_rule" "flp_in" {
   port_min = 8443
   port_max = 8443
 }
+# ingress to 22 (SSH) — ONLY when an operator SSH key is attached, scoped to the
+# same allowed CIDRs as 8443 (trusted subnets, e.g. the operator/services subnet).
+resource "ibm_is_security_group_rule" "flp_ssh" {
+  for_each  = local.enabled && var.flp_vsi_ssh_key != "" ? toset(length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]) : toset([])
+  group     = ibm_is_security_group.flp[0].id
+  direction = "inbound"
+  remote    = each.value
+  protocol  = "tcp"
+  port_min  = 22
+  port_max  = 22
+}
 resource "ibm_is_security_group_rule" "egress" {
   count     = local.enabled ? 1 : 0
   group     = ibm_is_security_group.flp[0].id
@@ -122,13 +133,13 @@ resource "tls_self_signed_cert" "ca" {
 
 # ── COS: FAR auth tarball → cne_pull_64 SA + subscription JWT ─────────────────
 data "ibm_resource_instance" "cos" {
-  count             = local.enabled ? 1 : 0
+  count             = local.enabled && var.use_cos_bucket ? 1 : 0
   name              = var.ibmcloud_cos_instance_name
   resource_group_id = data.ibm_resource_group.rg[0].id
   service           = "cloud-object-storage"
 }
 data "http" "iam_token" {
-  count  = local.enabled ? 1 : 0
+  count  = local.enabled && var.use_cos_bucket ? 1 : 0
   url    = "https://iam.cloud.ibm.com/identity/token"
   method = "POST"
   request_headers = {
@@ -137,7 +148,7 @@ data "http" "iam_token" {
   request_body = "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${var.ibmcloud_api_key}"
 }
 resource "null_resource" "far_download" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && var.use_cos_bucket ? 1 : 0
   triggers = {
     bucket = var.ibmcloud_resources_cos_bucket
     file   = var.f5_cne_far_auth_file
@@ -158,13 +169,23 @@ resource "null_resource" "far_download" {
     command = "${local.roksbnkctl_bin} tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
 }
+# Disconnected / local supply-chain path (use_cos_bucket=false): the root already
+# extracted the FAR service-account (bnk.far_auth_local_file) into
+# far_service_account_b64, so write it straight to far-sa.json instead of pulling the
+# tarball from COS. Same file the COS path (far_download → far-extract) produces, so
+# every downstream consumer (repo.f5.com pulls, cloud-init far_sa_b64) is unchanged.
+resource "local_file" "far_sa_local" {
+  count    = local.enabled && !var.use_cos_bucket ? 1 : 0
+  content  = var.far_service_account_b64
+  filename = "${var.scratch_dir}/far-sa.json"
+}
 data "local_file" "far_sa" {
   count      = local.enabled ? 1 : 0
   filename   = "${var.scratch_dir}/far-sa.json"
-  depends_on = [null_resource.far_download]
+  depends_on = [null_resource.far_download, local_file.far_sa_local]
 }
 data "http" "jwt" {
-  count  = local.enabled ? 1 : 0
+  count  = local.enabled && var.use_cos_bucket ? 1 : 0
   url    = "https://s3.${var.ibmcloud_cos_bucket_region}.cloud-object-storage.appdomain.cloud/${var.ibmcloud_resources_cos_bucket}/${var.f5_cne_subscription_jwt_file}"
   method = "GET"
   request_headers = {
@@ -229,7 +250,7 @@ locals {
     ca_cert_b64           = base64encode(tls_self_signed_cert.ca[0].cert_pem)
     ca_key_b64            = base64encode(tls_private_key.ca[0].private_key_pem)
     pod_up_b64            = base64encode(file("${path.module}/flp-pod-up.sh"))
-    jwt_token             = trimspace(data.http.jwt[0].response_body)
+    jwt_token             = var.use_cos_bucket ? try(trimspace(data.http.jwt[0].response_body), "") : trimspace(var.f5_cne_subscription_jwt)
     external_ip           = "" # private reach: the box uses its own VPC IP as the SAN
     reg                   = var.flp_image_registry
     tag                   = local.flp_tag
@@ -245,6 +266,11 @@ locals {
   }) : ""
 }
 
+data "ibm_is_ssh_key" "flp" {
+  count = local.enabled && var.flp_vsi_ssh_key != "" ? 1 : 0
+  name  = var.flp_vsi_ssh_key
+}
+
 resource "ibm_is_instance" "flp" {
   count          = local.enabled ? 1 : 0
   name           = "flp-vsi"
@@ -253,7 +279,7 @@ resource "ibm_is_instance" "flp" {
   profile        = var.flp_vsi_profile
   image          = local.ubuntu_image_id
   resource_group = data.ibm_resource_group.rg[0].id
-  keys           = []
+  keys           = var.flp_vsi_ssh_key != "" ? [data.ibm_is_ssh_key.flp[0].id] : []
 
   primary_network_interface {
     subnet          = ibm_is_subnet.flp[0].id

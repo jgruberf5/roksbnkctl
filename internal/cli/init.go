@@ -279,10 +279,27 @@ func runInit(_ *cobra.Command, _ []string) error {
 		// Optional F5 License Proxy. Default no → BNK licenses with the
 		// subscription JWT as before (unchanged). Yes → set FLP mode + an flp
 		// block; the operator then runs `roksbnkctl flp up` before `bnk up`.
-		if promptYesNo("License via an in-cluster F5 License Proxy (FLP)?", false) {
+		if promptYesNo("License via an F5 License Proxy (FLP)?", false) {
 			ws.BNK.LicenseMode = "f5licenseproxy"
-			ns := promptString("FLP namespace", config.DefaultFLPNamespace)
-			ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
+			if promptYesNo("Deploy the FLP as a standalone VSI appliance? (No = in-cluster helm chart)", false) {
+				// ── Standalone VSI appliance: region, VPC (pick/create), SSH key. ──
+				flpRegion := promptString("FLP VSI region", region)
+				vpcID := pickOrCreateFLPVPC(ctx, ic, flpRegion, rgID)
+				zone := promptString("FLP VSI zone", flpRegion+"-1")
+				sshKey := resolveFLPVSISSHKey(ctx, ic, cctx.WorkspaceName, flpRegion, rgID)
+				ws.BNK.FLP = &config.BNKFLPCfg{
+					Mode: "vsi",
+					VSI:  &config.BNKFLPVSICfg{VPC: vpcID, Zone: zone, SSHKey: sshKey},
+				}
+			} else {
+				// ── In-cluster helm chart. ──
+				ns := promptString("FLP namespace", config.DefaultFLPNamespace)
+				ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
+				// Onto THIS workspace's cluster, or a different running ROKS cluster?
+				if !promptYesNo("Install onto THIS workspace's cluster?", true) {
+					pickRunningClusterForFLP(ctx, ic, cctx, ws)
+				}
+			}
 		}
 
 		// Optional per-zone data-plane networking. Default no → the module's
@@ -748,6 +765,118 @@ func pickExistingTransitGateway(ctx context.Context, ic *ibm.Client, label strin
 // because ResourcesCfg.ClusterVPC.Existing is rendered as existing_cluster_vpc_id.
 // Returns "" for none/skip. Falls back to a free-text VPC-id prompt when discovery
 // fails; reports (and skips) when the region has none.
+// pickOrCreateFLPVPC lets the operator pick an existing VPC in region for the
+// standalone FLP appliance, or create a new one. Returns the VPC id (empty on
+// error/none). A freshly created VPC still needs a Transit Gateway attachment to
+// be reachable from a cluster in another VPC — noted to the operator.
+func pickOrCreateFLPVPC(ctx context.Context, ic *ibm.Client, region, rgID string) string {
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list VPCs: %v)\n", err)
+		return promptString("FLP VPC id", "")
+	}
+	labels := make([]string, 0, len(vpcs)+1)
+	for _, v := range vpcs {
+		labels = append(labels, fmt.Sprintf("%s (%s)", v.Name, v.Status))
+	}
+	labels = append(labels, "＋ create a new VPC")
+	sel := promptSelect(fmt.Sprintf("VPC for the FLP appliance in %s", region), labels, 0)
+	if sel >= 0 && sel < len(vpcs) {
+		return vpcs[sel].ID
+	}
+	name := promptString("New VPC name", "bnk-svc-vpc")
+	var created *ibm.VPC
+	if err := spin(fmt.Sprintf("Creating VPC %q in %s", name, region), func() error {
+		var e error
+		created, e = ic.CreateVPC(ctx, region, name, rgID)
+		return e
+	}); err != nil || created == nil {
+		fmt.Fprintf(os.Stderr, "  could not create VPC: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "✓ Created VPC %q (%s). Attach it to your Transit Gateway before the cluster can reach the FLP: `roksbnkctl tgw connect`.\n", created.Name, created.ID)
+	return created.ID
+}
+
+// resolveFLPVSISSHKey resolves a VPC SSH key for the standalone FLP VSI in region
+// (reuse if it already exists, else generate + upload), so an operator can SSH
+// into the licensing appliance to inspect Vault/podman/logs or recover it.
+// Returns the key name ("" = no key attached).
+func resolveFLPVSISSHKey(ctx context.Context, ic *ibm.Client, workspace, region, rgID string) string {
+	keyName := promptString("SSH key for the FLP VSI (existing name; blank = none)", workspace+"-flp")
+	if keyName == "" {
+		return ""
+	}
+	kctx, cancel := apiCtx(ctx)
+	existing, _ := ic.GetSSHKeyByName(kctx, region, keyName)
+	cancel()
+	if existing != nil && existing.PublicKey != "" {
+		fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q in %s\n", keyName, region)
+		return keyName
+	}
+	if !promptYesNo(fmt.Sprintf("SSH key %q not found in %s — generate + upload it now?", keyName, region), true) {
+		return ""
+	}
+	pub, priv, err := sshkey.Generate()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  could not generate key: %v\n", err)
+		return ""
+	}
+	sshDir, err := config.WorkspaceSSHDir(workspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  %v\n", err)
+		return ""
+	}
+	privPath, err := sshkey.Write(sshDir, keyName, priv, pub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  storing SSH key: %v\n", err)
+		return ""
+	}
+	if err := spin(fmt.Sprintf("Uploading the public key to %s", region), func() error {
+		_, e := ic.CreateSSHKey(ctx, region, keyName, pub, rgID)
+		return e
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "  uploading SSH key: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "✓ Generated SSH key %q → %s (uploaded to %s)\n", keyName, privPath, region)
+	if promptYesNo(fmt.Sprintf("Copy the private key to ~/.ssh/%s?", keyName), true) {
+		if _, err := copyKeyToUserSSH(sshDir, keyName); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not copy to ~/.ssh (%v)\n", err)
+		}
+	}
+	return keyName
+}
+
+// pickRunningClusterForFLP points the workspace at an existing running ROKS
+// cluster for an in-cluster FLP install (instead of this workspace's own
+// cluster): the operator picks from the account's running clusters and the
+// workspace adopts it (create=false + register), mirroring `cluster register`.
+func pickRunningClusterForFLP(ctx context.Context, ic *ibm.Client, cctx *config.Context, ws *config.Workspace) {
+	fmt.Fprintln(os.Stderr, "\n→ Listing running OpenShift clusters...")
+	lctx, cancel := apiCtx(ctx)
+	clusters, err := ic.ListClusters(lctx)
+	cancel()
+	if err != nil || len(clusters) == 0 {
+		fmt.Fprintln(os.Stderr, "  (no running clusters found — the FLP will target this workspace's cluster)")
+		return
+	}
+	labels := make([]string, len(clusters))
+	for i, cl := range clusters {
+		labels[i] = fmt.Sprintf("%s  (%s, %s)", cl.Name, cl.Region, cl.State)
+	}
+	chosen := clusters[promptSelect("Choose a running ROKS cluster to license", labels, 0)]
+	ws.Cluster.Create = false
+	ws.Cluster.Name = chosen.Name
+	if err := registerReusedCluster(ctx, ic, cctx.WorkspaceName, chosen.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not record cluster (%v) — run `roksbnkctl cluster register %s`\n", err, chosen.Name)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ FLP will license adopted cluster %q\n", chosen.Name)
+	}
+}
+
 func pickExistingVPC(ctx context.Context, ic *ibm.Client, region, label string) string {
 	lctx, cancel := apiCtx(ctx)
 	vpcs, err := ic.ListVPCs(lctx, region)

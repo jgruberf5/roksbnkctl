@@ -28,6 +28,33 @@ type VPC struct {
 	CRN    string `json:"crn"`
 }
 
+// CreateVPC creates a VPC named name in region with default (auto) address
+// prefixes and returns it. Used by the init interview when the operator chooses
+// "create a new VPC" for a standalone FLP appliance; the FLP module then adds the
+// subnet, public gateway, and security group inside it. (The new VPC still needs
+// to be attached to the Transit Gateway to be reachable from a cluster in another
+// VPC/region — `roksbnkctl tgw connect` or the console.)
+func (c *Client) CreateVPC(ctx context.Context, region, name, resourceGroupID string) (*VPC, error) {
+	reqBody := map[string]any{"name": name}
+	if resourceGroupID != "" {
+		reqBody["resource_group"] = map[string]string{"id": resourceGroupID}
+	}
+	bodyJSON, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/v1/vpcs?version=%s&generation=2", vpcHost(region), vpcAPIVersion)
+	resp, err := c.authedPOST(ctx, url, bodyJSON)
+	if err != nil {
+		return nil, fmt.Errorf("creating VPC %q in %s: %w", name, region, err)
+	}
+	var v VPC
+	if err := json.Unmarshal(resp, &v); err != nil {
+		return nil, fmt.Errorf("parsing created VPC: %w", err)
+	}
+	return &v, nil
+}
+
 // ListVPCs returns every VPC in a region. Unlike transit gateways (a global
 // collection), VPCs are regional, so the caller passes the cluster region.
 // Pagination follows the API's next.href cursor (which carries the

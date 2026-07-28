@@ -506,7 +506,7 @@ func TestWriteFLPPhaseOverride_StandaloneNoCluster(t *testing.T) {
 	// id/name), so the override adopts NO cluster: roks_cluster_id_or_name = "" and
 	// the cluster-adopt data source is gated off (terraform side).
 	co := &config.ClusterOutputs{VPCID: "r006-services-vpc"}
-	p, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true) // vsi
+	p, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true, false) // vsi
 	if err != nil {
 		t.Fatalf("writeFLPPhaseOverrideAt: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 		VPCID:     "r038-ef6305af-vpc",
 		Source:    "cluster-up",
 	}
-	p, err := writeFLPPhaseOverrideAt(dir, co, false) // helm mode
+	p, err := writeFLPPhaseOverrideAt(dir, co, false, false) // helm mode
 	if err != nil {
 		t.Fatalf("writeFLPPhaseOverrideAt: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestWriteFLPPhaseOverride_ForcedBlock(t *testing.T) {
 	}
 
 	// mode: vsi ⇒ the toggles flip (VSI backend on, helm off).
-	pv, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true)
+	pv, err := writeFLPPhaseOverrideAt(t.TempDir(), co, true, false)
 	if err != nil {
 		t.Fatalf("writeFLPPhaseOverrideAt(vsi): %v", err)
 	}

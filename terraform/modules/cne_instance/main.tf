@@ -55,8 +55,8 @@ module "cneinstance" {
   f5_bigip_k8s_manifest_version      = var.f5_bigip_k8s_manifest_version
   cneinstance_ibm_trusted_profile_id = var.flo_trusted_profile_id
 
-  kube_host  = data.ibm_container_cluster_config.runtime_config.host
-  kube_token = data.ibm_container_cluster_config.runtime_config.token
+  kube_host  = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
+  kube_token = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
 
   flo_deployment_id         = var.flo_dependency_id != null ? var.flo_dependency_id : ""
   flo_deployment_dependency = var.flo_dependency_id
@@ -72,7 +72,7 @@ module "cneinstance" {
   cneinstance_env_discovery        = false
   cneinstance_cloud_env            = true
   cneinstance_cloud_provider       = "ibm"
-  cneinstance_vpc_name             = data.ibm_is_vpc.cluster_vpc.name
+  cneinstance_vpc_name             = try(data.ibm_is_vpc.cluster_vpc[0].name, "")
   cneinstance_cloud_region         = var.ibmcloud_cluster_region
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = var.cneinstance_network_attachments

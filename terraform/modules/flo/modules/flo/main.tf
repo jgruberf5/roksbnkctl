@@ -1195,9 +1195,15 @@ resource "null_resource" "node_labeler_job" {
 # ==============================================================================
 
 locals {
-  # FLO/CIS chart versions discovered terraform-side from the FAR manifest.
-  flo_chart_version = local.global_enabled && var.use_cos_bucket ? try(data.external.versions[0].result.flo, "") : ""
-  cis_chart_version = local.global_enabled && var.use_cos_bucket ? try(data.external.versions[0].result.cis, "") : ""
+  # FLO/CIS chart versions discovered terraform-side from the FAR manifest. The
+  # manifest pull + version-extract (null_resource.extract_flo_version → data.external
+  # .versions) run whenever global_enabled, independent of the FAR SOURCE. The old
+  # `&& var.use_cos_bucket` gate discarded the resolved versions on the disconnected
+  # path (local FAR → use_cos_bucket=false) even though the charts are pulled from the
+  # mirror there — leaving `--version ` empty and shifting the pull-chart args. Resolve
+  # them for the mirror path too.
+  flo_chart_version = local.global_enabled && (var.use_cos_bucket || var.use_registry_mirror) ? try(data.external.versions[0].result.flo, "") : ""
+  cis_chart_version = local.global_enabled && (var.use_cos_bucket || var.use_registry_mirror) ? try(data.external.versions[0].result.cis, "") : ""
 
   # NAD (ens3) manifest — spec.config is a JSON string, same as the legacy curl.
   nad_ens3_manifest = {
