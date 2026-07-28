@@ -4,6 +4,18 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.32.0 — 2026-07-28
+
+### Added
+
+- **`bnk.flp.vsi.floating_ip` — operator floating IP for the standalone FLP appliance (default on).** The FLP VSI attached no floating IP, so remote `roksbnkctl flp status` and the `:80` web UI were only reachable from inside the VPC. A new `bnk.flp.vsi.floating_ip` (default `true`) attaches an operator floating IP purely as a **management path** — it is added to the leaf-cert SAN so `:8443` and the web UI are valid over it, and recorded in `flp-outputs.json` so **`flp status` prefers it** (reachable from a machine outside the VPC). It is **not** the CWC endpoint — the consuming cluster still reaches the proxy privately over the VPC / Transit Gateway. `roksbnkctl init` prompts for it.
+- **Per-plane FLP security-group CIDRs — `bnk.flp.vsi.management_allowed_cidrs` + `licensing_allowed_cidrs`.** With the floating IP now on by default, a single open CIDR list would have published the licensing proxy to the Internet. The FLP VSI's ingress is now split by plane, each with a safe default: **`management_allowed_cidrs`** gates the `:80` flp-status web UI (read-only status — defaults to **`0.0.0.0/0`**, open); **`licensing_allowed_cidrs`** gates the `:8443` proxy and `:22` SSH (trusted access — defaults to the **RFC-1918** private ranges, since the cluster reaches the proxy privately over the VPC / Transit Gateway). The legacy `bnk.flp.vsi.allowed_cidrs` is deprecated but still honored — when set it seeds both planes.
+- **flp-status turnkey deployment wiring (completes the v1.31.0 service).** `bnk.flp.vsi.status_image` (+ `status_registry_host` / `status_registry_ca_b64` for a self-signed mirror) runs the flp-status web UI as a container in the FLP podman pod on the VSI, published on `:80`; cloud-init trusts the mirror's CA so the image pulls from an air-gapped Harbor by private IP. The image builds from `cmd/flp-status/Dockerfile` (a **static** `CGO_ENABLED=0` binary — a dynamically-linked build crashes on the musl base image) and mirrors into the disconnected supply chain; an in-cluster `Deployment` + NodePort manifest ships under `deploy/flp-status/`. Validated end-to-end on a live air-gapped VSI: pulled from the private-IP mirror, all four dependent services + listener + TEEM reported, CNEInstance fields (including the root CA) surfaced, `roksbnkctl flp status` rendered it with the web-UI link.
+
+### Fixed
+
+- **`bnk up` converges the F5SPKVlan CRs in a single pass (no more "run twice").** The declarative `external-vlan` / `internal-vlan` (`F5SPKVlan`) CRs are admitted by the `f5validate` webhook, whose TLS server (in `f5-cne-controller`) comes up a few seconds **after** `CNEControllerAvailable=True` — a real apply in that gap failed `http: server gave HTTP response to HTTPS client`, which is why the VLANs (and thus `bnk up`) historically needed a second pass. A `validation_webhook_ready` gate now probes the webhook with a **server-side dry-run apply** (routes through admission, `sideEffects: None`, persists nothing) and retries until it is accepted, so the VLAN applies land first time. The probe targets the correct REST plural **`f5-spk-vlans`** (CRD `f5-spk-vlans.k8s.f5net.com`) — the resource path the CNE reconcile's crd-installer establishes — and tolerates the CRD not existing yet (early 404s) as well as the webhook-TLS race. Mirrors the License CR's existing admission-retry so both consumers of the webhook are consistent.
+
 ## v1.31.0 — 2026-07-28
 
 ### Added

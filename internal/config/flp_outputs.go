@@ -37,6 +37,12 @@ type FLPOutputs struct {
 	// another if the first node is drained.
 	ExternalEndpoints []string `json:"external_endpoints,omitempty"`
 
+	// FloatingIP is the standalone FLP VSI's operator floating IP, when one was
+	// attached (bnk.flp.vsi.floating_ip, default true). It is a MANAGEMENT address —
+	// `roksbnkctl flp status` prefers it so the status + web UI are reachable from a
+	// machine outside the VPC. Empty for an in-cluster FLP or when opted out.
+	FloatingIP string `json:"floating_ip,omitempty"`
+
 	// Namespace the FLP was installed into.
 	Namespace  string    `json:"namespace,omitempty"`
 	RecordedAt time.Time `json:"recorded_at"`

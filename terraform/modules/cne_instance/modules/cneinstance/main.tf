@@ -554,20 +554,25 @@ resource "null_resource" "validation_webhook_ready" {
   provisioner "local-exec" {
     command = <<-EOT
       probe='${jsonencode(local.external_vlan_manifest)}'
-      url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.flo_namespace}/f5spkvlans/external-vlan?dryRun=All&fieldManager=roksbnkctl-webhook-probe&force=true"
+      # The F5SPKVlan REST plural is f5-spk-vlans (CRD f5-spk-vlans.k8s.f5net.com),
+      # NOT f5spkvlans — the wrong path 404s forever. The kubectl_manifest applies
+      # below resolve it via discovery; this raw probe must spell it out. Early 404s
+      # are also expected until the CNE reconcile's crd-installer establishes the
+      # CRD (retried, same as the webhook-TLS race the gate exists for).
+      url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.flo_namespace}/f5-spk-vlans/external-vlan?dryRun=All&fieldManager=roksbnkctl-webhook-probe&force=true"
       status=000
-      for i in $(seq 1 30); do
+      for i in $(seq 1 60); do
         status=$(curl -sk -o /dev/null -w "%%{http_code}" -X PATCH \
           -H "Authorization: Bearer $KUBE_TOKEN" \
           -H "Content-Type: application/apply-patch+yaml" \
           "$url" -d "$probe")
         case "$status" in 2??) break ;; esac
-        echo "f5validate webhook not serving yet (attempt $i/30, HTTP $status), retrying in 10s..." >&2
+        echo "f5-spk-vlans admission not ready yet (attempt $i/60, HTTP $status), retrying in 10s..." >&2
         sleep 10
       done
       case "$status" in
-        2??) echo "f5validate webhook serving (dry-run accepted, HTTP $status)" ;;
-        *)   echo "ERROR: f5validate admission webhook not ready after 300s (last HTTP $status)" >&2; exit 1 ;;
+        2??) echo "f5validate webhook serving for f5-spk-vlans (dry-run accepted, HTTP $status)" ;;
+        *)   echo "ERROR: f5-spk-vlans admission webhook not ready after 600s (last HTTP $status)" >&2; exit 1 ;;
       esac
     EOT
     environment = {

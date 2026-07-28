@@ -707,8 +707,23 @@ variable "flp_vsi_reach" {
   type        = string
   default     = "private"
 }
+variable "flp_vsi_floating_ip" {
+  description = "Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true."
+  type        = bool
+  default     = true
+}
+variable "flp_vsi_management_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open)."
+  type        = list(string)
+  default     = []
+}
+variable "flp_vsi_licensing_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges."
+  type        = list(string)
+  default     = []
+}
 variable "flp_vsi_allowed_cidrs" {
-  description = "Source CIDRs allowed to reach the FLP VSI's 8443 port (the consuming cluster's subnets). Empty → the cluster VPC address space."
+  description = "DEPRECATED — legacy single list; seeds both management + licensing when set. Prefer the two per-plane variables."
   type        = list(string)
   default     = []
 }

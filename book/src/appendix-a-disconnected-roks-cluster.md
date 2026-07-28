@@ -204,35 +204,122 @@ $ roksbnkctl -w bnk-mirror registry verify
 
 ## Step 3 — Standalone FLP licensing appliance (on the VSI)
 
-Deploy the FLP as a standalone VSI into the services VPC — no cluster. It pulls its own image
-from `repo.f5.com` through the services-VPC public gateway (local FAR) and sends F5 **TEEM**
-telemetry; its endpoint is a **private** IP the cluster reaches over the TGW:
+The FLP is a **self-contained F5 licensing appliance** — a VSI running the `f5-license-proxy`
+stack (postgresql, vault, vault-init, f5-license-proxy) as a podman pod, with **no cluster**.
+It is the one box with controlled egress to F5: it pulls its own images from `repo.f5.com`
+through the services-VPC public gateway and brokers licenses (and sends F5 **TEEM** telemetry)
+on the cluster's behalf. Its licensing endpoint is a **private** IP the disconnected cluster
+reaches over the TGW.
+
+Because it is its own appliance, it needs two F5 credentials of its own — the same two you'd
+give any BNK deploy, but here consumed by the FLP itself, not a cluster:
+
+- **`far_auth_local_file`** — the F5 Artifact Registry service account. The VSI runs
+  `podman login repo.f5.com` with it to **pull its own container images**. It's a registry
+  pull secret, nothing cluster-specific.
+- **`subscription_jwt_local_file`** — your **subscription entitlement token**. It's injected as
+  the proxy's `JWT_TOKEN`; the proxy presents it to F5's licensing backend to broker licenses.
+  Required — the appliance will not start without it.
+
+> Both can equally come from **COS** instead of local files — set `bnk.far_auth_file` +
+> `bnk.subscription_jwt_file` (the COS object keys) and omit the `*_local_file` fields; that is
+> the default path (`use_cos_bucket=true`). The disconnected runbook uses **local files** so the
+> FLP has no COS dependency.
+
+> **Do not put `license_mode: f5licenseproxy` here** — that is the *consuming cluster's*
+> License-CR setting (it goes in `cluster.yaml`, Step 4). `flp up` never reads it. The FLP-only
+> workspace needs only the two credentials above plus the `flp.vsi` block. `manifest_version`
+> **is** needed — it selects which `f5-license-proxy` image version to run.
+
+The minimal standalone `flp.yaml`:
 
 ```yaml
 # flp.yaml  (on the VSI)
 ibmcloud: { region: us-east, resource_group: default }
 prefix: bnk-flp
 tf_source: { type: embedded }
-cluster: { create: false, name: none }
+cluster: { create: false, name: none }          # no cluster — the flp phase only
 bnk:
-  manifest_version: 2.3.0-3.2598.3-0.0.170
-  far_auth_local_file: /root/f5-far-auth-key.tgz
-  subscription_jwt_local_file: /root/subscription.jwt
-  license_mode: f5licenseproxy
+  manifest_version: 2.3.0-3.2598.3-0.0.170       # selects the f5-license-proxy image version
+  far_auth_local_file: /root/f5-far-auth-key.tgz         # podman login repo.f5.com → pull images
+  subscription_jwt_local_file: /root/subscription.jwt    # the proxy's entitlement token
   flp:
     mode: vsi
     vsi:
-      vpc: <SVC_VPC>
-      zone: us-east-1
-      reach: floating
-      allowed_cidrs: [10.0.0.0/8]   # the cluster's workers over the TGW (scope in prod)
+      vpc: <SVC_VPC>                # the VPC the appliance lands in (attach it to the TGW)
+      # zone: us-east-1             # optional — defaults to <region>-1
+      # profile: bx2-4x16          # optional — default; meets the FLP's 4 vCPU / 8 GB minimum
+      # ssh_key: <vpc-ssh-key>     # optional — attach to SSH in (:22, licensing plane)
+      # floating_ip: true          # optional — DEFAULT true; operator management IP (see below)
+      # management_allowed_cidrs: [ 0.0.0.0/0 ]                       # :80 web UI — default open
+      # licensing_allowed_cidrs:  [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 ]  # :8443 — default RFC-1918
 ```
+
+Everything commented is optional and defaults as noted. The only field with no default is
+`vsi.vpc` — a standalone FLP has no cluster VPC to fall back to, so name the VPC explicitly (and
+attach it to your Transit Gateway so the disconnected cluster can reach the proxy privately).
+
+**Operator floating IP (`floating_ip`, default `true`).** The appliance also gets a floating IP
+purely as a **management path** — so `roksbnkctl flp status` and the `:80` status web UI are
+reachable from a machine *outside* the VPC. It is **not** the licensing endpoint (the cluster
+always reaches the proxy privately over the TGW). The floating IP is added to the proxy's cert
+SAN and recorded in `flp-outputs.json` so `flp status` targets it automatically. Set
+`floating_ip: false` to opt out.
+
+**Security-group CIDRs split by plane (safe defaults).** Because the floating IP is public, the
+VSI's ingress is scoped per purpose, each with a sane default so you rarely set either:
+
+- **`management_allowed_cidrs`** → the `:80` flp-status web UI (read-only status). Defaults to
+  `0.0.0.0/0` — **open**, since the page carries no secrets. Restrict it if you want.
+- **`licensing_allowed_cidrs`** → the `:8443` proxy (and `:22` SSH). Defaults to the **RFC-1918**
+  private ranges — the cluster reaches the proxy privately over the TGW, so it never needs a
+  public source. Widen it only if a consumer sits outside RFC-1918 space.
+
+(The older single `allowed_cidrs` is deprecated; if set it seeds both planes.)
+
+Then deploy — only the flp phase runs (no cluster, BNK, or testing):
 
 ```console
 $ roksbnkctl -w bnk-flp init --config-file flp.yaml
 $ roksbnkctl -w bnk-flp flp up
 $ roksbnkctl -w bnk-flp flp output    # flp_external_endpoint (https://<private-ip>:8443) + flp_root_ca
+$ roksbnkctl -w bnk-flp flp status    # health of every dependent service + the web-UI link
 ```
+
+Copy the `flp_external_endpoint` and `flp_root_ca` from `flp output` into the cluster's
+`bnk.flp.external` in Step 4.
+
+### The status web UI
+
+`roksbnkctl flp status` prints the live health of the appliance **and the web-UI URL** — it
+derives the URL from `flp-outputs.json`, preferring the operator floating IP when one is attached:
+
+```console
+$ roksbnkctl -w bnk-flp flp status
+F5 License Proxy  (deployment: vsi, checked …)
+  web UI: http://169.63.101.72/
+  ● listener   https://localhost:8443/  (HTTP 400)
+  ● F5 / TEEM  proxy serving; no recent F5 connection error in log
+  dependent services:
+    ● postgresql         Up 28 minutes
+    ● vault              Up 28 minutes
+    ● vault-init         Up 28 minutes
+    ● f5-license-proxy   Up 28 minutes
+  …
+```
+
+Open that URL in a browser for the mobile-friendly status page — a green/red indicator for **every**
+dependent service, the `:8443` listener and F5/TEEM connection state, the CNEInstance fields
+(endpoint + a **Copy root CA** button, ready to paste into `bnk.flp.external`), and a live
+`f5-license-proxy` log stream. It is plain HTTP with **no auth** (read-only status), reachable from
+outside the VPC via the floating IP (the `:80` management plane defaults open). The floating IP is
+also available directly as `flp_floating_ip` in `flp output`.
+
+![The flp-status web UI](images/flp-status-web-ui.png)
+
+> A FLP-only workspace is created from this config file (`init --config-file`). The interactive
+> `roksbnkctl init` builds a full cluster + BNK workspace and can add an FLP as part of it, but
+> the standalone cluster-less appliance is driven by the `flp.yaml` above.
 
 ## Step 4 — The air-gapped cluster, joined to the TGW (on the VSI)
 
@@ -332,14 +419,16 @@ Keep `SSL_CERT_FILE` pointed at Harbor's cert (the chart pulls run host-side, i.
 
 ```console
 $ export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt
-$ roksbnkctl -w bnk-dc bnk up
-$ roksbnkctl -w bnk-dc bnk up            # run twice — converge the VLAN CRs (webhook race)
+$ roksbnkctl -w bnk-dc bnk up            # converges in one pass
 ```
 
-> **⚠ Confirmed — run `bnk up` twice.** The F5 validation webhook (`f5-validation-svc`) comes
-> up *with* the stack, so the first apply can lose a race and the `external-vlan`/`internal-vlan`
-> CRs fail (`http: server gave HTTP response to HTTPS client`); the License CR can report a
-> transient quota error. A second pass converges both.
+> **One pass (since v1.32.0).** The `external-vlan`/`internal-vlan` (`F5SPKVlan`) CRs are admitted
+> by the `f5validate` webhook, whose TLS server comes up a few seconds *after*
+> `CNEControllerAvailable=True` — a first apply used to lose that race
+> (`http: server gave HTTP response to HTTPS client`) and need a second pass. `bnk up` now gates
+> the VLAN applies on a **dry-run admission probe** of `f5-spk-vlans` that retries until the
+> webhook accepts, so the CRs land the first time. (The License CR already had its own
+> admission-retry.) Older releases still need the second `bnk up`.
 
 Verify — every pull private, nothing off the cluster to the Internet:
 
@@ -366,4 +455,4 @@ $ ibmcloud is vpc-delete "$SVC_VPC" --force   # after its subnet / public gatewa
 Everything above is scripted, interactively and phase-by-phase, in
 `disconnected_deployment_demo.sh` (shipped alongside the project resources). It asks only for
 `IBMCLOUD_API_KEY` and an ENTER between phases, and drives the exact commands in this appendix —
-including the full Harbor-CA DaemonSet manifest and the convergence re-run.
+including the full Harbor-CA DaemonSet manifest.

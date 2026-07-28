@@ -521,11 +521,34 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			if vsi.Reach != "" {
 				fmt.Fprintf(w, "flp_vsi_reach = %q\n", vsi.Reach)
 			}
+			// Per-plane SG source CIDRs: management (:80, default open) + licensing
+			// (:8443/:22, default RFC-1918). The legacy allowed_cidrs seeds both when set.
+			if len(vsi.ManagementAllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_management_allowed_cidrs = %s\n", hclStringList(vsi.ManagementAllowedCIDRs))
+			}
+			if len(vsi.LicensingAllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_licensing_allowed_cidrs = %s\n", hclStringList(vsi.LicensingAllowedCIDRs))
+			}
 			if len(vsi.AllowedCIDRs) > 0 {
 				fmt.Fprintf(w, "flp_vsi_allowed_cidrs = %s\n", hclStringList(vsi.AllowedCIDRs))
 			}
 			if vsi.SSHKey != "" {
 				fmt.Fprintf(w, "flp_vsi_ssh_key = %q\n", vsi.SSHKey)
+			}
+			// Operator floating IP (management access). nil → the tf default (true);
+			// render only when explicitly set so opting out (false) is honored.
+			if vsi.FloatingIP != nil {
+				fmt.Fprintf(w, "flp_vsi_floating_ip = %t\n", *vsi.FloatingIP)
+			}
+			// flp-status web UI (optional): image + mirror-trust so the VSI can pull it.
+			if vsi.StatusImage != "" {
+				fmt.Fprintf(w, "flp_status_image = %q\n", vsi.StatusImage)
+			}
+			if vsi.StatusRegistryHost != "" {
+				fmt.Fprintf(w, "flp_status_registry_host = %q\n", vsi.StatusRegistryHost)
+			}
+			if vsi.StatusRegistryCAB64 != "" {
+				fmt.Fprintf(w, "flp_status_registry_ca_b64 = %q\n", vsi.StatusRegistryCAB64)
 			}
 			if fp := vsi.ForwardProxy; fp != nil {
 				if fp.Host != "" {

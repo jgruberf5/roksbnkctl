@@ -84,6 +84,7 @@ var phaseOutputOwnership = map[string][]string{
 		"flp_external_endpoint",
 		"flp_external_endpoints",
 		"flp_node_port",
+		"flp_floating_ip",
 	},
 	"tgw": {
 		"tgw_gateway_id",

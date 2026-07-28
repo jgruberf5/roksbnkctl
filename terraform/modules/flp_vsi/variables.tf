@@ -46,8 +46,24 @@ variable "flp_vsi_reach" {
   default     = "private"
 }
 
+variable "flp_vsi_floating_ip" {
+  description = "Attach an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true."
+  type        = bool
+  default     = true
+}
+
+variable "flp_vsi_management_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach the :80 flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries no secrets)."
+  type        = list(string)
+  default     = []
+}
+variable "flp_vsi_licensing_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway)."
+  type        = list(string)
+  default     = []
+}
 variable "flp_vsi_allowed_cidrs" {
-  description = "Source CIDRs allowed to reach the proxy's 8443 port. Empty → the cluster VPC address space."
+  description = "DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply."
   type        = list(string)
   default     = []
 }
