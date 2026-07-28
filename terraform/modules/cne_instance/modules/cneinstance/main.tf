@@ -533,13 +533,58 @@ resource "null_resource" "cnecontroller_ready" {
   depends_on = [kubectl_manifest.cneinstance]
 }
 
+# Gate the F5SPKVlan CRs on the f5validate-f5-bnk admission webhook actually
+# SERVING TLS. cnecontroller_ready flips on CNEControllerAvailable=True, but the
+# webhook's TLS server (in the f5-cne-controller pod, backing Service
+# f5-validation-svc:3340) can lag a few seconds behind that — a real apply in the
+# gap fails "http: server gave HTTP response to HTTPS client", which is why
+# `bnk up` historically needed a second pass to land the VLANs. Probe the webhook
+# with a server-side DRY-RUN apply of the external-vlan (routes through admission,
+# persists NOTHING) and retry until it is accepted; then the declarative VLAN
+# applies below land on the FIRST `bnk up`. Mirrors the License CR's own
+# admission-webhook retry (modules/license) so both consumers of this webhook are
+# consistent. Token via KUBE_TOKEN env (kept out of the command string).
+resource "null_resource" "validation_webhook_ready" {
+  count = local.use_kubectl ? 1 : 0
+
+  triggers = {
+    cneinstance = kubectl_manifest.cneinstance[0].id
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      probe='${jsonencode(local.external_vlan_manifest)}'
+      url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.flo_namespace}/f5spkvlans/external-vlan?dryRun=All&fieldManager=roksbnkctl-webhook-probe&force=true"
+      status=000
+      for i in $(seq 1 30); do
+        status=$(curl -sk -o /dev/null -w "%%{http_code}" -X PATCH \
+          -H "Authorization: Bearer $KUBE_TOKEN" \
+          -H "Content-Type: application/apply-patch+yaml" \
+          "$url" -d "$probe")
+        case "$status" in 2??) break ;; esac
+        echo "f5validate webhook not serving yet (attempt $i/30, HTTP $status), retrying in 10s..." >&2
+        sleep 10
+      done
+      case "$status" in
+        2??) echo "f5validate webhook serving (dry-run accepted, HTTP $status)" ;;
+        *)   echo "ERROR: f5validate admission webhook not ready after 300s (last HTTP $status)" >&2; exit 1 ;;
+      esac
+    EOT
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
+  }
+
+  depends_on = [null_resource.cnecontroller_ready]
+}
+
 resource "kubectl_manifest" "external_vlan" {
   count             = local.use_kubectl ? 1 : 0
   yaml_body         = yamlencode(local.external_vlan_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [null_resource.cnecontroller_ready]
+  depends_on        = [null_resource.cnecontroller_ready, null_resource.validation_webhook_ready]
 }
 
 resource "kubectl_manifest" "internal_vlan" {
@@ -548,7 +593,7 @@ resource "kubectl_manifest" "internal_vlan" {
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [null_resource.cnecontroller_ready]
+  depends_on        = [null_resource.cnecontroller_ready, null_resource.validation_webhook_ready]
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {
