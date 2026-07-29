@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/pem"
 	"fmt"
@@ -24,27 +25,23 @@ func registryHostFromPath(hostPath string) string {
 // `bnk up` can install it into each node's certs.d before pulling images.
 //
 // Returns:
-//   - (pem, nil)  a private/untrusted CA the nodes must be taught to trust
-//   - ("", nil)   the host is publicly trusted (no per-node CA needed)
+//   - (pem, nil)  a private/self-signed CA the nodes must be taught to trust
+//   - ("", nil)   the host chains to a separate (public) issuer — no CA needed
 //   - ("", err)   the host could not be reached to determine trust
 //
-// For a self-signed registry (e.g. a co-located Harbor) the served leaf is its
-// own CA; the full served chain is encoded so CRI-O trusts it.
+// Trust is decided from the served chain itself, NOT from a verified handshake:
+// on the operator host the private registry's CA is often already in the local
+// trust store (e.g. `update-ca-certificates`), so a verified dial succeeds even
+// though the air-gapped CLUSTER NODES do not trust it. We instead capture the
+// served chain unconditionally and key on whether its top certificate is
+// self-signed — the signature of a private CA / self-signed registry (a
+// co-located Harbor). A registry fronted by a public CA sends a chain whose top
+// is an intermediate (issuer != subject), which the nodes' default roots cover.
 func captureRegistryCA(host string) (string, error) {
 	if !strings.Contains(host, ":") {
 		host += ":443"
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-
-	// A verified handshake means the host already chains to a public root the
-	// nodes trust — nothing to install.
-	if conn, err := tls.DialWithDialer(dialer, "tcp", host, nil); err == nil {
-		conn.Close()
-		return "", nil
-	}
-
-	// Verification failed (self-signed / private CA). Re-dial without
-	// verification purely to capture what the host serves.
 	conn, err := tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // capture only; no data is transported over this connection
 	if err != nil {
 		return "", fmt.Errorf("dialing %s to capture its CA: %w", host, err)
@@ -54,6 +51,11 @@ func captureRegistryCA(host string) (string, error) {
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return "", fmt.Errorf("%s served no certificates", host)
+	}
+	top := certs[len(certs)-1]
+	if !bytes.Equal(top.RawIssuer, top.RawSubject) {
+		// Chains to a separate issuer → treat as public; nodes already trust it.
+		return "", nil
 	}
 	var b strings.Builder
 	for _, c := range certs {
