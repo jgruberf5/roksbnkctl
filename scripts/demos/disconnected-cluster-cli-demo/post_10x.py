@@ -1,36 +1,54 @@
 #!/usr/bin/env python3
-# Post-process the raw demo recording:
-#   - speed the LONG windows (from the demo's begin_long/end_long timestamps) to 10x
-#   - HOLD each roksbnkctl command frame (FREEZE markers) on screen for 5 seconds,
-#     so the audience clearly sees the roksbnkctl command being used
-# Args: <raw.mkv> <timestamps> <rec_start_epoch> <out.mp4>
+# Build the final cut from a RAW recording + its QUEUE file. The queue records every
+# event with its exact wall-clock time, so the whole timeline is reworkable by just
+# RE-RUNNING this script on the same raw — no re-recording to change delays/speeds.
+#
+# Queue labels (written by the demo's ts()):
+#   PHASE  MARK <epoch>   → hold the phase banner (a clean screen) as a still, PHASE_SECS
+#   COMMAND MARK <epoch>  → hold the roksbnkctl command as a still, CMD_SECS
+#   OUTPUT MARK <epoch>   → hold the command's settled output as a still, OUT_SECS
+#   LONG   START/END      → speed that window SPEED× (the only sped part)
+#
+# Stills are cut from the RAW at each mark's timestamp, so they show the exact frame
+# that was on screen even when the mark sits inside a 10× window. Each roksbnkctl
+# command therefore reads as:  [CMD_SECS still: command] → [10× output] → [OUT_SECS still: output].
+#
+# Args: <raw.mkv> <queue> <rec_start_epoch> <out.mp4>
+# Env : SPEED (10), PHASE_SECS (4), CMD_SECS (5), OUT_SECS (5)
 import sys, subprocess, os
 
-raw, ts_file, rec_start, out = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
-SPEED = 10
-FREEZE_SECS = 5
+raw, qfile, rec_start, out = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+SPEED      = int(os.environ.get("SPEED", "10"))
+STILL_SECS = {
+    "PHASE":   float(os.environ.get("PHASE_SECS", "4")),
+    "COMMAND": float(os.environ.get("CMD_SECS", "5")),
+    "OUTPUT":  float(os.environ.get("OUT_SECS", "5")),
+}
 TMP = "/tmp/demo10x"
 os.makedirs(TMP, exist_ok=True)
-
-# Parse LONG windows and FREEZE points, as offsets from the recording start.
-longs, freezes, cur = [], [], None
-for line in open(ts_file):
-    p = line.split()
-    if len(p) != 3:
-        continue
-    label, ev, epoch = p[0], p[1], float(p[2])
-    off = epoch - rec_start
-    if label == "LONG" and ev == "START":
-        cur = off
-    elif label == "LONG" and ev == "END" and cur is not None:
-        longs.append((max(cur, 0.0), off)); cur = None
-    elif label == "FREEZE":
-        freezes.append(max(off, 0.0))
-longs.sort()
 
 dur = float(subprocess.check_output(
     ["ffprobe", "-v", "error", "-show_entries", "format=duration",
      "-of", "default=nk=1:nw=1", raw]).strip())
+
+# Parse the queue into long (10×) windows and stills, as offsets from the rec start.
+longs, stills, counts, cur = [], [], {"PHASE": 0, "COMMAND": 0, "OUTPUT": 0}, None
+for line in open(qfile):
+    p = line.split()
+    if len(p) < 3:
+        continue
+    label, ev, epoch = p[0], p[1], float(p[2])
+    off = min(max(epoch - rec_start, 0.0), dur)
+    if label == "LONG" and ev == "START":
+        cur = off
+    elif label == "LONG" and ev == "END" and cur is not None:
+        longs.append((cur, off)); cur = None
+    elif label in STILL_SECS:
+        stills.append((off, STILL_SECS[label])); counts[label] += 1
+longs.sort()
+stills.sort()
+# offset → still seconds (last write wins on an exact collision; offsets are distinct)
+still_at = {round(o, 3): s for o, s in stills}
 
 def speed_at(t):
     for s, e in longs:
@@ -41,14 +59,11 @@ def speed_at(t):
 ENC = ["-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
        "-pix_fmt", "yuv420p", "-r", "10"]
 
-# Cut the timeline at every LONG boundary AND every freeze point; a 5s still of the
-# frame at each freeze point is inserted right after the segment that ends on it.
-freezes = sorted(min(f, dur) for f in freezes)
-freeze_set = {round(f, 3) for f in freezes}
-cuts = sorted({0.0, dur} | {s for s, e in longs} | {e for s, e in longs} | set(freezes))
-
-parts = []
-i = 0
+# Cut the raw at every long-window boundary and every still point; play each raw
+# segment at its speed, and after a segment that ends on a still point, splice in the
+# held still of the frame at that point.
+cuts = sorted({0.0, dur} | {s for s, e in longs} | {e for s, e in longs} | {o for o, _ in stills})
+parts, i = [], 0
 for a, b in zip(cuts, cuts[1:]):
     if b > a:
         sp = speed_at((a + b) / 2.0)
@@ -57,13 +72,14 @@ for a, b in zip(cuts, cuts[1:]):
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", raw, "-ss", f"{a:.3f}",
                         "-to", f"{b:.3f}", "-filter:v", vf] + ENC + [pf], check=True)
         parts.append(pf); i += 1
-    if round(b, 3) in freeze_set and b < dur:
-        png = f"{TMP}/frz{i:03d}.png"
-        mf = f"{TMP}/frz{i:03d}.mp4"
+    key = round(b, 3)
+    if key in still_at and b < dur:
+        secs = still_at[key]
+        png = f"{TMP}/still{i:03d}.png"; mf = f"{TMP}/still{i:03d}.mp4"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{b:.3f}", "-i", raw,
                         "-frames:v", "1", png], check=True)
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-loop", "1",
-                        "-t", str(FREEZE_SECS), "-i", png] + ENC + [mf], check=True)
+                        "-t", str(secs), "-i", png] + ENC + [mf], check=True)
         parts.append(mf); i += 1
 
 listf = f"{TMP}/concat.txt"
@@ -73,4 +89,7 @@ with open(listf, "w") as f:
 subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
                 "-i", listf, "-c", "copy", out], check=True)
 print(f"wrote {out} ({int(os.path.getsize(out) / 1e6)} MB) — "
-      f"{len(longs)} long windows x{SPEED}, {len(freezes)} command freezes x{FREEZE_SECS}s")
+      f"{len(longs)} long×{SPEED}, "
+      f"{counts['PHASE']} banners×{STILL_SECS['PHASE']}s, "
+      f"{counts['COMMAND']} commands×{STILL_SECS['COMMAND']}s, "
+      f"{counts['OUTPUT']} outputs×{STILL_SECS['OUTPUT']}s")

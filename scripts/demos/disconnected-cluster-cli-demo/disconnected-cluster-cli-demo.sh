@@ -91,19 +91,28 @@ say(){ echo "${DIM}$(redact "$*")${N}" >&2; }
 note(){ { echo; echo "${Y}${B}NOTE:${N} ${Y}$(redact "$*")${N}"; echo; } >&2; }
 ok(){ echo "${G}✓ $(redact "$*")${N}" >&2; }
 die(){ echo "${R}✗ $(redact "$*")${N}" >&2; exit 1; }
-# show a command; if it's a roksbnkctl command, HOLD the bare command on screen a
-# beat, THEN mark a FREEZE. The pre-mark hold guarantees the frame the post-processor
-# grabs at the mark shows the *command itself* (fully rendered, no output yet) — so the
-# 5s freeze teaches the exact roksbnkctl invocation instead of blitzing to its output.
-# The post-mark hold keeps the command on screen a moment before it runs.
-CMD_RENDER_HOLD="${CMD_RENDER_HOLD:-1.8}"   # seconds the command sits on screen before the FREEZE mark
-CMD_POST_HOLD="${CMD_POST_HOLD:-0.7}"       # seconds it stays after the mark, before executing
-show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; case "$*" in *roksbnkctl*) sleep "$CMD_RENDER_HOLD"; ts FREEZE MARK; sleep "$CMD_POST_HOLD" ;; esac; }
-run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; }
-# phase timing → sidecar for the 10x post-process. LONG phases are tagged so the
-# post-processor knows which video segments to speed up.
-ts(){ echo "$1 $2 $(date +%s.%N)" >> "$TS_FILE"; }        # ts <label> <START|END>
-phase(){ banner "$2"; }
+# The recording is driven ENTIRELY by a queue file ($TS_FILE): every phase banner,
+# every roksbnkctl command, every command's settled output, and every long window is
+# logged with its exact wall-clock time. post_10x.py builds the final cut from that
+# queue + the raw video — so delays/speeds can be reworked by RE-RUNNING post_10x
+# alone; a re-record is only needed to change what actually happens on screen.
+#
+# Per roksbnkctl command the queue records TWO stills: the COMMAND (held so the viewer
+# reads the exact invocation) and its OUTPUT (held so the viewer reads the result).
+CMD_RENDER_HOLD="${CMD_RENDER_HOLD:-1.8}"   # command sits on screen before the COMMAND mark
+CMD_POST_HOLD="${CMD_POST_HOLD:-0.7}"       # …and a beat after the mark, before it runs
+OUT_SETTLE_HOLD="${OUT_SETTLE_HOLD:-1.2}"   # output settles on screen before the OUTPUT mark
+show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; case "$*" in *roksbnkctl*) sleep "$CMD_RENDER_HOLD"; ts COMMAND MARK; sleep "$CMD_POST_HOLD" ;; esac; }
+outmark(){ case "$*" in *roksbnkctl*) sleep "$OUT_SETTLE_HOLD"; ts OUTPUT MARK ;; esac; }
+run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; outmark "$@"; }
+# queue writer: <label> <ev> <epoch>. Labels: PHASE / COMMAND / OUTPUT (stills), LONG (10x window).
+ts(){ echo "$1 $2 $(date +%s.%N)" >> "$TS_FILE"; }
+# phase: CLEAR the screen so every phase starts on a blank terminal, show the banner
+# ALONE, then mark it (post_10x holds this banner still and NEVER speeds it) and hold
+# a readable beat before any command runs.
+PHASE_BANNER_HOLD="${PHASE_BANNER_HOLD:-1.5}"
+clear_screen(){ printf '\033[3J\033[2J\033[H' >&2; }
+phase(){ clear_screen; banner "$2"; sleep "$PHASE_BANNER_HOLD"; ts PHASE MARK; sleep 0.4; }
 endphase(){ :; }
 # begin_long/end_long bracket a LONG DEPLOYMENT operation (install wait, replicate,
 # flp up, bnk up). The recording post-processor speeds ONLY these windows to 10x,
@@ -125,6 +134,7 @@ onvsi_run(){
   show "(on harbor VSI) $*"
   [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }
   $HARBOR_SSH "export IBMCLOUD_API_KEY='$IBMCLOUD_API_KEY' PATH=\$PATH:/usr/local/bin; $*" 2>&1
+  outmark "$*"
 }
 onvsi(){ [[ "$DRY_RUN" == "1" ]] && return 0; $HARBOR_SSH "export IBMCLOUD_API_KEY='$IBMCLOUD_API_KEY' PATH=\$PATH:/usr/local/bin; $*" 2>&1; }
 
