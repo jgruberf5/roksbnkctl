@@ -453,11 +453,31 @@ $ ibmcloud is vpc-delete "$SVC_VPC" --force   # after its subnet / public gatewa
 
 ## The scripted walkthrough (CLI)
 
-Everything above is scripted, phase-by-phase, in `disconnected_deployment_demo.sh` (shipped
-alongside the project resources). It asks only for `IBMCLOUD_API_KEY`, auto-advances between phases,
-and drives the exact commands in this appendix. Node CA trust is handled by `bnk up` itself — it
-installs Harbor's CA on every node before pulling (see [Step 5](#step-5--install-bnk-air-gapped-on-the-vsi)),
-so there is no manual DaemonSet to apply.
+Everything above is scripted, phase-by-phase, in
+`scripts/demos/disconnected-cluster-cli-demo/` — a fully reproducible, parameterized walkthrough.
+It reads its inputs from a `.env` (only `IBMCLOUD_API_KEY` is strictly required), auto-advances
+between phases, and drives the exact commands in this appendix. Node CA trust is handled by `bnk up`
+itself — it installs Harbor's CA on every node before pulling (see
+[Step 5](#step-5--install-bnk-air-gapped-on-the-vsi)), so there is no manual DaemonSet to apply.
+
+### What to expect — timing
+
+A clean end-to-end run is roughly **45–65 minutes**, dominated by `bnk up`. The steps map to these
+typical durations (they vary with region load, image count, and cluster size):
+
+| Step | Typical duration |
+|---|---|
+| Step 1 — Services VPC + Harbor VSI (cloud-init installs Harbor) | ~8–10 min |
+| Step 2 — Mirror FAR → Harbor (`registry replicate`, many images) | ~8–15 min |
+| Step 3 — Standalone FLP appliance up | ~5–8 min |
+| Step 4 — Adopt the cluster + node CA trust | ~3–5 min |
+| Step 5 — `bnk up` converges (cert-manager → FLO → CNE → license → f5-spk) | ~20–30 min |
+
+`bnk up` is the long, variable one: it gates on **real readiness** at every stage (helm `wait`,
+`kubectl_manifest` `wait_for`, and the node-CA-trust installer reaching every node), so a clean apply
+*is* the convergence — there is no "run it twice." The other steps are one-time services
+infrastructure; a second install that reuses the same Harbor and FLP skips Steps 1–3 entirely and is
+just Steps 4–5.
 
 ## The same flow as CI — the container runner
 
