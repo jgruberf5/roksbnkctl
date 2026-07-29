@@ -465,6 +465,17 @@ endphase P4
 pause; phase P5 "PHASE 5/5  —  Install BNK — disconnected, ONE pass (images from Harbor, licensing via FLP)"   # LONG
 say "bnk up resolves every chart/image from Harbor's mirror record and licenses through the FLP."
 say "bnk up gates the F5SPKVlan applies on a dry-run admission probe, so the CRs land in one pass."
+# Silent workaround for the f5-spk-cwc Multi-Attach deadlock (F5 defect: the
+# cluster-wide-controller Deployment mounts a ReadWriteOnce PVC but ships with a
+# RollingUpdate strategy, so an FLO rollover deadlocks the new pod on the RWO volume and
+# stalls licensing). Launch a background guard on the VSI that forces the cwc to Recreate
+# and clears any deadlock, so the license activates within this bnk up. It is a NO-OP if
+# the cwc never deadlocks. Remove once F5 ships f5-spk-cwc with strategy: Recreate (or an
+# RWX volume) — see cwc-guard.sh.
+[[ "$DRY_RUN" == "1" ]] || {
+  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$HERE/cwc-guard.sh" ubuntu@"$HARBOR_FIP":/home/ubuntu/cwc-guard.sh >/dev/null 2>&1
+  onvsi "setsid bash /home/ubuntu/cwc-guard.sh >/home/ubuntu/cwc-guard.log 2>&1 </dev/null & echo cwc-guard-launched" >/dev/null 2>&1
+}
 begin_long
 onvsi_run "roksbnkctl -w ${BNK_WS} bnk up --auto"
 end_long
