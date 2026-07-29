@@ -45,6 +45,16 @@ REC_ROWS="${REC_ROWS:-50}"
 #                            comes from env vars, and the proxy handoff between the
 #                            two jobs is two of them. Nothing installed on the host.
 SCREENPLAY="${SCREENPLAY:-cli-demo.sh}"
+# Screenplays live in sibling category folders (scripts/demos/<category>/). Resolve
+# the bare name (or an explicit path) to the file we ship to the VSI, then keep just
+# the base name for the REMOTE_DIR-side references below (they run co-located there).
+if [[ -f "$SCREENPLAY" ]]; then
+  SCREENPLAY_SRC="$SCREENPLAY"
+else
+  SCREENPLAY_SRC="$(find "$SCRIPT_DIR/.." -maxdepth 2 -name "$SCREENPLAY" -type f 2>/dev/null | head -1)"
+fi
+[[ -f "$SCREENPLAY_SRC" ]] || { echo "✗ screenplay not found: $SCREENPLAY (looked under $SCRIPT_DIR/../<category>/)" >&2; exit 1; }
+SCREENPLAY="$(basename "$SCREENPLAY")"
 POLL_SECS="${POLL_SECS:-30}"
 MAX_WAIT_SECS="${MAX_WAIT_SECS:-14400}"   # 4h ceiling
 
@@ -103,7 +113,7 @@ do_start() {
 
   # far-replication-demo.sh targets a registry built off-camera (its address +
   # admin password come from demo.env), so it ships no extra files.
-  scpto "$SCRIPT_DIR/$SCREENPLAY" "$SCRIPT_DIR/demo-lib.sh" "$SCRIPT_DIR/forge-register.sh" "$ENV_FILE" "${extra[@]}"
+  scpto "$SCREENPLAY_SRC" "$SCRIPT_DIR/demo-lib.sh" "$SCRIPT_DIR/forge-register.sh" "$ENV_FILE" "${extra[@]}"
   sshv "chmod +x '$REMOTE_DIR/$SCREENPLAY' '$REMOTE_DIR/forge-register.sh'"
   [[ "${SRC_BUILD:-0}" == "1" ]] && sshv "chmod +x '$REMOTE_DIR/roksbnkctl.bin'"
 

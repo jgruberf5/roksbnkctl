@@ -1,0 +1,18 @@
+#cloud-config
+# Harbor operator VSI for the disconnected-cluster CLI demo. The demo renders this
+# template with envsubst, substituting ONLY ${HARBOR_FIP} ${HARBOR_VERSION}
+# ${HARBOR_ADMIN_PASSWORD}; the $(...) / $PRIV shell expansions below run on the VSI
+# at cloud-init time and are left intact.
+package_update: true
+packages: [docker.io, docker-compose-v2, openssl]
+runcmd:
+  - [ bash, -lc, "systemctl enable --now docker" ]
+  - [ bash, -lc, "PRIV=$(hostname -I | awk '{print $1}'); mkdir -p /opt/harbor/certs; openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout /opt/harbor/certs/harbor.key -out /opt/harbor/certs/harbor.crt -subj '/CN=${HARBOR_FIP}' -addext \"subjectAltName=IP:${HARBOR_FIP},IP:$PRIV\"" ]
+  - [ bash, -lc, "cd /opt/harbor && curl -fsSL -o h.tgz https://github.com/goharbor/harbor/releases/download/${HARBOR_VERSION}/harbor-offline-installer-${HARBOR_VERSION}.tgz && tar xzf h.tgz --strip-components=1" ]
+  # hostname MUST be the PRIVATE IP: Harbor derives its Bearer token-service URL
+  # (the docker/CRI-O auth realm) from hostname. In the co-located air-gap model the
+  # OPERATOR (on this VSI) and the cluster NODES (over the TGW) both reach Harbor at
+  # its private IP; a floating-IP hostname makes the token realm unreachable from
+  # no-egress nodes -> ImagePullBackOff. The cert SAN already covers both IPs.
+  - [ bash, -lc, "PRIV=$(hostname -I | awk '{print $1}'); sed -e \"s/^hostname:.*/hostname: $PRIV/\" -e 's#certificate:.*#certificate: /opt/harbor/certs/harbor.crt#' -e 's#private_key:.*#private_key: /opt/harbor/certs/harbor.key#' -e 's/^harbor_admin_password:.*/harbor_admin_password: ${HARBOR_ADMIN_PASSWORD}/' /opt/harbor/harbor.yml.tmpl > /opt/harbor/harbor.yml" ]
+  - [ bash, -lc, "cd /opt/harbor && ./install.sh && touch /opt/harbor/READY" ]

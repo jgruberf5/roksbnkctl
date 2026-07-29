@@ -74,7 +74,7 @@ if [[ "${1:-}" == "teardown" ]]; then
   exit 0
 fi
 
-: "${REGISTRY_DOMAIN:?set via demo.env — the private registry host (e.g. 1.2.3.4.sslip.io). Build one with scripts/deploy-far-registry.sh.}"
+: "${REGISTRY_DOMAIN:?set via demo.env — the private registry host (e.g. 1.2.3.4.sslip.io). Build one with scripts/demos/lib/deploy-far-registry.sh.}"
 : "${REGISTRY_ADMIN_PASSWORD:?set via demo.env — the registry admin password (deploy-far-registry.sh prints it)}"
 
 # ── 1) host preparation ──────────────────────────────────────────────────────
