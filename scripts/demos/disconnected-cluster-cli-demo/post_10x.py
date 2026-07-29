@@ -69,8 +69,11 @@ for a, b in zip(cuts, cuts[1:]):
         sp = speed_at((a + b) / 2.0)
         vf = f"setpts=PTS/{sp}" if sp != 1 else "setpts=PTS"
         pf = f"{TMP}/seg{i:03d}.mp4"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", raw, "-ss", f"{a:.3f}",
-                        "-to", f"{b:.3f}", "-filter:v", vf] + ENC + [pf], check=True)
+        # -ss/-to MUST precede -i (input-side trim). After -i they trim on the OUTPUT
+        # timeline, which is post-setpts — so a 10x window only compressed ~2.5x and the
+        # "sped" sections were still long dead screen. Input-side trim gives a true 10x.
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a:.3f}", "-to", f"{b:.3f}",
+                        "-i", raw, "-filter:v", vf] + ENC + [pf], check=True)
         parts.append(pf); i += 1
     key = round(b, 3)
     if key in still_at and b < dur:
@@ -86,8 +89,12 @@ listf = f"{TMP}/concat.txt"
 with open(listf, "w") as f:
     for p in parts:
         f.write(f"file '{p}'\n")
+# Re-encode the concatenation (not -c copy) so the final has clean, monotonic PTS —
+# a -c copy concat of independently-encoded parts yields a file that scrubs/seeks
+# unreliably. Re-encoding is a little slower but gives a properly seekable MP4.
 subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-                "-i", listf, "-c", "copy", out], check=True)
+                "-i", listf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+                "-pix_fmt", "yuv420p", "-r", "10", "-movflags", "+faststart", out], check=True)
 print(f"wrote {out} ({int(os.path.getsize(out) / 1e6)} MB) — "
       f"{len(longs)} long×{SPEED}, "
       f"{counts['PHASE']} banners×{STILL_SECS['PHASE']}s, "

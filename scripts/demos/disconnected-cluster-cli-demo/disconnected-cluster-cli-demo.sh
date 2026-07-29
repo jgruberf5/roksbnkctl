@@ -102,17 +102,24 @@ die(){ echo "${R}✗ $(redact "$*")${N}" >&2; exit 1; }
 CMD_RENDER_HOLD="${CMD_RENDER_HOLD:-1.8}"   # command sits on screen before the COMMAND mark
 CMD_POST_HOLD="${CMD_POST_HOLD:-0.7}"       # …and a beat after the mark, before it runs
 OUT_SETTLE_HOLD="${OUT_SETTLE_HOLD:-1.2}"   # output settles on screen before the OUTPUT mark
-show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; case "$*" in *roksbnkctl*) sleep "$CMD_RENDER_HOLD"; ts COMMAND MARK; sleep "$CMD_POST_HOLD" ;; esac; }
-outmark(){ case "$*" in *roksbnkctl*) sleep "$OUT_SETTLE_HOLD"; ts OUTPUT MARK ;; esac; }
+# True only when roksbnkctl is the COMMAND WORD — not merely a substring. Without the
+# word boundary, an ibmcloud command whose argument holds the repo path (e.g.
+# `--user-data @/…/project/roksbnkctl/…/harbor-cloud-init.yaml`) would spuriously get a
+# command/output still stamped on it. Match roksbnkctl only at start or after a space.
+is_rbk_cmd(){ [[ "$1" =~ (^|[[:space:]])roksbnkctl[[:space:]] ]]; }
+show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; if is_rbk_cmd "$*"; then sleep "$CMD_RENDER_HOLD"; ts COMMAND MARK "$(redact "$*")"; sleep "$CMD_POST_HOLD"; fi; }
+outmark(){ if is_rbk_cmd "$*"; then sleep "$OUT_SETTLE_HOLD"; ts OUTPUT MARK "$(redact "$*")"; fi; }
 run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; outmark "$@"; }
-# queue writer: <label> <ev> <epoch>. Labels: PHASE / COMMAND / OUTPUT (stills), LONG (10x window).
-ts(){ echo "$1 $2 $(date +%s.%N)" >> "$TS_FILE"; }
+# queue writer: <label> <ev> <epoch> [text]. Labels: PHASE / COMMAND / OUTPUT (stills),
+# LONG (10x window). The trailing text records WHICH command/phase each row is, so the
+# queue is human-readable and the timeline is auditable without watching the video.
+ts(){ local a="$1" b="$2"; shift 2; echo "$a $b $(date +%s.%N) $*" >> "$TS_FILE"; }
 # phase: CLEAR the screen so every phase starts on a blank terminal, show the banner
 # ALONE, then mark it (post_10x holds this banner still and NEVER speeds it) and hold
 # a readable beat before any command runs.
 PHASE_BANNER_HOLD="${PHASE_BANNER_HOLD:-1.5}"
 clear_screen(){ printf '\033[3J\033[2J\033[H' >&2; }
-phase(){ clear_screen; banner "$2"; sleep "$PHASE_BANNER_HOLD"; ts PHASE MARK; sleep 0.4; }
+phase(){ clear_screen; banner "$2"; sleep "$PHASE_BANNER_HOLD"; ts PHASE MARK "$2"; sleep 0.4; }
 endphase(){ :; }
 # begin_long/end_long bracket a LONG DEPLOYMENT operation (install wait, replicate,
 # flp up, bnk up). The recording post-processor speeds ONLY these windows to 10x,
