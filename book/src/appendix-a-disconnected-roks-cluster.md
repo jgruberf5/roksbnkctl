@@ -203,6 +203,11 @@ $ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor
 $ roksbnkctl -w mirror registry verify
 ```
 
+After replication, the `bnk-mirror` project holds every BNK chart and image — the cluster
+pulls exclusively from here, by Harbor's private IP over the TGW:
+
+![Harbor after the mirror — the public `bnk-mirror` project with all 89 BNK repositories](images/harbor-mirror-ui.png)
+
 ## Step 3 — Standalone FLP licensing appliance (on the VSI)
 
 The FLP is a **self-contained F5 licensing appliance** — a VSI running the `f5-license-proxy`
