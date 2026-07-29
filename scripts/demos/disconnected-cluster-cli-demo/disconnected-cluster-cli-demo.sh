@@ -63,14 +63,42 @@ DRY_RUN="${DRY_RUN:-0}"
 
 # ============================ helpers ========================================
 if [[ -t 2 ]]; then B=$'\e[1m'; DIM=$'\e[2m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; R=$'\e[31m'; N=$'\e[0m'; else B=""; DIM=""; G=""; Y=""; C=""; R=""; N=""; fi
-banner(){ { echo; echo "${B}${C}==============================================================================${N}"; echo "${B}${C} $* ${N}"; echo "${B}${C}==============================================================================${N}"; } >&2; }
-say(){ echo "${DIM}$*${N}" >&2; }
-note(){ { echo; echo "${Y}${B}NOTE:${N} ${Y}$*${N}"; echo; } >&2; }
-ok(){ echo "${G}✓ $*${N}" >&2; }
-die(){ echo "${R}✗ $*${N}" >&2; exit 1; }
-# show a command; if it's a roksbnkctl command, mark a FREEZE so the recording's
-# post-processor holds that frame for 5s (teach the audience the roksbnkctl usage).
-show(){ { echo; echo "${B}\$ $*${N}"; } >&2; case "$*" in *roksbnkctl*) ts FREEZE MARK ;; esac; }
+# ── secret masking ───────────────────────────────────────────────────────────
+# This demo is RECORDED: no credential may reach the screen. secret() registers a
+# value (and its base64 form, since configs carry the encoded form); every helper
+# below runs its text through redact() first. Verify with ../lib/check-masking.sh.
+_SECRETS=()
+secret(){
+  local v b n=0
+  for v in "$@"; do
+    [[ -n "${v:-}" && ${#v} -ge 8 ]] || continue
+    _SECRETS+=("$v"); n=$((n + 1))
+    b="$(printf '%s' "$v" | base64 -w0 2>/dev/null)"
+    [[ -n "$b" && "$b" != "$v" ]] && _SECRETS+=("$b")
+  done
+  (( n )) && ok "secret masking active — ${n} credential(s) render as ***REDACTED*** on screen"
+  return 0
+}
+redact(){
+  local s="$*" v
+  (( ${#_SECRETS[@]} )) || { printf '%s' "$s"; return 0; }
+  for v in "${_SECRETS[@]}"; do s="${s//"$v"/***REDACTED***}"; done
+  printf '%s' "$s"
+}
+mask(){ local l; while IFS= read -r l || [[ -n "$l" ]]; do redact "$l"; echo; done; }
+banner(){ { echo; echo "${B}${C}==============================================================================${N}"; echo "${B}${C} $(redact "$*") ${N}"; echo "${B}${C}==============================================================================${N}"; } >&2; }
+say(){ echo "${DIM}$(redact "$*")${N}" >&2; }
+note(){ { echo; echo "${Y}${B}NOTE:${N} ${Y}$(redact "$*")${N}"; echo; } >&2; }
+ok(){ echo "${G}✓ $(redact "$*")${N}" >&2; }
+die(){ echo "${R}✗ $(redact "$*")${N}" >&2; exit 1; }
+# show a command; if it's a roksbnkctl command, HOLD the bare command on screen a
+# beat, THEN mark a FREEZE. The pre-mark hold guarantees the frame the post-processor
+# grabs at the mark shows the *command itself* (fully rendered, no output yet) — so the
+# 5s freeze teaches the exact roksbnkctl invocation instead of blitzing to its output.
+# The post-mark hold keeps the command on screen a moment before it runs.
+CMD_RENDER_HOLD="${CMD_RENDER_HOLD:-1.8}"   # seconds the command sits on screen before the FREEZE mark
+CMD_POST_HOLD="${CMD_POST_HOLD:-0.7}"       # seconds it stays after the mark, before executing
+show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; case "$*" in *roksbnkctl*) sleep "$CMD_RENDER_HOLD"; ts FREEZE MARK; sleep "$CMD_POST_HOLD" ;; esac; }
 run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; }
 # phase timing → sidecar for the 10x post-process. LONG phases are tagged so the
 # post-processor knows which video segments to speed up.
@@ -112,6 +140,7 @@ The story, in five phases:
 EOF
 [[ -z "${IBMCLOUD_API_KEY:-}" && -f .env ]] && { set -a; source ./.env; set +a; }
 [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"; export IBMCLOUD_API_KEY
+secret "$IBMCLOUD_API_KEY" "$HARBOR_ADMIN_PASSWORD"
 for c in "$ROKSBNKCTL_BIN" ibmcloud jq; do command -v "$c" >/dev/null || die "$c not found"; done
 [[ -f "$FAR_AUTH_LOCAL_FILE" ]]        || die "FAR auth file not found: $FAR_AUTH_LOCAL_FILE"
 [[ -f "$SUBSCRIPTION_JWT_LOCAL_FILE" ]] || die "subscription JWT not found: $SUBSCRIPTION_JWT_LOCAL_FILE"
@@ -157,7 +186,18 @@ HARBOR_FIP="$HARBOR_FIP" HARBOR_VERSION="$HARBOR_VERSION" HARBOR_ADMIN_PASSWORD=
   envsubst '${HARBOR_FIP} ${HARBOR_VERSION} ${HARBOR_ADMIN_PASSWORD}' \
   < "$HERE/harbor-cloud-init.yaml.tmpl" > "$CI"
 VSI_JSON="$(run ibmcloud is instance-create "${SVC_PREFIX}-harbor" "$SVC_VPC_ID" "$SVC_ZONE" "$HARBOR_VSI_PROFILE" "$SUBNET_ID" --image "$HARBOR_IMAGE" --keys "$SSH_KEY_NAME" --resource-group-name "$RESOURCE_GROUP" --user-data "@$CI" --output json)"
-HARBOR_PRIVATE_IP="$(echo "$VSI_JSON" | jq -r .primary_network_interface.primary_ip.address)"
+HARBOR_VSI_ID="$(echo "$VSI_JSON" | jq -r .id)"
+# The reserved primary IP is 'pending' (0.0.0.0) at instance-create time and only
+# binds a moment later. Capturing it too early bakes 0.0.0.0 into generic_host, so
+# every mirrored image resolves to https://0.0.0.0/… and cert-manager (and thus
+# bnk up) fails with RegistryUnavailable. Poll until the IP actually binds.
+HARBOR_PRIVATE_IP="$(echo "$VSI_JSON" | jq -r '.primary_network_interface.primary_ip.address // empty')"
+for _ in $(seq 1 30); do
+  [[ -n "$HARBOR_PRIVATE_IP" && "$HARBOR_PRIVATE_IP" != "0.0.0.0" ]] && break
+  sleep 4
+  HARBOR_PRIVATE_IP="$(ibmcloud is instance "$HARBOR_VSI_ID" --output json 2>/dev/null | jq -r '.primary_network_interface.primary_ip.address // empty')"
+done
+[[ -z "$HARBOR_PRIVATE_IP" || "$HARBOR_PRIVATE_IP" == "0.0.0.0" ]] && die "Harbor VSI primary IP never bound (still 0.0.0.0) — cannot address the mirror"
 echo "$HARBOR_PRIVATE_IP" > "$STATE_DIR/harbor_private_ip"
 HARBOR_VNI="$(echo "$VSI_JSON" | jq -r '.primary_network_attachment.virtual_network_interface.id')"
 run ibmcloud is virtual-network-interface-floating-ip-add "$HARBOR_VNI" "$HARBOR_FIP_ID" >/dev/null
