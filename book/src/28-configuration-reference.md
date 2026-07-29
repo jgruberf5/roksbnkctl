@@ -20,10 +20,10 @@ The file is hand-editable; YAML is parsed with [`gopkg.in/yaml.v3`](https://pkg.
 ## Top-level structure
 
 ```yaml
-prefix:          # optional (since v1.8.0); workspace name-prefix base
+prefix:          # optional; workspace name-prefix base
 ibmcloud:        # required
 cluster:         # required
-resources:       # optional (since v1.8.0); per-resource create/existing toggles
+resources:       # optional; per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
@@ -97,7 +97,7 @@ resources:
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
-  client_region:     ca-tor               # since v1.9.0; testing-client region
+  client_region:     ca-tor               # testing-client region
   testing_jumphost_profile: ""            # optional; pin a profile for ALL jumphosts
   testing_min_vcpu_count:   4             # optional; jumphost auto-select floor
   testing_min_memory_gb:    8             # optional; jumphost auto-select floor
@@ -148,7 +148,6 @@ bnk:
 | `cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large` | Sizing for the deployed CNE Instance. Renders into the upstream HCL `cneinstance_deployment_size` variable. |
 | `far_repo_url` | string | `repo.f5.com` | URL of a Docker-compatible image registry | The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror. |
 | `manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | a published `f5-bigip-k8s-manifest` chart version | Pins the FLO + CIS versions transitively (both are extracted from the manifest chart). |
-| `cr_mode` | string | (empty ⇒ `kubectl`) | `kubectl` \| `legacy_curl` | *(since Sprint 27)* Selects the BNK custom-resource install mechanism, rendered as the `bnk_cr_mode` tfvar. Empty/omitted or `kubectl` ⇒ the terraform-native path (`helm_release` + `kubernetes_*` + `alekc/kubectl` `kubectl_manifest` + `wait_for`); `legacy_curl` ⇒ the `null_resource`/`curl`/`time_sleep` baseline. The `--legacy-bnk` flag on `bnk up`/`bnk down` overrides this to `legacy_curl` for a single run. See [Chapter 10 §"The install-mode flag"](./10-deploying-bnk-trials.md#the-install-mode-flag-bnk_cr_mode). |
 | `flo_namespace` | string | `f5-bnk` | RFC 1123 namespace label | Namespace the F5 Lifecycle Operator installs into (`flo_namespace`). Set for multi-tenant clusters or to avoid a namespace collision. |
 | `flo_utils_namespace` | string | `f5-utils` | RFC 1123 namespace label | Namespace for the F5 utility components (`flo_utils_namespace`). |
 | `gslb_datacenter_name` | string | (empty) | any string | Optional CNEInstance GSLB datacenter name (`cneinstance_gslb_datacenter_name`). |
@@ -498,7 +497,6 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.subscription_jwt_file` | string | `subscription.jwt` | Object KEY the subscription JWT is read from in the COS bucket → `subscription_jwt_file`. |
 | `bnk.far_auth_local_file` | string | (empty) | Read the FAR auth tarball from this **local path** instead of COS. When set together with `subscription_jwt_local_file`, renders `use_cos_bucket = false` + injects the content directly (no bucket). Mutually required with the JWT local file. See [Local files instead of COS](./25-cos-supply-chain.md#local-files-instead-of-cos-no-bucket-needed). |
 | `bnk.subscription_jwt_local_file` | string | (empty) | Read the subscription JWT from this **local path** instead of COS (pairs with `far_auth_local_file`; both or neither). |
-| `bnk.cr_mode` | string | (empty ⇒ `kubectl`) | `kubectl` \| `legacy_curl` → `bnk_cr_mode`. See the `bnk:` block above. |
 | `bnk.flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace → `flo_namespace`. |
 | `bnk.flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace → `flo_utils_namespace`. |
 | `bnk.gslb_datacenter_name` | string | (empty) | Optional CNEInstance GSLB datacenter → `cneinstance_gslb_datacenter_name`. |

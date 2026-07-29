@@ -2,9 +2,9 @@
 
 A **workspace** is a per-environment bundle of config + state. The shape is modelled on `kubectl` contexts: you can have many of them, exactly one is "current" at a time, and a `-w` flag lets you address a specific one for a single command without flipping the pointer.
 
-This chapter covers the on-disk layout, the everyday `init` / `use` / `list` flow, the full `roksbnkctl workspaces` command tree, the `-w` / `--workspace` override, and how creating or deleting a workspace moves the "current" pointer for you (so the old parking-lot dance is no longer needed).
+This chapter covers the on-disk layout, the everyday `init` / `use` / `list` flow, the full `roksbnkctl workspaces` command tree, the `-w` / `--workspace` override, and how creating or deleting a workspace moves the "current" pointer for you.
 
-> **Since `v1.9.0`, workspace selection follows you automatically.** Creating a workspace (`init` or `ws new`) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no longer a phantom `default` fallback — with nothing selected, commands say so instead of guessing.
+> **Workspace selection follows you automatically.** Creating a workspace (`init` or `ws new`) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no phantom `default` fallback — with nothing selected, commands say so instead of guessing.
 
 ## The on-disk layout
 
@@ -42,7 +42,7 @@ Override the base directory with the `ROKSBNKCTL_HOME` env var. Test fixtures us
 
 ## `terraform.applied.tfvars` — what's deployed right now
 
-`v1.4.0` adds a per-phase snapshot of the effective Terraform var-file inputs that produced the workspace's current state. After every successful `terraform apply` — `roksbnkctl cluster up`, `roksbnkctl bnk up`, or the legacy single-shape `roksbnkctl up` — `roksbnkctl` writes a canonical-HCL summary of "what var-files said" to the phase's state directory. Re-create / audit / handoff workflows that previously needed `config.yaml` (or memory) now have a file-on-disk record of the inputs.
+`roksbnkctl` keeps a per-phase snapshot of the effective Terraform var-file inputs that produced the workspace's current state. After every successful `terraform apply` — `roksbnkctl cluster up` or `roksbnkctl bnk up` — `roksbnkctl` writes a canonical-HCL summary of "what var-files said" to the phase's state directory. Re-create / audit / handoff workflows get a file-on-disk record of the inputs rather than reconstructing them from `config.yaml` (or memory).
 
 ### Where it lives
 
@@ -153,7 +153,7 @@ This writes `~/.roksbnkctl/myws/config.yaml` directly — unknown fields are **r
 
 ### Raw terraform-variable overrides
 
-For the rare case where you need to override a raw terraform variable the `config.yaml` schema doesn't surface, drop a `terraform.tfvars.user` at the workspace root (`~/.roksbnkctl/<ws>/terraform.tfvars.user`, mode `0600`) — the lifecycle auto-layers it on every `up` / `plan` / `apply` / `down` for **both** phases — or pass `--var-file <path>` on a phase command (`cluster up`, `bnk up`, …) for a one-shot. The precedence chain is: rendered `terraform.tfvars` → `terraform.tfvars.user` → a phase command's `--var-file` flags → phase overrides. See [Chapter 13 — Terraform variables](./13-terraform-variables.md). (`init` itself no longer seeds from a tfvars file — `config.yaml` is the seed surface.)
+For the rare case where you need to override a raw terraform variable the `config.yaml` schema doesn't surface, drop a `terraform.tfvars.user` at the workspace root (`~/.roksbnkctl/<ws>/terraform.tfvars.user`, mode `0600`) — the lifecycle auto-layers it on every `up` / `plan` / `apply` / `down` for **both** phases — or pass `--var-file <path>` on a phase command (`cluster up`, `bnk up`, …) for a one-shot. The precedence chain is: rendered `terraform.tfvars` → `terraform.tfvars.user` → a phase command's `--var-file` flags → phase overrides. See [Chapter 13 — Terraform variables](./13-terraform-variables.md). (`init` seeds the workspace from `config.yaml` — that's the seed surface.)
 
 ## The full command tree
 
@@ -276,9 +276,9 @@ Use this when:
 
 The flag only affects the running command — the pointer in `~/.roksbnkctl/config.yaml` is unchanged. After the command exits, the next bare `roksbnkctl` reads the original pointer.
 
-## Deleting the workspace you're in (the parking-lot dance is retired)
+## Deleting the workspace you're in
 
-Earlier versions refused to delete the current workspace, so the end-to-end test used a **parking-lot pattern** — a throwaway workspace that existed only to hold the `current_workspace` pointer while you deleted the real one. That's no longer necessary: `ws delete` removes the current workspace directly and moves the pointer to another existing workspace (or clears it when none remain).
+`ws delete` removes the current workspace directly — there's no "switch first" step. It moves the pointer to another existing workspace, or clears it when none remain.
 
 ```bash
 # End-to-end test cleanup — just destroy and delete, in any order
@@ -314,7 +314,7 @@ Same for `-w`:
 roksbnkctl -w prod shell
 ```
 
-Useful when you want to run host `kubectl` / host `oc` / arbitrary tools with the workspace context loaded. The Sprint 2 internalised verbs (`roksbnkctl k get`, etc.) read the same context automatically — you don't need to be in a subshell to use them.
+Useful when you want to run host `kubectl` / host `oc` / arbitrary tools with the workspace context loaded. The internalised verbs (`roksbnkctl k get`, etc.) read the same context automatically — you don't need to be in a subshell to use them.
 
 ## Common workspace patterns
 

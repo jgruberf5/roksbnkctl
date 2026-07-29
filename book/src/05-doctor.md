@@ -2,11 +2,11 @@
 
 `roksbnkctl doctor` is the prereq + credentials report. It runs in under five seconds, exits non-zero on any hard error, and prints a tabular report that maps one-to-one to the runtime dependencies the rest of the tool reaches for.
 
-This chapter walks every check, explains what each row's "why we care" blurb means, covers the post-Sprint 2 changes that move kubectl and oc from "needed" to "informational", and describes the `--target` SSH probe added in Sprint 1.
+This chapter walks every check, explains what each row's "why we care" blurb means, covers why kubectl and oc are informational rather than required, and describes the `--target` SSH probe.
 
 ## What `doctor` checks
 
-A bare `roksbnkctl doctor` runs the **general** checks: tooling on `PATH`, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine post-Sprint 2 looks like this:
+A bare `roksbnkctl doctor` runs the **general** checks: tooling on `PATH`, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine looks like this:
 
 ```
 roksbnkctl doctor
@@ -47,7 +47,7 @@ Failure mode: `not on PATH`. Fix: install Terraform from [terraform.io](https://
 
 ### `helm` — required
 
-The second **hard-required** binary (doctor flags it required), added in v1.0.2. It is required in **both** BNK modes. In the legacy path (`--legacy-bnk` / `bnk_cr_mode = "legacy_curl"`) the bundled terraform modules (`cert_manager`, `flo`, `cne_instance`) use `null_resource` + `local-exec` provisioners that shell out to `helm upgrade --install` from inside terraform's apply phase. In the **default** terraform-native path the charts install via the `helm_release` provider (no shell-out), **but** FAR chart-version discovery (the `data.external.versions` lookup) still runs `helm registry login` + `helm pull` to read the FLO/CIS versions — so `helm` is needed there too. Without `helm` on `PATH`, the apply fails partway through the cluster lifecycle with:
+The second **hard-required** binary (doctor flags it required). It is needed because FAR chart-version discovery — the `data.external.versions` lookup — runs `helm registry login` + `helm pull` to read the FLO/CIS chart versions during `roksbnkctl up`. Without `helm` on `PATH`, the apply fails partway through the cluster lifecycle with:
 
 ```
 Error: local-exec provisioner error
@@ -72,7 +72,7 @@ brew install helm
 choco install kubernetes-helm
 ```
 
-The default BNK path now installs the `cert_manager` / `flo` / `cne_instance` charts via the `helm_release` terraform resource (which uses the `hashicorp/helm` provider's embedded Helm 3 runtime — no host `helm` is shelled out); only the legacy `--legacy-bnk` path still shells out to host `helm`. Doctor continues to flag `helm` required (so the legacy path and any older workspace stay supported); a future release that drops the legacy path can relax this check. See [Chapter 10 §"The terraform-native deployment model"](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model).
+The BNK charts (`cert_manager` / `flo` / `cne_instance`) install via the `helm_release` terraform resource, which uses the `hashicorp/helm` provider's embedded Helm 3 runtime — no host `helm` is shelled out for the chart installs themselves. Doctor still flags `helm` required because FAR chart-version discovery shells out to host `helm` (`helm registry login` + `helm pull`) to read the FLO/CIS versions. See [Chapter 10 §"The terraform-native deployment model"](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model).
 
 ### `iperf3` — informational
 
@@ -80,17 +80,15 @@ Used only by `roksbnkctl test throughput` in its host-iperf3 modes. After Sprint
 
 Failure mode: `not on PATH`. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.
 
-### `kubectl` — informational (Sprint 2 change)
+### `kubectl` — informational
 
-**Before Sprint 2:** `kubectl` was an optional warning when missing — useful for the `roksbnkctl kubectl` passthrough.
-
-**After Sprint 2:** `kubectl` is informational. The everyday verbs (`get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`) are now native Go via `client-go` and live under [`roksbnkctl k`](./24-day-2-ops.md). Missing host `kubectl` no longer disables the happy path; it only disables the `roksbnkctl kubectl <args...>` passthrough.
+`kubectl` is informational. The everyday verbs (`get`, `apply`, `describe`, `delete`, `logs`, `exec`, `port-forward`) are native Go via `client-go` and live under [`roksbnkctl k`](./24-day-2-ops.md). Missing host `kubectl` does not disable the happy path; it only disables the `roksbnkctl kubectl <args...>` passthrough.
 
 If `kubectl` is on `PATH`, the row is still `✓` and shows the version line. If it's missing, the row is informational, not a warning, and the detail explains where the equivalent functionality lives.
 
-### `oc` — informational (Sprint 2 change)
+### `oc` — informational
 
-Same story as `kubectl` — Sprint 2 internalises the OpenShift-relevant verbs (Phase 2.1 adds `Project`, `Route`, `ImageStream` to `roksbnkctl k get`). Host `oc` is preserved as an escape hatch; missing `oc` no longer warns.
+Same story as `kubectl` — the OpenShift-relevant verbs are internalised (`Project`, `Route`, and `ImageStream` are available via `roksbnkctl k get`). Host `oc` is preserved as an escape hatch; a missing `oc` is informational, not a warning.
 
 ### `ibmcloud` — optional
 
@@ -152,9 +150,9 @@ The chapter readers most often land on. Each row maps a real-world symptom to it
 
 If a fix isn't here, [Chapter 26 — Troubleshooting](./26-troubleshooting.md) covers the longer tail.
 
-## The `--target <name>` SSH check (Sprint 1)
+## The `--target <name>` SSH check
 
-Sprint 1's `--on jumphost` flag introduced an optional second mode for `doctor`: probe an SSH target before you try to use it.
+The `--on jumphost` flag adds an optional second mode for `doctor`: probe an SSH target before you try to use it.
 
 ```bash
 roksbnkctl doctor --target jumphost
@@ -190,7 +188,7 @@ Pass `--target all` to probe every target listed in the workspace's `targets:` b
 
 This is the contract `scripts/e2e-test.sh` and the `Makefile` rely on: a script that runs `roksbnkctl doctor && roksbnkctl up --auto` will only proceed past `doctor` if the environment is genuinely ready.
 
-The "warnings don't fail" rule is deliberate. After Sprint 2, an `iperf3 not on PATH` warning is informational — the everyday `up` / `test connectivity` flow doesn't need it. Forcing exit-1 on every warning would be too aggressive for the common case.
+The "warnings don't fail" rule is deliberate. An `iperf3 not on PATH` warning is informational — the everyday `up` / `test connectivity` flow doesn't need it. Forcing exit-1 on every warning would be too aggressive for the common case.
 
 If you want to gate scripts strictly (e.g. CI workflows that must have iperf3 installed because they run the throughput suite), parse the output rather than relying on the exit code:
 

@@ -32,7 +32,7 @@ Direct hand-editing is supported (the file is plain YAML) but discouraged for fi
 ## Top-level structure
 
 ```yaml
-prefix: acme-eu  # base for every account-scoped resource name (since v1.8.0)
+prefix: acme-eu  # base for every account-scoped resource name
 
 ibmcloud:        # IBM Cloud account + auth
   region: ca-tor
@@ -46,7 +46,7 @@ cluster:         # ROKS cluster identity
   openshift_version: "4.18"
   workers_per_zone: 2
 
-resources:       # per-resource create/adopt toggles (since v1.8.0)
+resources:       # per-resource create/adopt toggles
   transit_gateway:   { create: true }
   registry_cos:      { create: true }
   cert_manager:      { create: true }
@@ -87,7 +87,7 @@ cos:             # optional COS supply-chain config
   bucket: bnk-artifacts
 ```
 
-Every block except `ibmcloud:`, `cluster:`, and `tf_source:` is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL's own default for terraform variables. The `prefix:` field and `resources:` block (both since `v1.8.0`) are also optional — omit them and the workspace renders the legacy sparse `terraform.tfvars` (upstream module default names), which is exactly how pre-`v1.8.0` configs keep working.
+Every block except `ibmcloud:`, `cluster:`, and `tf_source:` is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL's own default for terraform variables. The `prefix:` field and `resources:` block are also optional — omit them and the workspace renders a sparse `terraform.tfvars` that falls through to the upstream module default names.
 
 ## `prefix:`
 
@@ -99,7 +99,7 @@ prefix: acme-eu
 |---|---|---|---|
 | `prefix` | string | empty (legacy sparse render) | The base for every account-scoped IBM Cloud resource name (cluster, VPCs, Transit Gateway, COS, jumphosts). Must be a lowercase label: start with a letter, `[a-z0-9-]`, no trailing hyphen, **≤ 35 chars**. |
 
-Since `v1.8.0`, the `init` interview asks for a workspace **prefix** and derives every account-scoped resource name from it — `acme-eu` becomes cluster `acme-eu`, VPC `acme-eu-cluster-vpc`, TGW `acme-eu-tgw`, COS `acme-eu-registry-cos`, jumphosts `acme-eu-jh-tgw` / `acme-eu-jh-<zone>`. This stops two workspaces in the same IBM Cloud account from colliding on the old shared `tf-*` default names.
+The `init` interview asks for a workspace **prefix** and derives every account-scoped resource name from it — `acme-eu` becomes cluster `acme-eu`, VPC `acme-eu-cluster-vpc`, TGW `acme-eu-tgw`, COS `acme-eu-registry-cos`, jumphosts `acme-eu-jh-tgw` / `acme-eu-jh-<zone>`. This stops two workspaces in the same IBM Cloud account from colliding on the old shared `tf-*` default names.
 
 The 35-char cap is the ROKS cluster-name limit (the tightest of all the resource types). `roksbnkctl` validates the prefix — and every name it derives — at `init` time and re-prompts on overflow; there is no silent truncation. An **empty** `prefix` keeps the legacy sparse render (no names emitted), so old configs are unaffected. The full derivation table, the per-resource length/charset limits, the source citations, and the override path live in [Chapter 13 §"Resource naming & collision avoidance"](./13-terraform-variables.md#resource-naming--collision-avoidance).
 
@@ -160,10 +160,10 @@ resources:
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: shared-client-vpc }
-  client_region:     ca-tor               # since v1.9.0; testing-client region (plain string)
+  client_region:     ca-tor               # testing-client region (plain string)
 ```
 
-*(since `v1.8.0`)* The `init` interview's create/adopt answers, one `{create, existing}` pair per resource. `create: true` provisions a new, prefix-named resource; `create: false` declines it, and when a still-enabled resource depends on the declined one, `existing:` names the pre-existing resource to consume instead.
+The `init` interview's create/adopt answers, one `{create, existing}` pair per resource. `create: true` provisions a new, prefix-named resource; `create: false` declines it, and when a still-enabled resource depends on the declined one, `existing:` names the pre-existing resource to consume instead.
 
 | Sub-block | `create` default | Renders into | Asks for `existing` when… |
 |---|---|---|---|
@@ -175,9 +175,9 @@ resources:
 | `cluster_jumphosts` | `false` | `testing_create_cluster_jumphosts` (+ `testing_cluster_jumphost_name_prefix`) | — |
 | `client_vpc` | `false` | `testing_create_client_vpc` (+ `testing_client_vpc_name`) | TGW jumphost enabled but you decline creating a new client VPC for it |
 
-One extra key, `client_region` *(since `v1.9.0`)*, is a plain **string** rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when `init` asks where to install the test client. It renders into `testing_client_vpc_region` (omitted → the terraform default applies) and seeds the regions `roksbnkctl cleanup` scans.
+One extra key, `client_region`, is a plain **string** rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when `init` asks where to install the test client. It renders into `testing_client_vpc_region` (omitted → the terraform default applies) and seeds the regions `roksbnkctl cleanup` scans.
 
-The block is **optional and additive** — omit it (any pre-`v1.8.0` config) and the legacy sparse render applies; a fresh `init` writes it in full. The deep reference, including which terraform `create_*`/`*_name` variables each toggle renders, is [Chapter 28 §"`resources:` block"](./28-configuration-reference.md#resources-block).
+The block is **optional** — omit it and the sparse render (upstream module default names) applies; a fresh `init` writes it in full. The deep reference, including which terraform `create_*`/`*_name` variables each toggle renders, is [Chapter 28 §"`resources:` block"](./28-configuration-reference.md#resources-block).
 
 ## `bnk:`
 
@@ -365,7 +365,7 @@ The block is optional — if you've already populated COS by hand or via the ups
 | `bnk.*` | Field is omitted from the generated `terraform.tfvars` and the upstream HCL default applies. |
 | `tf_source` | Treated as `type: embedded` (legacy default). |
 | `targets.*` | Block absent ⇒ `roksbnkctl --on jumphost` errors with "no target named jumphost"; auto-populated by `up`. |
-| `exec.*` | Per-tool defaults at v1.0: `ibmcloud`→`local`, `terraform`→`local`, `iperf3`→`k8s`, DNS probe→`local`. Override per-tool via this block, or per-invocation via `--backend`. |
+| `exec.*` | Per-tool defaults: `ibmcloud`→`local`, `terraform`→`local`, `iperf3`→`k8s`, DNS probe→`local`. Override per-tool via this block, or per-invocation via `--backend`. |
 | `cos.*` | No pre-flight uploads; the COS instance/bucket are read from the upstream HCL's tfvars instead. |
 
 The general rule: **if you don't write it in `config.yaml`, `roksbnkctl` doesn't write it into `terraform.tfvars`**, and the upstream HCL's `default = ...` clause takes over. The full upstream defaults are listed in [Chapter 29](./29-terraform-variable-reference.md).
@@ -416,7 +416,7 @@ If a hand edit breaks the file, every command that reads the workspace fails fas
 
 End-to-end Part IV scenario: brand-new laptop, no `roksbnkctl` workspaces yet, an IBM Cloud API key in your password manager. Goal: a usable workspace with the key in the OS keychain, the right region + resource group resolved, and `terraform.tfvars` ready to drive the HCL.
 
-The transcript below is captured against the shipped `v1.8.0` binary. Prompts are written to **stderr**, indented two spaces, with the label left-padded; the `[default]` (or `[Y/n]` / `[y/N]`) in brackets is what you get on a bare Enter. Here the operator types `acme-eu` for the prefix, keeps the cluster + COS + cert-manager + BNK + TGW-jumphost defaults, declines the Transit Gateway (adopting `shared-corp-tgw`), declines a new client VPC for the jumphost (adopting `shared-client-vpc`), and declines per-zone cluster jumphosts.
+The transcript below is captured against the shipped binary. Prompts are written to **stderr**, indented two spaces, with the label left-padded; the `[default]` (or `[Y/n]` / `[y/N]`) in brackets is what you get on a bare Enter. Here the operator types `acme-eu` for the prefix, keeps the cluster + COS + cert-manager + BNK + TGW-jumphost defaults, declines the Transit Gateway (adopting `shared-corp-tgw`), declines a new client VPC for the jumphost (adopting `shared-client-vpc`), and declines per-zone cluster jumphosts.
 
 ```text
 $ roksbnkctl init -w dev

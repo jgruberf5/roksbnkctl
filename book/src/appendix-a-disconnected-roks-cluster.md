@@ -368,7 +368,26 @@ $ roksbnkctl -w bnk-dc cluster up            # ~45–55 min; TGW connect runs at
 $ roksbnkctl -w bnk-dc tgw status
 ```
 
-> **⚠ Confirmed — `registry_cos: { create: true }` is mandatory.** ROKS-on-VPC refuses to
+### Alternative — adopt a cluster you already have
+
+Often the ROKS cluster already exists (this is what the shipped demo does). Set
+`cluster: { create: false, name: <existing-cluster> }` and `registry_cos: { create: false }` in
+`cluster.yaml`, then **register** the cluster (records its identity — VPC, endpoints, registry
+COS — into `cluster-outputs.json`, which is what activates `bnk up`'s existing-cluster path) and
+pull its admin kubeconfig for `kubectl`:
+
+```console
+$ roksbnkctl -w bnk-dc init --config-file cluster.yaml
+$ roksbnkctl -w bnk-dc cluster register <existing-cluster>   # writes cluster-outputs.json
+$ roksbnkctl -w bnk-dc kubeconfig --download                 # ~/.kube/config for kubectl
+$ roksbnkctl -w bnk-dc tgw connect my-global-tgw             # if its VPC isn't on the TGW yet (idempotent)
+```
+
+Ensure the existing cluster's VPC is attached to the same global Transit Gateway and its address
+prefixes don't overlap the services VPC (so Harbor's private IP is routable from the nodes).
+Everything from Step 5 on is identical.
+
+> **⚠ Confirmed — `registry_cos: { create: true }` is mandatory** *when creating* the cluster. ROKS-on-VPC refuses to
 > provision without a COS instance backing its **internal** image registry (`E7278`). This is
 > IBM Cloud COS reached over the private service-endpoint range — needed even air-gapped.
 > `create: false` fails the cluster create outright.
@@ -422,13 +441,11 @@ $ export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt
 $ roksbnkctl -w bnk-dc bnk up            # converges in one pass
 ```
 
-> **One pass (since v1.32.0).** The `external-vlan`/`internal-vlan` (`F5SPKVlan`) CRs are admitted
+> **One pass.** The `external-vlan`/`internal-vlan` (`F5SPKVlan`) CRs are admitted
 > by the `f5validate` webhook, whose TLS server comes up a few seconds *after*
-> `CNEControllerAvailable=True` — a first apply used to lose that race
-> (`http: server gave HTTP response to HTTPS client`) and need a second pass. `bnk up` now gates
-> the VLAN applies on a **dry-run admission probe** of `f5-spk-vlans` that retries until the
-> webhook accepts, so the CRs land the first time. (The License CR already had its own
-> admission-retry.) Older releases still need the second `bnk up`.
+> `CNEControllerAvailable=True`. `bnk up` gates the VLAN applies on a **dry-run
+> admission probe** of `f5-spk-vlans` that retries until the webhook accepts, so
+> the CRs land the first time. (The License CR has its own admission-retry.)
 
 Verify — every pull private, nothing off the cluster to the Internet:
 

@@ -253,12 +253,7 @@ in `state-testing/` instead. Three cases:
 1. **Fresh / empty workspaces** — nothing to migrate. The first `up` lays
    out all three state directories cleanly.
 
-2. **Legacy single-state (v1.0.x) workspaces** — **left alone**. The cluster
-   + BNK + jumphosts stay in one `state/`; `up` / `down` keep operating
-   monolithically; the phase verbs (`cluster`, `bnk`, **and the new
-   `testing`**) all refuse and point you back at the unscoped `up`/`down`.
-
-3. **Two-phase split workspaces (the common case)** — the jumphosts need to
+2. **Two-phase split workspaces (the common case)** — the jumphosts need to
    move out of `state/` into `state-testing/` **without destroying the live
    jumphosts**. The recommended path preserves them:
 
