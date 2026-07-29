@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -79,6 +80,7 @@ var (
 	flagRegistryTarget        string
 	flagRegistryPasswordStdin bool
 	flagRegistryForce         bool
+	flagRegistryCAFile        string
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -166,6 +168,7 @@ func init() {
 		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
+	registryReplicateCmd.Flags().StringVar(&flagRegistryCAFile, "registry-ca", "", "PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)")
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
@@ -811,6 +814,25 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		ImageHost:       target.ImageHostPath(),
 		ManifestVersion: bom.ManifestVersion,
 		Artifacts:       mirrored,
+	}
+	// Air-gap node trust: record the bare pull host and the CA it serves so
+	// `bnk up` installs that CA on every node before pulling. --registry-ca
+	// wins; otherwise auto-capture from the host (best-effort — a public or
+	// unreachable host records no CA and the node-trust step no-ops).
+	rec.RegistryHost = registryHostFromPath(target.ImageHostPath())
+	if flagRegistryCAFile != "" {
+		pemBytes, rerr := os.ReadFile(flagRegistryCAFile)
+		if rerr != nil {
+			return fmt.Errorf("reading --registry-ca %s: %w", flagRegistryCAFile, rerr)
+		}
+		rec.CACert = strings.TrimSpace(string(pemBytes))
+	} else if rec.RegistryHost != "" {
+		if caPEM, cerr := captureRegistryCA(rec.RegistryHost); cerr != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ could not capture the mirror CA from %s (%v); if this is a private registry, re-run with --registry-ca <file> so nodes can trust it\n", rec.RegistryHost, cerr)
+		} else if caPEM != "" {
+			rec.CACert = caPEM
+			fmt.Fprintf(os.Stderr, "  ✓ captured mirror CA from %s (nodes will trust it before pulling)\n", rec.RegistryHost)
+		}
 	}
 	if err := config.WriteRegistryMirror(name, rec); err != nil {
 		return fmt.Errorf("recording mirror: %w", err)
