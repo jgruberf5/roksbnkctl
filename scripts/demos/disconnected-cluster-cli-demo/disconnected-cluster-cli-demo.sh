@@ -187,8 +187,20 @@ PGW_ID="$(run ibmcloud is public-gateway-create "${SVC_PREFIX}-pgw" "$SVC_VPC_ID
 run ibmcloud is subnet-update "$SUBNET_ID" --public-gateway-id "$PGW_ID" >/dev/null
 SG_ID="$(ibmcloud is vpc "$SVC_VPC_ID" --output json | jq -r .default_security_group.id)"
 for p in 22 443; do run ibmcloud is security-group-rule-add "$SG_ID" inbound tcp --port-min $p --port-max $p >/dev/null; done
-run ibmcloud tg connection-create "$TGW_ID" --name "${SVC_PREFIX}-conn" --network-type vpc --network-id "$SVC_VPC_CRN" >/dev/null
-ok "services VPC $SVC_VPC_ID (+ subnet, public gateway, SG) attached to $TGW_NAME"
+# Attach the services VPC to the TGW — the ONLY path from the cluster's worker nodes to
+# Harbor. If this silently fails (or never reaches "attached"), nodes can't pull from the
+# mirror and bnk up dies much later with a baffling `cert_manager: context deadline
+# exceeded` (only nodes with a cached image survive). So verify it actually attaches.
+SVC_CONN_ID="$(run ibmcloud tg connection-create "$TGW_ID" --name "${SVC_PREFIX}-conn" --network-type vpc --network-id "$SVC_VPC_CRN" --output json | jq -r '.id // empty')"
+[[ -n "$SVC_CONN_ID" ]] || die "services-VPC TGW connection was not created (name conflict with a not-yet-deleted ${SVC_PREFIX}-conn?)"
+if [[ "$DRY_RUN" != "1" ]]; then
+  for _ in $(seq 1 30); do
+    [[ "$(ibmcloud tg connection "$TGW_ID" "$SVC_CONN_ID" --output json 2>/dev/null | jq -r '.status // empty')" == "attached" ]] && break
+    sleep 6
+  done
+  [[ "$(ibmcloud tg connection "$TGW_ID" "$SVC_CONN_ID" --output json 2>/dev/null | jq -r '.status')" == "attached" ]] || die "services-VPC TGW connection never reached 'attached' — nodes could not reach Harbor"
+fi
+ok "services VPC $SVC_VPC_ID attached to $TGW_NAME (connection $SVC_CONN_ID, verified attached)"
 
 run ibmcloud is floating-ip-reserve "${SVC_PREFIX}-harbor-fip" --zone "$SVC_ZONE" >/dev/null
 HARBOR_FIP="$(ibmcloud is floating-ips --output json | jq -r --arg n "${SVC_PREFIX}-harbor-fip" '.[]|select(.name==$n)|.address' | head -1)"
@@ -334,6 +346,15 @@ onvsi_run "roksbnkctl -w ${FLP_WS} init --config-file /home/ubuntu/${FLP_WS}.yam
 begin_long
 onvsi_run "roksbnkctl -w ${FLP_WS} flp up --auto"
 end_long
+# The FLP listener starts accepting connections a little AFTER `flp up` returns, so the
+# very first `flp status` probes can print transient "unable to connect" lines before it
+# goes green. Poll silently until the listener is serving, so the SHOWN status is clean.
+say "letting the FLP listener finish coming up (so the status below reads clean)…"
+[[ "$DRY_RUN" == "1" ]] || for _ in $(seq 1 30); do
+  st="$(onvsi "roksbnkctl -w ${FLP_WS} flp status 2>&1")"
+  if echo "$st" | grep -qi "listener" && ! echo "$st" | grep -qiE "unable to connect|connection refused|dial tcp|HTTP 000"; then break; fi
+  sleep 10
+done
 onvsi_run "roksbnkctl -w ${FLP_WS} flp status"
 FLP_URL="$(onvsi "roksbnkctl -w ${FLP_WS} flp output 2>/dev/null | awk '/flp_external_endpoint:/{print \$2}'" | tr -d '\r' | head -1)"
 FLP_CA="$(onvsi "roksbnkctl -w ${FLP_WS} flp output 2>/dev/null | awk '/flp_root_ca:/{print \$2}'" | tr -d '\r' | head -1)"
