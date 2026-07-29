@@ -161,8 +161,8 @@ ssh ubuntu@"$HARBOR_FIP"     # ← run Steps 2–5 from this shell, with:
 #   export IBMCLOUD_API_KEY=…   (the VSI needs it for cluster config + tfx COS-less flows)
 ```
 
-Create the `bnk-mirror` project in Harbor (`curl -sk -u admin:… -X POST
-https://$HARBOR_PRIVATE_IP/api/v2.0/projects -d '{"project_name":"bnk-mirror"}'`).
+Create the `mirror` project in Harbor (`curl -sk -u admin:… -X POST
+https://$HARBOR_PRIVATE_IP/api/v2.0/projects -d '{"project_name":"mirror"}'`).
 
 ## Step 2 — Mirror FAR → Harbor (on the VSI, over the private IP)
 
@@ -179,7 +179,7 @@ FAR_SA_B64=$(cat /root/far-sa.json)
 ```yaml
 # mirror.yaml  (on the VSI)
 ibmcloud: { region: us-east, resource_group: default }
-prefix: bnk-mirror
+prefix: mirror
 tf_source: { type: embedded }
 cluster: { create: false, name: none }
 bnk:
@@ -189,7 +189,7 @@ bnk:
 registry:
   target: generic
   generic_host: <HARBOR_PRIVATE_IP>          # local to the VSI, private to the cluster
-  generic_repo_prefix: bnk-mirror
+  generic_repo_prefix: mirror
   generic_username: admin
   generic_password_b64: <base64 of the Harbor admin password>
   source_service_account_b64: <FAR_SA_B64>
@@ -197,9 +197,10 @@ registry:
 
 ```console
 # on the VSI:
-$ roksbnkctl -w bnk-mirror init --config-file mirror.yaml
-$ roksbnkctl -w bnk-mirror registry replicate    # FAR → Harbor (89 artifacts)
-$ roksbnkctl -w bnk-mirror registry verify
+$ roksbnkctl -w mirror init --config-file mirror.yaml
+$ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
+$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry verify
 ```
 
 ## Step 3 — Standalone FLP licensing appliance (on the VSI)
@@ -236,7 +237,7 @@ The minimal standalone `flp.yaml`:
 ```yaml
 # flp.yaml  (on the VSI)
 ibmcloud: { region: us-east, resource_group: default }
-prefix: bnk-flp
+prefix: flp
 tf_source: { type: embedded }
 cluster: { create: false, name: none }          # no cluster — the flp phase only
 bnk:
@@ -280,10 +281,10 @@ VSI's ingress is scoped per purpose, each with a sane default so you rarely set 
 Then deploy — only the flp phase runs (no cluster, BNK, or testing):
 
 ```console
-$ roksbnkctl -w bnk-flp init --config-file flp.yaml
-$ roksbnkctl -w bnk-flp flp up
-$ roksbnkctl -w bnk-flp flp output    # flp_external_endpoint (https://<private-ip>:8443) + flp_root_ca
-$ roksbnkctl -w bnk-flp flp status    # health of every dependent service + the web-UI link
+$ roksbnkctl -w flp init --config-file flp.yaml
+$ roksbnkctl -w flp flp up --auto
+$ roksbnkctl -w flp flp output    # flp_external_endpoint (https://<private-ip>:8443) + flp_root_ca
+$ roksbnkctl -w flp flp status    # health of every dependent service + the web-UI link
 ```
 
 Copy the `flp_external_endpoint` and `flp_root_ca` from `flp output` into the cluster's
@@ -295,7 +296,7 @@ Copy the `flp_external_endpoint` and `flp_root_ca` from `flp output` into the cl
 derives the URL from `flp-outputs.json`, preferring the operator floating IP when one is attached:
 
 ```console
-$ roksbnkctl -w bnk-flp flp status
+$ roksbnkctl -w flp flp status
 F5 License Proxy  (deployment: vsi, checked …)
   web UI: http://169.63.101.72/
   ● listener   https://localhost:8443/  (HTTP 400)
@@ -329,11 +330,11 @@ private IP (over the TGW), and `bnk.flp.external` at the FLP from Step 3:
 ```yaml
 # cluster.yaml  (on the VSI)
 ibmcloud: { region: us-south, resource_group: default }
-prefix: bnk-dc
+prefix: bnk
 tf_source: { type: embedded }
 cluster:
   create: true
-  name: bnk-dc-roks
+  name: bnk-roks
   openshift_version: "4.18"
   workers_per_zone: 2
   public_gateway: false           # air-gapped — no worker Internet egress
@@ -348,7 +349,7 @@ resources:
 registry:
   target: generic
   generic_host: <HARBOR_PRIVATE_IP>   # over the TGW
-  generic_repo_prefix: bnk-mirror
+  generic_repo_prefix: mirror
   generic_username: admin
   generic_password_b64: <base64 of the Harbor admin password>
 bnk:
@@ -362,83 +363,66 @@ bnk:
       root_ca_b64: <flp_root_ca from Step 3>
 ```
 
-```console
-$ roksbnkctl -w bnk-dc init --config-file cluster.yaml
-$ roksbnkctl -w bnk-dc cluster up            # ~45–55 min; TGW connect runs at the end
-$ roksbnkctl -w bnk-dc tgw status
-```
-
-### Alternative — adopt a cluster you already have
-
-Often the ROKS cluster already exists (this is what the shipped demo does). Set
+The demo **adopts an existing cluster** (the common case). Set
 `cluster: { create: false, name: <existing-cluster> }` and `registry_cos: { create: false }` in
-`cluster.yaml`, then **register** the cluster (records its identity — VPC, endpoints, registry
-COS — into `cluster-outputs.json`, which is what activates `bnk up`'s existing-cluster path) and
-pull its admin kubeconfig for `kubectl`:
+`cluster.yaml`, then **register** it (records its identity — VPC, endpoints, registry COS — into
+`cluster-outputs.json`, which activates `bnk up`'s existing-cluster path) and pull its admin
+kubeconfig for `kubectl`:
 
 ```console
-$ roksbnkctl -w bnk-dc init --config-file cluster.yaml
-$ roksbnkctl -w bnk-dc cluster register <existing-cluster>   # writes cluster-outputs.json
-$ roksbnkctl -w bnk-dc kubeconfig --download                 # ~/.kube/config for kubectl
-$ roksbnkctl -w bnk-dc tgw connect my-global-tgw             # if its VPC isn't on the TGW yet (idempotent)
+$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster register <existing-cluster>   # writes cluster-outputs.json
+$ roksbnkctl -w bnk kubeconfig --download                 # ~/.kube/config for kubectl
 ```
 
 Ensure the existing cluster's VPC is attached to the same global Transit Gateway and its address
-prefixes don't overlap the services VPC (so Harbor's private IP is routable from the nodes).
-Everything from Step 5 on is identical.
+prefixes don't overlap the services VPC (so Harbor's private IP is routable from the nodes). If its
+VPC isn't on the TGW yet, attach it (idempotent): `roksbnkctl -w bnk tgw connect <your-global-tgw>`.
+
+### Alternative — create the cluster here
+
+To build the cluster instead of adopting one, set `cluster: { create: true }` +
+`registry_cos: { create: true }` and:
+
+```console
+$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster up            # ~45–55 min; TGW connect runs at the end
+$ roksbnkctl -w bnk tgw status
+```
 
 > **⚠ Confirmed — `registry_cos: { create: true }` is mandatory** *when creating* the cluster. ROKS-on-VPC refuses to
 > provision without a COS instance backing its **internal** image registry (`E7278`). This is
 > IBM Cloud COS reached over the private service-endpoint range — needed even air-gapped.
 > `create: false` fails the cluster create outright.
 
-### Trust Harbor's cert on the cluster nodes (ROKS-specific)
+### Node CA trust is automatic
 
-Before `bnk up`, CRI-O on each node must trust Harbor's self-signed cert or every pull fails
-`x509`. **The usual OpenShift mechanism does not work on ROKS** —
-`image.config.openshift.io/cluster` is HostedCluster-managed and a ValidatingAdmissionPolicy
-denies edits. Instead a privileged DaemonSet drops the CA into each node's
-`/etc/containers/certs.d/<HARBOR_PRIVATE_IP>/ca.crt` (CRI-O reads it per-registry; no
-MachineConfig, no reboot). Because Harbor is addressed by an **IP**, the `certs.d` key is that
-IP and no node `/etc/hosts` entry is needed. Apply it from the VSI:
-
-```console
-$ roksbnkctl -w bnk-dc k apply -f harbor-ca-daemonset.yaml   # full manifest in the demo script
-$ kubectl get pods -n harbor-ca-trust                        # one Running per node
-```
-
-> **⚠ Confirmed — the installer's own image must be node-resident.** A no-egress cluster can't
-> pull `ubi-minimal` (or any public image) for the installer pod, and it can't pull from Harbor
-> yet (that's the very trust you're bootstrapping) — a chicken-and-egg. Point the DaemonSet at
-> an image **already cached on every node** with `imagePullPolicy: IfNotPresent` — e.g. the
-> `openshift-dns/node-resolver` image (`kubectl get ds -n openshift-dns node-resolver -o
-> jsonpath='{.spec.template.spec.containers[0].image}'`), which is the OCP tools image (has
-> `sh`/`cp`) and runs on every node. It then runs from cache with no pull. (With
-> `public_gateway: true` you can just use a public image; this only bites the true air-gap.)
-
-Verify a pull from Harbor's private IP over the TGW actually works before `bnk up`:
-
-```console
-$ kubectl -n harbor-ca-trust run t --image=<HARBOR_PRIVATE_IP>/bnk-mirror/images/vault-init:1.29.0-0.10.28 \
-    --restart=Never --command -- sh -c 'echo ok'   # Succeeded = CA trust + TGW reach + auth all OK
-```
+Before pulling, CRI-O on each node must trust Harbor's self-signed cert or every pull fails `x509`.
+**The usual OpenShift mechanism does not work on ROKS** — `image.config.openshift.io/cluster` is
+HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. `bnk up` handles it: it installs
+the CA — captured into the mirror record by `registry replicate --registry-ca` (Step 2) — into each
+node's `/etc/containers/certs.d/<HARBOR_PRIVATE_IP>/ca.crt` via a privileged DaemonSet (one pod per
+node, a **node-cached** image so it needs no egress, self-refreshing if the CA changes on a
+cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
+hand. Because Harbor is addressed by an **IP**, the `certs.d` key is that IP — no node `/etc/hosts`
+entry needed.
 
 ## Step 5 — Install BNK, air-gapped (on the VSI)
 
 `bnk up` requires a populated `registry-mirror.json` in **this** (cluster) workspace. You
-replicated in the `bnk-mirror` workspace (Step 2); since both live under the same
+replicated in the `mirror` workspace (Step 2); since both live under the same
 `~/.roksbnkctl` on the VSI, that's a one-line local copy — no cross-host transfer (or replicate
-directly in the `bnk-dc` workspace to skip it):
+directly in the `bnk` workspace to skip it):
 
 ```bash
-cp ~/.roksbnkctl/bnk-mirror/registry-mirror.json ~/.roksbnkctl/bnk-dc/registry-mirror.json
+cp ~/.roksbnkctl/mirror/registry-mirror.json ~/.roksbnkctl/bnk/registry-mirror.json
 ```
 
 Keep `SSL_CERT_FILE` pointed at Harbor's cert (the chart pulls run host-side, i.e. on the VSI):
 
 ```console
 $ export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt
-$ roksbnkctl -w bnk-dc bnk up            # converges in one pass
+$ roksbnkctl -w bnk bnk up --auto     # installs node CA trust, pulls from Harbor, licenses via the FLP — one pass
 ```
 
 > **One pass.** The `external-vlan`/`internal-vlan` (`F5SPKVlan`) CRs are admitted
@@ -459,17 +443,159 @@ $ kubectl get cneinstance -n f5-bnk -o \
 ## Teardown
 
 ```console
-$ roksbnkctl -w bnk-dc  down --auto     # cluster + BNK (+ detaches its TGW connection)
-$ roksbnkctl -w bnk-flp down --auto     # the standalone FLP VSI
+$ roksbnkctl -w bnk  down --auto     # cluster + BNK (+ detaches its TGW connection)
+$ roksbnkctl -w flp down --auto     # the standalone FLP VSI
 $ ibmcloud is instance-delete bnk-svc-harbor --force
 $ ibmcloud is floating-ip-release "$FIPID" --force
 $ ibmcloud tg connection-delete "$TGW_ID" <services-conn-id>
 $ ibmcloud is vpc-delete "$SVC_VPC" --force   # after its subnet / public gateway / floating IP are gone
 ```
 
-## The automated version
+## The scripted walkthrough (CLI)
 
-Everything above is scripted, interactively and phase-by-phase, in
-`disconnected_deployment_demo.sh` (shipped alongside the project resources). It asks only for
-`IBMCLOUD_API_KEY` and an ENTER between phases, and drives the exact commands in this appendix —
-including the full Harbor-CA DaemonSet manifest.
+Everything above is scripted, phase-by-phase, in `disconnected_deployment_demo.sh` (shipped
+alongside the project resources). It asks only for `IBMCLOUD_API_KEY`, auto-advances between phases,
+and drives the exact commands in this appendix. Node CA trust is handled by `bnk up` itself — it
+installs Harbor's CA on every node before pulling (see [Step 5](#step-5--install-bnk-air-gapped-on-the-vsi)),
+so there is no manual DaemonSet to apply.
+
+## The same flow as CI — the container runner
+
+The CLI walkthrough above is the *narrative*; this is the same five steps as a pipeline, using the
+all-in-one **runner image** (`roksbnkctl` plus every tool on `PATH`). The one shape change from the CLI
+walkthrough: where the operator VSI read the FAR auth archive and subscription JWT from **local files**,
+CI reads them from the **registry COS bucket** by their object keys — the standard supply-chain store
+(upload them once; see [Chapter 25 — the COS supply chain](./25-cos-supply-chain.md)). So there are no
+secret files to mount: only the manifest version and where the mirror is need a small `config.yaml`, and
+the secrets + FLP handoff late-bind from the environment with `--override-from-env`. For the general CI
+contract see [Chapter 7b — GitHub Actions](./07b-github-actions-ci.md) and the env map in
+[Unattended setup](./07a-unattended-setup.md#-override-from-env); this section only adds what is specific
+to the disconnected, standalone-VSI topology.
+
+> **One constraint the connected flows don't have.** The runner must sit where it can reach Harbor's
+> **private IP** and the cluster **over the TGW** — a GitHub-*hosted* runner can't. Run it on a
+> **self-hosted runner inside the services VPC**, or invoke the container **on the operator (Harbor)
+> VSI** itself. Harbor and the FLP VSI are standing services infrastructure ([Steps 1](#step-1--services-vpc--harbor-the-operator-host-attached-to-the-tgw)
+> and [3](#step-3--standalone-flp-licensing-appliance-on-the-vsi)); the mirror-refresh + install below
+> is what CI repeats.
+
+### As a script (plain `docker run` — what a CI runner does)
+
+```bash
+#!/usr/bin/env bash
+# Secrets come from the CI vault, never the repo. IBMCLOUD_API_KEY, the Harbor
+# password, and the FLP handoff (URL + CA) are exported by the runner. The FAR
+# archive + subscription JWT already live in the registry COS bucket — CI reads
+# them from there with the API key, so there is nothing to mount.
+set -euo pipefail
+RUNNER=ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
+COMMON=( --rm -v "$PWD/state:/work" -e IBMCLOUD_API_KEY )
+
+# config.yaml carries only what env can't: the manifest + where the mirror is.
+cat > state/config.yaml <<'YAML'
+ibmcloud: { region: us-south, resource_group: default }
+prefix: bnk
+cluster: { name: disco-demo, create: false }          # adopt the EXISTING cluster
+registry:
+  target: generic
+  generic_host: 10.241.0.4                             # Harbor by PRIVATE IP over the TGW
+  generic_repo_prefix: mirror
+  generic_username: admin
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  license_mode: f5licenseproxy
+  # FAR auth + JWT are read from the registry COS bucket by their default object
+  # keys (f5-far-auth-key.tgz / subscription.jwt) — upload them once (Chapter 25).
+YAML
+
+export ROKSBNKCTL_GENERIC_PASSWORD="$HARBOR_PW"          # base64'd into the config by init
+export ROKSBNKCTL_FLP_EXTERNAL_URL="$FLP_URL"            # the FLP VSI's endpoint …
+export ROKSBNKCTL_FLP_ROOT_CA_B64="$FLP_CA_B64"          # … and its CA (already base64)
+run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
+        -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
+
+run init --config-file /work/config.yaml --override-from-env
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry verify
+run cluster register disco-demo             # Step 4 — adopt
+run bnk up --auto                           # Step 5 — disconnected: installs node CA trust, pulls from Harbor, licenses via the FLP, reads FAR/JWT from COS
+```
+
+`registry replicate` captures Harbor's self-signed CA into the mirror record automatically; pass
+`--registry-ca <file>` only to supply it explicitly. `-v "$PWD/state:/work"` persists the workspace —
+config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
+back it with COS remote state instead so a later teardown run still sees it — see
+[Chapter 7b §"Ephemeral runners need remote state"](./07b-github-actions-ci.md#ephemeral-runners-need-remote-state).
+
+### As an ArgoCD Application (GitOps)
+
+To drive it from GitOps, a Git repo holds a Kubernetes **Job** that runs the runner image through the
+same five steps, plus a `ConfigMap` (the `bnk.yaml` shape) and a `Secret` (the credentials). ArgoCD
+syncs them into a **management cluster that sits in the services VPC** — the same private-IP / TGW
+reachability the runner needs; a *hosted* ArgoCD can't reach Harbor's private IP or the target cluster.
+The `argocd` CLI registers and syncs the app.
+
+The Git path (`disconnected-bnk/`) — the runner as a one-shot Job plus its config:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: bnk-config, namespace: bnk-ci }
+data:
+  bnk.yaml: |
+    ibmcloud: { region: us-south, resource_group: default }
+    prefix: bnk
+    cluster:  { name: disco-demo, create: false }        # adopt the EXISTING cluster
+    registry: { target: generic, generic_host: 10.241.0.4, generic_repo_prefix: mirror, generic_username: admin }
+    bnk:      { manifest_version: 2.3.0-3.2598.3-0.0.170, license_mode: f5licenseproxy }
+---
+apiVersion: batch/v1
+kind: Job
+metadata: { name: bnk-disconnected-install, namespace: bnk-ci }
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - { name: config, configMap: { name: bnk-config } }
+        - { name: work,   emptyDir: {} }        # back with a PVC or COS remote state for idempotent re-syncs
+      containers:
+        - name: roksbnkctl
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+          envFrom:
+            - secretRef: { name: bnk-secrets }   # IBMCLOUD_API_KEY, ROKSBNKCTL_GENERIC_PASSWORD, ROKSBNKCTL_FLP_EXTERNAL_URL, ROKSBNKCTL_FLP_ROOT_CA_B64
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: work,   mountPath: /work }
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              roksbnkctl -w bnk init --config-file /config/bnk.yaml --override-from-env
+              roksbnkctl -w bnk registry replicate --target generic   # auto-captures Harbor's CA
+              roksbnkctl -w bnk registry verify
+              roksbnkctl -w bnk cluster register disco-demo            # adopt
+              roksbnkctl -w bnk bnk up --auto                         # FAR/JWT read from the COS bucket
+```
+
+Register and run it with the `argocd` CLI, pointed at the in-VPC management cluster:
+
+```bash
+argocd app create bnk-disconnected \
+  --repo https://git.example.com/infra/bnk-gitops.git --path disconnected-bnk \
+  --dest-server https://kubernetes.default.svc --dest-namespace bnk-ci \
+  --sync-option CreateNamespace=true
+
+argocd app sync bnk-disconnected      # runs the Job → the disconnected install
+argocd app wait bnk-disconnected --health
+argocd app logs bnk-disconnected -f   # follow bnk up
+```
+
+The `Secret bnk-secrets` (API key, Harbor password, FLP endpoint + CA) comes from a sealed-secret or the
+External Secrets operator — never committed; `init` applies them via `--override-from-env` and logs only
+which fields, never the values. Because this is a one-shot *provisioning* Job, drive it with an explicit
+`argocd app sync` (or a `Sync`/`PostSync` hook), not continuous auto-sync, and back `/work` with a PVC or
+COS remote state so a re-sync is an idempotent no-op rather than a fresh run.
+
+> The two-*cluster* variant — an in-cluster FLP in a services cluster rather than a standalone VSI — is
+> [Flow C in CI](./10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).
