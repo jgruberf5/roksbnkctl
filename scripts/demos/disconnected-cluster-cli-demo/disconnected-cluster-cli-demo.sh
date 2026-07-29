@@ -68,7 +68,9 @@ say(){ echo "${DIM}$*${N}" >&2; }
 note(){ { echo; echo "${Y}${B}NOTE:${N} ${Y}$*${N}"; echo; } >&2; }
 ok(){ echo "${G}✓ $*${N}" >&2; }
 die(){ echo "${R}✗ $*${N}" >&2; exit 1; }
-show(){ { echo; echo "${B}\$ $*${N}"; } >&2; }
+# show a command; if it's a roksbnkctl command, mark a FREEZE so the recording's
+# post-processor holds that frame for 5s (teach the audience the roksbnkctl usage).
+show(){ { echo; echo "${B}\$ $*${N}"; } >&2; case "$*" in *roksbnkctl*) ts FREEZE MARK ;; esac; }
 run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; }
 # phase timing → sidecar for the 10x post-process. LONG phases are tagged so the
 # post-processor knows which video segments to speed up.
