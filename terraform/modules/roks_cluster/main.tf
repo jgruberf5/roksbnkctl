@@ -17,7 +17,7 @@ terraform {
 }
 
 module "cluster" {
-  source = "./modules/cluster"
+  source         = "./modules/cluster"
   cluster_absent = var.cluster_absent
 
   ibmcloud_api_key = var.ibmcloud_api_key

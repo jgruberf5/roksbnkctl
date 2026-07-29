@@ -51,7 +51,6 @@ module "cert_manager" {
   # an accidental phase combination (e.g. a legacy monolithic apply) into a clean
   # no-op instead of a plan-time failure.
   enabled                  = var.deploy_cert_manager && !var.create_roks_cluster
-  bnk_cr_mode              = var.bnk_cr_mode
   namespace                = var.cert_manager_namespace
   chart_version            = var.cert_manager_version
   registry_mirror_username = var.registry_mirror_username

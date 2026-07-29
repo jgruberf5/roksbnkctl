@@ -310,14 +310,6 @@ type BNKCfg struct {
 	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
 	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
 
-	// CRMode selects the BNK custom-resource install mechanism rendered as
-	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
-	// helm_release + alekc/kubectl kubectl_manifest + wait_for path (default);
-	// "legacy_curl" → the null_resource/curl/time_sleep baseline kept behind
-	// the flag for the validator's benchmark. The `--legacy-bnk` flag sets
-	// "legacy_curl" at runtime, overriding this config value.
-	CRMode string `yaml:"cr_mode,omitempty"`
-
 	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set

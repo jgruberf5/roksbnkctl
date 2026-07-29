@@ -322,9 +322,9 @@ locals {
     proxy_port            = var.flp_forward_proxy_port > 0 ? tostring(var.flp_forward_proxy_port) : ""
     proxy_protocol        = var.flp_forward_proxy_protocol
     # Optional flp-status web UI (a container in the pod, served on :80).
-    flp_status_image      = var.flp_status_image
-    flp_registry_host     = var.flp_status_registry_host
-    flp_registry_ca_b64   = var.flp_status_registry_ca_b64
+    flp_status_image    = var.flp_status_image
+    flp_registry_host   = var.flp_status_registry_host
+    flp_registry_ca_b64 = var.flp_status_registry_ca_b64
   }) : ""
 }
 

@@ -1,6 +1,5 @@
 locals {
-  use_kubectl = var.enabled && var.bnk_cr_mode == "kubectl"
-  use_legacy  = var.enabled && var.bnk_cr_mode == "legacy_curl"
+  use_kubectl = var.enabled
 
   cneinstance_name = "${var.flo_namespace}-f5-cne-controller"
 
@@ -257,18 +256,6 @@ locals {
   }
 }
 
-# Wait for CNEInstance CRD to be available (legacy mode only — kubectl mode
-# gates on the FLO helm_release ordering + the CNEInstance Available condition).
-resource "time_sleep" "wait_for_cneinstance_crd" {
-  count           = local.use_legacy ? 1 : 0
-  depends_on      = [var.flo_deployment_dependency]
-  create_duration = "30s"
-
-  triggers = {
-    flo_deployed = var.flo_deployment_id
-  }
-}
-
 locals {
   cneinstance_manifest = {
     apiVersion = "k8s.f5.com/v1"
@@ -285,100 +272,8 @@ locals {
   }
 }
 
-# Create CNEInstance resource via curl Server-Side Apply (legacy mode)
-resource "null_resource" "cneinstance" {
-  count = local.use_legacy ? 1 : 0
-
-  triggers = {
-    manifest  = jsonencode(local.cneinstance_manifest)
-    kube_host = var.kube_host
-    token     = var.kube_token
-    namespace = var.flo_namespace
-    name      = local.cneinstance_name
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      printf '%s' "${base64encode(jsonencode(local.cneinstance_manifest))}" | base64 -d | \
-      curl -f -X PATCH \
-        -H "Authorization: Bearer ${var.kube_token}" \
-        -H "Content-Type: application/apply-patch+yaml" \
-        -k "${var.kube_host}/apis/k8s.f5.com/v1/namespaces/${var.flo_namespace}/cneinstances/${local.cneinstance_name}?fieldManager=terraform&force=true" \
-        --data-binary @-
-    EOT
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      curl -sk -X DELETE \
-        -H "Authorization: Bearer ${self.triggers.token}" \
-        "${self.triggers.kube_host}/apis/k8s.f5.com/v1/namespaces/${self.triggers.namespace}/cneinstances/${self.triggers.name}" || true
-    EOT
-  }
-
-  depends_on = [time_sleep.wait_for_cneinstance_crd[0]]
-}
-
 # ============================================================
-# OpenShift Security Context Constraint (SCC) Policies
-# ============================================================
-# Apply privileged SCC to service accounts created by CNEInstance deployment
-# via curl server-side apply — no kubernetes provider required at plan time.
-
-resource "null_resource" "cneinstance_scc_policies" {
-  for_each = local.use_legacy ? {
-    for assignment in local.scc_policy_assignments :
-    "${assignment.namespace}-${assignment.service_account}" => assignment
-  } : {}
-
-  triggers = {
-    name      = "system:openshift:scc:privileged:${each.value.namespace}:${each.value.service_account}"
-    namespace = each.value.namespace
-    sa        = each.value.service_account
-    kube_host = var.kube_host
-    token     = var.kube_token
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      NAME="system:openshift:scc:privileged:${each.value.namespace}:${each.value.service_account}"
-      curl -sf -X PATCH \
-        -H "Authorization: Bearer ${var.kube_token}" \
-        -H "Content-Type: application/apply-patch+yaml" \
-        -k "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/$NAME?fieldManager=terraform&force=true" \
-        -d "{\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"kind\":\"ClusterRoleBinding\",\"metadata\":{\"name\":\"$NAME\"},\"roleRef\":{\"apiGroup\":\"rbac.authorization.k8s.io\",\"kind\":\"ClusterRole\",\"name\":\"system:openshift:scc:privileged\"},\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"${each.value.service_account}\",\"namespace\":\"${each.value.namespace}\"}]}"
-    EOT
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      curl -sk -X DELETE \
-        -H "Authorization: Bearer ${self.triggers.token}" \
-        "${self.triggers.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${self.triggers.name}" || true
-    EOT
-  }
-
-  depends_on = [null_resource.cneinstance[0]]
-}
-
-# ============================================================
-# Wait for SCC Policies to Propagate
-# ============================================================
-
-resource "time_sleep" "wait_for_scc_policies" {
-  count           = local.use_legacy ? 1 : 0
-  depends_on      = [null_resource.cneinstance_scc_policies]
-  create_duration = "30s"
-
-  triggers = {
-    scc_policies_count = length(null_resource.cneinstance_scc_policies)
-  }
-}
-
-# ============================================================
-# Sprint 27 — kubectl mode (terraform-native)
+# kubectl mode (terraform-native)
 # ============================================================
 # CNEInstance CR as a real terraform resource + wait_for the FLO-reported
 # Available condition; the SCC ClusterRoleBindings as plain kubectl_manifest

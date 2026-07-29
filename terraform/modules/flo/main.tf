@@ -59,8 +59,7 @@ module "flo" {
   # cluster-config are count=0 then; see providers.tf). Correct phases already
   # pass create_roks_cluster=false, so this is inert there and only turns an
   # accidental phase combination into a clean no-op rather than a plan crash.
-  enabled     = var.deploy_bnk && !var.create_roks_cluster
-  bnk_cr_mode = var.bnk_cr_mode
+  enabled = var.deploy_bnk && !var.create_roks_cluster
 
   cert_manager_crd_ready = true
 

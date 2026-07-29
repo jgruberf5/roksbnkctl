@@ -470,12 +470,6 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		fmt.Fprintf(w, "far_service_account_b64 = %q\n", strings.TrimSpace(saB64))
 		fmt.Fprintf(w, "f5_cne_subscription_jwt = %q\n", strings.TrimSpace(string(jwtBytes)))
 	}
-	// Sprint 27 install-mode flag. Emitted only when set; an unset value
-	// lets the upstream TF default (kubectl) stand, keeping older configs
-	// byte-identical. "legacy_curl" selects the null_resource baseline.
-	if ws.BNK.CRMode != "" {
-		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
-	}
 	// License operation mode. Emitted only when set; empty leaves the terraform
 	// default ("connected"), keeping existing JWT configs byte-identical. The FLP
 	// endpoint + root CA needed for "f5licenseproxy" mode are NOT rendered here —

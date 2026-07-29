@@ -4,6 +4,21 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.33.0 — 2026-07-29
+
+### Added
+
+- **Air-gapped node trust for a private registry is now roksbnkctl-native — no hand-rolled DaemonSet.** When `bnk up` pulls images from a self-signed / private registry (a co-located Harbor by private IP), the cluster's worker nodes must trust that registry's CA or CRI-O image pulls fail with `x509: unknown authority`. roksbnkctl now emits the whole trust path itself — a dedicated `roksbnkctl-registry-trust` namespace, a privileged ServiceAccount + SCC binding, the CA as a ConfigMap, and a node-installer DaemonSet that writes `ca.crt` into every node's `/etc/containers/certs.d/<host>/` and `/etc/docker/certs.d/<host>/` — then **gates `bnk up` on that installer reaching 1/1 on every node** before any image pull. The CA is captured automatically from the mirror over TLS during `registry replicate` (or supplied with **`registry replicate --registry-ca <file>`**) and recorded on the mirror record; the DaemonSet's pod template carries a CA-hash annotation so a changed CA **auto-rolls** the installer. The installer image is node-cached (`imagePullPolicy: IfNotPresent`), so the trust step itself needs no egress. This replaces the DaemonSet the disconnected walkthrough used to ship by hand.
+- **Book Appendix A — "Disconnected ROKS cluster".** An end-to-end walkthrough for deploying BNK air-gapped onto an **existing** ROKS cluster over an **existing** Transit Gateway: mirror FAR into a private Harbor, stand up a standalone F5 License Proxy, and install BNK with images from the mirror and licensing via the proxy — with the CLI commands matched 1:1 to the reproducible `scripts/demos/` walkthrough.
+
+### Fixed
+
+- **`registry replicate` captures the mirror's CA from the served chain, not a verified dial.** The capture decided "is this a private CA the nodes must trust?" from a verified TLS handshake — which succeeds on the operator host whenever the mirror's CA is already in the local trust store (e.g. after `update-ca-certificates`), returning "nothing to install" even though the air-gapped cluster nodes do **not** trust it. It now keys on whether the served chain's top certificate is **self-signed** (the signature of a private CA / co-located Harbor), matching what the nodes actually see.
+
+### Removed
+
+- **The legacy `bnk_cr_mode = "legacy_curl"` BNK install path and the `--legacy-bnk` flag are gone.** The terraform-native path (`helm_release` `wait = true` + alekc/kubectl `kubectl_manifest` with real `wait_for` readiness gates) has been the default and is now the only path. Removed: the `--legacy-bnk` flag on `bnk up` / `bnk down`, the `bnk.cr_mode` workspace-config key, the `bnk_cr_mode` terraform variable at every module level, and every `null_resource` / `curl` / `time_sleep` block that implemented the curl Server-Side-Apply baseline across the `cert_manager`, `cne_instance`, `license` and `flo` modules. No action is required — configs that never set `cr_mode` / `bnk_cr_mode` render byte-identically.
+
 ## v1.32.0 — 2026-07-28
 
 ### Added

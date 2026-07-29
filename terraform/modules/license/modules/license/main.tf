@@ -6,8 +6,7 @@
 
 locals {
   global_enabled = var.enabled
-  use_kubectl    = var.enabled && var.bnk_cr_mode == "kubectl"
-  use_legacy     = var.enabled && var.bnk_cr_mode == "legacy_curl"
+  use_kubectl    = var.enabled
   jwt_token      = local.global_enabled && var.use_cos_bucket ? trimspace(data.http.jwt_download[0].response_body) : var.jwt_token
 
   # F5 License Proxy mode. In FLP mode the CWC talks to the in-cluster FLP instead
@@ -47,13 +46,11 @@ locals {
   # root CA so CWC trusts the proxy's TLS. Written as a real Secret so a CWC
   # rollout picks it up.
   #
-  # NOT gated on bnk_cr_mode. The FLP spec fields (teem*Url +
-  # licenseProxyServerRootCaPath) go onto the License CR whenever is_flp — on BOTH
-  # the kubectl and legacy_curl paths — so gating the CA Secret on kubectl mode left
-  # legacy_curl with a CR pointing at the proxy and an EMPTY licenseserver-rootca:
-  # the CWC's TLS handshake to the proxy fails cert verification and the license
-  # never reaches Active, while the apply looks successful. Both this Secret
-  # (kubectl provider) and the CWC rollout (curl) work in either CR mode.
+  # The FLP spec fields (teem*Url + licenseProxyServerRootCaPath) go onto the
+  # License CR whenever is_flp, so the CA Secret must be populated to match:
+  # otherwise the CR points at the proxy with an EMPTY licenseserver-rootca, the
+  # CWC's TLS handshake to the proxy fails cert verification, and the license
+  # never reaches Active while the apply looks successful.
   write_flp_ca = local.global_enabled && local.is_flp && var.license_server_root_ca != ""
 
   # The CWC (f5-spk-cwc) is deployed by the CNEInstance BEFORE this module writes
@@ -140,16 +137,6 @@ resource "null_resource" "cwc_flp_rollout" {
   depends_on = [kubectl_manifest.licenseserver_rootca]
 }
 
-# Wait for License CRD to be available (legacy mode only — kubectl mode gates
-# on the FLO/CNEInstance ordering + the License status.state field).
-resource "time_sleep" "wait_for_license_crd" {
-  count           = local.use_legacy ? 1 : 0
-  create_duration = "30s"
-  triggers = {
-    cneinstance_dependency = var.cneinstance_dependency != null ? tostring(var.cneinstance_dependency) : "direct-apply"
-  }
-}
-
 # ==============================================================================
 # COS Bucket Resources (when use_cos_bucket = true)
 # ==============================================================================
@@ -210,80 +197,8 @@ data "http" "jwt_download" {
   }
 }
 
-# Create License CR in utils namespace via curl Server-Side Apply (legacy mode)
-resource "null_resource" "bnk_license" {
-  count = local.use_legacy ? 1 : 0
-
-  triggers = {
-    jwt             = local.jwt_token
-    license_mode    = var.license_mode
-    kube_host       = var.kube_host
-    token           = var.kube_token
-    utils_namespace = var.utils_namespace
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      # Wait for the License CRD's API group to be served.
-      code=000
-      for i in $(seq 1 30); do
-        code=$(curl -sk -o /dev/null -w "%%{http_code}" \
-          -H "Authorization: Bearer ${var.kube_token}" \
-          "${var.kube_host}/apis/k8s.f5net.com/v1/")
-        [ "$code" = "200" ] && break
-        echo "Waiting for License CRD (attempt $i/30, status=$code)..."
-        sleep 10
-      done
-      if [ "$code" != "200" ]; then
-        echo "ERROR: License CRD not available after 300s (last HTTP status: $code)" >&2
-        exit 1
-      fi
-      # Apply the License CR. Retry on transient/admission-webhook-not-ready
-      # errors (4xx/5xx) — the API group can be served before the FLO admission
-      # webhook is reachable, producing 403/503 responses for ~30-60s.
-      patch_body='${jsonencode(local.license_manifest)}'
-      patch_url="${var.kube_host}/apis/k8s.f5net.com/v1/namespaces/${var.utils_namespace}/licenses/bnk-license?fieldManager=terraform&force=true"
-      patch_status=000
-      for i in $(seq 1 30); do
-        body_file=$(mktemp)
-        patch_status=$(curl -sk -o "$body_file" -w "%%{http_code}" -X PATCH \
-          -H "Authorization: Bearer ${var.kube_token}" \
-          -H "Content-Type: application/apply-patch+yaml" \
-          "$patch_url" -d "$patch_body")
-        case "$patch_status" in
-          2??)
-            rm -f "$body_file"
-            break
-            ;;
-          *)
-            echo "License PATCH attempt $i/30 returned HTTP $patch_status, retrying in 10s..." >&2
-            sed -E 's/("jwt":")[^"]*/\1<redacted>/g' "$body_file" >&2 || true
-            rm -f "$body_file"
-            sleep 10
-            ;;
-        esac
-      done
-      case "$patch_status" in
-        2??) echo "License applied (HTTP $patch_status)";;
-        *)   echo "ERROR: License PATCH failed after 30 attempts (last HTTP $patch_status)" >&2; exit 1;;
-      esac
-    EOT
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      curl -sk -X DELETE \
-        -H "Authorization: Bearer ${self.triggers.token}" \
-        "${self.triggers.kube_host}/apis/k8s.f5net.com/v1/namespaces/${self.triggers.utils_namespace}/licenses/bnk-license" || true
-    EOT
-  }
-
-  depends_on = [time_sleep.wait_for_license_crd[0]]
-}
-
 # ============================================================
-# Sprint 27 — kubectl mode (terraform-native)
+# License CR (terraform-native)
 # ============================================================
 # License CR as a real terraform resource + wait_for the CWC-mirrored
 # status.state == "Verification Complete" (confirmed queryable from the FAR

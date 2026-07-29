@@ -61,10 +61,8 @@ func init() {
 	// model across the three command surfaces.
 	bnkUpCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip confirmation prompts (cluster-bootstrap + apply)")
 	bnkUpCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
-	bnkUpCmd.Flags().BoolVar(&flagLegacyBnk, "legacy-bnk", false, "deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path")
 	bnkUpCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 	bnkDownCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
-	bnkDownCmd.Flags().BoolVar(&flagLegacyBnk, "legacy-bnk", false, "destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up")
 	bnkDownCmd.Flags().StringArrayVar(&flagVarFiles, "var-file", nil, "extra TF var-file (repeatable; later files override earlier)")
 
 	bnkCmd.AddCommand(bnkUpCmd, bnkDownCmd)

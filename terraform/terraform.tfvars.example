@@ -139,12 +139,6 @@ ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
 # Set to false to skip FLO (ws3), CNEInstance (ws4), and License (ws5).
 deploy_bnk = true
 
-# BNK install mechanism:
-#   "kubectl"     — terraform-native (helm_release + kubectl_manifest). Default.
-#   "legacy_curl" — the null_resource/curl baseline (benchmark / fallback).
-bnk_cr_mode = "kubectl"
-
-
 # --- FLO (ws3) ---
 
 # FAR repository URL for Docker and Helm images.
