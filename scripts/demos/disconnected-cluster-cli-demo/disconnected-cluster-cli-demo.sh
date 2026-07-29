@@ -145,6 +145,57 @@ onvsi_run(){
 }
 onvsi(){ [[ "$DRY_RUN" == "1" ]] && return 0; $HARBOR_SSH "export IBMCLOUD_API_KEY='$IBMCLOUD_API_KEY' PATH=\$PATH:/usr/local/bin; $*" 2>&1; }
 
+# ---------------------------------------------------------------------------
+# Manual teardown:  ./disconnected-cluster-cli-demo.sh teardown
+# Removes everything THIS demo created — the standalone FLP VSI (roksbnkctl flp down
+# on the operator VSI), the Harbor VSI, the services VPC (subnets, public gateway,
+# floating IPs) and its TGW connection. The adopted cluster is LEFT UNTOUCHED (run
+# `roksbnkctl -w bnk bnk down --auto` on the operator VSI first if you also want BNK
+# removed from it). The demo does NOT auto-tear-down, so you can explore the UIs first.
+# ---------------------------------------------------------------------------
+teardown(){
+  [[ -n "${IBMCLOUD_API_KEY:-}" ]] || { [[ -f .env ]] && { set -a; . ./.env; set +a; }; }
+  [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY (or provide .env) to tear down"
+  export IBMCLOUD_API_KEY
+  banner "TEARDOWN — disconnected-cluster CLI demo"
+  local HFIP VPC SSH_OPTS TGW_ID
+  HFIP="$(cat "$STATE_DIR/harbor_fip" 2>/dev/null || true)"
+  VPC="$(cat "$STATE_DIR/svc_vpc_id" 2>/dev/null || true)"
+  SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15"
+  if [[ -n "$HFIP" ]]; then
+    say "Destroying the standalone FLP (roksbnkctl -w ${FLP_WS} flp down) on the operator VSI…"
+    ssh -i "$SSH_KEY_FILE" $SSH_OPTS ubuntu@"$HFIP" \
+      "export IBMCLOUD_API_KEY='$IBMCLOUD_API_KEY' PATH=\$PATH:/usr/local/bin; roksbnkctl -w ${FLP_WS} flp down --auto" 2>&1 | tail -3 || true
+  fi
+  ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$SVC_REGION" -g "$RESOURCE_GROUP" -q >/dev/null 2>&1 || die "ibmcloud login failed"
+  TGW_ID="$(ibmcloud tg gateways --output json 2>/dev/null | jq -r --arg n "$TGW_NAME" '.[]|select(.name==$n)|.id' | head -1)"
+  for c in $(ibmcloud tg connections "$TGW_ID" --output json 2>/dev/null | jq -r --arg n "${SVC_PREFIX}-conn" '.[]|select(.name==$n)|.id'); do
+    ibmcloud tg connection-delete "$TGW_ID" "$c" -f >/dev/null 2>&1 && ok "TGW connection ${SVC_PREFIX}-conn deleted"
+  done
+  [[ -n "$VPC" ]] || VPC="$(ibmcloud is vpcs --output json 2>/dev/null | jq -r --arg n "${SVC_PREFIX}-vpc" '.[]|select(.name==$n)|.id' | head -1)"
+  if [[ -n "$VPC" ]]; then
+    local insts; insts="$(ibmcloud is instances --vpc "$VPC" --output json 2>/dev/null | jq -r '.[].id' | tr '\n' ' ')"
+    [[ -n "${insts// }" ]] && { ibmcloud is instance-delete $insts -f >/dev/null 2>&1 && ok "VSIs deleted"; }
+    for _ in $(seq 1 30); do [[ "$(ibmcloud is instances --vpc "$VPC" --output json 2>/dev/null | jq 'length')" == "0" ]] && break; sleep 8; done
+    for f in "${SVC_PREFIX}-harbor-fip" "${SVC_PREFIX}-pgw"; do ibmcloud is floating-ip-release "$f" -f >/dev/null 2>&1 && ok "floating IP $f released"; done
+    for s in $(ibmcloud is subnets --vpc "$VPC" --output json 2>/dev/null | jq -r '.[].id'); do
+      ibmcloud is subnet-public-gateway-detach "$s" -f >/dev/null 2>&1; sleep 2
+      ibmcloud is subnet-delete "$s" -f >/dev/null 2>&1 && ok "subnet deleted"
+    done
+    for p in $(ibmcloud is public-gateways --output json 2>/dev/null | jq -r --arg v "$VPC" '.[]|select(.vpc.id==$v)|.id'); do ibmcloud is public-gateway-delete "$p" -f >/dev/null 2>&1 && ok "public gateway deleted"; done
+    sleep 6
+    for _ in $(seq 1 15); do
+      ibmcloud is vpc-delete "$VPC" -f >/dev/null 2>&1
+      [[ -z "$(ibmcloud is vpcs --output json 2>/dev/null | jq -r --arg v "$VPC" '.[]|select(.id==$v)|.id')" ]] && { ok "services VPC deleted"; break; }
+      sleep 8
+    done
+  else
+    note "services VPC not found (already gone, or run from a different STATE_DIR)"
+  fi
+  ok "teardown complete — the adopted cluster ${EXISTING_CLUSTER} was left untouched"
+}
+[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — DISCONNECTED BNK onto an EXISTING cluster"
 cat >&2 <<EOF
@@ -428,6 +479,13 @@ Disconnected, onto an existing cluster:
   - Harbor mirror + standalone FLP (floating IP) in ${SVC_REGION} (the only egress)
   - EXISTING private cluster ${EXISTING_CLUSTER} in ${BNK_REGION}, adopted over the TGW
   - BNK installed entirely from Harbor + licensed via the FLP — one pass
-  FLP status web UI: http://${FLP_FIP}/
+
+Reachable web UIs (explore before you tear down):
+  Harbor registry:  https://${HARBOR_FIP}/     (login: admin / your HARBOR_ADMIN_PASSWORD)
+  FLP status:       http://${FLP_FIP}/          (read-only status, no login)
+
+Tear it all down when finished (leaves the adopted cluster ${EXISTING_CLUSTER} untouched):
+  ./disconnected-cluster-cli-demo.sh teardown
+
 Phase timestamps for the 10x post-process: ${TS_FILE}
 EOF
