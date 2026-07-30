@@ -778,8 +778,13 @@ argo submit -n bnk-ci --wait workflows/wf-install.yaml    # register -> bnk up -
 argo get   -n bnk-ci @latest                              # the step tree + status
 ```
 
-The Argo Workflows UI shows the install pipeline as a step DAG — each roksbnkctl phase its own node,
-green when it succeeds:
+The Argo Workflows web UI (server auth, NodePort `30746` over the VSI floating IP) lists both runs —
+the mirror and the install — each **Succeeded 3/3**:
+
+![The Argo Workflows UI — the bnk-mirror and bnk-install Workflows, each Succeeded 3/3 (and a bnk-down teardown run)](images/argo-workflows-list.png)
+
+Opening the install run shows it as a step DAG — each roksbnkctl phase its own node, green when it
+succeeds:
 
 ![The bnk-install Workflow in the Argo Workflows UI — cluster-register → bnk-up → bnk-status, all succeeded](images/argo-workflows-install-dag.png)
 
