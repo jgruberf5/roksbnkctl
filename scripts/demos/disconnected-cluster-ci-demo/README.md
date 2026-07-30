@@ -51,11 +51,14 @@ group must allow `30746`).
 ## Prerequisites
 
 **An existing air-gapped ROKS cluster** on the Transit Gateway with **BNK not installed** (the
-pipeline adopts it and installs from clean). Everything else — the services VPC, Harbor, the FLP,
-and the Argo VSI — this demo builds. **You provide** (see `.env.example`): an IBM Cloud API key,
-`REGION`/`CLUSTER_NAME`, the reused Harbor/FLP coordinates + `HARBOR_ADMIN_PASSWORD`, the
-`FAR_COS_BUCKET` (the orchestration COS bucket holding `f5-far-auth-key.tgz` + `subscription.jwt`),
-and an `SSH_KEY_FILE` / `SSH_KEY_NAME`.
+pipeline adopts it and installs from clean), plus the **Harbor mirror + standalone FLP** — build
+those once with the [CLI demo's services-infra section](../disconnected-cluster-cli-demo/README.md#building-the-services-infrastructure-harbor-vsi--flp-vsi),
+and mirror the runner image into Harbor (see [Why `>= v1.33.0`](#why--v1330) / the CI section of
+Appendix A). **This demo builds only the Argo Workflows VSI.** **You provide** (see `.env.example`):
+an IBM Cloud API key, `REGION`/`CLUSTER_NAME`, the reused Harbor coordinates + `HARBOR_ADMIN_PASSWORD`
++ `HARBOR_CA_B64` (so k3s trusts Harbor for the runner pull), the `FAR_COS_BUCKET` (the orchestration
+COS bucket holding `f5-far-auth-key.tgz` + `subscription.jwt`), the FLP handoff (`FLP_EXTERNAL_URL` +
+`FLP_ROOT_CA_B64`), and an `SSH_KEY_FILE` / `SSH_KEY_NAME`.
 
 Tools on this (Ubuntu) control host — only ssh + a couple of CLIs (`openssh-client`, `jq`,
 `gettext-base`, the `ibmcloud` CLI with `vpc-infrastructure`). Everything else — k3s, Argo
