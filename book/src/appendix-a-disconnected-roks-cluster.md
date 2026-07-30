@@ -630,7 +630,7 @@ run init --config-file /work/config.yaml --override-from-env
 run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
 run registry verify
 run cluster register disco-demo             # Step 4 — adopt
-run bnk up --auto                           # Step 5 — disconnected: installs node CA trust, pulls from Harbor, licenses via the FLP, reads FAR/JWT from COS
+run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
 ```
 
 `registry replicate` captures Harbor's self-signed CA into the mirror record automatically; pass
@@ -700,9 +700,18 @@ spec:
   templates:
     - name: mirror
       steps:
-        - - { name: init,               template: rbk, arguments: { parameters: [{ name: cmd, value: "init --config-file /config/bnk.yaml --override-from-env" }] } }
-        - - { name: registry-replicate, template: rbk, arguments: { parameters: [{ name: cmd, value: "registry replicate --target generic" }] } }
-        - - { name: registry-verify,    template: rbk, arguments: { parameters: [{ name: cmd, value: "registry verify" }] } }
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init --config-file /config/bnk.yaml --override-from-env" }]
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry replicate --target generic" }]
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry verify" }]
     - name: rbk                       # one reusable step: roksbnkctl -w bnk <cmd> on the runner image
       inputs: { parameters: [{ name: cmd }] }
       container:
@@ -732,9 +741,16 @@ spec:
   templates:
     - name: install
       steps:
-        - - { name: cluster-register, template: rbk,    arguments: { parameters: [{ name: cmd, value: "cluster register disco-demo" }] } }
-        - - { name: bnk-up,           template: bnk-up }                # dedicated — carries the cwc-guard sidecar
-        - - { name: bnk-status,       template: rbk,    arguments: { parameters: [{ name: cmd, value: "bnk status" }] } }
+        - - name: cluster-register
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "cluster register disco-demo" }]
+        - - name: bnk-up
+            template: bnk-up                   # dedicated — carries the cwc-guard sidecar
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "bnk status" }]
     # `bnk up` + a silent cwc-guard sidecar. F5 defect: on a REUSED cluster the f5-spk-cwc
     # Deployment (RWO PVC + RollingUpdate) deadlocks on a Multi-Attach error and the License
     # never activates; the sidecar forces strategy=Recreate + cycles replicas so a single pod
