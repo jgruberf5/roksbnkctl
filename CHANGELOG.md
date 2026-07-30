@@ -4,6 +4,16 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.33.1 — 2026-07-30
+
+Documentation and demo assets only — **no change to the `roksbnkctl` binary from v1.33.0**.
+
+### Changed
+
+- **The disconnected-cluster CI demo is now Argo Workflows — git-free, with the runner served from Harbor.** It drives the `roksbnkctl-tools-runner` container through two `argo submit` Workflows (mirror + install) on a k3s VSI — no ArgoCD Application, no git repo — sharing a **persistent PVC** so teardown via `bnk down` is clean (an ephemeral `emptyDir` orphans the IAM trusted profile). The runner image is pulled from the **private Harbor mirror** over the TGW (k3s trusts Harbor's CA via `/etc/rancher/k3s/registries.yaml`), so nothing is pulled from a public registry at run time; a silent cwc-guard sidecar clears F5's cwc Multi-Attach (RWO) deadlock on reused clusters by forcing `strategy: Recreate` and cycling replicas.
+- **Book Appendix A rewritten to match.** Both topology diagrams are now Mermaid; the CI section highlights all three Workflow YAMLs (prereqs + mirror + install) plus the Argo Workflows UI screenshots, adds a box on uploading the FAR key + subscription JWT into COS with `roksbnkctl cos object`, and shows the runner served from Harbor. The **PDF build keeps every code/YAML block unbroken across page breaks** (`fvextra` + a smaller monospace so wide file examples don't wrap).
+- **The disconnected CLI demo README gained a cut-and-paste "Building the services infrastructure (Harbor + FLP)" section** so an end user can clone, edit `.env`, and stand up Harbor + the FLP (which the CI demo reuses); the CI demo README links to it.
+
 ## v1.33.0 — 2026-07-29
 
 ### Added
