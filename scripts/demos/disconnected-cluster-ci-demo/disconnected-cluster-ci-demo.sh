@@ -35,7 +35,7 @@ HARBOR_PRIVATE_IP="${HARBOR_PRIVATE_IP:?set HARBOR_PRIVATE_IP (Harbor VSI privat
 HARBOR_ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:?set HARBOR_ADMIN_PASSWORD}"
 FLP_EXTERNAL_URL="${FLP_EXTERNAL_URL:?set FLP_EXTERNAL_URL (from: roksbnkctl -w flp flp output)}"
 FLP_ROOT_CA_B64="${FLP_ROOT_CA_B64:?set FLP_ROOT_CA_B64 (base64 of the FLP root CA)}"
-HARBOR_CA_B64="${HARBOR_CA_B64:?set HARBOR_CA_B64 (base64 of Harbor's CA — so the k3s VSI trusts Harbor to pull the runner image)}"
+HARBOR_CA_B64="${HARBOR_CA_B64:?set HARBOR_CA_B64 - base64 of the Harbor CA, so the k3s VSI trusts Harbor to pull the runner image}"
 FAR_COS_BUCKET="${FAR_COS_BUCKET:?set FAR_COS_BUCKET (orchestration COS bucket holding f5-far-auth-key.tgz + subscription.jwt)}"
 CLUSTER_NAME="${CLUSTER_NAME:-disco-demo}"
 
@@ -63,14 +63,33 @@ ARGO_FIP=""   # resolved after provisioning
 # A COMMAND still fires before, and an OUTPUT still after, any roksbnkctl or argo command —
 # post_10x.py holds each frame 5s in the final cut (the same convention as the CLI demo's
 # show/outmark). The hold vars + ts()/redact() come from ../lib/demo-format.sh.
-is_demo_cmd(){ [[ "$1" =~ (^|[[:space:]])(roksbnkctl|argo)([[:space:]]|$) ]]; }
-vshow(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; if is_demo_cmd "$*"; then sleep "${CMD_RENDER_HOLD:-1.8}"; ts COMMAND MARK "$(redact "$*")"; sleep "${CMD_POST_HOLD:-0.7}"; fi; }
-V(){ ssh -i "$SSH_KEY_FILE" $SSH_OPTS "ubuntu@${ARGO_FIP}" "export KUBECONFIG=/home/ubuntu/.kube/config PATH=\$PATH:/usr/local/bin; $*"; }
-vrun(){ vshow "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; V "$@"; if is_demo_cmd "$*"; then sleep "${OUT_SETTLE_HOLD:-1.2}"; ts OUTPUT MARK "$(redact "$*")"; sleep "${OUT_POST_HOLD:-0.7}"; fi; }
+is_demo_cmd(){
+  case "$*" in
+    roksbnkctl\ *|argo\ *|*\ roksbnkctl\ *|*\ argo\ *) return 0 ;;
+  esac
+  return 1
+}
+vshow(){
+  { echo; echo "${B}\$ $*${N}"; } >&2
+  if is_demo_cmd "$*"; then
+    sleep "${CMD_RENDER_HOLD:-1.8}"; ts COMMAND MARK "$*"; sleep "${CMD_POST_HOLD:-0.7}"
+  fi
+}
+V(){
+  ssh -i "$SSH_KEY_FILE" $SSH_OPTS "ubuntu@${ARGO_FIP}" "export KUBECONFIG=/home/ubuntu/.kube/config PATH=\$PATH:/usr/local/bin; $*"
+}
+vrun(){
+  vshow "$@"
+  if [ "$DRY_RUN" = "1" ]; then say "  (dry-run)"; return 0; fi
+  V "$@"
+  if is_demo_cmd "$*"; then
+    sleep "${OUT_SETTLE_HOLD:-1.2}"; ts OUTPUT MARK "$*"; sleep "${OUT_POST_HOLD:-0.7}"
+  fi
+}
 
 # =============================================================================
 phase 1 "The pipeline — a disconnected install as two Argo Workflows"
-say "No git, no ArgoCD Application. Two Workflow YAMLs run the roksbnkctl-tools-runner"
+say "Two Workflow YAMLs run the roksbnkctl-tools-runner"
 say "image through the same steps as the CLI demo, each step its own pod:"
 echo >&2
 say "  wf-mirror   — init -> registry replicate -> registry verify   (FAR -> Harbor)"
@@ -158,7 +177,7 @@ fi
 pause
 
 # =============================================================================
-phase 4 "Workflow 1 — mirror FAR into Harbor (argo submit, no git)"
+phase 4 "Workflow 1 — mirror FAR into Harbor (argo submit)"
 say "One 'argo submit' runs init -> registry replicate -> registry verify on the runner"
 say "image. The runner captures Harbor's self-signed CA and mirrors 89 artifacts by its"
 say "private IP over the TGW; the workspace lands on the shared PVC."
@@ -182,7 +201,7 @@ say "The runner's last step already ran 'bnk status'. Confirm the install Workfl
 say "Succeeded and the license is Active on the air-gapped cluster."
 vrun "argo get -n bnk-ci @latest"
 vrun "argo logs -n bnk-ci @latest | grep -iE 'STATE:|Active|deployed|Succeeded' | tail -8"
-ok "GitOps disconnected BNK install complete — Argo Workflows drove the runner, no git."
+ok "Disconnected BNK install complete — Argo Workflows drove the runner."
 pause
 
 banner "Disconnected-cluster CI demo complete (Argo Workflows)"
