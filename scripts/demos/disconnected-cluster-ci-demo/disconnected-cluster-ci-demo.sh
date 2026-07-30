@@ -35,6 +35,7 @@ HARBOR_PRIVATE_IP="${HARBOR_PRIVATE_IP:?set HARBOR_PRIVATE_IP (Harbor VSI privat
 HARBOR_ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:?set HARBOR_ADMIN_PASSWORD}"
 FLP_EXTERNAL_URL="${FLP_EXTERNAL_URL:?set FLP_EXTERNAL_URL (from: roksbnkctl -w flp flp output)}"
 FLP_ROOT_CA_B64="${FLP_ROOT_CA_B64:?set FLP_ROOT_CA_B64 (base64 of the FLP root CA)}"
+HARBOR_CA_B64="${HARBOR_CA_B64:?set HARBOR_CA_B64 (base64 of Harbor's CA — so the k3s VSI trusts Harbor to pull the runner image)}"
 FAR_COS_BUCKET="${FAR_COS_BUCKET:?set FAR_COS_BUCKET (orchestration COS bucket holding f5-far-auth-key.tgz + subscription.jwt)}"
 CLUSTER_NAME="${CLUSTER_NAME:-disco-demo}"
 
@@ -46,7 +47,11 @@ ARGO_VSI_IMAGE="${ARGO_VSI_IMAGE:-ibm-ubuntu-24-04-4-minimal-amd64-6}"   # `ibmc
 ARGO_WF_VERSION="${ARGO_WF_VERSION:-v4.0.8}"
 K3S_CHANNEL="${K3S_CHANNEL:-stable}"
 
-RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:${RUNNER_TAG:-v1.33.0}}"
+# The runner image is served from the private Harbor mirror (not ghcr) — a full air-gap:
+# the k3s VSI pulls it over the private IP, trusting Harbor's CA via registries.yaml.
+# Mirror it once:  docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:<tag>
+#                  docker tag  … <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:<tag> && docker push …
+RUNNER_IMAGE="${RUNNER_IMAGE:-${HARBOR_PRIVATE_IP}/bnk-mirror/roksbnkctl-tools-runner:${RUNNER_TAG:-v1.33.0}}"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
 export IBMCLOUD_API_KEY
@@ -89,7 +94,8 @@ begin_long
 if [[ "$DRY_RUN" != "1" ]]; then
   ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$REGION" -g "$RESOURCE_GROUP" -q >/dev/null 2>&1 || die "ibmcloud login failed"
   RENDERED="$(mktemp)"; export ARGO_WF_VERSION K3S_CHANNEL
-  envsubst '${ARGO_WF_VERSION} ${K3S_CHANNEL}' < "$HERE/argo-vsi-cloud-init.yaml.tmpl" > "$RENDERED"
+  export HARBOR_IP="$HARBOR_PRIVATE_IP" HARBOR_PASS="$HARBOR_ADMIN_PASSWORD" HARBOR_CA_B64   # k3s registries.yaml → pull the runner from Harbor
+  envsubst '${ARGO_WF_VERSION} ${K3S_CHANNEL} ${HARBOR_IP} ${HARBOR_PASS} ${HARBOR_CA_B64}' < "$HERE/argo-vsi-cloud-init.yaml.tmpl" > "$RENDERED"
   if ! ibmcloud is instance "$ARGO_VSI_NAME" >/dev/null 2>&1; then
     ibmcloud is instance-create "$ARGO_VSI_NAME" "$SERVICES_VPC" "$REGION-1" "$ARGO_VSI_PROFILE" \
       "$SERVICES_SUBNET" --image "$ARGO_VSI_IMAGE" --keys "$SSH_KEY_NAME" \

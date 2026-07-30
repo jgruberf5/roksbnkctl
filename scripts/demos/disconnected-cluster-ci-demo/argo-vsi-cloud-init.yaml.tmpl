@@ -29,6 +29,29 @@ write_files:
       done
       echo "argo workflows did not become ready" >&2; exit 1
 
+  # Trust the self-signed Harbor CA + credentials so k3s/containerd pulls the runner
+  # image from Harbor's PRIVATE registry (the runner is mirrored into Harbor for a full
+  # air-gap story — nothing is pulled from ghcr at run time). k3s reads registries.yaml
+  # at install, so both files must exist before the k3s runcmd below.
+  - path: /etc/rancher/k3s/harbor-ca.crt
+    encoding: b64
+    permissions: '0644'
+    content: ${HARBOR_CA_B64}
+  - path: /etc/rancher/k3s/registries.yaml
+    permissions: '0600'
+    content: |
+      mirrors:
+        "${HARBOR_IP}":
+          endpoint:
+            - "https://${HARBOR_IP}"
+      configs:
+        "${HARBOR_IP}":
+          auth:
+            username: admin
+            password: ${HARBOR_PASS}
+          tls:
+            ca_file: /etc/rancher/k3s/harbor-ca.crt
+
 runcmd:
   - [ bash, -c, "export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y curl jq" ]
   # --- single-node k3s ------------------------------------------------------

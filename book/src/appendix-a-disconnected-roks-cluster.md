@@ -548,15 +548,24 @@ to the disconnected, standalone-VSI topology.
 
 Where the CLI walkthrough runs `roksbnkctl` on the Harbor VSI, CI runs the **same commands inside the
 runner container**, driven by an **Argo Workflows** controller on a small **k3s VSI in the services
-VPC**. That controller has egress — it pulls the runner
-image and FAR freely — so only the target ROKS cluster is air-gapped. The runner sits where it can reach
-Harbor's **private IP** and the cluster **over the TGW**, exactly as the operator VSI did.
+VPC**. The **runner image itself is mirrored into Harbor** (like FAR) and pulled from there over the
+private IP — nothing is pulled from a public registry at run time; k3s trusts Harbor's self-signed CA
+via `/etc/rancher/k3s/registries.yaml`. Only the target ROKS cluster is fully air-gapped; the runner
+sits where it can reach Harbor's **private IP** and the cluster **over the TGW**, exactly as the
+operator VSI did.
+
+> **Mirror the runner into Harbor once**, alongside FAR:
+>
+> ```bash
+> docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+> docker tag  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0 <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+> docker push <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+> ```
 
 ```mermaid
 graph TB
     subgraph net["Internet — the controller VSI has egress"]
         FAR["repo.f5.com<br/>FAR pull"]
-        IMG["ghcr.io / Harbor<br/>runner image"]
         IBM["IBM Cloud API · IAM · COS<br/>(FAR key + JWT)"]
     end
     subgraph svc["SERVICES VPC — public gateway = egress"]
@@ -574,7 +583,7 @@ graph TB
     end
     AC -->|"argo submit"| SRC
     SRC --> Runner
-    Runner -->|pull| IMG
+    Runner -->|"pull runner image"| Harbor
     Runner -->|"registry replicate → mirror"| Harbor
     Runner -->|"FAR pull"| FAR
     Runner -->|"API · FAR key/JWT from COS"| IBM
@@ -600,7 +609,7 @@ graph TB
 # archive + subscription JWT already live in the registry COS bucket — CI reads
 # them from there with the API key, so there is nothing to mount.
 set -euo pipefail
-RUNNER=ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
+RUNNER=10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
 COMMON=( --rm -v "$PWD/state:/work" -e IBMCLOUD_API_KEY )
 
 # config.yaml carries only what env can't: the manifest + where the mirror is.
@@ -715,7 +724,7 @@ spec:
     - name: rbk                       # one reusable step: roksbnkctl -w bnk <cmd> on the runner image
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0   # >= v1.33.0: native operator + node CA trust
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0   # >= v1.33.0: native operator + node CA trust
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -757,7 +766,7 @@ spec:
     # attaches, then exits (Argo kills it when bnk up finishes). A no-op on a fresh cluster.
     - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk bnk up --auto"]
         workingDir: /work
@@ -765,7 +774,7 @@ spec:
         volumeMounts: [{ name: work, mountPath: /work }]
       sidecars:
         - name: cwc-guard            # (args abridged — the full loop is in workflows/wf-install.yaml)
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+          image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
           command: [sh, -ec]
           args:
             - |
@@ -778,7 +787,7 @@ spec:
     - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
         workingDir: /work
