@@ -548,7 +548,7 @@ to the disconnected, standalone-VSI topology.
 
 Where the CLI walkthrough runs `roksbnkctl` on the Harbor VSI, CI runs the **same commands inside the
 runner container**, driven by an **Argo Workflows** controller on a small **k3s VSI in the services
-VPC** (`argo submit` — no git repo, no `Application`). That controller has egress — it pulls the runner
+VPC**. That controller has egress — it pulls the runner
 image and FAR freely — so only the target ROKS cluster is air-gapped. The runner sits where it can reach
 Harbor's **private IP** and the cluster **over the TGW**, exactly as the operator VSI did.
 
@@ -561,8 +561,8 @@ graph TB
     end
     subgraph svc["SERVICES VPC — public gateway = egress"]
         subgraph ctl["Argo Workflows controller VSI · k3s"]
-            AC["Argo Workflows<br/>+ argo CLI"]
-            SRC["argo submit (no git)<br/>Workflow: mirror + install"]
+            AC["Argo Workflows"]
+            SRC["Workflow manifests<br/>mirror + install"]
             Runner["roksbnkctl-tools-runner<br/>Workflow step pods<br/>▶ the operator"]
         end
         Harbor["Harbor VSI<br/>OCI mirror · PRIVATE IP"]
@@ -639,13 +639,13 @@ config, terraform state, and the mirror record (with the CA) — across steps; o
 back it with COS remote state instead so a later teardown run still sees it — see
 [Chapter 7b §"Ephemeral runners need remote state"](./07b-github-actions-ci.md#ephemeral-runners-need-remote-state).
 
-### As Argo Workflows — the runner steps as a pipeline (no git)
+### As Argo Workflows — the runner steps as a pipeline
 
-ArgoCD syncs *desired state from git*; a one-shot **provisioning** run is a better fit for
-**Argo Workflows**, which runs the roksbnkctl steps as an explicit pipeline — **no git repo, no
-`Application`**, just `argo submit`. Each step is its own pod with its own status, logs and
-retries (the per-step visibility a single `Job` can't give), and the workspace lives on a
-**persistent PVC** shared across the steps. That PVC is also what makes teardown clean: an
+A one-shot **provisioning** run is a natural fit for **Argo Workflows**, which runs the
+roksbnkctl steps as an explicit pipeline driven with `argo submit`. Each step is its own pod
+with its own status, logs and retries (the per-step visibility a single `Job` can't give), and
+the workspace lives on a **persistent PVC** shared across the steps. That PVC is also what makes
+teardown clean: an
 ephemeral `emptyDir` loses its terraform state when the pod ends — orphaning the IAM trusted
 profile and pull secrets — whereas the PVC lets a later `roksbnkctl bnk down` destroy them.
 
@@ -770,7 +770,7 @@ spec:
         volumeMounts: [{ name: work, mountPath: /work }]
 ```
 
-Submit them in order — no git, the manifests are applied directly:
+Submit them in order:
 
 ```bash
 argo submit -n bnk-ci --wait workflows/wf-mirror.yaml     # init -> replicate -> verify
