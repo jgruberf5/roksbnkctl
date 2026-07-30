@@ -161,7 +161,7 @@ teardown(){
   local HFIP VPC SSH_OPTS TGW_ID
   HFIP="$(cat "$STATE_DIR/harbor_fip" 2>/dev/null || true)"
   VPC="$(cat "$STATE_DIR/svc_vpc_id" 2>/dev/null || true)"
-  SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15"
+  SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
   if [[ -n "$HFIP" ]]; then
     say "Destroying the standalone FLP (roksbnkctl -w ${FLP_WS} flp down) on the operator VSI…"
     ssh -i "$SSH_KEY_FILE" $SSH_OPTS ubuntu@"$HFIP" \
@@ -285,7 +285,7 @@ ok "Harbor VSI — private ${B}${HARBOR_PRIVATE_IP}${N}, floating ${B}${HARBOR_F
 # LogLevel=ERROR silences the "Warning: Permanently added … to known hosts" spam that
 # UserKnownHostsFile=/dev/null otherwise prints on stderr — critical because onvsi captures
 # 2>&1 into shell vars (FAR service account, CAs, FLP URL), and that warning would corrupt them.
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
 HARBOR_SSH="ssh -i $SSH_KEY_FILE $SSH_OPTS ubuntu@$HARBOR_FIP"
 
 say "Waiting for Harbor to finish installing (cloud-init: Docker + offline installer; ~8–15 min)…"
