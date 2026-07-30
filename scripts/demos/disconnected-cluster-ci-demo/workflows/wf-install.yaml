@@ -1,0 +1,98 @@
+# wf-install.yaml — Argo Workflow: install BNK onto the air-gapped cluster.
+#
+# The install half of the disconnected deployment, as an Argo Workflow: adopt the
+# existing air-gapped ROKS cluster over the TGW, run `bnk up` (images pulled from the
+# Harbor mirror, license brokered by the FLP), and confirm status — each roksbnkctl
+# step its own pod with its own status/logs.
+#
+# It reuses the SAME `bnk-work` PVC wf-mirror.yaml wrote, so the workspace it reads is
+# already `init`'d and carries the recorded mirror CA — which `bnk up` trusts for its
+# terraform/helm chart pulls (>= v1.33.0 native operator CA trust). The persistent PVC
+# is also what makes teardown clean: `roksbnkctl -w bnk bnk down --auto` against the
+# same PVC destroys the IAM trusted profile + secrets, unlike an ephemeral emptyDir
+# whose tfstate dies with the pod (orphaning account resources). Submit after wf-mirror:
+#   argo submit -n bnk-ci --wait workflows/wf-install.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-install-
+  namespace: bnk-ci
+spec:
+  entrypoint: install
+  serviceAccountName: bnk-runner
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }   # the SAME workspace wf-mirror wrote
+  templates:
+    - name: install
+      steps:
+        - - name: cluster-register
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "cluster register disco-demo" }]
+        - - name: bnk-up
+            template: bnk-up          # dedicated template — carries the cwc-guard sidecar
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "bnk status" }]
+
+    # `bnk up` with a silent cwc-guard sidecar. F5 defect: the f5-spk-cwc Deployment mounts a
+    # ReadWriteOnce PVC but ships RollingUpdate, so on a REUSED cluster the rolled pod lands on
+    # another node, can't attach the volume ("Multi-Attach"), and the License never activates.
+    # The sidecar forces strategy=Recreate + cycles replicas so a single pod attaches, then
+    # exits; Argo kills it when `bnk up` finishes. A no-op on a genuinely fresh cluster.
+    - name: bnk-up
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk bnk up --auto"]
+        workingDir: /work
+        envFrom:
+          - secretRef: { name: bnk-secrets }
+        volumeMounts:
+          - { name: work, mountPath: /work }
+      sidecars:
+        - name: cwc-guard
+          image: PLACEHOLDER_RUNNER_IMAGE
+          command: [sh, -ec]
+          args:
+            - |
+              KB=/usr/local/bin/kubectl
+              KC=""
+              for i in $(seq 1 90); do
+                KC=$(find /work -type f -name kubeconfig 2>/dev/null | head -1)
+                [ -n "$KC" ] && "$KB" --kubeconfig "$KC" get ns >/dev/null 2>&1 && break
+                sleep 10
+              done
+              [ -z "$KC" ] && exit 0
+              for i in $(seq 1 150); do
+                if "$KB" --kubeconfig "$KC" -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
+                  "$KB" --kubeconfig "$KC" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+                    -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1
+                  pods=$("$KB" --kubeconfig "$KC" -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)
+                  if [ "$(echo "$pods" | grep -c f5-spk-cwc)" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
+                    "$KB" --kubeconfig "$KC" -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
+                    for j in $(seq 1 20); do [ "$("$KB" --kubeconfig "$KC" -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
+                    "$KB" --kubeconfig "$KC" -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
+                  fi
+                  [ "$("$KB" --kubeconfig "$KC" -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
+                fi
+                sleep 10
+              done
+          volumeMounts:
+            - { name: work, mountPath: /work }
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - secretRef: { name: bnk-secrets }
+        volumeMounts:
+          - { name: work, mountPath: /work }

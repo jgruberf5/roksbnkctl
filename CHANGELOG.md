@@ -14,6 +14,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 ### Fixed
 
 - **`registry replicate` captures the mirror's CA from the served chain, not a verified dial.** The capture decided "is this a private CA the nodes must trust?" from a verified TLS handshake — which succeeds on the operator host whenever the mirror's CA is already in the local trust store (e.g. after `update-ca-certificates`), returning "nothing to install" even though the air-gapped cluster nodes do **not** trust it. It now keys on whether the served chain's top certificate is **self-signed** (the signature of a private CA / co-located Harbor), matching what the nodes actually see.
+- **The whole operator side now trusts a private mirror's CA — not only the cluster nodes — so the disconnected install runs end-to-end from a container/CI operator.** The captured (or `--registry-ca`) CA taught the cluster *nodes* to trust the mirror, but every roksbnkctl operation that itself contacts the mirror still relied on the host OS trust store. That was invisible when the operator ran on the Harbor VSI (its CA was in system trust), but the `roksbnkctl-tools-runner` **container** has none, so each step failed `x509: certificate signed by unknown authority`. Fixed across the operator's paths, keyed on the same captured/recorded CA:
+  - **`registry replicate`** resolves the CA **before** the copy and trusts it for the push — a custom `RootCAs` pool (system roots + mirror CA) on the crane transport for image/chart copies, and `--ca-file` on the one classic-Helm chart's `helm registry login` / `helm push`.
+  - **`registry verify`** trusts the CA for its crane digest HEAD checks the same way.
+  - **`bnk up`** exports an operator CA bundle (system roots + the recorded mirror CA) via `SSL_CERT_FILE` before running terraform, so the **terraform helm provider** — which pulls each chart from the mirror as a plugin subprocess that inherits the env — trusts it too.
+
+  Public targets (whose chain is covered by the default roots) are unaffected. This is the operator-side complement to the node CA-trust installer: nodes get the CA via the DaemonSet, the operator gets it here.
 
 ### Removed
 

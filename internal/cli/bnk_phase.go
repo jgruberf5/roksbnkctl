@@ -89,6 +89,10 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Trust a co-located private mirror's CA for the terraform/helm chart pulls this
+	// install runs — a no-op unless `registry replicate` recorded a private CA. Lets
+	// `bnk up` work from a container operator with no OS trust for the mirror.
+	ensureMirrorCATrust(cctx.WorkspaceName)
 	shape, err := config.DetectShape(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace shape: %w", err)

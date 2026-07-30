@@ -1,0 +1,43 @@
+# bnk.yaml — the non-secret shape roksbnkctl reads. No secrets here (GitOps-safe:
+# this file is committed to git and synced by ArgoCD). The API key, Harbor
+# password, and FLP handoff come from the bnk-secrets Secret via --override-from-env;
+# the FAR auth archive + subscription JWT are read from the orchestration COS bucket.
+#
+# Mirrors the CLI demo's known-good workspace config (adopt disco-demo over the
+# existing TGW, cert-manager + BNK installed, Harbor by private IP) — the ONE
+# difference from the CLI demo is the FAR supply chain: local files there, the COS
+# bucket here (cos: block + far_auth_file / subscription_jwt_file object keys).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bnk-config
+  namespace: bnk-ci
+data:
+  bnk.yaml: |
+    ibmcloud: { region: us-south, resource_group: default }
+    prefix: bnk
+    tf_source: { type: embedded }
+    cluster:  { name: disco-demo, create: false }        # adopt the EXISTING air-gapped cluster
+    # Orchestration COS holding the FAR pull key + subscription JWT. The runner has
+    # NO local FAR files, so it resolves them from here; the bucket carries a
+    # per-account uniqueness suffix, so it is rendered from FAR_COS_BUCKET.
+    cos: { instance: bnk-supply-chain, bucket: PLACEHOLDER_COS_BUCKET, region: us-south }
+    registry:
+      target: generic
+      generic_host: PLACEHOLDER_HARBOR_PRIVATE_IP        # e.g. 10.241.0.4 — Harbor by PRIVATE IP over the TGW
+      generic_repo_prefix: bnk-mirror
+      generic_username: admin
+    bnk:
+      manifest_version: 2.3.0-3.2598.3-0.0.170
+      license_mode: f5licenseproxy
+      far_auth_file: f5-far-auth-key.tgz                 # object keys in the COS bucket above
+      subscription_jwt_file: subscription.jwt
+    resources:
+      transit_gateway:   { create: false, existing: bnkci-testing }   # reach the cluster over the EXISTING TGW
+      registry_cos:      { create: false }               # cluster already has its internal registry
+      cert_manager:      { create: true }
+      bnk:               { create: true }
+      cluster_vpc:       { create: true }
+      tgw_jumphost:      { create: false }
+      cluster_jumphosts: { create: false }
+      client_vpc:        { create: false }

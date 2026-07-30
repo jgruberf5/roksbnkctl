@@ -1,0 +1,52 @@
+#cloud-config
+# =============================================================================
+# Argo Workflows controller VSI — single-node k3s + Argo Workflows.
+#
+# The GitOps controller for the disconnected-cluster CI demo — but GitOps as a
+# *pipeline*, not sync-from-git: it runs the roksbnkctl-tools-runner image through
+# two Workflows (mirror + install) that the demo `argo submit`s directly. No git
+# repo, no ArgoCD Application. It sits in the services VPC (the only egress), so
+# k3s / Argo Workflows / the runner image all pull from public registries normally;
+# only the ROKS cluster it targets is air-gapped, reached over the TGW.
+#
+# Rendered by envsubst before provisioning. Substituted vars:
+#   ${ARGO_WF_VERSION}  — pinned Argo Workflows install manifest + CLI tag (e.g. v4.0.8)
+#   ${K3S_CHANNEL}      — k3s install channel (e.g. stable)
+# =============================================================================
+write_files:
+  # Wait-for-argo helper the demo polls over SSH before it drives the CLI.
+  - path: /usr/local/bin/wait-argo
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -e
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      for i in $(seq 1 120); do
+        kubectl -n argo rollout status deploy/workflow-controller --timeout=10s >/dev/null 2>&1 && \
+        kubectl -n argo rollout status deploy/argo-server --timeout=10s >/dev/null 2>&1 && {
+          echo "argo workflows ready"; exit 0; }
+        sleep 5
+      done
+      echo "argo workflows did not become ready" >&2; exit 1
+
+runcmd:
+  - [ bash, -c, "export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y curl jq" ]
+  # --- single-node k3s ------------------------------------------------------
+  - [ bash, -c, "curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=${K3S_CHANNEL} sh -" ]
+  - [ bash, -c, "until kubectl get nodes >/dev/null 2>&1; do sleep 3; done" ]
+  # --- Argo Workflows (pinned manifest) -------------------------------------
+  # --server-side: the Argo CRDs carry annotations larger than the 262144-byte
+  # client-side last-applied limit, so a plain `kubectl apply` is rejected.
+  - [ bash, -c, "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; kubectl create namespace argo" ]
+  - [ bash, -c, "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; kubectl apply -n argo --server-side --force-conflicts -f https://github.com/argoproj/argo-workflows/releases/download/${ARGO_WF_VERSION}/install.yaml" ]
+  # --- expose the Argo Workflows WEB UI over the VSI's floating IP -----------
+  # auth-mode=server → the UI opens with no login (read the DAG for the demo); NodePort
+  # 30746 → https://<argo-vsi-fip>:30746/ (the VSI security group must allow 30746).
+  - [ bash, -c, "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; kubectl -n argo patch deploy argo-server --type=json -p='[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--auth-mode=server\"}]'" ]
+  - [ bash, -c, "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; kubectl -n argo patch svc argo-server --type merge -p '{\"spec\":{\"type\":\"NodePort\",\"ports\":[{\"name\":\"web\",\"port\":2746,\"targetPort\":2746,\"nodePort\":30746}]}}'" ]
+  # --- argo CLI -------------------------------------------------------------
+  - [ bash, -c, "curl -sSL -o /tmp/argo.gz https://github.com/argoproj/argo-workflows/releases/download/${ARGO_WF_VERSION}/argo-linux-amd64.gz && gunzip -f /tmp/argo.gz && install -m0755 /tmp/argo /usr/local/bin/argo" ]
+  # kubeconfig readable by the ubuntu user, so the demo's SSH commands need no sudo
+  - [ bash, -c, "mkdir -p /home/ubuntu/.kube && cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config && chown -R ubuntu:ubuntu /home/ubuntu/.kube && echo 'export KUBECONFIG=/home/ubuntu/.kube/config' >> /home/ubuntu/.bashrc" ]
+  - [ bash, -c, "/usr/local/bin/wait-argo || true" ]
+  - [ bash, -c, "touch /var/lib/cloud/argo-vsi-ready" ]

@@ -763,6 +763,78 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 
 // ── replicate ───────────────────────────────────────────────────────────────
 
+// resolveMirrorCA returns the mirror's CA PEM used both to trust the replicate
+// push TLS and to record for air-gap node trust. --registry-ca wins and is fatal
+// if unreadable; otherwise it is a best-effort auto-capture from host, where a
+// public or unreachable host yields "" (no error) and the caller warns. A private
+// self-signed mirror (co-located Harbor) returns its served CA chain.
+func resolveMirrorCA(host string) (string, error) {
+	if flagRegistryCAFile != "" {
+		pemBytes, err := os.ReadFile(flagRegistryCAFile)
+		if err != nil {
+			return "", fmt.Errorf("reading --registry-ca %s: %w", flagRegistryCAFile, err)
+		}
+		return strings.TrimSpace(string(pemBytes)), nil
+	}
+	if host == "" {
+		return "", nil
+	}
+	caPEM, err := captureRegistryCA(host)
+	if err != nil {
+		return "", nil // best-effort: unreachable/public host is non-fatal
+	}
+	return caPEM, nil
+}
+
+// ensureMirrorCATrust makes the operator's terraform/helm CHILD processes trust a
+// private mirror's recorded CA before `bnk up` pulls charts from it. `bnk up`'s
+// terraform helm provider runs as a subprocess that inherits os.Environ(), and a
+// container operator (the roksbnkctl-tools-runner) has NO OS trust for a co-located
+// self-signed Harbor — so those chart pulls fail `x509: unknown authority` without
+// this. It is the operator-side complement to the node CA-trust installer: nodes get
+// the CA via the DaemonSet, the operator gets it here. It appends the recorded mirror
+// CA to the existing trust bundle and points SSL_CERT_FILE at the result (so public
+// source pulls keep working too). No-op when the workspace recorded no private CA (a
+// public mirror), and never fatal — trust setup is best-effort.
+func ensureMirrorCATrust(workspace string) {
+	rec, err := config.ReadRegistryMirror(workspace)
+	if err != nil || rec == nil || strings.TrimSpace(rec.CACert) == "" {
+		return
+	}
+	base, err := config.BaseDir()
+	if err != nil {
+		return
+	}
+	sys := os.Getenv("SSL_CERT_FILE")
+	if sys == "" {
+		for _, p := range []string{
+			"/etc/ssl/certs/ca-certificates.crt", // debian / ubuntu (the runner image)
+			"/etc/pki/tls/certs/ca-bundle.crt",   // rhel / fedora
+			"/etc/ssl/cert.pem",                  // alpine / macos
+		} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				sys = p
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	if sys != "" {
+		if b, rerr := os.ReadFile(sys); rerr == nil {
+			buf.Write(b)
+			buf.WriteByte('\n')
+		}
+	}
+	buf.WriteString(strings.TrimSpace(rec.CACert))
+	buf.WriteByte('\n')
+	bundle := filepath.Join(base, "mirror-ca-bundle.crt")
+	if werr := os.WriteFile(bundle, buf.Bytes(), 0o644); werr != nil {
+		return
+	}
+	_ = os.Setenv("SSL_CERT_FILE", bundle)
+	fmt.Fprintln(os.Stderr, "→ trusting the mirror's private CA for the install (operator SSL_CERT_FILE)")
+}
+
 func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	name, ws, err := loadRegistryWorkspace()
 	if err != nil {
@@ -777,7 +849,19 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Resolve the mirror's CA up front (before any copy): --registry-ca wins, else
+	// auto-capture from the push host. A private/self-signed mirror (co-located
+	// Harbor by private IP) returns its CA here; a public target returns "". When
+	// set, the engine trusts it for the push TLS so a container operator with no OS
+	// trust for the mirror can still replicate — and it is also recorded below for
+	// air-gap node trust, so the same CA drives both the operator and the nodes.
+	pushHost := registryHostFromPath(target.ImageHostPath())
+	mirrorCA, caErr := resolveMirrorCA(pushHost)
+	if caErr != nil {
+		return caErr // an explicit --registry-ca that can't be read is fatal
+	}
 	eng := registryEngine(target, in)
+	eng.RegistryCA = mirrorCA
 	// Check the push credential once up front. Without this a wrong password is
 	// retried against every artifact in the BOM (401 is retryable — Harbor's token
 	// service genuinely flakes), so the command grinds for minutes and then reports
@@ -819,20 +903,13 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	// `bnk up` installs that CA on every node before pulling. --registry-ca
 	// wins; otherwise auto-capture from the host (best-effort — a public or
 	// unreachable host records no CA and the node-trust step no-ops).
-	rec.RegistryHost = registryHostFromPath(target.ImageHostPath())
-	if flagRegistryCAFile != "" {
-		pemBytes, rerr := os.ReadFile(flagRegistryCAFile)
-		if rerr != nil {
-			return fmt.Errorf("reading --registry-ca %s: %w", flagRegistryCAFile, rerr)
-		}
-		rec.CACert = strings.TrimSpace(string(pemBytes))
-	} else if rec.RegistryHost != "" {
-		if caPEM, cerr := captureRegistryCA(rec.RegistryHost); cerr != nil {
-			fmt.Fprintf(os.Stderr, "  ⚠ could not capture the mirror CA from %s (%v); if this is a private registry, re-run with --registry-ca <file> so nodes can trust it\n", rec.RegistryHost, cerr)
-		} else if caPEM != "" {
-			rec.CACert = caPEM
-			fmt.Fprintf(os.Stderr, "  ✓ captured mirror CA from %s (nodes will trust it before pulling)\n", rec.RegistryHost)
-		}
+	rec.RegistryHost = pushHost
+	// mirrorCA was resolved (and trusted for the push) before the copy above.
+	if mirrorCA != "" {
+		rec.CACert = mirrorCA
+		fmt.Fprintf(os.Stderr, "  ✓ trusted + recorded the mirror CA from %s (the push trusts it; nodes install it before pulling)\n", pushHost)
+	} else if pushHost != "" {
+		fmt.Fprintf(os.Stderr, "  ⚠ no private CA captured from %s — if it is a self-signed mirror, re-run with --registry-ca <file>\n", pushHost)
 	}
 	if err := config.WriteRegistryMirror(name, rec); err != nil {
 		return fmt.Errorf("recording mirror: %w", err)
@@ -860,7 +937,14 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	bad := registryEngine(target, in).Verify(cmd.Context(), bom)
+	// Trust a private/self-signed mirror's CA for the verify HEAD checks too — the
+	// crane digest probes fail x509 from a container operator otherwise, exactly as
+	// the replicate push does. Best-effort capture (public targets return "").
+	eng := registryEngine(target, in)
+	if ca, _ := resolveMirrorCA(registryHostFromPath(target.ImageHostPath())); ca != "" {
+		eng.RegistryCA = ca
+	}
+	bad := eng.Verify(cmd.Context(), bom)
 	if flagOutput == "json" {
 		out := make([]map[string]string, 0, len(bad))
 		for _, b := range bad {
