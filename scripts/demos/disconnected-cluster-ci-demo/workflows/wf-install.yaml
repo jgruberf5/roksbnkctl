@@ -55,28 +55,28 @@ spec:
       sidecars:
         - name: cwc-guard
           image: PLACEHOLDER_RUNNER_IMAGE
+          envFrom:
+            - secretRef: { name: bnk-secrets }     # IBMCLOUD_API_KEY for an admin kubeconfig
           command: [sh, -ec]
           args:
             - |
-              KB=/usr/local/bin/kubectl
-              KC=""
-              for i in $(seq 1 90); do
-                KC=$(find /work -type f -name kubeconfig 2>/dev/null | head -1)
-                [ -n "$KC" ] && "$KB" --kubeconfig "$KC" get ns >/dev/null 2>&1 && break
-                sleep 10
-              done
-              [ -z "$KC" ] && exit 0
-              for i in $(seq 1 150); do
-                if "$KB" --kubeconfig "$KC" -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
-                  "$KB" --kubeconfig "$KC" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+              # Get an admin kubeconfig for the target cluster from the API key (the runner's
+              # own workspace kubeconfig lives at a path this sidecar can't reliably resolve),
+              # then force cwc to Recreate + cycle replicas until the license activates.
+              export IBMCLOUD_HOME=/tmp HOME=/tmp KUBECONFIG=/tmp/.kube/config
+              ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r us-south -g default -q >/dev/null 2>&1 || exit 0
+              for _ in $(seq 1 40); do ibmcloud ks cluster config -c disco-demo --admin >/dev/null 2>&1 && break; sleep 10; done
+              for _ in $(seq 1 160); do
+                if kubectl -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
+                  kubectl -n f5-utils patch deploy f5-spk-cwc --type=merge \
                     -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1
-                  pods=$("$KB" --kubeconfig "$KC" -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)
+                  pods=$(kubectl -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)
                   if [ "$(echo "$pods" | grep -c f5-spk-cwc)" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
-                    "$KB" --kubeconfig "$KC" -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
-                    for j in $(seq 1 20); do [ "$("$KB" --kubeconfig "$KC" -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
-                    "$KB" --kubeconfig "$KC" -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
+                    kubectl -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
+                    for _ in $(seq 1 20); do [ "$(kubectl -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
+                    kubectl -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
                   fi
-                  [ "$("$KB" --kubeconfig "$KC" -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
+                  [ "$(kubectl -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
                 fi
                 sleep 10
               done

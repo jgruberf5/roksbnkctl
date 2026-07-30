@@ -55,9 +55,13 @@ export IBMCLOUD_API_KEY
 #    KUBECONFIG + PATH. A command mentioning roksbnkctl or argo drops a FREEZE mark
 #    (post_10x.py holds that frame 5s), so the pipeline commands are taught.
 ARGO_FIP=""   # resolved after provisioning
-vshow(){ { echo; echo "${B}\$ $*${N}"; } >&2; case "$*" in *roksbnkctl*|*"argo "*) ts FREEZE MARK ;; esac; }
+# A COMMAND still fires before, and an OUTPUT still after, any roksbnkctl or argo command —
+# post_10x.py holds each frame 5s in the final cut (the same convention as the CLI demo's
+# show/outmark). The hold vars + ts()/redact() come from ../lib/demo-format.sh.
+is_demo_cmd(){ [[ "$1" =~ (^|[[:space:]])(roksbnkctl|argo)([[:space:]]|$) ]]; }
+vshow(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; if is_demo_cmd "$*"; then sleep "${CMD_RENDER_HOLD:-1.8}"; ts COMMAND MARK "$(redact "$*")"; sleep "${CMD_POST_HOLD:-0.7}"; fi; }
 V(){ ssh -i "$SSH_KEY_FILE" $SSH_OPTS "ubuntu@${ARGO_FIP}" "export KUBECONFIG=/home/ubuntu/.kube/config PATH=\$PATH:/usr/local/bin; $*"; }
-vrun(){ vshow "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; V "$@"; }
+vrun(){ vshow "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; V "$@"; if is_demo_cmd "$*"; then sleep "${OUT_SETTLE_HOLD:-1.2}"; ts OUTPUT MARK "$(redact "$*")"; sleep "${OUT_POST_HOLD:-0.7}"; fi; }
 
 # =============================================================================
 phase 1 "The pipeline — a disconnected install as two Argo Workflows"
@@ -73,7 +77,7 @@ note "The runner image is the whole toolchain; the Workflows just sequence these
   echo "${B}    roksbnkctl -w bnk cluster register ${CLUSTER_NAME}${N}"
   echo "${B}    roksbnkctl -w bnk bnk up --auto${N}"
   echo "${B}    roksbnkctl -w bnk bnk status${N}"; } >&2
-ts FREEZE MARK
+ts COMMAND MARK "the roksbnkctl pipeline"
 pause
 
 # =============================================================================
