@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -235,13 +235,24 @@ $ roksbnkctl registry replicate       # mirror the BOM (one-time per BNK version
 $ roksbnkctl registry verify          # confirm completeness
 $ roksbnkctl bnk up                   # installs from the mirror
 </code></pre>
-<p><code>registry replicate</code> runs <strong>after</strong> the Cluster phase and <strong>before</strong> BNK. It is a
-deliberate, occasional supply-chain step — it is <strong>not</strong> part of the composite
-<code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). With no <code>--target</code>, it
-uses the workspace’s <code>registry.target</code> (default <code>icr</code>). It copies each artifact
-registry-to-registry by digest, idempotently — re-running it only moves what
-changed (e.g. after a BNK version bump, <code>registry diff</code> shows exactly the changed
-artifacts).</p>
+<p>The walk-through runs <code>registry replicate</code> after the Cluster phase for convenience,
+but <strong><code>replicate</code> needs no cluster</strong>. It is a purely host-side, registry-to-registry
+copy: it pulls each artifact by digest from the FAR source (<code>repo.f5.com</code>) and pushes
+to your target registry via <a href="https://github.com/google/go-containerregistry">go-containerregistry</a>,
+from wherever <code>roksbnkctl</code> runs. So you can <strong>pre-seed the mirror as a standalone
+supply-chain step, before any cluster exists</strong> — all it requires is a configured
+<code>registry:</code> block, the FAR source credential, and network reachability to both
+<code>repo.f5.com</code> and your registry:</p>
+<pre><code class="language-console">$ roksbnkctl -w mirror init --config-file mirror.yaml   # registry: block + bnk.far_auth_local_file
+$ roksbnkctl -w mirror registry target generic          # or icr
+$ roksbnkctl -w mirror registry replicate               # copies FAR → your registry, no cluster
+$ roksbnkctl -w mirror registry verify
+</code></pre>
+<p><code>registry replicate</code> is a deliberate, occasional step — it is <strong>not</strong> part of the
+composite <code>roksbnkctl up</code> (like <code>gateway</code>, you run it explicitly). With no <code>--target</code>,
+it uses the workspace’s <code>registry.target</code> (default <code>icr</code>). It copies each artifact by
+digest, idempotently — re-running only moves what changed (after a BNK version bump,
+<code>registry diff</code> shows exactly the changed artifacts).</p>
 <h2 id="how-the-install-reads-the-mirror"><a class="header" href="#how-the-install-reads-the-mirror">How the install reads the mirror</a></h2>
 <p><code>registry replicate</code> records what it copied — and where — in
 <code>registry-mirror.json</code>. The BNK phase reads that record and <strong>redirects the
@@ -264,7 +275,7 @@ images</strong> — cert-manager, the FLO/BNK namespaces, and <code>kube-system<
 node-labeler — and referenced from the CNEInstance. You do not create any of it.</p>
 <p>This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
 by RBAC and gets <strong>no</strong> pull secret; an external one (Harbor, Artifactory) gets
-<code>mirror-secret</code>. Dropping the pull secret for <em>every</em> mirror is what used to force
+<code>mirror-secret</code>. Dropping the pull secret for <em>every</em> mirror would force
 people to make their Harbor project world-readable — for a registry holding F5’s
 proprietary images, not an acceptable requirement.</p>
 </li>
@@ -329,6 +340,39 @@ ICR and a public Artifactory carry publicly-trusted certificates. If your
 registry uses a custom or self-signed cert, add its CA to the trust store on the
 host running <code>registry replicate</code> (and on the cluster, for the image pulls)
 before you replicate.</p>
+</blockquote>
+<h2 id="a-truly-disconnected-cluster-no-worker-egress"><a class="header" href="#a-truly-disconnected-cluster-no-worker-egress">A truly disconnected cluster (no worker egress)</a></h2>
+<p>Mirroring removes external <em>pulls</em> at install time, but by default the ROKS cluster
+is still built with a <strong>public gateway</strong> on each subnet — its workers keep Internet
+egress. For a genuinely disconnected cluster with <strong>no egress at all</strong>, set:</p>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: dc-roks
+  public_gateway: false     # no public gateways → no worker Internet egress
+</code></pre>
+<p><code>init</code> also prompts for this (“Attach public gateways for worker Internet egress?”);
+answer <strong>No</strong> for a private cluster. It renders the <code>cluster_public_gateway = false</code>
+terraform variable, so no <code>ibm_is_public_gateway</code> is created and no subnet attaches
+one. An omitted or <code>true</code> value is the current behavior (egress on).</p>
+<blockquote>
+<p><strong>This is an expert topology.</strong> A cluster with no egress can only pull images and
+reach IBM Cloud services over <strong>private</strong> paths that <code>roksbnkctl</code> does <strong>not</strong> build
+for you. Before setting <code>public_gateway: false</code> you must provide:</p>
+<ul>
+<li><strong>Private reachability to your mirror registry</strong> — e.g. the registry in a VPC the
+cluster reaches over a Transit Gateway, or a Virtual Private Endpoint (VPE). All
+BNK images/charts then come from the mirror (this chapter).</li>
+<li><strong>VPEs / private service endpoints</strong> for the IBM Cloud services the cluster needs
+(Container Registry if you mirror to ICR, COS for remote state, etc.).</li>
+<li><strong>Licensing without F5 egress</strong> — license through an in-cluster or VSI
+<a href="./10c-flp-licensing.html">F5 License Proxy</a> (<code>bnk.license_mode: f5licenseproxy</code>)
+that itself has the one controlled egress path to F5, or a <code>disconnected</code>
+license mode, so the cluster never calls F5 directly.</li>
+</ul>
+<p>The <code>public_gateway</code> toggle only removes the egress path; wiring the private paths
+above is the operator’s responsibility. Note the cluster <strong>master</strong> keeps its public
+service endpoint regardless — this toggle governs worker/subnet egress, not the API
+endpoint.</p>
 </blockquote>
 
                     </main>

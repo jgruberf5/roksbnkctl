@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -210,7 +210,7 @@ The Terraform source tree compiled into the <code>roksbnkctl</code> binary via G
 <p><strong><code>envFrom</code></strong> (k8s)
 A Pod spec field that references a Secret or ConfigMap and projects all of its keys as environment variables into the container. The k8s backend’s ops pod uses <code>envFrom: secretRef: roksbnkctl-ibm-creds</code> to receive the API key without listing it in the manifest plaintext.</p>
 <p><strong><code>extra_hosts</code></strong>
-The workspace config’s list of additional URLs to probe under <code>roksbnkctl test connectivity</code>. In v1.0 the value is a bare <code>[]string</code> of URLs; per-host method/expected-status overrides are deferred. See <a href="./20-connectivity-testing.html">Chapter 20</a>.</p>
+The workspace config’s list of additional URLs to probe under <code>roksbnkctl test connectivity</code>. The value is a bare <code>[]string</code> of URLs; per-host method/expected-status overrides are deferred. See <a href="./20-connectivity-testing.html">Chapter 20</a>.</p>
 <p><strong>FAR</strong>
 <strong>F5 Application Runtime</strong> — the container-image distribution of the BIG-IP Next data plane. FLO pulls FAR images from <code>repo.f5.com</code> using the auth key in the COS supply-chain bucket.</p>
 <p><strong>FLO</strong>

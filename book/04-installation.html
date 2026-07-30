@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -216,19 +216,19 @@
 <p>Methods A and B put a binary on <code>PATH</code> and assume the runtime tools are installed too. Method C (<a href="#path-c--run-from-the-all-in-one-container-image-no-install">Path C below</a>) is self-contained: nothing on the host but a container runtime and a place to keep state.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li><strong>Linux or macOS</strong> for the day-to-day developer experience. Windows compiles cleanly but interactive features (TTY-bound SSH shell, ssh-agent integration) are not first-class on Windows yet.</li>
+<li><strong>Linux, macOS, or native Windows.</strong> The full deploy path — cluster, BNK, and testing phases — runs on <strong>native Windows without WSL</strong>: roksbnkctl drives Terraform’s provisioning glue itself (no <code>curl</code>/<code>tar</code>/<code>grep</code>/<code>bash</code> on the host), and the whole <code>up</code> → shared-Transit-Gateway → <code>down</code> flow is validated on Windows PowerShell. A few <em>interactive</em> conveniences (the TTY-bound SSH shell, ssh-agent integration) are still not first-class on Windows; use <code>--on</code>/backends or a Linux/macOS host for those.</li>
 <li><strong>Git</strong> to clone the repository (only if building from source — not needed if you grab a pre-built binary).</li>
 <li><strong>Go 1.26 or newer</strong> if you want a native build. If you don’t have Go (or have an older version), use the Docker-based build or a pre-built release binary.</li>
 <li><strong>Terraform &gt;= 1.5 on PATH</strong> at runtime — required for <code>roksbnkctl up</code> / <code>plan</code> / <code>apply</code> / <code>down</code>.</li>
-<li><strong>Helm 3 on PATH</strong> at runtime — <code>doctor</code> flags it as required during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, so without <code>helm</code> that path errors out with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead (in-process via the <code>hashicorp/helm</code> provider — see <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>). <strong>The default path still shells <code>helm</code> once, though</strong> — for FAR chart-version discovery (the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions), so <code>helm</code> is genuinely required in <em>both</em> modes, not only the legacy one. Keep <code>helm</code> installed to stay <code>doctor</code>-green.</li>
+<li><strong>Helm 3 on PATH</strong> at runtime — <code>doctor</code> flags it as required during <code>roksbnkctl up</code>. The charts install via the <code>helm_release</code> resource (in-process via the <code>hashicorp/helm</code> provider — see <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>), but FAR chart-version discovery still shells out to host <code>helm</code>: the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions. So <code>helm</code> is genuinely required. Keep <code>helm</code> installed to stay <code>doctor</code>-green.</li>
 </ul>
 <p>The remaining tools (<code>ibmcloud</code>, <code>kubectl</code>, <code>oc</code>, <code>iperf3</code>, <code>docker</code>) are optional and only needed for the corresponding passthrough or backend.</p>
 <p>You do not need Docker installed to <em>use</em> <code>roksbnkctl</code> with the default <code>local</code> backend. Docker is required only if you opt in to <code>--backend docker</code> for <code>terraform</code> / <code>ibmcloud</code>. The k8s and ssh backends are alternatives that need neither host Docker nor host Go.</p>
 <h2 id="installing-prerequisites"><a class="header" href="#installing-prerequisites">Installing prerequisites</a></h2>
-<p>Install paths per platform. <code>terraform</code> and <code>helm</code> are flagged required by <code>doctor</code> (<code>helm</code> is invoked by terraform’s <code>local-exec</code> provisioners in the legacy <code>--legacy-bnk</code> BNK path; the default terraform-native path installs charts via the <code>helm_release</code> provider — keep <code>helm</code> installed to stay green and to keep the legacy path available); the rest are optional, install only what you need.</p>
+<p>Install paths per platform. <code>terraform</code> and <code>helm</code> are flagged required by <code>doctor</code> (<code>helm</code> is shelled out for FAR chart-version discovery during <code>roksbnkctl up</code> — keep it installed to stay green); the rest are optional, install only what you need.</p>
 <h3 id="macos--homebrew"><a class="header" href="#macos--homebrew">macOS — Homebrew</a></h3>
 <pre><code class="language-bash">brew install terraform               # required
-brew install helm                    # flagged required by doctor — the legacy --legacy-bnk path's `local-exec` provisioner shells out to `helm` (the default path uses the helm_release provider)
+brew install helm                    # flagged required by doctor — FAR chart-version discovery shells out to `helm`
 brew install --cask ibmcloud-cli     # optional — only for `roksbnkctl ibmcloud …` passthrough
 brew install kubectl                 # optional — only for `roksbnkctl kubectl …` passthrough (`roksbnkctl k *` is internalised)
 brew install iperf3                  # optional — only for `--backend local`/`--backend ssh:&lt;t&gt;` throughput tests
@@ -251,7 +251,7 @@ https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
   | sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update &amp;&amp; sudo apt-get install -y terraform
 
-# helm 3 — flagged required by doctor (the legacy --legacy-bnk path's null_resource + local-exec provisioner for cert_manager / flo / cne_instance shells out to `helm`; the default path uses the helm_release provider in-process)
+# helm 3 — flagged required by doctor (FAR chart-version discovery shells out to `helm` to read the FLO/CIS chart versions)
 curl https://baltocdn.com/helm/signing.asc \
   | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] \
@@ -445,7 +445,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>The v1.0 cluster lifecycle needs two binaries on <code>PATH</code>:</p>
 <ul>
 <li><strong><code>terraform</code> (&gt;= 1.5)</strong> — hard-required for any cluster lifecycle command (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>).</li>
-<li><strong><code>helm</code> (3.x)</strong> — flagged required by <code>doctor</code> during <code>roksbnkctl up</code>. In the legacy BNK path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code>, and without it that path fails with <code>exit status 127 — helm: not found</code>. The default terraform-native path installs the charts via the <code>helm_release</code> resource instead — the <code>hashicorp/helm</code> provider speaks the Helm 3 protocol via an embedded Go runtime, so no host <code>helm</code> is shelled out (the refactor onto <code>helm_release</code> that this once deferred has landed for the BNK phase; see <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10</a>). Keeping <code>helm</code> installed keeps <code>doctor</code> green and the legacy path available.</li>
+<li><strong><code>helm</code> (3.x)</strong> — flagged required by <code>doctor</code> during <code>roksbnkctl up</code>. The charts install via the <code>helm_release</code> resource — the <code>hashicorp/helm</code> provider speaks the Helm 3 protocol via an embedded Go runtime, so no host <code>helm</code> is shelled out for the chart installs (see <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10</a>). FAR chart-version discovery does shell out to host <code>helm</code>, though: the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions, so <code>helm</code> is genuinely required. Keeping <code>helm</code> installed keeps <code>doctor</code> green.</li>
 </ul>
 <p>Optional binaries — only needed for the corresponding passthrough or fallback path:</p>
 <ul>

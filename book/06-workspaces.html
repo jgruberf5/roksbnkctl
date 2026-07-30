@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,9 +179,9 @@
                     <main>
                         <h1 id="workspaces"><a class="header" href="#workspaces">Workspaces</a></h1>
 <p>A <strong>workspace</strong> is a per-environment bundle of config + state. The shape is modelled on <code>kubectl</code> contexts: you can have many of them, exactly one is “current” at a time, and a <code>-w</code> flag lets you address a specific one for a single command without flipping the pointer.</p>
-<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and how creating or deleting a workspace moves the “current” pointer for you (so the old parking-lot dance is no longer needed).</p>
+<p>This chapter covers the on-disk layout, the everyday <code>init</code> / <code>use</code> / <code>list</code> flow, the full <code>roksbnkctl workspaces</code> command tree, the <code>-w</code> / <code>--workspace</code> override, and how creating or deleting a workspace moves the “current” pointer for you.</p>
 <blockquote>
-<p><strong>Since <code>v1.9.0</code>, workspace selection follows you automatically.</strong> Creating a workspace (<code>init</code> or <code>ws new</code>) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no longer a phantom <code>default</code> fallback — with nothing selected, commands say so instead of guessing.</p>
+<p><strong>Workspace selection follows you automatically.</strong> Creating a workspace (<code>init</code> or <code>ws new</code>) makes it current; deleting the current workspace moves the pointer to another existing one, or clears it when none remain. There is no phantom <code>default</code> fallback — with nothing selected, commands say so instead of guessing.</p>
 </blockquote>
 <h2 id="the-on-disk-layout"><a class="header" href="#the-on-disk-layout">The on-disk layout</a></h2>
 <p>Every workspace lives under <code>~/.roksbnkctl/&lt;name&gt;/</code>:</p>
@@ -213,7 +213,7 @@
 </ul>
 <p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var. Test fixtures use this; everyday users shouldn’t need it.</p>
 <h2 id="terraformappliedtfvars--whats-deployed-right-now"><a class="header" href="#terraformappliedtfvars--whats-deployed-right-now"><code>terraform.applied.tfvars</code> — what’s deployed right now</a></h2>
-<p><code>v1.4.0</code> adds a per-phase snapshot of the effective Terraform var-file inputs that produced the workspace’s current state. After every successful <code>terraform apply</code> — <code>roksbnkctl cluster up</code>, <code>roksbnkctl bnk up</code>, or the legacy single-shape <code>roksbnkctl up</code> — <code>roksbnkctl</code> writes a canonical-HCL summary of “what var-files said” to the phase’s state directory. Re-create / audit / handoff workflows that previously needed <code>config.yaml</code> (or memory) now have a file-on-disk record of the inputs.</p>
+<p><code>roksbnkctl</code> keeps a per-phase snapshot of the effective Terraform var-file inputs that produced the workspace’s current state. After every successful <code>terraform apply</code> — <code>roksbnkctl cluster up</code> or <code>roksbnkctl bnk up</code> — <code>roksbnkctl</code> writes a canonical-HCL summary of “what var-files said” to the phase’s state directory. Re-create / audit / handoff workflows get a file-on-disk record of the inputs rather than reconstructing them from <code>config.yaml</code> (or memory).</p>
 <h3 id="where-it-lives"><a class="header" href="#where-it-lives">Where it lives</a></h3>
 <div class="table-wrapper">
 <table>
@@ -299,7 +299,7 @@ roksbnkctl init -w myws --config-file ./config.yaml
 </code></pre>
 <p>This writes <code>~/.roksbnkctl/myws/config.yaml</code> directly — unknown fields are <strong>rejected</strong>, not silently dropped — and is fully non-interactive when the file is complete (<code>ibmcloud.region</code>, <code>ibmcloud.resource_group</code>, <code>prefix</code>, <code>tf_source.type</code>). The API key is <strong>not</strong> required in the file; it resolves from the environment / keychain at run time (see <a href="./14-credentials-resolver.html">Credentials</a>). A local path <strong>or</strong> an <code>http(s)</code> URL is accepted, and <code>--config-file</code> composes with <code>--override-from-env</code> to inject secrets from the environment — the full unattended / CI patterns (including <code>--non-interactive</code>, which builds <code>config.yaml</code> from <code>ROKSBNKCTL_*</code> env alone) are in <a href="./07a-unattended-setup.html">Chapter 7a — Unattended setup</a>.</p>
 <h3 id="raw-terraform-variable-overrides"><a class="header" href="#raw-terraform-variable-overrides">Raw terraform-variable overrides</a></h3>
-<p>For the rare case where you need to override a raw terraform variable the <code>config.yaml</code> schema doesn’t surface, drop a <code>terraform.tfvars.user</code> at the workspace root (<code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>, mode <code>0600</code>) — the lifecycle auto-layers it on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> phases — or pass <code>--var-file &lt;path&gt;</code> on a phase command (<code>cluster up</code>, <code>bnk up</code>, …) for a one-shot. The precedence chain is: rendered <code>terraform.tfvars</code> → <code>terraform.tfvars.user</code> → a phase command’s <code>--var-file</code> flags → phase overrides. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a>. (<code>init</code> itself no longer seeds from a tfvars file — <code>config.yaml</code> is the seed surface.)</p>
+<p>For the rare case where you need to override a raw terraform variable the <code>config.yaml</code> schema doesn’t surface, drop a <code>terraform.tfvars.user</code> at the workspace root (<code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code>, mode <code>0600</code>) — the lifecycle auto-layers it on every <code>up</code> / <code>plan</code> / <code>apply</code> / <code>down</code> for <strong>both</strong> phases — or pass <code>--var-file &lt;path&gt;</code> on a phase command (<code>cluster up</code>, <code>bnk up</code>, …) for a one-shot. The precedence chain is: rendered <code>terraform.tfvars</code> → <code>terraform.tfvars.user</code> → a phase command’s <code>--var-file</code> flags → phase overrides. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a>. (<code>init</code> seeds the workspace from <code>config.yaml</code> — that’s the seed surface.)</p>
 <h2 id="the-full-command-tree"><a class="header" href="#the-full-command-tree">The full command tree</a></h2>
 <pre><code class="language-bash">roksbnkctl workspaces ...     # canonical name
 roksbnkctl ws ...              # alias
@@ -383,8 +383,8 @@ roksbnkctl -w default k get pods -A
 <li>You’re testing a fresh workspace before promoting it to current.</li>
 </ul>
 <p>The flag only affects the running command — the pointer in <code>~/.roksbnkctl/config.yaml</code> is unchanged. After the command exits, the next bare <code>roksbnkctl</code> reads the original pointer.</p>
-<h2 id="deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired"><a class="header" href="#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired">Deleting the workspace you’re in (the parking-lot dance is retired)</a></h2>
-<p>Earlier versions refused to delete the current workspace, so the end-to-end test used a <strong>parking-lot pattern</strong> — a throwaway workspace that existed only to hold the <code>current_workspace</code> pointer while you deleted the real one. That’s no longer necessary: <code>ws delete</code> removes the current workspace directly and moves the pointer to another existing workspace (or clears it when none remain).</p>
+<h2 id="deleting-the-workspace-youre-in"><a class="header" href="#deleting-the-workspace-youre-in">Deleting the workspace you’re in</a></h2>
+<p><code>ws delete</code> removes the current workspace directly — there’s no “switch first” step. It moves the pointer to another existing workspace, or clears it when none remain.</p>
 <pre><code class="language-bash"># End-to-end test cleanup — just destroy and delete, in any order
 roksbnkctl down --auto
 roksbnkctl ws delete default --force
@@ -409,7 +409,7 @@ exit
 <p>Same for <code>-w</code>:</p>
 <pre><code class="language-bash">roksbnkctl -w prod shell
 </code></pre>
-<p>Useful when you want to run host <code>kubectl</code> / host <code>oc</code> / arbitrary tools with the workspace context loaded. The Sprint 2 internalised verbs (<code>roksbnkctl k get</code>, etc.) read the same context automatically — you don’t need to be in a subshell to use them.</p>
+<p>Useful when you want to run host <code>kubectl</code> / host <code>oc</code> / arbitrary tools with the workspace context loaded. The internalised verbs (<code>roksbnkctl k get</code>, etc.) read the same context automatically — you don’t need to be in a subshell to use them.</p>
 <h2 id="common-workspace-patterns"><a class="header" href="#common-workspace-patterns">Common workspace patterns</a></h2>
 <p>A handful of patterns that come up in practice:</p>
 <div class="table-wrapper">

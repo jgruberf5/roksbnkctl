@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -254,6 +254,7 @@ into logs or CI output.</p>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
+<tr><td><code>--plan</code></td><td><code>string</code></td><td>—</td><td>apply exactly this saved plan file (from <code>plan --out</code>) instead of re-planning</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
@@ -306,7 +307,6 @@ on legacy single-state workspaces (use <code>roksbnkctl down</code> there).</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the destroy confirmation</td></tr>
-<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
@@ -361,7 +361,6 @@ provision takes ~30 min) before the trial apply.</p>
 </thead>
 <tbody>
 <tr><td><code>--auto</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip confirmation prompts (cluster-bootstrap + apply)</td></tr>
-<tr><td><code>--legacy-bnk</code></td><td><code>bool</code></td><td><code>false</code></td><td>deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path</td></tr>
 <tr><td><code>--no-kubeconfig</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the post-apply admin kubeconfig fetch</td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
@@ -785,6 +784,18 @@ Pass –backend k8s | ssh:<code>&lt;target&gt;</code> for per-backend prereq che
 <p>Destroy everything in the workspace — terraform destroy</p>
 <pre><code>roksbnkctl down [flags]
 </code></pre>
+<p>Tears down the workspace’s phases in reverse-dependency order: BNK and
+Testing in parallel, then the cluster. Two behaviours worth knowing:</p>
+<ul>
+<li>If the cluster was attached to an EXISTING (shared) Transit Gateway, down
+auto-detaches that connection first — removing only this cluster’s connection;
+the shared gateway and every other cluster’s connection are left intact.</li>
+<li>If this workspace CREATED a VPC that another cluster’s subnets still live in
+(the shared-VPC topology), down refuses: the VPC owner must be torn down LAST,
+so tear the workspaces sharing the VPC down first.</li>
+</ul>
+<p>The Gateway and FLP phases are separate and optional; if present, tear them down
+first (down reports which command to run).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -851,6 +862,26 @@ reverse-order teardown of every phase.</p>
 <tbody>
 <tr><td><code>--json</code></td><td><code>bool</code></td><td><code>false</code></td><td>output JSON (CI-friendly)</td></tr>
 <tr><td><code>--show-sensitive</code></td><td><code>bool</code></td><td><code>false</code></td><td>reveal sensitive output values (default redacted)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-flp"><code>roksbnkctl flp</code></a></p>
+<h3 id="roksbnkctl-flp-status"><a class="header" href="#roksbnkctl-flp-status"><code>roksbnkctl flp status</code></a></h3>
+<p>Show the F5 License Proxy’s live status (services, listener, F5/TEEM, CNE fields)</p>
+<pre><code>roksbnkctl flp status [flags]
+</code></pre>
+<p>Fetches /api/status from the FLP’s status service (the flp-status container,
+which runs alongside the proxy on the VSI pod or in the cluster) and renders it.</p>
+<p>The service URL is derived from the workspace’s flp-outputs.json (the FLP endpoint
+host, port 80) unless –url is given. Output honors -o json.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>flp-status base URL (default: derived from the FLP endpoint, port 80)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1048,10 +1079,16 @@ roksbnkctl init example | grep -E ‘manifest_version|cluster_vpc’</p>
 <p>Install the roksbnkctl binary you’re currently running into a directory
 on $PATH so you can invoke it as <code>roksbnkctl</code> from any working
 directory.</p>
-<p>Default destination, in order of preference:
+<p>Default destination:
+Linux/macOS, in order of preference:
 $HOME/.local/bin  (preferred — typically writable without sudo)
 $HOME/bin         (older convention; still on PATH for some setups)
-/usr/local/bin    (system-wide; usually needs sudo)</p>
+/usr/local/bin    (system-wide; usually needs sudo)
+Windows:
+a writable directory already on %PATH% — preferring
+%LOCALAPPDATA%\Microsoft\WindowsApps (on the per-user PATH by default,
+no admin) — so the binary resolves immediately. Falls back to
+%LOCALAPPDATA%\Programs\roksbnkctl (with a PATH hint) if none is usable.</p>
 <p>Override the destination with –dir.</p>
 <p>Idempotent: if the running binary already lives at the destination,
 prints a message and exits 0. Use –force to overwrite (useful right
@@ -1069,7 +1106,7 @@ pulls the latest GitHub release tarball over the network.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--dir</code></td><td><code>string</code></td><td>—</td><td>destination directory (default: ~/.local/bin or /usr/local/bin)</td></tr>
+<tr><td><code>--dir</code></td><td><code>string</code></td><td>—</td><td>destination directory (default: a PATH dir — ~/.local/bin on Unix, %LOCALAPPDATA%\Microsoft\WindowsApps on Windows)</td></tr>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>overwrite even if destination resolves to the running binary</td></tr>
 </tbody>
 </table>
@@ -1449,6 +1486,7 @@ phase’s managed attributes.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--out</code></td><td><code>string</code></td><td>—</td><td>save the plan to <code>&lt;file&gt;</code> (binary plan + a readable <code>&lt;file&gt;</code>.txt) for later <code>apply --plan</code></td></tr>
 <tr><td><code>--var-file</code></td><td><code>stringArray</code></td><td><code>[]</code></td><td>extra TF var-file (repeatable; later files override earlier)</td></tr>
 </tbody>
 </table>
@@ -1465,13 +1503,16 @@ roksbnkctl registry target     Show or set the mirror target (icr|generic)
 roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
-roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
 roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
 roksbnkctl registry delete     Delete ALL replicated artifacts from the target</p>
-<p><code>registry bom</code> works offline against the FAR manifest; the cluster-touching
-verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
-registry: block in the workspace config.</p>
+<p><code>registry bom</code> works entirely offline against the FAR manifest. The other verbs
+need a configured registry: block and network reachability to the target registry —
+<code>replicate</code> also needs the FAR source (repo.f5.com). NONE require a Kubernetes
+cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
+roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
+any cluster exists.</p>
 <h3 id="roksbnkctl-registry-bom"><a class="header" href="#roksbnkctl-registry-bom"><code>roksbnkctl registry bom</code></a></h3>
 <p>Build + print the BNK bill-of-materials from the FAR manifest</p>
 <pre><code>roksbnkctl registry bom [flags]
@@ -1566,12 +1607,19 @@ for target=generic the registry must have deletes enabled.</p>
 </div>
 <p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
 <h3 id="roksbnkctl-registry-replicate"><a class="header" href="#roksbnkctl-registry-replicate"><code>roksbnkctl registry replicate</code></a></h3>
-<p>Copy the BOM into the mirror (needs a live cluster)</p>
+<p>Copy the BOM into the mirror (registry-to-registry; no cluster needed)</p>
 <pre><code>roksbnkctl registry replicate [flags]
 </code></pre>
 <p>Prepares the target registry (auth + repository namespace), then copies every
 BOM artifact into it, idempotently. Records the result in registry-mirror.json so
 the BNK install can be redirected to the mirror.</p>
+<p>Runs entirely host-side: it pulls each artifact by digest from the FAR source
+(repo.f5.com) and pushes to the target registry via go-containerregistry — no
+Kubernetes cluster is involved. So you can pre-seed the mirror as a standalone
+supply-chain step, before creating any cluster, from any host that can reach both
+the FAR source and the target registry. Requires a configured registry: block and
+the FAR source credential (registry.source_service_account_b64, the workspace FAR
+auth, or –source-sa-b64).</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1584,6 +1632,7 @@ the BNK install can be redirected to the mirror.</p>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
+<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
 <tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
@@ -2178,6 +2227,32 @@ gateway itself and every other cluster’s connection to it are left intact.</p>
 <h3 id="roksbnkctl-tgw-status"><a class="header" href="#roksbnkctl-tgw-status"><code>roksbnkctl tgw status</code></a></h3>
 <p>Show the Transit Gateway id/name and the live connection state</p>
 <p>← back to <a href="#roksbnkctl-tgw"><code>roksbnkctl tgw</code></a></p>
+<h2 id="roksbnkctl-uninstall"><a class="header" href="#roksbnkctl-uninstall"><code>roksbnkctl uninstall</code></a></h2>
+<p>Remove the installed roksbnkctl binary from ~/.local/bin (opposite of install)</p>
+<pre><code>roksbnkctl uninstall [flags]
+</code></pre>
+<p>Delete the roksbnkctl binary that <code>roksbnkctl install</code> copied onto $PATH.</p>
+<p>By default it removes <code>&lt;install-dir&gt;</code>/roksbnkctl, where <code>&lt;install-dir&gt;</code> is the same
+directory <code>install</code> uses (~/.local/bin, then ~/bin). Override with –dir.</p>
+<p>It refuses to delete the binary you are currently running on Windows (a running
+.exe cannot be removed there) — delete it manually or run uninstall from a
+different binary. On Linux/macOS removing the running (installed) binary is fine.</p>
+<p>Examples:
+roksbnkctl uninstall                 # remove ~/.local/bin/roksbnkctl
+roksbnkctl uninstall –dir ~/bin
+sudo roksbnkctl uninstall –dir /usr/local/bin</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--dir</code></td><td><code>string</code></td><td>—</td><td>directory to remove roksbnkctl from (default: ~/.local/bin or ~/bin)</td></tr>
+<tr><td><code>--yes</code> / <code>-y</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip the confirmation prompt</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="roksbnkctl-up"><a class="header" href="#roksbnkctl-up"><code>roksbnkctl up</code></a></h2>
 <p>Provision (or attach) and deploy BNK — terraform plan + apply</p>
 <pre><code>roksbnkctl up [flags]

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -300,6 +300,9 @@ is taken up front; the approved phases then apply <strong>in parallel</strong>. 
 only one (e.g. <code>y</code> to BNK, <code>N</code> to Testing) brings up just that phase — handy
 when you want to redeploy the BNK trial without touching the jumphosts. A
 phase whose plan shows no changes is skipped without prompting.</p>
+<p>To review a change out-of-band before applying — save the full plan to a file, get
+sign-off, then apply <strong>exactly</strong> that plan — use the dissociated <code>roksbnkctl plan --out &lt;file&gt;</code> / <code>roksbnkctl apply --plan &lt;file&gt;</code> flow (see <a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK
+trials</a>, §“Reviewing a plan before applying”).</p>
 <p>Why Cluster-completes-first rather than starting Testing the moment the
 cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
 Testing is a handful of VSIs (minutes). Starting Testing against a half-built
@@ -385,14 +388,6 @@ in <code>state-testing/</code> instead. Three cases:</p>
 <li>
 <p><strong>Fresh / empty workspaces</strong> — nothing to migrate. The first <code>up</code> lays
 out all three state directories cleanly.</p>
-</li>
-<li>
-<p><strong>Legacy single-state (v1.0.x) workspaces</strong> — <strong>left alone</strong>. The cluster</p>
-<ul>
-<li>BNK + jumphosts stay in one <code>state/</code>; <code>up</code> / <code>down</code> keep operating
-monolithically; the phase verbs (<code>cluster</code>, <code>bnk</code>, <strong>and the new
-<code>testing</code></strong>) all refuse and point you back at the unscoped <code>up</code>/<code>down</code>.</li>
-</ul>
 </li>
 <li>
 <p><strong>Two-phase split workspaces (the common case)</strong> — the jumphosts need to

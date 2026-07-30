@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,9 +179,9 @@
                     <main>
                         <h1 id="doctor-checking-your-environment"><a class="header" href="#doctor-checking-your-environment">Doctor: checking your environment</a></h1>
 <p><code>roksbnkctl doctor</code> is the prereq + credentials report. It runs in under five seconds, exits non-zero on any hard error, and prints a tabular report that maps one-to-one to the runtime dependencies the rest of the tool reaches for.</p>
-<p>This chapter walks every check, explains what each row’s “why we care” blurb means, covers the post-Sprint 2 changes that move kubectl and oc from “needed” to “informational”, and describes the <code>--target</code> SSH probe added in Sprint 1.</p>
+<p>This chapter walks every check, explains what each row’s “why we care” blurb means, covers why kubectl and oc are informational rather than required, and describes the <code>--target</code> SSH probe.</p>
 <h2 id="what-doctor-checks"><a class="header" href="#what-doctor-checks">What <code>doctor</code> checks</a></h2>
-<p>A bare <code>roksbnkctl doctor</code> runs the <strong>general</strong> checks: tooling on <code>PATH</code>, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine post-Sprint 2 looks like this:</p>
+<p>A bare <code>roksbnkctl doctor</code> runs the <strong>general</strong> checks: tooling on <code>PATH</code>, kubeconfig location, the resolved workspace, and the IBM Cloud authentication chain. Sample output on a healthy machine looks like this:</p>
 <pre><code>roksbnkctl doctor
 ✓  terraform         /usr/bin/terraform (Terraform v1.15.2)                                   (required for `roksbnkctl up`)
 ✓  helm              /usr/local/bin/helm (v3.20.2)                                            (required for `roksbnkctl up`; terraform `local-exec` shells out to helm)
@@ -210,7 +210,7 @@
 <p>Pass condition: a binary on <code>PATH</code>, version <code>1.5</code> or newer.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install Terraform from <a href="https://www.terraform.io/downloads">terraform.io</a>, or your distro’s package manager, then re-run <code>doctor</code>.</p>
 <h3 id="helm--required"><a class="header" href="#helm--required"><code>helm</code> — required</a></h3>
-<p>The second <strong>hard-required</strong> binary (doctor flags it required), added in v1.0.2. It is required in <strong>both</strong> BNK modes. In the legacy path (<code>--legacy-bnk</code> / <code>bnk_cr_mode = "legacy_curl"</code>) the bundled terraform modules (<code>cert_manager</code>, <code>flo</code>, <code>cne_instance</code>) use <code>null_resource</code> + <code>local-exec</code> provisioners that shell out to <code>helm upgrade --install</code> from inside terraform’s apply phase. In the <strong>default</strong> terraform-native path the charts install via the <code>helm_release</code> provider (no shell-out), <strong>but</strong> FAR chart-version discovery (the <code>data.external.versions</code> lookup) still runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS versions — so <code>helm</code> is needed there too. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
+<p>The second <strong>hard-required</strong> binary (doctor flags it required). It is needed because FAR chart-version discovery — the <code>data.external.versions</code> lookup — runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions during <code>roksbnkctl up</code>. Without <code>helm</code> on <code>PATH</code>, the apply fails partway through the cluster lifecycle with:</p>
 <pre><code>Error: local-exec provisioner error
 Error running command 'helm upgrade --install cert-manager ...':
 exit status 127. Output: /bin/sh: 1: helm: not found
@@ -228,16 +228,15 @@ brew install helm
 # Windows:
 choco install kubernetes-helm
 </code></pre>
-<p>The default BNK path now installs the <code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code> charts via the <code>helm_release</code> terraform resource (which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime — no host <code>helm</code> is shelled out); only the legacy <code>--legacy-bnk</code> path still shells out to host <code>helm</code>. Doctor continues to flag <code>helm</code> required (so the legacy path and any older workspace stay supported); a future release that drops the legacy path can relax this check. See <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>.</p>
+<p>The BNK charts (<code>cert_manager</code> / <code>flo</code> / <code>cne_instance</code>) install via the <code>helm_release</code> terraform resource, which uses the <code>hashicorp/helm</code> provider’s embedded Helm 3 runtime — no host <code>helm</code> is shelled out for the chart installs themselves. Doctor still flags <code>helm</code> required because FAR chart-version discovery shells out to host <code>helm</code> (<code>helm registry login</code> + <code>helm pull</code>) to read the FLO/CIS versions. See <a href="./10-deploying-bnk-trials.html#the-terraform-native-deployment-model">Chapter 10 §“The terraform-native deployment model”</a>.</p>
 <h3 id="iperf3--informational"><a class="header" href="#iperf3--informational"><code>iperf3</code> — informational</a></h3>
 <p>Used only by <code>roksbnkctl test throughput</code> in its host-iperf3 modes. After Sprint 4 lands the k8s execution backend (PRD 03), <code>iperf3</code> moves entirely in-cluster and this row goes away for the everyday user.</p>
 <p>Failure mode: <code>not on PATH</code>. Fix: install iperf3 if you plan to use the throughput test today; otherwise ignore.</p>
-<h3 id="kubectl--informational-sprint-2-change"><a class="header" href="#kubectl--informational-sprint-2-change"><code>kubectl</code> — informational (Sprint 2 change)</a></h3>
-<p><strong>Before Sprint 2:</strong> <code>kubectl</code> was an optional warning when missing — useful for the <code>roksbnkctl kubectl</code> passthrough.</p>
-<p><strong>After Sprint 2:</strong> <code>kubectl</code> is informational. The everyday verbs (<code>get</code>, <code>apply</code>, <code>describe</code>, <code>delete</code>, <code>logs</code>, <code>exec</code>, <code>port-forward</code>) are now native Go via <code>client-go</code> and live under <a href="./24-day-2-ops.html"><code>roksbnkctl k</code></a>. Missing host <code>kubectl</code> no longer disables the happy path; it only disables the <code>roksbnkctl kubectl &lt;args...&gt;</code> passthrough.</p>
+<h3 id="kubectl--informational"><a class="header" href="#kubectl--informational"><code>kubectl</code> — informational</a></h3>
+<p><code>kubectl</code> is informational. The everyday verbs (<code>get</code>, <code>apply</code>, <code>describe</code>, <code>delete</code>, <code>logs</code>, <code>exec</code>, <code>port-forward</code>) are native Go via <code>client-go</code> and live under <a href="./24-day-2-ops.html"><code>roksbnkctl k</code></a>. Missing host <code>kubectl</code> does not disable the happy path; it only disables the <code>roksbnkctl kubectl &lt;args...&gt;</code> passthrough.</p>
 <p>If <code>kubectl</code> is on <code>PATH</code>, the row is still <code>✓</code> and shows the version line. If it’s missing, the row is informational, not a warning, and the detail explains where the equivalent functionality lives.</p>
-<h3 id="oc--informational-sprint-2-change"><a class="header" href="#oc--informational-sprint-2-change"><code>oc</code> — informational (Sprint 2 change)</a></h3>
-<p>Same story as <code>kubectl</code> — Sprint 2 internalises the OpenShift-relevant verbs (Phase 2.1 adds <code>Project</code>, <code>Route</code>, <code>ImageStream</code> to <code>roksbnkctl k get</code>). Host <code>oc</code> is preserved as an escape hatch; missing <code>oc</code> no longer warns.</p>
+<h3 id="oc--informational"><a class="header" href="#oc--informational"><code>oc</code> — informational</a></h3>
+<p>Same story as <code>kubectl</code> — the OpenShift-relevant verbs are internalised (<code>Project</code>, <code>Route</code>, and <code>ImageStream</code> are available via <code>roksbnkctl k get</code>). Host <code>oc</code> is preserved as an escape hatch; a missing <code>oc</code> is informational, not a warning.</p>
 <h3 id="ibmcloud--optional"><a class="header" href="#ibmcloud--optional"><code>ibmcloud</code> — optional</a></h3>
 <p>Required only for the <code>roksbnkctl ibmcloud &lt;args...&gt;</code> passthrough. The cluster-lifecycle path uses IBM Go SDKs internally — <code>roksbnkctl up</code> does <strong>not</strong> shell out to <code>ibmcloud</code> — so you can skip this binary if you don’t need the passthrough.</p>
 <h3 id="kubeconfig"><a class="header" href="#kubeconfig"><code>kubeconfig</code></a></h3>
@@ -285,8 +284,8 @@ choco install kubernetes-helm
 </table>
 </div>
 <p>If a fix isn’t here, <a href="./26-troubleshooting.html">Chapter 26 — Troubleshooting</a> covers the longer tail.</p>
-<h2 id="the---target-name-ssh-check-sprint-1"><a class="header" href="#the---target-name-ssh-check-sprint-1">The <code>--target &lt;name&gt;</code> SSH check (Sprint 1)</a></h2>
-<p>Sprint 1’s <code>--on jumphost</code> flag introduced an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
+<h2 id="the---target-name-ssh-check"><a class="header" href="#the---target-name-ssh-check">The <code>--target &lt;name&gt;</code> SSH check</a></h2>
+<p>The <code>--on jumphost</code> flag adds an optional second mode for <code>doctor</code>: probe an SSH target before you try to use it.</p>
 <pre><code class="language-bash">roksbnkctl doctor --target jumphost
 </code></pre>
 <p>This adds one row per resolved target:</p>
@@ -313,7 +312,7 @@ choco install kubernetes-helm
 <li>non-zero — at least one row produced an <code>✗</code> error. The first error string is also written to stderr so wrapper scripts can grep it.</li>
 </ul>
 <p>This is the contract <code>scripts/e2e-test.sh</code> and the <code>Makefile</code> rely on: a script that runs <code>roksbnkctl doctor &amp;&amp; roksbnkctl up --auto</code> will only proceed past <code>doctor</code> if the environment is genuinely ready.</p>
-<p>The “warnings don’t fail” rule is deliberate. After Sprint 2, an <code>iperf3 not on PATH</code> warning is informational — the everyday <code>up</code> / <code>test connectivity</code> flow doesn’t need it. Forcing exit-1 on every warning would be too aggressive for the common case.</p>
+<p>The “warnings don’t fail” rule is deliberate. An <code>iperf3 not on PATH</code> warning is informational — the everyday <code>up</code> / <code>test connectivity</code> flow doesn’t need it. Forcing exit-1 on every warning would be too aggressive for the common case.</p>
 <p>If you want to gate scripts strictly (e.g. CI workflows that must have iperf3 installed because they run the throughput suite), parse the output rather than relying on the exit code:</p>
 <pre><code class="language-bash">if ! roksbnkctl doctor | grep -q '^✓  iperf3'; then
   echo "iperf3 missing — install it before running test throughput" &gt;&amp;2

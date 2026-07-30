@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -547,6 +547,52 @@ entirely; NodePort is the trade-off you accept for not needing a load balancer.<
 <li><strong>The consuming workspace needs no <code>flp</code> phase at all</strong> — no <code>state-flp/</code>, nothing to
 tear down. <code>bnk down</code> there leaves the proxy untouched, serving its other clusters.</li>
 </ul>
+<h2 id="running-the-flp-as-a-vsi-mode-vsi"><a class="header" href="#running-the-flp-as-a-vsi-mode-vsi">Running the FLP as a VSI (<code>mode: vsi</code>)</a></h2>
+<p>The flows above run the FLP as an in-cluster Helm deployment. It can instead run as a
+standalone <strong>Virtual Server Instance</strong> — a VM, no Kubernetes — which is the right shape
+when the proxy must be the one controlled egress point for an otherwise <strong>disconnected</strong>
+cluster. Select it with <code>bnk.flp.mode: vsi</code>:</p>
+<pre><code class="language-yaml">bnk:
+  license_mode: f5licenseproxy
+  flp:
+    mode: vsi
+    vsi:
+      profile: bx2-4x16          # &gt;= 4 vCPU / 16 GB
+      zone: us-south-1
+      reach: floating            # "private" (VPC IP) or "floating" (public IP → egress to F5)
+      allowed_cidrs: [10.242.0.0/18]   # sources allowed to reach the proxy (the cluster's workers)
+</code></pre>
+<p><code>roksbnkctl flp up</code> then provisions the VSI; it terminates in the same <code>flp-outputs.json</code>
+(endpoint + root CA) the Helm path produces, so <code>bnk up</code> consumes it unchanged.</p>
+<h3 id="standalone--a-licensing-appliance-in-another-vpc-no-cluster"><a class="header" href="#standalone--a-licensing-appliance-in-another-vpc-no-cluster">Standalone — a licensing appliance in another VPC (no cluster)</a></h3>
+<p>By default the FLP VSI joins the cluster’s own VPC (from <code>cluster-outputs.json</code>), so
+<code>flp up</code> requires a cluster. Set <strong><code>bnk.flp.vsi.vpc</code></strong> to an existing VPC id and <code>flp up</code>
+deploys the proxy into <strong>that</strong> VPC with <strong>no cluster at all</strong> — a standalone licensing
+appliance:</p>
+<pre><code class="language-yaml">bnk:
+  license_mode: f5licenseproxy
+  flp:
+    mode: vsi
+    vsi:
+      vpc: r006-…                # existing VPC id — deploy here, no cluster required
+      zone: us-south-1
+      reach: floating            # the appliance's controlled egress to F5
+      allowed_cidrs: [10.0.0.0/8]   # allow the consuming cluster's workers (e.g. over a TGW)
+</code></pre>
+<p>This is the piece that makes a genuinely <strong>disconnected</strong> topology clean: put Harbor +
+the FLP in a <strong>services VPC</strong> that has egress, run the ROKS cluster in another VPC with
+<code>cluster.public_gateway: false</code> (no worker egress — see
+<a href="./10a-air-gapped-install.html">Chapter 10a §“A truly disconnected cluster”</a>), join both
+with a Transit Gateway, and point the cluster’s workspace at the proxy with
+<code>bnk.flp.external</code> (its <code>flp output</code> endpoint + root CA). The cluster reaches Harbor and
+the FLP privately over the TGW; <strong>all egress is concentrated in the services VPC</strong>, and
+the cluster never phones home. A worked end-to-end script is in
+<code>disconnected_deployment_demo.sh</code>.</p>
+<pre><code class="language-console"># in a services workspace (no cluster) — deploy the standalone proxy, then read its handoff
+$ roksbnkctl -w svc-flp flp up
+$ roksbnkctl -w svc-flp flp output flp_external_endpoint
+$ roksbnkctl -w svc-flp flp output flp_root_ca            # → the disconnected cluster's bnk.flp.external
+</code></pre>
 <h2 id="tearing-down"><a class="header" href="#tearing-down">Tearing down</a></h2>
 <p>The FLP is an opt-in phase, so — exactly like <code>gateway</code> — the composite <code>down</code>
 does <strong>not</strong> cover it. Tear it down <strong>first</strong>, while the cluster is still up:</p>

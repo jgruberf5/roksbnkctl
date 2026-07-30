@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,18 +199,13 @@ I want to tear down everything (cluster + trial):
 
 I want to tear down only the cluster (no trial currently deployed):
     → roksbnkctl cluster down
-
-I'm on a v1.0.x workspace (cluster + trial in one state):
-    → roksbnkctl down       (tears down everything in one shot)
-    → see Chapter 8 §"Legacy single-state workspaces" to confirm your shape
 </code></pre>
-<p>Quick shape check: <code>ls ~/.roksbnkctl/&lt;workspace&gt;/</code> — if you see <code>state-cluster/</code>, you’re on the v1.1.0 split shape; if you see only <code>state/</code>, you’re on legacy single-state.</p>
-<p>The big rule, stated up front: <strong>destroy in reverse of create</strong>. Trial first (<code>bnk down</code>), cluster second (<code>cluster down</code>). The unscoped <code>roksbnkctl down</code> does this ordering for you — on a split workspace it runs the trial destroy first and then the cluster destroy. On a legacy single-state workspace it runs a monolithic destroy (the v1.0.x behaviour, byte-for-byte). Either way you don’t have to think about ordering; <code>down</code> is the safe default.</p>
+<p>The big rule, stated up front: <strong>destroy in reverse of create</strong>. Trial first (<code>bnk down</code>), cluster second (<code>cluster down</code>). The unscoped <code>roksbnkctl down</code> does this ordering for you — it runs the trial destroy first and then the cluster destroy. You don’t have to think about ordering; <code>down</code> is the safe default.</p>
 <p>The phase-scoped commands (<code>bnk down</code>, <code>cluster down</code>) are the precision tools — they let you keep one phase across many cycles of the other. They also <strong>refuse loudly</strong> if you ask them to do something that would orphan resources or that the shape doesn’t allow. The full refusal catalogue is in <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> below; the rule of thumb is that the error message always names the verb that would actually work.</p>
 <h2 id="the-three-destroys"><a class="header" href="#the-three-destroys">The three destroys</a></h2>
 <p>There are three teardown verbs matching the three slices of state:</p>
 <h3 id="roksbnkctl-down--shape-aware-composite"><a class="header" href="#roksbnkctl-down--shape-aware-composite"><code>roksbnkctl down</code> — shape-aware composite</a></h3>
-<p>The unscoped <code>down</code> is a <strong>shape-aware composite</strong> in v1.1.0: it detects the on-disk shape of the workspace and dispatches to the right phase destroys in the right order.</p>
+<p>The unscoped <code>down</code> is a <strong>shape-aware composite</strong>: it detects the on-disk shape of the workspace and dispatches to the right phase destroys in the right order.</p>
 <pre><code class="language-bash">roksbnkctl down
 </code></pre>
 <div class="table-wrapper">
@@ -221,14 +216,13 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 <tbody>
 <tr><td>Split (cluster + trial)</td><td>trial destroy → cluster destroy</td></tr>
 <tr><td>ClusterOnly (only cluster applied)</td><td>cluster destroy</td></tr>
-<tr><td>LegacySingle (v1.0.x — both in one state)</td><td>monolithic destroy (v1.0.x behaviour, byte-for-byte)</td></tr>
 <tr><td>Empty</td><td>error: <code>nothing to destroy in this workspace</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>This is the safe default — <code>down</code> always does the right thing regardless of shape, and it’s the only verb you can run on a legacy single-state workspace.</p>
+<p>This is the safe default — <code>down</code> always does the right thing regardless of shape.</p>
 <h3 id="roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><a class="header" href="#roksbnkctl-bnk-down--destroy-the-bnk-trial-only"><code>roksbnkctl bnk down</code> — destroy the BNK trial only</a></h3>
-<p>New in v1.1.0. Tears down everything the trial phase created — the <code>flo</code> / <code>cis</code> Helm releases, the <code>cne_instance</code> and <code>license</code> custom resources, and the cluster-side namespaces / Secrets / ServiceAccounts / RoleBindings / SCC bindings — and leaves the cluster running. In the default terraform-native path these are all real terraform resources (<code>helm_release</code>, <code>kubernetes_*</code>, and <code>alekc/kubectl</code> <code>kubectl_manifest</code>), so <code>bnk down</code> is an ordinary <code>terraform destroy</code> that deletes the CRs finalizer-aware — no destroy-time <code>curl</code>. (On a <code>--legacy-bnk</code> trial the same destroy removes the legacy <code>null_resource</code>-applied objects instead.)</p>
+<p>Tears down everything the trial phase created — the <code>flo</code> / <code>cis</code> Helm releases, the <code>cne_instance</code> and <code>license</code> custom resources, and the cluster-side namespaces / Secrets / ServiceAccounts / RoleBindings / SCC bindings — and leaves the cluster running. These are all real terraform resources (<code>helm_release</code>, <code>kubernetes_*</code>, and <code>alekc/kubectl</code> <code>kubectl_manifest</code>), so <code>bnk down</code> is an ordinary <code>terraform destroy</code> that deletes the CRs finalizer-aware.</p>
 <pre><code class="language-bash">roksbnkctl bnk down
 </code></pre>
 <p>What survives:</p>
@@ -242,7 +236,7 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 <li>The workspace’s <code>config.yaml</code></li>
 </ul>
 <p>Roughly <strong>41 resources destroyed</strong> on a clean trial-only <code>bnk down</code>. Time is dominated by Helm’s pre-delete hooks and the cne_instance finaliser unwind — usually 2-5 minutes total.</p>
-<p><code>bnk down</code> is a <strong>no-op success</strong> (exits 0, “nothing to do”) on Empty and ClusterOnly workspaces — there’s no trial state to destroy, so it leaves the cluster alone and returns cleanly. This lets a tool like bnk-forge call <code>bnk down</code> unconditionally in a reverse-order teardown without a missing-trial error blocking the cluster destroy. It still <strong>refuses</strong> on LegacySingle workspaces, where trial-only isolation isn’t possible (use <code>roksbnkctl down</code> there). See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
+<p><code>bnk down</code> is a <strong>no-op success</strong> (exits 0, “nothing to do”) on Empty and ClusterOnly workspaces — there’s no trial state to destroy, so it leaves the cluster alone and returns cleanly. This lets a tool like bnk-forge call <code>bnk down</code> unconditionally in a reverse-order teardown without a missing-trial error blocking the cluster destroy. See <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> for the exact text.</p>
 <h3 id="roksbnkctl-cluster-down--destroy-the-cluster-phase"><a class="header" href="#roksbnkctl-cluster-down--destroy-the-cluster-phase"><code>roksbnkctl cluster down</code> — destroy the cluster phase</a></h3>
 <p>Tears down the cluster + cluster-shared services: the ROKS cluster, transit gateway, registry COS instance, cert-manager Helm release, and the TGW jumphost.</p>
 <pre><code class="language-bash">roksbnkctl cluster down
@@ -257,7 +251,7 @@ I'm on a v1.0.x workspace (cluster + trial in one state):
 <p>The post-destroy cleanup deletes <code>cluster-outputs.json</code> automatically — the workspace no longer has a registered cluster.</p>
 <h2 id="order-matters-trial-first-then-cluster"><a class="header" href="#order-matters-trial-first-then-cluster">Order matters: trial first, then cluster</a></h2>
 <p>The upstream HCL’s resource graph requires this ordering. The trial-phase resources have implicit dependencies on cluster-phase resources (they live <em>in</em> the cluster, after all), and Terraform’s destroy graph traverses dependencies in reverse. If the cluster phase tries to destroy first, the trial phase’s resources are still there — finalisers block the destroy of the cluster’s namespaces, the cluster-side SCC bindings reference SCCs that are in the way, and so on.</p>
-<p>In v1.1.0 <code>roksbnkctl cluster down</code> enforces this ordering with a <strong>hard refusal</strong>: if the trial state has any resources in it, <code>cluster down</code> errors out and points you at <code>bnk down</code> (or <code>down</code>) instead. The v1.0.x “warning-but-prompt” behaviour is gone — even <code>--auto</code> won’t bypass the guard, because correctness, not confirmation, is the issue. The full refusal text:</p>
+<p><code>roksbnkctl cluster down</code> enforces this ordering with a <strong>hard refusal</strong>: if the trial state has any resources in it, <code>cluster down</code> errors out and points you at <code>bnk down</code> (or <code>down</code>) instead. Even <code>--auto</code> won’t bypass the guard, because correctness, not confirmation, is the issue. The full refusal text:</p>
 <pre><code>$ roksbnkctl cluster down
 BNK trial state exists in this workspace; run `roksbnkctl bnk down` first
 (or `roksbnkctl down` to tear down both phases)
@@ -307,14 +301,14 @@ roksbnkctl cleanup --auto     # skip the confirmation prompt
 </ul>
 <p>Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is <strong>best-effort</strong>: a failure on one resource is reported and the sweep continues. Re-run <code>cleanup</code> for anything blocked on an async delete (e.g. a VPC that can’t go until its cluster finishes terminating).</p>
 <h3 id="which-regions-it-scans"><a class="header" href="#which-regions-it-scans">Which regions it scans</a></h3>
-<p>By default <code>cleanup</code> scans the workspace’s cluster region plus the testing-client region (from <code>config.yaml</code>’s <a href="./28-configuration-reference.html#resources-block"><code>resources.client_region</code></a> and <code>cluster-outputs.json</code>). If resources landed in a region not recorded in config — common on older workspaces — add it explicitly or sweep everything:</p>
+<p>By default <code>cleanup</code> scans the workspace’s cluster region plus the testing-client region (from <code>config.yaml</code>’s <a href="./28-configuration-reference.html#resources-block"><code>resources.client_region</code></a> and <code>cluster-outputs.json</code>). If resources landed in a region not recorded in config, add it explicitly or sweep everything:</p>
 <pre><code class="language-bash">roksbnkctl cleanup --region ca-tor   # add a specific region to the scan
 roksbnkctl cleanup --all-regions     # sweep every IBM Cloud region (slower)
 </code></pre>
 <h3 id="caveats"><a class="header" href="#caveats">Caveats</a></h3>
 <ul>
 <li><strong>It matches purely on the <code>&lt;prefix&gt;-</code> name convention.</strong> If unrelated resources happen to share the workspace prefix, they match too — always review the <code>--dry-run</code> (or the pre-delete confirmation) list first.</li>
-<li><strong>It needs a prefix.</strong> Workspaces created before prefix-based naming (<code>v1.8.0</code>) have nothing to match; <code>cleanup</code> reports there’s nothing to sweep.</li>
+<li><strong>It needs a prefix.</strong> A workspace with no configured prefix has nothing to match; <code>cleanup</code> reports there’s nothing to sweep.</li>
 <li>It does <strong>not</strong> touch Terraform state or <code>config.yaml</code>. After a successful sweep the state files still reference the now-gone resources; run <code>roksbnkctl ws delete &lt;name&gt; --force</code> to drop the workspace, or re-<code>up</code> to rebuild.</li>
 </ul>
 <p>A typical recovery — a <code>down</code> errored, and <code>up</code> now refuses with “not unique”:</p>
@@ -330,20 +324,15 @@ roksbnkctl up --auto           # rebuild clean
 <tr><th>Command + shape</th><th>Refusal text</th><th>Resolution</th></tr>
 </thead>
 <tbody>
-<tr><td><code>bnk down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; </code>bnk down<code>can't isolate the trial phase. Use</code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>; the legacy state has the trial and cluster in one file, so a trial-only destroy isn’t possible. See <a href="./08-cluster-phase.html#legacy-single-state-workspaces">Chapter 8 §“Legacy single-state workspaces”</a>.</td></tr>
 <tr><td><code>bnk down</code> on <strong>Empty</strong> or <strong>ClusterOnly</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No BNK trial state to destroy in this workspace — nothing to do.</code></td><td>No-op success — no trial is deployed, so the command returns cleanly and leaves the cluster alone. If you want to destroy the cluster, use <code>roksbnkctl cluster down</code>.</td></tr>
 <tr><td><code>testing down</code> with <strong>no jumphosts</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No testing jumphost state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the testing phase is optional, so <code>down</code> returns cleanly when nothing was provisioned.</td></tr>
 <tr><td><code>gateway down</code> with <strong>no gateway state</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No gateway phase state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the gateway phase is opt-in, so <code>down</code> returns cleanly when it was never applied.</td></tr>
-<tr><td><code>cluster down</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; cluster and BNK trial share one state. Use </code>roksbnkctl down<code> to tear down both, or migrate the state first</code></td><td>Use <code>roksbnkctl down</code>.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>
 <tr><td><code>down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the workspace has no state.</td></tr>
-<tr><td><code>cluster up</code> on <strong>LegacySingle</strong></td><td><code>this workspace was provisioned with v1.0.x single-state — its cluster lives in the trial state file. Use `roksbnkctl up` to operate on it, or migrate the state to two-phase shape first</code></td><td>Use <code>roksbnkctl up</code>. The cluster already exists in the trial state; applying the cluster phase separately would create a second one.</td></tr>
-<tr><td><code>bnk up</code> on <strong>LegacySingle</strong></td><td><code>this workspace is legacy single-state; `bnk up` can't isolate the trial phase. Use `roksbnkctl up` for in-place behavior, or migrate the state first</code></td><td>Use <code>roksbnkctl up</code>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>The “migrate the state first” references in two of the messages describe a future <code>roksbnkctl migrate</code> command that does not exist in v1.1.0. The refusals point at it so the wording stays valid once migrate ships; until then, the unscoped <code>up</code> / <code>down</code> is the working alternative for legacy workspaces.</p>
 <h2 id="what-survives-a-destroy"><a class="header" href="#what-survives-a-destroy">What survives a destroy</a></h2>
 <p>The contract: <strong><code>roksbnkctl</code> never destroys local state without explicit consent</strong>, and never destroys cloud resources outside its Terraform state.</p>
 <p>After a successful <code>down</code>:</p>
@@ -389,7 +378,7 @@ Continue? [y/N]:
 roksbnkctl bnk down --auto
 roksbnkctl cluster down --auto
 </code></pre>
-<p><code>--auto</code> does <strong>not</strong> override the shape-based refusals (see <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> above) — those are correctness guards, not confirmation prompts. If trial state is present, <code>cluster down --auto</code> still refuses; on a legacy single-state workspace, <code>bnk down --auto</code> and <code>cluster down --auto</code> still refuse.</p>
+<p><code>--auto</code> does <strong>not</strong> override the shape-based refusals (see <a href="#refusal-messages-catalogue">§“Refusal messages catalogue”</a> above) — those are correctness guards, not confirmation prompts. If trial state is present, <code>cluster down --auto</code> still refuses.</p>
 <h2 id="like-up-transient-errors-retry"><a class="header" href="#like-up-transient-errors-retry">Like <code>up</code>, transient errors retry</a></h2>
 <p><code>down</code> doesn’t share <code>up</code>’s explicit retry-on-transient-error logic, but Terraform’s destroy is naturally idempotent: re-running <code>down</code> after a partial destroy picks up where the previous run left off. If you see a transient network error during destroy, just re-run:</p>
 <pre><code class="language-bash">roksbnkctl down --auto
@@ -403,7 +392,7 @@ roksbnkctl down --auto
 <p>A successful <code>down</code> leaves the workspace directory in place. You usually want to clean that up too:</p>
 <pre><code class="language-bash">roksbnkctl ws delete &lt;name&gt; --force
 </code></pre>
-<p>One safety rail on <code>ws delete</code>: it <strong>refuses if Terraform state still lists resources</strong> (unless <code>--force</code>) — which catches the case where you forgot to run <code>down</code> first. You <strong>can</strong> delete the current workspace directly; the pointer moves to another existing workspace (or clears when none remain), so no “switch first” dance is needed (see <a href="./06-workspaces.html#deleting-the-workspace-youre-in-the-parking-lot-dance-is-retired">Chapter 6</a>).</p>
+<p>One safety rail on <code>ws delete</code>: it <strong>refuses if Terraform state still lists resources</strong> (unless <code>--force</code>) — which catches the case where you forgot to run <code>down</code> first. You <strong>can</strong> delete the current workspace directly; the pointer moves to another existing workspace (or clears when none remain), so you don’t need to switch away first (see <a href="./06-workspaces.html#deleting-the-workspace-youre-in">Chapter 6</a>).</p>
 <p>The <code>--force</code> flag overrides the state check — but if you <code>ws delete --force</code> a workspace that still has provisioned cloud resources, you’ll have stranded them. Recover with <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a>: run it <strong>before</strong> deleting the workspace (it reads the prefix from <code>config.yaml</code>), or recreate the workspace’s <code>config.yaml</code> with the same prefix and run it after.</p>
 <p>The full clean-as-you-go teardown (<code>scripts/e2e-test.sh</code> Phase D destroys; Phase H deletes):</p>
 <pre><code class="language-bash"># 1. Destroy the trial

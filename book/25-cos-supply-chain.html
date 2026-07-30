@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,7 +200,7 @@
 </tbody>
 </table>
 </div>
-<p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable, which defaults to <code>bnk-artifacts</code>. The instance defaults to <code>bnk-supply-chain</code>.</p>
+<p>The bucket structure is defined by the upstream HCL — concretely by the <code>ibmcloud_resources_cos_bucket</code> variable. When you leave <code>cos.bucket</code> unset, <code>init</code> provisions (or discovers and reuses) an <strong>account-scoped</strong> bucket named <code>bnk-artifacts-&lt;first-12-of-account-id&gt;</code>: COS bucket names share one global namespace (like S3), so the account suffix keeps the name unique and lets a second workspace run from the same account find the bucket the first one created — no duplicate, no re-upload. The instance defaults to <code>bnk-supply-chain</code>. (The bare <code>bnk-artifacts</code> used in the manual <code>cos</code> examples below is just an illustrative name; supply your own.)</p>
 <h2 id="local-files-instead-of-cos-no-bucket-needed"><a class="header" href="#local-files-instead-of-cos-no-bucket-needed">Local files instead of COS (no bucket needed)</a></h2>
 <p>COS is not mandatory for the two artefacts the BNK phase actually needs at apply time — the FAR auth tarball and the subscription JWT. You can point the workspace at <strong>local files</strong> and skip COS entirely:</p>
 <pre><code class="language-yaml">bnk:

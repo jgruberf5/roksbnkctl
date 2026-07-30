@@ -1,0 +1,967 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>A — A disconnected ROKS cluster - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "rust";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-d5c18a15.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jgruberf5/roksbnkctl" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="appendix-a--a-disconnected-roks-cluster"><a class="header" href="#appendix-a--a-disconnected-roks-cluster">Appendix A — A disconnected ROKS cluster</a></h1>
+<p>This appendix is a manual, end-to-end <strong>runbook</strong> for a genuinely air-gapped BNK cluster — the
+cluster has <strong>no Internet egress at all</strong>; only the two service VSIs (Harbor and the FLP) ever
+touch the Internet, and only for the two things that intrinsically require F5: pulling the FAR
+artifacts and sending F5 <strong>TEEM</strong> telemetry. Everything else is private, over a Transit
+Gateway. It combines three chapters into one worked topology:</p>
+<ul>
+<li><a href="./10a-air-gapped-install.html">Air-gapped install</a> — mirroring BNK into a private registry</li>
+<li><a href="./10c-flp-licensing.html">The F5 License Proxy</a> — licensing without cluster egress</li>
+<li><a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a> — cross-region private reach</li>
+</ul>
+<h2 id="the-topology--what-reaches-the-internet-and-what-doesnt"><a class="header" href="#the-topology--what-reaches-the-internet-and-what-doesnt">The topology — what reaches the Internet, and what doesn’t</a></h2>
+<p>The key move: <strong>run <code>roksbnkctl</code> on the Harbor VSI itself.</strong> That host is the only one that
+needs <em>both</em> Internet egress (to pull FAR) <em>and</em> private reach to Harbor — and it has both, so
+Harbor is addressed by its <strong>private IP everywhere</strong>, with no split-horizon DNS and no separate
+jumphost. The cluster is fully private.</p>
+<pre class="mermaid">graph TB
+    subgraph net["Internet — reached ONLY by the two services VSIs"]
+        FAR["repo.f5.com&lt;br/&gt;FAR artifact pull"]
+        TEEM["F5 TEEM&lt;br/&gt;telemetry"]
+    end
+    subgraph svc["SERVICES VPC · region A&lt;br/&gt;public gateway = egress"]
+        Harbor["Harbor VSI&lt;br/&gt;OCI mirror · hostname = PRIVATE IP&lt;br/&gt;▶ roksbnkctl runs HERE (operator)"]
+        FLP["FLP VSI&lt;br/&gt;F5 License Proxy&lt;br/&gt;pulls its own image (FAR)"]
+    end
+    TGW{{"Transit Gateway · global&lt;br/&gt;private RFC1918 only"}}
+    subgraph clu["CLUSTER VPC · region B&lt;br/&gt;public_gateway: false — NO worker egress"]
+        Workers["ROKS workers&lt;br/&gt;fully private"]
+        Priv["IBM Cloud private service endpoints&lt;br/&gt;ICR · IAM · COS · master&lt;br/&gt;161.26.0.0/16 · 166.8.0.0/14"]
+    end
+    Harbor --&gt;|egress| FAR
+    FLP --&gt;|egress| FAR
+    FLP --&gt;|egress| TEEM
+    Harbor --- TGW
+    FLP --- TGW
+    TGW --- Workers
+    Workers --&gt;|"images + charts, over TGW"| Harbor
+    Workers --&gt;|"licensing, over TGW"| FLP
+    Workers --&gt;|"no public gateway needed"| Priv
+    classDef vpc fill:#eef3fb,stroke:#4b6ea9,color:#000;
+    classDef inet fill:#fdf2f2,stroke:#c0392b,color:#000;
+    class svc,clu vpc;
+    class net inet;
+</pre>
+
+<p><strong>Reachability summary</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Component</th><th>Internet?</th><th>How it reaches what it needs</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Harbor VSI</strong></td><td><strong>Yes</strong> — FAR pull only</td><td>public gateway (services VPC)</td></tr>
+<tr><td><strong>FLP VSI</strong></td><td><strong>Yes</strong> — F5 licensing + TEEM only</td><td>public gateway (services VPC)</td></tr>
+<tr><td>Cluster workers → Harbor / FLP</td><td><strong>No</strong></td><td>private IPs over the Transit Gateway</td></tr>
+<tr><td>Cluster workers → ICR / IAM / COS / master</td><td><strong>No</strong></td><td>IBM Cloud private service-endpoint CIDRs (<code>161.26.0.0/16</code>, <code>166.8.0.0/14</code>) — routable without a public gateway</td></tr>
+<tr><td>Operator (<code>roksbnkctl</code>)</td><td>runs <strong>on the Harbor VSI</strong></td><td>reaches Harbor locally + FAR/IBM API via the VSI’s egress</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>Why no operator-built VPEs are needed for the platform.</strong> A <code>public_gateway: false</code> ROKS
+VPC cluster still reaches its IBM Cloud dependencies privately: system-image pulls use
+<strong>private ICR</strong> (<code>private.icr.io</code>), IAM/COS use their <strong>private endpoints</strong>, and the
+<strong>master</strong> is reached over the <strong>private service endpoint ROKS provisions itself</strong>. All of
+those resolve into IBM Cloud’s service-endpoint ranges (<code>161.26.0.0/16</code>, <code>166.8.0.0/14</code>),
+which the VPC routes <strong>without a public gateway</strong>. Calico SNATs pod egress to the node, and
+the node uses those implicit routes. So the platform works private-only out of the box; you
+only add explicit <strong>VPEs</strong> for a <em>specific</em> service instance you want on a dedicated private
+endpoint (e.g. a particular COS bucket), not for the core ICR/IAM/COS/master path.</p>
+</blockquote>
+<blockquote>
+<p><strong>roksbnkctl does not build the services VPC, Harbor, or the FLP host image.</strong> It provisions
+no registries and no standalone VPCs (VPC creation only happens inside the cluster phase).
+Step 1 uses the <code>ibmcloud</code> CLI for those prerequisites; everything from Step 2 on is
+<code>roksbnkctl</code>, <strong>run on the Harbor VSI</strong>.</p>
+</blockquote>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li>An <strong>existing global Transit Gateway</strong> (a <em>global</em> gateway spans regions; a local one does
+not). Set <code>TGW_NAME</code>.</li>
+<li>The <code>ibmcloud</code> CLI (with <code>vpc-infrastructure</code> + <code>tg-cli</code> plugins), <code>jq</code>, and an SSH client on
+your workstation. <strong><code>roksbnkctl</code>, <code>kubectl</code>, the FAR tarball, and the JWT go on the Harbor
+VSI</strong>, not your workstation.</li>
+<li>An <strong>RSA</strong> VPC SSH key (IBM Cloud VPC rejects ed25519).</li>
+<li>Two regions: <code>SVC_REGION</code> (A, services) and <code>BNK_REGION</code> (B, cluster).</li>
+</ul>
+<pre><code class="language-bash">export IBMCLOUD_API_KEY=…
+export TGW_NAME=my-global-tgw
+export SVC_REGION=us-east SVC_ZONE=us-east-1
+export BNK_REGION=us-south
+ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$SVC_REGION" -g default -q
+TGW_ID=$(ibmcloud tg gateways --output json | jq -r --arg n "$TGW_NAME" '.[]|select(.name==$n)|.id')
+</code></pre>
+<h2 id="step-1--services-vpc--harbor-the-operator-host-attached-to-the-tgw"><a class="header" href="#step-1--services-vpc--harbor-the-operator-host-attached-to-the-tgw">Step 1 — Services VPC + Harbor (the operator host), attached to the TGW</a></h2>
+<p>Create the VPC, a subnet with a <strong>public gateway</strong>, a security group opening 22 + 443, and
+attach the VPC to the TGW:</p>
+<pre><code class="language-bash">SVC_VPC=$(ibmcloud is vpc-create bnk-svc-vpc --output json | jq -r .id)
+SVC_CRN=$(ibmcloud is vpc bnk-svc-vpc --output json | jq -r .crn)
+SUBNET=$(ibmcloud is subnet-create bnk-svc-subnet "$SVC_VPC" --zone "$SVC_ZONE" \
+           --ipv4-address-count 256 --output json | jq -r .id)
+PGW=$(ibmcloud is public-gateway-create bnk-svc-pgw "$SVC_VPC" "$SVC_ZONE" --output json | jq -r .id)
+ibmcloud is subnet-update "$SUBNET" --public-gateway-id "$PGW"
+SG=$(ibmcloud is vpc "$SVC_VPC" --output json | jq -r .default_security_group.id)
+for p in 22 443; do ibmcloud is security-group-rule-add "$SG" inbound tcp --port-min $p --port-max $p; done
+ibmcloud tg connection-create "$TGW_ID" --name bnk-svc-conn --network-type vpc --network-id "$SVC_CRN"
+</code></pre>
+<p>Launch the Harbor VSI. <strong>Because <code>roksbnkctl</code> will run <em>on this VSI</em>, Harbor’s <code>hostname</code> is
+simply its own private IP</strong> (<code>hostname -I</code>) — the naive choice, which is correct here: the
+operator reaches Harbor locally, and the cluster reaches the <em>same</em> private IP over the TGW. No
+floating IP appears in Harbor’s identity; the floating IP is only for your SSH + the VSI’s FAR
+egress.</p>
+<pre><code class="language-bash">cat &gt; harbor-init.yaml &lt;&lt;'CI'
+#cloud-config
+packages: [docker.io, docker-compose-v2, openssl]
+runcmd:
+  - [bash, -lc, "systemctl enable --now docker"]
+  - [bash, -lc, "PRIV=$(hostname -I|awk '{print $1}'); mkdir -p /opt/harbor/certs; openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout /opt/harbor/certs/harbor.key -out /opt/harbor/certs/harbor.crt -subj \"/CN=$PRIV\" -addext \"subjectAltName=IP:$PRIV\""]
+  - [bash, -lc, "cd /opt/harbor &amp;&amp; curl -fsSL -o h.tgz https://github.com/goharbor/harbor/releases/download/v2.11.1/harbor-offline-installer-v2.11.1.tgz &amp;&amp; tar xzf h.tgz --strip-components=1"]
+  - [bash, -lc, "PRIV=$(hostname -I|awk '{print $1}'); sed -e \"s/^hostname:.*/hostname: $PRIV/\" -e 's#certificate:.*#certificate: /opt/harbor/certs/harbor.crt#' -e 's#private_key:.*#private_key: /opt/harbor/certs/harbor.key#' -e 's/^harbor_admin_password:.*/harbor_admin_password: Harbor12345!/' /opt/harbor/harbor.yml.tmpl &gt; /opt/harbor/harbor.yml"]
+  - [bash, -lc, "cd /opt/harbor &amp;&amp; ./install.sh &amp;&amp; touch /opt/harbor/READY"]
+CI
+
+VSI=$(ibmcloud is instance-create bnk-svc-harbor "$SVC_VPC" "$SVC_ZONE" bx2-4x16 "$SUBNET" \
+        --image ibm-ubuntu-22-04-5-minimal-amd64-17 --keys "$RSA_KEY_NAME" \
+        --user-data @harbor-init.yaml --output json)
+HARBOR_PRIVATE_IP=$(echo "$VSI" | jq -r .primary_network_interface.primary_ip.address)
+VNI=$(echo "$VSI" | jq -r .primary_network_attachment.virtual_network_interface.id)
+FIPID=$(ibmcloud is floating-ip-reserve bnk-svc-harbor-fip --zone "$SVC_ZONE" --output json | jq -r .id)
+ibmcloud is virtual-network-interface-floating-ip-add "$VNI" "$FIPID"   # for SSH + FAR egress
+HARBOR_FIP=$(ibmcloud is floating-ip "$FIPID" --output json | jq -r .address)
+</code></pre>
+<h3 id="put-the-operator-on-the-vsi"><a class="header" href="#put-the-operator-on-the-vsi">Put the operator on the VSI</a></h3>
+<p>The IBM Cloud stock Ubuntu image logs in as <strong><code>ubuntu</code></strong> (with <code>sudo</code>), not <code>root</code>. Once
+<code>ssh ubuntu@$HARBOR_FIP 'ls /opt/harbor/READY'</code> succeeds, copy the operator toolchain onto the
+VSI and install roksbnkctl’s runtime dependencies — it shells out to <strong><code>terraform</code></strong>, <strong><code>helm</code></strong>
+(OCI chart pulls), and <strong><code>kubectl</code></strong>, all of which the VSI pulls over its own egress:</p>
+<pre><code class="language-bash">scp roksbnkctl f5-far-auth-key.tgz subscription.jwt ubuntu@"$HARBOR_FIP":/home/ubuntu/
+ssh ubuntu@"$HARBOR_FIP" '
+  sudo install -m755 roksbnkctl /usr/local/bin/roksbnkctl
+  # terraform (&gt;=1.5), helm (&gt;=3), kubectl — from the VSI'\''s egress
+  curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/tf.zip
+  sudo apt-get install -y unzip &amp;&amp; (cd /tmp &amp;&amp; unzip -o tf.zip &amp;&amp; sudo install -m755 terraform /usr/local/bin/)
+  curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp &amp;&amp; sudo install -m755 /tmp/linux-amd64/helm /usr/local/bin/
+  curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" &amp;&amp; sudo install -m755 /tmp/kubectl /usr/local/bin/
+  # trust Harbor'\''s own cert for host-side pulls (no DNS — it is the local private IP)
+  sudo cp /opt/harbor/certs/harbor.crt ~/harbor.crt &amp;&amp; sudo chown ubuntu ~/harbor.crt
+  cat /etc/ssl/certs/ca-certificates.crt ~/harbor.crt &gt; ~/ca-bundle.crt
+'
+ssh ubuntu@"$HARBOR_FIP"     # ← run Steps 2–5 from this shell, with:
+#   export SSL_CERT_FILE=~/ca-bundle.crt
+#   export IBMCLOUD_API_KEY=…   (the VSI needs it for cluster config + tfx COS-less flows)
+</code></pre>
+<p>Create the <code>mirror</code> project in Harbor (<code>curl -sk -u admin:… -X POST https://$HARBOR_PRIVATE_IP/api/v2.0/projects -d '{"project_name":"mirror"}'</code>).</p>
+<h2 id="step-2--mirror-far--harbor-on-the-vsi-over-the-private-ip"><a class="header" href="#step-2--mirror-far--harbor-on-the-vsi-over-the-private-ip">Step 2 — Mirror FAR → Harbor (on the VSI, over the private IP)</a></h2>
+<p><code>registry replicate</code> pulls from <code>repo.f5.com</code> (the VSI’s egress) and pushes to Harbor at its
+<strong>private IP</strong> (local). Give the workspace the FAR service account directly — replicate
+resolves its FAR <em>source</em> credential from COS or <code>registry.source_service_account_b64</code>, not
+from <code>bnk.far_auth_local_file</code>:</p>
+<pre><code class="language-bash">roksbnkctl tfx far-extract --tarball /root/f5-far-auth-key.tgz --out /root/far-sa.json
+FAR_SA_B64=$(cat /root/far-sa.json)
+</code></pre>
+<pre><code class="language-yaml"># mirror.yaml  (on the VSI)
+ibmcloud: { region: us-east, resource_group: default }
+prefix: mirror
+tf_source: { type: embedded }
+cluster: { create: false, name: none }
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  far_auth_local_file: /root/f5-far-auth-key.tgz
+  subscription_jwt_local_file: /root/subscription.jwt
+registry:
+  target: generic
+  generic_host: &lt;HARBOR_PRIVATE_IP&gt;          # local to the VSI, private to the cluster
+  generic_repo_prefix: mirror
+  generic_username: admin
+  generic_password_b64: &lt;base64 of the Harbor admin password&gt;
+  source_service_account_b64: &lt;FAR_SA_B64&gt;
+</code></pre>
+<pre><code class="language-console"># on the VSI:
+$ roksbnkctl -w mirror init --config-file mirror.yaml
+$ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
+$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry verify
+</code></pre>
+<p>After replication, the <code>bnk-mirror</code> project holds every BNK chart and image — the cluster
+pulls exclusively from here, by Harbor’s private IP over the TGW:</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/harbor-mirror-ui.png" alt="Harbor after the mirror — the public bnk-mirror project with all 89 BNK repositories"><span class="img-wrapper"><img src="images/harbor-mirror-ui.png" alt="Harbor after the mirror — the public bnk-mirror project with all 89 BNK repositories"></span></label></p>
+<blockquote>
+<p><strong>Local files vs. the COS supply chain — the one thing that changes for CI.</strong>
+This runbook points <code>bnk.far_auth_local_file</code> and <code>bnk.subscription_jwt_local_file</code> at files
+<strong>on the operator VSI</strong> — the simplest choice when you drive <code>roksbnkctl</code> by hand, and it keeps
+the mirror/FLP hosts free of any COS dependency. The alternative is to upload the two artifacts
+<strong>once</strong> into the orchestration <strong>COS bucket</strong> and read them from there instead:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Local files (this runbook)</th><th>COS bucket</th></tr>
+</thead>
+<tbody>
+<tr><td>Config keys</td><td><code>far_auth_local_file</code> + <code>subscription_jwt_local_file</code></td><td><code>far_auth_file</code> + <code>subscription_jwt_file</code> (object keys) + a <code>cos:</code> block</td></tr>
+<tr><td>Where the artifacts live</td><td>staged on the operator host (<code>scp</code>’d in)</td><td><code>f5-far-auth-key.tgz</code> / <code>subscription.jwt</code> in COS (<code>bnk-supply-chain</code> / <code>bnk-artifacts</code>)</td></tr>
+<tr><td>Who reads them</td><td><code>registry replicate</code> (FAR SA) and <code>bnk up</code> (JWT) read the local paths</td><td>the same two steps fetch them from COS with the API key — <strong>nothing staged on the host</strong></td></tr>
+<tr><td>Best for</td><td>a hand-driven operator on a long-lived VSI</td><td><strong>CI / the runner container</strong> (a container has <em>no</em> local files)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>1. Upload the two assets once</strong> — <code>roksbnkctl cos object</code> talks straight to COS via the IBM Go
+SDK (no <code>ibmcloud</code> CLI, nothing staged on the mirror/FLP hosts). The bucket is usually the one that
+already backs the cluster’s registry COS (Chapter 25); the account suffix makes it globally unique:</p>
+<pre><code class="language-bash">roksbnkctl cos object put bnk-artifacts-&lt;acct&gt;/f5-far-auth-key.tgz ./f5-far-auth-key.tgz --instance bnk-supply-chain
+roksbnkctl cos object put bnk-artifacts-&lt;acct&gt;/subscription.jwt    ./subscription.jwt    --instance bnk-supply-chain
+roksbnkctl cos object list bnk-artifacts-&lt;acct&gt; --instance bnk-supply-chain     # confirm both objects
+</code></pre>
+<p><strong>2. Point the config at them</strong> — drop the two <code>*_local_file</code> keys and add:</p>
+<pre><code class="language-yaml">cos: { instance: bnk-supply-chain, bucket: bnk-artifacts-&lt;acct&gt;, region: us-south }
+bnk:
+  far_auth_file: f5-far-auth-key.tgz       # object keys in the bucket above
+  subscription_jwt_file: subscription.jwt
+</code></pre>
+<p><strong>The pipeline commands themselves do not change</strong> — <code>roksbnkctl init</code> / <code>registry replicate</code> /
+<code>bnk up</code> are byte-identical; only the config keys differ. With them, <code>registry replicate</code> resolves
+the FAR service account and <code>bnk up</code> resolves the subscription JWT <strong>from COS</strong> with the workspace
+API key, instead of reading a file staged on the host. This is the <strong>only</strong> difference between the
+CLI config here and the CI runner’s <code>bnk.yaml</code> in
+<a href="#the-same-flow-as-ci--the-container-runner">§“The same flow as CI”</a> — see also
+<a href="./25-cos-supply-chain.html">Chapter 25 — the COS supply chain</a>.</p>
+</blockquote>
+<h2 id="step-3--standalone-flp-licensing-appliance-on-the-vsi"><a class="header" href="#step-3--standalone-flp-licensing-appliance-on-the-vsi">Step 3 — Standalone FLP licensing appliance (on the VSI)</a></h2>
+<p>The FLP is a <strong>self-contained F5 licensing appliance</strong> — a VSI running the <code>f5-license-proxy</code>
+stack (postgresql, vault, vault-init, f5-license-proxy) as a podman pod, with <strong>no cluster</strong>.
+It is the one box with controlled egress to F5: it pulls its own images from <code>repo.f5.com</code>
+through the services-VPC public gateway and brokers licenses (and sends F5 <strong>TEEM</strong> telemetry)
+on the cluster’s behalf. Its licensing endpoint is a <strong>private</strong> IP the disconnected cluster
+reaches over the TGW.</p>
+<p>Because it is its own appliance, it needs two F5 credentials of its own — the same two you’d
+give any BNK deploy, but here consumed by the FLP itself, not a cluster:</p>
+<ul>
+<li><strong><code>far_auth_local_file</code></strong> — the F5 Artifact Registry service account. The VSI runs
+<code>podman login repo.f5.com</code> with it to <strong>pull its own container images</strong>. It’s a registry
+pull secret, nothing cluster-specific.</li>
+<li><strong><code>subscription_jwt_local_file</code></strong> — your <strong>subscription entitlement token</strong>. It’s injected as
+the proxy’s <code>JWT_TOKEN</code>; the proxy presents it to F5’s licensing backend to broker licenses.
+Required — the appliance will not start without it.</li>
+</ul>
+<blockquote>
+<p>Both can equally come from <strong>COS</strong> instead of local files — set <code>bnk.far_auth_file</code> +
+<code>bnk.subscription_jwt_file</code> (the COS object keys) and omit the <code>*_local_file</code> fields; that is
+the default path (<code>use_cos_bucket=true</code>). The disconnected runbook uses <strong>local files</strong> so the
+FLP has no COS dependency.</p>
+</blockquote>
+<blockquote>
+<p><strong>Do not put <code>license_mode: f5licenseproxy</code> here</strong> — that is the <em>consuming cluster’s</em>
+License-CR setting (it goes in <code>cluster.yaml</code>, Step 4). <code>flp up</code> never reads it. The FLP-only
+workspace needs only the two credentials above plus the <code>flp.vsi</code> block. <code>manifest_version</code>
+<strong>is</strong> needed — it selects which <code>f5-license-proxy</code> image version to run.</p>
+</blockquote>
+<p>The minimal standalone <code>flp.yaml</code>:</p>
+<pre><code class="language-yaml"># flp.yaml  (on the VSI)
+ibmcloud: { region: us-east, resource_group: default }
+prefix: flp
+tf_source: { type: embedded }
+cluster: { create: false, name: none }          # no cluster — the flp phase only
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170       # selects the f5-license-proxy image version
+  far_auth_local_file: /root/f5-far-auth-key.tgz         # podman login repo.f5.com → pull images
+  subscription_jwt_local_file: /root/subscription.jwt    # the proxy's entitlement token
+  flp:
+    mode: vsi
+    vsi:
+      vpc: &lt;SVC_VPC&gt;                # the VPC the appliance lands in (attach it to the TGW)
+      # zone: us-east-1             # optional — defaults to &lt;region&gt;-1
+      # profile: bx2-4x16          # optional — default; meets the FLP's 4 vCPU / 8 GB minimum
+      # ssh_key: &lt;vpc-ssh-key&gt;     # optional — attach to SSH in (:22, licensing plane)
+      # floating_ip: true          # optional — DEFAULT true; operator management IP (see below)
+      # management_allowed_cidrs: [ 0.0.0.0/0 ]                       # :80 web UI — default open
+      # licensing_allowed_cidrs:  [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 ]  # :8443 — default RFC-1918
+</code></pre>
+<p>Everything commented is optional and defaults as noted. The only field with no default is
+<code>vsi.vpc</code> — a standalone FLP has no cluster VPC to fall back to, so name the VPC explicitly (and
+attach it to your Transit Gateway so the disconnected cluster can reach the proxy privately).</p>
+<p><strong>Operator floating IP (<code>floating_ip</code>, default <code>true</code>).</strong> The appliance also gets a floating IP
+purely as a <strong>management path</strong> — so <code>roksbnkctl flp status</code> and the <code>:80</code> status web UI are
+reachable from a machine <em>outside</em> the VPC. It is <strong>not</strong> the licensing endpoint (the cluster
+always reaches the proxy privately over the TGW). The floating IP is added to the proxy’s cert
+SAN and recorded in <code>flp-outputs.json</code> so <code>flp status</code> targets it automatically. Set
+<code>floating_ip: false</code> to opt out.</p>
+<p><strong>Security-group CIDRs split by plane (safe defaults).</strong> Because the floating IP is public, the
+VSI’s ingress is scoped per purpose, each with a sane default so you rarely set either:</p>
+<ul>
+<li><strong><code>management_allowed_cidrs</code></strong> → the <code>:80</code> flp-status web UI (read-only status). Defaults to
+<code>0.0.0.0/0</code> — <strong>open</strong>, since the page carries no secrets. Restrict it if you want.</li>
+<li><strong><code>licensing_allowed_cidrs</code></strong> → the <code>:8443</code> proxy (and <code>:22</code> SSH). Defaults to the <strong>RFC-1918</strong>
+private ranges — the cluster reaches the proxy privately over the TGW, so it never needs a
+public source. Widen it only if a consumer sits outside RFC-1918 space.</li>
+</ul>
+<p>(The older single <code>allowed_cidrs</code> is deprecated; if set it seeds both planes.)</p>
+<p>Then deploy — only the flp phase runs (no cluster, BNK, or testing):</p>
+<pre><code class="language-console">$ roksbnkctl -w flp init --config-file flp.yaml
+$ roksbnkctl -w flp flp up --auto
+$ roksbnkctl -w flp flp output    # flp_external_endpoint (https://&lt;private-ip&gt;:8443) + flp_root_ca
+$ roksbnkctl -w flp flp status    # health of every dependent service + the web-UI link
+</code></pre>
+<p>Copy the <code>flp_external_endpoint</code> and <code>flp_root_ca</code> from <code>flp output</code> into the cluster’s
+<code>bnk.flp.external</code> in Step 4.</p>
+<h3 id="the-status-web-ui"><a class="header" href="#the-status-web-ui">The status web UI</a></h3>
+<p><code>roksbnkctl flp status</code> prints the live health of the appliance <strong>and the web-UI URL</strong> — it
+derives the URL from <code>flp-outputs.json</code>, preferring the operator floating IP when one is attached:</p>
+<pre><code class="language-console">$ roksbnkctl -w flp flp status
+F5 License Proxy  (deployment: vsi, checked …)
+  web UI: http://169.63.101.72/
+  ● listener   https://localhost:8443/  (HTTP 400)
+  ● F5 / TEEM  proxy serving; no recent F5 connection error in log
+  dependent services:
+    ● postgresql         Up 28 minutes
+    ● vault              Up 28 minutes
+    ● vault-init         Up 28 minutes
+    ● f5-license-proxy   Up 28 minutes
+  …
+</code></pre>
+<p>Open that URL in a browser for the mobile-friendly status page — a green/red indicator for <strong>every</strong>
+dependent service, the <code>:8443</code> listener and F5/TEEM connection state, the CNEInstance fields
+(endpoint + a <strong>Copy root CA</strong> button, ready to paste into <code>bnk.flp.external</code>), and a live
+<code>f5-license-proxy</code> log stream. It is plain HTTP with <strong>no auth</strong> (read-only status), reachable from
+outside the VPC via the floating IP (the <code>:80</code> management plane defaults open). The floating IP is
+also available directly as <code>flp_floating_ip</code> in <code>flp output</code>.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/flp-status-web-ui.png" alt="The flp-status web UI"><span class="img-wrapper"><img src="images/flp-status-web-ui.png" alt="The flp-status web UI"></span></label></p>
+<blockquote>
+<p>A FLP-only workspace is created from this config file (<code>init --config-file</code>). The interactive
+<code>roksbnkctl init</code> builds a full cluster + BNK workspace and can add an FLP as part of it, but
+the standalone cluster-less appliance is driven by the <code>flp.yaml</code> above.</p>
+</blockquote>
+<h2 id="step-4--the-air-gapped-cluster-joined-to-the-tgw-on-the-vsi"><a class="header" href="#step-4--the-air-gapped-cluster-joined-to-the-tgw-on-the-vsi">Step 4 — The air-gapped cluster, joined to the TGW (on the VSI)</a></h2>
+<p><code>public_gateway: false</code> — <strong>no worker egress</strong>. The <code>registry:</code> block points at Harbor’s
+private IP (over the TGW), and <code>bnk.flp.external</code> at the FLP from Step 3:</p>
+<pre><code class="language-yaml"># cluster.yaml  (on the VSI)
+ibmcloud: { region: us-south, resource_group: default }
+prefix: bnk
+tf_source: { type: embedded }
+cluster:
+  create: true
+  name: bnk-roks
+  openshift_version: "4.18"
+  workers_per_zone: 2
+  public_gateway: false           # air-gapped — no worker Internet egress
+resources:
+  transit_gateway: { create: false, existing: my-global-tgw }
+  registry_cos:    { create: true }   # REQUIRED — ROKS-on-VPC internal registry (see below)
+  cert_manager:    { create: true }
+  bnk:             { create: true }
+  tgw_jumphost:    { create: false }
+  cluster_jumphosts: { create: false }
+  client_vpc:      { create: false }
+registry:
+  target: generic
+  generic_host: &lt;HARBOR_PRIVATE_IP&gt;   # over the TGW
+  generic_repo_prefix: mirror
+  generic_username: admin
+  generic_password_b64: &lt;base64 of the Harbor admin password&gt;
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  far_auth_local_file: /root/f5-far-auth-key.tgz
+  subscription_jwt_local_file: /root/subscription.jwt
+  license_mode: f5licenseproxy
+  flp:
+    external:
+      url: &lt;flp_external_endpoint from Step 3&gt;
+      root_ca_b64: &lt;flp_root_ca from Step 3&gt;
+</code></pre>
+<p>The demo <strong>adopts an existing cluster</strong> (the common case). Set
+<code>cluster: { create: false, name: &lt;existing-cluster&gt; }</code> and <code>registry_cos: { create: false }</code> in
+<code>cluster.yaml</code>, then <strong>register</strong> it (records its identity — VPC, endpoints, registry COS — into
+<code>cluster-outputs.json</code>, which activates <code>bnk up</code>’s existing-cluster path) and pull its admin
+kubeconfig for <code>kubectl</code>:</p>
+<pre><code class="language-console">$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster register &lt;existing-cluster&gt;   # writes cluster-outputs.json
+$ roksbnkctl -w bnk kubeconfig --download                 # ~/.kube/config for kubectl
+</code></pre>
+<p>Ensure the existing cluster’s VPC is attached to the same global Transit Gateway and its address
+prefixes don’t overlap the services VPC (so Harbor’s private IP is routable from the nodes). If its
+VPC isn’t on the TGW yet, attach it (idempotent): <code>roksbnkctl -w bnk tgw connect &lt;your-global-tgw&gt;</code>.</p>
+<h3 id="alternative--create-the-cluster-here"><a class="header" href="#alternative--create-the-cluster-here">Alternative — create the cluster here</a></h3>
+<p>To build the cluster instead of adopting one, set <code>cluster: { create: true }</code> +
+<code>registry_cos: { create: true }</code> and:</p>
+<pre><code class="language-console">$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster up            # ~45–55 min; TGW connect runs at the end
+$ roksbnkctl -w bnk tgw status
+</code></pre>
+<blockquote>
+<p><strong>⚠ Confirmed — <code>registry_cos: { create: true }</code> is mandatory</strong> <em>when creating</em> the cluster. ROKS-on-VPC refuses to
+provision without a COS instance backing its <strong>internal</strong> image registry (<code>E7278</code>). This is
+IBM Cloud COS reached over the private service-endpoint range — needed even air-gapped.
+<code>create: false</code> fails the cluster create outright.</p>
+</blockquote>
+<h3 id="node-ca-trust-is-automatic"><a class="header" href="#node-ca-trust-is-automatic">Node CA trust is automatic</a></h3>
+<p>Before pulling, CRI-O on each node must trust Harbor’s self-signed cert or every pull fails <code>x509</code>.
+<strong>The usual OpenShift mechanism does not work on ROKS</strong> — <code>image.config.openshift.io/cluster</code> is
+HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. <code>bnk up</code> handles it: it installs
+the CA — captured into the mirror record by <code>registry replicate --registry-ca</code> (Step 2) — into each
+node’s <code>/etc/containers/certs.d/&lt;HARBOR_PRIVATE_IP&gt;/ca.crt</code> via a privileged DaemonSet (one pod per
+node, a <strong>node-cached</strong> image so it needs no egress, self-refreshing if the CA changes on a
+cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
+hand. Because Harbor is addressed by an <strong>IP</strong>, the <code>certs.d</code> key is that IP — no node <code>/etc/hosts</code>
+entry needed.</p>
+<h2 id="step-5--install-bnk-air-gapped-on-the-vsi"><a class="header" href="#step-5--install-bnk-air-gapped-on-the-vsi">Step 5 — Install BNK, air-gapped (on the VSI)</a></h2>
+<p><code>bnk up</code> requires a populated <code>registry-mirror.json</code> in <strong>this</strong> (cluster) workspace. You
+replicated in the <code>mirror</code> workspace (Step 2); since both live under the same
+<code>~/.roksbnkctl</code> on the VSI, that’s a one-line local copy — no cross-host transfer (or replicate
+directly in the <code>bnk</code> workspace to skip it):</p>
+<pre><code class="language-bash">cp ~/.roksbnkctl/mirror/registry-mirror.json ~/.roksbnkctl/bnk/registry-mirror.json
+</code></pre>
+<p>Keep <code>SSL_CERT_FILE</code> pointed at Harbor’s cert (the chart pulls run host-side, i.e. on the VSI):</p>
+<pre><code class="language-console">$ export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt
+$ roksbnkctl -w bnk bnk up --auto     # installs node CA trust, pulls from Harbor, licenses via the FLP — one pass
+</code></pre>
+<blockquote>
+<p><strong>One pass.</strong> The <code>external-vlan</code>/<code>internal-vlan</code> (<code>F5SPKVlan</code>) CRs are admitted
+by the <code>f5validate</code> webhook, whose TLS server comes up a few seconds <em>after</em>
+<code>CNEControllerAvailable=True</code>. <code>bnk up</code> gates the VLAN applies on a <strong>dry-run
+admission probe</strong> of <code>f5-spk-vlans</code> that retries until the webhook accepts, so
+the CRs land the first time. (The License CR has its own admission-retry.)</p>
+</blockquote>
+<p>Verify — every pull private, nothing off the cluster to the Internet:</p>
+<pre><code class="language-console">$ kubectl get pods -n f5-bnk                     # all Running — images all from &lt;HARBOR_PRIVATE_IP&gt;
+$ kubectl get license -n f5-utils                # STATE: Active   MODE: f5licenseproxy
+$ kubectl get cneinstance -n f5-bnk -o \
+    jsonpath='{.items[0].status.conditions[?(@.type=="Available")].status}'   # True
+</code></pre>
+<h2 id="teardown"><a class="header" href="#teardown">Teardown</a></h2>
+<pre><code class="language-console">$ roksbnkctl -w bnk  down --auto     # cluster + BNK (+ detaches its TGW connection)
+$ roksbnkctl -w flp down --auto     # the standalone FLP VSI
+$ ibmcloud is instance-delete bnk-svc-harbor --force
+$ ibmcloud is floating-ip-release "$FIPID" --force
+$ ibmcloud tg connection-delete "$TGW_ID" &lt;services-conn-id&gt;
+$ ibmcloud is vpc-delete "$SVC_VPC" --force   # after its subnet / public gateway / floating IP are gone
+</code></pre>
+<h2 id="the-scripted-walkthrough-cli"><a class="header" href="#the-scripted-walkthrough-cli">The scripted walkthrough (CLI)</a></h2>
+<p>Everything above is scripted, phase-by-phase, in
+<code>scripts/demos/disconnected-cluster-cli-demo/</code> — a fully reproducible, parameterized walkthrough.
+It reads its inputs from a <code>.env</code> (only <code>IBMCLOUD_API_KEY</code> is strictly required), auto-advances
+between phases, and drives the exact commands in this appendix. Node CA trust is handled by <code>bnk up</code>
+itself — it installs Harbor’s CA on every node before pulling (see
+<a href="#step-5--install-bnk-air-gapped-on-the-vsi">Step 5</a>), so there is no manual DaemonSet to apply.</p>
+<h3 id="what-to-expect--timing"><a class="header" href="#what-to-expect--timing">What to expect — timing</a></h3>
+<p>A clean end-to-end run is roughly <strong>45–65 minutes</strong>, dominated by <code>bnk up</code>. The steps map to these
+typical durations (they vary with region load, image count, and cluster size):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Step</th><th>Typical duration</th></tr>
+</thead>
+<tbody>
+<tr><td>Step 1 — Services VPC + Harbor VSI (cloud-init installs Harbor)</td><td>~8–10 min</td></tr>
+<tr><td>Step 2 — Mirror FAR → Harbor (<code>registry replicate</code>, many images)</td><td>~8–15 min</td></tr>
+<tr><td>Step 3 — Standalone FLP appliance up</td><td>~5–8 min</td></tr>
+<tr><td>Step 4 — Adopt the cluster + node CA trust</td><td>~3–5 min</td></tr>
+<tr><td>Step 5 — <code>bnk up</code> converges (cert-manager → FLO → CNE → license → f5-spk)</td><td>~20–30 min</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>bnk up</code> is the long, variable one: it gates on <strong>real readiness</strong> at every stage (helm <code>wait</code>,
+<code>kubectl_manifest</code> <code>wait_for</code>, and the node-CA-trust installer reaching every node), so a clean apply
+<em>is</em> the convergence — there is no “run it twice.” The other steps are one-time services
+infrastructure; a second install that reuses the same Harbor and FLP skips Steps 1–3 entirely and is
+just Steps 4–5.</p>
+<h2 id="the-same-flow-as-ci--the-container-runner"><a class="header" href="#the-same-flow-as-ci--the-container-runner">The same flow as CI — the container runner</a></h2>
+<p>The CLI walkthrough above is the <em>narrative</em>; this is the same five steps as a pipeline, using the
+all-in-one <strong>runner image</strong> (<code>roksbnkctl</code> plus every tool on <code>PATH</code>). The one shape change from the CLI
+walkthrough: where the operator VSI read the FAR auth archive and subscription JWT from <strong>local files</strong>,
+CI reads them from the <strong>registry COS bucket</strong> by their object keys — the standard supply-chain store
+(upload them once; see <a href="./25-cos-supply-chain.html">Chapter 25 — the COS supply chain</a>). So there are no
+secret files to mount: only the manifest version and where the mirror is need a small <code>config.yaml</code>, and
+the secrets + FLP handoff late-bind from the environment with <code>--override-from-env</code>. For the general CI
+contract see <a href="./07b-github-actions-ci.html">Chapter 7b — GitHub Actions</a> and the env map in
+<a href="./07a-unattended-setup.html#-override-from-env">Unattended setup</a>; this section only adds what is specific
+to the disconnected, standalone-VSI topology.</p>
+<blockquote>
+<p><strong>One constraint the connected flows don’t have.</strong> The runner must sit where it can reach Harbor’s
+<strong>private IP</strong> and the cluster <strong>over the TGW</strong> — a GitHub-<em>hosted</em> runner can’t. Run it on a
+<strong>self-hosted runner inside the services VPC</strong>, or invoke the container <strong>on the operator (Harbor)
+VSI</strong> itself. Harbor and the FLP VSI are standing services infrastructure (<a href="#step-1--services-vpc--harbor-the-operator-host-attached-to-the-tgw">Steps 1</a>
+and <a href="#step-3--standalone-flp-licensing-appliance-on-the-vsi">3</a>); the mirror-refresh + install below
+is what CI repeats.</p>
+</blockquote>
+<h3 id="ci-topology--the-runner-container-is-the-operator"><a class="header" href="#ci-topology--the-runner-container-is-the-operator">CI topology — the runner container is the operator</a></h3>
+<p>Where the CLI walkthrough runs <code>roksbnkctl</code> on the Harbor VSI, CI runs the <strong>same commands inside the
+runner container</strong>, driven by an <strong>Argo Workflows</strong> controller on a small <strong>k3s VSI in the services
+VPC</strong>. The <strong>runner image itself is mirrored into Harbor</strong> (like FAR) and pulled from there over the
+private IP — nothing is pulled from a public registry at run time; k3s trusts Harbor’s self-signed CA
+via <code>/etc/rancher/k3s/registries.yaml</code>. Only the target ROKS cluster is fully air-gapped; the runner
+sits where it can reach Harbor’s <strong>private IP</strong> and the cluster <strong>over the TGW</strong>, exactly as the
+operator VSI did.</p>
+<blockquote>
+<p><strong>Mirror the runner into Harbor once</strong>, alongside FAR:</p>
+<pre><code class="language-bash">docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+docker tag  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0 &lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+docker push &lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+</code></pre>
+</blockquote>
+<pre class="mermaid">graph TB
+    subgraph net["Internet — the controller VSI has egress"]
+        FAR["repo.f5.com&lt;br/&gt;FAR pull"]
+        IBM["IBM Cloud API · IAM · COS&lt;br/&gt;(FAR key + JWT)"]
+    end
+    subgraph svc["SERVICES VPC — public gateway = egress"]
+        subgraph ctl["Argo Workflows controller VSI · k3s"]
+            AC["Argo Workflows"]
+            SRC["Workflow manifests&lt;br/&gt;mirror + install"]
+            Runner["roksbnkctl-tools-runner&lt;br/&gt;Workflow step pods&lt;br/&gt;▶ the operator"]
+        end
+        Harbor["Harbor VSI&lt;br/&gt;OCI mirror · PRIVATE IP"]
+        FLP["FLP VSI&lt;br/&gt;License Proxy · PRIVATE IP"]
+    end
+    TGW{{"Transit Gateway · global&lt;br/&gt;private RFC1918"}}
+    subgraph clu["CLUSTER VPC · private — NO worker egress"]
+        Workers["ROKS workers · disco-demo"]
+    end
+    AC --&gt;|"argo submit"| SRC
+    SRC --&gt; Runner
+    Runner --&gt;|"pull runner image"| Harbor
+    Runner --&gt;|"registry replicate → mirror"| Harbor
+    Runner --&gt;|"FAR pull"| FAR
+    Runner --&gt;|"API · FAR key/JWT from COS"| IBM
+    Runner --&gt;|"adopt + bnk up, over TGW"| TGW
+    Runner --&gt;|"license handoff"| FLP
+    TGW --- Workers
+    Workers --&gt;|"images, over TGW"| Harbor
+    Workers --&gt;|"licensing, over TGW"| FLP
+    classDef vpc fill:#eef3fb,stroke:#4b6ea9,color:#000;
+    classDef inet fill:#fdf2f2,stroke:#c0392b,color:#000;
+    classDef controller fill:#eafaf1,stroke:#27ae60,color:#000;
+    class svc,clu vpc;
+    class net inet;
+    class ctl controller;
+</pre>
+
+<h3 id="as-a-script-plain-docker-run--what-a-ci-runner-does"><a class="header" href="#as-a-script-plain-docker-run--what-a-ci-runner-does">As a script (plain <code>docker run</code> — what a CI runner does)</a></h3>
+<pre><code class="language-bash">#!/usr/bin/env bash
+# Secrets come from the CI vault, never the repo. IBMCLOUD_API_KEY, the Harbor
+# password, and the FLP handoff (URL + CA) are exported by the runner. The FAR
+# archive + subscription JWT already live in the registry COS bucket — CI reads
+# them from there with the API key, so there is nothing to mount.
+set -euo pipefail
+RUNNER=10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
+COMMON=( --rm -v "$PWD/state:/work" -e IBMCLOUD_API_KEY )
+
+# config.yaml carries only what env can't: the manifest + where the mirror is.
+cat &gt; state/config.yaml &lt;&lt;'YAML'
+ibmcloud: { region: us-south, resource_group: default }
+prefix: bnk
+cluster: { name: disco-demo, create: false }          # adopt the EXISTING cluster
+registry:
+  target: generic
+  generic_host: 10.241.0.4                             # Harbor by PRIVATE IP over the TGW
+  generic_repo_prefix: mirror
+  generic_username: admin
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  license_mode: f5licenseproxy
+  # FAR auth + JWT are read from the registry COS bucket by their default object
+  # keys (f5-far-auth-key.tgz / subscription.jwt) — upload them once (Chapter 25).
+YAML
+
+export ROKSBNKCTL_GENERIC_PASSWORD="$HARBOR_PW"          # base64'd into the config by init
+export ROKSBNKCTL_FLP_EXTERNAL_URL="$FLP_URL"            # the FLP VSI's endpoint …
+export ROKSBNKCTL_FLP_ROOT_CA_B64="$FLP_CA_B64"          # … and its CA (already base64)
+run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
+        -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
+
+run init --config-file /work/config.yaml --override-from-env
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry verify
+run cluster register disco-demo             # Step 4 — adopt
+run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
+</code></pre>
+<p><code>registry replicate</code> captures Harbor’s self-signed CA into the mirror record automatically; pass
+<code>--registry-ca &lt;file&gt;</code> only to supply it explicitly. <code>-v "$PWD/state:/work"</code> persists the workspace —
+config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
+back it with COS remote state instead so a later teardown run still sees it — see
+<a href="./07b-github-actions-ci.html#ephemeral-runners-need-remote-state">Chapter 7b §“Ephemeral runners need remote state”</a>.</p>
+<h3 id="as-argo-workflows--the-runner-steps-as-a-pipeline"><a class="header" href="#as-argo-workflows--the-runner-steps-as-a-pipeline">As Argo Workflows — the runner steps as a pipeline</a></h3>
+<p>A one-shot <strong>provisioning</strong> run is a natural fit for <strong>Argo Workflows</strong>, which runs the
+roksbnkctl steps as an explicit pipeline driven with <code>argo submit</code>. Each step is its own pod
+with its own status, logs and retries (the per-step visibility a single <code>Job</code> can’t give), and
+the workspace lives on a <strong>persistent PVC</strong> shared across the steps. That PVC is also what makes
+teardown clean: an
+ephemeral <code>emptyDir</code> loses its terraform state when the pod ends — orphaning the IAM trusted
+profile and pull secrets — whereas the PVC lets a later <code>roksbnkctl bnk down</code> destroy them.</p>
+<p>Both Workflows run in a small <strong>k3s + Argo Workflows</strong> cluster in the services VPC (the same
+private-IP / TGW reachability the runner needs; a <em>hosted</em> controller can’t reach Harbor’s
+private IP or the target cluster). They share the <code>bnk-work</code> PVC, the <code>bnk-config</code> ConfigMap (the
+<code>bnk.yaml</code> above), the <code>bnk-secrets</code> Secret, and a <code>bnk-runner</code> ServiceAccount.</p>
+<p><strong>The shared prerequisites</strong> — applied once (<code>kubectl apply -f workflows/00-prereqs.yaml</code>):</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata: { name: bnk-ci }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim          # the persistent workspace both Workflows share (and bnk down reads)
+metadata: { name: bnk-work, namespace: bnk-ci }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 8Gi } }     # k3s local-path default storageclass
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: bnk-runner, namespace: bnk-ci }
+---
+apiVersion: rbac.authorization.k8s.io/v1        # Argo's emissary executor writes workflowtaskresults
+kind: Role
+metadata: { name: bnk-runner-executor, namespace: bnk-ci }
+rules:
+  - { apiGroups: ["argoproj.io"], resources: ["workflowtaskresults"], verbs: ["create", "patch"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: bnk-runner-executor, namespace: bnk-ci }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: bnk-runner-executor }
+subjects: [{ kind: ServiceAccount, name: bnk-runner, namespace: bnk-ci }]
+</code></pre>
+<p><strong>Workflow 1 — mirror</strong> (<code>init</code> -&gt; <code>registry replicate</code> -&gt; <code>registry verify</code>):</p>
+<pre><code class="language-yaml">apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { generateName: bnk-mirror-, namespace: bnk-ci }
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  volumes:
+    - { name: work, persistentVolumeClaim: { claimName: bnk-work } }   # shared with Workflow 2
+    - { name: config, configMap: { name: bnk-config } }
+  templates:
+    - name: mirror
+      steps:
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init --config-file /config/bnk.yaml --override-from-env" }]
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry replicate --target generic" }]
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry verify" }]
+    - name: rbk                       # one reusable step: roksbnkctl -w bnk &lt;cmd&gt; on the runner image
+      inputs: { parameters: [{ name: cmd }] }
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0   # &gt;= v1.33.0: native operator + node CA trust
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts:
+          - { name: work, mountPath: /work }
+          - { name: config, mountPath: /config }
+</code></pre>
+<p><strong>Workflow 2 — install</strong> (<code>cluster register</code> -&gt; <code>bnk up</code> -&gt; <code>bnk status</code>), reusing the SAME
+<code>bnk-work</code> PVC — so the workspace it reads is already <code>init</code>’d and carries the <strong>recorded mirror
+CA</strong> that <code>bnk up</code> trusts for its terraform/helm chart pulls:</p>
+<pre><code class="language-yaml">apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { generateName: bnk-install-, namespace: bnk-ci }
+spec:
+  entrypoint: install
+  serviceAccountName: bnk-runner
+  volumes:
+    - { name: work, persistentVolumeClaim: { claimName: bnk-work } }   # the SAME workspace Workflow 1 wrote
+  templates:
+    - name: install
+      steps:
+        - - name: cluster-register
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "cluster register disco-demo" }]
+        - - name: bnk-up
+            template: bnk-up                   # dedicated — carries the cwc-guard sidecar
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "bnk status" }]
+    # `bnk up` + a silent cwc-guard sidecar. F5 defect: on a REUSED cluster the f5-spk-cwc
+    # Deployment (RWO PVC + RollingUpdate) deadlocks on a Multi-Attach error and the License
+    # never activates; the sidecar forces strategy=Recreate + cycles replicas so a single pod
+    # attaches, then exits (Argo kills it when bnk up finishes). A no-op on a fresh cluster.
+    - name: bnk-up
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk bnk up --auto"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts: [{ name: work, mountPath: /work }]
+      sidecars:
+        - name: cwc-guard            # (args abridged — the full loop is in workflows/wf-install.yaml)
+          image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+          command: [sh, -ec]
+          args:
+            - |
+              KC=$(find /work -type f -name kubeconfig | head -1)          # adopted-cluster kubeconfig on the PVC
+              until kubectl --kubeconfig "$KC" -n f5-utils get deploy f5-spk-cwc; do sleep 10; done
+              kubectl --kubeconfig "$KC" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+                -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+              # if &gt;1 cwc pod is stuck ContainerCreating, scale 0 then 1 so a single pod attaches
+          volumeMounts: [{ name: work, mountPath: /work }]
+    - name: rbk
+      inputs: { parameters: [{ name: cmd }] }
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts: [{ name: work, mountPath: /work }]
+</code></pre>
+<p>Submit them in order:</p>
+<pre><code class="language-bash">argo submit -n bnk-ci --wait workflows/wf-mirror.yaml     # init -&gt; replicate -&gt; verify
+argo submit -n bnk-ci --wait workflows/wf-install.yaml    # register -&gt; bnk up -&gt; bnk status
+argo get   -n bnk-ci @latest                              # the step tree + status
+</code></pre>
+<p>The Argo Workflows web UI (server auth, NodePort <code>30746</code> over the VSI floating IP) lists both runs —
+the mirror and the install — each <strong>Succeeded 3/3</strong>:</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/argo-workflows-list.png" alt="The Argo Workflows UI — the bnk-mirror and bnk-install Workflows, each Succeeded 3/3 (and a bnk-down teardown run)"><span class="img-wrapper"><img src="images/argo-workflows-list.png" alt="The Argo Workflows UI — the bnk-mirror and bnk-install Workflows, each Succeeded 3/3 (and a bnk-down teardown run)"></span></label></p>
+<p>Opening the install run shows it as a step DAG — each roksbnkctl phase its own node, green when it
+succeeds:</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/argo-workflows-install-dag.png" alt="The bnk-install Workflow in the Argo Workflows UI — cluster-register → bnk-up → bnk-status, all succeeded"><span class="img-wrapper"><img src="images/argo-workflows-install-dag.png" alt="The bnk-install Workflow in the Argo Workflows UI — cluster-register → bnk-up → bnk-status, all succeeded"></span></label></p>
+<p>The <code>bnk-secrets</code> Secret (API key, Harbor password, FLP endpoint + CA) comes from a sealed-secret
+or the External Secrets operator — never committed; <code>init</code> applies them via <code>--override-from-env</code>
+and logs only which fields, never the values. To reclaim, <code>roksbnkctl -w bnk bnk down --auto</code>
+against the persistent PVC (which still holds the state) before deleting the Workflows + PVC.</p>
+<blockquote>
+<p>The two-<em>cluster</em> variant — an in-cluster FLP in a services cluster rather than a standalone VSI — is
+<a href="./10c-flp-licensing.html#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
+</blockquote>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="33-agentic-mode.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="33-agentic-mode.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

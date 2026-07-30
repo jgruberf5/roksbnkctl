@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -398,7 +398,7 @@ roksbnkctl targets add backup-jump \
 <p>The auto-population is <strong>idempotent</strong> — re-running <code>up</code> against an already-jumphost-populated workspace re-writes the same fields. If you’ve manually customised the entry (changed the user, swapped to <code>key_path</code>), the auto-population overwrites your changes. There’s no merge logic; the latest <code>up</code> wins.</p>
 <p>If <code>testing_create_tgw_jumphost = false</code> in tfvars, the upstream HCL skips creating the jumphost VM and emits the sentinel output. Auto-population is then a no-op, and you’re free to create your own <code>jumphost</code> (or differently-named) entry via <code>targets add</code>.</p>
 <h3 id="per-az-cluster-jumphosts-jumphost-zone"><a class="header" href="#per-az-cluster-jumphosts-jumphost-zone">Per-AZ cluster jumphosts (<code>jumphost-&lt;zone&gt;</code>)</a></h3>
-<p>When <code>testing_create_cluster_jumphosts = true</code>, the deploy builds <strong>one cluster jumphost per cluster-VPC availability zone</strong> in addition to the single TGW jumphost — each on its own floating IP, all sharing the <em>same</em> key as the TGW jumphost. Since <strong>v1.5.0</strong>, the same post-<code>up</code> hook that seeds the singular <code>jumphost</code> also auto-registers one target per AZ:</p>
+<p>When <code>testing_create_cluster_jumphosts = true</code>, the deploy builds <strong>one cluster jumphost per cluster-VPC availability zone</strong> in addition to the single TGW jumphost — each on its own floating IP, all sharing the <em>same</em> key as the TGW jumphost. The same post-<code>up</code> hook that seeds the singular <code>jumphost</code> also auto-registers one target per AZ:</p>
 <ol>
 <li>
 <p>After a successful <code>up</code>, <code>roksbnkctl</code> reads the <code>testing_cluster_jumphost_ips</code> terraform output — a map <code>{ zone =&gt; floating-IP }</code>.</p>
@@ -429,21 +429,8 @@ roksbnkctl targets add backup-jump \
 </code></pre>
 <p>A host re-created on a recycled floating IP will also trip the host-key mismatch refusal — see <a href="#host-key-tofu-and-roksbnkctlknown_hosts">§“Host-key TOFU and <code>~/.roksbnkctl/known_hosts</code>”</a> and clear the stale <code>known_hosts</code> line with <code>ssh-keygen -R &lt;fip&gt; -f ~/.roksbnkctl/known_hosts</code>. An automatic-prune (reconcile) mode that removes orphans on the next <code>up</code> is a deliberate post-v1.5.0 follow-up (it needs unambiguous “this target is auto-managed” ownership semantics so a hand-named <code>jumphost-mybox</code> is never deleted). See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md">PRD 09</a>.</p>
 </blockquote>
-<blockquote>
-<p><strong>Pre-v1.5.0 fallback.</strong> On a release before v1.5.0 the per-AZ jumphosts are not auto-registered — register each by hand. Look up the floating IPs with the read-only <code>terraform</code> command (v1.5.0+; <a href="./16-on-flag-ssh-jumphosts.html#per-az-cluster-jumphosts">Chapter 16 §“Per-AZ cluster jumphosts”</a>):</p>
-<pre><code class="language-bash">roksbnkctl terraform output testing_cluster_jumphost_ips
-roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
-</code></pre>
-<p>…or, on an even older release without <code>roksbnkctl terraform</code>, the raw form <code>cd ~/.roksbnkctl/&lt;ws&gt;/state &amp;&amp; TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips</code>. Then register one target per AZ — note <code>--key-source tf-output:jumphost_shared_key</code> is correct because one shared key covers <em>all</em> jumphosts (see <a href="#key_source-tf-outputoutput-name">§“<code>key_source: tf-output:&lt;output-name&gt;</code>”</a>):</p>
-<pre><code class="language-bash">roksbnkctl targets add jumphost-ca-tor-1 \
-  --host &lt;ca-tor-1-fip&gt; --user ubuntu \
-  --key-source tf-output:jumphost_shared_key
-# …repeat per zone…
-</code></pre>
-<p>Each new IP triggers a one-time host-key TOFU prompt on first connect (see <a href="#host-key-tofu-and-roksbnkctlknown_hosts">§“Host-key TOFU and <code>~/.roksbnkctl/known_hosts</code>”</a>). Manually-added targets are not auto-managed: a destroy+recreate rotates the FIPs and you must re-<code>targets add</code> (contrast the v1.5.0 auto-registered targets, which <code>up</code> refreshes in place).</p>
-</blockquote>
 <h3 id="what-is-not-auto-discovered"><a class="header" href="#what-is-not-auto-discovered">What is <em>not</em> auto-discovered</a></h3>
-<p>The auto-discovery flow registers the TGW <code>jumphost</code> (always) and, since v1.5.0, the per-AZ <code>jumphost-&lt;zone&gt;</code> targets when <code>testing_create_cluster_jumphosts = true</code>. It does <strong>not</strong> register:</p>
+<p>The auto-discovery flow registers the TGW <code>jumphost</code> (always) and the per-AZ <code>jumphost-&lt;zone&gt;</code> targets when <code>testing_create_cluster_jumphosts = true</code>. It does <strong>not</strong> register:</p>
 <ul>
 <li><strong>Per-AZ jumphosts by <em>private</em> IP.</strong> There is no top-level <code>testing_cluster_jumphost_private_ips</code> terraform output; the private-IP hop pattern in <a href="./16-on-flag-ssh-jumphosts.html#per-az-cluster-jumphosts">Chapter 16 §“Per-AZ cluster jumphosts”</a> is a documented zero-setup technique, not an auto-registered target.</li>
 <li><strong>Any non-jumphost host.</strong> Bastions, ops boxes, and the like are always <code>targets add</code> by hand.</li>
@@ -466,7 +453,7 @@ roksbnkctl tf output -json jumphost_shared_key | head -c 50
 <tbody>
 <tr><td><strong>File materialisation</strong></td><td><code>RunOpts.Files</code> map gets written to <code>/tmp/roksbnkctl.&lt;rand&gt;/&lt;basename&gt;</code> on the remote, available as the working directory for the command. Cleanup via <code>trap 'rm -rf' EXIT</code> in a wrapper.</td></tr>
 <tr><td><strong>Env passing with fallback</strong></td><td>First tries <code>ssh -o SetEnv=KEY=VALUE</code> (requires remote sshd <code>AcceptEnv</code>). On failure, writes a 0700 wrapper script that exports the env and execs the command, with <code>trap 'rm -f $0' EXIT</code> to scrub.</td></tr>
-<tr><td><strong>Apt bootstrap</strong></td><td>If the remote target doesn’t have a tool (<code>iperf3</code>, <code>ibmcloud</code>) installed, the backend can <code>sudo apt-get install</code> it on demand (Ubuntu only at v1.0).</td></tr>
+<tr><td><strong>Apt bootstrap</strong></td><td>If the remote target doesn’t have a tool (<code>iperf3</code>, <code>ibmcloud</code>) installed, the backend can <code>sudo apt-get install</code> it on demand (Ubuntu only).</td></tr>
 <tr><td><strong>SCP-and-cleanup for kubeconfig</strong></td><td>The backend’s recommended path for shipping a kubeconfig to the remote: SCP to a tempdir, run, <code>trap 'rm -rf' EXIT</code> to scrub.</td></tr>
 <tr><td><strong>Wrapper-script credential propagation</strong></td><td>Detailed in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md">PRD 04 § SSH</a>. Brief on-disk window with strict cleanup.</td></tr>
 </tbody>

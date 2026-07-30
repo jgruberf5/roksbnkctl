@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -344,7 +344,7 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 </tbody>
 </table>
 </div>
-<p>Note the <strong>126 vs 127 split</strong>: 127 means “we never reached the tool” (binary missing, daemon unreachable, SSH refused); 126 means “we reached the tool but the backend itself broke after that point” (couldn’t fork, container created but crashed, pod scheduled but evicted before exec). Sprint 3 collapsed both to 127 in the local + docker implementations; this sprint splits them per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface">PRD 03 §“Backend interface”</a>. CI scripts that distinguish “test infra broken” from “real test failure” can now key on the difference.</p>
+<p>Note the <strong>126 vs 127 split</strong>: 127 means “we never reached the tool” (binary missing, daemon unreachable, SSH refused); 126 means “we reached the tool but the backend itself broke after that point” (couldn’t fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface">PRD 03 §“Backend interface”</a>. CI scripts that distinguish “test infra broken” from “real test failure” can now key on the difference.</p>
 <h4 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h4>
 <ul>
 <li>You have the tool installed and on PATH already.</li>
@@ -397,7 +397,7 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 </table>
 </div>
 <p>The <code>h2load</code> image is the L7 generator the <a href="./22a-performance-matrix.html">performance matrix</a> runs for <code>family: l7</code> cells. It’s built from <code>tools/docker/h2load/Dockerfile</code> (Alpine’s <code>nghttp2</code> package, built against OpenSSL so <code>https</code> / TLS-terminate-at-TMM targets work) and published by the <code>tools-images</code> workflow alongside the other per-tool images. Like the iperf3 image it declares <code>USER 1000</code> so it satisfies the OpenShift <code>restricted-v2</code> SCC (h2load is a pure client and binds no privileged port). The <code>docker</code> / <code>k8s</code> backends pull this image; the <code>ssh</code> backend uses the jumphost’s apt-installed <code>nghttp2-client</code> instead (preinstalled by the Testing phase — see <a href="./15-ssh-targets.html#per-az-cluster-jumphosts-jumphost-zone">Chapter 15 §“Per-AZ cluster jumphosts”</a>).</p>
-<p>The <code>&lt;tag&gt;</code> for the vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) is resolved at runtime by <code>internal/exec/docker.go::toolImageTag()</code>. It reads the binary’s <code>internal/version.Version</code> (set via ldflags at build time): a release-built binary like <code>v0.10.0</code> pulls <code>:v0.10.0</code>; a dev build (<code>Version == "dev"</code>) pulls <code>:dev</code>. Sprint 4 landed this version-pinning in place of Sprint 3’s hard-coded <code>:dev</code> so a <code>go install</code> of a tagged release pulls a matching tagged image rather than a <code>:dev</code> that may not exist for the published binary. The <code>terraform</code> row is the exception — it points at the upstream <code>hashicorp/terraform</code> image and stays pinned to a specific version (currently <code>1.5.7</code>) regardless of <code>roksbnkctl</code>’s own version.</p>
+<p>The <code>&lt;tag&gt;</code> for the vendored per-tool images (<code>ibmcloud</code>, <code>iperf3</code>) is resolved at runtime by <code>internal/exec/docker.go::toolImageTag()</code>. It reads the binary’s <code>internal/version.Version</code> (set via ldflags at build time): a release-built binary like <code>v0.10.0</code> pulls <code>:v0.10.0</code>; a dev build (<code>Version == "dev"</code>) pulls <code>:dev</code>. The tag is version-pinned, so a <code>go install</code> of a tagged release pulls a matching tagged image rather than a <code>:dev</code> that may not exist for the published binary. The <code>terraform</code> row is the exception — it points at the upstream <code>hashicorp/terraform</code> image and stays pinned to a specific version (currently <code>1.5.7</code>) regardless of <code>roksbnkctl</code>’s own version.</p>
 <p>The <code>:dev</code> tag is still the local-development idiom: <code>cd tools/docker &amp;&amp; make build-all</code> builds and tags every tools image as <code>:dev</code> locally; a dev-build <code>roksbnkctl</code> finds them via the local docker cache without a ghcr.io round-trip.</p>
 <p>If you’re cutting a custom tools image and want <code>roksbnkctl</code> to pick it up, the simplest path is <code>docker tag your-image ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev</code> locally — the docker backend pulls the local-cached version first.</p>
 <h4 id="auto-remove-and-ctx-cancel-kill"><a class="header" href="#auto-remove-and-ctx-cancel-kill">Auto-remove and ctx-cancel-kill</a></h4>
@@ -559,7 +559,7 @@ spec:
 </div>
 <p>The bare-Pod (rather than Deployment) shape is intentional — the iperf3 server is single-shot, scoped to one test, torn down on completion; the controller-managed replica machinery a Deployment provides is unused and would only confuse the cleanup story. Service type is driven by <code>--mode</code>: <code>north-south</code> measures laptop-to-cluster bandwidth and needs a publicly reachable endpoint (<code>LoadBalancer</code>); <code>east-west</code> measures node-to-pod and stays in-cluster (<code>ClusterIP</code>). See <a href="./22-throughput-testing.html">Chapter 22 — Throughput testing</a> for the user-facing flag surface.</p>
 <p>The client Job’s argv is <code>iperf3 -c &lt;server-cluster-ip-or-lb&gt; -J</code>. The <code>-J</code> JSON flows back via log streaming, parsed in <code>internal/test/throughput.go</code>, surfaced as <code>roksbnkctl test throughput</code> JSON output.</p>
-<p>The server pod’s <code>securityContext</code> is set to satisfy OpenShift’s <code>restricted-v2</code> SCC: <code>runAsNonRoot: true</code>, <code>allowPrivilegeEscalation: false</code>, <code>seccompProfile.type: RuntimeDefault</code>, <code>capabilities.drop: [ALL]</code>. iperf3 listens on port 5201 (unprivileged) so no root is needed. The Sprint 3 cluster baseline tripped the SCC by missing one or more of these fields; the manifest the k8s backend emits this sprint sets all four.</p>
+<p>The server pod’s <code>securityContext</code> is set to satisfy OpenShift’s <code>restricted-v2</code> SCC: <code>runAsNonRoot: true</code>, <code>allowPrivilegeEscalation: false</code>, <code>seccompProfile.type: RuntimeDefault</code>, <code>capabilities.drop: [ALL]</code>. iperf3 listens on port 5201 (unprivileged) so no root is needed. The manifest the k8s backend emits sets all four fields to satisfy the SCC.</p>
 <h4 id="when-to-use-it-2"><a class="header" href="#when-to-use-it-2">When to use it</a></h4>
 <ul>
 <li>You’re running <code>iperf3</code> and want a number that reflects cluster fabric, not your office Wi-Fi.</li>
@@ -574,7 +574,7 @@ spec:
 </ul>
 <p><a href="./19-in-cluster-ops-pod.html">Chapter 19</a> is the full reference for the cluster-side mechanics: namespace, ServiceAccount, ClusterRole, Secret, lifecycle.</p>
 <h3 id="ssh-backend"><a class="header" href="#ssh-backend"><code>ssh</code> backend</a></h3>
-<p>Runs the wrapped tool on a registered SSH target. Builds on Sprint 1’s <code>internal/remote.Client</code> (the same SSH client backing the <code>--on</code> flag); this section assumes you’ve read <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a> for the target-config and host-key TOFU framing.</p>
+<p>Runs the wrapped tool on a registered SSH target. Builds on the <code>internal/remote.Client</code> (the same SSH client backing the <code>--on</code> flag); this section assumes you’ve read <a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a> for the target-config and host-key TOFU framing.</p>
 <pre><code class="language-bash">roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 roksbnkctl ibmcloud --backend ssh:bastion --bootstrap iam oauth-tokens
 </code></pre>
@@ -649,7 +649,7 @@ export IBMCLOUD_API_KEY='&lt;value&gt;'
 exec "$@"
 </code></pre>
 <p>Then: <code>ssh &lt;target&gt; /tmp/roksbnkctl.&lt;rand&gt;/wrap.sh ibmcloud iam oauth-tokens</code>.</p>
-<p>The wrapper-script path is the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/issues/resolved_sprint1_validator.md">Sprint 1 validator Issue 4 carry-over</a> — the same shape <code>--on</code> uses for env passing today. Risks (file content includes the secret) are mitigated by:</p>
+<p>The wrapper-script path is the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/issues/resolved_sprint1_validator.md">validator Issue 4 carry-over</a> — the same shape <code>--on</code> uses for env passing today. Risks (file content includes the secret) are mitigated by:</p>
 <ul>
 <li>Mode <code>0700</code> so only the SSH user can read.</li>
 <li><code>set +o history</code> so the value doesn’t leak into shell history.</li>

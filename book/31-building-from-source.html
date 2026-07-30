@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -255,7 +255,7 @@ make build-mdbook       # builds roksbnkctl-tools-mdbook:dev
 make build-all          # all three
 </code></pre>
 <p>The <code>:dev</code> tag is what a from-source <code>roksbnkctl</code> resolves to when the binary’s <code>Version</code> is <code>dev</code>. A tag-released binary (<code>v1.0.0</code>) resolves to <code>ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:v1.0.0</code> instead — the resolver logic lives in <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/internal/exec"><code>internal/exec/</code></a> (<code>SetToolImageTag</code> is wired in <code>internal/cli/root.go::init</code>). See <a href="./17-execution-backends.html#dev-tag-resolution">Chapter 17 §“:dev tag resolution”</a>.</p>
-<p>The GitHub Actions workflow <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml"><code>tools-images.yml</code></a> builds and pushes the published images via a <code>strategy.matrix.image</code> over <code>[ibmcloud, iperf3, mdbook]</code>. Every push to <code>main</code> republishes the <code>:dev</code> tag for each image; every <code>v*</code> tag push publishes <code>:&lt;tagname&gt;</code> + <code>:latest</code>. <code>workflow_dispatch</code> is also wired for manual runs. The <code>mdbook</code> image was folded into the matrix in Sprint 22 — routine edits to <code>tools/docker/mdbook/Dockerfile</code> no longer require a manual <code>make -C tools/docker build-mdbook</code> + <code>docker push</code> step on the release-cut host; the next push to <code>main</code> republishes <code>ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev</code> automatically.</p>
+<p>The GitHub Actions workflow <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/.github/workflows/tools-images.yml"><code>tools-images.yml</code></a> builds and pushes the published images via a <code>strategy.matrix.image</code> over <code>[ibmcloud, iperf3, mdbook]</code>. Every push to <code>main</code> republishes the <code>:dev</code> tag for each image; every <code>v*</code> tag push publishes <code>:&lt;tagname&gt;</code> + <code>:latest</code>. <code>workflow_dispatch</code> is also wired for manual runs. The <code>mdbook</code> image is part of the matrix, so edits to <code>tools/docker/mdbook/Dockerfile</code> are republished automatically: the next push to <code>main</code> republishes <code>ghcr.io/jgruberf5/roksbnkctl-tools-mdbook:dev</code> with no manual <code>make -C tools/docker build-mdbook</code> + <code>docker push</code> step on the release-cut host.</p>
 <h2 id="the-book-build"><a class="header" href="#the-book-build">The book build</a></h2>
 <p>The book is built with <a href="https://rust-lang.github.io/mdBook/">mdBook</a>. Install:</p>
 <pre><code class="language-bash">cargo install mdbook

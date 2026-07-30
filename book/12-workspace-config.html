@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -204,7 +204,7 @@
 </div>
 <p>Direct hand-editing is supported (the file is plain YAML) but discouraged for fields that have dedicated commands — adding an SSH target via <code>roksbnkctl targets add</code> keeps the schema validation in one place.</p>
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
-<pre><code class="language-yaml">prefix: acme-eu  # base for every account-scoped resource name (since v1.8.0)
+<pre><code class="language-yaml">prefix: acme-eu  # base for every account-scoped resource name
 
 ibmcloud:        # IBM Cloud account + auth
   region: ca-tor
@@ -218,7 +218,7 @@ cluster:         # ROKS cluster identity
   openshift_version: "4.18"
   workers_per_zone: 2
 
-resources:       # per-resource create/adopt toggles (since v1.8.0)
+resources:       # per-resource create/adopt toggles
   transit_gateway:   { create: true }
   registry_cos:      { create: true }
   cert_manager:      { create: true }
@@ -258,7 +258,7 @@ cos:             # optional COS supply-chain config
   instance: bnk-supply-chain
   bucket: bnk-artifacts
 </code></pre>
-<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables. The <code>prefix:</code> field and <code>resources:</code> block (both since <code>v1.8.0</code>) are also optional — omit them and the workspace renders the legacy sparse <code>terraform.tfvars</code> (upstream module default names), which is exactly how pre-<code>v1.8.0</code> configs keep working.</p>
+<p>Every block except <code>ibmcloud:</code>, <code>cluster:</code>, and <code>tf_source:</code> is optional. Omit a block and the tool falls through to either a documented default (covered below) or the upstream HCL’s own default for terraform variables. The <code>prefix:</code> field and <code>resources:</code> block are also optional — omit them and the workspace renders a sparse <code>terraform.tfvars</code> that falls through to the upstream module default names.</p>
 <h2 id="prefix"><a class="header" href="#prefix"><code>prefix:</code></a></h2>
 <pre><code class="language-yaml">prefix: acme-eu
 </code></pre>
@@ -272,7 +272,7 @@ cos:             # optional COS supply-chain config
 </tbody>
 </table>
 </div>
-<p>Since <code>v1.8.0</code>, the <code>init</code> interview asks for a workspace <strong>prefix</strong> and derives every account-scoped resource name from it — <code>acme-eu</code> becomes cluster <code>acme-eu</code>, VPC <code>acme-eu-cluster-vpc</code>, TGW <code>acme-eu-tgw</code>, COS <code>acme-eu-registry-cos</code>, jumphosts <code>acme-eu-jh-tgw</code> / <code>acme-eu-jh-&lt;zone&gt;</code>. This stops two workspaces in the same IBM Cloud account from colliding on the old shared <code>tf-*</code> default names.</p>
+<p>The <code>init</code> interview asks for a workspace <strong>prefix</strong> and derives every account-scoped resource name from it — <code>acme-eu</code> becomes cluster <code>acme-eu</code>, VPC <code>acme-eu-cluster-vpc</code>, TGW <code>acme-eu-tgw</code>, COS <code>acme-eu-registry-cos</code>, jumphosts <code>acme-eu-jh-tgw</code> / <code>acme-eu-jh-&lt;zone&gt;</code>. This stops two workspaces in the same IBM Cloud account from colliding on the old shared <code>tf-*</code> default names.</p>
 <p>The 35-char cap is the ROKS cluster-name limit (the tightest of all the resource types). <code>roksbnkctl</code> validates the prefix — and every name it derives — at <code>init</code> time and re-prompts on overflow; there is no silent truncation. An <strong>empty</strong> <code>prefix</code> keeps the legacy sparse render (no names emitted), so old configs are unaffected. The full derivation table, the per-resource length/charset limits, the source citations, and the override path live in <a href="./13-terraform-variables.html#resource-naming--collision-avoidance">Chapter 13 §“Resource naming &amp; collision avoidance”</a>.</p>
 <h2 id="ibmcloud"><a class="header" href="#ibmcloud"><code>ibmcloud:</code></a></h2>
 <pre><code class="language-yaml">ibmcloud:
@@ -301,6 +301,7 @@ cos:             # optional COS supply-chain config
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 2
+  public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 </code></pre>
@@ -314,12 +315,13 @@ cos:             # optional COS supply-chain config
 <tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
 <tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
+<tr><td><code>public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Attach a public gateway to each cluster subnet for worker Internet egress. <code>false</code> builds a <strong>private/disconnected</strong> cluster with no egress (no <code>ibm_is_public_gateway</code>, no subnet attachment). Sets <code>cluster_public_gateway</code>. <strong>Expert:</strong> a <code>false</code> cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/<code>disconnected</code> licensing — see <a href="./10a-air-gapped-install.html">Chapter 10a §“A truly disconnected cluster”</a>. Governs worker egress only; the master keeps its public API endpoint.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>int</td><td><code>64</code></td><td>Minimum memory (GB) for the same auto-select. <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_memory_gb</code>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code> — see <a href="./13-terraform-variables.html">Chapter 13</a> and <a href="./29-terraform-variable-reference.html">Chapter 29</a> for the full mapping.</p>
+<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code>, <code>cluster_public_gateway</code> — see <a href="./13-terraform-variables.html">Chapter 13</a> and <a href="./29-terraform-variable-reference.html">Chapter 29</a> for the full mapping.</p>
 <p>When a <code>prefix</code> is set, <code>init</code> fills <code>cluster.name</code> with the prefix itself (the cluster name carries no suffix — see <a href="./13-terraform-variables.html#why-the-cluster-name-takes-no-suffix">Chapter 13</a>). Setting <code>cluster.create: false</code> adopts an existing cluster by name/ID via <code>cluster.name</code>, exactly as before — the cluster is <strong>not</strong> part of the <code>resources:</code> block below.</p>
 <h2 id="resources"><a class="header" href="#resources"><code>resources:</code></a></h2>
 <pre><code class="language-yaml">resources:
@@ -330,9 +332,9 @@ cos:             # optional COS supply-chain config
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: shared-client-vpc }
-  client_region:     ca-tor               # since v1.9.0; testing-client region (plain string)
+  client_region:     ca-tor               # testing-client region (plain string)
 </code></pre>
-<p><em>(since <code>v1.8.0</code>)</em> The <code>init</code> interview’s create/adopt answers, one <code>{create, existing}</code> pair per resource. <code>create: true</code> provisions a new, prefix-named resource; <code>create: false</code> declines it, and when a still-enabled resource depends on the declined one, <code>existing:</code> names the pre-existing resource to consume instead.</p>
+<p>The <code>init</code> interview’s create/adopt answers, one <code>{create, existing}</code> pair per resource. <code>create: true</code> provisions a new, prefix-named resource; <code>create: false</code> declines it, and when a still-enabled resource depends on the declined one, <code>existing:</code> names the pre-existing resource to consume instead.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -349,8 +351,8 @@ cos:             # optional COS supply-chain config
 </tbody>
 </table>
 </div>
-<p>One extra key, <code>client_region</code> <em>(since <code>v1.9.0</code>)</em>, is a plain <strong>string</strong> rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when <code>init</code> asks where to install the test client. It renders into <code>testing_client_vpc_region</code> (omitted → the terraform default applies) and seeds the regions <code>roksbnkctl cleanup</code> scans.</p>
-<p>The block is <strong>optional and additive</strong> — omit it (any pre-<code>v1.8.0</code> config) and the legacy sparse render applies; a fresh <code>init</code> writes it in full. The deep reference, including which terraform <code>create_*</code>/<code>*_name</code> variables each toggle renders, is <a href="./28-configuration-reference.html#resources-block">Chapter 28 §“<code>resources:</code> block”</a>.</p>
+<p>One extra key, <code>client_region</code>, is a plain <strong>string</strong> rather than a toggle: the region the testing client (TGW jumphost + client VPC) is installed in, set when <code>init</code> asks where to install the test client. It renders into <code>testing_client_vpc_region</code> (omitted → the terraform default applies) and seeds the regions <code>roksbnkctl cleanup</code> scans.</p>
+<p>The block is <strong>optional</strong> — omit it and the sparse render (upstream module default names) applies; a fresh <code>init</code> writes it in full. The deep reference, including which terraform <code>create_*</code>/<code>*_name</code> variables each toggle renders, is <a href="./28-configuration-reference.html#resources-block">Chapter 28 §“<code>resources:</code> block”</a>.</p>
 <h2 id="bnk"><a class="header" href="#bnk"><code>bnk:</code></a></h2>
 <pre><code class="language-yaml">bnk:
   cneinstance_size: Small
@@ -362,6 +364,17 @@ cos:             # optional COS supply-chain config
   cert_manager:                       # optional; cert-manager coordinates
     namespace: cert-manager
     version: v1.17.3
+  network:                            # optional; data-plane subnets + TMM self-IPs
+    vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
+    tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
+    zones:                            #   one entry per AZ (3 total)
+      - ext_vlan_cidr: 10.155.15.0/24
+        int_vlan_cidr: 10.254.99.0/24
+        int_snat_cidr: 10.10.11.0/24
+        int_vip_cidr: 10.135.15.0/24
+        external_selfip: 10.155.15.101
+        internal_selfip: 10.254.99.101
+      # …zones 2 and 3
   flp:
     storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
@@ -385,6 +398,26 @@ cos:             # optional COS supply-chain config
 </table>
 </div>
 <p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults.</p>
+<h3 id="bnknetwork--data-plane-subnets--tmm-self-ips"><a class="header" href="#bnknetwork--data-plane-subnets--tmm-self-ips"><code>bnk.network:</code> — data-plane subnets + TMM self-IPs</a></h3>
+<p>BNK’s data plane (TMM) needs per-availability-zone VLAN subnets, SNAT/VIP ranges, and self-IPs. Leave <code>bnk.network</code> out entirely and the BNK install-guide defaults apply. Set it to match your cluster’s fabric — <code>roksbnkctl init</code> prompts for every field (opt in at <em>“Customize BNK networking?”</em>, seeded with these defaults), or hand-write the block.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default (AZ1)</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>zones[].ext_vlan_cidr</code></td><td><code>10.155.15.0/24</code></td><td>External VLAN subnet CIDR.</td></tr>
+<tr><td><code>zones[].int_vlan_cidr</code></td><td><code>10.254.99.0/24</code></td><td>Internal VLAN subnet CIDR.</td></tr>
+<tr><td><code>zones[].int_snat_cidr</code></td><td><code>10.10.11.0/24</code></td><td>Internal SNAT-pool CIDR.</td></tr>
+<tr><td><code>zones[].int_vip_cidr</code></td><td><code>10.135.15.0/24</code></td><td>Internal VIP CIDR.</td></tr>
+<tr><td><code>zones[].external_selfip</code></td><td><code>10.155.15.101</code></td><td>External TMM self-IP.</td></tr>
+<tr><td><code>zones[].internal_selfip</code></td><td><code>10.254.99.101</code></td><td>Internal TMM self-IP.</td></tr>
+<tr><td><code>vlan_prefixlen</code></td><td><code>24</code></td><td>Self-IP prefix length (<code>spec.prefixlen_v4</code> on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs. Sets <code>cneinstance_vlan_prefixlen</code>.</td></tr>
+<tr><td><code>tmm_k8s_routes</code></td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM installs a route toward (<code>TMM_K8S_ROUTES</code>) so it can reach backend pods. Set to your cluster’s pod subnet if it isn’t the ROKS default. Sets <code>cneinstance_tmm_k8s_routes</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Provide <strong>all three zones</strong> when you set <code>zones</code> — supplying zones replaces the defaults entirely (they render <code>cneinstance_network_zones</code>, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone <em>names</em> are derived from the region and aren’t configurable. <code>vlan_prefixlen</code> and <code>tmm_k8s_routes</code> are network-wide (shared across all zones). Unset either scalar to keep the terraform default.</p>
 <h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -484,7 +517,7 @@ cos:             # optional COS supply-chain config
 </thead>
 <tbody>
 <tr><td><code>instance</code></td><td>string</td><td>COS instance name holding the FAR auth key + JWT. Empty ⇒ <code>bnk-supply-chain</code>. Sets <code>ibmcloud_cos_instance_name</code>.</td></tr>
-<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ <code>bnk-artifacts</code>. Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
+<tr><td><code>bucket</code></td><td>string</td><td>COS bucket name within that instance. Empty ⇒ an <strong>account-scoped</strong> <code>bnk-artifacts-&lt;first-12-of-account-id&gt;</code> (COS bucket names are globally unique, so the account suffix keeps it collision-free; <code>init</code> provisions it, and a second workspace from the same account discovers and reuses it). Sets <code>ibmcloud_resources_cos_bucket</code>.</td></tr>
 <tr><td><code>region</code></td><td>string</td><td>Region the bucket lives in. Empty ⇒ <code>us-south</code>. Sets <code>ibmcloud_cos_bucket_region</code>.</td></tr>
 <tr><td><code>upload</code></td><td>[]{source, key}</td><td>Optional pre-flight uploads from local files into the bucket. Useful for CI scenarios where the supply-chain artefacts are produced by the pipeline.</td></tr>
 </tbody>
@@ -511,7 +544,7 @@ cos:             # optional COS supply-chain config
 <tr><td><code>bnk.*</code></td><td>Field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>tf_source</code></td><td>Treated as <code>type: embedded</code> (legacy default).</td></tr>
 <tr><td><code>targets.*</code></td><td>Block absent ⇒ <code>roksbnkctl --on jumphost</code> errors with “no target named jumphost”; auto-populated by <code>up</code>.</td></tr>
-<tr><td><code>exec.*</code></td><td>Per-tool defaults at v1.0: <code>ibmcloud</code>→<code>local</code>, <code>terraform</code>→<code>local</code>, <code>iperf3</code>→<code>k8s</code>, DNS probe→<code>local</code>. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
+<tr><td><code>exec.*</code></td><td>Per-tool defaults: <code>ibmcloud</code>→<code>local</code>, <code>terraform</code>→<code>local</code>, <code>iperf3</code>→<code>k8s</code>, DNS probe→<code>local</code>. Override per-tool via this block, or per-invocation via <code>--backend</code>.</td></tr>
 <tr><td><code>cos.*</code></td><td>No pre-flight uploads; the COS instance/bucket are read from the upstream HCL’s tfvars instead.</td></tr>
 </tbody>
 </table>
@@ -556,7 +589,7 @@ cos:             # optional COS supply-chain config
 <p>If a hand edit breaks the file, every command that reads the workspace fails fast with the parse error path, so you’ll know within one invocation.</p>
 <h2 id="worked-example-bootstrap-a-workspace-from-scratch"><a class="header" href="#worked-example-bootstrap-a-workspace-from-scratch">Worked example: bootstrap a workspace from scratch</a></h2>
 <p>End-to-end Part IV scenario: brand-new laptop, no <code>roksbnkctl</code> workspaces yet, an IBM Cloud API key in your password manager. Goal: a usable workspace with the key in the OS keychain, the right region + resource group resolved, and <code>terraform.tfvars</code> ready to drive the HCL.</p>
-<p>The transcript below is captured against the shipped <code>v1.8.0</code> binary. Prompts are written to <strong>stderr</strong>, indented two spaces, with the label left-padded; the <code>[default]</code> (or <code>[Y/n]</code> / <code>[y/N]</code>) in brackets is what you get on a bare Enter. Here the operator types <code>acme-eu</code> for the prefix, keeps the cluster + COS + cert-manager + BNK + TGW-jumphost defaults, declines the Transit Gateway (adopting <code>shared-corp-tgw</code>), declines a new client VPC for the jumphost (adopting <code>shared-client-vpc</code>), and declines per-zone cluster jumphosts.</p>
+<p>The transcript below is captured against the shipped binary. Prompts are written to <strong>stderr</strong>, indented two spaces, with the label left-padded; the <code>[default]</code> (or <code>[Y/n]</code> / <code>[y/N]</code>) in brackets is what you get on a bare Enter. Here the operator types <code>acme-eu</code> for the prefix, keeps the cluster + COS + cert-manager + BNK + TGW-jumphost defaults, declines the Transit Gateway (adopting <code>shared-corp-tgw</code>), declines a new client VPC for the jumphost (adopting <code>shared-client-vpc</code>), and declines per-zone cluster jumphosts.</p>
 <pre><code class="language-text">$ roksbnkctl init -w dev
 Setting up workspace "dev"
 

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,10 +198,10 @@
 </div>
 <p>The file is hand-editable; YAML is parsed with <a href="https://pkg.go.dev/gopkg.in/yaml.v3"><code>gopkg.in/yaml.v3</code></a> so anchors and aliases work but are not idiomatic for this file. Plaintext credentials in any of the regex-matched secret fields (<code>api_key</code>, <code>apikey</code>, <code>password</code>, <code>token</code>, <code>secret_access_key</code>, <code>hmac_secret</code>) are rejected at load time — the file fails to parse with a clear error. Base64-encoded credentials in <code>ibmcloud.api_key_b64</code> are allowed (the field name doesn’t match the rejection regex). See <a href="./14-credentials-resolver.html">Chapter 14</a>.</p>
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-level structure</a></h2>
-<pre><code class="language-yaml">prefix:          # optional (since v1.8.0); workspace name-prefix base
+<pre><code class="language-yaml">prefix:          # optional; workspace name-prefix base
 ibmcloud:        # required
 cluster:         # required
-resources:       # optional (since v1.8.0); per-resource create/existing toggles
+resources:       # optional; per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
@@ -279,7 +279,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
-  client_region:     ca-tor               # since v1.9.0; testing-client region
+  client_region:     ca-tor               # testing-client region
   testing_jumphost_profile: ""            # optional; pin a profile for ALL jumphosts
   testing_min_vcpu_count:   4             # optional; jumphost auto-select floor
   testing_min_memory_gb:    8             # optional; jumphost auto-select floor
@@ -337,7 +337,6 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code></td><td>Sizing for the deployed CNE Instance. Renders into the upstream HCL <code>cneinstance_deployment_size</code> variable.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>URL of a Docker-compatible image registry</td><td>The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
-<tr><td><code>cr_mode</code></td><td>string</td><td>(empty ⇒ <code>kubectl</code>)</td><td><code>kubectl</code> | <code>legacy_curl</code></td><td><em>(since Sprint 27)</em> Selects the BNK custom-resource install mechanism, rendered as the <code>bnk_cr_mode</code> tfvar. Empty/omitted or <code>kubectl</code> ⇒ the terraform-native path (<code>helm_release</code> + <code>kubernetes_*</code> + <code>alekc/kubectl</code> <code>kubectl_manifest</code> + <code>wait_for</code>); <code>legacy_curl</code> ⇒ the <code>null_resource</code>/<code>curl</code>/<code>time_sleep</code> baseline. The <code>--legacy-bnk</code> flag on <code>bnk up</code>/<code>bnk down</code> overrides this to <code>legacy_curl</code> for a single run. See <a href="./10-deploying-bnk-trials.html#the-install-mode-flag-bnk_cr_mode">Chapter 10 §“The install-mode flag”</a>.</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>RFC 1123 namespace label</td><td>Namespace the F5 Lifecycle Operator installs into (<code>flo_namespace</code>). Set for multi-tenant clusters or to avoid a namespace collision.</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>RFC 1123 namespace label</td><td>Namespace for the F5 utility components (<code>flo_utils_namespace</code>).</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>any string</td><td>Optional CNEInstance GSLB datacenter name (<code>cneinstance_gslb_datacenter_name</code>).</td></tr>
@@ -346,7 +345,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 </tbody>
 </table>
 </div>
-<p>All fields are optional; omitting renders the HCL’s own defaults. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> for the upstream defaults. FLP settings live under <code>bnk.flp</code> (see the master table below); <code>bnk.flp.storage_class</code> sets the FLP’s PVC StorageClass.</p>
+<p>All fields are optional; omitting renders the HCL’s own defaults. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under <code>bnk.network</code> — <code>roksbnkctl init</code> prompts for it (opt in at <em>“Customize BNK networking?”</em>), or see <a href="./12-workspace-config.html">Chapter 12 §<code>bnk.network</code></a>. FLP settings live under <code>bnk.flp</code> (see the master table below); <code>bnk.flp.storage_class</code> sets the FLP’s PVC StorageClass.</p>
 <h2 id="test-block"><a class="header" href="#test-block"><code>test:</code> block</a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -701,6 +700,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
+<tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="./10a-air-gapped-install.html">Chapter 10a</a>).</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
@@ -724,17 +724,24 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>.</td></tr>
 <tr><td><code>bnk.far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>FAR image registry URL.</td></tr>
 <tr><td><code>bnk.manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>f5-bigip-k8s-manifest chart version.</td></tr>
-<tr><td><code>bnk.cr_mode</code></td><td>string</td><td>(empty ⇒ <code>kubectl</code>)</td><td><code>kubectl</code> | <code>legacy_curl</code> → <code>bnk_cr_mode</code>. See the <code>bnk:</code> block above.</td></tr>
+<tr><td><code>bnk.far_auth_file</code></td><td>string</td><td><code>f5-far-auth-key.tgz</code></td><td>Object KEY the FAR auth tarball is read from in the COS bucket → <code>far_auth_file</code>.</td></tr>
+<tr><td><code>bnk.subscription_jwt_file</code></td><td>string</td><td><code>subscription.jwt</code></td><td>Object KEY the subscription JWT is read from in the COS bucket → <code>subscription_jwt_file</code>.</td></tr>
+<tr><td><code>bnk.far_auth_local_file</code></td><td>string</td><td>(empty)</td><td>Read the FAR auth tarball from this <strong>local path</strong> instead of COS. When set together with <code>subscription_jwt_local_file</code>, renders <code>use_cos_bucket = false</code> + injects the content directly (no bucket). Mutually required with the JWT local file. See <a href="./25-cos-supply-chain.html#local-files-instead-of-cos-no-bucket-needed">Local files instead of COS</a>.</td></tr>
+<tr><td><code>bnk.subscription_jwt_local_file</code></td><td>string</td><td>(empty)</td><td>Read the subscription JWT from this <strong>local path</strong> instead of COS (pairs with <code>far_auth_local_file</code>; both or neither).</td></tr>
 <tr><td><code>bnk.flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace → <code>flo_namespace</code>.</td></tr>
 <tr><td><code>bnk.flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace → <code>flo_utils_namespace</code>.</td></tr>
 <tr><td><code>bnk.gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>Optional CNEInstance GSLB datacenter → <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>bnk.network.zones[]</code></td><td>list</td><td>(install-guide defaults)</td><td>Per-AZ data-plane subnets (<code>ext_vlan_cidr</code>, <code>int_vlan_cidr</code>, <code>int_snat_cidr</code>, <code>int_vip_cidr</code>) + TMM self-IPs (<code>external_selfip</code>, <code>internal_selfip</code>) → <code>cneinstance_network_zones</code>. Supply all 3 zones or none. See <a href="./12-workspace-config.html">Chapter 12 §<code>bnk.network</code></a>.</td></tr>
+<tr><td><code>bnk.network.vlan_prefixlen</code></td><td>int</td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>) → <code>cneinstance_vlan_prefixlen</code>. Match your VLAN CIDRs.</td></tr>
+<tr><td><code>bnk.network.tmm_k8s_routes</code></td><td>string</td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM routes to (<code>TMM_K8S_ROUTES</code>) → <code>cneinstance_tmm_k8s_routes</code>. Your cluster’s pod subnet if non-default.</td></tr>
 <tr><td><code>bnk.cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace → <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
 <tr><td><code>bnk.cert_manager.version</code></td><td>string</td><td>(HCL default)</td><td>cert-manager chart version → <code>cert_manager_version</code>.</td></tr>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="./10c-flp-licensing.html">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
 <tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
 <tr><td><code>bnk.flp.storage_class</code></td><td>string</td><td>(empty ⇒ HCL default)</td><td>Dynamic StorageClass for the FLP’s PVCs → <code>flp_storage_class</code>. Set it when the cluster/region exposes a different block-storage class. (helm mode)</td></tr>
-<tr><td><code>bnk.flp.mode</code></td><td>string</td><td>(empty ⇒ <code>helm</code>)</td><td><code>helm</code> | <code>vsi</code>. <code>vsi</code> deploys the proxy on a standalone VSI (podman pod, no k8s) in the cluster VPC instead of the helm chart; both terminate in the same endpoint + root CA handoff.</td></tr>
+<tr><td><code>bnk.flp.mode</code></td><td>string</td><td>(empty ⇒ <code>helm</code>)</td><td><code>helm</code> | <code>vsi</code>. <code>vsi</code> deploys the proxy on a standalone VSI (podman pod, no k8s) instead of the helm chart; both terminate in the same endpoint + root CA handoff.</td></tr>
+<tr><td><code>bnk.flp.vsi.vpc</code></td><td>string</td><td>(empty ⇒ the cluster VPC)</td><td>Existing VPC id to deploy the standalone FLP VSI into <strong>without any cluster</strong> — a licensing appliance in a services VPC. Empty ⇒ joins the workspace’s cluster VPC (requires a cluster). See <a href="./10c-flp-licensing.html">Chapter 10c §“Standalone”</a>.</td></tr>
 <tr><td><code>bnk.flp.vsi.profile</code></td><td>string</td><td><code>bx2-4x16</code></td><td>VSI instance profile (≥ 4 vCPU / 8 GB) → <code>flp_vsi_profile</code>.</td></tr>
 <tr><td><code>bnk.flp.vsi.zone</code></td><td>string</td><td>(empty ⇒ <code>&lt;region&gt;-1</code>)</td><td>Zone for the FLP VSI → <code>flp_vsi_zone</code>.</td></tr>
 <tr><td><code>bnk.flp.vsi.boot_size_gb</code></td><td>integer</td><td><code>100</code></td><td>Boot volume size (≥ 80) → <code>flp_vsi_boot_size_gb</code>.</td></tr>

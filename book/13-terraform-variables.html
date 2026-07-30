@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-485ce194.js";
+            window.path_to_searchindex_js = "searchindex-d7606862.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-14f30233.js"></script>
+        <script src="toc-d5c18a15.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -220,6 +220,7 @@
 <tr><td><code>openshift_cluster_name</code></td><td><code>tf-openshift-cluster</code></td><td>Cluster name. Mirrors <code>config.yaml</code>’s <code>cluster.name</code>.</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>1</code></td><td>Worker nodes per AZ. <code>2</code> ⇒ 6 workers in a 3-AZ MZR region.</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>true</code></td><td>Set <code>false</code> to adopt an existing cluster. Pair with <code>roks_cluster_id_or_name</code>.</td></tr>
+<tr><td><code>cluster_public_gateway</code></td><td><code>true</code></td><td><code>false</code> = private/disconnected cluster (no public gateways, no worker egress). <code>config.yaml</code>’s <code>cluster.public_gateway</code>. Expert — needs private connectivity you provide.</td></tr>
 <tr><td><code>openshift_cluster_version</code></td><td><code>"4.18"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.18</code> as float otherwise.</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>Small</code></td><td><code>Small</code>/<code>Medium</code>/<code>Large</code>. CNEInstance sizing.</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td>upstream pin</td><td>Pin a specific BNK manifest chart version.</td></tr>
@@ -228,17 +229,16 @@
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
+<tr><td><code>cneinstance_network_zones</code></td><td><code>[]</code> (install-guide defaults)</td><td>Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors <code>config.yaml</code>’s <code>bnk.network.zones</code>. Supply all three zones or none.</td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen</code></td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>). <code>bnk.network.vlan_prefixlen</code>. Match your VLAN CIDRs.</td></tr>
+<tr><td><code>cneinstance_tmm_k8s_routes</code></td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM routes to (<code>TMM_K8S_ROUTES</code>). <code>bnk.network.tmm_k8s_routes</code>. Set to your cluster’s pod subnet if non-default.</td></tr>
 <tr><td><code>license_mode</code></td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code>.</td></tr>
 </tbody>
 </table>
 </div>
 <p>For the full list with types and per-field descriptions, see <code>terraform/variables.tf</code> directly — link <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">here</a> — or the auto-generated <a href="./29-terraform-variable-reference.html">Chapter 29 — Terraform variable reference</a>.</p>
 <h2 id="resource-naming--collision-avoidance"><a class="header" href="#resource-naming--collision-avoidance">Resource naming &amp; collision avoidance</a></h2>
-<blockquote>
-<p>Applies to workspaces created with a <strong>prefix</strong> (the default since <code>v1.8.0</code>). Pre-<code>v1.8.0</code> workspaces — those whose <code>config.yaml</code> has no <code>prefix:</code> field — keep the old behaviour: a sparse <code>terraform.tfvars</code> with no name variables, so every account-scoped resource falls through to the upstream module defaults (<code>tf-openshift-cluster</code>, <code>tf-cluster-vpc</code>, <code>tf-tgw</code>, …). See <a href="#backward-compatibility">§“Backward compatibility”</a> below.</p>
-</blockquote>
-<p>Before <code>v1.8.0</code>, <code>roksbnkctl</code> rendered a name-less <code>terraform.tfvars</code>, so every workspace inherited the <strong>same</strong> upstream module default names. Two workspaces that both created infrastructure in the same IBM Cloud account collided at the account level — the second <code>up</code> hit <code>Provided Name … is not unique</code> / <code>gateway with the same name already exists</code>. (This is the collision class that stranded the <code>canada-roks-*</code> resources behind the 2026-05-28 cleanup incident.)</p>
-<p><code>v1.8.0</code> closes that hole: a single <strong>workspace prefix</strong> becomes the base for every account-scoped IBM Cloud resource name. <code>roksbnkctl</code> derives the full name set from the prefix, validates each name against its resource type’s length/charset limit at <code>init</code> time, and renders a complete <code>terraform.tfvars</code> that names every resource explicitly.</p>
+<p>Every account-scoped IBM Cloud resource name is derived from a single <strong>workspace prefix</strong>. Without per-workspace naming, two workspaces creating infrastructure in the same IBM Cloud account would collide at the account level — the second <code>up</code> would hit <code>Provided Name … is not unique</code> / <code>gateway with the same name already exists</code>. The prefix avoids this: <code>roksbnkctl</code> derives the full name set from it, validates each name against its resource type’s length/charset limit at <code>init</code> time, and renders a complete <code>terraform.tfvars</code> that names every resource explicitly.</p>
 <h3 id="prefix--name-derivation"><a class="header" href="#prefix--name-derivation">Prefix → name derivation</a></h3>
 <p>Give a workspace the prefix <code>acme-eu</code>, and <code>roksbnkctl</code> generates this name set:</p>
 <div class="table-wrapper">
@@ -290,12 +290,7 @@
 echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
   &gt;&gt; ~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user
 </code></pre>
-<p>The <code>.user</code> file (or <code>--var-file</code>) layers <strong>after</strong> the generated <code>terraform.tfvars</code>, so the override wins. This is the same Sprint 19 override path documented in <a href="#the-layering-rule">§“The layering rule”</a> — the prefix machinery doesn’t change it. Declining a resource at <code>init</code> time and supplying an existing one is the cleaner path for adoption; see <a href="./12-workspace-config.html#worked-example-bootstrap-a-workspace-from-scratch">Chapter 12 §“Worked example”</a>.</p>
-<h3 id="backward-compatibility"><a class="header" href="#backward-compatibility">Backward compatibility</a></h3>
-<p>The change is additive. A pre-<code>v1.8.0</code> <code>config.yaml</code> has no <code>prefix:</code> field; <code>roksbnkctl</code> detects the empty prefix and renders the <strong>old sparse <code>terraform.tfvars</code></strong> unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run <code>roksbnkctl init -w &lt;ws&gt;</code> and answer the prefix prompt.</p>
-<blockquote>
-<p><strong>Detection complement.</strong> Prefix-derived naming <em>prevents</em> the collisions described above. The forward-looking <code>roksbnkctl doctor --orphan-sweep</code> diagnostic (tracked for a later release) <em>detects</em> already-stranded resources by deriving the same <code>&lt;prefix&gt;-cluster-vpc</code> / <code>&lt;prefix&gt;-tgw</code> formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.</p>
-</blockquote>
+<p>The <code>.user</code> file (or <code>--var-file</code>) layers <strong>after</strong> the generated <code>terraform.tfvars</code>, so the override wins. This is the same override path documented in <a href="#the-layering-rule">§“The layering rule”</a> — the prefix machinery doesn’t change it. Declining a resource at <code>init</code> time and supplying an existing one is the cleaner path for adoption; see <a href="./12-workspace-config.html#worked-example-bootstrap-a-workspace-from-scratch">Chapter 12 §“Worked example”</a>.</p>
 <h2 id="the-layering-rule"><a class="header" href="#the-layering-rule">The layering rule</a></h2>
 <p>When <code>roksbnkctl up</code> (or <code>plan</code>/<code>apply</code>/<code>destroy</code>) invokes Terraform, it composes three layers of tfvars in this order:</p>
 <pre><code>1. terraform.tfvars              (rendered by roksbnkctl from config.yaml)
