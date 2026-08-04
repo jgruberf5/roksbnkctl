@@ -4,19 +4,8 @@ variable "enabled" {
   default     = false
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 variable "node_labeler_job_ttl_seconds" {
-  description = "ttlSecondsAfterFinished for the node-labeler Job (kubectl mode). The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
+  description = "ttlSecondsAfterFinished for the node-labeler Job. The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
   type        = number
   default     = 600
 }
@@ -92,7 +81,7 @@ variable "f5_bigip_k8s_manifest_version" {
 }
 
 variable "manifest_download_dir" {
-  description = "Directory to download and extract the f5-bigip-k8s-manifest chart. Lives under .bnk/ so the extracted flo-version.txt and cis-version.txt files survive between bnk container invocations (the install null_resources read them on subsequent applies)."
+  description = "Directory to download and extract the f5-bigip-k8s-manifest chart. Lives under .bnk/ so the extracted flo-version.txt and cis-version.txt files survive between bnk container invocations (the chart-version extraction reads them on subsequent applies)."
   type        = string
   default     = "/work/.bnk/scratch/f5-manifest"
 }
@@ -129,13 +118,13 @@ variable "utils_namespace" {
 }
 
 variable "kube_host" {
-  description = "Kubernetes API server URL (used by null_resource curl provisioners)"
+  description = "Kubernetes API server URL"
   type        = string
   sensitive   = true
 }
 
 variable "kube_token" {
-  description = "Kubernetes bearer token (used by null_resource curl provisioners)"
+  description = "Kubernetes bearer token (used as the OCI chart-pull credential for the OpenShift in-cluster registry route)"
   type        = string
   sensitive   = true
 }

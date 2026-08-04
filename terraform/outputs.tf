@@ -236,6 +236,11 @@ output "flp_node_port" {
   value       = try(module.flp.flp_node_port, 0)
 }
 
+output "flp_floating_ip" {
+  description = "Operator floating IP of the standalone FLP VSI (remote flp status + web UI). Empty for in-cluster FLP or when flp_vsi_floating_ip=false."
+  value       = try(module.flp_vsi.flp_floating_ip, "")
+}
+
 output "tgw_gateway_id" {
   description = "ID of the Transit Gateway the cluster VPC is attached to (tgw phase)."
   value       = try(module.tgw_connection.tgw_gateway_id, "")

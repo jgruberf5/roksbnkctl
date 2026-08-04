@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# cwc-guard.sh — silent workaround for the f5-spk-cwc Multi-Attach deadlock.
+#
+# F5 DEFECT: the cluster-wide-controller (f5-spk-cwc) Deployment mounts a ReadWriteOnce
+# PVC but ships with a RollingUpdate strategy. When the F5 Lifecycle Operator rolls it
+# during `bnk up`, the new pod is scheduled before the old is terminated and — landing on
+# a different node — cannot attach the RWO volume, so it sticks in ContainerCreating
+# forever ("Multi-Attach error"). The rollout never completes and BNK licensing never
+# activates (License CR stays out of Active), so `bnk up`'s license gate times out.
+#
+# This guard runs in the BACKGROUND on the operator VSI during `bnk up`: as soon as the
+# cwc Deployment appears it forces strategy=Recreate (old pod terminated before new →
+# volume freed) and clears any rollover deadlock by cycling replicas 0→1. Licensing then
+# activates within bnk up's window. It is silent and self-terminating.
+#
+# REMOVE this once F5 ships f5-spk-cwc with strategy: Recreate (or an RWX volume) — see the
+# defect filed for the RWO+RollingUpdate deadlock.
+set -uo pipefail
+export PATH=$PATH:/usr/local/bin
+KB=/home/ubuntu/kubectl
+[ -x "$KB" ] || { curl -sLo "$KB" "https://dl.k8s.io/release/v1.31.4/bin/linux/amd64/kubectl" >/dev/null 2>&1 && chmod +x "$KB"; }
+
+# Find a kubeconfig that can reach the cluster (wait up to ~10 min for adopt/kubeconfig).
+KC=""
+for _ in $(seq 1 60); do
+  for c in $(find /home/ubuntu/.roksbnkctl -type f -name kubeconfig 2>/dev/null) /home/ubuntu/.kube/config; do
+    [ -f "$c" ] && KUBECONFIG="$c" "$KB" get ns >/dev/null 2>&1 && { KC="$c"; break 2; }
+  done
+  sleep 10
+done
+[ -z "$KC" ] && exit 0
+export KUBECONFIG="$KC"
+
+patched=0
+for _ in $(seq 1 120); do              # up to ~20 min, covering the whole bnk up
+  if "$KB" -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
+    if [ "$patched" = 0 ]; then
+      "$KB" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+        -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1 && patched=1
+    fi
+    # A rollover deadlock shows as >1 cwc pod with one stuck in ContainerCreating: release
+    # the RWO volume by cycling to 0 then 1 so a single pod attaches cleanly.
+    pods="$("$KB" -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)"
+    if [ "$(echo "$pods" | grep -c f5-spk-cwc)" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
+      "$KB" -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
+      for _ in $(seq 1 20); do [ "$("$KB" -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
+      "$KB" -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
+    fi
+    [ "$("$KB" -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
+  fi
+  sleep 10
+done

@@ -8,17 +8,6 @@ variable "enabled" {
   default     = true
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_namespace) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 variable "namespace" {
   description = "Namespace for cert-manager"
   type        = string
@@ -52,9 +41,9 @@ variable "wait_for_deployment" {
 }
 
 variable "timeout" {
-  description = "Timeout for helm release (in seconds)"
+  description = "Timeout for helm release (in seconds). 600s (not 300) gives an air-gapped cluster margin: cert-manager's images pull from a private mirror over the Transit Gateway and the startupapicheck hook must then issue a test Certificate, which can exceed 5 min on a cold cluster."
   type        = number
-  default     = 300
+  default     = 600
 }
 
 variable "post_deployment_delay" {

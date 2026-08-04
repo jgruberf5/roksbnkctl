@@ -194,7 +194,7 @@ The kill is process-only, not process-group. If `terraform` has spawned grandchi
 | Child binary couldn't be exec'd despite being present (e.g., not executable) | `126` | local backend (mid-run failure: we found the binary but couldn't spawn it) |
 | Ctx cancelled mid-run, child SIGKILL'd | `137` | `128 + SIGKILL` |
 
-Note the **126 vs 127 split**: 127 means "we never reached the tool" (binary missing, daemon unreachable, SSH refused); 126 means "we reached the tool but the backend itself broke after that point" (couldn't fork, container created but crashed, pod scheduled but evicted before exec). Sprint 3 collapsed both to 127 in the local + docker implementations; this sprint splits them per [PRD 03 §"Backend interface"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface). CI scripts that distinguish "test infra broken" from "real test failure" can now key on the difference.
+Note the **126 vs 127 split**: 127 means "we never reached the tool" (binary missing, daemon unreachable, SSH refused); 126 means "we reached the tool but the backend itself broke after that point" (couldn't fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per [PRD 03 §"Backend interface"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface). CI scripts that distinguish "test infra broken" from "real test failure" can now key on the difference.
 
 #### When to use it
 
@@ -257,7 +257,7 @@ The vendored images live at:
 
 The `h2load` image is the L7 generator the [performance matrix](./22a-performance-matrix.md) runs for `family: l7` cells. It's built from `tools/docker/h2load/Dockerfile` (Alpine's `nghttp2` package, built against OpenSSL so `https` / TLS-terminate-at-TMM targets work) and published by the `tools-images` workflow alongside the other per-tool images. Like the iperf3 image it declares `USER 1000` so it satisfies the OpenShift `restricted-v2` SCC (h2load is a pure client and binds no privileged port). The `docker` / `k8s` backends pull this image; the `ssh` backend uses the jumphost's apt-installed `nghttp2-client` instead (preinstalled by the Testing phase — see [Chapter 15 §"Per-AZ cluster jumphosts"](./15-ssh-targets.md#per-az-cluster-jumphosts-jumphost-zone)).
 
-The `<tag>` for the vendored per-tool images (`ibmcloud`, `iperf3`) is resolved at runtime by `internal/exec/docker.go::toolImageTag()`. It reads the binary's `internal/version.Version` (set via ldflags at build time): a release-built binary like `v0.10.0` pulls `:v0.10.0`; a dev build (`Version == "dev"`) pulls `:dev`. Sprint 4 landed this version-pinning in place of Sprint 3's hard-coded `:dev` so a `go install` of a tagged release pulls a matching tagged image rather than a `:dev` that may not exist for the published binary. The `terraform` row is the exception — it points at the upstream `hashicorp/terraform` image and stays pinned to a specific version (currently `1.5.7`) regardless of `roksbnkctl`'s own version.
+The `<tag>` for the vendored per-tool images (`ibmcloud`, `iperf3`) is resolved at runtime by `internal/exec/docker.go::toolImageTag()`. It reads the binary's `internal/version.Version` (set via ldflags at build time): a release-built binary like `v0.10.0` pulls `:v0.10.0`; a dev build (`Version == "dev"`) pulls `:dev`. The tag is version-pinned, so a `go install` of a tagged release pulls a matching tagged image rather than a `:dev` that may not exist for the published binary. The `terraform` row is the exception — it points at the upstream `hashicorp/terraform` image and stays pinned to a specific version (currently `1.5.7`) regardless of `roksbnkctl`'s own version.
 
 The `:dev` tag is still the local-development idiom: `cd tools/docker && make build-all` builds and tags every tools image as `:dev` locally; a dev-build `roksbnkctl` finds them via the local docker cache without a ghcr.io round-trip.
 
@@ -461,7 +461,7 @@ The bare-Pod (rather than Deployment) shape is intentional — the iperf3 server
 
 The client Job's argv is `iperf3 -c <server-cluster-ip-or-lb> -J`. The `-J` JSON flows back via log streaming, parsed in `internal/test/throughput.go`, surfaced as `roksbnkctl test throughput` JSON output.
 
-The server pod's `securityContext` is set to satisfy OpenShift's `restricted-v2` SCC: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `seccompProfile.type: RuntimeDefault`, `capabilities.drop: [ALL]`. iperf3 listens on port 5201 (unprivileged) so no root is needed. The Sprint 3 cluster baseline tripped the SCC by missing one or more of these fields; the manifest the k8s backend emits this sprint sets all four.
+The server pod's `securityContext` is set to satisfy OpenShift's `restricted-v2` SCC: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `seccompProfile.type: RuntimeDefault`, `capabilities.drop: [ALL]`. iperf3 listens on port 5201 (unprivileged) so no root is needed. The manifest the k8s backend emits sets all four fields to satisfy the SCC.
 
 #### When to use it
 
@@ -479,7 +479,7 @@ When `k8s` is the **wrong** call:
 
 ### `ssh` backend
 
-Runs the wrapped tool on a registered SSH target. Builds on Sprint 1's `internal/remote.Client` (the same SSH client backing the `--on` flag); this section assumes you've read [Chapter 16](./16-on-flag-ssh-jumphosts.md) for the target-config and host-key TOFU framing.
+Runs the wrapped tool on a registered SSH target. Builds on the `internal/remote.Client` (the same SSH client backing the `--on` flag); this section assumes you've read [Chapter 16](./16-on-flag-ssh-jumphosts.md) for the target-config and host-key TOFU framing.
 
 ```bash
 roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
@@ -573,7 +573,7 @@ exec "$@"
 
 Then: `ssh <target> /tmp/roksbnkctl.<rand>/wrap.sh ibmcloud iam oauth-tokens`.
 
-The wrapper-script path is the [Sprint 1 validator Issue 4 carry-over](https://github.com/jgruberf5/roksbnkctl/blob/main/issues/resolved_sprint1_validator.md) — the same shape `--on` uses for env passing today. Risks (file content includes the secret) are mitigated by:
+The wrapper-script path is the [validator Issue 4 carry-over](https://github.com/jgruberf5/roksbnkctl/blob/main/issues/resolved_sprint1_validator.md) — the same shape `--on` uses for env passing today. Risks (file content includes the secret) are mitigated by:
 
 - Mode `0700` so only the SSH user can read.
 - `set +o history` so the value doesn't leak into shell history.

@@ -32,9 +32,9 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 ### Symptom (Windows): `roksbnkctl install` succeeds but `roksbnkctl version` says the command is not recognized
 
-**Root cause**: before v1.26.1 the Windows installer copied the binary into `~/.local/bin` — a Unix convention that is never on the Windows `%PATH%` — so the copy succeeded but `roksbnkctl` didn't resolve, and the follow-up hint was Unix `export PATH` / `.bashrc` advice.
+**Root cause**: `roksbnkctl version` (like any command) only resolves if the binary sits in a directory on the Windows `%PATH%`. If the install landed the binary somewhere off `%PATH%` (for example `~/.local/bin`, a Unix convention that is never on the Windows `%PATH%`), the copy succeeds but the command doesn't resolve.
 
-**Fix**: upgrade to v1.26.1+. `roksbnkctl install` (and the `install.ps1` one-liner) now install into a directory already on `%PATH%` — preferring `%LOCALAPPDATA%\Microsoft\WindowsApps` (on the per-user PATH by default, no admin) — so the binary resolves immediately in the same session. Remove a stray pre-v1.26.1 copy with `Remove-Item "$env:USERPROFILE\.local\bin\roksbnkctl.exe"`. If a run ever lands in a non-PATH directory, it prints the PowerShell one-liner (`[Environment]::SetEnvironmentVariable('Path', ...,'User')`) to add it.
+**Fix**: `roksbnkctl install` (and the `install.ps1` one-liner) install into a directory already on `%PATH%` — preferring `%LOCALAPPDATA%\Microsoft\WindowsApps` (on the per-user PATH by default, no admin) — so the binary resolves immediately in the same session. Remove any stray copy left in a non-PATH directory with `Remove-Item "$env:USERPROFILE\.local\bin\roksbnkctl.exe"`. If a run ever lands in a non-PATH directory, it prints the PowerShell one-liner (`[Environment]::SetEnvironmentVariable('Path', ...,'User')`) to add it.
 
 ## `roksbnkctl up` lifecycle
 
@@ -48,7 +48,7 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 **Root cause**: the ROKS cluster's worker nodes take 5-10 minutes to provision *after* the cluster's master endpoint returns Ready. Terraform considers the cluster "applied" as soon as the master is up; the workers come up asynchronously.
 
-**Fix**: wait 5-10 minutes and re-run. If you want a deterministic gate, watch the IBM Cloud console's cluster page until the worker count matches `workers_per_zone × zones`, then proceed. There's no `roksbnkctl wait` command in v1.0 — that's a v1.x addition.
+**Fix**: wait 5-10 minutes and re-run. If you want a deterministic gate, watch the IBM Cloud console's cluster page until the worker count matches `workers_per_zone × zones`, then proceed. There's no `roksbnkctl wait` command.
 
 ### Symptom: `roksbnkctl up` post-apply hook fails fetching the admin kubeconfig with a 404
 

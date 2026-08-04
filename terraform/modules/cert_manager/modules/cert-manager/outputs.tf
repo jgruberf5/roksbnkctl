@@ -27,14 +27,9 @@ output "crd_ready" {
   value       = var.enabled
 }
 
-# Apply-time readiness sentinel for downstream gating. In kubectl mode this is
-# the helm_release id (helm_release wait=true ⇒ id is known only once the chart
-# rollout is healthy); in legacy mode it is the post-deploy time_sleep id.
+# Apply-time readiness sentinel for downstream gating: the helm_release id
+# (helm_release wait=true ⇒ id is known only once the chart rollout is healthy).
 output "cert_manager_ready_id" {
   description = "ID — (known after apply) until cert-manager is ready"
-  value = (
-    local.use_kubectl ? helm_release.cert_manager[0].id :
-    local.use_legacy ? time_sleep.cert_manager_ready[0].id :
-    null
-  )
+  value       = var.enabled ? helm_release.cert_manager[0].id : null
 }

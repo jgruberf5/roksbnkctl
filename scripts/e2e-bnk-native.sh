@@ -4,11 +4,10 @@
 # redact(), DRY_RUN walk-through, structured-log, and EXIT-trap discipline
 # of scripts/e2e-init-var-file.sh.
 #
-# THE SPRINT'S PRIMARY SUCCESS METRIC IS SPEED. The terraform-native path
-# (bnk_cr_mode=kubectl: helm_release wait=true + alekc/kubectl kubectl_manifest
-# wait_for) replaces ~210s of fixed time_sleep in the legacy_curl baseline
-# with real readiness gates. This driver proves the new path is CORRECT,
-# MATERIALLY FASTER than legacy, and that the License wait_for literal is right.
+# The terraform-native BNK phase (helm_release wait=true + alekc/kubectl
+# kubectl_manifest wait_for) gates the apply on REAL readiness. This driver
+# proves the path is CORRECT, that the License wait_for literal is right, and
+# that re-deploys are fast (terraform diffs only the changed spec).
 #
 # ─────────────────────────────────────────────────────────────────────
 # THIS IS NOT A CI JOB. Operator-run only, against an EXISTING cluster.
@@ -33,13 +32,7 @@
 #        If it DIFFERS, the driver prints the real value LOUDLY and FAILS so
 #        staff can pin it (or switch the matcher to status.conditions[]).
 #
-#   S3 — SPEED BENCHMARK (the headline). Time `bnk up` in kubectl mode vs
-#        `--legacy-bnk` mode on equivalent clusters. Print both wall-clocks +
-#        the delta. The kubectl path MUST be materially faster — the ~210s of
-#        legacy time_sleep is the floor. FAIL if kubectl is not faster by at
-#        least $SPEED_MIN_DELTA_S seconds (default 60).
-#
-#   S4 — FAST RE-DEPLOY. With BNK up (kubectl mode), bump
+#   S4 — FAST RE-DEPLOY. With BNK up, bump
 #        f5_bigip_k8s_manifest_version and re-`up`. Assert the re-up is
 #        markedly faster than the cold up (terraform diffs only the changed
 #        helm_release version + CNEInstance spec).
@@ -60,14 +53,9 @@
 #
 # Knobs:
 #   WORKSPACE_KUBECTL   workspace already init'd + attached to a cluster,
-#                       used for the kubectl-mode run. REQUIRED for a live run.
-#   WORKSPACE_LEGACY    a second equivalent workspace/cluster for the legacy
-#                       benchmark leg (S3). If unset, S3 runs the legacy leg
-#                       in WORKSPACE_KUBECTL AFTER a bnk down (same cluster,
-#                       sequential) — slower but valid; the driver says which.
+#                       used for the live run. REQUIRED for a live run.
 #   MANIFEST_BUMP_VERSION  the f5_bigip_k8s_manifest_version to bump to for S4.
 #                       REQUIRED for S4 (skipped with a warning if unset).
-#   SPEED_MIN_DELTA_S   min seconds kubectl must beat legacy by (default 60).
 #   LICENSE_NS          license namespace (default f5-utils).
 #   LICENSE_NAME        license CR name (default bnk-license).
 #   FLO_NS              flo namespace (default f5-bnk).
@@ -79,7 +67,7 @@
 #   KUBECTL             default kubectl.
 #
 # Exit codes: 0 = GREEN. Non-zero = first failed assertion, named in the
-# error line (correctness miss, wrong License literal, or kubectl-not-faster).
+# error line (correctness miss, wrong License literal, slow re-deploy).
 
 set -e
 set -u
@@ -92,9 +80,7 @@ ROKSBNKCTL=${ROKSBNKCTL:-roksbnkctl}
 KUBECTL=${KUBECTL:-kubectl}
 
 WORKSPACE_KUBECTL=${WORKSPACE_KUBECTL:-}
-WORKSPACE_LEGACY=${WORKSPACE_LEGACY:-}
 MANIFEST_BUMP_VERSION=${MANIFEST_BUMP_VERSION:-}
-SPEED_MIN_DELTA_S=${SPEED_MIN_DELTA_S:-60}
 LICENSE_NS=${LICENSE_NS:-f5-utils}
 LICENSE_NAME=${LICENSE_NAME:-bnk-license}
 FLO_NS=${FLO_NS:-f5-bnk}
@@ -185,7 +171,7 @@ teardown() {
     [[ "$TORN_DOWN" == "1" ]] && return
     TORN_DOWN=1
     if [[ "$DRY_RUN" == "1" ]]; then
-        log "→ teardown (dry-run): would bnk down -w $WORKSPACE_KUBECTL (+ legacy ws)"
+        log "→ teardown (dry-run): would bnk down -w $WORKSPACE_KUBECTL"
         return
     fi
     echo "" >&2
@@ -194,9 +180,6 @@ teardown() {
     bold "════════════════════════════════════════════════════════════"
     if [[ -n "$WORKSPACE_KUBECTL" ]]; then
         "$ROKSBNKCTL" bnk down -w "$WORKSPACE_KUBECTL" --auto >>"$RUN_LOG" 2>&1 || true
-    fi
-    if [[ -n "$WORKSPACE_LEGACY" ]]; then
-        "$ROKSBNKCTL" bnk down -w "$WORKSPACE_LEGACY" --auto --legacy-bnk >>"$RUN_LOG" 2>&1 || true
     fi
     green "  ✓ teardown: bnk down issued (best-effort)"
     if [[ "$prev_rc" != "0" ]]; then
@@ -222,7 +205,7 @@ preflight() {
             fail "$KUBECTL not on PATH (set KUBECTL=/abs/path); required for the live .status checks"
         fi
     fi
-    log "preflight OK — kubectl-ws=${WORKSPACE_KUBECTL:-<unset>} legacy-ws=${WORKSPACE_LEGACY:-<unset>} log=$RUN_LOG"
+    log "preflight OK — ws=${WORKSPACE_KUBECTL:-<unset>} log=$RUN_LOG"
 }
 
 # Confirm redact() is wired before we rely on it (sentinel round-trip, same
@@ -290,56 +273,6 @@ assert_license_state() {
         fail "S2: License status.state literal mismatch (see above)"
     fi
     green "  ✓ S2 License .status.state == \"$EXPECT_LICENSE_STATE\" (wait_for literal confirmed)"
-}
-
-# ── S3 — speed benchmark (kubectl vs legacy) ────────────────────────
-speed_benchmark() {
-    bold "S3 — SPEED BENCHMARK: kubectl mode vs --legacy-bnk (the headline)"
-    if [[ "$DRY_RUN" == "1" ]]; then
-        log "→ S3 would: time bnk up (kubectl) vs bnk up --legacy-bnk on equivalent clusters"
-        log "    print both wall-clocks + delta; FAIL if kubectl not faster by >= ${SPEED_MIN_DELTA_S}s"
-        log "    (~210s of legacy time_sleep is the floor)"
-        return 0
-    fi
-
-    # kubectl leg — already up from S1's cold up; re-measure a clean cold up
-    # for a fair comparison by tearing down first.
-    log "  resetting WORKSPACE_KUBECTL for a clean cold kubectl-mode timing"
-    "$ROKSBNKCTL" bnk down -w "$WORKSPACE_KUBECTL" --auto >>"$RUN_LOG" 2>&1 || true
-    local t_kubectl
-    t_kubectl=$(timed_up "kubectl-mode cold up" "$WORKSPACE_KUBECTL")
-    log "  kubectl-mode cold up: ${t_kubectl}s"
-
-    # legacy leg — equivalent cluster if provided, else the same workspace
-    # sequentially (down kubectl, up legacy). Same-cluster sequential is
-    # valid (same cluster, same specs) but serializes the two legs.
-    local legacy_ws="$WORKSPACE_LEGACY"
-    if [[ -z "$legacy_ws" ]]; then
-        yellow "  WORKSPACE_LEGACY unset — running the legacy leg in WORKSPACE_KUBECTL sequentially (down kubectl → up --legacy-bnk)"
-        "$ROKSBNKCTL" bnk down -w "$WORKSPACE_KUBECTL" --auto >>"$RUN_LOG" 2>&1 || true
-        legacy_ws="$WORKSPACE_KUBECTL"
-    fi
-    local t_legacy
-    t_legacy=$(timed_up "legacy-mode cold up" "$legacy_ws" --legacy-bnk)
-    log "  legacy-mode cold up:  ${t_legacy}s"
-
-    # If we used the shared workspace for legacy, tear it back down so S4
-    # starts from a clean kubectl up.
-    if [[ -z "$WORKSPACE_LEGACY" ]]; then
-        "$ROKSBNKCTL" bnk down -w "$WORKSPACE_KUBECTL" --auto --legacy-bnk >>"$RUN_LOG" 2>&1 || true
-    fi
-
-    local delta=$((t_legacy - t_kubectl))
-    bold "  ──── SPEED RESULT ────"
-    bold "    kubectl mode : ${t_kubectl}s"
-    bold "    legacy mode  : ${t_legacy}s"
-    bold "    delta (legacy - kubectl) : ${delta}s   (require >= ${SPEED_MIN_DELTA_S}s faster)"
-    if [[ "$delta" -lt "$SPEED_MIN_DELTA_S" ]]; then
-        fail "S3: kubectl mode NOT materially faster — delta ${delta}s < required ${SPEED_MIN_DELTA_S}s. The ~210s of legacy time_sleep should make kubectl clearly faster; investigate."
-    fi
-    green "  ✓ S3 kubectl mode is materially faster (delta ${delta}s >= ${SPEED_MIN_DELTA_S}s)"
-    # S4 re-establishes its own cold baseline (down → up), so we don't rely
-    # on the post-benchmark up-state here.
 }
 
 # ── S4 — fast re-deploy (version bump, delta-only) ──────────────────
@@ -413,7 +346,7 @@ teardown_verify() {
 # ── main ────────────────────────────────────────────────────────────
 main() {
     bold "roksbnkctl terraform-native BNK — LIVE verify — run-id $RUN_TS"
-    bold "(validator Issue 2 — Sprint 27 — CLUSTER-MUTATING — NOT a CI job)"
+    bold "(CLUSTER-MUTATING — operator-run, NOT a CI job)"
     log "log: $RUN_LOG"
     preflight
     plant_sentinel
@@ -422,23 +355,19 @@ main() {
         bold "──── DRY-RUN: rendering the live plan (no cloud/cluster calls) ────"
         assert_kubectl_status "$WORKSPACE_KUBECTL"
         assert_license_state
-        speed_benchmark
         fast_redeploy
         teardown_verify
         green "DRY-RUN complete — steps rendered, no cluster mutated, no key printed."
         return 0
     fi
 
-    # S1 — correctness: cold kubectl-mode up, then live .status double-check.
-    step "S1 bnk up -w $WORKSPACE_KUBECTL (kubectl mode; clean apply = readiness)" \
+    # S1 — correctness: cold up, then live .status double-check.
+    step "S1 bnk up -w $WORKSPACE_KUBECTL (clean apply = readiness)" \
         "$ROKSBNKCTL" bnk up -w "$WORKSPACE_KUBECTL" --auto
     assert_kubectl_status "$WORKSPACE_KUBECTL"
 
     # S2 — License literal confirm.
     assert_license_state
-
-    # S3 — speed benchmark (tears down + re-times both legs).
-    speed_benchmark
 
     # S4 — fast re-deploy (re-ups cold then bump).
     fast_redeploy
@@ -449,8 +378,7 @@ main() {
     echo "" >&2
     green "════════════════════════════════════════════════════════════"
     green "GREEN — terraform-native BNK verified live: correct, License"
-    green "literal confirmed, kubectl materially faster than legacy,"
-    green "fast re-deploy + clean teardown. run-id $RUN_TS"
+    green "literal confirmed, fast re-deploy + clean teardown. run-id $RUN_TS"
     green "════════════════════════════════════════════════════════════"
 }
 

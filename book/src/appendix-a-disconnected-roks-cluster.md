@@ -17,34 +17,34 @@ needs *both* Internet egress (to pull FAR) *and* private reach to Harbor — and
 Harbor is addressed by its **private IP everywhere**, with no split-horizon DNS and no separate
 jumphost. The cluster is fully private.
 
-```
-                          ╔══════════════════ INTERNET ══════════════════╗
-                          ║   repo.f5.com (FAR pull)     F5 TEEM (telemetry) ║
-                          ╚════════▲═══════════════════════════▲════════════╝
-                                   │  ONLY these two VSIs       │
-        ┌──────────────────────────┼────────────────────────────┼───────────────────┐
-        │ SERVICES VPC  (region A)  │   public gateway = egress   │                   │
-        │                          │                             │                   │
-        │   ┌───────────────────┐  │        ┌─────────────────┐  │                   │
-        │   │  Harbor VSI       │──┘        │  FLP VSI         │──┘                   │
-        │   │  • OCI mirror     │           │  • license proxy │  → TEEM to F5        │
-        │   │  • hostname =     │           │  • pulls its own │                      │
-        │   │    PRIVATE IP     │           │    image (FAR)   │                      │
-        │   │  ◀ roksbnkctl RUNS│           └────────▲─────────┘                      │
-        │   │    HERE (operator)│                    │  private IP                    │
-        │   └─────────▲─────────┘                    │                                │
-        └─────────────┼──────────────────────────────┼────────────────────────────────┘
-                      │            Transit Gateway (global) — private RFC1918 only
-        ┌─────────────┼──────────────────────────────┼────────────────────────────────┐
-        │ CLUSTER VPC (region B)   public_gateway: FALSE  — NO worker Internet egress   │
-        │             │                              │                                 │
-        │   ROKS workers                                                               │
-        │     • images + charts ── over TGW ─────▶ Harbor  (private IP)                 │
-        │     • licensing ─────── over TGW ─────▶ FLP     (private IP)                  │
-        │     • ICR / IAM / COS / master ──▶ 161.26.0.0/16 + 166.8.0.0/14              │
-        │                                    (IBM Cloud private service endpoints —     │
-        │                                     routable with NO public gateway)          │
-        └──────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph net["Internet — reached ONLY by the two services VSIs"]
+        FAR["repo.f5.com<br/>FAR artifact pull"]
+        TEEM["F5 TEEM<br/>telemetry"]
+    end
+    subgraph svc["SERVICES VPC · region A<br/>public gateway = egress"]
+        Harbor["Harbor VSI<br/>OCI mirror · hostname = PRIVATE IP<br/>▶ roksbnkctl runs HERE (operator)"]
+        FLP["FLP VSI<br/>F5 License Proxy<br/>pulls its own image (FAR)"]
+    end
+    TGW{{"Transit Gateway · global<br/>private RFC1918 only"}}
+    subgraph clu["CLUSTER VPC · region B<br/>public_gateway: false — NO worker egress"]
+        Workers["ROKS workers<br/>fully private"]
+        Priv["IBM Cloud private service endpoints<br/>ICR · IAM · COS · master<br/>161.26.0.0/16 · 166.8.0.0/14"]
+    end
+    Harbor -->|egress| FAR
+    FLP -->|egress| FAR
+    FLP -->|egress| TEEM
+    Harbor --- TGW
+    FLP --- TGW
+    TGW --- Workers
+    Workers -->|"images + charts, over TGW"| Harbor
+    Workers -->|"licensing, over TGW"| FLP
+    Workers -->|"no public gateway needed"| Priv
+    classDef vpc fill:#eef3fb,stroke:#4b6ea9,color:#000;
+    classDef inet fill:#fdf2f2,stroke:#c0392b,color:#000;
+    class svc,clu vpc;
+    class net inet;
 ```
 
 **Reachability summary**
@@ -161,8 +161,8 @@ ssh ubuntu@"$HARBOR_FIP"     # ← run Steps 2–5 from this shell, with:
 #   export IBMCLOUD_API_KEY=…   (the VSI needs it for cluster config + tfx COS-less flows)
 ```
 
-Create the `bnk-mirror` project in Harbor (`curl -sk -u admin:… -X POST
-https://$HARBOR_PRIVATE_IP/api/v2.0/projects -d '{"project_name":"bnk-mirror"}'`).
+Create the `mirror` project in Harbor (`curl -sk -u admin:… -X POST
+https://$HARBOR_PRIVATE_IP/api/v2.0/projects -d '{"project_name":"mirror"}'`).
 
 ## Step 2 — Mirror FAR → Harbor (on the VSI, over the private IP)
 
@@ -179,7 +179,7 @@ FAR_SA_B64=$(cat /root/far-sa.json)
 ```yaml
 # mirror.yaml  (on the VSI)
 ibmcloud: { region: us-east, resource_group: default }
-prefix: bnk-mirror
+prefix: mirror
 tf_source: { type: embedded }
 cluster: { create: false, name: none }
 bnk:
@@ -189,7 +189,7 @@ bnk:
 registry:
   target: generic
   generic_host: <HARBOR_PRIVATE_IP>          # local to the VSI, private to the cluster
-  generic_repo_prefix: bnk-mirror
+  generic_repo_prefix: mirror
   generic_username: admin
   generic_password_b64: <base64 of the Harbor admin password>
   source_service_account_b64: <FAR_SA_B64>
@@ -197,42 +197,175 @@ registry:
 
 ```console
 # on the VSI:
-$ roksbnkctl -w bnk-mirror init --config-file mirror.yaml
-$ roksbnkctl -w bnk-mirror registry replicate    # FAR → Harbor (89 artifacts)
-$ roksbnkctl -w bnk-mirror registry verify
+$ roksbnkctl -w mirror init --config-file mirror.yaml
+$ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
+$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry verify
 ```
+
+After replication, the `bnk-mirror` project holds every BNK chart and image — the cluster
+pulls exclusively from here, by Harbor's private IP over the TGW:
+
+![Harbor after the mirror — the public `bnk-mirror` project with all 89 BNK repositories](images/harbor-mirror-ui.png)
+
+> **Local files vs. the COS supply chain — the one thing that changes for CI.**
+> This runbook points `bnk.far_auth_local_file` and `bnk.subscription_jwt_local_file` at files
+> **on the operator VSI** — the simplest choice when you drive `roksbnkctl` by hand, and it keeps
+> the mirror/FLP hosts free of any COS dependency. The alternative is to upload the two artifacts
+> **once** into the orchestration **COS bucket** and read them from there instead:
+>
+> | | Local files (this runbook) | COS bucket |
+> |---|---|---|
+> | Config keys | `far_auth_local_file` + `subscription_jwt_local_file` | `far_auth_file` + `subscription_jwt_file` (object keys) + a `cos:` block |
+> | Where the artifacts live | staged on the operator host (`scp`'d in) | `f5-far-auth-key.tgz` / `subscription.jwt` in COS (`bnk-supply-chain` / `bnk-artifacts`) |
+> | Who reads them | `registry replicate` (FAR SA) and `bnk up` (JWT) read the local paths | the same two steps fetch them from COS with the API key — **nothing staged on the host** |
+> | Best for | a hand-driven operator on a long-lived VSI | **CI / the runner container** (a container has *no* local files) |
+>
+> **1. Upload the two assets once** — `roksbnkctl cos object` talks straight to COS via the IBM Go
+> SDK (no `ibmcloud` CLI, nothing staged on the mirror/FLP hosts). The bucket is usually the one that
+> already backs the cluster's registry COS (Chapter 25); the account suffix makes it globally unique:
+>
+> ```bash
+> roksbnkctl cos object put bnk-artifacts-<acct>/f5-far-auth-key.tgz ./f5-far-auth-key.tgz --instance bnk-supply-chain
+> roksbnkctl cos object put bnk-artifacts-<acct>/subscription.jwt    ./subscription.jwt    --instance bnk-supply-chain
+> roksbnkctl cos object list bnk-artifacts-<acct> --instance bnk-supply-chain     # confirm both objects
+> ```
+>
+> **2. Point the config at them** — drop the two `*_local_file` keys and add:
+>
+> ```yaml
+> cos: { instance: bnk-supply-chain, bucket: bnk-artifacts-<acct>, region: us-south }
+> bnk:
+>   far_auth_file: f5-far-auth-key.tgz       # object keys in the bucket above
+>   subscription_jwt_file: subscription.jwt
+> ```
+>
+> **The pipeline commands themselves do not change** — `roksbnkctl init` / `registry replicate` /
+> `bnk up` are byte-identical; only the config keys differ. With them, `registry replicate` resolves
+> the FAR service account and `bnk up` resolves the subscription JWT **from COS** with the workspace
+> API key, instead of reading a file staged on the host. This is the **only** difference between the
+> CLI config here and the CI runner's `bnk.yaml` in
+> [§"The same flow as CI"](#the-same-flow-as-ci--the-container-runner) — see also
+> [Chapter 25 — the COS supply chain](./25-cos-supply-chain.md).
 
 ## Step 3 — Standalone FLP licensing appliance (on the VSI)
 
-Deploy the FLP as a standalone VSI into the services VPC — no cluster. It pulls its own image
-from `repo.f5.com` through the services-VPC public gateway (local FAR) and sends F5 **TEEM**
-telemetry; its endpoint is a **private** IP the cluster reaches over the TGW:
+The FLP is a **self-contained F5 licensing appliance** — a VSI running the `f5-license-proxy`
+stack (postgresql, vault, vault-init, f5-license-proxy) as a podman pod, with **no cluster**.
+It is the one box with controlled egress to F5: it pulls its own images from `repo.f5.com`
+through the services-VPC public gateway and brokers licenses (and sends F5 **TEEM** telemetry)
+on the cluster's behalf. Its licensing endpoint is a **private** IP the disconnected cluster
+reaches over the TGW.
+
+Because it is its own appliance, it needs two F5 credentials of its own — the same two you'd
+give any BNK deploy, but here consumed by the FLP itself, not a cluster:
+
+- **`far_auth_local_file`** — the F5 Artifact Registry service account. The VSI runs
+  `podman login repo.f5.com` with it to **pull its own container images**. It's a registry
+  pull secret, nothing cluster-specific.
+- **`subscription_jwt_local_file`** — your **subscription entitlement token**. It's injected as
+  the proxy's `JWT_TOKEN`; the proxy presents it to F5's licensing backend to broker licenses.
+  Required — the appliance will not start without it.
+
+> Both can equally come from **COS** instead of local files — set `bnk.far_auth_file` +
+> `bnk.subscription_jwt_file` (the COS object keys) and omit the `*_local_file` fields; that is
+> the default path (`use_cos_bucket=true`). The disconnected runbook uses **local files** so the
+> FLP has no COS dependency.
+
+> **Do not put `license_mode: f5licenseproxy` here** — that is the *consuming cluster's*
+> License-CR setting (it goes in `cluster.yaml`, Step 4). `flp up` never reads it. The FLP-only
+> workspace needs only the two credentials above plus the `flp.vsi` block. `manifest_version`
+> **is** needed — it selects which `f5-license-proxy` image version to run.
+
+The minimal standalone `flp.yaml`:
 
 ```yaml
 # flp.yaml  (on the VSI)
 ibmcloud: { region: us-east, resource_group: default }
-prefix: bnk-flp
+prefix: flp
 tf_source: { type: embedded }
-cluster: { create: false, name: none }
+cluster: { create: false, name: none }          # no cluster — the flp phase only
 bnk:
-  manifest_version: 2.3.0-3.2598.3-0.0.170
-  far_auth_local_file: /root/f5-far-auth-key.tgz
-  subscription_jwt_local_file: /root/subscription.jwt
-  license_mode: f5licenseproxy
+  manifest_version: 2.3.0-3.2598.3-0.0.170       # selects the f5-license-proxy image version
+  far_auth_local_file: /root/f5-far-auth-key.tgz         # podman login repo.f5.com → pull images
+  subscription_jwt_local_file: /root/subscription.jwt    # the proxy's entitlement token
   flp:
     mode: vsi
     vsi:
-      vpc: <SVC_VPC>
-      zone: us-east-1
-      reach: floating
-      allowed_cidrs: [10.0.0.0/8]   # the cluster's workers over the TGW (scope in prod)
+      vpc: <SVC_VPC>                # the VPC the appliance lands in (attach it to the TGW)
+      # zone: us-east-1             # optional — defaults to <region>-1
+      # profile: bx2-4x16          # optional — default; meets the FLP's 4 vCPU / 8 GB minimum
+      # ssh_key: <vpc-ssh-key>     # optional — attach to SSH in (:22, licensing plane)
+      # floating_ip: true          # optional — DEFAULT true; operator management IP (see below)
+      # management_allowed_cidrs: [ 0.0.0.0/0 ]                       # :80 web UI — default open
+      # licensing_allowed_cidrs:  [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 ]  # :8443 — default RFC-1918
 ```
 
+Everything commented is optional and defaults as noted. The only field with no default is
+`vsi.vpc` — a standalone FLP has no cluster VPC to fall back to, so name the VPC explicitly (and
+attach it to your Transit Gateway so the disconnected cluster can reach the proxy privately).
+
+**Operator floating IP (`floating_ip`, default `true`).** The appliance also gets a floating IP
+purely as a **management path** — so `roksbnkctl flp status` and the `:80` status web UI are
+reachable from a machine *outside* the VPC. It is **not** the licensing endpoint (the cluster
+always reaches the proxy privately over the TGW). The floating IP is added to the proxy's cert
+SAN and recorded in `flp-outputs.json` so `flp status` targets it automatically. Set
+`floating_ip: false` to opt out.
+
+**Security-group CIDRs split by plane (safe defaults).** Because the floating IP is public, the
+VSI's ingress is scoped per purpose, each with a sane default so you rarely set either:
+
+- **`management_allowed_cidrs`** → the `:80` flp-status web UI (read-only status). Defaults to
+  `0.0.0.0/0` — **open**, since the page carries no secrets. Restrict it if you want.
+- **`licensing_allowed_cidrs`** → the `:8443` proxy (and `:22` SSH). Defaults to the **RFC-1918**
+  private ranges — the cluster reaches the proxy privately over the TGW, so it never needs a
+  public source. Widen it only if a consumer sits outside RFC-1918 space.
+
+(The older single `allowed_cidrs` is deprecated; if set it seeds both planes.)
+
+Then deploy — only the flp phase runs (no cluster, BNK, or testing):
+
 ```console
-$ roksbnkctl -w bnk-flp init --config-file flp.yaml
-$ roksbnkctl -w bnk-flp flp up
-$ roksbnkctl -w bnk-flp flp output    # flp_external_endpoint (https://<private-ip>:8443) + flp_root_ca
+$ roksbnkctl -w flp init --config-file flp.yaml
+$ roksbnkctl -w flp flp up --auto
+$ roksbnkctl -w flp flp output    # flp_external_endpoint (https://<private-ip>:8443) + flp_root_ca
+$ roksbnkctl -w flp flp status    # health of every dependent service + the web-UI link
 ```
+
+Copy the `flp_external_endpoint` and `flp_root_ca` from `flp output` into the cluster's
+`bnk.flp.external` in Step 4.
+
+### The status web UI
+
+`roksbnkctl flp status` prints the live health of the appliance **and the web-UI URL** — it
+derives the URL from `flp-outputs.json`, preferring the operator floating IP when one is attached:
+
+```console
+$ roksbnkctl -w flp flp status
+F5 License Proxy  (deployment: vsi, checked …)
+  web UI: http://169.63.101.72/
+  ● listener   https://localhost:8443/  (HTTP 400)
+  ● F5 / TEEM  proxy serving; no recent F5 connection error in log
+  dependent services:
+    ● postgresql         Up 28 minutes
+    ● vault              Up 28 minutes
+    ● vault-init         Up 28 minutes
+    ● f5-license-proxy   Up 28 minutes
+  …
+```
+
+Open that URL in a browser for the mobile-friendly status page — a green/red indicator for **every**
+dependent service, the `:8443` listener and F5/TEEM connection state, the CNEInstance fields
+(endpoint + a **Copy root CA** button, ready to paste into `bnk.flp.external`), and a live
+`f5-license-proxy` log stream. It is plain HTTP with **no auth** (read-only status), reachable from
+outside the VPC via the floating IP (the `:80` management plane defaults open). The floating IP is
+also available directly as `flp_floating_ip` in `flp output`.
+
+![The flp-status web UI](images/flp-status-web-ui.png)
+
+> A FLP-only workspace is created from this config file (`init --config-file`). The interactive
+> `roksbnkctl init` builds a full cluster + BNK workspace and can add an FLP as part of it, but
+> the standalone cluster-less appliance is driven by the `flp.yaml` above.
 
 ## Step 4 — The air-gapped cluster, joined to the TGW (on the VSI)
 
@@ -242,11 +375,11 @@ private IP (over the TGW), and `bnk.flp.external` at the FLP from Step 3:
 ```yaml
 # cluster.yaml  (on the VSI)
 ibmcloud: { region: us-south, resource_group: default }
-prefix: bnk-dc
+prefix: bnk
 tf_source: { type: embedded }
 cluster:
   create: true
-  name: bnk-dc-roks
+  name: bnk-roks
   openshift_version: "4.18"
   workers_per_zone: 2
   public_gateway: false           # air-gapped — no worker Internet egress
@@ -261,7 +394,7 @@ resources:
 registry:
   target: generic
   generic_host: <HARBOR_PRIVATE_IP>   # over the TGW
-  generic_repo_prefix: bnk-mirror
+  generic_repo_prefix: mirror
   generic_username: admin
   generic_password_b64: <base64 of the Harbor admin password>
 bnk:
@@ -275,71 +408,73 @@ bnk:
       root_ca_b64: <flp_root_ca from Step 3>
 ```
 
+The demo **adopts an existing cluster** (the common case). Set
+`cluster: { create: false, name: <existing-cluster> }` and `registry_cos: { create: false }` in
+`cluster.yaml`, then **register** it (records its identity — VPC, endpoints, registry COS — into
+`cluster-outputs.json`, which activates `bnk up`'s existing-cluster path) and pull its admin
+kubeconfig for `kubectl`:
+
 ```console
-$ roksbnkctl -w bnk-dc init --config-file cluster.yaml
-$ roksbnkctl -w bnk-dc cluster up            # ~45–55 min; TGW connect runs at the end
-$ roksbnkctl -w bnk-dc tgw status
+$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster register <existing-cluster>   # writes cluster-outputs.json
+$ roksbnkctl -w bnk kubeconfig --download                 # ~/.kube/config for kubectl
 ```
 
-> **⚠ Confirmed — `registry_cos: { create: true }` is mandatory.** ROKS-on-VPC refuses to
+Ensure the existing cluster's VPC is attached to the same global Transit Gateway and its address
+prefixes don't overlap the services VPC (so Harbor's private IP is routable from the nodes). If its
+VPC isn't on the TGW yet, attach it (idempotent): `roksbnkctl -w bnk tgw connect <your-global-tgw>`.
+
+### Alternative — create the cluster here
+
+To build the cluster instead of adopting one, set `cluster: { create: true }` +
+`registry_cos: { create: true }` and:
+
+```console
+$ roksbnkctl -w bnk init --config-file cluster.yaml
+$ roksbnkctl -w bnk cluster up            # ~45–55 min; TGW connect runs at the end
+$ roksbnkctl -w bnk tgw status
+```
+
+> **⚠ Confirmed — `registry_cos: { create: true }` is mandatory** *when creating* the cluster. ROKS-on-VPC refuses to
 > provision without a COS instance backing its **internal** image registry (`E7278`). This is
 > IBM Cloud COS reached over the private service-endpoint range — needed even air-gapped.
 > `create: false` fails the cluster create outright.
 
-### Trust Harbor's cert on the cluster nodes (ROKS-specific)
+### Node CA trust is automatic
 
-Before `bnk up`, CRI-O on each node must trust Harbor's self-signed cert or every pull fails
-`x509`. **The usual OpenShift mechanism does not work on ROKS** —
-`image.config.openshift.io/cluster` is HostedCluster-managed and a ValidatingAdmissionPolicy
-denies edits. Instead a privileged DaemonSet drops the CA into each node's
-`/etc/containers/certs.d/<HARBOR_PRIVATE_IP>/ca.crt` (CRI-O reads it per-registry; no
-MachineConfig, no reboot). Because Harbor is addressed by an **IP**, the `certs.d` key is that
-IP and no node `/etc/hosts` entry is needed. Apply it from the VSI:
-
-```console
-$ roksbnkctl -w bnk-dc k apply -f harbor-ca-daemonset.yaml   # full manifest in the demo script
-$ kubectl get pods -n harbor-ca-trust                        # one Running per node
-```
-
-> **⚠ Confirmed — the installer's own image must be node-resident.** A no-egress cluster can't
-> pull `ubi-minimal` (or any public image) for the installer pod, and it can't pull from Harbor
-> yet (that's the very trust you're bootstrapping) — a chicken-and-egg. Point the DaemonSet at
-> an image **already cached on every node** with `imagePullPolicy: IfNotPresent` — e.g. the
-> `openshift-dns/node-resolver` image (`kubectl get ds -n openshift-dns node-resolver -o
-> jsonpath='{.spec.template.spec.containers[0].image}'`), which is the OCP tools image (has
-> `sh`/`cp`) and runs on every node. It then runs from cache with no pull. (With
-> `public_gateway: true` you can just use a public image; this only bites the true air-gap.)
-
-Verify a pull from Harbor's private IP over the TGW actually works before `bnk up`:
-
-```console
-$ kubectl -n harbor-ca-trust run t --image=<HARBOR_PRIVATE_IP>/bnk-mirror/images/vault-init:1.29.0-0.10.28 \
-    --restart=Never --command -- sh -c 'echo ok'   # Succeeded = CA trust + TGW reach + auth all OK
-```
+Before pulling, CRI-O on each node must trust Harbor's self-signed cert or every pull fails `x509`.
+**The usual OpenShift mechanism does not work on ROKS** — `image.config.openshift.io/cluster` is
+HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. `bnk up` handles it: it installs
+the CA — captured into the mirror record by `registry replicate --registry-ca` (Step 2) — into each
+node's `/etc/containers/certs.d/<HARBOR_PRIVATE_IP>/ca.crt` via a privileged DaemonSet (one pod per
+node, a **node-cached** image so it needs no egress, self-refreshing if the CA changes on a
+cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
+hand. Because Harbor is addressed by an **IP**, the `certs.d` key is that IP — no node `/etc/hosts`
+entry needed.
 
 ## Step 5 — Install BNK, air-gapped (on the VSI)
 
 `bnk up` requires a populated `registry-mirror.json` in **this** (cluster) workspace. You
-replicated in the `bnk-mirror` workspace (Step 2); since both live under the same
+replicated in the `mirror` workspace (Step 2); since both live under the same
 `~/.roksbnkctl` on the VSI, that's a one-line local copy — no cross-host transfer (or replicate
-directly in the `bnk-dc` workspace to skip it):
+directly in the `bnk` workspace to skip it):
 
 ```bash
-cp ~/.roksbnkctl/bnk-mirror/registry-mirror.json ~/.roksbnkctl/bnk-dc/registry-mirror.json
+cp ~/.roksbnkctl/mirror/registry-mirror.json ~/.roksbnkctl/bnk/registry-mirror.json
 ```
 
 Keep `SSL_CERT_FILE` pointed at Harbor's cert (the chart pulls run host-side, i.e. on the VSI):
 
 ```console
 $ export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt
-$ roksbnkctl -w bnk-dc bnk up
-$ roksbnkctl -w bnk-dc bnk up            # run twice — converge the VLAN CRs (webhook race)
+$ roksbnkctl -w bnk bnk up --auto     # installs node CA trust, pulls from Harbor, licenses via the FLP — one pass
 ```
 
-> **⚠ Confirmed — run `bnk up` twice.** The F5 validation webhook (`f5-validation-svc`) comes
-> up *with* the stack, so the first apply can lose a race and the `external-vlan`/`internal-vlan`
-> CRs fail (`http: server gave HTTP response to HTTPS client`); the License CR can report a
-> transient quota error. A second pass converges both.
+> **One pass.** The `external-vlan`/`internal-vlan` (`F5SPKVlan`) CRs are admitted
+> by the `f5validate` webhook, whose TLS server comes up a few seconds *after*
+> `CNEControllerAvailable=True`. `bnk up` gates the VLAN applies on a **dry-run
+> admission probe** of `f5-spk-vlans` that retries until the webhook accepts, so
+> the CRs land the first time. (The License CR has its own admission-retry.)
 
 Verify — every pull private, nothing off the cluster to the Internet:
 
@@ -353,17 +488,335 @@ $ kubectl get cneinstance -n f5-bnk -o \
 ## Teardown
 
 ```console
-$ roksbnkctl -w bnk-dc  down --auto     # cluster + BNK (+ detaches its TGW connection)
-$ roksbnkctl -w bnk-flp down --auto     # the standalone FLP VSI
+$ roksbnkctl -w bnk  down --auto     # cluster + BNK (+ detaches its TGW connection)
+$ roksbnkctl -w flp down --auto     # the standalone FLP VSI
 $ ibmcloud is instance-delete bnk-svc-harbor --force
 $ ibmcloud is floating-ip-release "$FIPID" --force
 $ ibmcloud tg connection-delete "$TGW_ID" <services-conn-id>
 $ ibmcloud is vpc-delete "$SVC_VPC" --force   # after its subnet / public gateway / floating IP are gone
 ```
 
-## The automated version
+## The scripted walkthrough (CLI)
 
-Everything above is scripted, interactively and phase-by-phase, in
-`disconnected_deployment_demo.sh` (shipped alongside the project resources). It asks only for
-`IBMCLOUD_API_KEY` and an ENTER between phases, and drives the exact commands in this appendix —
-including the full Harbor-CA DaemonSet manifest and the convergence re-run.
+Everything above is scripted, phase-by-phase, in
+`scripts/demos/disconnected-cluster-cli-demo/` — a fully reproducible, parameterized walkthrough.
+It reads its inputs from a `.env` (only `IBMCLOUD_API_KEY` is strictly required), auto-advances
+between phases, and drives the exact commands in this appendix. Node CA trust is handled by `bnk up`
+itself — it installs Harbor's CA on every node before pulling (see
+[Step 5](#step-5--install-bnk-air-gapped-on-the-vsi)), so there is no manual DaemonSet to apply.
+
+### What to expect — timing
+
+A clean end-to-end run is roughly **45–65 minutes**, dominated by `bnk up`. The steps map to these
+typical durations (they vary with region load, image count, and cluster size):
+
+| Step | Typical duration |
+|---|---|
+| Step 1 — Services VPC + Harbor VSI (cloud-init installs Harbor) | ~8–10 min |
+| Step 2 — Mirror FAR → Harbor (`registry replicate`, many images) | ~8–15 min |
+| Step 3 — Standalone FLP appliance up | ~5–8 min |
+| Step 4 — Adopt the cluster + node CA trust | ~3–5 min |
+| Step 5 — `bnk up` converges (cert-manager → FLO → CNE → license → f5-spk) | ~20–30 min |
+
+`bnk up` is the long, variable one: it gates on **real readiness** at every stage (helm `wait`,
+`kubectl_manifest` `wait_for`, and the node-CA-trust installer reaching every node), so a clean apply
+*is* the convergence — there is no "run it twice." The other steps are one-time services
+infrastructure; a second install that reuses the same Harbor and FLP skips Steps 1–3 entirely and is
+just Steps 4–5.
+
+## The same flow as CI — the container runner
+
+The CLI walkthrough above is the *narrative*; this is the same five steps as a pipeline, using the
+all-in-one **runner image** (`roksbnkctl` plus every tool on `PATH`). The one shape change from the CLI
+walkthrough: where the operator VSI read the FAR auth archive and subscription JWT from **local files**,
+CI reads them from the **registry COS bucket** by their object keys — the standard supply-chain store
+(upload them once; see [Chapter 25 — the COS supply chain](./25-cos-supply-chain.md)). So there are no
+secret files to mount: only the manifest version and where the mirror is need a small `config.yaml`, and
+the secrets + FLP handoff late-bind from the environment with `--override-from-env`. For the general CI
+contract see [Chapter 7b — GitHub Actions](./07b-github-actions-ci.md) and the env map in
+[Unattended setup](./07a-unattended-setup.md#-override-from-env); this section only adds what is specific
+to the disconnected, standalone-VSI topology.
+
+> **One constraint the connected flows don't have.** The runner must sit where it can reach Harbor's
+> **private IP** and the cluster **over the TGW** — a GitHub-*hosted* runner can't. Run it on a
+> **self-hosted runner inside the services VPC**, or invoke the container **on the operator (Harbor)
+> VSI** itself. Harbor and the FLP VSI are standing services infrastructure ([Steps 1](#step-1--services-vpc--harbor-the-operator-host-attached-to-the-tgw)
+> and [3](#step-3--standalone-flp-licensing-appliance-on-the-vsi)); the mirror-refresh + install below
+> is what CI repeats.
+
+### CI topology — the runner container is the operator
+
+Where the CLI walkthrough runs `roksbnkctl` on the Harbor VSI, CI runs the **same commands inside the
+runner container**, driven by an **Argo Workflows** controller on a small **k3s VSI in the services
+VPC**. The **runner image itself is mirrored into Harbor** (like FAR) and pulled from there over the
+private IP — nothing is pulled from a public registry at run time; k3s trusts Harbor's self-signed CA
+via `/etc/rancher/k3s/registries.yaml`. Only the target ROKS cluster is fully air-gapped; the runner
+sits where it can reach Harbor's **private IP** and the cluster **over the TGW**, exactly as the
+operator VSI did.
+
+> **Mirror the runner into Harbor once**, alongside FAR:
+>
+> ```bash
+> docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
+> docker tag  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0 <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+> docker push <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+> ```
+
+```mermaid
+graph TB
+    subgraph net["Internet — the controller VSI has egress"]
+        FAR["repo.f5.com<br/>FAR pull"]
+        IBM["IBM Cloud API · IAM · COS<br/>(FAR key + JWT)"]
+    end
+    subgraph svc["SERVICES VPC — public gateway = egress"]
+        subgraph ctl["Argo Workflows controller VSI · k3s"]
+            AC["Argo Workflows"]
+            SRC["Workflow manifests<br/>mirror + install"]
+            Runner["roksbnkctl-tools-runner<br/>Workflow step pods<br/>▶ the operator"]
+        end
+        Harbor["Harbor VSI<br/>OCI mirror · PRIVATE IP"]
+        FLP["FLP VSI<br/>License Proxy · PRIVATE IP"]
+    end
+    TGW{{"Transit Gateway · global<br/>private RFC1918"}}
+    subgraph clu["CLUSTER VPC · private — NO worker egress"]
+        Workers["ROKS workers · disco-demo"]
+    end
+    AC -->|"argo submit"| SRC
+    SRC --> Runner
+    Runner -->|"pull runner image"| Harbor
+    Runner -->|"registry replicate → mirror"| Harbor
+    Runner -->|"FAR pull"| FAR
+    Runner -->|"API · FAR key/JWT from COS"| IBM
+    Runner -->|"adopt + bnk up, over TGW"| TGW
+    Runner -->|"license handoff"| FLP
+    TGW --- Workers
+    Workers -->|"images, over TGW"| Harbor
+    Workers -->|"licensing, over TGW"| FLP
+    classDef vpc fill:#eef3fb,stroke:#4b6ea9,color:#000;
+    classDef inet fill:#fdf2f2,stroke:#c0392b,color:#000;
+    classDef controller fill:#eafaf1,stroke:#27ae60,color:#000;
+    class svc,clu vpc;
+    class net inet;
+    class ctl controller;
+```
+
+### As a script (plain `docker run` — what a CI runner does)
+
+```bash
+#!/usr/bin/env bash
+# Secrets come from the CI vault, never the repo. IBMCLOUD_API_KEY, the Harbor
+# password, and the FLP handoff (URL + CA) are exported by the runner. The FAR
+# archive + subscription JWT already live in the registry COS bucket — CI reads
+# them from there with the API key, so there is nothing to mount.
+set -euo pipefail
+RUNNER=10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
+COMMON=( --rm -v "$PWD/state:/work" -e IBMCLOUD_API_KEY )
+
+# config.yaml carries only what env can't: the manifest + where the mirror is.
+cat > state/config.yaml <<'YAML'
+ibmcloud: { region: us-south, resource_group: default }
+prefix: bnk
+cluster: { name: disco-demo, create: false }          # adopt the EXISTING cluster
+registry:
+  target: generic
+  generic_host: 10.241.0.4                             # Harbor by PRIVATE IP over the TGW
+  generic_repo_prefix: mirror
+  generic_username: admin
+bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170
+  license_mode: f5licenseproxy
+  # FAR auth + JWT are read from the registry COS bucket by their default object
+  # keys (f5-far-auth-key.tgz / subscription.jwt) — upload them once (Chapter 25).
+YAML
+
+export ROKSBNKCTL_GENERIC_PASSWORD="$HARBOR_PW"          # base64'd into the config by init
+export ROKSBNKCTL_FLP_EXTERNAL_URL="$FLP_URL"            # the FLP VSI's endpoint …
+export ROKSBNKCTL_FLP_ROOT_CA_B64="$FLP_CA_B64"          # … and its CA (already base64)
+run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
+        -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
+
+run init --config-file /work/config.yaml --override-from-env
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry verify
+run cluster register disco-demo             # Step 4 — adopt
+run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
+```
+
+`registry replicate` captures Harbor's self-signed CA into the mirror record automatically; pass
+`--registry-ca <file>` only to supply it explicitly. `-v "$PWD/state:/work"` persists the workspace —
+config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
+back it with COS remote state instead so a later teardown run still sees it — see
+[Chapter 7b §"Ephemeral runners need remote state"](./07b-github-actions-ci.md#ephemeral-runners-need-remote-state).
+
+### As Argo Workflows — the runner steps as a pipeline
+
+A one-shot **provisioning** run is a natural fit for **Argo Workflows**, which runs the
+roksbnkctl steps as an explicit pipeline driven with `argo submit`. Each step is its own pod
+with its own status, logs and retries (the per-step visibility a single `Job` can't give), and
+the workspace lives on a **persistent PVC** shared across the steps. That PVC is also what makes
+teardown clean: an
+ephemeral `emptyDir` loses its terraform state when the pod ends — orphaning the IAM trusted
+profile and pull secrets — whereas the PVC lets a later `roksbnkctl bnk down` destroy them.
+
+Both Workflows run in a small **k3s + Argo Workflows** cluster in the services VPC (the same
+private-IP / TGW reachability the runner needs; a *hosted* controller can't reach Harbor's
+private IP or the target cluster). They share the `bnk-work` PVC, the `bnk-config` ConfigMap (the
+`bnk.yaml` above), the `bnk-secrets` Secret, and a `bnk-runner` ServiceAccount.
+
+**The shared prerequisites** — applied once (`kubectl apply -f workflows/00-prereqs.yaml`):
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata: { name: bnk-ci }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim          # the persistent workspace both Workflows share (and bnk down reads)
+metadata: { name: bnk-work, namespace: bnk-ci }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 8Gi } }     # k3s local-path default storageclass
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: bnk-runner, namespace: bnk-ci }
+---
+apiVersion: rbac.authorization.k8s.io/v1        # Argo's emissary executor writes workflowtaskresults
+kind: Role
+metadata: { name: bnk-runner-executor, namespace: bnk-ci }
+rules:
+  - { apiGroups: ["argoproj.io"], resources: ["workflowtaskresults"], verbs: ["create", "patch"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: bnk-runner-executor, namespace: bnk-ci }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: bnk-runner-executor }
+subjects: [{ kind: ServiceAccount, name: bnk-runner, namespace: bnk-ci }]
+```
+
+**Workflow 1 — mirror** (`init` -> `registry replicate` -> `registry verify`):
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { generateName: bnk-mirror-, namespace: bnk-ci }
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  volumes:
+    - { name: work, persistentVolumeClaim: { claimName: bnk-work } }   # shared with Workflow 2
+    - { name: config, configMap: { name: bnk-config } }
+  templates:
+    - name: mirror
+      steps:
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init --config-file /config/bnk.yaml --override-from-env" }]
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry replicate --target generic" }]
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry verify" }]
+    - name: rbk                       # one reusable step: roksbnkctl -w bnk <cmd> on the runner image
+      inputs: { parameters: [{ name: cmd }] }
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0   # >= v1.33.0: native operator + node CA trust
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts:
+          - { name: work, mountPath: /work }
+          - { name: config, mountPath: /config }
+```
+
+**Workflow 2 — install** (`cluster register` -> `bnk up` -> `bnk status`), reusing the SAME
+`bnk-work` PVC — so the workspace it reads is already `init`'d and carries the **recorded mirror
+CA** that `bnk up` trusts for its terraform/helm chart pulls:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { generateName: bnk-install-, namespace: bnk-ci }
+spec:
+  entrypoint: install
+  serviceAccountName: bnk-runner
+  volumes:
+    - { name: work, persistentVolumeClaim: { claimName: bnk-work } }   # the SAME workspace Workflow 1 wrote
+  templates:
+    - name: install
+      steps:
+        - - name: cluster-register
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "cluster register disco-demo" }]
+        - - name: bnk-up
+            template: bnk-up                   # dedicated — carries the cwc-guard sidecar
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "bnk status" }]
+    # `bnk up` + a silent cwc-guard sidecar. F5 defect: on a REUSED cluster the f5-spk-cwc
+    # Deployment (RWO PVC + RollingUpdate) deadlocks on a Multi-Attach error and the License
+    # never activates; the sidecar forces strategy=Recreate + cycles replicas so a single pod
+    # attaches, then exits (Argo kills it when bnk up finishes). A no-op on a fresh cluster.
+    - name: bnk-up
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk bnk up --auto"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts: [{ name: work, mountPath: /work }]
+      sidecars:
+        - name: cwc-guard            # (args abridged — the full loop is in workflows/wf-install.yaml)
+          image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+          command: [sh, -ec]
+          args:
+            - |
+              KC=$(find /work -type f -name kubeconfig | head -1)          # adopted-cluster kubeconfig on the PVC
+              until kubectl --kubeconfig "$KC" -n f5-utils get deploy f5-spk-cwc; do sleep 10; done
+              kubectl --kubeconfig "$KC" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+                -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+              # if >1 cwc pod is stuck ContainerCreating, scale 0 then 1 so a single pod attaches
+          volumeMounts: [{ name: work, mountPath: /work }]
+    - name: rbk
+      inputs: { parameters: [{ name: cmd }] }
+      container:
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom: [{ secretRef: { name: bnk-secrets } }]
+        volumeMounts: [{ name: work, mountPath: /work }]
+```
+
+Submit them in order:
+
+```bash
+argo submit -n bnk-ci --wait workflows/wf-mirror.yaml     # init -> replicate -> verify
+argo submit -n bnk-ci --wait workflows/wf-install.yaml    # register -> bnk up -> bnk status
+argo get   -n bnk-ci @latest                              # the step tree + status
+```
+
+The Argo Workflows web UI (server auth, NodePort `30746` over the VSI floating IP) lists both runs —
+the mirror and the install — each **Succeeded 3/3**:
+
+![The Argo Workflows UI — the bnk-mirror and bnk-install Workflows, each Succeeded 3/3 (and a bnk-down teardown run)](images/argo-workflows-list.png)
+
+Opening the install run shows it as a step DAG — each roksbnkctl phase its own node, green when it
+succeeds:
+
+![The bnk-install Workflow in the Argo Workflows UI — cluster-register → bnk-up → bnk-status, all succeeded](images/argo-workflows-install-dag.png)
+
+The `bnk-secrets` Secret (API key, Harbor password, FLP endpoint + CA) comes from a sealed-secret
+or the External Secrets operator — never committed; `init` applies them via `--override-from-env`
+and logs only which fields, never the values. To reclaim, `roksbnkctl -w bnk bnk down --auto`
+against the persistent PVC (which still holds the state) before deleting the Workflows + PVC.
+
+> The two-*cluster* variant — an in-cluster FLP in a services cluster rather than a standalone VSI — is
+> [Flow C in CI](./10c-flp-licensing.md#flow-c-in-ci--the-runner-container-no-host-install).

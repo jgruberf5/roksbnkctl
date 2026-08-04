@@ -4,6 +4,49 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.33.1 — 2026-07-30
+
+Documentation and demo assets only — **no change to the `roksbnkctl` binary from v1.33.0**.
+
+### Changed
+
+- **The disconnected-cluster CI demo is now Argo Workflows — git-free, with the runner served from Harbor.** It drives the `roksbnkctl-tools-runner` container through two `argo submit` Workflows (mirror + install) on a k3s VSI — no ArgoCD Application, no git repo — sharing a **persistent PVC** so teardown via `bnk down` is clean (an ephemeral `emptyDir` orphans the IAM trusted profile). The runner image is pulled from the **private Harbor mirror** over the TGW (k3s trusts Harbor's CA via `/etc/rancher/k3s/registries.yaml`), so nothing is pulled from a public registry at run time; a silent cwc-guard sidecar clears F5's cwc Multi-Attach (RWO) deadlock on reused clusters by forcing `strategy: Recreate` and cycling replicas.
+- **Book Appendix A rewritten to match.** Both topology diagrams are now Mermaid; the CI section highlights all three Workflow YAMLs (prereqs + mirror + install) plus the Argo Workflows UI screenshots, adds a box on uploading the FAR key + subscription JWT into COS with `roksbnkctl cos object`, and shows the runner served from Harbor. The **PDF build keeps every code/YAML block unbroken across page breaks** (`fvextra` + a smaller monospace so wide file examples don't wrap).
+- **The disconnected CLI demo README gained a cut-and-paste "Building the services infrastructure (Harbor + FLP)" section** so an end user can clone, edit `.env`, and stand up Harbor + the FLP (which the CI demo reuses); the CI demo README links to it.
+
+## v1.33.0 — 2026-07-29
+
+### Added
+
+- **Air-gapped node trust for a private registry is now roksbnkctl-native — no hand-rolled DaemonSet.** When `bnk up` pulls images from a self-signed / private registry (a co-located Harbor by private IP), the cluster's worker nodes must trust that registry's CA or CRI-O image pulls fail with `x509: unknown authority`. roksbnkctl now emits the whole trust path itself — a dedicated `roksbnkctl-registry-trust` namespace, a privileged ServiceAccount + SCC binding, the CA as a ConfigMap, and a node-installer DaemonSet that writes `ca.crt` into every node's `/etc/containers/certs.d/<host>/` and `/etc/docker/certs.d/<host>/` — then **gates `bnk up` on that installer reaching 1/1 on every node** before any image pull. The CA is captured automatically from the mirror over TLS during `registry replicate` (or supplied with **`registry replicate --registry-ca <file>`**) and recorded on the mirror record; the DaemonSet's pod template carries a CA-hash annotation so a changed CA **auto-rolls** the installer. The installer image is node-cached (`imagePullPolicy: IfNotPresent`), so the trust step itself needs no egress. This replaces the DaemonSet the disconnected walkthrough used to ship by hand.
+- **Book Appendix A — "Disconnected ROKS cluster".** An end-to-end walkthrough for deploying BNK air-gapped onto an **existing** ROKS cluster over an **existing** Transit Gateway: mirror FAR into a private Harbor, stand up a standalone F5 License Proxy, and install BNK with images from the mirror and licensing via the proxy — with the CLI commands matched 1:1 to the reproducible `scripts/demos/` walkthrough.
+
+### Fixed
+
+- **`registry replicate` captures the mirror's CA from the served chain, not a verified dial.** The capture decided "is this a private CA the nodes must trust?" from a verified TLS handshake — which succeeds on the operator host whenever the mirror's CA is already in the local trust store (e.g. after `update-ca-certificates`), returning "nothing to install" even though the air-gapped cluster nodes do **not** trust it. It now keys on whether the served chain's top certificate is **self-signed** (the signature of a private CA / co-located Harbor), matching what the nodes actually see.
+- **The whole operator side now trusts a private mirror's CA — not only the cluster nodes — so the disconnected install runs end-to-end from a container/CI operator.** The captured (or `--registry-ca`) CA taught the cluster *nodes* to trust the mirror, but every roksbnkctl operation that itself contacts the mirror still relied on the host OS trust store. That was invisible when the operator ran on the Harbor VSI (its CA was in system trust), but the `roksbnkctl-tools-runner` **container** has none, so each step failed `x509: certificate signed by unknown authority`. Fixed across the operator's paths, keyed on the same captured/recorded CA:
+  - **`registry replicate`** resolves the CA **before** the copy and trusts it for the push — a custom `RootCAs` pool (system roots + mirror CA) on the crane transport for image/chart copies, and `--ca-file` on the one classic-Helm chart's `helm registry login` / `helm push`.
+  - **`registry verify`** trusts the CA for its crane digest HEAD checks the same way.
+  - **`bnk up`** exports an operator CA bundle (system roots + the recorded mirror CA) via `SSL_CERT_FILE` before running terraform, so the **terraform helm provider** — which pulls each chart from the mirror as a plugin subprocess that inherits the env — trusts it too.
+
+  Public targets (whose chain is covered by the default roots) are unaffected. This is the operator-side complement to the node CA-trust installer: nodes get the CA via the DaemonSet, the operator gets it here.
+
+### Removed
+
+- **The legacy `bnk_cr_mode = "legacy_curl"` BNK install path and the `--legacy-bnk` flag are gone.** The terraform-native path (`helm_release` `wait = true` + alekc/kubectl `kubectl_manifest` with real `wait_for` readiness gates) has been the default and is now the only path. Removed: the `--legacy-bnk` flag on `bnk up` / `bnk down`, the `bnk.cr_mode` workspace-config key, the `bnk_cr_mode` terraform variable at every module level, and every `null_resource` / `curl` / `time_sleep` block that implemented the curl Server-Side-Apply baseline across the `cert_manager`, `cne_instance`, `license` and `flo` modules. No action is required — configs that never set `cr_mode` / `bnk_cr_mode` render byte-identically.
+
+## v1.32.0 — 2026-07-28
+
+### Added
+
+- **`bnk.flp.vsi.floating_ip` — operator floating IP for the standalone FLP appliance (default on).** The FLP VSI attached no floating IP, so remote `roksbnkctl flp status` and the `:80` web UI were only reachable from inside the VPC. A new `bnk.flp.vsi.floating_ip` (default `true`) attaches an operator floating IP purely as a **management path** — it is added to the leaf-cert SAN so `:8443` and the web UI are valid over it, and recorded in `flp-outputs.json` so **`flp status` prefers it** (reachable from a machine outside the VPC). It is **not** the CWC endpoint — the consuming cluster still reaches the proxy privately over the VPC / Transit Gateway. `roksbnkctl init` prompts for it.
+- **Per-plane FLP security-group CIDRs — `bnk.flp.vsi.management_allowed_cidrs` + `licensing_allowed_cidrs`.** With the floating IP now on by default, a single open CIDR list would have published the licensing proxy to the Internet. The FLP VSI's ingress is now split by plane, each with a safe default: **`management_allowed_cidrs`** gates the `:80` flp-status web UI (read-only status — defaults to **`0.0.0.0/0`**, open); **`licensing_allowed_cidrs`** gates the `:8443` proxy and `:22` SSH (trusted access — defaults to the **RFC-1918** private ranges, since the cluster reaches the proxy privately over the VPC / Transit Gateway). The legacy `bnk.flp.vsi.allowed_cidrs` is deprecated but still honored — when set it seeds both planes.
+- **flp-status turnkey deployment wiring (completes the v1.31.0 service).** `bnk.flp.vsi.status_image` (+ `status_registry_host` / `status_registry_ca_b64` for a self-signed mirror) runs the flp-status web UI as a container in the FLP podman pod on the VSI, published on `:80`; cloud-init trusts the mirror's CA so the image pulls from an air-gapped Harbor by private IP. The image builds from `cmd/flp-status/Dockerfile` (a **static** `CGO_ENABLED=0` binary — a dynamically-linked build crashes on the musl base image) and mirrors into the disconnected supply chain; an in-cluster `Deployment` + NodePort manifest ships under `deploy/flp-status/`. Validated end-to-end on a live air-gapped VSI: pulled from the private-IP mirror, all four dependent services + listener + TEEM reported, CNEInstance fields (including the root CA) surfaced, `roksbnkctl flp status` rendered it with the web-UI link.
+
+### Fixed
+
+- **`bnk up` converges the F5SPKVlan CRs in a single pass (no more "run twice").** The declarative `external-vlan` / `internal-vlan` (`F5SPKVlan`) CRs are admitted by the `f5validate` webhook, whose TLS server (in `f5-cne-controller`) comes up a few seconds **after** `CNEControllerAvailable=True` — a real apply in that gap failed `http: server gave HTTP response to HTTPS client`, which is why the VLANs (and thus `bnk up`) historically needed a second pass. A `validation_webhook_ready` gate now probes the webhook with a **server-side dry-run apply** (routes through admission, `sideEffects: None`, persists nothing) and retries until it is accepted, so the VLAN applies land first time. The probe targets the correct REST plural **`f5-spk-vlans`** (CRD `f5-spk-vlans.k8s.f5net.com`) — the resource path the CNE reconcile's crd-installer establishes — and tolerates the CRD not existing yet (early 404s) as well as the webhook-TLS race. Mirrors the License CR's existing admission-retry so both consumers of the webhook are consistent.
+
 ## v1.31.0 — 2026-07-28
 
 ### Added

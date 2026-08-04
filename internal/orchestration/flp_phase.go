@@ -174,12 +174,20 @@ func persistFLPOutputs(ctx context.Context, tfws *tf.Workspace, workspace string
 		// Empty unless the proxy was exposed with --add-node-port-access.
 		ExternalEndpoint:  tfStringOutput(outputs, "flp_external_endpoint"),
 		ExternalEndpoints: tfStringListOutput(outputs, "flp_external_endpoints"),
+		// Operator floating IP (standalone VSI, default on) — management/status access.
+		FloatingIP: tfStringOutput(outputs, "flp_floating_ip"),
 	}
 	if out.ExternalEndpoint != "" {
 		fmt.Fprintf(w, "→ FLP reachable from other clusters at %s\n"+
 			"  point the consuming workspace at it with:\n"+
 			"    bnk:\n      flp:\n        external:\n          url: %s\n          root_ca_b64: <`roksbnkctl -w %s flp output` → root_ca_b64>\n",
 			out.ExternalEndpoint, out.ExternalEndpoint, workspace)
+	}
+	if out.FloatingIP != "" {
+		fmt.Fprintf(w, "→ operator floating IP %s — remote status + web UI:\n"+
+			"    roksbnkctl -w %s flp status        (web UI: http://%s/)\n"+
+			"  reachable per bnk.flp.vsi.allowed_cidrs — scope those to your public IP for external access.\n",
+			out.FloatingIP, workspace, out.FloatingIP)
 	}
 	if err := config.WriteFLPOutputs(workspace, out); err != nil {
 		return fmt.Errorf("writing flp-outputs.json: %w", err)

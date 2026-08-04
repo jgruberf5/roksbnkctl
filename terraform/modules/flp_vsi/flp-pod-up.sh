@@ -84,6 +84,7 @@ if [ -n "${FLP_STATUS_IMAGE:-}" ]; then
   systemctl enable --now podman.socket >/dev/null 2>&1 || true
   podman run -d --restart=always --pod flp --name flp-status \
     -v /run/podman/podman.sock:/run/podman/podman.sock \
+    -v /opt/flp/ca.crt:/opt/flp/ca.crt:ro \
     -e CONTAINER_HOST=unix:///run/podman/podman.sock \
     -e FLP_BACKEND=podman -e PORT=80 \
     -e FLP_ENDPOINT="https://$PRIV_IP:8443" \

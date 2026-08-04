@@ -24,6 +24,19 @@ type RegistryMirror struct {
 	ManifestVersion string           `json:"manifest_version"`
 	RecordedAt      time.Time        `json:"recorded_at"`
 	Artifacts       []MirrorArtifact `json:"artifacts,omitempty"`
+
+	// RegistryHost is the bare host[:port] the cluster nodes pull from (the
+	// part of ImageHost before the first "/"), e.g. "10.241.0.4". Recorded when
+	// the mirror is a co-located registry the nodes reach directly (not the
+	// in-cluster image-registry service). Empty ⇒ no per-node CA trust needed.
+	RegistryHost string `json:"registry_host,omitempty"`
+
+	// CACert is the PEM-encoded CA (or self-signed leaf) the mirror serves its
+	// TLS with. When set, the air-gap `bnk up` path installs it into every
+	// node's /etc/containers/certs.d/<RegistryHost>/ca.crt before pulling, so
+	// no-egress nodes trust the private registry. Empty ⇒ the mirror is
+	// public/anonymous or already node-trusted; no CA install runs.
+	CACert string `json:"ca_cert,omitempty"`
 }
 
 // MirrorArtifact records one mirrored artifact + the digest it resolved to, so

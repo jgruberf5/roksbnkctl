@@ -287,9 +287,10 @@ func runInit(_ *cobra.Command, _ []string) error {
 				vpcID := pickOrCreateFLPVPC(ctx, ic, flpRegion, rgID)
 				zone := promptString("FLP VSI zone", flpRegion+"-1")
 				sshKey := resolveFLPVSISSHKey(ctx, ic, cctx.WorkspaceName, flpRegion, rgID)
+				fip := promptYesNo("Attach a floating IP for remote `flp status` + web-UI access?", true)
 				ws.BNK.FLP = &config.BNKFLPCfg{
 					Mode: "vsi",
-					VSI:  &config.BNKFLPVSICfg{VPC: vpcID, Zone: zone, SSHKey: sshKey},
+					VSI:  &config.BNKFLPVSICfg{VPC: vpcID, Zone: zone, SSHKey: sshKey, FloatingIP: &fip},
 				}
 			} else {
 				// ── In-cluster helm chart. ──

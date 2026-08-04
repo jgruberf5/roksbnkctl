@@ -94,6 +94,7 @@ roksbnkctl apply [flags]
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the confirmation prompt |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
+| `--plan` | `string` | — | apply exactly this saved plan file (from `plan --out`) instead of re-planning |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ## `roksbnkctl backend`
@@ -171,7 +172,6 @@ on legacy single-state workspaces (use `roksbnkctl down` there).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the destroy confirmation |
-| `--legacy-bnk` | `bool` | `false` | destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
@@ -227,7 +227,6 @@ provision takes ~30 min) before the trial apply.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip confirmation prompts (cluster-bootstrap + apply) |
-| `--legacy-bnk` | `bool` | `false` | deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
@@ -807,6 +806,28 @@ roksbnkctl flp output [name] [flags]
 |---|---|---|---|
 | `--json` | `bool` | `false` | output JSON (CI-friendly) |
 | `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl flp`](#roksbnkctl-flp)
+
+### `roksbnkctl flp status`
+
+Show the F5 License Proxy's live status (services, listener, F5/TEEM, CNE fields)
+
+```
+roksbnkctl flp status [flags]
+```
+
+Fetches /api/status from the FLP's status service (the flp-status container,
+which runs alongside the proxy on the VSI pod or in the cluster) and renders it.
+
+The service URL is derived from the workspace's flp-outputs.json (the FLP endpoint
+host, port 80) unless --url is given. Output honors -o json.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--url` | `string` | — | flp-status base URL (default: derived from the FLP endpoint, port 80) |
 
 ← back to [`roksbnkctl flp`](#roksbnkctl-flp)
 
@@ -1510,6 +1531,7 @@ roksbnkctl plan [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--out` | `string` | — | save the plan to `<file>` (binary plan + a readable `<file>`.txt) for later `apply --plan` |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ## `roksbnkctl registry`
@@ -1527,14 +1549,17 @@ Commands:
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
-  roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+  roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
-`registry bom` works offline against the FAR manifest; the cluster-touching
-verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
-registry: block in the workspace config.
+`registry bom` works entirely offline against the FAR manifest. The other verbs
+need a configured registry: block and network reachability to the target registry —
+`replicate` also needs the FAR source (repo.f5.com). NONE require a Kubernetes
+cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
+roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
+any cluster exists.
 
 ### `roksbnkctl registry bom`
 
@@ -1638,7 +1663,7 @@ roksbnkctl registry prune [flags]
 
 ### `roksbnkctl registry replicate`
 
-Copy the BOM into the mirror (needs a live cluster)
+Copy the BOM into the mirror (registry-to-registry; no cluster needed)
 
 ```
 roksbnkctl registry replicate [flags]
@@ -1647,6 +1672,14 @@ roksbnkctl registry replicate [flags]
 Prepares the target registry (auth + repository namespace), then copies every
 BOM artifact into it, idempotently. Records the result in registry-mirror.json so
 the BNK install can be redirected to the mirror.
+
+Runs entirely host-side: it pulls each artifact by digest from the FAR source
+(repo.f5.com) and pushes to the target registry via go-containerregistry — no
+Kubernetes cluster is involved. So you can pre-seed the mirror as a standalone
+supply-chain step, before creating any cluster, from any host that can reach both
+the FAR source and the target registry. Requires a configured registry: block and
+the FAR source credential (registry.source_service_account_b64, the workspace FAR
+auth, or --source-sa-b64).
 
 **Flags**
 
@@ -1657,6 +1690,7 @@ the BNK install can be redirected to the mirror.
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling) |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
 | `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 

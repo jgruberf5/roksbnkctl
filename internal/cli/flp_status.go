@@ -40,9 +40,15 @@ func runFLPStatus(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("%w — or pass --url", err)
 		}
-		host, err := hostOf(out.ExternalEndpoint)
-		if err != nil {
-			return fmt.Errorf("deriving status URL from FLP endpoint %q: %w", out.ExternalEndpoint, err)
+		// Prefer the operator floating IP when one was attached — it's the address
+		// reachable from a machine outside the VPC. Fall back to the (private) CWC
+		// endpoint host, which works when run co-located (same VPC / over the TGW).
+		host := out.FloatingIP
+		if host == "" {
+			host, err = hostOf(out.ExternalEndpoint)
+			if err != nil {
+				return fmt.Errorf("deriving status URL from FLP endpoint %q: %w", out.ExternalEndpoint, err)
+			}
 		}
 		base = "http://" + host // status service is plain HTTP on :80
 	}

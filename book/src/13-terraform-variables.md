@@ -71,11 +71,7 @@ For the full list with types and per-field descriptions, see `terraform/variable
 
 ## Resource naming & collision avoidance
 
-> Applies to workspaces created with a **prefix** (the default since `v1.8.0`). Pre-`v1.8.0` workspaces — those whose `config.yaml` has no `prefix:` field — keep the old behaviour: a sparse `terraform.tfvars` with no name variables, so every account-scoped resource falls through to the upstream module defaults (`tf-openshift-cluster`, `tf-cluster-vpc`, `tf-tgw`, …). See [§"Backward compatibility"](#backward-compatibility) below.
-
-Before `v1.8.0`, `roksbnkctl` rendered a name-less `terraform.tfvars`, so every workspace inherited the **same** upstream module default names. Two workspaces that both created infrastructure in the same IBM Cloud account collided at the account level — the second `up` hit `Provided Name … is not unique` / `gateway with the same name already exists`. (This is the collision class that stranded the `canada-roks-*` resources behind the 2026-05-28 cleanup incident.)
-
-`v1.8.0` closes that hole: a single **workspace prefix** becomes the base for every account-scoped IBM Cloud resource name. `roksbnkctl` derives the full name set from the prefix, validates each name against its resource type's length/charset limit at `init` time, and renders a complete `terraform.tfvars` that names every resource explicitly.
+Every account-scoped IBM Cloud resource name is derived from a single **workspace prefix**. Without per-workspace naming, two workspaces creating infrastructure in the same IBM Cloud account would collide at the account level — the second `up` would hit `Provided Name … is not unique` / `gateway with the same name already exists`. The prefix avoids this: `roksbnkctl` derives the full name set from it, validates each name against its resource type's length/charset limit at `init` time, and renders a complete `terraform.tfvars` that names every resource explicitly.
 
 ### Prefix → name derivation
 
@@ -128,13 +124,7 @@ echo 'roks_transit_gateway_name = "shared-corp-tgw"' \
   >> ~/.roksbnkctl/<ws>/terraform.tfvars.user
 ```
 
-The `.user` file (or `--var-file`) layers **after** the generated `terraform.tfvars`, so the override wins. This is the same Sprint 19 override path documented in [§"The layering rule"](#the-layering-rule) — the prefix machinery doesn't change it. Declining a resource at `init` time and supplying an existing one is the cleaner path for adoption; see [Chapter 12 §"Worked example"](./12-workspace-config.md#worked-example-bootstrap-a-workspace-from-scratch).
-
-### Backward compatibility
-
-The change is additive. A pre-`v1.8.0` `config.yaml` has no `prefix:` field; `roksbnkctl` detects the empty prefix and renders the **old sparse `terraform.tfvars`** unchanged — no names emitted, upstream module defaults in force, byte-for-byte the prior behaviour. Old workspaces load without migration. To opt an existing workspace into prefix-derived names, re-run `roksbnkctl init -w <ws>` and answer the prefix prompt.
-
-> **Detection complement.** Prefix-derived naming *prevents* the collisions described above. The forward-looking `roksbnkctl doctor --orphan-sweep` diagnostic (tracked for a later release) *detects* already-stranded resources by deriving the same `<prefix>-cluster-vpc` / `<prefix>-tgw` formulas this chapter makes canonical. Once that lands, this section will cross-link to its chapter.
+The `.user` file (or `--var-file`) layers **after** the generated `terraform.tfvars`, so the override wins. This is the same override path documented in [§"The layering rule"](#the-layering-rule) — the prefix machinery doesn't change it. Declining a resource at `init` time and supplying an existing one is the cleaner path for adoption; see [Chapter 12 §"Worked example"](./12-workspace-config.md#worked-example-bootstrap-a-workspace-from-scratch).
 
 ## The layering rule
 

@@ -8,7 +8,16 @@ locals {
   roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
   enabled        = var.deploy_flp_vsi
   zone           = var.flp_vsi_zone != "" ? var.flp_vsi_zone : "${var.ibmcloud_cluster_region}-1"
-  reach_ip       = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ipv4_address : ""
+  # The CWC/CNEInstance endpoint is ALWAYS the private VPC IP — the consuming
+  # cluster reaches the proxy privately (same VPC or over a Transit Gateway).
+  reach_ip = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ipv4_address : ""
+  # Optional operator floating IP — a MANAGEMENT path (remote `roksbnkctl flp
+  # status` + the :80 web UI from another machine), NOT the CWC endpoint. Reserved
+  # zone-only (no target) so its address is known before the instance and can be
+  # baked into the leaf-cert SAN; bound to the NIC after the instance exists.
+  # Reserving with target=NIC instead would form an instance→cloud-init→fip→instance
+  # cycle.
+  floating_ip_addr = local.enabled && var.flp_vsi_floating_ip ? try(ibm_is_floating_ip.flp[0].address, "") : ""
   # FLP chart/image tag: pinned, else resolved from the BNK manifest.
   flp_tag = var.flp_chart_version != "" ? var.flp_chart_version : try(data.external.flp_version[0].result.v, "")
 }
@@ -82,9 +91,27 @@ resource "ibm_is_security_group" "flp" {
   vpc            = data.ibm_is_vpc.cluster[0].id
   resource_group = data.ibm_resource_group.rg[0].id
 }
-# ingress to 8443 from the consuming cluster's subnets (or the whole VPC if unset)
+locals {
+  # Ingress source CIDRs, split by plane so each defaults to a sane posture on the
+  # (now default-on) floating IP:
+  #  - MANAGEMENT (:80 flp-status) is a read-only status page → defaults OPEN.
+  #  - LICENSING (:8443 proxy) + SSH (:22) are trusted-access → default to the
+  #    RFC-1918 private ranges (the cluster reaches the proxy privately over the
+  #    VPC / Transit Gateway; it never needs a public source).
+  # The legacy single flp_vsi_allowed_cidrs, when set, seeds BOTH planes so existing
+  # configs keep working (it takes precedence over the per-plane defaults, not over
+  # an explicitly-set per-plane list).
+  flp_rfc1918 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  flp_mgmt_cidrs = length(var.flp_vsi_management_allowed_cidrs) > 0 ? var.flp_vsi_management_allowed_cidrs : (
+    length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]
+  )
+  flp_licensing_cidrs = length(var.flp_vsi_licensing_allowed_cidrs) > 0 ? var.flp_vsi_licensing_allowed_cidrs : (
+    length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : local.flp_rfc1918
+  )
+}
+# ingress to 8443 — the licensing proxy. Private by default (licensing plane).
 resource "ibm_is_security_group_rule" "flp_in" {
-  for_each  = local.enabled ? toset(length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]) : toset([])
+  for_each  = local.enabled ? toset(local.flp_licensing_cidrs) : toset([])
   group     = ibm_is_security_group.flp[0].id
   direction = "inbound"
   remote    = each.value
@@ -95,10 +122,10 @@ resource "ibm_is_security_group_rule" "flp_in" {
   port_min = 8443
   port_max = 8443
 }
-# ingress to 22 (SSH) — ONLY when an operator SSH key is attached, scoped to the
-# same allowed CIDRs as 8443 (trusted subnets, e.g. the operator/services subnet).
+# ingress to 22 (SSH) — ONLY when an operator SSH key is attached. Trusted access,
+# so it follows the licensing (private) plane, NOT the open management plane.
 resource "ibm_is_security_group_rule" "flp_ssh" {
-  for_each  = local.enabled && var.flp_vsi_ssh_key != "" ? toset(length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]) : toset([])
+  for_each  = local.enabled && var.flp_vsi_ssh_key != "" ? toset(local.flp_licensing_cidrs) : toset([])
   group     = ibm_is_security_group.flp[0].id
   direction = "inbound"
   remote    = each.value
@@ -106,10 +133,10 @@ resource "ibm_is_security_group_rule" "flp_ssh" {
   port_min  = 22
   port_max  = 22
 }
-# ingress to 80 (flp-status web UI) — ONLY when the status UI is enabled, scoped
-# to the same allowed CIDRs as 8443 (operator/consuming subnets).
+# ingress to 80 (flp-status web UI) — ONLY when the status UI is enabled. Read-only
+# status, so it uses the management plane (default open).
 resource "ibm_is_security_group_rule" "flp_status" {
-  for_each  = local.enabled && var.flp_status_image != "" ? toset(length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]) : toset([])
+  for_each  = local.enabled && var.flp_status_image != "" ? toset(local.flp_mgmt_cidrs) : toset([])
   group     = ibm_is_security_group.flp[0].id
   direction = "inbound"
   remote    = each.value
@@ -122,6 +149,26 @@ resource "ibm_is_security_group_rule" "egress" {
   group     = ibm_is_security_group.flp[0].id
   direction = "outbound"
   remote    = "0.0.0.0/0"
+}
+
+# ── operator floating IP (management/status access; default on) ──────────────
+# Reserved unbound (zone only) so local.floating_ip_addr resolves BEFORE the
+# instance — its value goes into the cert SAN so `:8443` and the `:80` web UI are
+# valid over the floating IP. Bound to the VSI's NIC after the instance is up.
+# Reachability is still gated by the security-group rules (allowed_cidrs): the
+# floating IP provides the path, allowed_cidrs authorizes the source — scope
+# allowed_cidrs to the operator's public IP to reach it from outside the VPC.
+resource "ibm_is_floating_ip" "flp" {
+  count          = local.enabled && var.flp_vsi_floating_ip ? 1 : 0
+  name           = "flp-vsi-fip"
+  zone           = local.zone
+  resource_group = data.ibm_resource_group.rg[0].id
+}
+resource "ibm_is_instance_network_interface_floating_ip" "flp" {
+  count             = local.enabled && var.flp_vsi_floating_ip ? 1 : 0
+  instance          = ibm_is_instance.flp[0].id
+  network_interface = ibm_is_instance.flp[0].primary_network_interface[0].id
+  floating_ip       = ibm_is_floating_ip.flp[0].id
 }
 
 # ── CA (terraform-owned; injected into the box, output as flp_root_ca) ────────
@@ -262,7 +309,7 @@ locals {
     ca_key_b64            = base64encode(tls_private_key.ca[0].private_key_pem)
     pod_up_b64            = base64encode(file("${path.module}/flp-pod-up.sh"))
     jwt_token             = var.use_cos_bucket ? try(trimspace(data.http.jwt[0].response_body), "") : trimspace(var.f5_cne_subscription_jwt)
-    external_ip           = "" # private reach: the box uses its own VPC IP as the SAN
+    external_ip           = local.floating_ip_addr # operator floating IP → added to the leaf-cert SAN (empty when disabled)
     reg                   = var.flp_image_registry
     tag                   = local.flp_tag
     vault_tag             = var.flp_vault_image_tag
@@ -275,9 +322,9 @@ locals {
     proxy_port            = var.flp_forward_proxy_port > 0 ? tostring(var.flp_forward_proxy_port) : ""
     proxy_protocol        = var.flp_forward_proxy_protocol
     # Optional flp-status web UI (a container in the pod, served on :80).
-    flp_status_image      = var.flp_status_image
-    flp_registry_host     = var.flp_status_registry_host
-    flp_registry_ca_b64   = var.flp_status_registry_ca_b64
+    flp_status_image    = var.flp_status_image
+    flp_registry_host   = var.flp_status_registry_host
+    flp_registry_ca_b64 = var.flp_status_registry_ca_b64
   }) : ""
 }
 

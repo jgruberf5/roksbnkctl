@@ -310,14 +310,6 @@ type BNKCfg struct {
 	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
 	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
 
-	// CRMode selects the BNK custom-resource install mechanism rendered as
-	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
-	// helm_release + alekc/kubectl kubectl_manifest + wait_for path (default);
-	// "legacy_curl" → the null_resource/curl/time_sleep baseline kept behind
-	// the flag for the validator's benchmark. The `--legacy-bnk` flag sets
-	// "legacy_curl" at runtime, overriding this config value.
-	CRMode string `yaml:"cr_mode,omitempty"`
-
 	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
@@ -437,15 +429,47 @@ type BNKFLPVSICfg struct {
 	// Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP,
 	// for a CWC in the same/peered VPC) or "floating" (a public floating IP).
 	Reach string `yaml:"reach,omitempty"`
-	// AllowedCIDRs are the source CIDRs permitted to reach the proxy's 8443 port on the
-	// VSI security group — the consuming cluster's worker subnets. Empty → open to the
-	// cluster VPC's address space.
+	// ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80
+	// flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries
+	// no secrets). Rendered as flp_vsi_management_allowed_cidrs.
+	ManagementAllowedCIDRs []string `yaml:"management_allowed_cidrs,omitempty"`
+	// LicensingAllowedCIDRs are the source CIDRs permitted to reach the :8443 licensing
+	// proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the consuming cluster
+	// reaches the proxy privately over the VPC / Transit Gateway). Rendered as
+	// flp_vsi_licensing_allowed_cidrs.
+	LicensingAllowedCIDRs []string `yaml:"licensing_allowed_cidrs,omitempty"`
+	// AllowedCIDRs is DEPRECATED — a legacy single list. When set it seeds BOTH the
+	// management and licensing planes (back-compat). Prefer the two per-plane fields
+	// above. Rendered as flp_vsi_allowed_cidrs.
 	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
 	// SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP
 	// VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman
 	// pod, Vault, logs). Empty → no key attached (the VSI is unreachable by SSH). Port 22
 	// is NOT opened by default; scope it via your own security-group rules if you need it.
 	SSHKey string `yaml:"ssh_key,omitempty"`
+	// FloatingIP attaches an operator floating IP to the FLP VSI for remote
+	// management — running `roksbnkctl flp status` and reaching the :80 web UI + the
+	// :8443 proxy from a machine OUTSIDE the VPC. It is NOT the CWC endpoint (the
+	// consuming cluster always reaches the proxy privately over the VPC / Transit
+	// Gateway); the floating IP is added to the leaf-cert SAN and recorded in
+	// flp-outputs.json so `flp status` targets it. Reachability is still gated by
+	// AllowedCIDRs (scope those to the operator's public IP for external access).
+	// A *bool so an unset field means the module default (true); set false to opt out.
+	FloatingIP *bool `yaml:"floating_ip,omitempty"`
+	// StatusImage, when set, runs the flp-status web UI as a container in the FLP pod
+	// (mobile-friendly status page + /api/status + live logs on :80, no auth — a
+	// read-only private status endpoint). It is a container image reference, e.g.
+	// <harbor>/bnk-status/flp-status:v1. Empty → no status UI (the proxy still serves
+	// :8443). For an air-gapped VSI the image must be reachable from the VSI (a mirror
+	// on the services VPC's Harbor, pulled by private IP).
+	StatusImage string `yaml:"status_image,omitempty"`
+	// StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror
+	// so it can pull StatusImage: cloud-init drops the (base64) CA into
+	// /etc/containers/certs.d/<host>/ca.crt before the pod comes up. Both empty → the
+	// image host is assumed publicly trusted (or StatusImage is unset). Only needed for
+	// a private/self-signed mirror such as the disconnected-deploy Harbor.
+	StatusRegistryHost  string `yaml:"status_registry_host,omitempty"`
+	StatusRegistryCAB64 string `yaml:"status_registry_ca_b64,omitempty"`
 	// ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP
 	// forward proxy (air-gapped/egress-controlled networks). nil → direct egress.
 	ForwardProxy *BNKFLPForwardProxyCfg `yaml:"forward_proxy,omitempty"`

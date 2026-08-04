@@ -34,9 +34,9 @@
 # already a supported `generic` target (book/src/10b-registry-targets.md).
 #
 # Usage:
-#   scripts/deploy-far-registry.sh -w prod --key-name my-ibm-key --ssh-key ~/.ssh/id_rsa
-#   scripts/deploy-far-registry.sh --host 52.116.1.2 --ssh-key ~/.ssh/id_rsa
-#   scripts/deploy-far-registry.sh -w prod --destroy
+#   scripts/demos/lib/deploy-far-registry.sh -w prod --key-name my-ibm-key --ssh-key ~/.ssh/id_rsa
+#   scripts/demos/lib/deploy-far-registry.sh --host 52.116.1.2 --ssh-key ~/.ssh/id_rsa
+#   scripts/demos/lib/deploy-far-registry.sh -w prod --destroy
 #
 # Requires: ssh, plus (provision mode only) ibmcloud CLI + `vpc-infrastructure`
 # plugin and jq. `roksbnkctl` is used to configure the workspace when -w is given.
@@ -301,7 +301,7 @@ if [[ -z "$HOST" ]]; then
     # cloud-init reading the metadata service, which is DISABLED by default — the
     # key gets attached but never lands in root's authorized_keys. Enable it, and
     # also pass a cloud-config user-data that writes the key directly. Belt and
-    # suspenders, mirroring scripts/demo/provision-vsi.sh.
+    # suspenders, mirroring scripts/demos/lib/provision-vsi.sh.
     USER_DATA="$(printf '#cloud-config\nssh_authorized_keys:\n  - %s\n' "$(ssh-keygen -y -f "$SSH_KEY")")"
     VSI_ID=$(ibmcloud is instance-create "$VSI_NAME" "$VPC" "$ZONE" "$PROFILE" "$SUBNET" \
       --image "$IMAGE_ID" --keys "$KEY_ID" --resource-group-id "$RG" \

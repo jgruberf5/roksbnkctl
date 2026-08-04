@@ -93,4 +93,12 @@ header-includes = [
   "\\newunicodechar{≤}{\\ensuremath{\\leq}}",
   "\\newunicodechar{≠}{\\ensuremath{\\neq}}",
   "\\newunicodechar{≈}{\\ensuremath{\\approx}}",
+  "\\usepackage{fvextra}",
+  "\\newcommand{\\codesize}{\\fontsize{6.5}{7.8}\\selectfont}",
+  "\\fvset{fontsize=\\codesize,breaklines=true,breakanywhere=true}",
+  "\\usepackage{etoolbox}",
+  "\\AtBeginEnvironment{Shaded}{\\par\\smallskip\\begin{minipage}{\\linewidth}}",
+  "\\AtEndEnvironment{Shaded}{\\end{minipage}\\smallskip\\par}",
+  "\\AtBeginEnvironment{verbatim}{\\par\\smallskip\\begin{minipage}{\\linewidth}\\codesize}",
+  "\\AtEndEnvironment{verbatim}{\\end{minipage}\\smallskip\\par}",
 ]

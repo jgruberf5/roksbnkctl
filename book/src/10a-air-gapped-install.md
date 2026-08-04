@@ -105,7 +105,7 @@ The target's own pull credential is wired in for you:
 
   This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
   by RBAC and gets **no** pull secret; an external one (Harbor, Artifactory) gets
-  `mirror-secret`. Dropping the pull secret for *every* mirror is what used to force
+  `mirror-secret`. Dropping the pull secret for *every* mirror would force
   people to make their Harbor project world-readable — for a registry holding F5's
   proprietary images, not an acceptable requirement.
 
