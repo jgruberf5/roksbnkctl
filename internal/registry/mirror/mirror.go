@@ -345,8 +345,11 @@ func (e *Engine) copyClassicHelmChart(ctx context.Context, a bnkbom.Artifact) Re
 	// needs its own authenticated session to the target route — log it in first.
 	if auth := e.Target.PushAuth(); auth != nil {
 		if ac, aerr := auth.Authorization(); aerr == nil && ac != nil && (ac.Username != "" || ac.Password != "") {
-			loginArgs := append([]string{"registry", "login", e.Target.PushHost(), "-u", ac.Username, "-p", ac.Password}, caArgs...)
+			// --password-stdin, NOT -p — see the note in registry/source: current
+			// helm exits non-zero on a CLI password instead of warning.
+			loginArgs := append([]string{"registry", "login", e.Target.PushHost(), "-u", ac.Username, "--password-stdin"}, caArgs...)
 			login := exec.CommandContext(ctx, e.helmBin(), loginArgs...)
+			login.Stdin = strings.NewReader(ac.Password)
 			if out, lerr := login.CombinedOutput(); lerr != nil {
 				return Result{Artifact: a, Err: fmt.Errorf("helm registry login %s: %w: %s", e.Target.PushHost(), lerr, strings.TrimSpace(string(out)))}
 			}
