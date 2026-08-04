@@ -96,6 +96,17 @@ template seeds every account.
   Open Question D: which target the `targets.<t>.*` overrides apply to when a
   config has multiple targets (default target only? all? a `--target` arg?).
 
+  **As shipped** the map is considerably larger than this initial set — cluster
+  identity, the CIS BIG-IP target, the per-zone TMM networking, the registry
+  mirror, the FLP (including the standalone **VSI appliance**: `ROKSBNKCTL_FLP_MODE`
+  + `ROKSBNKCTL_FLP_VSI_*`), and the FAR supply chain (`ROKSBNKCTL_COS_*`,
+  `ROKSBNKCTL_{FAR_AUTH,SUBSCRIPTION_JWT}_{FILE,LOCAL_FILE}`). The driver for the
+  last two groups is the **argv-only runner**: BNK Forge's container engine and CI
+  jobs run the tool with an env map and no shell, so anything not reachable from
+  env is unreachable from those callers entirely. The canonical table lives in
+  [Chapter 7a](../../book/src/07a-unattended-setup.md); the code is
+  `internal/config/envoverride.go` + `envoverride_flp.go`.
+
 - Precedence: **env override wins** over the seeded file (it's the explicit
   late-binding step). Document it.
 
