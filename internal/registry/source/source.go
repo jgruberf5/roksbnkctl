@@ -76,8 +76,14 @@ func FetchManifest(ctx context.Context, farRepoURL, version, helmBin, scratchDir
 	}
 
 	if farServiceAccountB64 != "" {
+		// --password-stdin, NOT -p: current helm REJECTS a password on the command
+		// line ("Using --password via the CLI is insecure") with a non-zero exit
+		// rather than warning, so -p breaks `registry replicate` outright on any
+		// runner image built with a recent helm. Piping also keeps the FAR service
+		// account out of the process table.
 		login := exec.CommandContext(ctx, bin, "registry", "login", host,
-			"-u", jsonKeyUser, "-p", farServiceAccountB64)
+			"-u", jsonKeyUser, "--password-stdin")
+		login.Stdin = strings.NewReader(farServiceAccountB64)
 		if out, err := login.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("helm registry login %s: %w: %s", host, err, strings.TrimSpace(string(out)))
 		}
