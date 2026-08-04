@@ -1,9 +1,5 @@
-demo.env
+# provision-vsi.sh state (the optional throwaway Ubuntu host the demos can run on).
 vsi-state.env
 vsi-state.env.tmp
-out/
-voices/
 vsi_key
 vsi_key.pub
-roksbnkctl.bin
-demo_exit

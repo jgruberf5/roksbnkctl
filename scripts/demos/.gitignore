@@ -1,0 +1,11 @@
+# Per-demo secrets and artefacts. Every demo reads ./.env (copy from .env.example)
+# and writes its recordings + phase timestamps under ./demo-video/, with scratch
+# state (seed configs, rendered CI env files) under a .demo-state/ dir.
+.env
+demo-video/
+.demo-state/
+roksbnkctl.bin
+
+# editor swap files
+*.swp
+*.swo

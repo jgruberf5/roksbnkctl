@@ -1,181 +1,218 @@
 #!/usr/bin/env bash
+# =============================================================================
+# far-replication-demo.sh  (roksbnkctl v1.32.0)
 #
-# far-replication-demo.sh — Demo #3: replicating the F5 Artifact Repository (FAR)
-# into a private OCI registry with roksbnkctl.
-#
-# Runs ON the demo VSI (copied there with demo.env + demo-lib.sh by record.sh)
-# and is captured by asciinema, exactly like cli-demo.sh and ci-demo.sh.
-#
-# Story — an air-gapped cluster cannot reach repo.f5.com, so every chart and
+# Replicating the F5 Artifact Repository (FAR) into a private OCI registry with
+# roksbnkctl. An air-gapped cluster cannot reach repo.f5.com, so every chart and
 # image a BNK install needs must first be copied into a registry you control:
-#   seed a workspace → pull the FAR credential from COS → show the bill of
-#   materials → point the workspace at the registry → diff → replicate → verify →
-#   list.
 #
-# The private registry (a standard open-source Harbor — any OCI-compliant
-# registry works) is stood up BEFORE recording, off-camera; how it is built is
-# not part of this story. The demo just targets it. Provide its address and admin
-# password in demo.env as REGISTRY_DOMAIN + REGISTRY_ADMIN_PASSWORD (scripts/
-# deploy-far-registry.sh prints both when it provisions one).
+#   1. seed a mirror-only workspace -> init   (create: false — no cluster at all)
+#   2. the FAR credential sitting in COS      (roksbnkctl reads it itself)
+#   3. registry bom      — every chart and image a BNK install pulls
+#   4. registry target   — four fields select the mirror; the password on stdin
+#   5. registry diff     — what replication would copy
+#   6. registry replicate — copy each artifact by digest
+#   7. registry verify + list — confirm, then browse the mirror
 #
-# NOTE: no ROKS cluster is built. `registry replicate` reads the workspace, pulls
-# from FAR and pushes to the target; it never talks to a cluster (the "needs a
-# live cluster" line in `registry --help` is stale, from the removed openshift
-# target). That keeps this shoot to a few minutes.
+# NO ROKS CLUSTER IS BUILT. `registry replicate` is a host-side registry-to-registry
+# copy: it reads the workspace, pulls from FAR and pushes to the target, and never
+# talks to a cluster. That keeps this demo to a few minutes.
 #
-#   ./far-replication-demo.sh            # run the demonstration
-#   ./far-replication-demo.sh teardown   # no-op: the registry is managed off-camera
+# The private registry (a standard open-source Harbor — any OCI-compliant registry
+# works) is stood up BEFORE recording, off-camera; how it is built is not part of
+# this story. Provide its address and admin password as REGISTRY_DOMAIN +
+# REGISTRY_ADMIN_PASSWORD (../lib/deploy-far-registry.sh prints both).
 #
-# Inputs come from demo.env: IBMCLOUD_API_KEY, REGION, RESOURCE_GROUP,
-# CLUSTER_NAME, BNK_VERSION, FAR_REPO_URL, REGISTRY_DOMAIN, REGISTRY_ADMIN_PASSWORD.
-# The FAR pull credential is fetched from COS by roksbnkctl itself — not an input.
-# Optional: COS_INSTANCE / COS_BUCKET / FAR_AUTH_FILE (COS coordinates),
-# FAR_WORKSPACE (default <CLUSTER_NAME>-mirror), REGISTRY_PROJECT
-# (default bnk-mirror), PACE / TYPE_MIN / TYPE_MAX / READ_DELAY / STAGE_HOLD.
+# The demo does NOT tear itself down: it ends with a report naming the Harbor UI so the
+# operator can browse the mirror. `./far-replication-demo.sh teardown` empties the
+# mirror and clears the workspace, leaving the registry host itself alone.
 #
-# The "STAGE n/N · Title" cards (demo-lib.sh) double as chapter markers that
-# postprocess.sh greps to align the EN/FR voiceover; titles must contain the
-# narration keys in narration.*.txt.
+# Hands-off: AUTO_ADVANCE=1 (default) auto-advances between phases. Emits phase
+# timestamps to $TS_FILE so record.sh can 10x the long phase (replicate) and hold
+# each roksbnkctl command on screen for 5s in post.
 #
-set -euo pipefail
+# Linux / WSL. Requires: roksbnkctl v1.32.0, helm, jq.
+# =============================================================================
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-trap 'echo $? > "$SCRIPT_DIR/demo_exit"' EXIT
-ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/demo.env}"
-# shellcheck disable=SC1090
-[[ -f "$ENV_FILE" ]] && source "$ENV_FILE" || { echo "✗ $ENV_FILE not found — run ./prompt-inputs.sh first." >&2; exit 1; }
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/demo-lib.sh"
-
-: "${IBMCLOUD_API_KEY:?set via demo.env}"
-: "${REGION:?}"; : "${RESOURCE_GROUP:?}"; : "${CLUSTER_NAME:?}"; : "${BNK_VERSION:?}"
-: "${FAR_REPO_URL:?set via demo.env — the source registry to mirror FROM}"
+# ============================ CONFIG (edit me) ===============================
+REGION="${REGION:-ca-tor}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
+BNK_VERSION="${BNK_VERSION:-2.3.0-3.2598.3-0.0.170}"   # the FAR manifest to mirror
+FAR_REPO_URL="${FAR_REPO_URL:-repo.f5.com}"            # the SOURCE registry
 
 # The FAR pull credential is NOT an input. roksbnkctl downloads bnk.far_auth_file
 # from the orchestration COS bucket and extracts the service account itself
 # (internal/cli/registry.go: resolveFARServiceAccount, called from buildBOM
 # whenever registry.source_service_account_b64 is empty). These mirror the
-# constants there; override in demo.env only if your COS layout differs.
+# constants there; override only if your COS layout differs.
 COS_INSTANCE="${COS_INSTANCE:-bnk-orchestration}"
 COS_BUCKET="${COS_BUCKET:-bnk-schematics-resources}"
 FAR_AUTH_FILE="${FAR_AUTH_FILE:-f5-far-auth-key.tgz}"
 
-WS="${FAR_WORKSPACE:-${CLUSTER_NAME}-mirror}"
-PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"
-export PATH="$HOME/.local/bin:$PATH"
-SUDO=""; [[ "$(id -u)" -eq 0 ]] || SUDO="sudo"
+REGISTRY_DOMAIN="${REGISTRY_DOMAIN:-}"                 # the TARGET registry host
+REGISTRY_ADMIN_PASSWORD="${REGISTRY_ADMIN_PASSWORD:-}" # its admin password
+REGISTRY_PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"     # project/repo prefix in it
 
-# ── emergency teardown ───────────────────────────────────────────────────────
-# The registry lives outside this demo (built and destroyed off-camera), so there
-# is nothing here to tear down — the workspace is just local state.
-if [[ "${1:-}" == "teardown" ]]; then
-  rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS"
-  echo "cleared local workspace '$WS'. The registry is managed outside this demo."
-  exit 0
-fi
+WS="${FAR_WORKSPACE:-bnk-mirror}"                      # roksbnkctl workspace
+ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"
 
-: "${REGISTRY_DOMAIN:?set via demo.env — the private registry host (e.g. 1.2.3.4.sslip.io). Build one with scripts/demos/lib/deploy-far-registry.sh.}"
-: "${REGISTRY_ADMIN_PASSWORD:?set via demo.env — the registry admin password (deploy-far-registry.sh prints it)}"
+# ============================ helpers ========================================
+source "$HERE/../lib/demo-format.sh"
 
-# ── 1) host preparation ──────────────────────────────────────────────────────
-stage "1/10" "Preparing the demo host"
-say "The only local dependency is helm, which roksbnkctl uses to pull the classic-Helm charts in the bill of materials."
-export DEBIAN_FRONTEND=noninteractive
-run $SUDO apt-get update -qq
-run $SUDO apt-get install -y -qq curl jq tar
-if ! command -v helm >/dev/null 2>&1; then
-  helm_ver="$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | jq -r .tag_name)"
-  curl -fsSL "https://get.helm.sh/helm-${helm_ver}-linux-amd64.tar.gz" | tar -xz -C /tmp
-  $SUDO install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-fi
-run helm version --short
+# ============================ teardown =======================================
+# This demo provisions NO cloud infrastructure — no cluster, no VSI, no VPC. The only
+# things it creates are the mirrored artifacts in the registry and a local workspace.
+# Teardown empties the mirror it filled and clears that workspace; the REGISTRY ITSELF
+# is left untouched, because it was built off-camera and this demo does not own it.
+# The demo does NOT auto-tear-down, so you can browse the mirror first.
+# ---------------------------------------------------------------------------
+teardown(){
+  # Runs standalone, so resolve the credentials itself.
+  [[ -n "${IBMCLOUD_API_KEY:-}" ]] || { [[ -f "$HERE/.env" ]] && { set -a; . "$HERE/.env"; set +a; }; }
+  [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY (or provide .env) to tear down"
+  export IBMCLOUD_API_KEY
+  secret "$IBMCLOUD_API_KEY" "${REGISTRY_ADMIN_PASSWORD:-}"
+  banner "TEARDOWN — FAR-replication demo"
+  local WSDIR="${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS"
+  if [[ -d "$WSDIR" ]]; then
+    say "Delete the artifacts this demo pushed into ${REGISTRY_DOMAIN:-the registry}/${REGISTRY_PROJECT}."
+    run "$ROKSBNKCTL_BIN" -w "$WS" registry delete --force
+    say "Clearing the local workspace (it is only local state — nothing is provisioned)."
+    rm -rf "$WSDIR"
+    ok "mirror emptied and workspace '$WS' cleared"
+  else
+    note "no workspace '$WS' — nothing to tear down"
+  fi
+  ok "teardown complete — the registry host itself was left untouched (this demo never built it)"
+}
+[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
 
-# ── 2) install roksbnkctl ────────────────────────────────────────────────────
-stage "2/10" "Install the roksbnkctl binary"
-if [[ -x "$SCRIPT_DIR/roksbnkctl.bin" ]]; then
-  say "Installing a locally-built roksbnkctl (source build under test)."
-  run install -D -m 0755 "$SCRIPT_DIR/roksbnkctl.bin" "$HOME/.local/bin/roksbnkctl"
-else
-  say "One self-contained release binary — no Go toolchain required."
-  REL_API="https://api.github.com/repos/jgruberf5/roksbnkctl/releases/latest"
-  DL_URL="$(curl -fsSL "$REL_API" | jq -r '.assets[].browser_download_url' \
-            | grep -iE 'linux.*(amd64|x86_64).*\.tar\.gz$' | head -1)"
-  [[ -n "$DL_URL" ]] || { echo "✗ could not resolve a linux/amd64 release asset." >&2; exit 1; }
-  run curl -fsSL "$DL_URL" -o /tmp/roksbnkctl.tgz
-  run tar -xzf /tmp/roksbnkctl.tgz -C /tmp
-  RB="$(find /tmp -maxdepth 2 -type f -name roksbnkctl | head -1)"
-  run "$RB" install
-fi
-hash -r
-run roksbnkctl version 2>/dev/null || true
+# ============================ Phase 0: preflight =============================
+banner "roksbnkctl — MIRROR THE F5 ARTIFACT REPOSITORY INTO A PRIVATE REGISTRY"
+cat >&2 <<EOF
+The story, in seven phases — and ${B}no cluster anywhere${N}:
+  1. A mirror-only workspace: ${B}cluster.create: false${N}. Nothing is provisioned.
+  2. The FAR credential is an ${B}auth tarball in COS${N} — roksbnkctl reads it itself.
+  3. ${B}registry bom${N} — every chart and image a BNK install pulls.
+  4. ${B}registry target${N} — four fields select ${C}${REGISTRY_DOMAIN:-<registry>}${N}; password on stdin.
+  5. ${B}registry diff${N} — what replication would copy.
+  6. ${B}registry replicate${N} — each artifact copied by digest, straight across.
+  7. ${B}registry verify${N} + ${B}list${N} — digest-matched, then browse the mirror.
+EOF
+[[ -z "${IBMCLOUD_API_KEY:-}" && -f "$HERE/.env" ]] && { set -a; source "$HERE/.env"; set +a; }
+[[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"; export IBMCLOUD_API_KEY
+[[ -n "$REGISTRY_DOMAIN" ]]         || die "set REGISTRY_DOMAIN — the private registry host (../lib/deploy-far-registry.sh builds one)"
+[[ -n "$REGISTRY_ADMIN_PASSWORD" ]] || die "set REGISTRY_ADMIN_PASSWORD — deploy-far-registry.sh prints it"
+# These demos are RECORDED: register every credential so banner/say/ok/show and
+# show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
+secret "$IBMCLOUD_API_KEY" "$REGISTRY_ADMIN_PASSWORD"
+# roksbnkctl shells out to helm to pull the classic-Helm charts in the BOM; the
+# image copies are crane, in-process.
+for c in "$ROKSBNKCTL_BIN" helm jq; do command -v "$c" >/dev/null || die "$c not found"; done
+run "$ROKSBNKCTL_BIN" version
+ok "preflight: roksbnkctl + helm present, target registry $REGISTRY_DOMAIN"
 
-# ── 3) seed a workspace for the mirror ───────────────────────────────────────
-stage "3/10" "Seed a workspace for the mirror"
-say "The mirror needs the BNK version, the FAR repo, and the name of the auth tarball in COS. No credential is pasted in, and no cluster is involved."
-rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS"
-SEED="$HOME/${WS}-config.yaml"
-{
-  echo "ibmcloud:"
-  echo "  region: $REGION"
-  echo "  resource_group: $RESOURCE_GROUP"
-  echo "prefix: $WS"
-  echo "cluster:"
-  echo "  create: true"
-  echo "  name: $WS"
-  echo "tf_source:"
-  echo "  type: embedded"
-  echo "bnk:"
-  echo "  manifest_version: $BNK_VERSION"
-  echo "  far_repo_url: $FAR_REPO_URL"
-  echo "  far_auth_file: $FAR_AUTH_FILE"
-} > "$SEED"
-# Nothing secret in the seed: the FAR credential is named, not embedded.
-run cat "$SEED"
-run roksbnkctl -w "$WS" init --config-file "$SEED" --override-from-env
+# ============================ Phase 1: mirror-only workspace =================
+pause; phase P1 "PHASE 1/7  —  A mirror-only workspace (no cluster)"
+say "The mirror needs three things: the BNK version, the FAR repo, and the NAME of the auth"
+say "tarball in COS. cluster.create is false — this workspace never provisions anything."
+# Start clean: init refuses to clobber an existing workspace. (Not shown on camera —
+# the path contains "roksbnkctl", which would trip the command-freeze marker.)
+[[ "$DRY_RUN" == "1" ]] || rm -rf "${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS"
+SEED="$STATE_DIR/${WS}-config.yaml"
+cat > "$SEED" <<YAML
+ibmcloud: { region: ${REGION}, resource_group: ${RESOURCE_GROUP} }
+prefix: ${WS}
+tf_source: { type: embedded }
+cluster: { create: false, name: none }
+bnk:
+  manifest_version: ${BNK_VERSION}
+  far_repo_url: ${FAR_REPO_URL}
+  far_auth_file: ${FAR_AUTH_FILE}
+YAML
+say "Nothing secret is in the seed: the FAR credential is NAMED, not embedded."
+show_file "$SEED"
+run "$ROKSBNKCTL_BIN" -w "$WS" init --config-file "$SEED" --override-from-env
+ok "workspace '$WS' seeded — no cluster, no infrastructure"
+endphase P1
 
-# ── 4) the FAR credential in COS ─────────────────────────────────────────────
-stage "4/10" "Pull the FAR credential from COS"
-say "The credential that unlocks repo.f5.com is an auth tarball in the orchestration COS bucket. roksbnkctl reads it straight from COS — it is never pasted into a config, and never leaves as a file."
-say "The bucket is in us-south while the workspace is not; roksbnkctl resolves each bucket's own region."
-run roksbnkctl -w "$WS" cos object list "$COS_BUCKET" --instance "$COS_INSTANCE"
+# ============================ Phase 2: the FAR credential in COS =============
+pause; phase P2 "PHASE 2/7  —  The FAR credential lives in COS"
+say "The credential that unlocks repo.f5.com is an auth tarball in the orchestration COS bucket."
+say "roksbnkctl reads it straight from COS — it is never pasted into a config and never lands as"
+say "a file on this host. The bucket is in us-south even when the workspace is not; roksbnkctl"
+say "resolves each bucket's own region."
+run "$ROKSBNKCTL_BIN" -w "$WS" cos object list "$COS_BUCKET" --instance "$COS_INSTANCE"
+ok "the credential ($FAR_AUTH_FILE) is in COS — that is the whole supply-chain secret"
+endphase P2
 
-# ── 5) the bill of materials ─────────────────────────────────────────────────
-stage "5/10" "The bill of materials"
-say "roksbnkctl pulls that auth tarball from COS to authenticate, reads the F5 manifest, and derives every chart and image a BNK install pulls."
-run roksbnkctl -w "$WS" registry bom
+# ============================ Phase 3: the bill of materials =================
+pause; phase P3 "PHASE 3/7  —  The bill of materials"
+say "roksbnkctl pulls that auth tarball from COS to authenticate, reads the F5 manifest for"
+say "BNK ${BNK_VERSION}, and derives every chart and image a BNK install pulls."
+run "$ROKSBNKCTL_BIN" -w "$WS" registry bom
+ok "the BOM is the contract: mirror all of it and the install needs nothing from F5"
+endphase P3
 
-# ── 6) point the workspace at the mirror ─────────────────────────────────────
-stage "6/10" "Point the workspace at the mirror"
-say "The target is a standard open-source Harbor — any OCI-compliant registry works; roksbnkctl does not care which. It is already running."
-say "Four fields select it. The password is piped in on stdin so it never lands in argv or shell history."
-run roksbnkctl -w "$WS" registry target generic
-run roksbnkctl -w "$WS" registry target generic_host "$REGISTRY_DOMAIN"
-run roksbnkctl -w "$WS" registry target generic_repo_prefix "$PROJECT"
-run roksbnkctl -w "$WS" registry target generic_username admin
-# type_cmd (not run) — the pipeline is executed below so the secret stays off screen.
-type_cmd "printf '%s' \"\$REGISTRY_PASSWORD\" | roksbnkctl -w $WS registry target generic_password --password-stdin"
-printf '%s' "$REGISTRY_ADMIN_PASSWORD" | roksbnkctl -w "$WS" registry target generic_password --password-stdin
-run roksbnkctl -w "$WS" registry target
+# ============================ Phase 4: point at the mirror ===================
+pause; phase P4 "PHASE 4/7  —  Point the workspace at the mirror"
+say "The target is a standard open-source Harbor — any OCI-compliant registry works; roksbnkctl"
+say "does not care which. It is already running, built off-camera."
+run "$ROKSBNKCTL_BIN" -w "$WS" registry target generic
+run "$ROKSBNKCTL_BIN" -w "$WS" registry target generic_host "$REGISTRY_DOMAIN"
+run "$ROKSBNKCTL_BIN" -w "$WS" registry target generic_repo_prefix "$REGISTRY_PROJECT"
+run "$ROKSBNKCTL_BIN" -w "$WS" registry target generic_username admin
+say "The password is piped in on stdin, so it never lands in argv or in shell history."
+show "printf '%s' \"\$REGISTRY_ADMIN_PASSWORD\" | roksbnkctl -w $WS registry target generic_password --password-stdin"
+[[ "$DRY_RUN" == "1" ]] || printf '%s' "$REGISTRY_ADMIN_PASSWORD" | "$ROKSBNKCTL_BIN" -w "$WS" registry target generic_password --password-stdin
+run "$ROKSBNKCTL_BIN" -w "$WS" registry target
+ok "target set: $REGISTRY_DOMAIN/$REGISTRY_PROJECT"
+endphase P4
 
-# ── 7) diff ──────────────────────────────────────────────────────────────────
-stage "7/10" "What replication would copy"
-say "diff compares the bill of materials against what the mirror already holds. The registry is empty, so everything is missing."
-run roksbnkctl -w "$WS" registry diff
+# ============================ Phase 5: diff ==================================
+pause; phase P5 "PHASE 5/7  —  What replication would copy"
+say "diff compares the bill of materials against what the mirror already holds. Starting from an"
+say "empty project, everything is missing — and on a re-run, only the delta shows up here."
+run "$ROKSBNKCTL_BIN" -w "$WS" registry diff
+endphase P5
 
-# ── 8) replicate ─────────────────────────────────────────────────────────────
-stage "8/10" "Replicate FAR into the mirror"
-say "Each artifact is copied by digest, straight from repo.f5.com into the registry. Artifacts already present are skipped."
-run roksbnkctl -w "$WS" registry replicate --target generic
+# ============================ Phase 6: replicate =============================
+pause; phase P6 "PHASE 6/7  —  Replicate FAR into the mirror"   # LONG
+say "Each artifact is copied BY DIGEST, straight from repo.f5.com into the registry — charts and"
+say "images alike. Artifacts already present are skipped, so this is safely re-runnable."
+begin_long
+run "$ROKSBNKCTL_BIN" -w "$WS" registry replicate --target generic
+end_long
+ok "every BOM artifact now lives in $REGISTRY_DOMAIN"
+endphase P6
 
-# ── 9) verify ────────────────────────────────────────────────────────────────
-stage "9/10" "Verify every mirrored artifact"
-say "verify re-reads the bill of materials and confirms each artifact is present in the mirror and digest-matched."
-run roksbnkctl -w "$WS" registry verify
+# ============================ Phase 7: verify + list =========================
+pause; phase P7 "PHASE 7/7  —  Verify by digest, then browse the mirror"
+say "verify re-reads the bill of materials and confirms each artifact is present in the mirror"
+say "AND digest-matched — not merely present under the right name."
+run "$ROKSBNKCTL_BIN" -w "$WS" registry verify
+say "Everything a BNK install needs now lives in a registry we control. An air-gapped cluster"
+say "installs from here, and never resolves repo.f5.com at all."
+run "$ROKSBNKCTL_BIN" -w "$WS" registry list
+endphase P7
 
-# ── 10) list ─────────────────────────────────────────────────────────────────
-stage "10/10" "Browse the mirror"
-say "Everything a BNK install needs now lives in a registry we control — charts and images alike. An air-gapped cluster installs from here."
-run roksbnkctl -w "$WS" registry list
+banner "DEMO COMPLETE"
+cat >&2 <<EOF
+FAR mirrored into a private OCI registry and verified by digest:
+  source  ${FAR_REPO_URL} (BNK ${BNK_VERSION}), credential read from COS bucket ${COS_BUCKET}
+  target  ${REGISTRY_DOMAIN}/${REGISTRY_PROJECT}
+  one roksbnkctl workspace, and no cluster anywhere.
 
-echo
-printf '\033[1;32m✓ FAR mirrored into a private OCI registry and verified by digest — with one roksbnkctl workspace and no cluster.\033[0m\n'
+Reachable web UIs (explore before you tear down):
+  Harbor registry:  https://${REGISTRY_DOMAIN}/   (login: admin / your REGISTRY_ADMIN_PASSWORD)
+                    browse the '${REGISTRY_PROJECT}' project — every BNK chart and image is now in it
+  Or from the CLI:  roksbnkctl -w ${WS} registry list
+
+Nothing was torn down — the mirror is full and ready for an air-gapped install.
+Tear down when finished (empties the mirror; the registry HOST is left untouched):
+  ./far-replication-demo.sh teardown
+
+Capture queue for the post-process: ${TS_FILE}
+EOF
