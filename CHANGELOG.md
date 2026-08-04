@@ -4,6 +4,26 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.34.0 — 2026-08-04
+
+### Added
+
+- **`init --override-from-env` now reaches the standalone FLP VSI and the FAR supply chain.** `--override-from-env` is the only way an argv-only caller can build a `config.yaml` — BNK Forge's container engine and CI jobs invoke `roksbnkctl` with an env map and no shell, so a field with no env var is unreachable from them entirely. Two load-bearing groups were missing. The FLP deployment backend gains `ROKSBNKCTL_FLP_MODE` (`helm` | `vsi`) plus `ROKSBNKCTL_FLP_VSI_VPC` / `_ZONE` / `_PROFILE` / `_SSH_KEY` / `_REACH` / `_BOOT_SIZE_GB` / `_FLOATING_IP` / `_{MANAGEMENT,LICENSING}_ALLOWED_CIDRS` / `_STATUS_IMAGE` / `_STATUS_REGISTRY_HOST` / `_STATUS_REGISTRY_CA_B64`; together these reproduce, from env alone, the exact Phase 3 `config.yaml` the disconnected walkthrough writes by heredoc. The FAR supply chain gains `ROKSBNKCTL_MANIFEST_VERSION`, `ROKSBNKCTL_{FAR_AUTH,SUBSCRIPTION_JWT}_LOCAL_FILE`, `ROKSBNKCTL_COS_{INSTANCE,BUCKET,REGION}` and `ROKSBNKCTL_{FAR_AUTH,SUBSCRIPTION_JWT}_FILE` — the COS coordinates previously had **no env surface at all**, pinning an env-only runner to defaults that were renamed in v1.22.0, with the failure surfacing as an opaque fetch error mid-`bnk up`.
+
+### Fixed
+
+- **`registry replicate` was broken outright on any runner image built with a current helm.** Both login call sites (the FAR pull in `registry/source`, the mirror push in `registry/mirror`) passed the secret as `-p <secret>`; current helm **rejects** that with a non-zero exit (`Using --password via the CLI is insecure. Use --password-stdin.`) where it used to only warn. Because the runner image installs "helm latest stable", this was a latent time-bomb rather than a code change: v1.33.1's image works, an image built today does not. Both paths now pipe the secret via `--password-stdin`, which also keeps the FAR service account and the mirror password out of the process table.
+- **`GO-2026-5970` — infinite loop on invalid input in `golang.org/x/text`.** Reachable from `ibm.Client.GetCluster`, `k8s.Run` and `tf.init`; fixed by the dependency bump below.
+
+### Changed
+
+- **Dependencies.** `golang.org/x/text` 0.38.0 → 0.40.0 (the CVE above), `golang.org/x/crypto` 0.53.0 → 0.54.0, `x/sync` 0.21.0 → 0.22.0, `x/term` 0.44.0 → 0.45.0, `x/sys` 0.46.0 → 0.47.0, `x/tools` 0.46.0 → 0.47.0, `github.com/IBM/go-sdk-core/v5` 5.22.1 → 5.23.1, `github.com/moby/moby/client` 0.5.0 → 0.5.1, and the `k8s.io/*` set 0.36.2 → 0.36.3. CI: `actions/setup-go` 6 → 7.
+- **Every demo now shares one capture pipeline and one CLI contract.** `cluster-lifecycle-{cli,ci}`, `far-replication` and `shared-licensing-{cli,ci}` are refactored onto the `disconnected-cluster-cli-demo` format, so they differ only in *what* they demonstrate. Voiceover is gone — `say`/`note` write the spoken context onto the screen, so a recording needs no TTS, narration files or chapter markers. New shared tooling in `scripts/demos/lib/`: `demo-format.sh` (cleared-screen phase banners; the `PHASE`/`COMMAND`/`OUTPUT` queue rows that drive every still), `post_10x.py`, `record-demo.sh` and `check-masking.sh`. Each demo ships `.env.example` + `record.sh`.
+- **Demo recordings are credential-safe by construction.** Each demo registers its secrets with `secret()`, after which `banner`/`say`/`note`/`ok`/`die`/`show` and the `show_file`/`runmask` pair replace every registered value — **and its base64 form** — with `***REDACTED***`. This closed two real leaks in the shared-licensing CI demo, which displayed its `--env-file` with `grep -v PASSWORD` and so printed `IBMCLOUD_API_KEY` verbatim on camera twice. `lib/check-masking.sh` proves it before a shoot.
+- **No demo tears itself down.** Each ends with a report naming every reachable web UI and its credentials **by variable name, never the value**, and takes a `teardown` subcommand that removes only what that demo created — adopted clusters (`cluster register`) and the off-camera registry are left running, and the report says so.
+- **Capture fixes.** The `COMMAND` mark is taken after a render hold, so the extracted still shows the command rather than its output; `OUT_POST_HOLD` keeps the output on screen after its mark (without it the next phase's `clear_screen` landed ~0.1s later and the "output" still captured the **next phase's banner**); and `roksbnkctl` is matched as a command word — plus the `roksbnkctl-tools-runner` image, since the CI demos invoke every step through it — so a repo path in an argument no longer stamps a spurious still.
+- **cspell dictionary** gains 63 technical terms and British spellings, clearing 115 findings across 19 book/docs files.
+
 ## v1.33.1 — 2026-07-30
 
 Documentation and demo assets only — **no change to the `roksbnkctl` binary from v1.33.0**.

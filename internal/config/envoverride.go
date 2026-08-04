@@ -50,6 +50,11 @@ import (
 // installs BNK consumes them as ordinary pipeline variables — no config file has
 // to be templated to carry two values between jobs.
 //
+// Two further maps live in envoverride_flp.go, with their own variable → field
+// tables: ROKSBNKCTL_FLP_MODE / ROKSBNKCTL_FLP_VSI_* (the standalone F5 License
+// Proxy VSI appliance) and ROKSBNKCTL_{MANIFEST_VERSION,FAR_AUTH_*,
+// SUBSCRIPTION_JWT_*,COS_*} (the FAR supply chain — local files or a COS bucket).
+//
 // ROKSBNKCTL_API_KEY_B64 takes precedence over IBMCLOUD_API_KEY when both are
 // set (an explicit pre-encoded value beats the raw-key convenience path).
 func OverrideFromEnv(ws *Workspace) []string {
@@ -207,6 +212,12 @@ func OverrideFromEnv(ws *Workspace) []string {
 		flpExternal(ws).RootCAB64 = v
 		applied = append(applied, "bnk.flp.external.root_ca_b64 (ROKSBNKCTL_FLP_ROOT_CA_B64)")
 	}
+
+	// The FLP deployment backend (helm vs. a standalone VSI appliance) and the
+	// supply chain the phase reads its entitlement material from. Both maps live
+	// in envoverride_flp.go — see there for the variable → field tables.
+	applied = append(applied, overrideFLPFromEnv(ws)...)
+	applied = append(applied, overrideSupplyChainFromEnv(ws)...)
 
 	return applied
 }
