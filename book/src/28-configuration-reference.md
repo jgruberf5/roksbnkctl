@@ -283,6 +283,8 @@ registry:
   generic_repo_prefix: bnk-mirror
   generic_username: admin
   generic_password_b64: <base64>     # set via `registry target generic_password --password-stdin`
+  generic_ca_b64: <base64>           # set via `registry target generic_ca <harbor.crt>`
+  generic_ca_sha256: sha256:ab12...  # its fingerprint; also pins a captured CA
   # target: icr — IBM Container Registry
   # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
   # icr_namespace: my-namespace      # empty → the workspace prefix
@@ -297,6 +299,8 @@ registry:
 | `registry.generic_repo_prefix` | string | (empty) | Repository path artifacts nest under — a Harbor **project**, or an Artifactory repo key. |
 | `registry.generic_username` | string | (empty) | Basic-auth user. Both credential fields empty ⇒ anonymous push/pull. |
 | `registry.generic_password_b64` | string | (empty) | Basic-auth password/token, base64. Like every `_b64` field this is **obfuscation, not encryption** — `chmod 600`, never commit. Set it with `registry target generic_password --password-stdin` so it never reaches your shell history; templatable from the environment via `init --override-from-env` (`ROKSBNKCTL_GENERIC_PASSWORD`). |
+| `registry.generic_ca_b64` | string | (empty) | The mirror's CA chain (PEM, base64) — the **authoritative** copy, taken from the file that generated it. When set, `registry replicate` never dials the mirror to discover trust. A certificate is public data, so unlike the other `_b64` fields this is encoded only for single-line YAML safety. Set it with `registry target generic_ca <file>`; templatable via `ROKSBNKCTL_GENERIC_CA_B64`. |
+| `registry.generic_ca_sha256` | string | (empty) | SHA-256 pin for the mirror CA (hex; a `sha256:` prefix and colons are accepted). Authenticates a CA **captured** from the host when `generic_ca_b64` is unset. Without either, `replicate` **refuses** to adopt a self-signed CA it discovered over the wire — it would become cluster-wide node trust. Templatable via `ROKSBNKCTL_GENERIC_CA_SHA256`. |
 
 **The same credential installs, not just replicates.** For an external private registry
 these fields authenticate *both* halves of the install: chart pulls log in with them, and

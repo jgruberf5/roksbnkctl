@@ -70,17 +70,19 @@ any cluster exists.`,
 
 // registry-group flag values.
 var (
-	flagRegistryJSON          bool
-	flagRegistryManifestVer   string
-	flagRegistryFARRepo       string
-	flagRegistrySAB64         string
-	flagRegistryIncludeDeps   bool
-	flagRegistryNoIncludeDep  bool
-	flagRegistryConcurrency   int
-	flagRegistryTarget        string
-	flagRegistryPasswordStdin bool
-	flagRegistryForce         bool
-	flagRegistryCAFile        string
+	flagRegistryJSON              bool
+	flagRegistryManifestVer       string
+	flagRegistryFARRepo           string
+	flagRegistrySAB64             string
+	flagRegistryIncludeDeps       bool
+	flagRegistryNoIncludeDep      bool
+	flagRegistryConcurrency       int
+	flagRegistryTarget            string
+	flagRegistryPasswordStdin     bool
+	flagRegistryForce             bool
+	flagRegistryCAFile            string
+	flagRegistryCAFingerprint     string
+	flagRegistryInsecureCaptureCA bool
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -168,7 +170,9 @@ func init() {
 		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
-	registryReplicateCmd.Flags().StringVar(&flagRegistryCAFile, "registry-ca", "", "PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)")
+	registryReplicateCmd.Flags().StringVar(&flagRegistryCAFile, "registry-ca", "", "PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else registry.generic_ca_b64)")
+	registryReplicateCmd.Flags().StringVar(&flagRegistryCAFingerprint, "registry-ca-fingerprint", "", "expected SHA-256 of the mirror CA (\"sha256:ab:cd…\" or bare hex), authenticating a captured CA out of band")
+	registryReplicateCmd.Flags().BoolVar(&flagRegistryInsecureCaptureCA, "insecure-capture-ca", false, "adopt a self-signed mirror CA over an UNAUTHENTICATED connection (trust-on-first-use); prefer --registry-ca or --registry-ca-fingerprint")
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
@@ -467,6 +471,7 @@ first argument is either a backend KIND (sets registry.target) or a FIELD name
   Kinds:  icr | generic
   Fields: icr_host  icr_namespace
           generic_host  generic_repo_prefix  generic_username  generic_password
+          generic_ca (a PEM file)  generic_ca_sha256
 
 Examples:
   roksbnkctl registry target                          # show current config
@@ -476,7 +481,8 @@ Examples:
   roksbnkctl registry target generic_host art.example.com
   roksbnkctl registry target generic_repo_prefix bnk
   roksbnkctl registry target generic_username ci-bot
-  echo "$TOKEN" | roksbnkctl registry target generic_password --password-stdin`,
+  echo "$TOKEN" | roksbnkctl registry target generic_password --password-stdin
+  roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: runRegistryTarget,
 }
@@ -545,10 +551,33 @@ func runRegistryTarget(_ *cobra.Command, args []string) error {
 		reg.GenericRepoPrefix = val
 	case "generic_username":
 		reg.GenericUsername = val
+	case "generic_ca":
+		// Takes a FILE, not a literal: the CA is what you generated, so it is read
+		// from disk and its fingerprint recorded alongside it. Recording both means a
+		// later capture (if the PEM is ever cleared) is still authenticated by the pin.
+		pemBytes, rerr := os.ReadFile(val)
+		if rerr != nil {
+			return fmt.Errorf("reading generic_ca %s: %w", val, rerr)
+		}
+		trimmed := strings.TrimSpace(string(pemBytes))
+		if !strings.Contains(trimmed, "BEGIN CERTIFICATE") {
+			return fmt.Errorf("%s does not look like a PEM certificate", val)
+		}
+		reg.GenericCAB64 = base64.StdEncoding.EncodeToString([]byte(trimmed))
+		if fp, ferr := pemRootFingerprint(trimmed); ferr == nil {
+			reg.GenericCASHA256 = fp
+			fmt.Fprintf(os.Stderr, "  pinned SHA-256 %s\n", fp)
+		}
+	case "generic_ca_sha256":
+		fp := normalizeCAPin(val)
+		if len(fp) != 64 {
+			return fmt.Errorf("generic_ca_sha256 %q is not a SHA-256 hex digest (64 hex chars)", val)
+		}
+		reg.GenericCASHA256 = fp
 	case "generic_password":
 		reg.GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(val))
 	default:
-		return fmt.Errorf("unknown registry target arg %q\n  kinds:  icr|generic\n  fields: icr_host icr_namespace generic_host generic_repo_prefix generic_username generic_password", first)
+		return fmt.Errorf("unknown registry target arg %q\n  kinds:  icr|generic\n  fields: icr_host icr_namespace generic_host generic_repo_prefix generic_username generic_password generic_ca generic_ca_sha256", first)
 	}
 	return saveRegistryTarget(name, ws, first)
 }
@@ -764,11 +793,24 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 // ── replicate ───────────────────────────────────────────────────────────────
 
 // resolveMirrorCA returns the mirror's CA PEM used both to trust the replicate
-// push TLS and to record for air-gap node trust. --registry-ca wins and is fatal
-// if unreadable; otherwise it is a best-effort auto-capture from host, where a
-// public or unreachable host yields "" (no error) and the caller warns. A private
-// self-signed mirror (co-located Harbor) returns its served CA chain.
-func resolveMirrorCA(host string) (string, error) {
+// push TLS and to record for air-gap node trust, in DESCENDING ORDER OF AUTHORITY:
+//
+//  1. --registry-ca <file>        explicit, per-invocation; fatal if unreadable
+//  2. registry.generic_ca_b64     the workspace's recorded copy, taken from the
+//     file that generated it — no network involved
+//  3. registry-mirror.json        a CA a previous replicate already established
+//  4. a PINNED capture from host  authenticated against generic_ca_sha256 or
+//     --registry-ca-fingerprint
+//  5. an UNPINNED capture         refused unless --insecure-capture-ca
+//
+// 1–3 never touch the network for trust, and are the intended path for a mirror
+// you built yourself. A public target still yields "" (no error): there is no
+// private CA to adopt, so nothing needs authenticating.
+//
+// A capture REFUSAL is fatal, unlike a transport failure. Silently degrading to ""
+// would be worse than failing: the node-trust step would no-op and `bnk up` would
+// fail much later with an opaque x509 error from a pod pull.
+func resolveMirrorCA(name string, ws *config.Workspace, host string) (string, error) {
 	if flagRegistryCAFile != "" {
 		pemBytes, err := os.ReadFile(flagRegistryCAFile)
 		if err != nil {
@@ -776,14 +818,43 @@ func resolveMirrorCA(host string) (string, error) {
 		}
 		return strings.TrimSpace(string(pemBytes)), nil
 	}
+	if ws != nil && ws.Registry != nil && ws.Registry.GenericCAB64 != "" {
+		der, err := base64.StdEncoding.DecodeString(strings.TrimSpace(ws.Registry.GenericCAB64))
+		if err != nil {
+			return "", fmt.Errorf("decoding registry.generic_ca_b64: %w", err)
+		}
+		return strings.TrimSpace(string(der)), nil
+	}
+	if rec, err := config.ReadRegistryMirror(name); err == nil && rec != nil && rec.CACert != "" {
+		return strings.TrimSpace(rec.CACert), nil
+	}
 	if host == "" {
 		return "", nil
 	}
-	caPEM, err := captureRegistryCA(host)
+	caPEM, err := captureRegistryCA(host, caCaptureOpts{
+		PinSHA256:     mirrorCAPin(ws),
+		AllowUnpinned: flagRegistryInsecureCaptureCA,
+	})
 	if err != nil {
+		// A refused/mismatched CA is a policy decision the operator must see.
+		if errors.Is(err, errUnpinnedPrivateCA) || errors.Is(err, errCAPinMismatch) {
+			return "", err
+		}
 		return "", nil // best-effort: unreachable/public host is non-fatal
 	}
 	return caPEM, nil
+}
+
+// mirrorCAPin is the configured out-of-band fingerprint: the flag wins over the
+// workspace so a one-off invocation can pin without editing config.
+func mirrorCAPin(ws *config.Workspace) string {
+	if flagRegistryCAFingerprint != "" {
+		return flagRegistryCAFingerprint
+	}
+	if ws != nil && ws.Registry != nil {
+		return ws.Registry.GenericCASHA256
+	}
+	return ""
 }
 
 // ensureMirrorCATrust makes the operator's terraform/helm CHILD processes trust a
@@ -849,14 +920,15 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// Resolve the mirror's CA up front (before any copy): --registry-ca wins, else
-	// auto-capture from the push host. A private/self-signed mirror (co-located
-	// Harbor by private IP) returns its CA here; a public target returns "". When
+	// Resolve the mirror's CA up front (before any copy): the file/config copy wins,
+	// else an OUT-OF-BAND-PINNED capture from the push host (refused when unpinned).
+	// A private/self-signed mirror (co-located Harbor by private IP) returns its CA
+	// here; a public target returns "". When
 	// set, the engine trusts it for the push TLS so a container operator with no OS
 	// trust for the mirror can still replicate — and it is also recorded below for
 	// air-gap node trust, so the same CA drives both the operator and the nodes.
 	pushHost := registryHostFromPath(target.ImageHostPath())
-	mirrorCA, caErr := resolveMirrorCA(pushHost)
+	mirrorCA, caErr := resolveMirrorCA(name, ws, pushHost)
 	if caErr != nil {
 		return caErr // an explicit --registry-ca that can't be read is fatal
 	}
@@ -900,9 +972,9 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		Artifacts:       mirrored,
 	}
 	// Air-gap node trust: record the bare pull host and the CA it serves so
-	// `bnk up` installs that CA on every node before pulling. --registry-ca
-	// wins; otherwise auto-capture from the host (best-effort — a public or
-	// unreachable host records no CA and the node-trust step no-ops).
+	// `bnk up` installs that CA on every node before pulling. The authoritative
+	// copy (--registry-ca / registry.generic_ca_b64) wins; a captured CA must be
+	// pinned. A public or unreachable host records no CA and node-trust no-ops.
 	rec.RegistryHost = pushHost
 	// mirrorCA was resolved (and trusted for the push) before the copy above.
 	if mirrorCA != "" {
@@ -941,7 +1013,7 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	// crane digest probes fail x509 from a container operator otherwise, exactly as
 	// the replicate push does. Best-effort capture (public targets return "").
 	eng := registryEngine(target, in)
-	if ca, _ := resolveMirrorCA(registryHostFromPath(target.ImageHostPath())); ca != "" {
+	if ca, _ := resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath())); ca != "" {
 		eng.RegistryCA = ca
 	}
 	bad := eng.Verify(cmd.Context(), bom)

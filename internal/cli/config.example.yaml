@@ -99,6 +99,17 @@ bnk:
 #   target: icr                               # openshift | icr | generic  (default icr)
 #   icr_namespace: acme-eu                    # default: the prefix
 #   # generic_host / generic_repo_prefix / generic_username / generic_password_b64 for target=generic
+#   #
+#   # A SELF-SIGNED mirror (a co-located Harbor) needs its CA installed on every
+#   # cluster node before pulls work. Supply it from the file you generated —
+#   # `registry replicate` then never has to learn trust from the network:
+#   #   roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt
+#   generic_ca_b64: LS0tLS1CRUdJTiBDRVJU...     # the CA chain, PEM, base64 (public data)
+#   generic_ca_sha256: sha256:ab12...           # its SHA-256; also PINS a captured CA
+#   #
+#   # With neither set, replicate REFUSES to adopt a self-signed CA it discovered
+#   # over the wire (it would become cluster-wide trust). Pass --insecure-capture-ca
+#   # to accept trust-on-first-use deliberately.
 
 # ---- Remote state (optional) -----------------------------------------------
 state:

@@ -40,6 +40,8 @@ import (
 //	ROKSBNKCTL_GENERIC_REPO_PREFIX  → registry.generic_repo_prefix
 //	ROKSBNKCTL_GENERIC_USERNAME     → registry.generic_username
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
+//	ROKSBNKCTL_GENERIC_CA_B64       → registry.generic_ca_b64 (verbatim; already base64)
+//	ROKSBNKCTL_GENERIC_CA_SHA256    → registry.generic_ca_sha256 (the out-of-band CA pin)
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
@@ -176,6 +178,20 @@ func OverrideFromEnv(ws *Workspace) []string {
 	if v := envValue("ROKSBNKCTL_GENERIC_PASSWORD"); v != "" {
 		registryCfg(ws).GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "registry.generic_password_b64 (ROKSBNKCTL_GENERIC_PASSWORD)")
+	}
+	// The mirror's CA and/or its fingerprint. Without these an env-only runner
+	// facing a SELF-SIGNED mirror has no way to supply trust out of band, and
+	// `registry replicate` refuses to adopt a captured CA (it would be installed
+	// into every node's trust store). _CA_B64 is the PEM chain, already base64 and
+	// passed verbatim — a certificate is public data, encoded only so it survives
+	// as a single env value.
+	if v := envValue("ROKSBNKCTL_GENERIC_CA_B64"); v != "" {
+		registryCfg(ws).GenericCAB64 = v
+		applied = append(applied, "registry.generic_ca_b64 (ROKSBNKCTL_GENERIC_CA_B64)")
+	}
+	if v := envValue("ROKSBNKCTL_GENERIC_CA_SHA256"); v != "" {
+		registryCfg(ws).GenericCASHA256 = v
+		applied = append(applied, "registry.generic_ca_sha256 (ROKSBNKCTL_GENERIC_CA_SHA256)")
 	}
 
 	// License mode (optional; connected|disconnected|f5licenseproxy). f5licenseproxy
