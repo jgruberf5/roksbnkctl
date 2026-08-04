@@ -4,6 +4,23 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.35.0 — 2026-08-04
+
+### Changed
+
+- **The air-gap mirror CA is now authenticated out of band instead of trusted from the wire.** A CA captured from the mirror is installed into **every node's `certs.d`** and persisted in `registry-mirror.json`, so adopting one over an unauthenticated connection handed durable, cluster-wide trust to whoever won a race on a single dial. `registry replicate` now resolves the CA in descending order of authority — `--registry-ca` → `registry.generic_ca_b64` → the CA a previous replicate recorded → a **pinned** capture — and the first three never touch the network for trust. Since you generate the CA, the intended path is to supply it from the file that generated it: `roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt`.
+- **A captured CA must now be pinned, or the capture is refused.** `registry.generic_ca_sha256` / `--registry-ca-fingerprint` pin the served chain by SHA-256, enforced inside `tls.Config.VerifyPeerCertificate` so the check runs *during* the handshake, before any bytes move, against the chain the peer actually presented. Matching is constant-time over the DER, so a peer must hold the private key — replaying a copied public certificate cannot complete the handshake. The pin is accepted as bare hex, `sha256:…`, colon-separated, or raw `openssl x509 -fingerprint -sha256` output.
+- **Fail closed.** With no CA and no pin, `replicate` refuses a self-signed mirror rather than silently adopting it, and the refusal quotes the fingerprint the host actually served so a first-time operator can record the pin without a second tool. `--insecure-capture-ca` accepts trust-on-first-use deliberately. **Public mirrors are unaffected** — a chain to a separate issuer adopts nothing, so it needs no pin, and ICR/publicly-issued targets behave exactly as before.
+
+  > **Upgrade note.** A workflow that relied on unpinned auto-capture against a **self-signed** mirror will now error until it supplies `registry.generic_ca_b64` / `--registry-ca`, sets a pin, or passes `--insecure-capture-ca`. This is deliberate: the previous silent adoption is the behaviour being fixed.
+
+- **New workspace fields + env overrides:** `registry.generic_ca_b64` (`ROKSBNKCTL_GENERIC_CA_B64`, verbatim — already base64) and `registry.generic_ca_sha256` (`ROKSBNKCTL_GENERIC_CA_SHA256`), plus `registry target generic_ca <file>` (which records the PEM and derives its pin) and `registry target generic_ca_sha256`. An env-only runner facing a self-signed mirror previously had no way to supply trust at all.
+- **The disconnected CLI demo** reads Harbor's CA **and** its fingerprint once from `/opt/harbor/certs/harbor.crt` and feeds both the mirror and BNK workspaces, so `registry replicate` no longer passes `--registry-ca`.
+
+### Fixed
+
+- **A refused CA is fatal, not a best-effort miss.** `describeCAPolicyError` wraps its sentinels (`%w`) so `errors.Is` still identifies them in `resolveMirrorCA`. Without the wrap the refusal degraded to "no CA recorded", the node-trust step no-opped, and `bnk up` failed much later with an opaque `x509` error from a pod pull. Regression-tested.
+
 ## v1.34.0 — 2026-08-04
 
 ### Added
