@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d7606862.js";
+            window.path_to_searchindex_js = "searchindex-71ee849a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -1470,10 +1470,42 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code></td><td><code>helm</code> (default) | <code>vsi</code> — how the FLP phase deploys the proxy</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this is what arms the <strong>standalone, cluster-less</strong> appliance</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code></td><td><code>bnk.flp.vsi.zone</code></td><td>e.g. <code>us-south-1</code>; blank → the region’s first zone</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SSH_KEY</code></td><td><code>bnk.flp.vsi.ssh_key</code></td><td>name of an existing IBM Cloud VPC SSH key</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB</code></td><td><code>bnk.flp.vsi.boot_size_gb</code></td><td>integer; blank → 100</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_REACH</code></td><td><code>bnk.flp.vsi.reach</code></td><td><code>private</code> (default) | <code>floating</code> — the address the CWC dials</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_FLOATING_IP</code></td><td><code>bnk.flp.vsi.floating_ip</code></td><td>bool; an unparseable value leaves the <strong>module default (true)</strong> rather than pinning false</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.management_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:80</code> status UI</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.licensing_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:8443</code> proxy + <code>:22</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_IMAGE</code></td><td><code>bnk.flp.vsi.status_image</code></td><td>the <code>flp-status</code> web-UI image, e.g. <code>&lt;harbor&gt;/bnk-status/flp-status:v1</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST</code></td><td><code>bnk.flp.vsi.status_registry_host</code></td><td>verbatim — the mirror the status image is pulled from</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64</code></td><td><code>bnk.flp.vsi.status_registry_ca_b64</code></td><td><strong>verbatim; already base64</strong> — the mirror’s CA, dropped into the VSI’s <code>certs.d</code></td></tr>
+<tr><td><code>ROKSBNKCTL_MANIFEST_VERSION</code></td><td><code>bnk.manifest_version</code></td><td>verbatim — the BNK manifest release</td></tr>
+<tr><td><code>ROKSBNKCTL_FAR_AUTH_LOCAL_FILE</code></td><td><code>bnk.far_auth_local_file</code></td><td>path to the FAR auth tarball <strong>in the run workspace</strong></td></tr>
+<tr><td><code>ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE</code></td><td><code>bnk.subscription_jwt_local_file</code></td><td>path to the subscription JWT. Set <strong>both</strong> local-file vars and the COS download is skipped (<code>use_cos_bucket = false</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_COS_INSTANCE</code></td><td><code>cos.instance</code></td><td>verbatim; blank → <code>bnk-supply-chain</code></td></tr>
+<tr><td><code>ROKSBNKCTL_COS_BUCKET</code></td><td><code>cos.bucket</code></td><td>verbatim; blank → <code>bnk-artifacts</code></td></tr>
+<tr><td><code>ROKSBNKCTL_COS_REGION</code></td><td><code>cos.region</code></td><td>verbatim; blank → <code>us-south</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FAR_AUTH_FILE</code></td><td><code>bnk.far_auth_file</code></td><td>object name in the bucket; blank → <code>f5-far-auth-key.tgz</code></td></tr>
+<tr><td><code>ROKSBNKCTL_SUBSCRIPTION_JWT_FILE</code></td><td><code>bnk.subscription_jwt_file</code></td><td>object name in the bucket; blank → <code>subscription.jwt</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>The last six are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
+<p>The FLP-VSI block reproduces, from environment variables alone, the standalone
+licensing appliance the <a href="#appendix-a--a-disconnected-roks-cluster">disconnected-cluster walkthrough</a>
+builds from a hand-written <code>config.yaml</code> — for an <strong>argv-only</strong> runner (a CI
+container, BNK Forge’s container engine) that has no shell to write a YAML file
+with. <code>bnk.flp.mode: vsi</code> <strong>plus</strong> a non-empty <code>bnk.flp.vsi.vpc</code> is the pair that
+selects the cluster-less path; either alone leaves the cluster-required behaviour.</p>
+<p>The supply-chain block matters because the COS fallbacks were <strong>renamed in
+v1.22.0</strong> (<code>bnk-orchestration</code> → <code>bnk-supply-chain</code>, <code>bnk-schematics-resources</code> →
+<code>bnk-artifacts</code>, <code>trial.jwt</code> → <code>subscription.jwt</code>). Before these variables existed
+a runner that could not write a <code>config.yaml</code> was pinned to whatever the defaults
+happened to be; an account still holding the pre-v1.22 layout can now say so.</p>
+<p>The FLP/registry handoff vars are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
 template. The registry four say <em>where</em> the mirror is; the FLP two are the <strong>cross-job
 handoff</strong> — the job that owns the proxy prints them with <code>flp output flp_external_endpoint</code> / <code>flp_root_ca</code>, and the job that installs BNK receives them as
 ordinary job outputs. See <a href="#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>
@@ -10513,7 +10545,9 @@ auth, or –source-sa-b64).</p>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
-<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)</td></tr>
+<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else <code>registry.generic_ca_b64</code>)</td></tr>
+<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>Expected SHA-256 of the mirror CA (<code>sha256:ab:cd…</code> or bare hex), authenticating a captured CA out of band</td></tr>
+<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>Adopt a self-signed mirror CA over an <strong>unauthenticated</strong> connection (trust-on-first-use). Prefer <code>--registry-ca</code> or <code>--registry-ca-fingerprint</code></td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
 <tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
@@ -11543,6 +11577,8 @@ record exists, the registry the install pulls <strong>out of</strong>. See
   generic_repo_prefix: bnk-mirror
   generic_username: admin
   generic_password_b64: &lt;base64&gt;     # set via `registry target generic_password --password-stdin`
+  generic_ca_b64: &lt;base64&gt;           # set via `registry target generic_ca &lt;harbor.crt&gt;`
+  generic_ca_sha256: sha256:ab12...  # its fingerprint; also pins a captured CA
   # target: icr — IBM Container Registry
   # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
   # icr_namespace: my-namespace      # empty → the workspace prefix
@@ -11560,6 +11596,8 @@ record exists, the registry the install pulls <strong>out of</strong>. See
 <tr><td><code>registry.generic_repo_prefix</code></td><td>string</td><td>(empty)</td><td>Repository path artifacts nest under — a Harbor <strong>project</strong>, or an Artifactory repo key.</td></tr>
 <tr><td><code>registry.generic_username</code></td><td>string</td><td>(empty)</td><td>Basic-auth user. Both credential fields empty ⇒ anonymous push/pull.</td></tr>
 <tr><td><code>registry.generic_password_b64</code></td><td>string</td><td>(empty)</td><td>Basic-auth password/token, base64. Like every <code>_b64</code> field this is <strong>obfuscation, not encryption</strong> — <code>chmod 600</code>, never commit. Set it with <code>registry target generic_password --password-stdin</code> so it never reaches your shell history; templatable from the environment via <code>init --override-from-env</code> (<code>ROKSBNKCTL_GENERIC_PASSWORD</code>).</td></tr>
+<tr><td><code>registry.generic_ca_b64</code></td><td>string</td><td>(empty)</td><td>The mirror’s CA chain (PEM, base64) — the <strong>authoritative</strong> copy, taken from the file that generated it. When set, <code>registry replicate</code> never dials the mirror to discover trust. A certificate is public data, so unlike the other <code>_b64</code> fields this is encoded only for single-line YAML safety. Set it with <code>registry target generic_ca &lt;file&gt;</code>; templatable via <code>ROKSBNKCTL_GENERIC_CA_B64</code>.</td></tr>
+<tr><td><code>registry.generic_ca_sha256</code></td><td>string</td><td>(empty)</td><td>SHA-256 pin for the mirror CA (hex; a <code>sha256:</code> prefix and colons are accepted). Authenticates a CA <strong>captured</strong> from the host when <code>generic_ca_b64</code> is unset. Without either, <code>replicate</code> <strong>refuses</strong> to adopt a self-signed CA it discovered over the wire — it would become cluster-wide node trust. Templatable via <code>ROKSBNKCTL_GENERIC_CA_SHA256</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -13151,7 +13189,7 @@ registry:
 <pre><code class="language-console"># on the VSI:
 $ roksbnkctl -w mirror init --config-file mirror.yaml
 $ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
-$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry replicate           # FAR → Harbor (89 artifacts); CA from registry.generic_ca_b64
 $ roksbnkctl -w mirror registry verify
 </code></pre>
 <p>After replication, the <code>bnk-mirror</code> project holds every BNK chart and image — the cluster
@@ -13367,7 +13405,7 @@ IBM Cloud COS reached over the private service-endpoint range — needed even ai
 <p>Before pulling, CRI-O on each node must trust Harbor’s self-signed cert or every pull fails <code>x509</code>.
 <strong>The usual OpenShift mechanism does not work on ROKS</strong> — <code>image.config.openshift.io/cluster</code> is
 HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. <code>bnk up</code> handles it: it installs
-the CA — captured into the mirror record by <code>registry replicate --registry-ca</code> (Step 2) — into each
+the CA — recorded into the mirror record by <code>registry replicate</code> from <code>registry.generic_ca_b64</code> (Step 2) — into each
 node’s <code>/etc/containers/certs.d/&lt;HARBOR_PRIVATE_IP&gt;/ca.crt</code> via a privileged DaemonSet (one pod per
 node, a <strong>node-cached</strong> image so it needs no egress, self-refreshing if the CA changes on a
 cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
@@ -13539,13 +13577,16 @@ run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
         -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
 
 run init --config-file /work/config.yaml --override-from-env
-run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; CA from registry.generic_ca_b64
 run registry verify
 run cluster register disco-demo             # Step 4 — adopt
 run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
 </code></pre>
-<p><code>registry replicate</code> captures Harbor’s self-signed CA into the mirror record automatically; pass
-<code>--registry-ca &lt;file&gt;</code> only to supply it explicitly. <code>-v "$PWD/state:/work"</code> persists the workspace —
+<p><code>registry replicate</code> takes Harbor’s self-signed CA from <code>registry.generic_ca_b64</code> (or
+<code>--registry-ca &lt;file&gt;</code>) and records it in the mirror record. It will <strong>not</strong> adopt a self-signed CA
+it merely discovered over the wire — that CA becomes trust on every node — so supply it from the
+file you generated, or pin it with <code>registry.generic_ca_sha256</code> / <code>--registry-ca-fingerprint</code>.
+<code>--insecure-capture-ca</code> accepts trust-on-first-use deliberately. <code>-v "$PWD/state:/work"</code> persists the workspace —
 config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
 back it with COS remote state instead so a later teardown run still sees it — see
 <a href="#ephemeral-runners-need-remote-state">Chapter 7b §“Ephemeral runners need remote state”</a>.</p>

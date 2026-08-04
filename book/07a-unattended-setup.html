@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d7606862.js";
+            window.path_to_searchindex_js = "searchindex-71ee849a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -286,10 +286,42 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code></td><td><code>helm</code> (default) | <code>vsi</code> — how the FLP phase deploys the proxy</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this is what arms the <strong>standalone, cluster-less</strong> appliance</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code></td><td><code>bnk.flp.vsi.zone</code></td><td>e.g. <code>us-south-1</code>; blank → the region’s first zone</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SSH_KEY</code></td><td><code>bnk.flp.vsi.ssh_key</code></td><td>name of an existing IBM Cloud VPC SSH key</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB</code></td><td><code>bnk.flp.vsi.boot_size_gb</code></td><td>integer; blank → 100</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_REACH</code></td><td><code>bnk.flp.vsi.reach</code></td><td><code>private</code> (default) | <code>floating</code> — the address the CWC dials</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_FLOATING_IP</code></td><td><code>bnk.flp.vsi.floating_ip</code></td><td>bool; an unparseable value leaves the <strong>module default (true)</strong> rather than pinning false</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.management_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:80</code> status UI</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.licensing_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:8443</code> proxy + <code>:22</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_IMAGE</code></td><td><code>bnk.flp.vsi.status_image</code></td><td>the <code>flp-status</code> web-UI image, e.g. <code>&lt;harbor&gt;/bnk-status/flp-status:v1</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST</code></td><td><code>bnk.flp.vsi.status_registry_host</code></td><td>verbatim — the mirror the status image is pulled from</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64</code></td><td><code>bnk.flp.vsi.status_registry_ca_b64</code></td><td><strong>verbatim; already base64</strong> — the mirror’s CA, dropped into the VSI’s <code>certs.d</code></td></tr>
+<tr><td><code>ROKSBNKCTL_MANIFEST_VERSION</code></td><td><code>bnk.manifest_version</code></td><td>verbatim — the BNK manifest release</td></tr>
+<tr><td><code>ROKSBNKCTL_FAR_AUTH_LOCAL_FILE</code></td><td><code>bnk.far_auth_local_file</code></td><td>path to the FAR auth tarball <strong>in the run workspace</strong></td></tr>
+<tr><td><code>ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE</code></td><td><code>bnk.subscription_jwt_local_file</code></td><td>path to the subscription JWT. Set <strong>both</strong> local-file vars and the COS download is skipped (<code>use_cos_bucket = false</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_COS_INSTANCE</code></td><td><code>cos.instance</code></td><td>verbatim; blank → <code>bnk-supply-chain</code></td></tr>
+<tr><td><code>ROKSBNKCTL_COS_BUCKET</code></td><td><code>cos.bucket</code></td><td>verbatim; blank → <code>bnk-artifacts</code></td></tr>
+<tr><td><code>ROKSBNKCTL_COS_REGION</code></td><td><code>cos.region</code></td><td>verbatim; blank → <code>us-south</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FAR_AUTH_FILE</code></td><td><code>bnk.far_auth_file</code></td><td>object name in the bucket; blank → <code>f5-far-auth-key.tgz</code></td></tr>
+<tr><td><code>ROKSBNKCTL_SUBSCRIPTION_JWT_FILE</code></td><td><code>bnk.subscription_jwt_file</code></td><td>object name in the bucket; blank → <code>subscription.jwt</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>The last six are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
+<p>The FLP-VSI block reproduces, from environment variables alone, the standalone
+licensing appliance the <a href="./appendix-a-disconnected-roks-cluster.html">disconnected-cluster walkthrough</a>
+builds from a hand-written <code>config.yaml</code> — for an <strong>argv-only</strong> runner (a CI
+container, BNK Forge’s container engine) that has no shell to write a YAML file
+with. <code>bnk.flp.mode: vsi</code> <strong>plus</strong> a non-empty <code>bnk.flp.vsi.vpc</code> is the pair that
+selects the cluster-less path; either alone leaves the cluster-required behaviour.</p>
+<p>The supply-chain block matters because the COS fallbacks were <strong>renamed in
+v1.22.0</strong> (<code>bnk-orchestration</code> → <code>bnk-supply-chain</code>, <code>bnk-schematics-resources</code> →
+<code>bnk-artifacts</code>, <code>trial.jwt</code> → <code>subscription.jwt</code>). Before these variables existed
+a runner that could not write a <code>config.yaml</code> was pinned to whatever the defaults
+happened to be; an account still holding the pre-v1.22 layout can now say so.</p>
+<p>The FLP/registry handoff vars are what turn a CI pipeline into a workspace with no <code>config.yaml</code> to
 template. The registry four say <em>where</em> the mirror is; the FLP two are the <strong>cross-job
 handoff</strong> — the job that owns the proxy prints them with <code>flp output flp_external_endpoint</code> / <code>flp_root_ca</code>, and the job that installs BNK receives them as
 ordinary job outputs. See <a href="./10c-flp-licensing.html#flow-c-in-ci--the-runner-container-no-host-install">Flow C in CI</a>.</p>

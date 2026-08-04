@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d7606862.js";
+            window.path_to_searchindex_js = "searchindex-71ee849a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -359,7 +359,7 @@ registry:
 <pre><code class="language-console"># on the VSI:
 $ roksbnkctl -w mirror init --config-file mirror.yaml
 $ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
-$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry replicate           # FAR → Harbor (89 artifacts); CA from registry.generic_ca_b64
 $ roksbnkctl -w mirror registry verify
 </code></pre>
 <p>After replication, the <code>bnk-mirror</code> project holds every BNK chart and image — the cluster
@@ -575,7 +575,7 @@ IBM Cloud COS reached over the private service-endpoint range — needed even ai
 <p>Before pulling, CRI-O on each node must trust Harbor’s self-signed cert or every pull fails <code>x509</code>.
 <strong>The usual OpenShift mechanism does not work on ROKS</strong> — <code>image.config.openshift.io/cluster</code> is
 HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. <code>bnk up</code> handles it: it installs
-the CA — captured into the mirror record by <code>registry replicate --registry-ca</code> (Step 2) — into each
+the CA — recorded into the mirror record by <code>registry replicate</code> from <code>registry.generic_ca_b64</code> (Step 2) — into each
 node’s <code>/etc/containers/certs.d/&lt;HARBOR_PRIVATE_IP&gt;/ca.crt</code> via a privileged DaemonSet (one pod per
 node, a <strong>node-cached</strong> image so it needs no egress, self-refreshing if the CA changes on a
 cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
@@ -747,13 +747,16 @@ run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
         -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
 
 run init --config-file /work/config.yaml --override-from-env
-run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; CA from registry.generic_ca_b64
 run registry verify
 run cluster register disco-demo             # Step 4 — adopt
 run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
 </code></pre>
-<p><code>registry replicate</code> captures Harbor’s self-signed CA into the mirror record automatically; pass
-<code>--registry-ca &lt;file&gt;</code> only to supply it explicitly. <code>-v "$PWD/state:/work"</code> persists the workspace —
+<p><code>registry replicate</code> takes Harbor’s self-signed CA from <code>registry.generic_ca_b64</code> (or
+<code>--registry-ca &lt;file&gt;</code>) and records it in the mirror record. It will <strong>not</strong> adopt a self-signed CA
+it merely discovered over the wire — that CA becomes trust on every node — so supply it from the
+file you generated, or pin it with <code>registry.generic_ca_sha256</code> / <code>--registry-ca-fingerprint</code>.
+<code>--insecure-capture-ca</code> accepts trust-on-first-use deliberately. <code>-v "$PWD/state:/work"</code> persists the workspace —
 config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
 back it with COS remote state instead so a later teardown run still sees it — see
 <a href="./07b-github-actions-ci.html#ephemeral-runners-need-remote-state">Chapter 7b §“Ephemeral runners need remote state”</a>.</p>

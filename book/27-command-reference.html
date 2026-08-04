@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d7606862.js";
+            window.path_to_searchindex_js = "searchindex-71ee849a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -1632,7 +1632,9 @@ auth, or –source-sa-b64).</p>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
-<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)</td></tr>
+<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else <code>registry.generic_ca_b64</code>)</td></tr>
+<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>Expected SHA-256 of the mirror CA (<code>sha256:ab:cd…</code> or bare hex), authenticating a captured CA out of band</td></tr>
+<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>Adopt a self-signed mirror CA over an <strong>unauthenticated</strong> connection (trust-on-first-use). Prefer <code>--registry-ca</code> or <code>--registry-ca-fingerprint</code></td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
 <tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d7606862.js";
+            window.path_to_searchindex_js = "searchindex-71ee849a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -496,6 +496,8 @@ record exists, the registry the install pulls <strong>out of</strong>. See
   generic_repo_prefix: bnk-mirror
   generic_username: admin
   generic_password_b64: &lt;base64&gt;     # set via `registry target generic_password --password-stdin`
+  generic_ca_b64: &lt;base64&gt;           # set via `registry target generic_ca &lt;harbor.crt&gt;`
+  generic_ca_sha256: sha256:ab12...  # its fingerprint; also pins a captured CA
   # target: icr — IBM Container Registry
   # icr_host: uk.icr.io              # empty → derived from ibmcloud.region
   # icr_namespace: my-namespace      # empty → the workspace prefix
@@ -513,6 +515,8 @@ record exists, the registry the install pulls <strong>out of</strong>. See
 <tr><td><code>registry.generic_repo_prefix</code></td><td>string</td><td>(empty)</td><td>Repository path artifacts nest under — a Harbor <strong>project</strong>, or an Artifactory repo key.</td></tr>
 <tr><td><code>registry.generic_username</code></td><td>string</td><td>(empty)</td><td>Basic-auth user. Both credential fields empty ⇒ anonymous push/pull.</td></tr>
 <tr><td><code>registry.generic_password_b64</code></td><td>string</td><td>(empty)</td><td>Basic-auth password/token, base64. Like every <code>_b64</code> field this is <strong>obfuscation, not encryption</strong> — <code>chmod 600</code>, never commit. Set it with <code>registry target generic_password --password-stdin</code> so it never reaches your shell history; templatable from the environment via <code>init --override-from-env</code> (<code>ROKSBNKCTL_GENERIC_PASSWORD</code>).</td></tr>
+<tr><td><code>registry.generic_ca_b64</code></td><td>string</td><td>(empty)</td><td>The mirror’s CA chain (PEM, base64) — the <strong>authoritative</strong> copy, taken from the file that generated it. When set, <code>registry replicate</code> never dials the mirror to discover trust. A certificate is public data, so unlike the other <code>_b64</code> fields this is encoded only for single-line YAML safety. Set it with <code>registry target generic_ca &lt;file&gt;</code>; templatable via <code>ROKSBNKCTL_GENERIC_CA_B64</code>.</td></tr>
+<tr><td><code>registry.generic_ca_sha256</code></td><td>string</td><td>(empty)</td><td>SHA-256 pin for the mirror CA (hex; a <code>sha256:</code> prefix and colons are accepted). Authenticates a CA <strong>captured</strong> from the host when <code>generic_ca_b64</code> is unset. Without either, <code>replicate</code> <strong>refuses</strong> to adopt a self-signed CA it discovered over the wire — it would become cluster-wide node trust. Templatable via <code>ROKSBNKCTL_GENERIC_CA_SHA256</code>.</td></tr>
 </tbody>
 </table>
 </div>
