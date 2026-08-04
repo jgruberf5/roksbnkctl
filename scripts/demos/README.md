@@ -1,7 +1,7 @@
 # roksbnkctl demonstration video pipeline
 
-Reproducible tooling to **record (and re-record)** four demos as time-compressed,
-EN + FR narrated 1080p mp4s:
+Reproducible tooling to **record (and re-record)** the roksbnkctl demos as
+time-compressed, EN + FR narrated 1080p mp4s:
 
 | # | Screenplay | What it demonstrates |
 |---|---|---|
@@ -11,9 +11,33 @@ EN + FR narrated 1080p mp4s:
 | 4 | `flp-licensed-demo.sh` | **A shared licensing cluster** — one cluster runs the F5 License Proxy (exposed as a NodePort service) and holds the only egress to F5; a second, air-gapped cluster installs BNK entirely from a private registry and licenses *through that proxy*. Replicate FAR → registry, `flp up --add-node-port-access`, then `bnk up` in the other cluster. **Both ROKS clusters are already running and are `cluster register`ed, not created** — cluster builds are ~40 min of nothing to watch. |
 | 5 | `ci-flp-demo.sh` | **Demo #4 as a CI pipeline** — the same disconnected install (private registry + remote FLP licensing), except every step is a `docker run` of the tools-runner image and the whole workspace comes from **environment variables**. No roksbnkctl, terraform, helm or kubectl on the host; no `config.yaml` templated anywhere. The handoff between the two jobs — the proxy's address and its CA — is two env vars, exactly what CI passes as job outputs. **Both ROKS clusters are already running and are `cluster register`ed, not created.** |
 
-All four share one pipeline. The raw asciinema `.cast` is the **master** — the
+They share one pipeline. The raw asciinema `.cast` is the **master** — the
 mp4s are derived from it, so re-cuts (pacing, narration, language) never need
 another cloud run.
+
+## Layout
+
+Each demo is a screenplay in its own category folder; the shared pipeline lives in
+`lib/`. **Every demo folder has its own `README.md` listing that demo's
+prerequisites and Ubuntu install steps.**
+
+```
+scripts/demos/
+  lib/            shared: record · postprocess · voiceover · narrate ·
+                          prompt-inputs · provision-vsi · demo-lib ·
+                          deploy-far-registry · narration.{en,fr}
+  cluster-lifecycle-cli-demo/     cli-demo.sh              (demo 1)
+  cluster-lifecycle-ci-demo/      ci-demo.sh               (demo 2)
+  far-replication-demo/           far-replication-demo.sh  (demo 3)
+  shared-licensing-cli-demo/      flp-licensed-demo.sh     (demo 4)
+  shared-licensing-ci-demo/       ci-flp-demo.sh           (demo 5)
+  disconnected-cluster-cli-demo/  standalone Harbor + FLP VSIs, adopt an existing
+                                  cluster over a Transit Gateway (Appendix A)
+  disconnected-cluster-ci-demo/   the same, driven by ArgoCD
+```
+
+Run everything from `lib/`: `cd scripts/demos/lib`, then `SCREENPLAY=<name>
+./record.sh run` — `record.sh` finds the screenplay in its category folder by name.
 
 ## How the pipeline works
 
@@ -39,7 +63,8 @@ Pick the screenplay with the `SCREENPLAY` environment variable. It defaults to
 | `provision-vsi.sh {up\|down\|ssh}` | control host | Creates/destroys a self-contained Ubuntu 24.04 VSI (own VPC, subnet, PGW, SG rule, floating IP). IDs recorded in `vsi-state.env`. |
 | `cli-demo.sh [teardown]` | **on the VSI** | Demo #1 — see the table above. |
 | `ci-demo.sh [teardown]` | **on the VSI** | Demo #2 — see the table above. |
-| `far-replication-demo.sh [teardown]` | **on the VSI** | Demo #3 — see the table above. Drives `../deploy-far-registry.sh`, which provisions a *second* VSI to host Harbor. |
+| `far-replication-demo.sh [teardown]` | **on the VSI** | Demo #3 — see the table above. Mirrors into a Harbor built off-camera by `lib/deploy-far-registry.sh` (a separate VSI). |
+| `deploy-far-registry.sh` | control host | Stands up a standalone open-source Harbor on its own VSI (or configures a host you name), for demos #3/#4/#5 and the disconnected demos. Run once, off-camera. |
 | `flp-licensed-demo.sh [teardown]` | **on the VSI** | Demo #4 — see the table above. Registers two ALREADY-RUNNING clusters (`SERVICES_CLUSTER` + `APP_CLUSTER` in `demo.env`) and a pre-built registry; installs the FLP in one and BNK in the other. Teardown removes only the workloads — it never destroys the clusters, because it never created them. |
 | `demo-lib.sh` | on the VSI | Shared presentation helpers: stage cards + framed commands. The `STAGE n/N · Title` line doubles as the chapter marker. |
 | `record.sh {run\|start\|wait\|fetch\|attach\|teardown}` | control host | Copies the screenplay + `demo.env` to the VSI, records it under `asciinema rec` in `tmux`, polls, and pulls the master `.cast` into `out/`. |
@@ -48,12 +73,39 @@ Pick the screenplay with the `SCREENPLAY` environment variable. It defaults to
 
 ## Host prerequisites
 
+The **recording pipeline** runs on the control host (your workstation). The demo
+**VSI installs its own tools automatically** (per screenplay), so you only install
+the pipeline here.
+
 - **Control host:** `ibmcloud` CLI + `vpc-infrastructure` plugin, `jq`, `ssh`/`scp`,
   `agg` (asciinema gif renderer), `ffmpeg`, `piper` (+ voice models), Python 3.
 - **VSI:** installed automatically by the screenplays (`terraform`, `helm`,
-  `asciinema`, `tmux`, roksbnkctl).
-- **Piper voices:** download `.onnx` + `.onnx.json` from
-  <https://huggingface.co/rhasspy/piper-voices> into `voices/` (default
+  `asciinema`, `tmux`, roksbnkctl — or `docker` + the tools-runner image for the CI
+  demos). Nothing to install by hand.
+
+### Install the pipeline on Ubuntu (control host)
+
+```bash
+# base tools
+sudo apt-get update
+sudo apt-get install -y jq ffmpeg python3 openssh-client curl cargo
+
+# IBM Cloud CLI + the VPC plugin
+curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+ibmcloud plugin install vpc-infrastructure -f
+
+# agg — asciinema → gif renderer (https://github.com/asciinema/agg)
+cargo install --git https://github.com/asciinema/agg
+export PATH="$HOME/.cargo/bin:$PATH"        # add to ~/.bashrc to persist
+
+# piper — neural TTS (https://github.com/rhasspy/piper); grab the release binary
+mkdir -p ~/piper && curl -fsSL \
+  https://github.com/rhasspy/piper/releases/latest/download/piper_linux_x86_64.tar.gz \
+  | tar xz -C ~/piper && sudo ln -sf ~/piper/piper/piper /usr/local/bin/piper
+```
+
+- **Piper voices:** download the `.onnx` + `.onnx.json` pair from
+  <https://huggingface.co/rhasspy/piper-voices> into `lib/voices/` (default
   `en_US-lessac-medium`, `fr_FR-siwis-medium`; override with `PIPER_MODEL_EN/FR`).
 
 If `agg` was installed with `cargo`, make sure it is on `PATH`
@@ -63,7 +115,7 @@ If `agg` was installed with `cargo`, make sure it is on `PATH`
 ## Common setup (once)
 
 ```bash
-cd scripts/demo
+cd scripts/demos/lib
 ./prompt-inputs.sh          # → demo.env (0600, git-ignored)
 ./provision-vsi.sh up       # → fresh VSI, ids in vsi-state.env
 ```
@@ -101,11 +153,11 @@ cluster" — that line is stale, left over from the removed `openshift` target.)
 
 **Build the registry first (off-camera).** How the registry is built is not part
 of this demo's story — it just needs an OCI-compliant registry to target.
-`scripts/deploy-far-registry.sh` stands up a standard open-source Harbor and
+`scripts/demos/lib/deploy-far-registry.sh` stands up a standard open-source Harbor and
 prints its address + admin password; put both in `demo.env`:
 
 ```bash
-../deploy-far-registry.sh -w prebuilt-harbor \
+./deploy-far-registry.sh -w prebuilt-harbor \
   --key-name <ibmcloud-key> --ssh-key vsi_key \
   --region "$REGION" --vpc <vpc> --subnet <subnet> --resource-group <rg> \
   --project bnk-mirror --no-configure
@@ -189,7 +241,7 @@ gateway between their VPCs.
 
 ### The registry
 
-Same prerequisites as Demo #3 — build it off-camera with `scripts/deploy-far-registry.sh`
+Same prerequisites as Demo #3 — build it off-camera with `scripts/demos/lib/deploy-far-registry.sh`
 and put `REGISTRY_DOMAIN` + `REGISTRY_ADMIN_PASSWORD` in `demo.env`. Start from an
 **empty** project (`roksbnkctl -w <ws> registry delete --force`) so the replication has
 real work to show on camera.

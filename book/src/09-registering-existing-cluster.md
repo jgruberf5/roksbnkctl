@@ -4,7 +4,7 @@
 
 This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the `cluster-outputs.json` write, and a worked example.
 
-> **`roksbnkctl init` can register for you.** Since `v1.9.0`, answering **no** to *Create a new ROKS cluster?* in the [`init` interview](./07-quick-start.md#reusing-an-existing-cluster) lists the account's running OpenShift clusters and registers the one you pick — it performs the same `cluster-outputs.json` write described here, inline. Use `cluster register <name>` directly when you want to (re)register without re-running the full interview, or when scripting.
+> **`roksbnkctl init` can register for you.** Answering **no** to *Create a new ROKS cluster?* in the [`init` interview](./07-quick-start.md#reusing-an-existing-cluster) lists the account's running OpenShift clusters and registers the one you pick — it performs the same `cluster-outputs.json` write described here, inline. Use `cluster register <name>` directly when you want to (re)register without re-running the full interview, or when scripting.
 
 > **`cluster up` attaches when `cluster.create=false`.** You don't need a separate `cluster register` call: if the workspace's `cluster.create` is `false`, `roksbnkctl cluster up` *attaches* to the existing cluster named in `cluster.name` (the same discovery + `cluster-outputs.json` write) instead of running the terraform create. So one command — and one toggle in an automation/CI form — covers both "make a new cluster" and "use the existing one". Set it non-interactively with `ROKSBNKCTL_CLUSTER_CREATE` / `ROKSBNKCTL_CLUSTER_NAME` (see [Chapter 7a](./07a-unattended-setup.md)).
 
@@ -209,7 +209,7 @@ roksbnkctl -w canada down --auto
 Some scenarios where `cluster register` won't get you over the line:
 
 - **The cluster is in a different IBM Cloud account.** API keys are account-scoped; you'd need a key for the cluster's account. `cluster register` doesn't cross account boundaries.
-- **The cluster is private (no public master endpoint).** `roksbnkctl up` needs to apply Helm charts and Kubernetes manifests against the master. If the master is only reachable from inside a VPN, route the apply through `--on jumphost` (Sprint 1) or wait for the SSH execution backend in Sprint 4.
+- **The cluster is private (no public master endpoint).** `roksbnkctl up` needs to apply Helm charts and Kubernetes manifests against the master. If the master is only reachable from inside a VPN, route the apply through `--on jumphost` or wait for the SSH execution backend in Sprint 4.
 - **The cluster is a classic-infrastructure ROKS** (not vpc-gen2). Registration refuses; classic clusters aren't supported.
 - **The cluster's worker pool is too small.** BNK trials need at least 2 workers with adequate CPU/memory. The upstream HCL provisions appropriately-sized workers; an existing cluster might not.
 

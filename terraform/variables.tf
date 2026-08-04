@@ -214,24 +214,6 @@ variable "deploy_bnk" {
   default     = true
 }
 
-# Sprint 27: install-mode flag selecting the terraform-native BNK CR path
-# (helm_release + kubernetes_* + alekc/kubectl kubectl_manifest + wait_for) vs
-# the legacy null_resource/curl/time_sleep baseline. Defaults to "kubectl"; the
-# roksbnkctl --legacy-bnk flag / workspace toggle renders "legacy_curl" to keep
-# the validator's byte-identical benchmark path available. Threaded to
-# cert_manager / flo / cne_instance / license, where it gates count/for_each.
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native) or \"legacy_curl\" (null_resource baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
-
 # ============================================================
 # flo — F5 Lifecycle Operator
 # ============================================================
@@ -707,8 +689,23 @@ variable "flp_vsi_reach" {
   type        = string
   default     = "private"
 }
+variable "flp_vsi_floating_ip" {
+  description = "Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true."
+  type        = bool
+  default     = true
+}
+variable "flp_vsi_management_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open)."
+  type        = list(string)
+  default     = []
+}
+variable "flp_vsi_licensing_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges."
+  type        = list(string)
+  default     = []
+}
 variable "flp_vsi_allowed_cidrs" {
-  description = "Source CIDRs allowed to reach the FLP VSI's 8443 port (the consuming cluster's subnets). Empty → the cluster VPC address space."
+  description = "DEPRECATED — legacy single list; seeds both management + licensing when set. Prefer the two per-plane variables."
   type        = list(string)
   default     = []
 }

@@ -290,7 +290,7 @@ If `testing_create_tgw_jumphost = false` in tfvars, the upstream HCL skips creat
 
 ### Per-AZ cluster jumphosts (`jumphost-<zone>`)
 
-When `testing_create_cluster_jumphosts = true`, the deploy builds **one cluster jumphost per cluster-VPC availability zone** in addition to the single TGW jumphost — each on its own floating IP, all sharing the *same* key as the TGW jumphost. Since **v1.5.0**, the same post-`up` hook that seeds the singular `jumphost` also auto-registers one target per AZ:
+When `testing_create_cluster_jumphosts = true`, the deploy builds **one cluster jumphost per cluster-VPC availability zone** in addition to the single TGW jumphost — each on its own floating IP, all sharing the *same* key as the TGW jumphost. The same post-`up` hook that seeds the singular `jumphost` also auto-registers one target per AZ:
 
 1. After a successful `up`, `roksbnkctl` reads the `testing_cluster_jumphost_ips` terraform output — a map `{ zone => floating-IP }`.
 2. For each `zone => fip`, it upserts a target named `jumphost-<zone>`, reusing the same shared key the singular `jumphost` uses:
@@ -322,27 +322,9 @@ Verify with `roksbnkctl targets list` — you should see `jumphost` plus one `ju
 >
 > A host re-created on a recycled floating IP will also trip the host-key mismatch refusal — see [§"Host-key TOFU and `~/.roksbnkctl/known_hosts`"](#host-key-tofu-and-roksbnkctlknown_hosts) and clear the stale `known_hosts` line with `ssh-keygen -R <fip> -f ~/.roksbnkctl/known_hosts`. An automatic-prune (reconcile) mode that removes orphans on the next `up` is a deliberate post-v1.5.0 follow-up (it needs unambiguous "this target is auto-managed" ownership semantics so a hand-named `jumphost-mybox` is never deleted). See [PRD 09](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/09-AUTO-CLUSTER-JUMPHOSTS.md).
 
-> **Pre-v1.5.0 fallback.** On a release before v1.5.0 the per-AZ jumphosts are not auto-registered — register each by hand. Look up the floating IPs with the read-only `terraform` command (v1.5.0+; [Chapter 16 §"Per-AZ cluster jumphosts"](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts)):
->
-> ```bash
-> roksbnkctl terraform output testing_cluster_jumphost_ips
-> roksbnkctl terraform output testing_cluster_jumphost_ssh_commands
-> ```
->
-> …or, on an even older release without `roksbnkctl terraform`, the raw form `cd ~/.roksbnkctl/<ws>/state && TF_DATA_DIR=$PWD/terraform terraform output testing_cluster_jumphost_ips`. Then register one target per AZ — note `--key-source tf-output:jumphost_shared_key` is correct because one shared key covers *all* jumphosts (see [§"`key_source: tf-output:<output-name>`"](#key_source-tf-outputoutput-name)):
->
-> ```bash
-> roksbnkctl targets add jumphost-ca-tor-1 \
->   --host <ca-tor-1-fip> --user ubuntu \
->   --key-source tf-output:jumphost_shared_key
-> # …repeat per zone…
-> ```
->
-> Each new IP triggers a one-time host-key TOFU prompt on first connect (see [§"Host-key TOFU and `~/.roksbnkctl/known_hosts`"](#host-key-tofu-and-roksbnkctlknown_hosts)). Manually-added targets are not auto-managed: a destroy+recreate rotates the FIPs and you must re-`targets add` (contrast the v1.5.0 auto-registered targets, which `up` refreshes in place).
-
 ### What is *not* auto-discovered
 
-The auto-discovery flow registers the TGW `jumphost` (always) and, since v1.5.0, the per-AZ `jumphost-<zone>` targets when `testing_create_cluster_jumphosts = true`. It does **not** register:
+The auto-discovery flow registers the TGW `jumphost` (always) and the per-AZ `jumphost-<zone>` targets when `testing_create_cluster_jumphosts = true`. It does **not** register:
 
 - **Per-AZ jumphosts by *private* IP.** There is no top-level `testing_cluster_jumphost_private_ips` terraform output; the private-IP hop pattern in [Chapter 16 §"Per-AZ cluster jumphosts"](./16-on-flag-ssh-jumphosts.md#per-az-cluster-jumphosts) is a documented zero-setup technique, not an auto-registered target.
 - **Any non-jumphost host.** Bastions, ops boxes, and the like are always `targets add` by hand.
@@ -369,7 +351,7 @@ The `--on <target>` flag is the lightweight remote-exec path — one SSH session
 |---|---|
 | **File materialisation** | `RunOpts.Files` map gets written to `/tmp/roksbnkctl.<rand>/<basename>` on the remote, available as the working directory for the command. Cleanup via `trap 'rm -rf' EXIT` in a wrapper. |
 | **Env passing with fallback** | First tries `ssh -o SetEnv=KEY=VALUE` (requires remote sshd `AcceptEnv`). On failure, writes a 0700 wrapper script that exports the env and execs the command, with `trap 'rm -f $0' EXIT` to scrub. |
-| **Apt bootstrap** | If the remote target doesn't have a tool (`iperf3`, `ibmcloud`) installed, the backend can `sudo apt-get install` it on demand (Ubuntu only at v1.0). |
+| **Apt bootstrap** | If the remote target doesn't have a tool (`iperf3`, `ibmcloud`) installed, the backend can `sudo apt-get install` it on demand (Ubuntu only). |
 | **SCP-and-cleanup for kubeconfig** | The backend's recommended path for shipping a kubeconfig to the remote: SCP to a tempdir, run, `trap 'rm -rf' EXIT` to scrub. |
 | **Wrapper-script credential propagation** | Detailed in [PRD 04 § SSH](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md). Brief on-disk window with strict cleanup. |
 

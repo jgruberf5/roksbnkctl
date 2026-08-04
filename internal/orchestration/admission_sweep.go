@@ -119,6 +119,23 @@ func runAdmissionSweepLoop(ctx context.Context, dc dynamic.Interface, interval t
 // account, so a duplicate-named (or orphaned) cluster can otherwise misdirect every
 // delete to the wrong endpoint — which is exactly how the sweep landed zero deletes.
 func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) (dynamic.Interface, error) {
+	body, err := clusterKubeconfigBytes(ctx, cctx, tfws)
+	if err != nil {
+		return nil, err
+	}
+	dc, err := k8s.DynamicFromKubeconfigBytes(body)
+	if err != nil {
+		return nil, fmt.Errorf("building k8s client from kubeconfig: %w", err)
+	}
+	return dc, nil
+}
+
+// clusterKubeconfigBytes resolves the workspace's cluster identity and fetches
+// its admin kubeconfig from the IBM Cloud container-service API — the same
+// endpoint the terraform providers use. Shared by the admission-policy sweep
+// and the air-gap registry-CA trust, both of which need a live client against
+// the cluster during the BNK apply.
+func clusterKubeconfigBytes(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) ([]byte, error) {
 	if cctx == nil || cctx.Workspace == nil {
 		return nil, fmt.Errorf("no workspace context")
 	}
@@ -127,7 +144,7 @@ func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Wo
 		return nil, fmt.Errorf("could not resolve the cluster identity (no cluster-outputs.json cluster_id and no roks_cluster_id output)")
 	}
 	if !byID {
-		fmt.Fprintf(os.Stderr, "  ⚠ admission-policy sweep resolving cluster by NAME %q (no recorded cluster_id) — ambiguous if a duplicate-named cluster exists.\n", cluster)
+		fmt.Fprintf(os.Stderr, "  ⚠ resolving cluster by NAME %q (no recorded cluster_id) — ambiguous if a duplicate-named cluster exists.\n", cluster)
 	}
 	resolver := &cred.Resolver{
 		Workspace: cctx.WorkspaceName,
@@ -145,9 +162,5 @@ func admissionSweepClient(ctx context.Context, cctx *config.Context, tfws *tf.Wo
 	if err != nil {
 		return nil, fmt.Errorf("fetching admin kubeconfig for cluster %q: %w", cluster, err)
 	}
-	dc, err := k8s.DynamicFromKubeconfigBytes(body)
-	if err != nil {
-		return nil, fmt.Errorf("building k8s client from kubeconfig: %w", err)
-	}
-	return dc, nil
+	return body, nil
 }

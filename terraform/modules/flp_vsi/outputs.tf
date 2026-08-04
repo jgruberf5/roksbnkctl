@@ -21,3 +21,8 @@ output "flp_vsi_id" {
   description = "The VSI id (for diagnostics)."
   value       = var.deploy_flp_vsi ? ibm_is_instance.flp[0].id : ""
 }
+
+output "flp_floating_ip" {
+  description = "Operator floating IP for remote management (flp status + web UI from another machine). Empty when flp_vsi_floating_ip=false."
+  value       = local.floating_ip_addr
+}

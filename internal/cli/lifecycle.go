@@ -27,7 +27,6 @@ var (
 	flagTFSource     string
 	flagUpgradeTF    bool
 	flagNoKubeconfig bool
-	flagLegacyBnk    bool     // --legacy-bnk: render bnk_cr_mode = "legacy_curl" (Sprint 27)
 	flagVarFiles     []string // -var-file (repeatable; matches terraform's flag)
 	flagPlanOut      string   // plan --out <file>: save the plan for `apply --plan`
 	flagPlanFile     string   // apply --plan <file>: apply exactly that saved plan
@@ -156,7 +155,6 @@ func lifecycleInputs() *orchestration.LifecycleInputs {
 		Backend:      flagBackend,
 		Auto:         flagAuto,
 		NoKubeconfig: flagNoKubeconfig,
-		LegacyBNK:    flagLegacyBnk,
 		PlanOut:      flagPlanOut,
 		PlanFile:     flagPlanFile,
 		VarFiles:     flagVarFiles,

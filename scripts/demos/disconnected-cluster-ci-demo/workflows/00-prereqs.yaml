@@ -1,0 +1,56 @@
+# 00-prereqs.yaml — the shared substrate the two Workflows need, applied once.
+#
+#   - bnk-ci namespace
+#   - bnk-work PVC: the PERSISTENT workspace shared by wf-mirror + wf-install and read
+#     by `bnk down` for a clean teardown (k3s ships the local-path default storageclass)
+#   - bnk-runner ServiceAccount + the minimal RBAC Argo's emissary executor needs
+#     (create/patch its own workflowtaskresults)
+#
+# The bnk-config ConfigMap (bnk.yaml) and bnk-secrets Secret are applied separately by
+# the demo (the ConfigMap is rendered; the Secret is imperative — never in git).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bnk-ci
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bnk-work
+  namespace: bnk-ci
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 8Gi
+  # storageClassName omitted → k3s local-path default
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bnk-runner
+  namespace: bnk-ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bnk-runner-executor
+  namespace: bnk-ci
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bnk-runner-executor
+  namespace: bnk-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bnk-runner-executor
+subjects:
+  - kind: ServiceAccount
+    name: bnk-runner
+    namespace: bnk-ci
