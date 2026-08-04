@@ -1690,7 +1690,9 @@ auth, or --source-sa-b64).
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
-| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling) |
+| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else `registry.generic_ca_b64`) |
+| `--registry-ca-fingerprint` | `string` | — | Expected SHA-256 of the mirror CA (`sha256:ab:cd…` or bare hex), authenticating a captured CA out of band |
+| `--insecure-capture-ca` | `bool` | `false` | Adopt a self-signed mirror CA over an **unauthenticated** connection (trust-on-first-use). Prefer `--registry-ca` or `--registry-ca-fingerprint` |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
 | `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 

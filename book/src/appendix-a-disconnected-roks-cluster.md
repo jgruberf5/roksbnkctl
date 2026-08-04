@@ -199,7 +199,7 @@ registry:
 # on the VSI:
 $ roksbnkctl -w mirror init --config-file mirror.yaml
 $ roksbnkctl -w mirror registry bom          # the bill of materials to mirror
-$ roksbnkctl -w mirror registry replicate --registry-ca /opt/harbor/certs/harbor.crt   # FAR → Harbor (89 artifacts); records Harbor's CA
+$ roksbnkctl -w mirror registry replicate           # FAR → Harbor (89 artifacts); CA from registry.generic_ca_b64
 $ roksbnkctl -w mirror registry verify
 ```
 
@@ -445,7 +445,7 @@ $ roksbnkctl -w bnk tgw status
 Before pulling, CRI-O on each node must trust Harbor's self-signed cert or every pull fails `x509`.
 **The usual OpenShift mechanism does not work on ROKS** — `image.config.openshift.io/cluster` is
 HostedCluster-managed and a ValidatingAdmissionPolicy denies edits. `bnk up` handles it: it installs
-the CA — captured into the mirror record by `registry replicate --registry-ca` (Step 2) — into each
+the CA — recorded into the mirror record by `registry replicate` from `registry.generic_ca_b64` (Step 2) — into each
 node's `/etc/containers/certs.d/<HARBOR_PRIVATE_IP>/ca.crt` via a privileged DaemonSet (one pod per
 node, a **node-cached** image so it needs no egress, self-refreshing if the CA changes on a
 cluster/Harbor rebuild), then gates the install on the CA landing on every node. Nothing to apply by
@@ -636,14 +636,17 @@ run(){ docker run "${COMMON[@]}" -e ROKSBNKCTL_GENERIC_PASSWORD \
         -e ROKSBNKCTL_FLP_EXTERNAL_URL -e ROKSBNKCTL_FLP_ROOT_CA_B64 "$RUNNER" -w bnk "$@"; }
 
 run init --config-file /work/config.yaml --override-from-env
-run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; auto-captures Harbor's CA
+run registry replicate --target generic     # Step 2 — mirror FAR→Harbor; CA from registry.generic_ca_b64
 run registry verify
 run cluster register disco-demo             # Step 4 — adopt
 run bnk up --auto                           # Step 5 — node CA trust, Harbor pulls, FLP license, FAR/JWT from COS
 ```
 
-`registry replicate` captures Harbor's self-signed CA into the mirror record automatically; pass
-`--registry-ca <file>` only to supply it explicitly. `-v "$PWD/state:/work"` persists the workspace —
+`registry replicate` takes Harbor's self-signed CA from `registry.generic_ca_b64` (or
+`--registry-ca <file>`) and records it in the mirror record. It will **not** adopt a self-signed CA
+it merely discovered over the wire — that CA becomes trust on every node — so supply it from the
+file you generated, or pin it with `registry.generic_ca_sha256` / `--registry-ca-fingerprint`.
+`--insecure-capture-ca` accepts trust-on-first-use deliberately. `-v "$PWD/state:/work"` persists the workspace —
 config, terraform state, and the mirror record (with the CA) — across steps; on an ephemeral runner,
 back it with COS remote state instead so a later teardown run still sees it — see
 [Chapter 7b §"Ephemeral runners need remote state"](./07b-github-actions-ci.md#ephemeral-runners-need-remote-state).

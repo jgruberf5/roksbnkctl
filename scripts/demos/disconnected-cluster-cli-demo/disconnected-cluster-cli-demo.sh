@@ -316,6 +316,14 @@ say "and install terraform (roksbnkctl shells out to it for every apply)."
 }
 ok "operator ready on the Harbor VSI (roksbnkctl + terraform + helm)"
 
+# Harbor's CA, read from the FILE cloud-init generated — the authoritative copy. Taken
+# once here and handed to every workspace that needs it, so nothing later has to learn
+# trust from the network. The fingerprint travels with it as the pin.
+HARBOR_CA_B64="$(onvsi "sudo base64 -w0 /opt/harbor/certs/harbor.crt" | tr -d '\r')"
+HARBOR_CA_SHA256="$(onvsi "sudo openssl x509 -in /opt/harbor/certs/harbor.crt -noout -fingerprint -sha256" | tr -d '\r' | sed -E 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+[[ "$DRY_RUN" == "1" || -n "$HARBOR_CA_B64" ]] || die "could not read Harbor's CA from /opt/harbor/certs/harbor.crt"
+ok "Harbor CA taken from the source file — SHA-256 ${HARBOR_CA_SHA256}"
+
 # Build + push the flp-status web-UI image into Harbor's PUBLIC status project, so the
 # FLP VSI (Phase 3) can pull it by private IP. podman (certs.d trust, no daemon) — docker
 # would need the CA in system trust + a restart, which would bounce Harbor itself.
@@ -336,6 +344,9 @@ endphase P1
 pause; phase P2 "PHASE 2/5  —  Mirror F5's artifact registry -> Harbor (on the VSI, private IP)"   # LONG
 say "registry replicate is a host-side registry-to-registry copy — no cluster needed. Run it ON"
 say "the VSI so the mirror record lives beside the workspace bnk up will use."
+say "registry.generic_ca_b64 carries Harbor's CA from the file that generated it, and"
+say "generic_ca_sha256 pins it — so replicate never learns trust from the network. Without"
+say "either, it REFUSES to adopt a self-signed CA discovered over the wire."
 FAR_SA_B64="$(onvsi "roksbnkctl tfx far-extract --tarball /home/ubuntu/far-auth.tgz --out /home/ubuntu/far-sa.json >/dev/null 2>&1; cat /home/ubuntu/far-sa.json" | tr -d '\r')"
 onvsi "cat > /home/ubuntu/${MIRROR_WS}.yaml <<YAML
 ibmcloud: { region: ${SVC_REGION}, resource_group: ${RESOURCE_GROUP} }
@@ -352,12 +363,14 @@ registry:
   generic_repo_prefix: ${HARBOR_PROJECT}
   generic_username: admin
   generic_password_b64: ${HARBOR_PW_B64}
+  generic_ca_b64: ${HARBOR_CA_B64}
+  generic_ca_sha256: ${HARBOR_CA_SHA256}
   source_service_account_b64: ${FAR_SA_B64}
 YAML"
 onvsi_run "roksbnkctl -w ${MIRROR_WS} init --config-file /home/ubuntu/${MIRROR_WS}.yaml"
 onvsi_run "roksbnkctl -w ${MIRROR_WS} registry bom"
 begin_long
-onvsi_run "roksbnkctl -w ${MIRROR_WS} registry replicate --registry-ca /opt/harbor/certs/harbor.crt"
+onvsi_run "roksbnkctl -w ${MIRROR_WS} registry replicate"
 end_long
 onvsi_run "roksbnkctl -w ${MIRROR_WS} registry verify"
 ok "Harbor holds every BNK chart + image (private IP ${HARBOR_PRIVATE_IP})"
@@ -368,7 +381,6 @@ pause; phase P3 "PHASE 3/5  —  Standalone F5 License Proxy VSI (with operator 
 say "flp up (mode vsi) into the services VPC — no cluster. floating_ip: true gives it an operator"
 say "floating IP so 'roksbnkctl flp status' + the :80 web UI work from anywhere; the cluster still"
 say "reaches it PRIVATELY over the TGW. Its status image comes from Harbor's public project."
-HARBOR_CA_B64="$(onvsi "sudo base64 -w0 /opt/harbor/certs/harbor.crt" | tr -d '\r')"
 onvsi "cat > /home/ubuntu/${FLP_WS}.yaml <<YAML
 ibmcloud: { region: ${SVC_REGION}, resource_group: ${RESOURCE_GROUP} }
 prefix: ${FLP_WS}
@@ -436,6 +448,8 @@ registry:
   generic_repo_prefix: ${HARBOR_PROJECT}
   generic_username: admin
   generic_password_b64: ${HARBOR_PW_B64}
+  generic_ca_b64: ${HARBOR_CA_B64}
+  generic_ca_sha256: ${HARBOR_CA_SHA256}
 bnk:
   manifest_version: ${MANIFEST_VERSION}
   far_auth_local_file: /home/ubuntu/far-auth.tgz

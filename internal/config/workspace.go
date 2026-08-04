@@ -606,6 +606,24 @@ type RegistryCfg struct {
 	GenericUsername    string `yaml:"generic_username,omitempty"`
 	GenericPasswordB64 string `yaml:"generic_password_b64,omitempty"`
 
+	// GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the
+	// AUTHORITATIVE copy, recorded from the file that generated it rather than
+	// learned from the network. When set, `registry replicate` never dials the
+	// mirror to discover trust: it uses this, trusts it for the push, and records
+	// it for the node CA-trust installer. A certificate is public data, so unlike
+	// the `_b64` secret fields this is encoded only for single-line YAML safety.
+	//
+	// This is the preferred way to configure a self-signed mirror: you generate
+	// the CA, so you already hold it and never need to learn it over the very
+	// connection it is meant to authenticate.
+	GenericCAB64 string `yaml:"generic_ca_b64,omitempty"`
+	// GenericCASHA256 pins the mirror's CA by SHA-256 (hex; a "sha256:" prefix
+	// and colons are accepted). It authenticates a CA *captured* from the host
+	// when GenericCAB64 is not set — the capture is refused outright unless
+	// either this pin is configured or --insecure-capture-ca is passed, because
+	// a captured CA is installed into every node's trust store.
+	GenericCASHA256 string `yaml:"generic_ca_sha256,omitempty"`
+
 	// Namespace is the mirror project the artifacts land in. "" → "bnk-mirror".
 	Namespace string `yaml:"namespace,omitempty"`
 
