@@ -21,6 +21,12 @@ variable "create_roks_cluster" {
   default     = true
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach public gateways for worker Internet egress. true (default) = current behavior; false = private/disconnected cluster (no egress)."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_id_or_name" {
   description = "ID or name of an existing ROKS cluster — used when create_roks_cluster = false"
   type        = string
@@ -106,4 +112,16 @@ variable "existing_cluster_vpc_id" {
 variable "kubeconfig_dir" {
   description = "Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner."
   type        = string
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the cluster phase invokes `roksbnkctl tfx <verb>` in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0)."
+  type        = bool
+  default     = false
 }

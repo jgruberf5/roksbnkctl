@@ -8,7 +8,10 @@ package mirror
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +66,14 @@ type Engine struct {
 	HelmBin     string // helm binary for the classic-helm path; "" means "helm"
 	ScratchDir  string // working dir for helm pull/push; "" means a temp dir
 	Insecure    bool   // allow plain-HTTP registries (tests; never for production targets)
+	// RegistryCA is the PEM CA (chain) the TARGET mirror serves TLS with, when it
+	// is a private/self-signed registry (a co-located Harbor by private IP). The
+	// operator running replicate — e.g. the roksbnkctl-tools-runner CONTAINER in a
+	// CI/GitOps flow — has no OS trust for it, so crane's default transport fails
+	// the push with x509 "unknown authority". When set, it is added to the system
+	// root pool for the copy transport so the push (and any TLS pull) trusts it.
+	// Empty for public targets (their chain is covered by the default roots).
+	RegistryCA string
 }
 
 func (e *Engine) concurrency() int {
@@ -110,7 +121,34 @@ func (e *Engine) craneOpts(ctx context.Context) []crane.Option {
 	if e.Insecure {
 		opts = append(opts, crane.Insecure)
 	}
+	if tr := e.caTransport(); tr != nil {
+		opts = append(opts, crane.WithTransport(tr))
+	}
 	return opts
+}
+
+// caTransport returns an http transport that trusts RegistryCA on top of the
+// system roots, or nil when no private CA is configured (use crane's default).
+// The same transport serves both the source pull (public CAs, from the system
+// pool) and the target push (the private mirror CA), so a container operator
+// with no OS trust for the mirror can still replicate into it.
+func (e *Engine) caTransport() http.RoundTripper {
+	if strings.TrimSpace(e.RegistryCA) == "" {
+		return nil
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM([]byte(e.RegistryCA)) {
+		return nil // unparseable CA — fall back to the default transport
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	tr.TLSClientConfig.RootCAs = pool
+	return tr
 }
 
 // PreflightAuth checks the target credential ONCE, before any copying starts.
@@ -281,6 +319,18 @@ func (e *Engine) copyClassicHelmChart(ctx context.Context, a bnkbom.Artifact) Re
 		defer os.RemoveAll(d)
 		scratch = d
 	}
+	// helm shells out and uses its OWN trust store (not crane's caTransport), so a
+	// private/self-signed target mirror must be handed the CA explicitly or
+	// `helm registry login` / `helm push` fail x509 "unknown authority" — the one
+	// artifact (the classic-Helm cert-manager chart) that goes through helm, not crane.
+	var caArgs []string
+	if strings.TrimSpace(e.RegistryCA) != "" {
+		caPath := filepath.Join(scratch, "mirror-ca.pem")
+		if err := os.WriteFile(caPath, []byte(e.RegistryCA), 0o600); err != nil {
+			return Result{Artifact: a, Err: fmt.Errorf("writing mirror CA for helm: %w", err)}
+		}
+		caArgs = []string{"--ca-file", caPath}
+	}
 	chart := pathBase(a.Name) // "cert-manager" from "cert-manager" (or a path)
 	// helm pull <chart> --repo https://<host> --version <tag> -d <scratch>
 	pull := exec.CommandContext(ctx, e.helmBin(), "pull", chart,
@@ -295,13 +345,14 @@ func (e *Engine) copyClassicHelmChart(ctx context.Context, a bnkbom.Artifact) Re
 	// needs its own authenticated session to the target route — log it in first.
 	if auth := e.Target.PushAuth(); auth != nil {
 		if ac, aerr := auth.Authorization(); aerr == nil && ac != nil && (ac.Username != "" || ac.Password != "") {
-			login := exec.CommandContext(ctx, e.helmBin(), "registry", "login", e.Target.PushHost(), "-u", ac.Username, "-p", ac.Password)
+			loginArgs := append([]string{"registry", "login", e.Target.PushHost(), "-u", ac.Username, "-p", ac.Password}, caArgs...)
+			login := exec.CommandContext(ctx, e.helmBin(), loginArgs...)
 			if out, lerr := login.CombinedOutput(); lerr != nil {
 				return Result{Artifact: a, Err: fmt.Errorf("helm registry login %s: %w: %s", e.Target.PushHost(), lerr, strings.TrimSpace(string(out)))}
 			}
 		}
 	}
-	push := exec.CommandContext(ctx, e.helmBin(), "push", tgz, dstRepo)
+	push := exec.CommandContext(ctx, e.helmBin(), append([]string{"push", tgz, dstRepo}, caArgs...)...)
 	if out, err := push.CombinedOutput(); err != nil {
 		return Result{Artifact: a, Err: fmt.Errorf("helm push %s -> %s: %w: %s", tgz, dstRepo, err, strings.TrimSpace(string(out)))}
 	}

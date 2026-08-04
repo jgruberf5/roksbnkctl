@@ -62,9 +62,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Schematics lifecycle test artifacts
-workspace.json
-test-reports/
 
 # Python
 __pycache__/

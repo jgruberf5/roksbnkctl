@@ -4,6 +4,298 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.33.1 — 2026-07-30
+
+Documentation and demo assets only — **no change to the `roksbnkctl` binary from v1.33.0**.
+
+### Changed
+
+- **The disconnected-cluster CI demo is now Argo Workflows — git-free, with the runner served from Harbor.** It drives the `roksbnkctl-tools-runner` container through two `argo submit` Workflows (mirror + install) on a k3s VSI — no ArgoCD Application, no git repo — sharing a **persistent PVC** so teardown via `bnk down` is clean (an ephemeral `emptyDir` orphans the IAM trusted profile). The runner image is pulled from the **private Harbor mirror** over the TGW (k3s trusts Harbor's CA via `/etc/rancher/k3s/registries.yaml`), so nothing is pulled from a public registry at run time; a silent cwc-guard sidecar clears F5's cwc Multi-Attach (RWO) deadlock on reused clusters by forcing `strategy: Recreate` and cycling replicas.
+- **Book Appendix A rewritten to match.** Both topology diagrams are now Mermaid; the CI section highlights all three Workflow YAMLs (prereqs + mirror + install) plus the Argo Workflows UI screenshots, adds a box on uploading the FAR key + subscription JWT into COS with `roksbnkctl cos object`, and shows the runner served from Harbor. The **PDF build keeps every code/YAML block unbroken across page breaks** (`fvextra` + a smaller monospace so wide file examples don't wrap).
+- **The disconnected CLI demo README gained a cut-and-paste "Building the services infrastructure (Harbor + FLP)" section** so an end user can clone, edit `.env`, and stand up Harbor + the FLP (which the CI demo reuses); the CI demo README links to it.
+
+## v1.33.0 — 2026-07-29
+
+### Added
+
+- **Air-gapped node trust for a private registry is now roksbnkctl-native — no hand-rolled DaemonSet.** When `bnk up` pulls images from a self-signed / private registry (a co-located Harbor by private IP), the cluster's worker nodes must trust that registry's CA or CRI-O image pulls fail with `x509: unknown authority`. roksbnkctl now emits the whole trust path itself — a dedicated `roksbnkctl-registry-trust` namespace, a privileged ServiceAccount + SCC binding, the CA as a ConfigMap, and a node-installer DaemonSet that writes `ca.crt` into every node's `/etc/containers/certs.d/<host>/` and `/etc/docker/certs.d/<host>/` — then **gates `bnk up` on that installer reaching 1/1 on every node** before any image pull. The CA is captured automatically from the mirror over TLS during `registry replicate` (or supplied with **`registry replicate --registry-ca <file>`**) and recorded on the mirror record; the DaemonSet's pod template carries a CA-hash annotation so a changed CA **auto-rolls** the installer. The installer image is node-cached (`imagePullPolicy: IfNotPresent`), so the trust step itself needs no egress. This replaces the DaemonSet the disconnected walkthrough used to ship by hand.
+- **Book Appendix A — "Disconnected ROKS cluster".** An end-to-end walkthrough for deploying BNK air-gapped onto an **existing** ROKS cluster over an **existing** Transit Gateway: mirror FAR into a private Harbor, stand up a standalone F5 License Proxy, and install BNK with images from the mirror and licensing via the proxy — with the CLI commands matched 1:1 to the reproducible `scripts/demos/` walkthrough.
+
+### Fixed
+
+- **`registry replicate` captures the mirror's CA from the served chain, not a verified dial.** The capture decided "is this a private CA the nodes must trust?" from a verified TLS handshake — which succeeds on the operator host whenever the mirror's CA is already in the local trust store (e.g. after `update-ca-certificates`), returning "nothing to install" even though the air-gapped cluster nodes do **not** trust it. It now keys on whether the served chain's top certificate is **self-signed** (the signature of a private CA / co-located Harbor), matching what the nodes actually see.
+- **The whole operator side now trusts a private mirror's CA — not only the cluster nodes — so the disconnected install runs end-to-end from a container/CI operator.** The captured (or `--registry-ca`) CA taught the cluster *nodes* to trust the mirror, but every roksbnkctl operation that itself contacts the mirror still relied on the host OS trust store. That was invisible when the operator ran on the Harbor VSI (its CA was in system trust), but the `roksbnkctl-tools-runner` **container** has none, so each step failed `x509: certificate signed by unknown authority`. Fixed across the operator's paths, keyed on the same captured/recorded CA:
+  - **`registry replicate`** resolves the CA **before** the copy and trusts it for the push — a custom `RootCAs` pool (system roots + mirror CA) on the crane transport for image/chart copies, and `--ca-file` on the one classic-Helm chart's `helm registry login` / `helm push`.
+  - **`registry verify`** trusts the CA for its crane digest HEAD checks the same way.
+  - **`bnk up`** exports an operator CA bundle (system roots + the recorded mirror CA) via `SSL_CERT_FILE` before running terraform, so the **terraform helm provider** — which pulls each chart from the mirror as a plugin subprocess that inherits the env — trusts it too.
+
+  Public targets (whose chain is covered by the default roots) are unaffected. This is the operator-side complement to the node CA-trust installer: nodes get the CA via the DaemonSet, the operator gets it here.
+
+### Removed
+
+- **The legacy `bnk_cr_mode = "legacy_curl"` BNK install path and the `--legacy-bnk` flag are gone.** The terraform-native path (`helm_release` `wait = true` + alekc/kubectl `kubectl_manifest` with real `wait_for` readiness gates) has been the default and is now the only path. Removed: the `--legacy-bnk` flag on `bnk up` / `bnk down`, the `bnk.cr_mode` workspace-config key, the `bnk_cr_mode` terraform variable at every module level, and every `null_resource` / `curl` / `time_sleep` block that implemented the curl Server-Side-Apply baseline across the `cert_manager`, `cne_instance`, `license` and `flo` modules. No action is required — configs that never set `cr_mode` / `bnk_cr_mode` render byte-identically.
+
+## v1.32.0 — 2026-07-28
+
+### Added
+
+- **`bnk.flp.vsi.floating_ip` — operator floating IP for the standalone FLP appliance (default on).** The FLP VSI attached no floating IP, so remote `roksbnkctl flp status` and the `:80` web UI were only reachable from inside the VPC. A new `bnk.flp.vsi.floating_ip` (default `true`) attaches an operator floating IP purely as a **management path** — it is added to the leaf-cert SAN so `:8443` and the web UI are valid over it, and recorded in `flp-outputs.json` so **`flp status` prefers it** (reachable from a machine outside the VPC). It is **not** the CWC endpoint — the consuming cluster still reaches the proxy privately over the VPC / Transit Gateway. `roksbnkctl init` prompts for it.
+- **Per-plane FLP security-group CIDRs — `bnk.flp.vsi.management_allowed_cidrs` + `licensing_allowed_cidrs`.** With the floating IP now on by default, a single open CIDR list would have published the licensing proxy to the Internet. The FLP VSI's ingress is now split by plane, each with a safe default: **`management_allowed_cidrs`** gates the `:80` flp-status web UI (read-only status — defaults to **`0.0.0.0/0`**, open); **`licensing_allowed_cidrs`** gates the `:8443` proxy and `:22` SSH (trusted access — defaults to the **RFC-1918** private ranges, since the cluster reaches the proxy privately over the VPC / Transit Gateway). The legacy `bnk.flp.vsi.allowed_cidrs` is deprecated but still honored — when set it seeds both planes.
+- **flp-status turnkey deployment wiring (completes the v1.31.0 service).** `bnk.flp.vsi.status_image` (+ `status_registry_host` / `status_registry_ca_b64` for a self-signed mirror) runs the flp-status web UI as a container in the FLP podman pod on the VSI, published on `:80`; cloud-init trusts the mirror's CA so the image pulls from an air-gapped Harbor by private IP. The image builds from `cmd/flp-status/Dockerfile` (a **static** `CGO_ENABLED=0` binary — a dynamically-linked build crashes on the musl base image) and mirrors into the disconnected supply chain; an in-cluster `Deployment` + NodePort manifest ships under `deploy/flp-status/`. Validated end-to-end on a live air-gapped VSI: pulled from the private-IP mirror, all four dependent services + listener + TEEM reported, CNEInstance fields (including the root CA) surfaced, `roksbnkctl flp status` rendered it with the web-UI link.
+
+### Fixed
+
+- **`bnk up` converges the F5SPKVlan CRs in a single pass (no more "run twice").** The declarative `external-vlan` / `internal-vlan` (`F5SPKVlan`) CRs are admitted by the `f5validate` webhook, whose TLS server (in `f5-cne-controller`) comes up a few seconds **after** `CNEControllerAvailable=True` — a real apply in that gap failed `http: server gave HTTP response to HTTPS client`, which is why the VLANs (and thus `bnk up`) historically needed a second pass. A `validation_webhook_ready` gate now probes the webhook with a **server-side dry-run apply** (routes through admission, `sideEffects: None`, persists nothing) and retries until it is accepted, so the VLAN applies land first time. The probe targets the correct REST plural **`f5-spk-vlans`** (CRD `f5-spk-vlans.k8s.f5net.com`) — the resource path the CNE reconcile's crd-installer establishes — and tolerates the CRD not existing yet (early 404s) as well as the webhook-TLS race. Mirrors the License CR's existing admission-retry so both consumers of the webhook are consistent.
+
+## v1.31.0 — 2026-07-28
+
+### Added
+
+- **F5 License Proxy status service + `roksbnkctl flp status`.** A new `flp-status` web service reports the live state of an FLP appliance: a status indicator for **every dependent service** (postgresql, vault, vault-init, f5-license-proxy), the `:8443` listener, and the F5/TEEM connection — plus the CNEInstance CR fields (endpoint + root CA, ready to paste into `bnk.flp.external`) and a **live `f5-license-proxy` log stream** (SSE). It serves a **mobile-first, self-contained page on plain HTTP with NO authentication** — the FLP is a private endpoint and the page is read-only. The **same binary runs for either deployment type** (a container in the podman pod on a standalone VSI, or a Deployment in a ROKS cluster), auto-selecting its data source (the podman socket vs. the Kubernetes API) or honoring `FLP_BACKEND`. **`roksbnkctl flp status`** renders the same information in the terminal — including the browsable web-UI link — deriving the service URL from the workspace's `flp-outputs.json` (or `--url`), with `-o json` for scripting.
+
+  This release ships the service binary (`flp-status`) + the CLI, both validated live against a running proxy. The turnkey deployment wiring — building + mirroring the `flp-status` image into the air-gap supply chain, running it in the FLP podman pod (`--publish 80`) on the VSI, and as an in-cluster NodePort Deployment (reusing the `flp_node_port_access` pattern, with a ServiceAccount/RBAC for pods + logs) — is the next increment.
+
+## v1.30.0 — 2026-07-28
+
+### Added
+
+- **`bnk.flp.vsi.ssh_key` — operator SSH access to the standalone FLP appliance.** The FLP VSI attached no SSH key, so the licensing appliance could not be inspected or recovered into (a real operational hole). A new `bnk.flp.vsi.ssh_key` names an existing IBM Cloud VPC SSH key to attach, and a scoped port-22 security-group rule (limited to `allowed_cidrs`) is opened **only** when a key is set.
+- **`roksbnkctl init` — a full F5 License Proxy interview.** Interactive init now asks whether to license via an FLP and, if so, whether to deploy it **in-cluster** (helm) or as a **standalone VSI appliance**. For the VSI it collects the region, lets you **pick an existing VPC or create a new one** (a new `CreateVPC` client call), the zone, and an **SSH key** (generate + upload, or reuse an existing one). For in-cluster it asks whether to use this workspace's cluster or **pick + adopt a running ROKS cluster** to license.
+
+### Fixed
+
+- **A genuinely air-gapped (`public_gateway: false`) deployment now works end-to-end** — validated by building a real disconnected cluster (us-south) whose entire BNK supply chain is served privately from a services VPC (us-east) over a Transit Gateway, with roksbnkctl driven from the Harbor VSI itself. Several gaps were closed:
+  - **Standalone FLP VSI + cluster-less modules.** `flp up` refused a cluster-less VSI (a CLI precondition), and the standalone FLP phase ran the full BNK root where `cert_manager`/`flo`/`cne_instance`/`license`/`testing` resolved cluster data sources against a nonexistent cluster. A new `cluster_absent` gate skips every cluster lookup + kube provider + the adopt data source when there is no cluster (default `false`; every existing path is unchanged, the `[0]`-indexed references resolve identically when a cluster is present).
+  - **FLP VSI local supply chain.** The FLP VSI forced its FAR auth + subscription JWT from COS; it now honors local files (`use_cos_bucket=false`), matching the cluster path.
+  - **flo chart versions on the mirror path.** `flo` discarded the chart versions it resolved from the manifest unless `use_cos_bucket` was true, emitting an empty `--version` (and a mangled `pull-chart`) on the disconnected mirror path. Versions now resolve whenever the mirror is used.
+  - **`zone_worker_map` duplicate key.** With `workers_per_zone > 1` (all workers in a zone share a subnet) the zone→worker-IP map collided on the subnet key and failed the apply. Grouped by subnet with one representative IP per zone.
+  - **`registry_cos: { create: true }` is required** for a ROKS-on-VPC cluster — its internal image registry needs a backing COS instance (provisioning error `E7278`) even in a disconnected deployment. Documented.
+- **The standalone FLP VSI survives reboots.** The appliance relied on `podman-restart.service`, which Ubuntu's podman package does **not** ship, so a host reboot left the pod's infra container (and its `:8443` publish) dead. `flp-pod-up.sh` now generates + enables systemd pod units (`podman generate systemd --new`) so systemd rebuilds the whole pod on boot with its data volumes (Vault/postgres) intact, and a conservative `flp-health.timer` — which acts only **after** the proxy has served at least once, and only issues a single gentle `systemctl restart` (never a destructive re-stage) — self-heals residual failures without ever looping or interrupting the ~3–5 min initial bring-up.
+
+### Documentation
+
+- **Appendix A rewritten as a validated air-gap runbook.** Co-located operator on the Harbor VSI (Harbor addressed by its **private IP everywhere** — no split-horizon DNS, no jumphost); a reachability diagram showing **only the Harbor + FLP VSIs reach the Internet** (FAR pulls + F5 TEEM telemetry); the ROKS-specific **CA-trust DaemonSet** (OpenShift `image.config` is HostedCluster-managed and blocked, so drop the CA into each node's `certs.d` via a privileged DaemonSet using a **node-cached** installer image); the private **CSE-range routing** (`161.26.0.0/16` + `166.8.0.0/14` — a no-egress ROKS cluster reaches private ICR/IAM/COS/master without operator-built VPEs); and the `bnk up` convergence re-run.
+
+## v1.29.0 — 2026-07-27
+
+### Added
+
+- **`cluster.public_gateway` — build a private, disconnected cluster with no worker egress.** ROKS clusters were always created with a public gateway on every subnet (workers had Internet egress). A new `cluster.public_gateway` config toggle (rendered as the `cluster_public_gateway` terraform variable) defaults to `true` (unchanged behavior); set it to `false` and no `ibm_is_public_gateway` is created and no subnet attaches one — a genuinely private cluster. `roksbnkctl init` prompts for it ("Attach public gateways for worker Internet egress?") and warns when you choose private. **Expert topology:** a no-egress cluster needs private connectivity you provide (VPEs / private service endpoints for IBM Cloud services, plus a privately-reachable mirror registry); the toggle removes the egress path but does not build those paths, and the cluster master keeps its public API endpoint. See the new Appendix A.
+
+- **Standalone `flp up` (VSI mode) — an F5 License Proxy appliance with no cluster.** `flp up` in VSI mode previously required a `cluster-outputs.json` and deployed the proxy into the cluster's own VPC. A new `bnk.flp.vsi.vpc` config field names an existing VPC to deploy the FLP VSI into **without any cluster** — a licensing appliance you can place in a services VPC that has controlled egress to F5, which a disconnected cluster in another VPC then reaches over a Transit Gateway (via `bnk.flp.external`). The cluster-adopt terraform lookup is now gated on a non-empty cluster name (with `try()`-guarded outputs) so a cluster-less apply doesn't fail resolving a cluster named `""`; normal adopt is unchanged. This is the piece that makes a clean "services-VPC" disconnected topology native — see Appendix A and Chapter 10c.
+
+### Fixed
+
+- **`registry replicate` is documented truthfully — it needs no cluster.** The help text said the mirror verbs "need a live cluster." They don't: `replicate` is a purely host-side, registry-to-registry copy (go-containerregistry) that pulls from the FAR source and pushes to the target from wherever roksbnkctl runs. The help now states the real requirements (a configured `registry:` block, the FAR source credential, and host reachability to both endpoints) and that the mirror can be pre-seeded as a standalone supply-chain step before any cluster exists.
+
+### Documentation
+
+- **New Appendix A — "A disconnected ROKS cluster"**: a manual, end-to-end runbook for the services-VPC topology (Harbor mirror + standalone FLP appliance in a VPC with egress; a `public_gateway: false` cluster in another VPC with none; joined by a Transit Gateway), mirroring the `disconnected_deployment_demo.sh` script.
+- Chapter 10a documents standalone `registry replicate` and adds a "truly disconnected cluster" section; Chapter 10c adds "Running the FLP as a VSI" + the standalone-appliance flow; the config/tfvars references (Ch. 12/13/28) cover `cluster.public_gateway`, `cluster_public_gateway`, and `bnk.flp.vsi.vpc`.
+
+## v1.28.0 — 2026-07-27
+
+### Added
+
+- **Customize BNK data-plane networking from `config.yaml` and the `init` interview.** The per-availability-zone subnet CIDRs and TMM self-IPs — `ext_vlan_cidr`, `int_vlan_cidr`, `int_snat_cidr`, `int_vip_cidr`, `external_selfip`, `internal_selfip` — plus the two network-wide TMM knobs (`vlan_prefixlen`, `tmm_k8s_routes`) are now first-class `bnk.network` config, and `roksbnkctl init` prompts for all of them (opt in at *"Customize BNK networking?"*, seeded with the install-guide defaults so you edit only what your fabric differs on; re-init pre-fills from the saved config). Supplying zones replaces the install-guide defaults entirely; they render `cneinstance_network_zones` (driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). `vlan_prefixlen` (F5SPKVlan `spec.prefixlen_v4` — the self-IP subnet mask) and `tmm_k8s_routes` (the pod CIDR TMM routes to, `TMM_K8S_ROUTES`) were previously reachable only by forking the embedded Terraform; they are now plumbed root → `cne_instance` → `cneinstance` and settable via config or a `--var-file` (`cneinstance_vlan_prefixlen` / `cneinstance_tmm_k8s_routes`). An unset `bnk.network` is byte-identical to before — the module's defaults stand.
+
+- **`plan --out <file>` / `apply --plan <file>` — review a plan, then apply exactly it.** `plan` and `apply` were already separate commands, but `apply` re-planned and applied fresh, so the applied change wasn't guaranteed to equal the reviewed one. `roksbnkctl plan --out <file>` now saves a binary Terraform plan file (plus a human-readable `<file>.txt` — so the full diff lands in a file instead of scrolling off the terminal), and `roksbnkctl apply --plan <file>` applies that saved plan **verbatim** — no re-plan, no var-files (the plan captured them). If state or config drifted since the plan was saved, Terraform refuses the stale plan rather than applying something un-reviewed — the change-control guarantee. The gateway-api admission-policy sweep still runs on the plan-apply path. Requires the local backend (a docker/remote backend errors clearly).
+
+### Fixed
+
+- **`staticcheck` is clean again (CI's lint job goes green).** A pre-existing ST1005 in `cluster_vpc_guard.go` (a multi-line actionable operator message ending in a period) is now explicitly suppressed with a documented `//lint:ignore`, so the CI staticcheck job — red for several releases — passes.
+
+### Documentation
+
+- Book updated for the above: `bnk.network` in the workspace-config and configuration-reference chapters, the new networking Terraform variables in Chapter 13, a "Reviewing a plan before applying" section in Chapter 10 (cross-linked from the three-phase-lifecycle chapter), and an installation-prerequisites rewrite noting the full deploy path now runs on **native Windows without WSL** (validated end-to-end — see v1.27.5–v1.27.7).
+
+## v1.27.7 — 2026-07-27
+
+### Fixed
+
+- **Console output no longer mojibakes on Windows.** roksbnkctl's UTF-8 glyphs (`✓ ⚠ ✗ → ─` in `doctor`, phase progress, separators) rendered as cp1252 garbage (`Γ£ô ΓÜá ΓÇö`) on the Windows console, whose default output code page is the legacy OEM/ANSI page rather than UTF-8. A Windows-only `init` now sets the console output code page to UTF-8 (`SetConsoleOutputCP(65001)`) at startup, so the whole surface displays correctly without changing a single output string. Best-effort (a no-op when stdout is redirected/piped, failures ignored — cosmetics only), stdlib `syscall` (no new dependency), and a strict no-op on Linux/macOS via build tag. A UTF-8 console is a superset of ASCII, so plain output and child processes (terraform/helm) are unaffected.
+
+## v1.27.6 — 2026-07-27
+
+### Fixed
+
+- **The gateway-api admission-policy sweep now targets the deploying cluster by ID, and fails loudly instead of silently sweeping nothing.** The tfx migration (v1.27.0) replaced the FLO crd-installer's Linux-only `nohup bash` delete-loop — which targeted the cluster *directly* via `var.kube_host`/`var.kube_token` — with an in-process Go goroutine that **re-resolved** the cluster from the *BNK* workspace's terraform outputs, falling back to the cluster **name**. Two problems compounded: (a) on a first apply the BNK outputs don't exist yet at sweep-start, forcing the name fallback; and (b) a ROKS cluster name is **not unique** in an account, so with a duplicate-named (or orphaned) cluster present the name resolved to the wrong — even a dead — endpoint. Every delete then silently no-op'd against that cluster (errors were discarded), so the real cluster's `openshift-ingress-operator-gatewayapi-crd-admission` policy was never removed; FLO's `backendtlspolicies` CRD create stayed blocked, and the *only* visible symptom — 15 minutes later — was the CNEInstance never reporting `CNEControllerAvailable`. The sweep now (1) resolves the cluster by **ID** from `cluster-outputs.json` (written by the cluster phase, so it exists before the BNK phase and is immune to a duplicate name), then `roks_cluster_id`, only falling back to a name as a last resort; (2) **warns** when it must resolve by name; (3) logs a delete failure once per resource instead of discarding it; and (4) reports how many deletes actually landed on stop — **zero** now prints a loud red-flag line instead of looking like success. Platform-independent (helps Linux too), but it's what unblocks the CNEInstance on a native-Windows deploy where a stale same-named cluster exists.
+
+## v1.27.5 — 2026-07-27
+
+### Fixed
+
+- **The FLO/CIS/FLP `helm_release` charts install from a locally-staged archive — the helm provider does no OCI login at all (Windows fix, definitive).** v1.27.4's premise was wrong: the terraform helm provider (`hashicorp/helm` 2.x) does **not** read `HELM_REGISTRY_CONFIG` per-resource for an `oci://` `helm_release` — it loads registry config once at provider-init (before any `local_file` writes), and the resource's only auth path is `repository_username`/`repository_password`, which triggers the login-and-**store** that fails on Windows (`The stub received bad data`). Dropping those creds made it fetch an anonymous token → `403 Forbidden`. There is no file the provider re-reads to hit. So the provider is now taken out of the OCI-pull business entirely: a new `tfx helm-value pull-chart` verb stages the chart `.tgz` on disk (authenticating inline via `helm pull --registry-config`, the mechanism that already works on Windows for the manifest/version pulls), and `helm_release.flo` / `.cis` / `.flp` set `chart` to that **local archive path** — no `repository`, no `version`, no `repository_username`/`password`. A local chart path does zero registry auth, so every Windows credential-store and anonymous-token failure disappears at once. Identical on Linux/macOS (same staged-archive install), so the platform-specific `local_file`/`repository_*` branching from v1.27.4 is gone.
+
+## v1.27.4 — 2026-07-25
+
+### Fixed
+
+- **The FLO/FLP `helm_release` OCI pull authenticates inline instead of via the provider's login-and-store (Windows fix, part 3).** v1.27.3's env redirect (`HELM_REGISTRY_CONFIG`/`DOCKER_CONFIG`) did not stop the terraform helm provider's OCI **login** from storing the credential through a docker credential helper — helm's registry client falls back to the docker config for helpers, and the store still failed on the multi-KB FAR password with `The stub received bad data`. On Windows, roksbnkctl now writes the pull credential **inline** into the registry config the provider reads (via a `local_file` resource keyed on the new `helm_registry_config` path roksbnkctl exports), and the `helm_release.flo` / `.cis` / `.flp` resources drop `repository_username`/`repository_password` — so the provider performs **no** OCI login-and-store at all; its chart pull simply reads the inline auth. Confined to Windows (`runtime.GOOS`); Linux/macOS keep the proven `repository_username`/`password` login path unchanged.
+
+## v1.27.3 — 2026-07-24
+
+### Fixed
+
+- **The helm provider's OCI login stores credentials inline, not via a native helper (Windows fix, part 2).** With the tfx helm-value pull fixed in v1.27.2, the FLO/FLP deploy reached the in-process terraform **helm provider**'s `helm_release`, which does its own OCI registry login-and-store. On Windows a `credsStore` in the docker config (Docker Desktop sets `"desktop"` in `~/.docker/config.json`) makes that store shell out to a native credential helper — which fails on the multi-KB FAR `_json_key_base64` password with `error storing credentials … The stub received bad data` (the Windows Credential Manager blob cap), erroring `helm_release.flo`. `prepareToolEnv` now writes the isolated `HELM_REGISTRY_CONFIG` and a redirected `DOCKER_CONFIG` as fresh `{"auths":{}}` files with **no** `credsStore`/`credHelpers`, so the provider's login stores the credential as inline base64 in the file (no helper). Overwritten each run (the login re-populates it) and a no-op on Linux, where the store was already inline. tfx helm-value is unaffected — it passes its own `--registry-config`.
+
+## v1.27.2 — 2026-07-24
+
+### Fixed
+
+- **`tfx helm-value` authenticates the OCI chart pull via a config file, not `helm registry login` (Windows Credential Manager fix).** The helm-value verbs (`pull-file`, `chart-version` pull mode, `prod-jwks`) ran `helm registry login <host> --password <far-sa>` before pulling. On Windows `helm registry login` stores the credential in the Windows Credential Manager, whose credential blob is capped at ~2.5 KB — the FAR `_json_key_base64` service-account password is a multi-KB base64 blob, so the store failed with `Error: The stub received bad data` and the FLO/FLP version-resolution provisioners errored at apply time. tfx now writes a temporary docker-style registry-config file with the auth and passes `helm pull --registry-config <file>` instead — no credential store, no size cap, the password never touches the command line (so helm's insecure-`--password` warning is gone too), and the behaviour is identical on Linux. The temp file lives in the same scratch dir the pull cleans up.
+
+## v1.27.1 — 2026-07-24
+
+### Fixed
+
+- **`tfx` deploy phases run on native Windows (`cmd.exe` quoting fix).** The v1.27.0 tfx `local-exec` commands wrapped the binary path in escaped quotes (`"\"${roksbnkctl}\" tfx …"`). That parses fine under `/bin/sh` on WSL/Linux, but on Windows terraform runs `local-exec` via `cmd /C <command>` and Go's arg-escaping turned the inner quotes into `\"`, so `cmd.exe` tried to execute a program literally named `\"C:\…\roksbnkctl.exe\"` and failed with *"is not recognized as an internal or external command"* — breaking every FAR/FLO/FLP/license/cne provisioner at apply time. (The verbs themselves were fine; only the terraform-to-`cmd.exe` handoff was — and it was never exercised on Windows before, since the tfx validation harness invoked the verbs directly rather than through a `local-exec`.) All 17 tfx `local-exec` command strings now pass the binary unquoted, which `cmd.exe` and `/bin/sh` both execute correctly (the Windows install dir and the tfx arguments contain no spaces). The `data.external` programs were already argv lists and were never affected.
+
+## v1.27.0 — 2026-07-24
+
+### Added
+
+- **The FAR + FLO/FLP deploy phases now run on native Windows — no WSL.** The last Windows-blocking shell glue in the default (non-legacy) deploy path is gone: every `curl` / `tar` / `grep` / `awk` / `helm pull` `local-exec` in the `flo`, `flp`, and `flp_vsi` modules is replaced by a native `roksbnkctl tfx <verb>` the terraform provisioner execs directly (no `interpreter`, so `cmd.exe` runs `roksbnkctl.exe`). New internal verbs back this:
+  - **`tfx cos-get`** — downloads the FAR-auth tarball via the COS SDK (was `curl` + a hand-rolled IAM bearer-token exchange).
+  - **`tfx far-extract`** — writes the FAR service-account JSON via a Go tar-extract to a fixed path (was `tar -xzf … | grep '\.json$'`).
+  - **`tfx helm-value`** — `chart-version` resolves a sub-chart version out of the pulled BNK manifest (helm binary for the OCI pull, Go for the extract), `pull-file` extracts a bundled file, `prod-jwks` extracts + base64-decodes the license-proxy keyset, and `--manifest-file` reads a version from an already-pulled manifest so one pull feeds several reads. In-chart file lookup walks the untarred tree tolerantly, so helm `--untar`'s top-dir naming doesn't matter.
+  - **`tfx read-json`** — emits `data.external` JSON from a file, with a repeatable `--pair key=file` for multi-key outputs and a missing-file→empty tolerance so a fresh-container destroy refresh stays well-formed.
+  - Rounding out the surface added earlier in this cycle: **`tfx apply`** (server-side apply from a manifest stream), **`tfx wait`** (client-go watch + poll), **`tfx patch`** (strategic/merge/json/apply, `--patch-b64`), and **`tfx delete`** (`--ignore-not-found`). The cne_instance admission-policy delete loop moved from a detached `nohup bash` into an in-process Go goroutine (identical on Windows and Linux).
+
+- **Quota preflight for the VPC-per-region and TGW-per-account walls.** `doctor` now reports VPCs-in-region and account transit-gateway counts against their limits (warns at the wall), and the `init` interview surfaces the same headroom before you commit to a create — so an apply fails fast with a clear message instead of deep in a `terraform apply`.
+
+### Changed
+
+- **Terraform error output is summarized and de-duplicated.** A failed plan/apply/destroy now collapses the repeated per-resource IBM `Error: --- summary: ---` blocks into a single deduplicated diagnostic (`x3 …`) instead of scrolling the same error once per affected resource.
+
+- **One shared IAM authenticator instead of a token exchange per call.** The IBM client now reuses a single `core.IamAuthenticator` (and one injectable `http.Client`) across every raw-REST helper, rather than exchanging the API key for a fresh bearer token on each request.
+
+### Fixed
+
+- **Idempotent Transit Gateway attach when a shared VPC is already on the target gateway.** An IBM VPC holds exactly one Transit Gateway attachment, so when a second cluster is created in a first cluster's VPC (the shared-VPC path) and both point at the same gateway, the second `up`'s TGW-connect phase hit `the requested network is already connected to an existing transit gateway` and surfaced it as an error (non-fatal — the cluster/BNK still deployed — but `tgw status` then reported "not connected" even though the shared VPC *was* attached via the first cluster's connection). The connect phase now pre-checks: if this workspace's cluster VPC is already attached to the target gateway, it records the live connection and returns success, skipping the apply. The normal first-cluster path (VPC not yet attached) is unchanged, and a genuine conflict (VPC on a *different* gateway) still surfaces loudly. This is the attach-side analogue of the tolerant-detach `down` already does for shared infra.
+
+## v1.26.1 — 2026-07-23
+
+### Fixed
+
+- **Windows `install` now lands on a directory that is actually on `%PATH%`.** `roksbnkctl install` (and the `install.ps1` one-liner) defaulted to the Unix `~/.local/bin`, which is never on the Windows PATH — so the copy succeeded but `roksbnkctl` didn't resolve, and the follow-up hint was Unix `export PATH` / `.bashrc` advice. On Windows it now installs into a writable directory already on `%PATH%` — preferring `%LOCALAPPDATA%\Microsoft\WindowsApps` (on the per-user PATH by default, no admin), so the binary resolves immediately in the same session — and the PATH hint (for the rare fallback dir) is now the PowerShell `SetEnvironmentVariable(...,'User')` one-liner. `isOnPATH` is also case-insensitive on Windows.
+
+- **Windows `uninstall` no longer refuses when removing the running binary.** Windows can't delete a running `.exe`, so `uninstall` used to error and tell you to delete it by hand. It now moves the running binary aside to `<name>.old` (renaming a running exe *is* allowed on Windows), freeing its install path; the `.old` remnant unlocks once the process exits. Unix behaviour (unlink the running file) is unchanged.
+
+- **Shared-VPC teardown is safe now (guardrail + tolerant detach).** When multiple clusters share one VPC (the `resources.cluster_vpc` adopt-existing feature), the cluster that **created** the VPC owns its per-zone public gateways and must be destroyed **last**. Two fixes make that correct:
+  - **Guardrail:** `cluster down` / `down` now refuses to destroy a workspace that created the VPC while the VPC still holds **another cluster's subnets**, naming them and telling you to tear the sharers down first — instead of failing mid-destroy with `The VPC is in use` after already deleting the shared gateways. (A correctness check; `--auto` does not bypass it. Best-effort — a discovery-API hiccup warns and proceeds.)
+  - **Tolerant detach:** cluster subnets now carry their public gateway **inline** (`ibm_is_subnet.public_gateway`) instead of via a separate `ibm_is_subnet_public_gateway_attachment`. Deleting the subnet removes the association implicitly, so an adopter's destroy no longer fails with `UnsetSubnetPublicGateway ... the specified subnet has no public gateway` when the owner's gateway was already gone.
+
+## v1.26.0 — 2026-07-23
+
+### Added
+
+- **`init` discovers an existing VPC for the new cluster to build into.**
+ In the interactive interview, when creating a new ROKS cluster, declining "Create a new cluster VPC?" now lists the account's existing VPCs **in the chosen region** (name + status) and lets you pick one by number — mirroring the transit-gateway discovery. Picking one records it as `resources.cluster_vpc { create: false, existing: <vpc-id> }`, which renders `use_existing_cluster_vpc` + `existing_cluster_vpc_id`, so the cluster's subnets (and reused per-zone public gateways) land in the adopted VPC. This lets **multiple workspaces put different clusters in the same VPC**. Picking `0` (or if the region has none) falls back to creating a new VPC, since a cluster must have one. Falls back to a free-text VPC-id prompt if the listing call fails. (The Terraform, config model, and tfvars rendering for BYO cluster VPC already existed — this exposes it in the interview instead of requiring a hand-edited `config.yaml`.)
+
+### Changed
+
+- **`roksbnkctl down` auto-detaches an existing Transit Gateway before tearing down the cluster.** When a workspace **created** its VPC but attached it to an **existing** (shared) Transit Gateway — via `tgw connect` or the init interview — that connection lives in its own phase (`state-tgw/`) the composite `down` previously ignored. Because the connection pins the cluster VPC's CRN, the cluster-phase VPC delete would fail (`VPC still has an attached transit gateway connection`) until you manually ran `tgw disconnect`. `down` now detects the connection (`Presence.TGW`) and disconnects it automatically — **after** the BNK/Testing teardown and **before** the cluster — removing only this cluster's connection (the gateway and every other cluster's connection stay intact). A detach, never a delete of the shared gateway. Unlike the Gateway/FLP phases (guarded with "run `X down` first" because their teardown has cluster-namespace finalizer ordering), a TGW connection is a pure IBM resource with deterministic ordering, so automating it is safe.
+
+### Fixed
+
+- **Removed the deprecated `tcp {}` block from the FLP-VSI security group rule.** `modules/flp_vsi`'s inbound-8443 rule used the nested `tcp { port_min port_max }` form, which the IBM provider now warns is deprecated (`tcp is deprecated, use 'protocol', 'code', and 'type' instead`). Rewrote it to the flat `protocol = "tcp"` / `port_min` / `port_max` form already used in `modules/flp` and `modules/testing` — same rule, no more warning on every plan/apply/destroy.
+
+## v1.25.0 — 2026-07-23
+
+### Added
+
+- **`init` discovers existing transit gateways to attach.** When the interactive interview's "Create Transit Gateway?" is declined, `init` now lists the account's existing transit gateways (name, location, status) and lets you pick one by number to attach the cluster to — instead of typing a name/ID from memory. Picking `0` (or none present) leaves the cluster unattached to connect later with `tgw connect`. Falls back to the free-text name/ID prompt if the listing call fails.
+
+- **Ctrl-C exits the interactive `init` cleanly.** From the point the partial workspace is persisted, `SIGINT` prints `^C interrupted — workspace "X" is saved. Re-run roksbnkctl init -w X to finish it.` and exits (130), leaving the saved (partial) workspace intact to resume — rather than dropping into a half-answered interview or a defaulted config. A dedicated handler, so it fires only on a real Ctrl-C, not the normal end-of-run.
+
+## v1.24.1 — 2026-07-23
+
+### Fixed
+
+- **`init` provisions a globally-unique COS bucket (was `BucketAlreadyExists`).** COS bucket names share ONE global namespace (like S3), so provisioning the generic default `bnk-artifacts` failed with `BucketAlreadyExists: Container bnk-artifacts exists with a different storage location than requested` whenever another account already owned that name. `init` now provisions under an account-scoped name, `bnk-artifacts-<first-12-of-account-id>`, which is globally unique. An explicitly-configured `cos.bucket` is still used as-is.
+
+  The name is **deterministic per account and discoverable**: `init`'s supply-chain check looks for both the plain default and the account-suffixed name, so a **second workspace run from the same account's API key finds and reuses the bucket the first one provisioned** (and records the resolved coordinates on the workspace so the BNK phase pulls from exactly that bucket) — no duplicate bucket, no re-upload. An interrupted run that already created the bucket is reused rather than re-created.
+
+## v1.24.0 — 2026-07-23
+
+### Added
+
+- **One-line installers for Linux/macOS and Windows.** `install.sh` (`curl -fsSL https://raw.githubusercontent.com/jgruberf5/roksbnkctl/main/install.sh | sh`) and `install.ps1` (`irm …/install.ps1 | iex`) download a release archive for the host OS/arch, verify its checksum, extract the binary, hand off to the binary's own `roksbnkctl install` (which copies it onto `PATH`, replacing any existing copy), then delete the archive — leaving only the installed binary. `VERSION=vX.Y.Z` pins a release; `ROKSBNKCTL_INSTALL_ARGS` passes flags to `install`.
+- **`roksbnkctl uninstall`** — removes the installed binary from `~/.local/bin` (or `--dir`), the opposite of `roksbnkctl install`. On Windows it refuses to delete the currently-running `.exe`.
+- **`roksbnkctl upgrade` interactive version picker** — with no `--version` on a terminal it now lists the releases newer than the running binary and lets you pick one (a `dev` build is offered every release). `--version vX.Y.Z` still pins a specific release; `--yes` still takes the latest non-interactively.
+- **Local-file FAR supply chain (no COS) — `bnk.far_auth_local_file` + `bnk.subscription_jwt_local_file`.** The BNK phase can now read the FAR auth tarball and the subscription JWT from **local files** instead of an IBM COS bucket. When both are set, roksbnkctl reads them at render time — extracting the FAR `_json_key_base64` service account from the tarball **in Go** (no `curl`/`tar`/`grep`) — and injects the content as `far_service_account_b64` / `f5_cne_subscription_jwt`, setting `use_cos_bucket = false` so the `flo` and `license` modules skip the COS download entirely. `init` sets these automatically (see below); they can also be set by hand. When unset, the COS path is unchanged.
+
+### Changed
+
+- **`init` checks COS, then falls back to local files.** The interactive supply-chain check now treats any COS error (transport/DNS/auth) as **non-fatal**: instead of aborting, it offers to use local files for the FAR tarball + JWT and records them on the workspace (`bnk.*_local_file`). When COS is reachable but an artefact is missing, it prefers local files (no COS) but still offers to provision + upload. This unblocks accounts whose COS is unreachable.
+
+### Removed
+
+- **IBM Cloud Schematics deployment path (~5,300 lines).** The Terraform modules were originally authored as standalone IBM Schematics workspaces; roksbnkctl is now the sole driver, so the Schematics tooling is dead weight. Removed the five `terraform/modules/*/schematics_runner.py` lifecycle scripts, the "Deploying with IBM Schematics" sections + `ibmcloud_schematics_*` workspace naming in the module READMEs, and the Schematics-lifecycle `.gitignore` entries; the remaining `local-exec` rationale comments that cited "Schematics compatibility" now cite lean runtimes (the tools-runner) generally. No functional change to any deployment — nothing in the Go or `.tf` code referenced Schematics. (This also deletes the last `python3` scripts in the tree; the two remaining `python3` uses are the deterministic-poll `null_resource`s, which are being converted to `tfx` — see `docs/prd/native-windows-tfx.md`.)
+
+### Fixed
+
+- **`roksbnkctl version` shows the release as `vX.Y.Z`.** Release binaries are now stamped `v{{.Version}}` (goreleaser), so `version` prints `v1.23.2` rather than `1.23.2` — and it matches the `v`-prefixed tag the bundled tool images are published under (previously `Version` was `1.23.2` while the images were `:v1.23.2`, so a release binary's `ops`/docker-backend pulls could miss). Local `make build` derives the version from `git describe` (e.g. `v1.23.1-3-g<sha>-dirty`), so a locally-built binary is clearly a build, not a release.
+
+- **`init` no longer leaves NO workspace when it fails partway.** Previously the only `SaveWorkspace` was at the very end of the interview, so any earlier failure (cluster listing, the COS supply-chain check) aborted with **nothing persisted** — and manual commands like `roksbnkctl cos …` then had no workspace to resolve. `init` now persists a **partial workspace** (region + a resolvable API key) as soon as credentials verify, before the fallible steps. A failed init leaves a usable workspace, and re-running `init` completes it.
+
+- **`roksbnkctl init -w <existing-workspace>` resumes to complete/update the workspace** rather than only offering a destructive "Overwrite config? → abort". The prompt is reframed to "Continue and update this workspace?" (default yes) and the interview pre-fills from the saved config — the intended way to finish a partial workspace left by a failed first init.
+
+- **Orchestration-COS region no longer defaults to the cluster region.** `init`'s supply-chain check derived the COS S3 endpoint region from `ibmcloud.region`; a VPC-only region like `eu-fr2` has **no COS S3 endpoint**, so the check failed with `dial tcp: lookup s3.eu-fr2.cloud-object-storage.appdomain.cloud: no such host`. It now defaults to `DefaultCOSRegion` (`us-south`), overridden only by an explicit `cos.region`.
+
+## v1.23.1 — 2026-07-23
+
+### Fixed
+
+- **`f5licenseproxy` licensing no longer deadlocks — BNK now licenses through the FLP reliably.** On a from-scratch `bnk up` in `f5licenseproxy` mode, the apply would hang indefinitely (observed 3+ hours) and the CNEInstance never licensed: the CWC polled the proxy forever with an empty entitlement (`GetBackLater`). Root cause: the CNEInstance `kubectl_manifest` gated on the `alekc/kubectl` provider's `wait_for { condition = CNEControllerAvailable }`, which did not clear even after that condition was `True` (it hung past its own timeout). Because the License CR — and the FLP CA Secret + CWC restart it needs — is gated on the CNEInstance's ready-id, none of the FLP wiring ever applied, so the CWC licensed against nothing. The two fragile provider `wait_for`s (CNEInstance `CNEControllerAvailable`, License `LicenseActive`) are replaced with **deterministic Kubernetes-API polls** (`null_resource` running `curl` + coreutils `grep`/`tr` — **no `python3`, no `jq`**, so it runs in the tools-runner container where python is absent): each clears as soon as its condition is met (seconds), is bounded (~15 min), and **fails loudly instead of hanging**. The change is mode-agnostic — `connected`/`disconnected` (direct licensing, no FLP) get the same deterministic gating with no FLP Secret or CWC rollout written. Validated across repeated from-scratch cycles: each licensed through the FLP in 2–5 minutes with zero hangs.
+
+- **FLP VSI reuses the cluster VPC's existing zone gateway instead of failing the per-zone quota.** With `bnk.flp.mode: vsi`, `flp up` into an existing cluster VPC failed with `CreatePublicGatewayWithContext failed: … over quota. Quota: 1` — the module always created its own public gateway, but IBM Cloud allows exactly one public gateway per zone per VPC and the cluster phase already attached one to every zone. The `flp_vsi` module now looks the VPC's gateways up and **reuses** the one already in the FLP VSI's zone, creating its own only when the zone has none (the same reuse pattern the cluster module uses).
+
+## v1.23.0 — 2026-07-22
+
+### Added
+
+- **Run the F5 License Proxy on a standalone VSI instead of a Helm install — `bnk.flp.mode: vsi`.** The FLP phase gains a second deployment backend: rather than the `f5-license-proxy` Helm chart into the ROKS cluster, `mode: vsi` provisions a headless Ubuntu VSI in the cluster VPC that runs the same four containers (f5-license-proxy + postgresql + vault + vault-init) as a **podman pod** — no Kubernetes. Terraform generates the mTLS CA and injects it via cloud-init; the box signs the leaves and brings the pod up on 8443; the FAR pull key, subscription JWT, image tags, and F5 public JWKS are resolved from the same COS + BNK manifest the Helm path uses. It terminates in the **same** `flp-outputs.json` (endpoint + root CA) the Helm path produces, so `bnk up` in `f5licenseproxy` mode consumes the handoff **unchanged** — the BNK side is untouched.
+
+  Config lives under `bnk.flp.vsi` (`profile` — default `bx2-4x16`; `zone`; `boot_size_gb`; `reach` — `private` [default]; `allowed_cidrs`; optional `forward_proxy`). The CWC reaches the proxy over the VPC / a transit gateway (private reach). See [Licensing BNK with the F5 License Proxy](book/src/10c-flp-licensing.md).
+
+## v1.22.0 — 2026-07-22
+
+### Added
+
+- **`init` provisions the FAR supply chain when it's missing.** The interactive `roksbnkctl init` now checks that the orchestration COS actually holds what the BNK phase needs — the FAR auth tarball and the subscription JWT — and, when the instance, bucket, or either object is absent, offers to create them from local files: it provisions the COS instance and bucket if needed and uploads the two artefacts, then records the coordinates under `cos:` so the BNK phase and `registry` resolve from exactly what was created. Declining is non-fatal (it prints a warning and continues). Interactive path only — `--config-file` / `--non-interactive` are unchanged (they assume COS is already populated, as in CI).
+
+### Changed
+
+- **Generic default COS/FAR resource names.** The orchestration COS defaults, which previously named a specific test environment, are now generic: instance `bnk-supply-chain` (was `bnk-orchestration`), bucket `bnk-artifacts` (was `bnk-schematics-resources`), and the default subscription JWT `subscription.jwt` (was `trial.jwt`). The FAR auth tarball default (`f5-far-auth-key.tgz`) is unchanged. These are the fallbacks when the `cos:` block and `bnk.subscription_jwt_file` are unset, and they're centralized in `internal/config` so the Terraform render, the `registry` resolver, and the new init provisioning share one source of truth. **A workspace that relied on the old defaults** (no `cos:` block) should either set `cos: {instance: bnk-orchestration, bucket: bnk-schematics-resources}` + `bnk.subscription_jwt_file: trial.jwt` to keep the old target, or let the new `init` flow provision the new-named resources.
+
+## v1.21.0 — 2026-07-22
+
+### Added
+
+- **`roksbnkctl upgrade` — self-upgrade the binary, on Linux, macOS, and Windows.** `roksbnkctl upgrade` downloads the latest GitHub release for the host OS/arch, verifies its SHA256 against the release's `checksums.txt`, and replaces the running binary in place. `--version vX.Y.Z` pins a specific release (and may downgrade or reinstall); `--yes` skips the confirmation prompt. Windows is now supported: a running `.exe` can't be overwritten, so the old binary is moved aside to `<binary>.old` (which Windows permits) and the new one takes its place, with the sidecar swept on the next run. `roksbnkctl self update` remains as the latest-only interactive alias.
+
+  Release binaries are not yet code-signed, so on a host with an application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly downloaded binary may be blocked until its hash is trusted — the command's `--help` says so.
+
+### Fixed
+
+- **`self update` no longer always reported an update was available.** goreleaser stamps the version without a leading `v` (`1.21.0`) while GitHub tag names carry it (`v1.21.0`), so the old equality check never matched a real release. Version comparisons now ignore the `v`.
+
+## v1.20.1 — 2026-07-22
+
+### Fixed
+
+- **`up`/`plan` on a new cluster VPC no longer fails at plan time with "Invalid count argument".** The public-gateway reuse logic (shared-VPC / air-gapped topology) fed the cluster VPC's id into the `ibm_is_public_gateway` `count`, but when the VPC is *created* in the same run that id is unknown until apply, so Terraform could not resolve the count. The lookup is now gated on `use_existing_cluster_vpc`: a freshly created VPC skips it entirely (it cannot already have gateways) and the counts resolve at plan time; an adopted VPC keeps reusing its existing gateways as before.
+
+- **Phase-combination hardening (defense-in-depth).** The cert-manager / FLO / CNE / license / gateway / FLP modules now gate their resources on `!create_roks_cluster` in addition to their `deploy_*` flag — matching the guard already on their provider + cluster-config data sources. In every correct phase these modules already run with `create_roks_cluster = false`, so this changes nothing there; it only turns an accidental phase combination (e.g. a legacy monolithic apply that enables BNK while the cluster is still being created) into a clean no-op instead of a plan-time crash.
+
+- **`roksbnkctl testing up` on a cluster-less workspace now errors instead of provisioning a cluster.** Like the Gateway / FLP / TGW phases, the Testing phase now requires `cluster-outputs.json` and hard-errors with an actionable message when it is missing, rather than silently rendering `create_roks_cluster = true` and planning a whole cluster into `state-testing/`.
+
+### Added
+
+- **More Terraform options are now settable from `config.yaml`.** Surfaced eleven knobs that previously only had their upstream HCL defaults: `cluster.min_worker_vcpu_count` / `min_worker_memory_gb` (worker-flavor auto-select floors), `bnk.flo_namespace` / `flo_utils_namespace` / `gslb_datacenter_name`, `bnk.cert_manager.namespace` / `version`, `bnk.flp.storage_class`, `cos.instance` / `bucket` / `region` (the orchestration COS — honoured by **both** the Terraform render and the `registry` FAR resolver), and `resources.testing_jumphost_profile` / `testing_min_vcpu_count` / `testing_min_memory_gb`. Each renders only when set, so existing configs are unchanged. See [Workspace config](book/src/12-workspace-config.md) and the [Configuration reference](book/src/28-configuration-reference.md).
+
 ## v1.20.0 — 2026-07-16
 
 ### Added

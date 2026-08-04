@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -54,14 +55,17 @@ Commands:
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what ` + "`replicate`" + ` would copy (BOM vs. mirror)
-  roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+  roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
-` + "`registry bom`" + ` works offline against the FAR manifest; the cluster-touching
-verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
-registry: block in the workspace config.`,
+` + "`registry bom`" + ` works entirely offline against the FAR manifest. The other verbs
+need a configured registry: block and network reachability to the target registry —
+` + "`replicate`" + ` also needs the FAR source (repo.f5.com). NONE require a Kubernetes
+cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
+roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
+any cluster exists.`,
 }
 
 // registry-group flag values.
@@ -76,6 +80,7 @@ var (
 	flagRegistryTarget        string
 	flagRegistryPasswordStdin bool
 	flagRegistryForce         bool
+	flagRegistryCAFile        string
 )
 
 var registryBOMCmd = &cobra.Command{
@@ -105,10 +110,18 @@ var registryDiffCmd = &cobra.Command{
 
 var registryReplicateCmd = &cobra.Command{
 	Use:   "replicate",
-	Short: "Copy the BOM into the mirror (needs a live cluster)",
+	Short: "Copy the BOM into the mirror (registry-to-registry; no cluster needed)",
 	Long: `Prepares the target registry (auth + repository namespace), then copies every
 BOM artifact into it, idempotently. Records the result in registry-mirror.json so
-the BNK install can be redirected to the mirror.`,
+the BNK install can be redirected to the mirror.
+
+Runs entirely host-side: it pulls each artifact by digest from the FAR source
+(repo.f5.com) and pushes to the target registry via go-containerregistry — no
+Kubernetes cluster is involved. So you can pre-seed the mirror as a standalone
+supply-chain step, before creating any cluster, from any host that can reach both
+the FAR source and the target registry. Requires a configured registry: block and
+the FAR source credential (registry.source_service_account_b64, the workspace FAR
+auth, or --source-sa-b64).`,
 	Args: cobra.NoArgs,
 	RunE: runRegistryReplicate,
 }
@@ -155,6 +168,7 @@ func init() {
 		c.Flags().StringVar(&flagRegistryTarget, "target", "", `mirror target backend: icr|generic (default: workspace registry.target, else "icr")`)
 	}
 	registryReplicateCmd.Flags().IntVar(&flagRegistryConcurrency, "concurrency", 0, "parallel copy workers (default: 4)")
+	registryReplicateCmd.Flags().StringVar(&flagRegistryCAFile, "registry-ca", "", "PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling)")
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
@@ -216,13 +230,13 @@ const (
 )
 
 // FAR-auth COS coordinates — the orchestration COS instance/bucket/region that
-// holds the FAR auth tarball + the license JWT. These mirror the terraform
-// ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
-// ibmcloud_cos_bucket_region defaults.
+// holds the FAR auth tarball + the license JWT. Centralised in internal/config
+// so the terraform render, the init supply-chain provisioning, and this
+// resolver all share one source of truth.
 const (
-	farOrchestrationCOSInstance = "bnk-orchestration"
-	farResourcesBucket          = "bnk-schematics-resources"
-	farCOSBucketRegion          = "us-south"
+	farOrchestrationCOSInstance = config.DefaultCOSInstance
+	farResourcesBucket          = config.DefaultCOSBucket
+	farCOSBucketRegion          = config.DefaultCOSRegion
 )
 
 // resolveFARServiceAccount downloads the workspace's FAR auth tarball
@@ -243,11 +257,27 @@ func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Works
 	if err != nil {
 		return "", err
 	}
-	inst, err := ic.GetCOSInstanceByName(ctx, farOrchestrationCOSInstance)
-	if err != nil {
-		return "", fmt.Errorf("finding the %q COS instance: %w", farOrchestrationCOSInstance, err)
+	// Honour a customer-owned orchestration COS from config.yaml (cos.instance /
+	// cos.bucket / cos.region), falling back to the built-in defaults. The
+	// terraform render reads the SAME cos block (ibmcloud_cos_* tfvars), so both
+	// paths resolve FAR files from the same place.
+	cosInstance, cosBucket, cosRegion := farOrchestrationCOSInstance, farResourcesBucket, farCOSBucketRegion
+	if ws.COS != nil {
+		if ws.COS.Instance != "" {
+			cosInstance = ws.COS.Instance
+		}
+		if ws.COS.Bucket != "" {
+			cosBucket = ws.COS.Bucket
+		}
+		if ws.COS.Region != "" {
+			cosRegion = ws.COS.Region
+		}
 	}
-	cosClient, err := cos.New(apiKey, farCOSBucketRegion, inst.CRN)
+	inst, err := ic.GetCOSInstanceByName(ctx, cosInstance)
+	if err != nil {
+		return "", fmt.Errorf("finding the %q COS instance: %w", cosInstance, err)
+	}
+	cosClient, err := cos.New(apiKey, cosRegion, inst.CRN)
 	if err != nil {
 		return "", err
 	}
@@ -257,8 +287,8 @@ func resolveFARServiceAccount(ctx context.Context, name string, ws *config.Works
 	}
 	defer os.RemoveAll(tmp)
 	tgz := filepath.Join(tmp, "far-auth.tgz")
-	if err := cosClient.GetObjectToFile(ctx, farResourcesBucket, farAuthFile, tgz); err != nil {
-		return "", fmt.Errorf("downloading %s from COS %s/%s: %w", farAuthFile, farOrchestrationCOSInstance, farResourcesBucket, err)
+	if err := cosClient.GetObjectToFile(ctx, cosBucket, farAuthFile, tgz); err != nil {
+		return "", fmt.Errorf("downloading %s from COS %s/%s: %w", farAuthFile, cosInstance, cosBucket, err)
 	}
 	return source.ExtractServiceAccountFromTarball(tgz)
 }
@@ -733,6 +763,78 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 
 // ── replicate ───────────────────────────────────────────────────────────────
 
+// resolveMirrorCA returns the mirror's CA PEM used both to trust the replicate
+// push TLS and to record for air-gap node trust. --registry-ca wins and is fatal
+// if unreadable; otherwise it is a best-effort auto-capture from host, where a
+// public or unreachable host yields "" (no error) and the caller warns. A private
+// self-signed mirror (co-located Harbor) returns its served CA chain.
+func resolveMirrorCA(host string) (string, error) {
+	if flagRegistryCAFile != "" {
+		pemBytes, err := os.ReadFile(flagRegistryCAFile)
+		if err != nil {
+			return "", fmt.Errorf("reading --registry-ca %s: %w", flagRegistryCAFile, err)
+		}
+		return strings.TrimSpace(string(pemBytes)), nil
+	}
+	if host == "" {
+		return "", nil
+	}
+	caPEM, err := captureRegistryCA(host)
+	if err != nil {
+		return "", nil // best-effort: unreachable/public host is non-fatal
+	}
+	return caPEM, nil
+}
+
+// ensureMirrorCATrust makes the operator's terraform/helm CHILD processes trust a
+// private mirror's recorded CA before `bnk up` pulls charts from it. `bnk up`'s
+// terraform helm provider runs as a subprocess that inherits os.Environ(), and a
+// container operator (the roksbnkctl-tools-runner) has NO OS trust for a co-located
+// self-signed Harbor — so those chart pulls fail `x509: unknown authority` without
+// this. It is the operator-side complement to the node CA-trust installer: nodes get
+// the CA via the DaemonSet, the operator gets it here. It appends the recorded mirror
+// CA to the existing trust bundle and points SSL_CERT_FILE at the result (so public
+// source pulls keep working too). No-op when the workspace recorded no private CA (a
+// public mirror), and never fatal — trust setup is best-effort.
+func ensureMirrorCATrust(workspace string) {
+	rec, err := config.ReadRegistryMirror(workspace)
+	if err != nil || rec == nil || strings.TrimSpace(rec.CACert) == "" {
+		return
+	}
+	base, err := config.BaseDir()
+	if err != nil {
+		return
+	}
+	sys := os.Getenv("SSL_CERT_FILE")
+	if sys == "" {
+		for _, p := range []string{
+			"/etc/ssl/certs/ca-certificates.crt", // debian / ubuntu (the runner image)
+			"/etc/pki/tls/certs/ca-bundle.crt",   // rhel / fedora
+			"/etc/ssl/cert.pem",                  // alpine / macos
+		} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				sys = p
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	if sys != "" {
+		if b, rerr := os.ReadFile(sys); rerr == nil {
+			buf.Write(b)
+			buf.WriteByte('\n')
+		}
+	}
+	buf.WriteString(strings.TrimSpace(rec.CACert))
+	buf.WriteByte('\n')
+	bundle := filepath.Join(base, "mirror-ca-bundle.crt")
+	if werr := os.WriteFile(bundle, buf.Bytes(), 0o644); werr != nil {
+		return
+	}
+	_ = os.Setenv("SSL_CERT_FILE", bundle)
+	fmt.Fprintln(os.Stderr, "→ trusting the mirror's private CA for the install (operator SSL_CERT_FILE)")
+}
+
 func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	name, ws, err := loadRegistryWorkspace()
 	if err != nil {
@@ -747,7 +849,19 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Resolve the mirror's CA up front (before any copy): --registry-ca wins, else
+	// auto-capture from the push host. A private/self-signed mirror (co-located
+	// Harbor by private IP) returns its CA here; a public target returns "". When
+	// set, the engine trusts it for the push TLS so a container operator with no OS
+	// trust for the mirror can still replicate — and it is also recorded below for
+	// air-gap node trust, so the same CA drives both the operator and the nodes.
+	pushHost := registryHostFromPath(target.ImageHostPath())
+	mirrorCA, caErr := resolveMirrorCA(pushHost)
+	if caErr != nil {
+		return caErr // an explicit --registry-ca that can't be read is fatal
+	}
 	eng := registryEngine(target, in)
+	eng.RegistryCA = mirrorCA
 	// Check the push credential once up front. Without this a wrong password is
 	// retried against every artifact in the BOM (401 is retryable — Harbor's token
 	// service genuinely flakes), so the command grinds for minutes and then reports
@@ -785,6 +899,18 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		ManifestVersion: bom.ManifestVersion,
 		Artifacts:       mirrored,
 	}
+	// Air-gap node trust: record the bare pull host and the CA it serves so
+	// `bnk up` installs that CA on every node before pulling. --registry-ca
+	// wins; otherwise auto-capture from the host (best-effort — a public or
+	// unreachable host records no CA and the node-trust step no-ops).
+	rec.RegistryHost = pushHost
+	// mirrorCA was resolved (and trusted for the push) before the copy above.
+	if mirrorCA != "" {
+		rec.CACert = mirrorCA
+		fmt.Fprintf(os.Stderr, "  ✓ trusted + recorded the mirror CA from %s (the push trusts it; nodes install it before pulling)\n", pushHost)
+	} else if pushHost != "" {
+		fmt.Fprintf(os.Stderr, "  ⚠ no private CA captured from %s — if it is a self-signed mirror, re-run with --registry-ca <file>\n", pushHost)
+	}
 	if err := config.WriteRegistryMirror(name, rec); err != nil {
 		return fmt.Errorf("recording mirror: %w", err)
 	}
@@ -811,7 +937,14 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	bad := registryEngine(target, in).Verify(cmd.Context(), bom)
+	// Trust a private/self-signed mirror's CA for the verify HEAD checks too — the
+	// crane digest probes fail x509 from a container operator otherwise, exactly as
+	// the replicate push does. Best-effort capture (public targets return "").
+	eng := registryEngine(target, in)
+	if ca, _ := resolveMirrorCA(registryHostFromPath(target.ImageHostPath())); ca != "" {
+		eng.RegistryCA = ca
+	}
+	bad := eng.Verify(cmd.Context(), bom)
 	if flagOutput == "json" {
 		out := make([]map[string]string, 0, len(bad))
 		for _, b := range bad {

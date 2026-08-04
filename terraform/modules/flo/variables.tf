@@ -100,6 +100,13 @@ variable "use_cos_bucket" {
   default     = true
 }
 
+variable "far_service_account_b64" {
+  description = "FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "ibmcloud_cos_bucket_region" {
   description = "IBM Cloud region where the COS bucket is located"
   type        = string
@@ -109,13 +116,13 @@ variable "ibmcloud_cos_bucket_region" {
 variable "ibmcloud_cos_instance_name" {
   description = "IBM Cloud COS instance name"
   type        = string
-  default     = "bnk-orchestration"
+  default     = "bnk-supply-chain"
 }
 
 variable "ibmcloud_resources_cos_bucket" {
   description = "IBM Cloud COS bucket containing the FAR auth key and JWT files"
   type        = string
-  default     = "bnk-schematics-resources"
+  default     = "bnk-artifacts"
 }
 
 variable "f5_cne_far_auth_file" {
@@ -127,7 +134,7 @@ variable "f5_cne_far_auth_file" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT filename in the COS bucket"
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
 }
 
 # ============================================================
@@ -181,17 +188,6 @@ variable "create_roks_cluster" {
   default     = false
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 variable "roks_cluster_dependency_id" {
   description = "roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes"
   type        = string
@@ -235,4 +231,22 @@ variable "scratch_dir" {
   description = "Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount."
   type        = string
   default     = "/work/.bnk/scratch"
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}
+
+variable "helm_registry_config" {
+  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0)."
+  type        = bool
+  default     = false
 }

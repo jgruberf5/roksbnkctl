@@ -24,6 +24,8 @@ cluster:
   name: acme-eu-roks            # new cluster name, or an existing cluster name/ID when create:false
   # openshift_version: "4.18"   # blank = roksbnkctl default
   # workers_per_zone: 2         # blank = roksbnkctl default (AZ-floor clamped)
+  # min_worker_vcpu_count: 16   # worker-flavor auto-select floor (blank = default 16)
+  # min_worker_memory_gb: 64    # worker-flavor auto-select floor (blank = default 64)
 
 tf_source:
   type: embedded                # embedded | github | local (REQUIRED)
@@ -42,11 +44,25 @@ resources:
   client_vpc:        { create: true }
   # testing_client_vpc_name: ""         # name the testing client VPC (testing phase)
   # testing_ssh_key_name: ""            # reuse an existing IBM Cloud SSH key for the testing jumphosts
+  # testing_jumphost_profile: ""        # pin an instance profile for all jumphosts (blank = auto-select)
+  # testing_min_vcpu_count: 4           # jumphost auto-select floor (blank = default 4)
+  # testing_min_memory_gb: 8            # jumphost auto-select floor (blank = default 8)
 
 # ---- BNK install -----------------------------------------------------------
 bnk:
   manifest_version: 2.3.0-3.2598.3-0.0.170   # BNK manifest (default shown — the BNK 2.3 line)
   # far_repo_url: oci://repo.f5.com/...      # FAR OCI repo for the BNK charts/images
+  # flo_namespace: f5-bnk                     # F5 Lifecycle Operator namespace (blank = default)
+  # flo_utils_namespace: f5-utils             # F5 utility-components namespace (blank = default)
+  # gslb_datacenter_name: ""                  # optional CNEInstance GSLB datacenter name
+  # license_mode: connected                   # connected | disconnected | f5licenseproxy
+  # cert_manager:                             # override cert-manager coordinates (create toggle stays in resources:)
+  #   namespace: cert-manager
+  #   version: v1.17.3
+  # flp:                                      # F5 License Proxy phase (roksbnkctl flp up)
+  #   namespace: f5-license-proxy
+  #   chart_version: ""
+  #   storage_class: ""                       # PVC StorageClass (blank = IBM VPC block default)
   # cis:                                      # optional BIG-IP CIS controller
   #   bigip_url: https://10.1.1.5
   #   bigip_username: admin
@@ -68,6 +84,15 @@ bnk:
 #   egress_mode: snatpool                     # snatpool | automap | both
 #   client_subnet_local:  [10.241.0.0/24]
 #   client_subnet_remote: [10.242.0.0/24]
+
+# ---- Orchestration COS (optional) ------------------------------------------
+# Where the FAR auth key + subscription JWT live. Blank fields fall back to the
+# built-in defaults (bnk-supply-chain / bnk-artifacts / us-south).
+# Honoured by BOTH the terraform render and the `registry` FAR resolver.
+# cos:
+#   instance: bnk-supply-chain
+#   bucket: bnk-artifacts
+#   region: us-south
 
 # ---- Air-gap registry mirror (optional; PRD 11) ----------------------------
 # registry:

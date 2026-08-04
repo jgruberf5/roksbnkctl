@@ -9,6 +9,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
+	"github.com/jgruberf5/roksbnkctl/internal/registry/source"
 )
 
 // WriteTFVars renders the workspace config into terraform.tfvars at path.
@@ -148,6 +149,7 @@ func renderSparseBody(w io.Writer, ws *config.Workspace, mirror *config.Registry
 		if ws.Cluster.WorkersPerZone > 0 {
 			fmt.Fprintf(w, "roks_workers_per_zone = %d\n", ws.Cluster.WorkersPerZone)
 		}
+		renderClusterSizing(w, ws.Cluster)
 	} else {
 		if ws.Cluster.Name != "" {
 			fmt.Fprintf(w, "roks_cluster_id_or_name = %q\n", ws.Cluster.Name)
@@ -210,6 +212,7 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		if ws.Cluster.WorkersPerZone > 0 {
 			fmt.Fprintf(w, "roks_workers_per_zone = %d\n", ws.Cluster.WorkersPerZone)
 		}
+		renderClusterSizing(w, ws.Cluster)
 	} else if ws.Cluster.Name != "" {
 		fmt.Fprintf(w, "roks_cluster_id_or_name = %q\n", ws.Cluster.Name)
 	}
@@ -275,6 +278,17 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 	if res.TestingSSHKeyName != "" {
 		fmt.Fprintf(w, "testing_ssh_key_name = %q\n", res.TestingSSHKeyName)
 	}
+	// Jumphost sizing. An explicit profile wins; otherwise the min vCPU/memory
+	// drive the auto-select. Emitted only when set → terraform defaults stand.
+	if res.TestingJumphostProfile != "" {
+		fmt.Fprintf(w, "testing_jumphost_profile = %q\n", res.TestingJumphostProfile)
+	}
+	if res.TestingMinVCPUCount > 0 {
+		fmt.Fprintf(w, "testing_min_vcpu_count = %d\n", res.TestingMinVCPUCount)
+	}
+	if res.TestingMinMemoryGB > 0 {
+		fmt.Fprintf(w, "testing_min_memory_gb = %d\n", res.TestingMinMemoryGB)
+	}
 
 	// Per-zone cluster jumphosts (the module appends -<zone> to the prefix).
 	fmt.Fprintf(w, "testing_create_cluster_jumphosts = %v\n", res.ClusterJumphosts.Create)
@@ -327,10 +341,66 @@ func hclStringList(items []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
+// renderClusterSizing emits the worker-flavor auto-select minimums. Emitted
+// only when set (0 → the terraform defaults stand), so old configs render
+// byte-identically. Shared by both render modes; called inside the
+// Cluster.Create branch since the minimums only drive flavor selection when the
+// cluster is being created.
+func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
+	if c.MinWorkerVCPUCount > 0 {
+		fmt.Fprintf(w, "roks_min_worker_vcpu_count = %d\n", c.MinWorkerVCPUCount)
+	}
+	if c.MinWorkerMemoryGB > 0 {
+		fmt.Fprintf(w, "roks_min_worker_memory_gb = %d\n", c.MinWorkerMemoryGB)
+	}
+	// Public-gateway toggle. Emitted only when explicitly set: nil → the terraform
+	// default (true, current behavior); false → a private/disconnected cluster with
+	// no worker Internet egress.
+	if c.PublicGateway != nil {
+		fmt.Fprintf(w, "cluster_public_gateway = %v\n", *c.PublicGateway)
+	}
+}
+
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
 // Each is emitted only when set in config.yaml, so neither render path
 // duplicates a variable.
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
+	// FLO / utility namespaces + GSLB datacenter. Emitted only when set; unset
+	// leaves the terraform defaults (f5-bnk / f5-utils / unset).
+	if ws.BNK.FLONamespace != "" {
+		fmt.Fprintf(w, "flo_namespace = %q\n", ws.BNK.FLONamespace)
+	}
+	if ws.BNK.FLOUtilsNamespace != "" {
+		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
+	}
+	if ws.BNK.GSLBDatacenterName != "" {
+		fmt.Fprintf(w, "cneinstance_gslb_datacenter_name = %q\n", ws.BNK.GSLBDatacenterName)
+	}
+	// cert-manager namespace / chart version. Emitted only when a cert_manager
+	// block is present; the install/skip toggle stays on resources.cert_manager.
+	if cm := ws.BNK.CertManager; cm != nil {
+		if cm.Namespace != "" {
+			fmt.Fprintf(w, "cert_manager_namespace = %q\n", cm.Namespace)
+		}
+		if cm.Version != "" {
+			fmt.Fprintf(w, "cert_manager_version = %q\n", cm.Version)
+		}
+	}
+	// Orchestration COS coordinates (the FAR auth key + JWT source). Emitted only
+	// when a cos block supplies them; unset leaves the terraform defaults. The
+	// `registry` FAR resolver reads the same cos block, so a customer-owned bucket
+	// is used consistently across terraform and roksbnkctl.
+	if cos := ws.COS; cos != nil {
+		if cos.Instance != "" {
+			fmt.Fprintf(w, "ibmcloud_cos_instance_name = %q\n", cos.Instance)
+		}
+		if cos.Bucket != "" {
+			fmt.Fprintf(w, "ibmcloud_resources_cos_bucket = %q\n", cos.Bucket)
+		}
+		if cos.Region != "" {
+			fmt.Fprintf(w, "ibmcloud_cos_bucket_region = %q\n", cos.Region)
+		}
+	}
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -382,11 +452,23 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.SubscriptionJWTFile != "" {
 		fmt.Fprintf(w, "f5_cne_subscription_jwt_file = %q\n", ws.BNK.SubscriptionJWTFile)
 	}
-	// Sprint 27 install-mode flag. Emitted only when set; an unset value
-	// lets the upstream TF default (kubectl) stand, keeping older configs
-	// byte-identical. "legacy_curl" selects the null_resource baseline.
-	if ws.BNK.CRMode != "" {
-		fmt.Fprintf(w, "bnk_cr_mode = %q\n", ws.BNK.CRMode)
+	// Local-file supply chain (no COS). When both local files are set, read them
+	// HERE (Go — no curl/tar/grep) and inject the FAR service account + JWT
+	// content directly, disabling the COS download path. Fail loudly: the operator
+	// explicitly pointed at these files, so an unreadable path is a config error,
+	// not a silent fall-through to a COS bucket that may not exist.
+	if far, jwt := ws.BNK.FarAuthLocalFile, ws.BNK.SubscriptionJWTLocalFile; far != "" && jwt != "" {
+		saB64, err := source.ExtractServiceAccountFromTarball(far)
+		if err != nil {
+			return fmt.Errorf("reading FAR auth tarball %q (bnk.far_auth_local_file): %w", far, err)
+		}
+		jwtBytes, err := os.ReadFile(jwt)
+		if err != nil {
+			return fmt.Errorf("reading subscription JWT %q (bnk.subscription_jwt_local_file): %w", jwt, err)
+		}
+		fmt.Fprintln(w, "use_cos_bucket = false")
+		fmt.Fprintf(w, "far_service_account_b64 = %q\n", strings.TrimSpace(saB64))
+		fmt.Fprintf(w, "f5_cne_subscription_jwt = %q\n", strings.TrimSpace(string(jwtBytes)))
 	}
 	// License operation mode. Emitted only when set; empty leaves the terraform
 	// default ("connected"), keeping existing JWT configs byte-identical. The FLP
@@ -406,6 +488,9 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		if flp.ChartVersion != "" {
 			fmt.Fprintf(w, "flp_chart_version = %q\n", flp.ChartVersion)
 		}
+		if flp.StorageClass != "" {
+			fmt.Fprintf(w, "flp_storage_class = %q\n", flp.StorageClass)
+		}
 		// Expose the proxy outside its own cluster (the shared-licensing-cluster
 		// topology). Emitted only when opted in, so the single-cluster render is
 		// byte-identical.
@@ -415,12 +500,76 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		if len(flp.NodePortSourceCIDRs) > 0 {
 			fmt.Fprintf(w, "flp_node_port_source_cidrs = %s\n", hclStringList(flp.NodePortSourceCIDRs))
 		}
+		// mode: vsi — the standalone-VSI backend. The deploy_flp_vsi toggle itself is
+		// forced by the FLP-phase override; these render the VSI's shape from config.
+		if vsi := flp.VSI; vsi != nil {
+			if vsi.Profile != "" {
+				fmt.Fprintf(w, "flp_vsi_profile = %q\n", vsi.Profile)
+			}
+			if vsi.Zone != "" {
+				fmt.Fprintf(w, "flp_vsi_zone = %q\n", vsi.Zone)
+			}
+			if vsi.BootSizeGB > 0 {
+				fmt.Fprintf(w, "flp_vsi_boot_size_gb = %d\n", vsi.BootSizeGB)
+			}
+			if vsi.Reach != "" {
+				fmt.Fprintf(w, "flp_vsi_reach = %q\n", vsi.Reach)
+			}
+			// Per-plane SG source CIDRs: management (:80, default open) + licensing
+			// (:8443/:22, default RFC-1918). The legacy allowed_cidrs seeds both when set.
+			if len(vsi.ManagementAllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_management_allowed_cidrs = %s\n", hclStringList(vsi.ManagementAllowedCIDRs))
+			}
+			if len(vsi.LicensingAllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_licensing_allowed_cidrs = %s\n", hclStringList(vsi.LicensingAllowedCIDRs))
+			}
+			if len(vsi.AllowedCIDRs) > 0 {
+				fmt.Fprintf(w, "flp_vsi_allowed_cidrs = %s\n", hclStringList(vsi.AllowedCIDRs))
+			}
+			if vsi.SSHKey != "" {
+				fmt.Fprintf(w, "flp_vsi_ssh_key = %q\n", vsi.SSHKey)
+			}
+			// Operator floating IP (management access). nil → the tf default (true);
+			// render only when explicitly set so opting out (false) is honored.
+			if vsi.FloatingIP != nil {
+				fmt.Fprintf(w, "flp_vsi_floating_ip = %t\n", *vsi.FloatingIP)
+			}
+			// flp-status web UI (optional): image + mirror-trust so the VSI can pull it.
+			if vsi.StatusImage != "" {
+				fmt.Fprintf(w, "flp_status_image = %q\n", vsi.StatusImage)
+			}
+			if vsi.StatusRegistryHost != "" {
+				fmt.Fprintf(w, "flp_status_registry_host = %q\n", vsi.StatusRegistryHost)
+			}
+			if vsi.StatusRegistryCAB64 != "" {
+				fmt.Fprintf(w, "flp_status_registry_ca_b64 = %q\n", vsi.StatusRegistryCAB64)
+			}
+			if fp := vsi.ForwardProxy; fp != nil {
+				if fp.Host != "" {
+					fmt.Fprintf(w, "flp_forward_proxy_host = %q\n", fp.Host)
+				}
+				if fp.Port > 0 {
+					fmt.Fprintf(w, "flp_forward_proxy_port = %d\n", fp.Port)
+				}
+				if fp.Protocol != "" {
+					fmt.Fprintf(w, "flp_forward_proxy_protocol = %q\n", fp.Protocol)
+				}
+			}
+		}
 	}
-	// Cloud-network-mapping + VLAN zones (BNK install-guide "Configuration").
-	// Emitted only when config.yaml supplies them; absent → the terraform
-	// module's install-guide defaults apply (existing configs unchanged).
-	if ws.BNK.Network != nil && len(ws.BNK.Network.Zones) > 0 {
-		renderNetworkZones(w, ws.BNK.Network.Zones)
+	// Cloud-network-mapping + VLAN zones + TMM VLAN/route knobs (BNK install-guide
+	// "Configuration"). Each is emitted only when config.yaml supplies it; absent →
+	// the terraform module's install-guide defaults apply (existing configs unchanged).
+	if net := ws.BNK.Network; net != nil {
+		if len(net.Zones) > 0 {
+			renderNetworkZones(w, net.Zones)
+		}
+		if net.VLANPrefixLen != nil {
+			fmt.Fprintf(w, "cneinstance_vlan_prefixlen = %d\n", *net.VLANPrefixLen)
+		}
+		if net.TMMK8SRoutes != "" {
+			fmt.Fprintf(w, "cneinstance_tmm_k8s_routes = %q\n", net.TMMK8SRoutes)
+		}
 	}
 	// BNK CIS controller's BIG-IP target. Emitted only when configured; absent →
 	// the bigip_* vars stay at their terraform defaults (blank = BNK without CIS).

@@ -23,10 +23,16 @@ var installCmd = &cobra.Command{
 on $PATH so you can invoke it as ` + "`roksbnkctl`" + ` from any working
 directory.
 
-Default destination, in order of preference:
-  $HOME/.local/bin  (preferred — typically writable without sudo)
-  $HOME/bin         (older convention; still on PATH for some setups)
-  /usr/local/bin    (system-wide; usually needs sudo)
+Default destination:
+  Linux/macOS, in order of preference:
+    $HOME/.local/bin  (preferred — typically writable without sudo)
+    $HOME/bin         (older convention; still on PATH for some setups)
+    /usr/local/bin    (system-wide; usually needs sudo)
+  Windows:
+    a writable directory already on %PATH% — preferring
+    %LOCALAPPDATA%\Microsoft\WindowsApps (on the per-user PATH by default,
+    no admin) — so the binary resolves immediately. Falls back to
+    %LOCALAPPDATA%\Programs\roksbnkctl (with a PATH hint) if none is usable.
 
 Override the destination with --dir.
 
@@ -46,7 +52,7 @@ pulls the latest GitHub release tarball over the network.`,
 }
 
 func init() {
-	installCmd.Flags().StringVar(&flagInstallDir, "dir", "", "destination directory (default: ~/.local/bin or /usr/local/bin)")
+	installCmd.Flags().StringVar(&flagInstallDir, "dir", "", "destination directory (default: a PATH dir — ~/.local/bin on Unix, %LOCALAPPDATA%\\Microsoft\\WindowsApps on Windows)")
 	installCmd.Flags().BoolVar(&flagInstallForce, "force", false, "overwrite even if destination resolves to the running binary")
 	rootCmd.AddCommand(installCmd)
 }
@@ -101,20 +107,38 @@ func runInstall(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "✓ Installed %s\n", dest)
 
 	if !isOnPATH(destDir) {
-		fmt.Fprintf(os.Stderr, "\nwarning: %s is not on $PATH\n", destDir)
-		fmt.Fprintln(os.Stderr, "  add this to your shell's rc file (~/.bashrc / ~/.zshrc / etc.):")
-		fmt.Fprintf(os.Stderr, "    export PATH=\"%s:$PATH\"\n", destDir)
-		fmt.Fprintln(os.Stderr, "  then `hash -r` or open a new shell.")
+		printPATHGuidance(os.Stderr, destDir)
+	} else if runtime.GOOS == "windows" {
+		fmt.Fprintln(os.Stderr, "  (open a new terminal if `roksbnkctl` doesn't resolve immediately)")
 	} else {
 		fmt.Fprintln(os.Stderr, "  (open a new shell or run `hash -r` if `roksbnkctl` doesn't resolve immediately)")
 	}
 	return nil
 }
 
+// printPATHGuidance prints OS-appropriate instructions for putting dir on PATH.
+// On Windows the Unix `export PATH` / rc-file advice is meaningless (and was what
+// a Windows install used to emit), so give the PowerShell user-PATH one-liner.
+func printPATHGuidance(w io.Writer, dir string) {
+	fmt.Fprintf(w, "\nwarning: %s is not on your PATH\n", dir)
+	if runtime.GOOS == "windows" {
+		fmt.Fprintln(w, "  add it to your user PATH (new terminals will pick it up):")
+		fmt.Fprintf(w, "    [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';%s', 'User')\n", dir)
+		fmt.Fprintln(w, "  then open a new terminal.")
+		return
+	}
+	fmt.Fprintln(w, "  add this to your shell's rc file (~/.bashrc / ~/.zshrc / etc.):")
+	fmt.Fprintf(w, "    export PATH=\"%s:$PATH\"\n", dir)
+	fmt.Fprintln(w, "  then `hash -r` or open a new shell.")
+}
+
 // chooseInstallDir picks a sensible default destination, preferring
 // paths that don't need sudo. ~/.local/bin is the modern convention
 // (XDG-ish, on PATH by default in most distros' login profiles).
 func chooseInstallDir() string {
+	if runtime.GOOS == "windows" {
+		return chooseInstallDirWindows()
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		local := filepath.Join(home, ".local", "bin")
 		if isOnPATH(local) || dirExists(local) {
@@ -132,27 +156,109 @@ func chooseInstallDir() string {
 	return "/usr/local/bin"
 }
 
+// chooseInstallDirWindows picks a destination that is ALREADY on the user's
+// %PATH% so `roksbnkctl` resolves immediately — Windows has no ~/.local/bin
+// convention, and defaulting there (the old cross-platform behaviour) installed
+// the binary somewhere PATH never looks. Order:
+//  1. %LOCALAPPDATA%\Microsoft\WindowsApps — on the per-user PATH by default on
+//     Windows 10/11, user-writable (no admin), so this is the common answer.
+//  2. the first writable directory on %PATH% under the user's profile (avoids
+//     admin-only system dirs like System32).
+//  3. a per-user dir we create; runInstall then prints the PATH hint.
+func chooseInstallDirWindows() string {
+	home, _ := os.UserHomeDir()
+	local := os.Getenv("LOCALAPPDATA")
+
+	if local != "" {
+		if winApps := filepath.Join(local, "Microsoft", "WindowsApps"); isOnPATH(winApps) && dirWritable(winApps) {
+			return winApps
+		}
+	}
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if p == "" {
+			continue
+		}
+		if isUnderDir(p, home) && dirWritable(p) {
+			return p
+		}
+	}
+	if local != "" {
+		return filepath.Join(local, "Programs", "roksbnkctl")
+	}
+	if home != "" {
+		return filepath.Join(home, ".roksbnkctl", "bin")
+	}
+	return "."
+}
+
 // isOnPATH reports whether dir is in $PATH (after Abs-ing both sides
-// so trailing slashes / relative entries match).
+// so trailing slashes / relative entries match). Case-insensitive on Windows,
+// where PATH entries commonly differ in case from the resolved dir.
 func isOnPATH(dir string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return false
 	}
-	for _, p := range strings.Split(os.Getenv("PATH"), string(os.PathListSeparator)) {
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
 		if p == "" {
 			continue
 		}
-		if pAbs, err := filepath.Abs(p); err == nil && pAbs == abs {
+		if pAbs, err := filepath.Abs(p); err == nil && pathEqual(pAbs, abs) {
 			return true
 		}
 	}
 	return false
 }
 
+// pathEqual compares two absolute paths, case-insensitively on Windows.
+func pathEqual(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// isUnderDir reports whether path is dir or a descendant of it (used to keep the
+// Windows PATH scan to user-scoped, admin-free directories).
+func isUnderDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	absP, err1 := filepath.Abs(path)
+	absD, err2 := filepath.Abs(dir)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if pathEqual(absP, absD) {
+		return true
+	}
+	prefix := absD + string(os.PathSeparator)
+	if runtime.GOOS == "windows" {
+		return strings.HasPrefix(strings.ToLower(absP), strings.ToLower(prefix))
+	}
+	return strings.HasPrefix(absP, prefix)
+}
+
 func dirExists(d string) bool {
 	info, err := os.Stat(d)
 	return err == nil && info.IsDir()
+}
+
+// dirWritable reports whether an EXISTING directory can be written to, by
+// creating and removing a probe file (the reliable cross-platform check — Windows
+// ACLs make a stat-based guess unreliable). Never creates the directory itself.
+func dirWritable(dir string) bool {
+	if !dirExists(dir) {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".roksbnkctl-wtest-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
 }
 
 // copyExecutable writes src to dest atomically: temp file in dest's

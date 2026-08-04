@@ -4,19 +4,8 @@ variable "enabled" {
   default     = false
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 variable "node_labeler_job_ttl_seconds" {
-  description = "ttlSecondsAfterFinished for the node-labeler Job (kubectl mode). The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
+  description = "ttlSecondsAfterFinished for the node-labeler Job. The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
   type        = number
   default     = 600
 }
@@ -92,7 +81,7 @@ variable "f5_bigip_k8s_manifest_version" {
 }
 
 variable "manifest_download_dir" {
-  description = "Directory to download and extract the f5-bigip-k8s-manifest chart. Lives under .bnk/ so the extracted flo-version.txt and cis-version.txt files survive between bnk container invocations (the install null_resources read them on subsequent applies)."
+  description = "Directory to download and extract the f5-bigip-k8s-manifest chart. Lives under .bnk/ so the extracted flo-version.txt and cis-version.txt files survive between bnk container invocations (the chart-version extraction reads them on subsequent applies)."
   type        = string
   default     = "/work/.bnk/scratch/f5-manifest"
 }
@@ -129,13 +118,13 @@ variable "utils_namespace" {
 }
 
 variable "kube_host" {
-  description = "Kubernetes API server URL (used by null_resource curl provisioners)"
+  description = "Kubernetes API server URL"
   type        = string
   sensitive   = true
 }
 
 variable "kube_token" {
-  description = "Kubernetes bearer token (used by null_resource curl provisioners)"
+  description = "Kubernetes bearer token (used as the OCI chart-pull credential for the OpenShift in-cluster registry route)"
   type        = string
   sensitive   = true
 }
@@ -196,6 +185,13 @@ variable "use_cos_bucket" {
   default     = true
 }
 
+variable "far_service_account_b64" {
+  description = "FAR _json_key_base64 service account (base64 of the .json), used when use_cos_bucket = false"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "ibmcloud_api_key" {
   description = "IBM Cloud API Key (required when use_cos_bucket = true)"
   type        = string
@@ -218,13 +214,13 @@ variable "ibmcloud_resource_group" {
 variable "ibmcloud_cos_instance_name" {
   description = "IBM Cloud COS instance name"
   type        = string
-  default     = "bnk-orchestration"
+  default     = "bnk-supply-chain"
 }
 
 variable "ibmcloud_resources_cos_bucket" {
   description = "IBM Cloud COS bucket for file resources"
   type        = string
-  default     = "bnk-schematics-resources"
+  default     = "bnk-artifacts"
 }
 
 variable "f5_cne_far_auth_file" {
@@ -236,7 +232,7 @@ variable "f5_cne_far_auth_file" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT filename in COS bucket"
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
 }
 
 # ==============================================================================
@@ -257,6 +253,18 @@ variable "openshift_cluster_crn" {
 
 variable "cluster_vpc_id" {
   description = "ID of the cluster VPC (used to grant trusted profile Viewer and Editor IAM roles)"
+  type        = string
+  default     = ""
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}
+
+variable "helm_registry_config" {
+  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
   type        = string
   default     = ""
 }

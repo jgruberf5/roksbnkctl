@@ -14,6 +14,7 @@ data "ibm_resource_group" "resource_group" {
 
 # Look up the existing OpenShift cluster — deferred to apply time via roks_cluster_gate.
 data "ibm_container_vpc_cluster" "cluster" {
+  count             = var.cluster_absent ? 0 : 1
   name              = var.roks_cluster_name_or_id
   resource_group_id = data.ibm_resource_group.resource_group.id
   depends_on        = [null_resource.roks_cluster_gate]
@@ -21,10 +22,12 @@ data "ibm_container_vpc_cluster" "cluster" {
 
 # Resolve a subnet from the first worker pool zone to learn the VPC
 data "ibm_is_subnet" "cluster_subnet" {
-  identifier = data.ibm_container_vpc_cluster.cluster.worker_pools[0].zones[0].subnets[0].id
+  count      = var.cluster_absent ? 0 : 1
+  identifier = try(data.ibm_container_vpc_cluster.cluster[0].worker_pools[0].zones[0].subnets[0].id, null)
 }
 
 # Learn the cluster VPC from the subnet
 data "ibm_is_vpc" "cluster_vpc" {
-  identifier = data.ibm_is_subnet.cluster_subnet.vpc
+  count      = var.cluster_absent ? 0 : 1
+  identifier = try(data.ibm_is_subnet.cluster_subnet[0].vpc, null)
 }

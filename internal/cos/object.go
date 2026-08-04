@@ -56,7 +56,7 @@ func (c *Client) PutObjectFromFile(ctx context.Context, bucket, key, localPath s
 // s3ForBucket so the download targets the bucket's actual region, not
 // the workspace's home region — the fix that unblocks `cos object get`
 // (and, by inheritance, the new `cos bucket get`) against a
-// cross-region bucket like `bnk-schematics-resources` in us-south.
+// cross-region bucket like `bnk-artifacts` in us-south.
 func (c *Client) GetObjectToFile(ctx context.Context, bucket, key, localPath string) error {
 	sv, err := c.s3ForBucket(ctx, bucket)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -121,10 +122,13 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return runUpgradeTF(ctx, cctx)
 	}
 
-	// Existing workspace + interactive overwrite confirmation.
+	// Existing workspace: re-init RESUMES the interview to complete/update it,
+	// pre-filling defaults from the saved config (initDefaults reads it below).
+	// This is how a PARTIAL workspace — one left by a failed first init — gets
+	// finished, so the framing is "complete/update", not "overwrite".
 	if cctx.Workspace != nil {
-		fmt.Fprintf(os.Stderr, "Workspace %q already exists.\n", cctx.WorkspaceName)
-		if !promptYesNo("Overwrite config?", false) {
+		fmt.Fprintf(os.Stderr, "Workspace %q already exists — re-running setup to complete/update it.\n", cctx.WorkspaceName)
+		if !promptYesNo("Continue and update this workspace?", true) {
 			return errors.New("aborted")
 		}
 	}
@@ -183,6 +187,36 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ %s\n\n", id)
 
+	// Persist a PARTIAL workspace now (region + a resolvable API key), BEFORE the
+	// interview's fallible steps (cluster listing, the FAR/COS check). Historically
+	// the only save was at the very end, so any earlier failure left NO workspace
+	// and manual commands like `roksbnkctl cos` had nothing to resolve. With this,
+	// a failed init still leaves a usable workspace, and re-running `init` completes
+	// it. Skipped on a re-init (the workspace already exists). Best-effort.
+	if cctx.Workspace == nil {
+		partial := &config.Workspace{IBMCloud: config.IBMCloudCfg{Region: region}}
+		if serr := config.SaveWorkspace(cctx.WorkspaceName, partial); serr == nil {
+			persistAPIKey(cctx.WorkspaceName, apiKey)
+			fmt.Fprintf(os.Stderr, "✓ Partial workspace saved (%q) — completes on a successful init\n\n", cctx.WorkspaceName)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: could not pre-save workspace: %v\n\n", serr)
+		}
+	}
+
+	// From here on the workspace is persisted, so Ctrl-C exits cleanly and leaves it
+	// to finish later — rather than dropping the operator into a half-answered
+	// interview or a defaulted config. (A dedicated handler, so it fires only on a
+	// real SIGINT, not the root context's normal end-of-run cancel.)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		<-sigCh
+		fmt.Fprintf(os.Stderr, "\n\n^C interrupted — workspace %q is saved. Re-run `roksbnkctl init -w %s` to finish it.\n",
+			cctx.WorkspaceName, cctx.WorkspaceName)
+		os.Exit(130)
+	}()
+
 	// The account-aware interview: create-vs-reuse, region + existing-cluster
 	// menus pulled from the credentials, resource toggles, and the optional
 	// testing client (with its own region).
@@ -236,13 +270,50 @@ func runInit(_ *cobra.Command, _ []string) error {
 		ws.BNK.ManifestVersion = promptString("BNK manifest version", config.DefaultManifestVersion)
 		ws.BNK.FarAuthFile = promptString("FAR auth file (in the orchestration COS bucket)", config.DefaultFARAuthFile)
 		ws.BNK.SubscriptionJWTFile = promptString("Subscription JWT file (in the orchestration COS bucket)", config.DefaultSubscriptionJWTFile)
+		// Verify the orchestration COS actually holds those artefacts; offer to
+		// provision the instance/bucket + upload from local files when it doesn't,
+		// so the BNK phase has what it needs. Interactive path only.
+		if err := ensureFARSupplyChain(ctx, ic, apiKey, rgID, ws); err != nil {
+			return err
+		}
 		// Optional F5 License Proxy. Default no → BNK licenses with the
 		// subscription JWT as before (unchanged). Yes → set FLP mode + an flp
 		// block; the operator then runs `roksbnkctl flp up` before `bnk up`.
-		if promptYesNo("License via an in-cluster F5 License Proxy (FLP)?", false) {
+		if promptYesNo("License via an F5 License Proxy (FLP)?", false) {
 			ws.BNK.LicenseMode = "f5licenseproxy"
-			ns := promptString("FLP namespace", config.DefaultFLPNamespace)
-			ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
+			if promptYesNo("Deploy the FLP as a standalone VSI appliance? (No = in-cluster helm chart)", false) {
+				// ── Standalone VSI appliance: region, VPC (pick/create), SSH key. ──
+				flpRegion := promptString("FLP VSI region", region)
+				vpcID := pickOrCreateFLPVPC(ctx, ic, flpRegion, rgID)
+				zone := promptString("FLP VSI zone", flpRegion+"-1")
+				sshKey := resolveFLPVSISSHKey(ctx, ic, cctx.WorkspaceName, flpRegion, rgID)
+				fip := promptYesNo("Attach a floating IP for remote `flp status` + web-UI access?", true)
+				ws.BNK.FLP = &config.BNKFLPCfg{
+					Mode: "vsi",
+					VSI:  &config.BNKFLPVSICfg{VPC: vpcID, Zone: zone, SSHKey: sshKey, FloatingIP: &fip},
+				}
+			} else {
+				// ── In-cluster helm chart. ──
+				ns := promptString("FLP namespace", config.DefaultFLPNamespace)
+				ws.BNK.FLP = &config.BNKFLPCfg{Namespace: ns}
+				// Onto THIS workspace's cluster, or a different running ROKS cluster?
+				if !promptYesNo("Install onto THIS workspace's cluster?", true) {
+					pickRunningClusterForFLP(ctx, ic, cctx, ws)
+				}
+			}
+		}
+
+		// Optional per-zone data-plane networking. Default no → the module's
+		// install-guide defaults apply (bnk.network stays unset). Yes → interview the
+		// six subnet CIDRs + TMM self-IPs per AZ, seeded from the saved config
+		// (re-init) or the guide defaults, so accepting every prompt reproduces the
+		// default layout and the operator changes only what their fabric requires.
+		if promptYesNo("Customize BNK networking (per-zone subnets + TMM self-IPs)?", false) {
+			var prior *config.BNKNetworkCfg
+			if cctx.Workspace != nil {
+				prior = cctx.Workspace.BNK.Network
+			}
+			ws.BNK.Network = promptBNKNetwork(prior)
 		}
 	}
 
@@ -263,19 +334,9 @@ func runInit(_ *cobra.Command, _ []string) error {
 	cfgPath, _ := config.WorkspaceConfigPath(cctx.WorkspaceName)
 	fmt.Fprintf(os.Stderr, "\n✓ Wrote %s\n", cfgPath)
 
-	// Persist the API key for future runs. ResolveAPIKey may have
-	// already saved to the keychain during the prompt path, but if it
-	// couldn't (e.g. WSL2 without libsecret) the workspace didn't yet
-	// exist for the config.yaml fallback. Now it does — try again.
-	if !envHasAPIKey() && !config.APIKeyInKeychain(cctx.WorkspaceName) {
-		dest, perr := config.SaveAPIKeyForWorkspace(cctx.WorkspaceName, apiKey)
-		if perr == nil {
-			fmt.Fprintf(os.Stderr, "✓ API key persisted in %s\n", dest)
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: could not persist API key: %v\n", perr)
-			fmt.Fprintln(os.Stderr, "  set IBMCLOUD_API_KEY in a .env file or shell to skip the prompt next run")
-		}
-	}
+	// Persist the API key for future runs (idempotent — no-op if the partial-save
+	// path above already stored it, or it's in env/keychain).
+	persistAPIKey(cctx.WorkspaceName, apiKey)
 
 	// Initialising a workspace selects it — the user's environment follows the
 	// freshly-configured workspace without a separate `ws use`.
@@ -287,6 +348,65 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(os.Stderr, "\nNext: roksbnkctl up")
 	return nil
+}
+
+// promptBNKNetwork interviews the per-zone BNK data-plane networking: the external
+// and internal VLAN subnet CIDRs, the internal SNAT and VIP CIDRs, and the external
+// and internal TMM self-IPs. These render as cneinstance_network_zones and drive the
+// cloud-network-mapping ConfigMap plus the external/internal F5SPKVlan CRs' selfip_v4s.
+// Each field is seeded from the saved config (re-init) or the install-guide default,
+// so accepting every prompt reproduces the guide layout for that AZ.
+func promptBNKNetwork(prior *config.BNKNetworkCfg) *config.BNKNetworkCfg {
+	seed := config.DefaultBNKNetworkZones
+	if prior != nil && len(prior.Zones) == len(seed) {
+		seed = prior.Zones
+	}
+	// Network-wide TMM knobs (shared across all zones): the self-IP prefix length
+	// TMM applies on the F5SPKVlan CRs (match your VLAN subnet mask), and the pod
+	// CIDR TMM installs a route toward (your cluster's pod subnet).
+	prefixDef, routesDef := config.DefaultVLANPrefixLen, config.DefaultTMMK8SRoutes
+	if prior != nil {
+		if prior.VLANPrefixLen != nil {
+			prefixDef = *prior.VLANPrefixLen
+		}
+		if prior.TMMK8SRoutes != "" {
+			routesDef = prior.TMMK8SRoutes
+		}
+	}
+	prefixLen := promptInt("  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; match your VLAN CIDRs)", prefixDef)
+	tmmRoutes := promptString("  Kubernetes pod CIDR TMM routes to (TMM_K8S_ROUTES; the cluster's pod subnet)", routesDef)
+
+	zones := make([]config.BNKZoneCfg, len(seed))
+	for i, d := range seed {
+		fmt.Fprintf(os.Stderr, "\n  Availability zone %d of %d:\n", i+1, len(seed))
+		zones[i] = config.BNKZoneCfg{
+			ExtVLANCIDR:    promptString(fmt.Sprintf("  zone %d external VLAN subnet CIDR", i+1), d.ExtVLANCIDR),
+			IntVLANCIDR:    promptString(fmt.Sprintf("  zone %d internal VLAN subnet CIDR", i+1), d.IntVLANCIDR),
+			IntSNATCIDR:    promptString(fmt.Sprintf("  zone %d internal SNAT CIDR", i+1), d.IntSNATCIDR),
+			IntVIPCIDR:     promptString(fmt.Sprintf("  zone %d internal VIP CIDR", i+1), d.IntVIPCIDR),
+			ExternalSelfIP: promptString(fmt.Sprintf("  zone %d external TMM self-IP", i+1), d.ExternalSelfIP),
+			InternalSelfIP: promptString(fmt.Sprintf("  zone %d internal TMM self-IP", i+1), d.InternalSelfIP),
+		}
+	}
+	return &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
+}
+
+// persistAPIKey saves the API key to the workspace keychain (or the config.yaml
+// fallback) when it isn't already resolvable from the environment or keychain.
+// Best-effort and idempotent, so it is safe to call early — right after the
+// partial-workspace save, so `roksbnkctl cos` on a half-finished workspace can
+// authenticate — and again at the end of init.
+func persistAPIKey(workspace, apiKey string) {
+	if envHasAPIKey() || config.APIKeyInKeychain(workspace) {
+		return
+	}
+	dest, perr := config.SaveAPIKeyForWorkspace(workspace, apiKey)
+	if perr == nil {
+		fmt.Fprintf(os.Stderr, "✓ API key persisted in %s\n", dest)
+	} else {
+		fmt.Fprintf(os.Stderr, "warning: could not persist API key: %v\n", perr)
+		fmt.Fprintln(os.Stderr, "  set IBMCLOUD_API_KEY in a .env file or shell to skip the prompt next run")
+	}
 }
 
 // allCreateResources returns a ResourcesCfg with every toggle set to
@@ -348,15 +468,41 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 			fmt.Fprintln(os.Stderr, "  (minimum is 1 worker per zone — a ROKS cluster spans 3 AZs, so 3 workers total)")
 			workers = 1
 		}
+		// Public gateways = worker Internet egress. Default yes (current behavior).
+		// No → a private, disconnected cluster: no egress, so the operator must supply
+		// private connectivity (VPEs / private service endpoints) for image pulls and
+		// IBM Cloud services. Recorded explicitly so the choice is visible in config.yaml.
+		pubGW := promptYesNo("Attach public gateways for worker Internet egress? (No = private/disconnected cluster)", true)
+		if !pubGW {
+			fmt.Fprintln(os.Stderr, "  ⚠ private cluster: no worker egress — you must provide private connectivity (VPEs / private")
+			fmt.Fprintln(os.Stderr, "    service endpoints) for image pulls + IBM Cloud services, and mirror BNK into a registry")
+			fmt.Fprintln(os.Stderr, "    the cluster can reach privately (roksbnkctl registry replicate).")
+		}
 		out.Cluster = config.ClusterCfg{
 			Create:           true,
 			Name:             naming.Derive(prefix).ClusterName,
 			OpenShiftVersion: promptString("OpenShift version", dOCP),
 			WorkersPerZone:   workers,
+			PublicGateway:    &pubGW,
 		}
 		res.RegistryCOS.Create = promptYesNo("Create registry COS instance?", true)
 		if !res.RegistryCOS.Create {
 			res.RegistryCOS.Existing = promptString("Existing COS instance name", "")
+		}
+
+		// Cluster VPC. Declining discovers the region's existing VPCs to build the
+		// new cluster into — so multiple clusters (workspaces) can share one VPC.
+		// The recorded value is the VPC id (ResourcesCfg.ClusterVPC.Existing), which
+		// renders as use_existing_cluster_vpc + existing_cluster_vpc_id. A new cluster
+		// must have a VPC, so if none is selected we fall back to creating one.
+		vpcQuotaHint(ctx, ic, out.Region)
+		res.ClusterVPC.Create = promptYesNo("Create a new cluster VPC?", true)
+		if !res.ClusterVPC.Create {
+			res.ClusterVPC.Existing = pickExistingVPC(ctx, ic, out.Region, "Use an existing cluster VPC")
+			if res.ClusterVPC.Existing == "" {
+				fmt.Fprintln(os.Stderr, "  (no VPC selected — a new cluster needs a VPC, so one will be created)")
+				res.ClusterVPC.Create = true
+			}
 		}
 	} else {
 		fmt.Fprintln(os.Stderr, "\n→ Listing running OpenShift clusters...")
@@ -392,9 +538,10 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 	// cluster to — by name or id — so multiple clusters can share one gateway.
 	// Blank is fine: the cluster is left unattached and can be connected later
 	// with `roksbnkctl tgw connect <name-or-id>`.
+	tgwQuotaHint(ctx, ic)
 	res.TransitGateway.Create = promptYesNo("Create Transit Gateway?", true)
 	if !res.TransitGateway.Create {
-		res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (blank = attach later with `tgw connect`)", "")
+		res.TransitGateway.Existing = pickExistingTransitGateway(ctx, ic, "Attach an existing Transit Gateway")
 	}
 
 	// In-cluster services.
@@ -414,7 +561,7 @@ func runAccountInterview(ctx context.Context, ic *ibm.Client, cctx *config.Conte
 		// operator declined to create one and didn't already name an existing one
 		// above, ask now — the jumphost can't work without it.
 		if !res.TransitGateway.Create && res.TransitGateway.Existing == "" {
-			res.TransitGateway.Existing = promptString("Existing Transit Gateway name or ID (required for the testing jumphost)", "")
+			res.TransitGateway.Existing = pickExistingTransitGateway(ctx, ic, "Attach an existing Transit Gateway (required for the testing jumphost)")
 		}
 	} else {
 		res.TGWJumphost.Create = false
@@ -585,6 +732,214 @@ func copyKeyToUserSSH(srcDir, name string) (created []string, err error) {
 // chosen name, defaulting to def. TTY-only: a non-interactive run returns def
 // without dialing the API (keeps init scriptable). On a list error it falls
 // back to the built-in region list so init never hard-fails offline.
+// pickExistingTransitGateway discovers the account's transit gateways and lets the
+// operator choose one to attach the cluster to (returns its name; "" = attach later
+// with `tgw connect`). Falls back to a free-text name/ID prompt when discovery
+// fails; reports (and skips) when the account has none.
+func pickExistingTransitGateway(ctx context.Context, ic *ibm.Client, label string) string {
+	lctx, cancel := apiCtx(ctx)
+	tgws, err := ic.ListTransitGateways(lctx)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list transit gateways: %v)\n", err)
+		return promptString(label+" — name or ID (blank = attach later)", "")
+	}
+	if len(tgws) == 0 {
+		fmt.Fprintln(os.Stderr, "  (no existing transit gateways in this account — attach one later with `tgw connect`)")
+		return ""
+	}
+	fmt.Fprintln(os.Stderr, "  Existing transit gateways in this account:")
+	for i, g := range tgws {
+		fmt.Fprintf(os.Stderr, "    %2d) %-28s (%s, %s)\n", i+1, g.Name, g.Location, g.Status)
+	}
+	choice := promptInt(label+" — pick a number (0 = none / attach later)", 0)
+	if choice <= 0 || choice > len(tgws) {
+		return ""
+	}
+	return tgws[choice-1].Name
+}
+
+// pickExistingVPC discovers the VPCs in a region and lets the operator choose one
+// for the new cluster to build into — enabling multiple clusters (workspaces) to
+// share one VPC. Mirrors pickExistingTransitGateway, with two differences: VPCs
+// are regional (so it takes a region), and it returns the VPC *ID* (not name),
+// because ResourcesCfg.ClusterVPC.Existing is rendered as existing_cluster_vpc_id.
+// Returns "" for none/skip. Falls back to a free-text VPC-id prompt when discovery
+// fails; reports (and skips) when the region has none.
+// pickOrCreateFLPVPC lets the operator pick an existing VPC in region for the
+// standalone FLP appliance, or create a new one. Returns the VPC id (empty on
+// error/none). A freshly created VPC still needs a Transit Gateway attachment to
+// be reachable from a cluster in another VPC — noted to the operator.
+func pickOrCreateFLPVPC(ctx context.Context, ic *ibm.Client, region, rgID string) string {
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list VPCs: %v)\n", err)
+		return promptString("FLP VPC id", "")
+	}
+	labels := make([]string, 0, len(vpcs)+1)
+	for _, v := range vpcs {
+		labels = append(labels, fmt.Sprintf("%s (%s)", v.Name, v.Status))
+	}
+	labels = append(labels, "＋ create a new VPC")
+	sel := promptSelect(fmt.Sprintf("VPC for the FLP appliance in %s", region), labels, 0)
+	if sel >= 0 && sel < len(vpcs) {
+		return vpcs[sel].ID
+	}
+	name := promptString("New VPC name", "bnk-svc-vpc")
+	var created *ibm.VPC
+	if err := spin(fmt.Sprintf("Creating VPC %q in %s", name, region), func() error {
+		var e error
+		created, e = ic.CreateVPC(ctx, region, name, rgID)
+		return e
+	}); err != nil || created == nil {
+		fmt.Fprintf(os.Stderr, "  could not create VPC: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "✓ Created VPC %q (%s). Attach it to your Transit Gateway before the cluster can reach the FLP: `roksbnkctl tgw connect`.\n", created.Name, created.ID)
+	return created.ID
+}
+
+// resolveFLPVSISSHKey resolves a VPC SSH key for the standalone FLP VSI in region
+// (reuse if it already exists, else generate + upload), so an operator can SSH
+// into the licensing appliance to inspect Vault/podman/logs or recover it.
+// Returns the key name ("" = no key attached).
+func resolveFLPVSISSHKey(ctx context.Context, ic *ibm.Client, workspace, region, rgID string) string {
+	keyName := promptString("SSH key for the FLP VSI (existing name; blank = none)", workspace+"-flp")
+	if keyName == "" {
+		return ""
+	}
+	kctx, cancel := apiCtx(ctx)
+	existing, _ := ic.GetSSHKeyByName(kctx, region, keyName)
+	cancel()
+	if existing != nil && existing.PublicKey != "" {
+		fmt.Fprintf(os.Stderr, "✓ Using existing SSH key %q in %s\n", keyName, region)
+		return keyName
+	}
+	if !promptYesNo(fmt.Sprintf("SSH key %q not found in %s — generate + upload it now?", keyName, region), true) {
+		return ""
+	}
+	pub, priv, err := sshkey.Generate()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  could not generate key: %v\n", err)
+		return ""
+	}
+	sshDir, err := config.WorkspaceSSHDir(workspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  %v\n", err)
+		return ""
+	}
+	privPath, err := sshkey.Write(sshDir, keyName, priv, pub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  storing SSH key: %v\n", err)
+		return ""
+	}
+	if err := spin(fmt.Sprintf("Uploading the public key to %s", region), func() error {
+		_, e := ic.CreateSSHKey(ctx, region, keyName, pub, rgID)
+		return e
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "  uploading SSH key: %v\n", err)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "✓ Generated SSH key %q → %s (uploaded to %s)\n", keyName, privPath, region)
+	if promptYesNo(fmt.Sprintf("Copy the private key to ~/.ssh/%s?", keyName), true) {
+		if _, err := copyKeyToUserSSH(sshDir, keyName); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not copy to ~/.ssh (%v)\n", err)
+		}
+	}
+	return keyName
+}
+
+// pickRunningClusterForFLP points the workspace at an existing running ROKS
+// cluster for an in-cluster FLP install (instead of this workspace's own
+// cluster): the operator picks from the account's running clusters and the
+// workspace adopts it (create=false + register), mirroring `cluster register`.
+func pickRunningClusterForFLP(ctx context.Context, ic *ibm.Client, cctx *config.Context, ws *config.Workspace) {
+	fmt.Fprintln(os.Stderr, "\n→ Listing running OpenShift clusters...")
+	lctx, cancel := apiCtx(ctx)
+	clusters, err := ic.ListClusters(lctx)
+	cancel()
+	if err != nil || len(clusters) == 0 {
+		fmt.Fprintln(os.Stderr, "  (no running clusters found — the FLP will target this workspace's cluster)")
+		return
+	}
+	labels := make([]string, len(clusters))
+	for i, cl := range clusters {
+		labels[i] = fmt.Sprintf("%s  (%s, %s)", cl.Name, cl.Region, cl.State)
+	}
+	chosen := clusters[promptSelect("Choose a running ROKS cluster to license", labels, 0)]
+	ws.Cluster.Create = false
+	ws.Cluster.Name = chosen.Name
+	if err := registerReusedCluster(ctx, ic, cctx.WorkspaceName, chosen.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not record cluster (%v) — run `roksbnkctl cluster register %s`\n", err, chosen.Name)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ FLP will license adopted cluster %q\n", chosen.Name)
+	}
+}
+
+func pickExistingVPC(ctx context.Context, ic *ibm.Client, region, label string) string {
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not list VPCs: %v)\n", err)
+		return promptString(label+" — VPC id (blank = create a new one)", "")
+	}
+	if len(vpcs) == 0 {
+		fmt.Fprintf(os.Stderr, "  (no existing VPCs in %s — a new one will be created)\n", region)
+		return ""
+	}
+	fmt.Fprintf(os.Stderr, "  Existing VPCs in %s:\n", region)
+	for i, v := range vpcs {
+		fmt.Fprintf(os.Stderr, "    %2d) %-28s (%s)\n", i+1, v.Name, v.Status)
+	}
+	choice := promptInt(label+" — pick a number (0 = none / create a new one)", 0)
+	if choice <= 0 || choice > len(vpcs) {
+		return ""
+	}
+	return vpcs[choice-1].ID
+}
+
+// vpcQuotaHint / tgwQuotaHint print current usage vs the default IBM quota just
+// before the create-VPC / create-TGW prompts, so the operator can choose "adopt
+// existing" BEFORE a full region/account fails the apply ~40 minutes into a cluster
+// build. Best-effort and silent on error (the interview already dials the API for
+// its pickers, so the extra call is cheap and TTY-only).
+func vpcQuotaHint(ctx context.Context, ic *ibm.Client, region string) {
+	if ic == nil || region == "" || !isTTY() {
+		return
+	}
+	lctx, cancel := apiCtx(ctx)
+	vpcs, err := ic.ListVPCs(lctx, region)
+	cancel()
+	if err != nil {
+		return
+	}
+	if n := len(vpcs); n >= ibm.VPCQuotaPerRegion {
+		fmt.Fprintf(os.Stderr, "  VPCs in %s: %d/%d -- at the default limit; a new one will FAIL. Answer 'n' to adopt an existing VPC.\n", region, n, ibm.VPCQuotaPerRegion)
+	} else {
+		fmt.Fprintf(os.Stderr, "  VPCs in %s: %d/%d\n", region, n, ibm.VPCQuotaPerRegion)
+	}
+}
+
+func tgwQuotaHint(ctx context.Context, ic *ibm.Client) {
+	if ic == nil || !isTTY() {
+		return
+	}
+	lctx, cancel := apiCtx(ctx)
+	tgws, err := ic.ListTransitGateways(lctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	if n := len(tgws); n >= ibm.TGWQuotaPerAccount {
+		fmt.Fprintf(os.Stderr, "  Transit Gateways: %d/%d (account-wide) -- at the default limit; a new one will FAIL. Answer 'n' to attach an existing gateway.\n", n, ibm.TGWQuotaPerAccount)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Transit Gateways: %d/%d (account-wide)\n", n, ibm.TGWQuotaPerAccount)
+	}
+}
+
 func pickRegion(ctx context.Context, ic *ibm.Client, label, def string) string {
 	if !isTTY() {
 		return def
@@ -696,7 +1051,14 @@ func printNamePlan(w io.Writer, ws *config.Workspace) {
 		clusterName = ws.Cluster.Name + "  (existing)"
 	}
 	fmt.Fprintf(w, "  cluster                %s\n", clusterName)
-	fmt.Fprintf(w, "  cluster VPC            %s\n", plan.ClusterVPCName)
+	// The cluster VPC is created under the derived name by default; it is adopted
+	// only when Create=false AND an id is given (the exact render condition in
+	// tf/vars.go), so a zero-value toggle still means "create", not "not managed".
+	clusterVPC := plan.ClusterVPCName
+	if !res.ClusterVPC.Create && res.ClusterVPC.Existing != "" {
+		clusterVPC = res.ClusterVPC.Existing + "  (existing)"
+	}
+	fmt.Fprintf(w, "  cluster VPC            %s\n", clusterVPC)
 	fmt.Fprintf(w, "  registry COS instance  %s\n", planNameOrExisting(res.RegistryCOS, plan.COSInstanceName))
 	fmt.Fprintf(w, "  transit gateway        %s\n", planNameOrExisting(res.TransitGateway, plan.TransitGatewayName))
 	if res.TGWJumphost.Create {

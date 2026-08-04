@@ -139,12 +139,6 @@ ibmcloud_resources_cos_bucket = "bnk-schematics-resources"
 # Set to false to skip FLO (ws3), CNEInstance (ws4), and License (ws5).
 deploy_bnk = true
 
-# BNK install mechanism:
-#   "kubectl"     — terraform-native (helm_release + kubectl_manifest). Default.
-#   "legacy_curl" — the null_resource/curl baseline (benchmark / fallback).
-bnk_cr_mode = "kubectl"
-
-
 # --- FLO (ws3) ---
 
 # FAR repository URL for Docker and Helm images.
@@ -214,6 +208,16 @@ cneinstance_gslb_datacenter_name = ""
 #     external_selfip = "10.10.1.10",    internal_selfip = "10.20.1.10" },
 #   # …repeat per AZ
 # ]
+
+# Self-IP prefix length TMM applies on the F5SPKVlan CRs (spec.prefixlen_v4) — the
+# size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs above.
+# (roksbnkctl: config.yaml `bnk.network.vlan_prefixlen`.)
+# cneinstance_vlan_prefixlen = 24
+
+# Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES)
+# so it can reach backend pods. Default is the ROKS pod subnet; set to your cluster's
+# actual pod CIDR if non-default. (roksbnkctl: config.yaml `bnk.network.tmm_k8s_routes`.)
+# cneinstance_tmm_k8s_routes = "172.17.0.0/18"
 
 
 # --- License (ws5) ---

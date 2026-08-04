@@ -14,6 +14,7 @@ Source: `terraform/variables.tf`
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region for all cluster resources | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud resource group name | no |
 | `create_roks_cluster` | `bool` | `true` | Create a new ROKS cluster. When false, supply roks_cluster_id_or_name instead. | no |
+| `cluster_public_gateway` | `bool` | `true` | Attach a public gateway to each cluster subnet for worker Internet egress. true (default) keeps current behavior; false builds a private, disconnected cluster with no egress (operator must supply private connectivity — VPEs / private service endpoints — for image pulls and IBM Cloud services). | no |
 | `roks_cluster_id_or_name` | `string` | `""` | ID or name of an existing ROKS cluster — used when create_roks_cluster = false | no |
 | `create_roks_transit_gateway` | `bool` | `true` | Create Transit Gateway and VPC connections | no |
 | `create_roks_registry_cos_instance` | `bool` | `true` | Create Cloud Object Storage instance for the OpenShift image registry | no |
@@ -32,10 +33,9 @@ Source: `terraform/variables.tf`
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager | no |
 | `cert_manager_version` | `string` | `"v1.17.3"` | cert-manager Helm chart version | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — creates flo, cne_instance, and license. When false all three modules are skipped. | no |
-| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native) or \"legacy_curl\" (null_resource baseline). | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository URL for Docker and Helm images | no |
 | `far_chart_repo_url` | `string` | `""` | Chart-pull host for the air-gap mirror (helm_release repository + manifest pull). Empty falls back to far_repo_url. | no |
 | `far_image_repo_url` | `string` | `""` | Image-pull host for the air-gap mirror (image.repository + CNEInstance spec.registry.uri). Empty falls back to far_repo_url. | no |
@@ -44,7 +44,10 @@ Source: `terraform/variables.tf`
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror. When set (with use_registry_mirror), chart and image pulls authenticate to the mirror with these credentials instead of the in-cluster kube token. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO and CIS versions are extracted from this) | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket — used by flo and license | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket — used by flo and license | no |
+| `use_cos_bucket` | `bool` | `true` | Download the FAR auth tarball + subscription JWT from the orchestration COS. false = use the injected far_service_account_b64 / f5_cne_subscription_jwt content instead (local files). | no |
+| `far_service_account_b64` | `string` | `""` | FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path. | **yes** |
+| `f5_cne_subscription_jwt` | `string` | `""` | Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead). | **yes** |
 | `flo_namespace` | `string` | `"f5-bnk"` | Kubernetes namespace for the F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license | no |
 | `bigip_username` | `string` | `"admin"` | BIG-IP username for the CIS controller | no |
@@ -56,6 +59,8 @@ Source: `terraform/variables.tf`
 | `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults) | no |
+| `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
+| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
 | `license_mode` | `string` | `"connected"` | License operation mode (connected, disconnected, or f5licenseproxy) | no |
 | `flp_license_server_url` | `string` | `""` | Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.`<ns>`.svc.cluster.local:8443) | no |
 | `license_server_root_ca` | `string` | `""` | PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only) | no |
@@ -87,9 +92,28 @@ Source: `terraform/variables.tf`
 | `flp_node_port_access` | `bool` | `false` | Expose the F5 License Proxy outside its own cluster (NodePort + worker-node-IP cert SANs), so a BNK install in a different cluster can license through it. | no |
 | `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the worker security group to these CIDRs. A LIST — a multi-zone VPC has one address prefix per zone, and a consuming pod in an unlisted zone is silently dropped. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary. helm invokes it as the f5-license-proxy chart's post-renderer (`roksbnkctl flp postrender`), so the FLP install needs no interpreter on the host. roksbnkctl sets this automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH. | no |
+| `deploy_flp_vsi` | `bool` | `false` | Deploy the F5 License Proxy as a standalone VSI (podman pod, no k8s) instead of the helm chart. Set true only by the FLP phase in mode: vsi. | no |
+| `flp_status_image` | `string` | `""` | Optional flp-status web UI image for the standalone FLP VSI (mirror/public ref). Empty = no status UI. | no |
+| `flp_status_registry_host` | `string` | `""` | Registry host:port whose CA to trust so the FLP VSI can pull flp_status_image (e.g. Harbor's `<ip>`). | no |
+| `flp_status_registry_ca_b64` | `string` | `""` | Base64 CA cert for flp_status_registry_host. | no |
+| `flp_vsi_ssh_key` | `string` | `""` | Existing IBM Cloud VPC SSH key name to attach to the standalone FLP VSI (operator access). Empty = no key. | no |
+| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile for the FLP (>= 4 vCPU / 8 GB). | no |
+| `flp_vsi_zone` | `string` | `""` | Zone for the FLP VSI. Empty → `<region>`-1. | no |
+| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size (GB) for the FLP VSI (>= 80). | no |
+| `flp_vsi_reach` | `string` | `"private"` | How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating. | no |
+| `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true. | no |
+| `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open). | no |
+| `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges. | no |
+| `flp_vsi_allowed_cidrs` | `list(string)` | `[]` | DEPRECATED — legacy single list; seeds both management + licensing when set. Prefer the two per-plane variables. | no |
+| `flp_prod_jwks_b64` | `string` | `""` | Optional override: base64 of F5's public prod_jwks.txt. Empty → the flp_vsi module extracts it from the f5-license-proxy chart. | no |
+| `flp_forward_proxy_host` | `string` | `""` | — | no |
+| `flp_forward_proxy_port` | `number` | `0` | — | no |
+| `flp_forward_proxy_protocol` | `string` | `"http"` | — | no |
 | `deploy_tgw_connection` | `bool` | `false` | Attach the cluster's VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else. | no |
 | `tgw_connection_target` | `string` | `""` | Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway. | no |
 | `tgw_connection_name` | `string` | `""` | Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide). | no |
+| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
+| `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
 
 ## Module: `cert_manager`
 
@@ -105,12 +129,12 @@ Source: `terraform/modules/cert_manager/variables.tf`
 | `cert_manager_version` | `string` | `"v1.17.3"` | cert-manager Helm chart version | no |
 | `cert_manager_image_repository` | `string` | `""` | Override the cert-manager controller image repository (air-gap mirror image host). Empty leaves the chart default. | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
-| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_namespace + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline). | no |
 | `deploy_cert_manager` | `bool` | `true` | When true, manage the cert_manager helm/null_resource bring-up. Set false in the bnk-phase override when cluster-outputs.json exists — cluster phase already provisioned cert_manager and the second phase must NOT re-manage it (would attempt kubectl delete namespace cert-manager on a subsequent bnk down). | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/cert_manager"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
 | `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created. | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with image_repository, cert-manager's pods pull with a dockerconfig secret built from it instead of anonymously. | **yes** |
+| `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 
 ## Module: `cne_instance`
 
@@ -134,14 +158,17 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | The Multus Network Attachment Definitions for the CNEInstance TMM deployments | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults) | no |
+| `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
+| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
-| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native kubectl_manifest + wait_for) or \"legacy_curl\" (null_resource local-exec baseline). | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `flo_dependency_id` | `string` | `null` | flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/cne_instance"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
 | `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (private Harbor/Artifactory). | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously. | **yes** |
+| `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
+| `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 
 ## Module: `flo`
 
@@ -161,11 +188,12 @@ Source: `terraform/modules/flo/variables.tf`
 | `registry_mirror_password` | `string` | `""` | Basic-auth password/token for an external registry mirror; chart pulls authenticate with it when set. | **yes** |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this) | no |
 | `use_cos_bucket` | `bool` | `true` | Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables | no |
+| `far_service_account_b64` | `string` | `""` | FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false | **yes** |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager - used by cert-manager, flo modules | no |
@@ -173,12 +201,14 @@ Source: `terraform/modules/flo/variables.tf`
 | `bigip_password` | `string` | `"admin"` | BIG-IP password for CIS controller login | **yes** |
 | `bigip_url` | `string` | `"https://192.168.1.245"` | BIG-IP URL for CIS controller login | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
-| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_* + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline). | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `cert_manager_dependency_id` | `string` | `null` | cert_manager ready sentinel ID — when set, blocks flo inner module until cert-manager CRDs are available | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — when false the inner flo module is disabled and no FLO resources are created | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/flo"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
 | `scratch_dir` | `string` | `"/work/.bnk/scratch"` | Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount. | no |
+| `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
+| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
+| `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 
 ## Module: `flp`
 
@@ -198,7 +228,7 @@ Source: `terraform/modules/flp/variables.tf`
 | `ibmcloud_resources_cos_bucket` | `string` | `""` | COS bucket holding the FAR auth tarball + subscription JWT. | no |
 | `ibmcloud_cos_bucket_region` | `string` | `""` | Region of the COS bucket. | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth tarball object key in the COS bucket (the _json_key_base64 SA lives inside). | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT object key in the COS bucket — seeds flp-jwt-secret. | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT object key in the COS bucket — seeds flp-jwt-secret. | no |
 | `scratch_dir` | `string` | `"/tmp/roksbnkctl-flp"` | Working directory for the FAR-auth download/extract. | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR registry host (fallback when no mirror). | no |
 | `far_chart_repo_url` | `string` | `""` | Mirror host for chart pulls (empty → coalesces to far_repo_url). | no |
@@ -213,6 +243,50 @@ Source: `terraform/modules/flp/variables.tf`
 | `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to these CIDRs (the consuming cluster's subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched. | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart's POST-RENDERER (`roksbnkctl flp postrender`). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH for a direct `terraform apply`. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container. | no |
+| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
+
+## Module: `flp_vsi`
+
+Source: `terraform/modules/flp_vsi/variables.tf`
+
+| Variable | Type | Default | Description | Sensitive |
+|---|---|---|---|---|
+| `deploy_flp_vsi` | `bool` | `false` | Master toggle — when false the whole module is a no-op (count=0). Set true only by the FLP phase in mode: vsi. | no |
+| `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API key (provider + COS/IAM REST auth). | **yes** |
+| `ibmcloud_cluster_region` | `string` | _required_ | Region of the ROKS cluster / where the FLP VSI is provisioned. | no |
+| `ibmcloud_resource_group` | `string` | `""` | Resource group for the VSI + network (empty = account default). | no |
+| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile (>= 4 vCPU / 8 GB). | no |
+| `flp_vsi_zone` | `string` | `""` | Zone for the VSI (e.g. us-south-1). Empty → `<region>`-1. | no |
+| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size in GB (>= 80). | no |
+| `flp_vsi_reach` | `string` | `"private"` | How the CWC dials the proxy: private (VSI VPC IP) or floating (public floating IP). | no |
+| `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true. | no |
+| `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :80 flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries no secrets). | no |
+| `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway). | no |
+| `flp_vsi_allowed_cidrs` | `list(string)` | `[]` | DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply. | no |
+| `existing_cluster_vpc_id` | `string` | `""` | The cluster VPC id (from cluster-outputs.json) the FLP VSI joins so the CWC reaches it directly. | no |
+| `flp_image_registry` | `string` | `"repo.f5.com/images"` | FAR image host prefix, e.g. repo.f5.com/images. | no |
+| `f5_bigip_k8s_manifest_version` | `string` | _required_ | BNK manifest version — the f5-license-proxy chart/image tag is resolved from it (like the helm path) when flp_chart_version is empty. | no |
+| `flp_chart_version` | `string` | `""` | Pin the f5-license-proxy chart/image tag. Empty → resolved from the BNK manifest. | no |
+| `flp_vault_image_tag` | `string` | `"2.0.0"` | Tag for the vault image. | no |
+| `f5_cert_url` | `string` | `"https://product.apis.f5.com/ee/v1"` | — | no |
+| `f5_entitlement_url` | `string` | `"https://product-s.apis.f5.com/ee/v1"` | — | no |
+| `f5_initial_config_url` | `string` | `"https://product-s.apis.f5.com/ee/v1"` | — | no |
+| `mode_of_operation` | `string` | `"connected"` | — | no |
+| `flp_forward_proxy_host` | `string` | `""` | — | no |
+| `flp_forward_proxy_port` | `number` | `0` | — | no |
+| `flp_forward_proxy_protocol` | `string` | `"http"` | — | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | — | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | — | no |
+| `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | — | no |
+| `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | — | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | — | no |
+| `scratch_dir` | `string` | `"/tmp/flp-vsi-scratch"` | Working dir for the FAR-auth download/extract + chart pull. | no |
+| `flp_prod_jwks_b64` | `string` | `""` | Base64 of F5's public prod_jwks.txt (JWT signature verification). Supplied by the FLP phase, which extracts it from the f5-license-proxy chart. | no |
+| `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the FLP-VSI phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
+| `use_cos_bucket` | `bool` | `true` | True: pull the FAR tarball + subscription JWT from COS. False (disconnected): use far_service_account_b64 + f5_cne_subscription_jwt supplied by the root from local files. | no |
+| `far_service_account_b64` | `string` | `""` | Base64 FAR service account (from bnk.far_auth_local_file), used when use_cos_bucket=false. | no |
+| `f5_cne_subscription_jwt` | `string` | `""` | Subscription JWT contents (from bnk.subscription_jwt_local_file), used when use_cos_bucket=false. | no |
+| `flp_vsi_ssh_key` | `string` | `""` | Existing VPC SSH key name to attach to the FLP VSI (operator access). Empty = no key. | no |
 
 ## Module: `gateway`
 
@@ -263,20 +337,23 @@ Source: `terraform/modules/license/variables.tf`
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region where the cluster resides | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud Resource Group name (leave empty to use account default) | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
-| `ibmcloud_cos_instance_name` | `string` | `"bnk-orchestration"` | IBM Cloud COS instance name | no |
-| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-schematics-resources"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
+| `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
+| `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `roks_cluster_name_or_id` | `string` | _required_ | Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"trial.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `use_cos_bucket` | `bool` | `true` | Download the subscription JWT from COS. false = use the injected jwt_token content (local file). | no |
+| `jwt_token` | `string` | `""` | Subscription/license JWT content, injected when use_cos_bucket = false. Empty on the COS path. | **yes** |
 | `license_mode` | `string` | `"connected"` | License operation mode (connected, disconnected, or f5licenseproxy) | no |
 | `flp_license_server_url` | `string` | `""` | Base URL of the in-cluster F5 License Proxy (FLP mode only) | no |
 | `license_server_root_ca` | `string` | `""` | PEM of the FLP root CA, written to the licenseserver-rootca Secret (FLP mode only) | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
-| `bnk_cr_mode` | `string` | `"kubectl"` | BNK install mechanism: \"kubectl\" (terraform-native kubectl_manifest + wait_for) or \"legacy_curl\" (null_resource local-exec baseline). | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `cneinstance_dependency_id` | `string` | `null` | cneinstance_ready_id from ws4 — when set, ensures License CRD is available before applying License CR | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — when false the inner license module is disabled and no License resources are created | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/license"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
+| `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the license phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
+| `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 
 ## Module: `roks_cluster`
 
@@ -288,6 +365,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `ibmcloud_cluster_region` | `string` | _required_ | IBM Cloud region for all cluster resources | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud resource group name | no |
 | `create_roks_cluster` | `bool` | `true` | Create a new ROKS cluster. When false, supply roks_cluster_id_or_name instead. | no |
+| `cluster_public_gateway` | `bool` | `true` | Attach public gateways for worker Internet egress. true (default) = current behavior; false = private/disconnected cluster (no egress). | no |
 | `roks_cluster_id_or_name` | `string` | `""` | ID or name of an existing ROKS cluster — used when create_roks_cluster = false | no |
 | `create_roks_transit_gateway` | `bool` | `true` | Create Transit Gateway and VPC connections | no |
 | `create_roks_registry_cos_instance` | `bool` | `true` | Create Cloud Object Storage instance for the OpenShift image registry | no |
@@ -302,6 +380,8 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster). | no |
 | `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster). | no |
 | `kubeconfig_dir` | `string` | _required_ | Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner. | no |
+| `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the cluster phase invokes `roksbnkctl tfx <verb>` in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH. | no |
+| `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
 
 ## Module: `testing`
 
@@ -328,6 +408,7 @@ Source: `terraform/modules/testing/variables.tf`
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers cluster/TGW data source reads to apply time after roks_cluster completes | no |
 | `create_roks_cluster` | `bool` | `false` | Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster | no |
 | `cluster_vpc_id` | `string` | `""` | ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time | no |
+| `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists, so cluster data-source lookups are skipped (count=0). | no |
 
 ## Module: `tgw_connection`
 

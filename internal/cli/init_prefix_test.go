@@ -259,6 +259,31 @@ func TestPrintNamePlan_ShowsDerivedNames(t *testing.T) {
 	}
 }
 
+// TestPrintNamePlan_ShowsAdoptedClusterVPC — when the cluster VPC is adopted
+// (ClusterVPC.Create=false + an id), the name plan annotates it as existing
+// instead of printing the derived name. Mirrors the transit-gateway BYO path,
+// and guards the render condition (adopt only when Create=false AND id != "").
+func TestPrintNamePlan_ShowsAdoptedClusterVPC(t *testing.T) {
+	ws := &config.Workspace{
+		Cluster: config.ClusterCfg{Create: true, Name: "demo"},
+		Prefix:  "demo",
+		Resources: &config.ResourcesCfg{
+			ClusterVPC:  config.ResourceToggle{Create: false, Existing: "r006-6fe0b20a-vpc"},
+			RegistryCOS: config.ResourceToggle{Create: true},
+		},
+	}
+	var buf bytes.Buffer
+	printNamePlan(&buf, ws)
+	out := buf.String()
+	if !strings.Contains(out, "r006-6fe0b20a-vpc") || !strings.Contains(out, "(existing)") {
+		t.Errorf("adopted cluster VPC not annotated as existing\noutput:\n%s", out)
+	}
+	// The derived cluster-VPC name must NOT appear once a VPC is adopted.
+	if strings.Contains(out, naming.Derive("demo").ClusterVPCName) {
+		t.Errorf("derived cluster-VPC name leaked when adopting an existing VPC\noutput:\n%s", out)
+	}
+}
+
 // TestPrintNamePlan_LegacyEmptyPrefix_PrintsNothing — a legacy empty-prefix
 // workspace prints no name plan (the upstream defaults still apply).
 func TestPrintNamePlan_LegacyEmptyPrefix_PrintsNothing(t *testing.T) {

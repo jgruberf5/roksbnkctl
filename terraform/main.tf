@@ -30,12 +30,14 @@
 # ============================================================
 
 module "roks_cluster" {
-  source = "./modules/roks_cluster"
+  source         = "./modules/roks_cluster"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                  = var.ibmcloud_api_key
   ibmcloud_cluster_region           = var.ibmcloud_cluster_region
   ibmcloud_resource_group           = var.ibmcloud_resource_group
   create_roks_cluster               = var.create_roks_cluster
+  cluster_public_gateway            = var.cluster_public_gateway
   roks_cluster_id_or_name           = var.roks_cluster_id_or_name
   create_roks_transit_gateway       = var.create_roks_transit_gateway
   create_roks_registry_cos_instance = var.create_roks_registry_cos_instance
@@ -50,6 +52,7 @@ module "roks_cluster" {
   use_existing_cluster_vpc          = var.use_existing_cluster_vpc
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
   kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
+  roksbnkctl_binary                 = var.roksbnkctl_binary
 }
 
 
@@ -58,7 +61,8 @@ module "roks_cluster" {
 # ============================================================
 
 module "cert_manager" {
-  source = "./modules/cert_manager"
+  source         = "./modules/cert_manager"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key        = var.ibmcloud_api_key
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
@@ -73,7 +77,6 @@ module "cert_manager" {
   cert_manager_image_repository = var.use_registry_mirror ? var.far_image_repo_url : ""
   create_roks_cluster           = var.create_roks_cluster
   deploy_cert_manager           = var.deploy_cert_manager
-  bnk_cr_mode                   = var.bnk_cr_mode
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   kubeconfig_dir                = "${var.kubeconfig_dir}/cert_manager"
   registry_mirror_username      = var.registry_mirror_username
@@ -86,7 +89,8 @@ module "cert_manager" {
 # ============================================================
 
 module "flo" {
-  source = "./modules/flo"
+  source         = "./modules/flo"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key        = var.ibmcloud_api_key
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
@@ -95,9 +99,9 @@ module "flo" {
   # Sprint 23 round-2: pass the ROOT variable directly, not the cert_manager
   # module's output. When deploy_cert_manager=false (bnk-phase override),
   # the inner cert-manager module's outputs return null (mode=managed
-  # resources gated to count=0). flo's null_resource.ca_certificate at
-  # modules/flo/modules/flo/main.tf:364-365 interpolates this value into a
-  # template string — interpolating null produces an "Invalid template
+  # resources gated to count=0). flo's kubectl_manifest.ca_certificate
+  # interpolates this value (cert_manager_namespace) into the Certificate
+  # manifest — interpolating null produces an "Invalid template
   # interpolation value" error. The root variable is always defined
   # (defaults to "cert-manager") and matches the namespace the CLUSTER
   # phase already provisioned cert_manager into, which is exactly what flo
@@ -110,7 +114,8 @@ module "flo" {
   registry_mirror_username      = var.registry_mirror_username
   registry_mirror_password      = var.registry_mirror_password
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
-  use_cos_bucket                = true
+  use_cos_bucket                = var.use_cos_bucket
+  far_service_account_b64       = var.far_service_account_b64
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
@@ -125,9 +130,10 @@ module "flo" {
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cert_manager_dependency_id    = module.cert_manager.cert_manager_ready_id
   deploy_bnk                    = var.deploy_bnk
-  bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/flo"
   scratch_dir                   = var.scratch_dir
+  roksbnkctl_binary             = var.roksbnkctl_binary
+  helm_registry_config          = var.helm_registry_config
 }
 
 locals {
@@ -151,7 +157,8 @@ locals {
 # ============================================================
 
 module "cne_instance" {
-  source = "./modules/cne_instance"
+  source         = "./modules/cne_instance"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                 = var.ibmcloud_api_key
   ibmcloud_cluster_region          = var.ibmcloud_cluster_region
@@ -169,14 +176,16 @@ module "cne_instance" {
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = local.cneinstance_network_attachments
   cneinstance_network_zones        = var.cneinstance_network_zones
+  cneinstance_vlan_prefixlen       = var.cneinstance_vlan_prefixlen
+  cneinstance_tmm_k8s_routes       = var.cneinstance_tmm_k8s_routes
   create_roks_cluster              = var.create_roks_cluster
   roks_cluster_dependency_id       = module.roks_cluster.cluster_ready_id
   flo_dependency_id                = module.flo.flo_ready_id
   deploy_bnk                       = var.deploy_bnk
-  bnk_cr_mode                      = var.bnk_cr_mode
   kubeconfig_dir                   = "${var.kubeconfig_dir}/cne_instance"
   registry_mirror_username         = var.registry_mirror_username
   registry_mirror_password         = var.registry_mirror_password
+  roksbnkctl_binary                = var.roksbnkctl_binary
 }
 
 
@@ -185,8 +194,9 @@ module "cne_instance" {
 # ============================================================
 
 module "license" {
-  source    = "./modules/license"
-  providers = { http = http }
+  source         = "./modules/license"
+  cluster_absent = var.cluster_absent
+  providers      = { http = http }
 
   ibmcloud_api_key              = var.ibmcloud_api_key
   ibmcloud_cluster_region       = var.ibmcloud_cluster_region
@@ -197,6 +207,8 @@ module "license" {
   roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
   flo_utils_namespace           = var.flo_utils_namespace
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  use_cos_bucket                = var.use_cos_bucket
+  jwt_token                     = var.f5_cne_subscription_jwt
   license_mode                  = var.license_mode
   flp_license_server_url        = var.flp_license_server_url
   license_server_root_ca        = var.license_server_root_ca
@@ -204,8 +216,8 @@ module "license" {
   roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
   cneinstance_dependency_id     = module.cne_instance.cneinstance_ready_id
   deploy_bnk                    = var.deploy_bnk
-  bnk_cr_mode                   = var.bnk_cr_mode
   kubeconfig_dir                = "${var.kubeconfig_dir}/license"
+  roksbnkctl_binary             = var.roksbnkctl_binary
 }
 
 
@@ -214,7 +226,8 @@ module "license" {
 # ============================================================
 
 module "testing" {
-  source = "./modules/testing"
+  source         = "./modules/testing"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key                     = var.ibmcloud_api_key
   ibmcloud_cluster_region              = var.ibmcloud_cluster_region
@@ -305,8 +318,56 @@ module "flp" {
   flp_node_port_access          = var.flp_node_port_access
   flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
   # helm post-renders the chart through the roksbnkctl binary itself (no python).
-  roksbnkctl_binary = var.roksbnkctl_binary
+  roksbnkctl_binary    = var.roksbnkctl_binary
+  helm_registry_config = var.helm_registry_config
 
+}
+
+# F5 License Proxy as a standalone VSI (mode: vsi) — reconstructs the
+# f5-license-proxy stack as a podman pod (no Kubernetes) in the cluster VPC. Gated
+# entirely by deploy_flp_vsi (set true only by the FLP phase in mode: vsi); a no-op
+# otherwise. Terminates in the same flp_root_ca / flp_external_endpoint outputs the
+# helm flp module produces, so the BNK phase consumes the handoff unchanged.
+module "flp_vsi" {
+  source = "./modules/flp_vsi"
+
+  deploy_flp_vsi          = var.deploy_flp_vsi
+  ibmcloud_api_key        = var.ibmcloud_api_key
+  ibmcloud_cluster_region = var.ibmcloud_cluster_region
+  ibmcloud_resource_group = var.ibmcloud_resource_group
+  existing_cluster_vpc_id = var.existing_cluster_vpc_id
+
+  flp_vsi_profile                  = var.flp_vsi_profile
+  flp_vsi_ssh_key                  = var.flp_vsi_ssh_key
+  flp_status_image                 = var.flp_status_image
+  flp_status_registry_host         = var.flp_status_registry_host
+  flp_status_registry_ca_b64       = var.flp_status_registry_ca_b64
+  flp_vsi_zone                     = var.flp_vsi_zone
+  flp_vsi_boot_size_gb             = var.flp_vsi_boot_size_gb
+  flp_vsi_reach                    = var.flp_vsi_reach
+  flp_vsi_floating_ip              = var.flp_vsi_floating_ip
+  flp_vsi_management_allowed_cidrs = var.flp_vsi_management_allowed_cidrs
+  flp_vsi_licensing_allowed_cidrs  = var.flp_vsi_licensing_allowed_cidrs
+  flp_vsi_allowed_cidrs            = var.flp_vsi_allowed_cidrs
+
+  f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
+  flp_chart_version             = var.flp_chart_version
+  flp_prod_jwks_b64             = var.flp_prod_jwks_b64
+
+  ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
+  ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
+  ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  f5_cne_far_auth_file          = var.f5_cne_far_auth_file
+  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
+  use_cos_bucket                = var.use_cos_bucket
+  far_service_account_b64       = var.far_service_account_b64
+  f5_cne_subscription_jwt       = var.f5_cne_subscription_jwt
+  scratch_dir                   = "${var.scratch_dir}/flp-vsi"
+
+  flp_forward_proxy_host     = var.flp_forward_proxy_host
+  flp_forward_proxy_port     = var.flp_forward_proxy_port
+  flp_forward_proxy_protocol = var.flp_forward_proxy_protocol
+  roksbnkctl_binary          = var.roksbnkctl_binary
 }
 
 module "tgw_connection" {

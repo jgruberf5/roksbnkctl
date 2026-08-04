@@ -35,13 +35,13 @@ variable "ibmcloud_cos_bucket_region" {
 variable "ibmcloud_cos_instance_name" {
   description = "IBM Cloud COS instance name"
   type        = string
-  default     = "bnk-orchestration"
+  default     = "bnk-supply-chain"
 }
 
 variable "ibmcloud_resources_cos_bucket" {
   description = "IBM Cloud COS bucket containing the FAR auth key and JWT files"
   type        = string
-  default     = "bnk-schematics-resources"
+  default     = "bnk-artifacts"
 }
 
 # ============================================================
@@ -76,7 +76,20 @@ variable "flo_utils_namespace" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT filename in the COS bucket"
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
+}
+
+variable "use_cos_bucket" {
+  description = "Download the subscription JWT from COS. false = use the injected jwt_token content (local file)."
+  type        = bool
+  default     = true
+}
+
+variable "jwt_token" {
+  description = "Subscription/license JWT content, injected when use_cos_bucket = false. Empty on the COS path."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "license_mode" {
@@ -101,17 +114,6 @@ variable "create_roks_cluster" {
   description = "When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch"
   type        = bool
   default     = false
-}
-
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native kubectl_manifest + wait_for) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
 }
 
 variable "roks_cluster_dependency_id" {
@@ -142,4 +144,16 @@ variable "kubeconfig_dir" {
   description = "Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch."
   type        = string
   default     = "/work/.bnk/scratch/kubeconfig/license"
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the license phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0)."
+  type        = bool
+  default     = false
 }

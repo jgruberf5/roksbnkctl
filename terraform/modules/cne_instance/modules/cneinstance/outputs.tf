@@ -37,9 +37,7 @@ output "cneinstance_scc_policies_applied" {
       for assignment in local.scc_policy_assignments
       : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == "f5-utils"
     ]
-    policy_names = local.use_legacy ? [
-      for key, nr in null_resource.cneinstance_scc_policies : nr.triggers.name
-      ] : [
+    policy_names = [
       for key, km in kubectl_manifest.cneinstance_scc_policies : km.name
     ]
   }
@@ -62,16 +60,12 @@ output "pod_deployment_status" {
     utils_namespace_pod_count = 0
     flo_pods_not_ready        = []
     utils_pods_not_ready      = []
-    scc_policies_applied      = length(null_resource.cneinstance_scc_policies)
+    scc_policies_applied      = length(kubectl_manifest.cneinstance_scc_policies)
     all_pods_running          = true
   } : null
 }
 
 output "cneinstance_ready_id" {
-  description = "ID — (known after apply) until CNEInstance + SCC are ready. kubectl mode: the CNEInstance kubectl_manifest id (only set once the Available condition is met); legacy mode: the wait_for_scc_policies time_sleep id."
-  value = (
-    local.use_kubectl ? kubectl_manifest.cneinstance[0].id :
-    local.use_legacy ? time_sleep.wait_for_scc_policies[0].id :
-    null
-  )
+  description = "ID — (known after apply) until the CNE controller is ready: the null_resource.cnecontroller_ready id (set once CNEControllerAvailable=True via the deterministic API poll)."
+  value       = var.enabled ? null_resource.cnecontroller_ready[0].id : null
 }

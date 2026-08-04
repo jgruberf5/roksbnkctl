@@ -57,6 +57,12 @@ variable "create_cluster" {
   default     = false
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach a public gateway to each cluster subnet for worker Internet egress. true (default) = current behavior. false = no public gateways / no egress (a private, disconnected cluster — the operator must supply private connectivity, e.g. VPEs, for image pulls + IBM Cloud services)."
+  type        = bool
+  default     = true
+}
+
 variable "create_cos_instance" {
   description = "Enable creation of Cloud Object Storage instance for OpenShift registry"
   type        = bool
@@ -125,4 +131,16 @@ variable "transit_gateway_name" {
 variable "kubeconfig_dir" {
   description = "Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner."
   type        = string
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary (forwarded from the root). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0)."
+  type        = bool
+  default     = false
 }

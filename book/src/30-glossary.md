@@ -49,7 +49,7 @@ The Terraform source tree compiled into the `roksbnkctl` binary via Go's `//go:e
 A Pod spec field that references a Secret or ConfigMap and projects all of its keys as environment variables into the container. The k8s backend's ops pod uses `envFrom: secretRef: roksbnkctl-ibm-creds` to receive the API key without listing it in the manifest plaintext.
 
 **`extra_hosts`**
-The workspace config's list of additional URLs to probe under `roksbnkctl test connectivity`. In v1.0 the value is a bare `[]string` of URLs; per-host method/expected-status overrides are deferred. See [Chapter 20](./20-connectivity-testing.md).
+The workspace config's list of additional URLs to probe under `roksbnkctl test connectivity`. The value is a bare `[]string` of URLs; per-host method/expected-status overrides are deferred. See [Chapter 20](./20-connectivity-testing.md).
 
 **FAR**
 **F5 Application Runtime** — the container-image distribution of the BIG-IP Next data plane. FLO pulls FAR images from `repo.f5.com` using the auth key in the COS supply-chain bucket.
@@ -85,7 +85,7 @@ A Pod status indicating the image couldn't be pulled from the registry. Usually 
 The throughput-suite flag selecting `north-south` (LoadBalancer Service, client outside the cluster) or `east-west` (ClusterIP Service, client inside the cluster). See [Chapter 22 §"The two modes"](./22-throughput-testing.md#the-two-modes).
 
 **JWT**
-**JSON Web Token** — the signed-token format BNK uses for the subscription licence (`trial.jwt` in the COS supply-chain bucket).
+**JSON Web Token** — the signed-token format BNK uses for the subscription licence (`subscription.jwt` in the COS supply-chain bucket).
 
 ## K — N
 

@@ -1,6 +1,6 @@
 # Day-2 ops: status, logs, k get/apply/exec
 
-This is the chapter to read after the cluster is up and BNK is deployed and you're now living with the result. It opens with [`roksbnkctl status`](#roksbnkctl-status) — the workspace-level read of what's deployed — then covers the per-resource verbs: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. Sprint 2 internalises all the per-resource verbs into native Go via [`client-go`](https://pkg.go.dev/k8s.io/client-go) so you no longer need `kubectl` on `PATH` for the everyday workflow.
+This is the chapter to read after the cluster is up and BNK is deployed and you're now living with the result. It opens with [`roksbnkctl status`](#roksbnkctl-status) — the workspace-level read of what's deployed — then covers the per-resource verbs: read pod state, tail logs, apply a manifest, port-forward to a service, exec into a pod. These per-resource verbs are native Go via [`client-go`](https://pkg.go.dev/k8s.io/client-go), so you don't need `kubectl` on `PATH` for the everyday workflow.
 
 The full design rationale lives in [PRD 02](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/02-KUBECTL-INTERNAL.md). This chapter is the user-facing surface — the canonical "what's the kubectl-equivalent in `roksbnkctl`?" reference.
 
@@ -8,7 +8,7 @@ The full design rationale lives in [PRD 02](https://github.com/jgruberf5/roksbnk
 
 Three reasons, in order of weight:
 
-1. **Single binary.** `roksbnkctl` is meant to be the one thing you install. After Sprint 2, the only required external prerequisite for the happy path is `terraform`. Everything else — `kubectl`, `oc`, `iperf3`, `dig` — is either built-in or an optional escape hatch.
+1. **Single binary.** `roksbnkctl` is meant to be the one thing you install. The only required external prerequisite for the happy path is `terraform`. Everything else — `kubectl`, `oc`, `iperf3`, `dig` — is either built-in or an optional escape hatch.
 2. **No version skew.** The vendored `client-go` matches the kube API the bundled HCL targets. You can't accidentally use `kubectl` 1.20 against a 1.28 cluster and have its print column heuristics go sideways.
 3. **First-class output formats.** `cli-runtime` gives byte-identical `-o yaml`/`-o json`/`-o jsonpath` output to `kubectl`. The validator agent's golden-file tests in [`internal/k8s/golden_test.go`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/k8s/golden_test.go) assert this for representative resources.
 
@@ -33,7 +33,7 @@ The header rows (workspace, region, resource group, cluster identity, TF source 
 
 The two `Cluster:` lines are by design: the first (in the header block) reports cluster *identity* — which cluster you're targeting and whether the workspace creates it or attaches to an existing one. The second (the trailer line) reports cluster *reachability* — node count and ready count from a live API call. The label is reused because both pieces of information are about "the cluster"; the column to the right disambiguates.
 
-`TF source:` reflects the workspace's `tf_source.type`: `github` renders as `<Repo>@<Ref>` (the canonical happy-path shape since Sprint 5 — e.g., `jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0`); `local` renders as `local:<Path>`; `embedded` or unset renders as `(unset)`. The samples below use the `github` shape since it's what most readers will see.
+`TF source:` reflects the workspace's `tf_source.type`: `github` renders as `<Repo>@<Ref>` (the canonical happy-path shape — e.g., `jgruberf5/ibmcloud_terraform_bigip_next_for_kubernetes_2_3@v1.3.0`); `local` renders as `local:<Path>`; `embedded` or unset renders as `(unset)`. The samples below use the `github` shape since it's what most readers will see.
 
 ### `ShapeEmpty` — fresh workspace, neither phase deployed
 
@@ -68,7 +68,7 @@ Cluster:          2/2 nodes ready
 
 The `Cluster phase` line reads the mtime of `<state-cluster-dir>/terraform.tfstate`; the `BNK trial` line reads `<state-dir>/terraform.tfstate` and falls back to `not deployed` when the trial state is empty or missing. Running [`roksbnkctl bnk up`](./10-deploying-bnk-trials.md) advances the workspace to `ShapeSplit`.
 
-### `ShapeSplit` — both phases deployed (the v1.1+ steady state)
+### `ShapeSplit` — both phases deployed (the steady state)
 
 ```bash
 $ roksbnkctl status
@@ -84,23 +84,6 @@ Cluster:          2/2 nodes ready
 ```
 
 Each phase has its own mtime; the timestamps move independently. Re-running [`roksbnkctl bnk down`](./11-tearing-down.md) then [`roksbnkctl bnk up`](./10-deploying-bnk-trials.md) updates the `BNK trial` line without touching the `Cluster phase` line — useful for confirming which phase you most recently exercised.
-
-### `ShapeLegacySingle` — v1.0.x workspace, cluster + trial in one tfstate
-
-```bash
-$ roksbnkctl status
-Workspace:        legacy-canada
-Region:           ca-tor
-Resource group:   default
-Cluster:          canada-roks  (attach existing)
-TF source:        (unset)
-Shape:            legacy single-state (cluster + trial in one tfstate)
-Last apply:       2026-05-13 14:15:01 MST  (4h22m18s ago)
-Kubeconfig:       /home/you/.kube/config
-Cluster:          2/2 nodes ready
-```
-
-> **Script-compat note.** `ShapeLegacySingle` preserves the v1.0.x `Last apply:` line verbatim. Scripts that parsed `roksbnkctl status` output for the `Last apply` line on a legacy workspace continue to work unchanged. New script targets should switch to the per-phase `Cluster phase:` / `BNK trial:` lines (or to `roksbnkctl cluster show` + `bnk show` for a structured read); the per-phase lines are emitted for `ShapeEmpty`, `ShapeClusterOnly`, and `ShapeSplit`, not for `ShapeLegacySingle`. The `Shape:` line is a one-line callout so you don't have to grep [Chapter 8](./08-cluster-phase.md) to figure out which shape you're on.
 
 The shape detection logic lives in `internal/config/tfstate.go::DetectShape`; the per-phase emission in `runStatus` is in `internal/cli/inspect.go`. See [PRD 06 §"`status` command integration"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/06-CLUSTER-TRIAL-PHASE-SPLIT.md#status-command-integration-sprint-10-scope-addition) for the design rationale.
 
@@ -129,12 +112,12 @@ roksbnkctl logs ↔  roksbnkctl k logs
 
 Two verbs are **deliberately not aliased** to avoid shadowing existing top-level commands:
 
-- **`roksbnkctl apply`** is the existing top-level lifecycle verb that runs `terraform apply` against the workspace (Sprint 0/1 surface). Adding a second `apply` would shadow it and break `roksbnkctl up` / `roksbnkctl apply` muscle memory. Use `roksbnkctl k apply -f ...` explicitly for the Kubernetes-side server-side apply.
-- **`roksbnkctl exec`** runs a command on the **host** with the workspace's env loaded (Sprint 1's host-exec verb — see [Chapter 16](./16-on-flag-ssh-jumphosts.md), specifically the "Working examples" section). `roksbnkctl k exec` runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.
+- **`roksbnkctl apply`** is the existing top-level lifecycle verb that runs `terraform apply` against the workspace. Adding a second `apply` would shadow it and break `roksbnkctl up` / `roksbnkctl apply` muscle memory. Use `roksbnkctl k apply -f ...` explicitly for the Kubernetes-side server-side apply.
+- **`roksbnkctl exec`** runs a command on the **host** with the workspace's env loaded (the host-exec verb — see [Chapter 16](./16-on-flag-ssh-jumphosts.md), specifically the "Working examples" section). `roksbnkctl k exec` runs in a pod. The split keeps both meanings unambiguous without surprising name-collision behaviour.
 
 ## kubectl/oc passthroughs stay as escape hatches
 
-The existing `roksbnkctl kubectl <args...>` and `roksbnkctl oc <args...>` passthroughs are **preserved** post-Sprint 2. They still shell out to the host binary (with the workspace's `KUBECONFIG` and credentials loaded) for anything outside the internalised subset.
+The `roksbnkctl kubectl <args...>` and `roksbnkctl oc <args...>` passthroughs are **preserved** alongside the internalised verbs. They shell out to the host binary (with the workspace's `KUBECONFIG` and credentials loaded) for anything outside the internalised subset.
 
 When to reach for the passthrough:
 
@@ -156,7 +139,7 @@ Error: kubectl not on PATH; use `roksbnkctl k get/apply/...` for the in-process 
        or install kubectl
 ```
 
-Same for `oc`. The doctor check (post-Sprint 2) treats both as **informational** rather than warnings — see [Chapter 5 — Doctor](./05-doctor.md).
+Same for `oc`. The doctor check treats both as **informational** rather than warnings — see [Chapter 5 — Doctor](./05-doctor.md).
 
 ## Worked examples
 
@@ -275,9 +258,9 @@ Use `--cascade=foreground` when you want to wait for owned resources (Pods owned
 
 ### `roksbnkctl k logs` and `roksbnkctl logs`
 
-Two paths, one verb. The component-aware path was introduced in Sprint 1 for BNK-specific workflows; the raw pod-name path is new in Sprint 2.
+Two paths, one verb. The component-aware path is a BNK-specific label-selector shortcut; the raw pod-name path takes a pod name directly.
 
-**Component-aware** (existing — by label selector):
+**Component-aware** (by label selector):
 
 ```bash
 roksbnkctl logs flo                # F5 Lifecycle Operator (label selector under the hood)
@@ -286,7 +269,7 @@ roksbnkctl logs cert-manager       # cert-manager
 roksbnkctl logs cneinstance        # BIG-IP TMM data plane pods
 ```
 
-**Raw pod-name** (new in Sprint 2):
+**Raw pod-name** (by pod name):
 
 ```bash
 roksbnkctl k logs flo-controller-abc123 -n f5-bnk
@@ -361,7 +344,7 @@ Concretely, the validator agent's golden-file tests at [`internal/k8s/golden_tes
 - `metadata.resourceVersion` (monotonic counter; changes on every read)
 - `metadata.creationTimestamp` (set server-side; not under our control)
 
-Anything else differing is a test failure. The covered resources at v1.0 are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via `cli-runtime`'s `resource.Builder`) paths.
+Anything else differing is a test failure. The covered resources are Node, Pod, Service, ConfigMap — representative both of cluster-scoped (Node) and namespace-scoped (Pod, Service, ConfigMap), and of the typed-client (Node, Pod, Service) and dynamic-client (anything via `cli-runtime`'s `resource.Builder`) paths.
 
 Run them locally with:
 
@@ -391,14 +374,14 @@ roksbnkctl oc get projects                   # typed-client output today
 roksbnkctl oc describe route f5-bnk-svc      # typed Route fields
 ```
 
-## Doctor change recap
+## How doctor treats `kubectl` / `oc`
 
-A reminder of what changed in Sprint 2's doctor (covered in [Chapter 5](./05-doctor.md)):
+How `roksbnkctl doctor` reports the host binaries (covered in [Chapter 5](./05-doctor.md)):
 
-- **`kubectl`** — was "needed (warning when missing)"; now **informational** (no warning when missing).
-- **`oc`** — same downgrade.
+- **`kubectl`** — **informational** (no warning when missing).
+- **`oc`** — also informational (no warning when missing).
 
-A fresh dev box without `kubectl` / `oc` installed should run `roksbnkctl doctor` and see green-or-informational across the board for the everyday workflow. The host-binary requirement is gone; the binaries are nice-to-have for the passthroughs.
+A fresh dev box without `kubectl` / `oc` installed should run `roksbnkctl doctor` and see green-or-informational across the board for the everyday workflow. The host binaries aren't required for the everyday workflow; they're nice-to-have for the passthroughs.
 
 ## kubectl muscle-memory cheat sheet
 

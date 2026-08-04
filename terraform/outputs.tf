@@ -138,12 +138,12 @@ output "gateway_enabled" {
 
 output "flp_root_ca" {
   description = "Base64 PEM of the FLP root CA (for CWC's licenseserver-rootca Secret)"
-  value       = module.flp.flp_root_ca
+  value       = module.flp.flp_root_ca != "" ? module.flp.flp_root_ca : module.flp_vsi.flp_root_ca
 }
 
 output "flp_endpoint" {
   description = "Base URL of the in-cluster F5 License Proxy service"
-  value       = module.flp.flp_endpoint
+  value       = module.flp.flp_endpoint != "" ? module.flp.flp_endpoint : module.flp_vsi.flp_external_endpoint
 }
 
 output "flp_namespace" {
@@ -223,17 +223,22 @@ output "gateway_static_routes" {
 
 output "flp_external_endpoint" {
   description = "Externally-reachable FLP URL for a BNK install in another cluster (empty unless flp_node_port_access)."
-  value       = try(module.flp.flp_external_endpoint, "")
+  value       = try(module.flp.flp_external_endpoint, "") != "" ? module.flp.flp_external_endpoint : try(module.flp_vsi.flp_external_endpoint, "")
 }
 
 output "flp_external_endpoints" {
   description = "Every worker-node URL the FLP answers on."
-  value       = try(module.flp.flp_external_endpoints, [])
+  value       = length(try(module.flp.flp_external_endpoints, [])) > 0 ? module.flp.flp_external_endpoints : try(module.flp_vsi.flp_external_endpoints, [])
 }
 
 output "flp_node_port" {
   description = "NodePort the FLP Service listens on (0 unless flp_node_port_access)."
   value       = try(module.flp.flp_node_port, 0)
+}
+
+output "flp_floating_ip" {
+  description = "Operator floating IP of the standalone FLP VSI (remote flp status + web UI). Empty for in-cluster FLP or when flp_vsi_floating_ip=false."
+  value       = try(module.flp_vsi.flp_floating_ip, "")
 }
 
 output "tgw_gateway_id" {

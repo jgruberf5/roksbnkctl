@@ -53,6 +53,12 @@ variable "create_roks_cluster" {
   default     = true
 }
 
+variable "cluster_public_gateway" {
+  description = "Attach a public gateway to each cluster subnet for worker Internet egress. true (default) keeps current behavior; false builds a private, disconnected cluster with no egress (operator must supply private connectivity — VPEs / private service endpoints — for image pulls and IBM Cloud services)."
+  type        = bool
+  default     = true
+}
+
 variable "roks_cluster_id_or_name" {
   description = "ID or name of an existing ROKS cluster — used when create_roks_cluster = false"
   type        = string
@@ -188,13 +194,13 @@ variable "ibmcloud_cos_bucket_region" {
 variable "ibmcloud_cos_instance_name" {
   description = "IBM Cloud COS instance name"
   type        = string
-  default     = "bnk-orchestration"
+  default     = "bnk-supply-chain"
 }
 
 variable "ibmcloud_resources_cos_bucket" {
   description = "IBM Cloud COS bucket containing FAR auth key and JWT files"
   type        = string
-  default     = "bnk-schematics-resources"
+  default     = "bnk-artifacts"
 }
 
 
@@ -207,24 +213,6 @@ variable "deploy_bnk" {
   type        = bool
   default     = true
 }
-
-# Sprint 27: install-mode flag selecting the terraform-native BNK CR path
-# (helm_release + kubernetes_* + alekc/kubectl kubectl_manifest + wait_for) vs
-# the legacy null_resource/curl/time_sleep baseline. Defaults to "kubectl"; the
-# roksbnkctl --legacy-bnk flag / workspace toggle renders "legacy_curl" to keep
-# the validator's byte-identical benchmark path available. Threaded to
-# cert_manager / flo / cne_instance / license, where it gates count/for_each.
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native) or \"legacy_curl\" (null_resource baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 
 # ============================================================
 # flo — F5 Lifecycle Operator
@@ -288,7 +276,32 @@ variable "f5_cne_far_auth_file" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT filename in the COS bucket — used by flo and license"
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
+}
+
+# ---- Local-file supply chain (no COS) --------------------------------------
+# When use_cos_bucket = false, the FAR service account + subscription JWT are
+# injected directly (roksbnkctl reads local files and passes them here), so the
+# BNK phase needs no orchestration COS instance/bucket. Empty defaults keep the
+# COS path (use_cos_bucket = true) byte-identical.
+variable "use_cos_bucket" {
+  description = "Download the FAR auth tarball + subscription JWT from the orchestration COS. false = use the injected far_service_account_b64 / f5_cne_subscription_jwt content instead (local files)."
+  type        = bool
+  default     = true
+}
+
+variable "far_service_account_b64" {
+  description = "FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "f5_cne_subscription_jwt" {
+  description = "Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead)."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "flo_namespace" {
@@ -381,6 +394,18 @@ variable "cneinstance_network_zones" {
     internal_selfip = string
   }))
   default = []
+}
+
+variable "cneinstance_vlan_prefixlen" {
+  description = "TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs"
+  type        = number
+  default     = 24
+}
+
+variable "cneinstance_tmm_k8s_routes" {
+  description = "Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet."
+  type        = string
+  default     = "172.17.0.0/18"
 }
 
 
@@ -614,6 +639,94 @@ variable "roksbnkctl_binary" {
   default     = ""
 }
 
+# ── FLP as a VSI (bnk.flp.mode: vsi) ──────────────────────────────────────────
+variable "deploy_flp_vsi" {
+  description = "Deploy the F5 License Proxy as a standalone VSI (podman pod, no k8s) instead of the helm chart. Set true only by the FLP phase in mode: vsi."
+  type        = bool
+  default     = false
+}
+variable "flp_status_image" {
+  description = "Optional flp-status web UI image for the standalone FLP VSI (mirror/public ref). Empty = no status UI."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_host" {
+  description = "Registry host:port whose CA to trust so the FLP VSI can pull flp_status_image (e.g. Harbor's <ip>)."
+  type        = string
+  default     = ""
+}
+
+variable "flp_status_registry_ca_b64" {
+  description = "Base64 CA cert for flp_status_registry_host."
+  type        = string
+  default     = ""
+}
+
+variable "flp_vsi_ssh_key" {
+  description = "Existing IBM Cloud VPC SSH key name to attach to the standalone FLP VSI (operator access). Empty = no key."
+  type        = string
+  default     = ""
+}
+
+variable "flp_vsi_profile" {
+  description = "VSI instance profile for the FLP (>= 4 vCPU / 8 GB)."
+  type        = string
+  default     = "bx2-4x16"
+}
+variable "flp_vsi_zone" {
+  description = "Zone for the FLP VSI. Empty → <region>-1."
+  type        = string
+  default     = ""
+}
+variable "flp_vsi_boot_size_gb" {
+  description = "Boot volume size (GB) for the FLP VSI (>= 80)."
+  type        = number
+  default     = 100
+}
+variable "flp_vsi_reach" {
+  description = "How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating."
+  type        = string
+  default     = "private"
+}
+variable "flp_vsi_floating_ip" {
+  description = "Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true."
+  type        = bool
+  default     = true
+}
+variable "flp_vsi_management_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open)."
+  type        = list(string)
+  default     = []
+}
+variable "flp_vsi_licensing_allowed_cidrs" {
+  description = "Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges."
+  type        = list(string)
+  default     = []
+}
+variable "flp_vsi_allowed_cidrs" {
+  description = "DEPRECATED — legacy single list; seeds both management + licensing when set. Prefer the two per-plane variables."
+  type        = list(string)
+  default     = []
+}
+variable "flp_prod_jwks_b64" {
+  description = "Optional override: base64 of F5's public prod_jwks.txt. Empty → the flp_vsi module extracts it from the f5-license-proxy chart."
+  type        = string
+  default     = ""
+}
+variable "flp_forward_proxy_host" {
+  type    = string
+  default = ""
+}
+variable "flp_forward_proxy_port" {
+  type    = number
+  default = 0
+}
+variable "flp_forward_proxy_protocol" {
+  type    = string
+  default = "http"
+}
+
 # ── Transit Gateway connection phase (roksbnkctl tgw connect) ─────────────────
 
 variable "deploy_tgw_connection" {
@@ -632,4 +745,16 @@ variable "tgw_connection_name" {
   description = "Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide)."
   type        = string
   default     = ""
+}
+
+variable "helm_registry_config" {
+  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0)."
+  type        = bool
+  default     = false
 }

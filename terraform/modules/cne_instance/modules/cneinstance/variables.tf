@@ -6,17 +6,6 @@ variable "enabled" {
   default     = true
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native kubectl_manifest + wait_for) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 variable "flo_namespace" {
   description = "Namespace for FLO deployment (where CNEInstance will be deployed)"
   type        = string
@@ -269,5 +258,11 @@ variable "registry_mirror_password" {
   description = "Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously."
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "roksbnkctl_binary" {
+  description = "Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
+  type        = string
   default     = ""
 }

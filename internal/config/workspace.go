@@ -145,6 +145,21 @@ type ClusterCfg struct {
 	Name             string `yaml:"name"`
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
 	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
+
+	// PublicGateway controls whether the cluster subnets attach a public gateway
+	// for worker Internet egress. nil → the terraform default (true, current
+	// behavior). false → a private/disconnected cluster with NO egress — the
+	// operator must supply private connectivity (VPEs / private service endpoints)
+	// for image pulls and IBM Cloud services. A pointer so "unset" is distinct from
+	// an explicit false. Rendered as cluster_public_gateway.
+	PublicGateway *bool `yaml:"public_gateway,omitempty"`
+
+	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
+	// (the cluster module picks the smallest bx2 profile meeting both minimums).
+	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
+	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
+	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty"`
+	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty"`
 }
 
 // ResourcesCfg holds the per-resource create toggles for a prefix-driven
@@ -181,6 +196,14 @@ type ResourcesCfg struct {
 	// private key per-workspace, and uploads the public key. Empty → no named key
 	// (the jumphosts use only the generated cloud-init key).
 	TestingSSHKeyName string `yaml:"testing_ssh_key_name,omitempty"`
+	// Jumphost sizing. TestingJumphostProfile pins an explicit instance profile for
+	// ALL jumphosts (rendered as testing_jumphost_profile); empty → auto-select the
+	// smallest profile meeting TestingMinVCPUCount / TestingMinMemoryGB (rendered as
+	// testing_min_vcpu_count / testing_min_memory_gb; 0 → the terraform defaults of
+	// 4 vCPU / 8 GB). An explicit profile wins over the minimums.
+	TestingJumphostProfile string `yaml:"testing_jumphost_profile,omitempty"`
+	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty"`
+	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty"`
 	// CopiedSSHKeyFiles lists the ~/.ssh basenames `roksbnkctl init` ACTUALLY
 	// wrote when the user accepted the "copy the private key to ~/.ssh" prompt
 	// (only files it created — pre-existing files are skipped, never recorded).
@@ -224,14 +247,47 @@ type ResourceToggle struct {
 const (
 	DefaultManifestVersion     = "2.3.0-3.2598.3-0.0.170"
 	DefaultFARAuthFile         = "f5-far-auth-key.tgz"
-	DefaultSubscriptionJWTFile = "trial.jwt"
+	DefaultSubscriptionJWTFile = "subscription.jwt"
+	// Default{COSInstance,COSBucket,COSRegion} are the orchestration COS
+	// coordinates that hold the FAR auth tarball + the subscription JWT. They
+	// mirror the ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
+	// ibmcloud_cos_bucket_region terraform-variable defaults and back the cos:
+	// config block; the `registry` FAR resolver and the init supply-chain
+	// provisioning both fall back to these when cos: is unset.
+	DefaultCOSInstance = "bnk-supply-chain"
+	DefaultCOSBucket   = "bnk-artifacts"
+	DefaultCOSRegion   = "us-south"
 	// DefaultLicenseMode is the terraform License CR operationMode default; an
 	// empty bnk.license_mode leaves it unset (terraform defaults to "connected"),
 	// so JWT/connected licensing is unchanged unless FLP is opted into.
 	DefaultLicenseMode = "connected"
 	// DefaultFLPNamespace is where the `flp` phase installs the F5 License Proxy.
 	DefaultFLPNamespace = "f5-license-proxy"
+	// DefaultFLPVSIProfile is the VSI profile for mode: vsi (4 vCPU / 16 GB — meets
+	// the FLP appliance's 4 vCPU / 8 GB minimum with headroom).
+	DefaultFLPVSIProfile = "bx2-4x16"
+	// DefaultVLANPrefixLen and DefaultTMMK8SRoutes mirror the
+	// cneinstance_vlan_prefixlen / cneinstance_tmm_k8s_routes terraform defaults
+	// (the F5SPKVlan self-IP prefix length, and the ROKS pod CIDR TMM routes to).
+	// They seed the interactive `init` networking prompts; an unset bnk.network
+	// value still falls back to the terraform default.
+	DefaultVLANPrefixLen = 24
+	DefaultTMMK8SRoutes  = "172.17.0.0/18"
 )
+
+// DefaultBNKNetworkZones mirrors the cneinstance_network_zones install-guide
+// default in terraform/modules/cne_instance/modules/cneinstance/variables.tf
+// (three availability zones). It seeds the interactive `init` networking prompts
+// so the operator edits only what differs from the guide. KEEP IN SYNC with that
+// terraform default — the module is the source of truth; this is the Go mirror used
+// only to pre-fill the interview (an unset bnk.network still falls back to the
+// module default, so drift here changes only the prompt seed, never the applied
+// value when the operator accepts a zone unchanged).
+var DefaultBNKNetworkZones = []BNKZoneCfg{
+	{ExtVLANCIDR: "10.155.15.0/24", IntVLANCIDR: "10.254.99.0/24", IntSNATCIDR: "10.10.11.0/24", IntVIPCIDR: "10.135.15.0/24", ExternalSelfIP: "10.155.15.101", InternalSelfIP: "10.254.99.101"},
+	{ExtVLANCIDR: "10.156.16.0/24", IntVLANCIDR: "10.254.100.0/24", IntSNATCIDR: "10.10.21.0/24", IntVIPCIDR: "10.136.16.0/24", ExternalSelfIP: "10.156.16.101", InternalSelfIP: "10.254.100.101"},
+	{ExtVLANCIDR: "10.157.17.0/24", IntVLANCIDR: "10.254.101.0/24", IntSNATCIDR: "10.10.31.0/24", IntVIPCIDR: "10.137.17.0/24", ExternalSelfIP: "10.157.17.101", InternalSelfIP: "10.254.101.101"},
+}
 
 type BNKCfg struct {
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
@@ -245,13 +301,31 @@ type BNKCfg struct {
 	// orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.
 	SubscriptionJWTFile string `yaml:"subscription_jwt_file,omitempty"`
 
-	// CRMode selects the BNK custom-resource install mechanism rendered as
-	// the bnk_cr_mode tfvar (Sprint 27). "" / "kubectl" → the terraform-native
-	// helm_release + alekc/kubectl kubectl_manifest + wait_for path (default);
-	// "legacy_curl" → the null_resource/curl/time_sleep baseline kept behind
-	// the flag for the validator's benchmark. The `--legacy-bnk` flag sets
-	// "legacy_curl" at runtime, overriding this config value.
-	CRMode string `yaml:"cr_mode,omitempty"`
+	// FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of
+	// COS objects. When both are set, the BNK phase reads them directly (roksbnkctl
+	// injects the FAR service account + the JWT as tfvars and sets use_cos_bucket=
+	// false), so no orchestration COS instance/bucket is needed. `init` sets these
+	// automatically when the COS supply-chain check fails or is declined. When empty,
+	// the phase falls back to COS (FarAuthFile / SubscriptionJWTFile).
+	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
+	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
+
+	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
+	// Operator and its utility components install into (rendered as flo_namespace /
+	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
+	// these for multi-tenant clusters or to avoid namespace collisions.
+	FLONamespace      string `yaml:"flo_namespace,omitempty"`
+	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
+
+	// GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name
+	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
+	// (unset).
+	GSLBDatacenterName string `yaml:"gslb_datacenter_name,omitempty"`
+
+	// CertManager overrides cert-manager's namespace + chart version. nil → the
+	// terraform defaults (cert-manager / the pinned chart version). The
+	// install/skip toggle stays on resources.cert_manager.create.
+	CertManager *BNKCertManagerCfg `yaml:"cert_manager,omitempty"`
 
 	// Network holds the optional per-zone subnet CIDRs + TMM self-IPs for the
 	// cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs
@@ -284,10 +358,27 @@ type BNKCfg struct {
 // nil block means FLP is off. It never carries secrets — the FLP generates its own
 // certs, and its subscription JWT is the same one resolved from COS.
 type BNKFLPCfg struct {
-	// Namespace the FLP is installed into. Empty → DefaultFLPNamespace.
+	// Mode selects HOW the FLP phase deploys the proxy:
+	//   "" | "helm" → the f5-license-proxy Helm chart into the ROKS cluster (default).
+	//   "vsi"       → a standalone IBM Cloud VSI running the same four containers as a
+	//                 podman pod (no Kubernetes). The VSI path reuses the cluster VPC so
+	//                 the CWC reaches it directly, and terminates in the SAME
+	//                 flp-outputs.json (endpoint + root CA) the helm path produces, so
+	//                 `bnk up` consumes it unchanged. VSI-specific knobs live under `vsi:`.
+	Mode string `yaml:"mode,omitempty"`
+
+	// VSI configures the mode: vsi deployment backend. Ignored for mode: helm.
+	VSI *BNKFLPVSICfg `yaml:"vsi,omitempty"`
+
+	// Namespace the FLP is installed into (helm mode). Empty → DefaultFLPNamespace.
 	Namespace string `yaml:"namespace,omitempty"`
 	// ChartVersion pins the f5-license-proxy chart. Empty → the terraform default.
 	ChartVersion string `yaml:"chart_version,omitempty"`
+
+	// StorageClass is the dynamic StorageClass for the FLP's PVCs (rendered as
+	// flp_storage_class). Empty → the terraform default (an IBM VPC block class).
+	// Set it when the cluster/region exposes a different block-storage class.
+	StorageClass string `yaml:"storage_class,omitempty"`
 
 	// NodePortAccess exposes the proxy OUTSIDE its own cluster, so a BNK install in
 	// a DIFFERENT cluster (same VPC, or across a transit gateway) can license
@@ -318,6 +409,80 @@ type BNKFLPCfg struct {
 	External *BNKFLPExternalCfg `yaml:"external,omitempty"`
 }
 
+// BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running the
+// f5-license-proxy stack as a podman pod. All fields optional; sensible defaults apply.
+type BNKFLPVSICfg struct {
+	// VPC is an existing VPC id to deploy the standalone FLP VSI into, WITHOUT any
+	// ROKS cluster. Set it to run `flp up` (vsi mode) as a standalone licensing
+	// appliance — e.g. in a services VPC that a disconnected cluster reaches over a
+	// Transit Gateway (the cluster then references it via bnk.flp.external). Empty →
+	// the FLP VSI joins the workspace's cluster VPC (from cluster-outputs.json), the
+	// original behavior which requires a cluster.
+	VPC string `yaml:"vpc,omitempty"`
+	// Profile is the IBM Cloud VSI instance profile. Empty → DefaultFLPVSIProfile
+	// (bx2-4x16 — meets the FLP's 4 vCPU / 8 GB minimum).
+	Profile string `yaml:"profile,omitempty"`
+	// Zone the VSI lands in (e.g. us-south-1). Empty → the first zone of the cluster region.
+	Zone string `yaml:"zone,omitempty"`
+	// BootSizeGB is the boot volume size. 0 → 100 (clears the FLP's >80 GB requirement).
+	BootSizeGB int `yaml:"boot_size_gb,omitempty"`
+	// Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP,
+	// for a CWC in the same/peered VPC) or "floating" (a public floating IP).
+	Reach string `yaml:"reach,omitempty"`
+	// ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80
+	// flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries
+	// no secrets). Rendered as flp_vsi_management_allowed_cidrs.
+	ManagementAllowedCIDRs []string `yaml:"management_allowed_cidrs,omitempty"`
+	// LicensingAllowedCIDRs are the source CIDRs permitted to reach the :8443 licensing
+	// proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the consuming cluster
+	// reaches the proxy privately over the VPC / Transit Gateway). Rendered as
+	// flp_vsi_licensing_allowed_cidrs.
+	LicensingAllowedCIDRs []string `yaml:"licensing_allowed_cidrs,omitempty"`
+	// AllowedCIDRs is DEPRECATED — a legacy single list. When set it seeds BOTH the
+	// management and licensing planes (back-compat). Prefer the two per-plane fields
+	// above. Rendered as flp_vsi_allowed_cidrs.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
+	// SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP
+	// VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman
+	// pod, Vault, logs). Empty → no key attached (the VSI is unreachable by SSH). Port 22
+	// is NOT opened by default; scope it via your own security-group rules if you need it.
+	SSHKey string `yaml:"ssh_key,omitempty"`
+	// FloatingIP attaches an operator floating IP to the FLP VSI for remote
+	// management — running `roksbnkctl flp status` and reaching the :80 web UI + the
+	// :8443 proxy from a machine OUTSIDE the VPC. It is NOT the CWC endpoint (the
+	// consuming cluster always reaches the proxy privately over the VPC / Transit
+	// Gateway); the floating IP is added to the leaf-cert SAN and recorded in
+	// flp-outputs.json so `flp status` targets it. Reachability is still gated by
+	// AllowedCIDRs (scope those to the operator's public IP for external access).
+	// A *bool so an unset field means the module default (true); set false to opt out.
+	FloatingIP *bool `yaml:"floating_ip,omitempty"`
+	// StatusImage, when set, runs the flp-status web UI as a container in the FLP pod
+	// (mobile-friendly status page + /api/status + live logs on :80, no auth — a
+	// read-only private status endpoint). It is a container image reference, e.g.
+	// <harbor>/bnk-status/flp-status:v1. Empty → no status UI (the proxy still serves
+	// :8443). For an air-gapped VSI the image must be reachable from the VSI (a mirror
+	// on the services VPC's Harbor, pulled by private IP).
+	StatusImage string `yaml:"status_image,omitempty"`
+	// StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror
+	// so it can pull StatusImage: cloud-init drops the (base64) CA into
+	// /etc/containers/certs.d/<host>/ca.crt before the pod comes up. Both empty → the
+	// image host is assumed publicly trusted (or StatusImage is unset). Only needed for
+	// a private/self-signed mirror such as the disconnected-deploy Harbor.
+	StatusRegistryHost  string `yaml:"status_registry_host,omitempty"`
+	StatusRegistryCAB64 string `yaml:"status_registry_ca_b64,omitempty"`
+	// ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP
+	// forward proxy (air-gapped/egress-controlled networks). nil → direct egress.
+	ForwardProxy *BNKFLPForwardProxyCfg `yaml:"forward_proxy,omitempty"`
+}
+
+// BNKFLPForwardProxyCfg describes an egress forward proxy for the FLP VSI's calls to
+// F5's licensing backend (product-s.apis.f5.com).
+type BNKFLPForwardProxyCfg struct {
+	Host     string `yaml:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"` // http (default) | https
+}
+
 // BNKFLPExternalCfg addresses an F5 License Proxy that this workspace does not own.
 // Both fields come from the owning workspace's `roksbnkctl flp output` — the URL is
 // its externally-reachable endpoint and the CA is its (base64) root CA, which the
@@ -328,6 +493,17 @@ type BNKFLPExternalCfg struct {
 	URL string `yaml:"url,omitempty"`
 	// RootCAB64 is the proxy's root CA, base64-encoded (as `flp output` emits it).
 	RootCAB64 string `yaml:"root_ca_b64,omitempty"`
+}
+
+// BNKCertManagerCfg overrides cert-manager's install coordinates. All optional;
+// the create/skip decision stays on resources.cert_manager.create.
+type BNKCertManagerCfg struct {
+	// Namespace cert-manager installs into (rendered as cert_manager_namespace).
+	// Empty → the terraform default ("cert-manager").
+	Namespace string `yaml:"namespace,omitempty"`
+	// Version pins the cert-manager Helm chart (rendered as cert_manager_version).
+	// Empty → the terraform default. Set for air-gap / compliance version pinning.
+	Version string `yaml:"version,omitempty"`
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
@@ -343,6 +519,18 @@ type BNKCISCfg struct {
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 type BNKNetworkCfg struct {
 	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
+	// VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to
+	// its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2
+	// subnet TMM treats as directly connected on each VLAN. nil → the terraform
+	// default (24); set only when the VLAN subnets aren't /24. A pointer so "unset"
+	// (fall back to the default) is distinct from a literal 0. Rendered as
+	// cneinstance_vlan_prefixlen.
+	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty"`
+	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
+	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
+	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
+	// only for a non-default cluster pod CIDR. Rendered as cneinstance_tmm_k8s_routes.
+	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty"`
 }
 
 // GatewayCfg carries optional overrides for the Gateway phase (the BNK
@@ -524,9 +712,17 @@ type TFSourceCfg struct {
 	Path string `yaml:"path,omitempty"` // populated for type=local
 }
 
+// COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR
+// auth key + subscription JWT (the "orchestration" COS). Empty fields fall back
+// to the built-in defaults (bnk-supply-chain / bnk-artifacts /
+// us-south). These are honoured BOTH by the terraform render
+// (ibmcloud_cos_instance_name / ibmcloud_resources_cos_bucket /
+// ibmcloud_cos_bucket_region) AND by the `registry` FAR-file resolver, so a
+// customer-owned COS bucket is used consistently across both.
 type COSCfg struct {
 	Instance string      `yaml:"instance,omitempty"`
 	Bucket   string      `yaml:"bucket,omitempty"`
+	Region   string      `yaml:"region,omitempty"`
 	Upload   []COSUpload `yaml:"upload,omitempty"`
 }
 

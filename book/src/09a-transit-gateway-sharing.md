@@ -12,14 +12,24 @@ its own connection, so N clusters can point at the one gateway.
 
 ## Attach when creating (the interview)
 
-Decline to create a gateway, then name an existing one:
+Decline to create a gateway, and `init` **discovers the transit gateways already
+in your account** and lets you pick one by number — name, location, and status —
+so you don't have to remember a name or id (since `v1.25.0`):
 
 ```console
 $ roksbnkctl -w prod init
 ...
 Create Transit Gateway? [Y/n] n
-Existing Transit Gateway name or ID (blank = attach later with `tgw connect`): shared-tgw
+→ Discovering existing transit gateways...
+  Existing transit gateways in this account:
+     1) shared-tgw            (us-south, available)
+     2) prod-tgw-eu           (eu-de, available)
+Attach an existing Transit Gateway — pick a number (0 = none / attach later): 1
 ```
+
+Picking `0` (or if the account has none) leaves the cluster unattached, to connect
+later with `tgw connect`; if the discovery call fails it falls back to a free-text
+name/ID prompt.
 
 `cluster up` (or `cluster register`) then attaches the cluster's VPC to
 `shared-tgw` automatically — no extra step. In config that is:
@@ -93,5 +103,10 @@ shows the same block alongside the rest of the cluster identity.
   region. `tgw connect` attaches to whatever gateway you name — make sure it can
   reach the region your cluster VPC is in.
 - **`cluster down` refuses** while a connection exists, so the cluster isn't
-  destroyed out from under its own TGW attachment — run `tgw disconnect` first (or
-  `roksbnkctl down`, which sequences it).
+  destroyed out from under its own TGW attachment — run `tgw disconnect` first.
+  **`roksbnkctl down` (the composite) auto-detaches for you** (since `v1.26.0`):
+  it removes this cluster's connection *after* the BNK/Testing teardown and
+  *before* the cluster, because the connection pins the VPC's CRN and the VPC
+  delete would otherwise fail (`VPC still has an attached transit gateway
+  connection`). Only *this* cluster's connection is removed — the shared gateway
+  and every other cluster's connection stay.

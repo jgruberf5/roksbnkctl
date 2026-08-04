@@ -47,11 +47,14 @@ module "license" {
     kubectl = kubectl
   }
 
-  enabled     = var.deploy_bnk
-  bnk_cr_mode = var.bnk_cr_mode
+  # Defense-in-depth: no-op while the cluster is being created (provider +
+  # cluster-config are count=0 then; see providers.tf). Correct phases already
+  # pass create_roks_cluster=false, so this is inert there and only turns an
+  # accidental phase combination into a clean no-op rather than a plan crash.
+  enabled = var.deploy_bnk && !var.create_roks_cluster
 
-  use_cos_bucket = true
-  jwt_token      = ""
+  use_cos_bucket = var.use_cos_bucket
+  jwt_token      = var.jwt_token
 
   ibmcloud_api_key              = var.ibmcloud_api_key
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
@@ -65,7 +68,8 @@ module "license" {
   flp_license_server_url       = var.flp_license_server_url
   license_server_root_ca       = var.license_server_root_ca
 
-  kube_host              = data.ibm_container_cluster_config.runtime_config.host
-  kube_token             = data.ibm_container_cluster_config.runtime_config.token
+  kube_host              = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
+  kube_token             = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
   cneinstance_dependency = var.cneinstance_dependency_id
+  roksbnkctl_binary      = var.roksbnkctl_binary
 }

@@ -27,8 +27,9 @@ var (
 	flagTFSource     string
 	flagUpgradeTF    bool
 	flagNoKubeconfig bool
-	flagLegacyBnk    bool     // --legacy-bnk: render bnk_cr_mode = "legacy_curl" (Sprint 27)
 	flagVarFiles     []string // -var-file (repeatable; matches terraform's flag)
+	flagPlanOut      string   // plan --out <file>: save the plan for `apply --plan`
+	flagPlanFile     string   // apply --plan <file>: apply exactly that saved plan
 )
 
 var initCmd = &cobra.Command{
@@ -71,8 +72,20 @@ var applyCmd = &cobra.Command{
 var downCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Destroy everything in the workspace — terraform destroy",
-	Args:  cobra.NoArgs,
-	RunE:  runDown,
+	Long: `Tears down the workspace's phases in reverse-dependency order: BNK and
+Testing in parallel, then the cluster. Two behaviours worth knowing:
+
+  - If the cluster was attached to an EXISTING (shared) Transit Gateway, down
+    auto-detaches that connection first — removing only this cluster's connection;
+    the shared gateway and every other cluster's connection are left intact.
+  - If this workspace CREATED a VPC that another cluster's subnets still live in
+    (the shared-VPC topology), down refuses: the VPC owner must be torn down LAST,
+    so tear the workspaces sharing the VPC down first.
+
+The Gateway and FLP phases are separate and optional; if present, tear them down
+first (down reports which command to run).`,
+	Args: cobra.NoArgs,
+	RunE: runDown,
 }
 
 func init() {
@@ -86,6 +99,10 @@ func init() {
 	applyCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the confirmation prompt")
 	applyCmd.Flags().BoolVar(&flagNoKubeconfig, "no-kubeconfig", false, "skip the post-apply admin kubeconfig fetch")
 	downCmd.Flags().BoolVar(&flagAuto, "auto", false, "skip the destroy confirmation")
+
+	// Reviewable plan → apply-exactly-that-plan (dissociated plan/apply).
+	planCmd.Flags().StringVar(&flagPlanOut, "out", "", "save the plan to <file> (binary plan + a readable <file>.txt) for later `apply --plan`")
+	applyCmd.Flags().StringVar(&flagPlanFile, "plan", "", "apply exactly this saved plan file (from `plan --out`) instead of re-planning")
 
 	// --var-file matches terraform's own flag: repeatable, later wins.
 	// Layered after the roksbnkctl-generated tfvars and the workspace's
@@ -138,7 +155,8 @@ func lifecycleInputs() *orchestration.LifecycleInputs {
 		Backend:      flagBackend,
 		Auto:         flagAuto,
 		NoKubeconfig: flagNoKubeconfig,
-		LegacyBNK:    flagLegacyBnk,
+		PlanOut:      flagPlanOut,
+		PlanFile:     flagPlanFile,
 		VarFiles:     flagVarFiles,
 
 		PromptYesNo:  promptYesNo,

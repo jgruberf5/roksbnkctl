@@ -125,6 +125,12 @@ resource "ibm_is_subnet" "cluster_subnet_zone1" {
   zone                     = local.zones[0]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  # Attach the zone's public gateway INLINE (not via a separate
+  # ibm_is_subnet_public_gateway_attachment). Deleting the subnet then removes the
+  # association implicitly — no UnsetSubnetPublicGateway call that fails with "the
+  # specified subnet has no public gateway" when a SHARED gateway was already
+  # deleted by the VPC-owning cluster. See local.pgw_zone1 (reused or created).
+  public_gateway = local.pgw_zone1
 
   timeouts {
     create = "30m"
@@ -139,6 +145,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone2" {
   zone                     = local.zones[1]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  public_gateway           = local.pgw_zone2
 
   timeouts {
     create = "30m"
@@ -153,6 +160,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
   zone                     = local.zones[2]
   total_ipv4_address_count = 256
   resource_group           = data.ibm_resource_group.resource_group.id
+  public_gateway           = local.pgw_zone3
 
   timeouts {
     create = "30m"
@@ -173,29 +181,38 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
 #
 # So: look the VPC's gateways up, reuse one when the zone already has it, and create
 # only for zones that do not.
+#
+# Only relevant when ADOPTING an existing VPC. A freshly created VPC cannot already
+# have public gateways, and its id (ibm_is_vpc.cluster_vpc[0].id) is unknown until
+# apply — feeding that into the gateway `count` below breaks the plan with
+# "Invalid count argument". So gate the lookup on use_existing_cluster_vpc: for a new
+# VPC the reuse map is empty, the counts resolve at plan time, and we always create.
 data "ibm_is_public_gateways" "vpc" {
-  count = var.create_cluster ? 1 : 0
+  count = var.create_cluster && var.use_existing_cluster_vpc ? 1 : 0
 }
 
 locals {
   # zone → id, for public gateways already in THIS cluster's VPC.
-  existing_pgw_by_zone = {
+  existing_pgw_by_zone = var.use_existing_cluster_vpc ? {
     for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
     g.zone => g.id if try(g.vpc, "") == local.cluster_vpc_id
-  }
+  } : {}
 
   pgw_existing_zone1 = lookup(local.existing_pgw_by_zone, local.zones[0], "")
   pgw_existing_zone2 = lookup(local.existing_pgw_by_zone, local.zones[1], "")
   pgw_existing_zone3 = lookup(local.existing_pgw_by_zone, local.zones[2], "")
 
   # The gateway each subnet attaches to: the one already in the zone, else ours.
-  pgw_zone1 = local.pgw_existing_zone1 != "" ? local.pgw_existing_zone1 : try(ibm_is_public_gateway.cluster_gateway_zone1[0].id, "")
-  pgw_zone2 = local.pgw_existing_zone2 != "" ? local.pgw_existing_zone2 : try(ibm_is_public_gateway.cluster_gateway_zone2[0].id, "")
-  pgw_zone3 = local.pgw_existing_zone3 != "" ? local.pgw_existing_zone3 : try(ibm_is_public_gateway.cluster_gateway_zone3[0].id, "")
+  # cluster_public_gateway = false → null on every subnet: no worker Internet egress
+  # (a private/disconnected cluster; the operator must provide private connectivity —
+  # VPEs / private service endpoints — for image pulls and IBM Cloud services).
+  pgw_zone1 = var.cluster_public_gateway ? (local.pgw_existing_zone1 != "" ? local.pgw_existing_zone1 : try(ibm_is_public_gateway.cluster_gateway_zone1[0].id, null)) : null
+  pgw_zone2 = var.cluster_public_gateway ? (local.pgw_existing_zone2 != "" ? local.pgw_existing_zone2 : try(ibm_is_public_gateway.cluster_gateway_zone2[0].id, null)) : null
+  pgw_zone3 = var.cluster_public_gateway ? (local.pgw_existing_zone3 != "" ? local.pgw_existing_zone3 : try(ibm_is_public_gateway.cluster_gateway_zone3[0].id, null)) : null
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
-  count          = var.create_cluster && local.pgw_existing_zone1 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone1 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone1"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[0]
@@ -208,7 +225,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
-  count          = var.create_cluster && local.pgw_existing_zone2 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone2 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone2"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[1]
@@ -221,7 +238,7 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
-  count          = var.create_cluster && local.pgw_existing_zone3 == "" ? 1 : 0
+  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone3 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone3"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[2]
@@ -233,24 +250,12 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
   }
 }
 
-# Attach the cluster subnets to their zone's gateway (reused or freshly created).
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone1" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone1[0].id
-  public_gateway = local.pgw_zone1
-}
-
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone2" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone2[0].id
-  public_gateway = local.pgw_zone2
-}
-
-resource "ibm_is_subnet_public_gateway_attachment" "cluster_subnet_gateway_zone3" {
-  count          = var.create_cluster ? 1 : 0
-  subnet         = ibm_is_subnet.cluster_subnet_zone3[0].id
-  public_gateway = local.pgw_zone3
-}
+# NOTE: subnet↔gateway attachment is now INLINE on each ibm_is_subnet
+# (public_gateway = local.pgw_zoneN) rather than a separate
+# ibm_is_subnet_public_gateway_attachment. This makes teardown tolerant in the
+# shared-VPC topology: deleting the subnet removes the association implicitly, so a
+# gateway already deleted by the VPC-owning cluster no longer breaks the adopter's
+# destroy with "the specified subnet has no public gateway".
 
 # Allow TCP port 80 from any source (using cluster security group)
 resource "ibm_is_security_group_rule" "cluster_tcp_80" {
@@ -331,19 +336,21 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
     delete = "90m"
   }
 
+  # The subnets carry their public gateway inline, so depending on the subnets is
+  # enough to guarantee egress is wired before the cluster comes up.
   depends_on = [
     ibm_is_subnet.cluster_subnet_zone1,
     ibm_is_subnet.cluster_subnet_zone2,
-    ibm_is_subnet.cluster_subnet_zone3,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone1,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone2,
-    ibm_is_subnet_public_gateway_attachment.cluster_subnet_gateway_zone3
+    ibm_is_subnet.cluster_subnet_zone3
   ]
 }
 
-# Look up existing cluster when not creating a new one
+# Look up existing cluster when not creating a new one — but ONLY when a cluster
+# name/id was supplied. A cluster-less phase (e.g. a standalone FLP VSI that joins an
+# existing VPC without any ROKS cluster) passes create_cluster=false with an empty
+# name; skip the lookup then so it doesn't error resolving a cluster named "".
 data "ibm_container_vpc_cluster" "existing_cluster" {
-  count             = var.create_cluster ? 0 : 1
+  count             = !var.create_cluster && var.openshift_cluster_name != "" && !var.cluster_absent ? 1 : 0
   name              = var.openshift_cluster_name
   resource_group_id = data.ibm_resource_group.resource_group.id
 }
@@ -365,7 +372,7 @@ data "ibm_is_security_group" "cluster_sg" {
 
 # Get worker node IPs from cluster workers
 data "ibm_container_vpc_cluster_worker" "cluster_workers" {
-  count             = var.create_cluster ? 3 : 0
+  count             = var.create_cluster ? 3 * var.workers_per_zone : 0
   cluster_name_id   = ibm_container_vpc_cluster.openshift_cluster[0].id
   worker_id         = element(data.ibm_container_vpc_cluster.cluster_info[0].workers, count.index)
   resource_group_id = data.ibm_resource_group.resource_group.id
@@ -376,13 +383,13 @@ locals {
   # Create a map of zone to worker IP (only when cluster is created)
   zone_worker_map = var.create_cluster && length(data.ibm_container_vpc_cluster_worker.cluster_workers) > 0 ? {
     for worker in data.ibm_container_vpc_cluster_worker.cluster_workers :
-    worker.network_interfaces[0].subnet_id => worker.network_interfaces[0].ip_address
+    worker.network_interfaces[0].subnet_id => worker.network_interfaces[0].ip_address...
   } : {}
 
   # Get zone-specific worker IPs
-  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone1[0].id] : null
-  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone2[0].id] : null
-  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone3[0].id] : null
+  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone1[0].id][0], null) : null
+  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone2[0].id][0], null) : null
+  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone3[0].id][0], null) : null
 
   # Get cluster security group from data source
   cluster_security_group = var.create_cluster && length(data.ibm_is_security_group.cluster_sg) > 0 ? data.ibm_is_security_group.cluster_sg[0].id : null
@@ -439,20 +446,25 @@ data "ibm_container_cluster_config" "cluster_config" {
 # ============================================================
 # Removes the OpenShift ingress operator's validating admission policy
 # binding that can block Gateway API CRD operations.
-# Uses curl against the Kubernetes API for Schematics compatibility
-# (kubectl is not available in Schematics runtime).
+#
+# Converted from a host `curl -X DELETE ... || true` to `roksbnkctl tfx delete`
+# (the Windows-native terraform helper): NO interpreter is set, so on Windows
+# terraform execs roksbnkctl.exe via `cmd.exe /C` directly — no bash/curl needed.
+# The command is flags-only (no pipes, no shell builtins); the kube token is passed
+# via the environment (KUBE_TOKEN), never on the command line. --ignore-not-found
+# keeps it idempotent, matching the old `|| true`. --insecure matches `curl -sk`.
+locals {
+  roksbnkctl_bin = var.roksbnkctl_binary != "" ? var.roksbnkctl_binary : "roksbnkctl"
+}
 
 resource "null_resource" "delete_gatewayapi_admission_policy" {
   count = var.create_cluster ? 1 : 0
 
   provisioner "local-exec" {
-    command = <<-EOT
-      curl -sk \
-        -X DELETE \
-        -H "Authorization: Bearer ${data.ibm_container_cluster_config.cluster_config[0].token}" \
-        "${data.ibm_container_cluster_config.cluster_config[0].host}/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/openshift-ingress-operator-gatewayapi-crd-admission" \
-        -o /dev/null -w "%%{http_code}" || true
-    EOT
+    command = "${local.roksbnkctl_bin} tfx delete --kube-host ${data.ibm_container_cluster_config.cluster_config[0].host} --insecure --gvr admissionregistration.k8s.io/v1/validatingadmissionpolicybindings --name openshift-ingress-operator-gatewayapi-crd-admission --ignore-not-found"
+    environment = {
+      KUBE_TOKEN = data.ibm_container_cluster_config.cluster_config[0].token
+    }
   }
 
   depends_on = [data.ibm_container_cluster_config.cluster_config]

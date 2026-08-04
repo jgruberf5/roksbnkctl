@@ -1,0 +1,82 @@
+# flp-status in-cluster deployment (for an in-cluster/helm FLP). Substitute:
+#   __IMAGE__     — the mirrored flp-status image (e.g. <harbor>/bnk-mirror/flp-status:<tag>)
+#   __NAMESPACE__ — the FLP namespace (default f5-license-proxy)
+#   __NODEPORT__  — the NodePort to expose (default 30080), like the :8443 proxy uses
+#
+# The Service is type NodePort so a browser / `roksbnkctl flp status` reaches it
+# the same way a remote cluster reaches the :8443 proxy (see flp_node_port_access).
+# NO auth: read-only private status.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flp-status
+  namespace: __NAMESPACE__
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flp-status
+  namespace: __NAMESPACE__
+rules:
+  # Read pod state + logs of the FLP containers — that is all the status needs.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flp-status
+  namespace: __NAMESPACE__
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: flp-status }
+subjects:
+  - { kind: ServiceAccount, name: flp-status, namespace: __NAMESPACE__ }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flp-status
+  namespace: __NAMESPACE__
+  labels: { app: flp-status }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: flp-status } }
+  template:
+    metadata:
+      labels: { app: flp-status }
+    spec:
+      serviceAccountName: flp-status
+      containers:
+        - name: flp-status
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: FLP_BACKEND, value: k8s }
+            - { name: FLP_NAMESPACE, value: __NAMESPACE__ }
+            - { name: PORT, value: "80" }
+          ports:
+            - { name: http, containerPort: 80 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 80 }
+            initialDelaySeconds: 3
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flp-status
+  namespace: __NAMESPACE__
+  labels: { app: flp-status }
+spec:
+  type: NodePort
+  selector: { app: flp-status }
+  ports:
+    - { name: http, port: 80, targetPort: 80, nodePort: __NODEPORT__ }

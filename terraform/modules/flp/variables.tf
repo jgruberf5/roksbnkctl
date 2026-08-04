@@ -78,7 +78,7 @@ variable "f5_cne_far_auth_file" {
 variable "f5_cne_subscription_jwt_file" {
   description = "Subscription JWT object key in the COS bucket — seeds flp-jwt-secret."
   type        = string
-  default     = "trial.jwt"
+  default     = "subscription.jwt"
 }
 
 variable "scratch_dir" {
@@ -166,6 +166,12 @@ variable "flp_storage_class" {
 
 variable "roksbnkctl_binary" {
   description = "Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart's POST-RENDERER (`roksbnkctl flp postrender`). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH for a direct `terraform apply`. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container."
+  type        = string
+  default     = ""
+}
+
+variable "helm_registry_config" {
+  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
   type        = string
   default     = ""
 }

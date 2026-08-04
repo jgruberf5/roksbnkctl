@@ -73,12 +73,20 @@ func openTestingTF(ctx context.Context, in *LifecycleInputs, stderr *prefixWrite
 }
 
 // writeAndInitTestingPhase is the testing-phase preamble. It renders the
-// normal terraform.tfvars and, when this workspace has a
-// cluster-outputs.json (the cluster phase completed / a cluster is
-// registered), writes the forced testing-phase-override.tfvars and returns
-// its path so the caller appends it LAST to the var-file chain. With no
-// cluster-outputs.json (fresh/legacy) extraVF is nil and the run is
-// byte-identical to the create path.
+// normal terraform.tfvars and writes the forced testing-phase-override.tfvars
+// (create_roks_cluster=false + the reused cluster VPC id from
+// cluster-outputs.json), returning its path so the caller appends it LAST to
+// the var-file chain.
+//
+// It REQUIRES cluster-outputs.json — the testing phase provisions jumphosts
+// *inside an existing cluster's VPC*, so without a cluster there is nothing to
+// attach to. Missing it hard-errors here, matching the Gateway/FLP/TGW phases
+// (gateway_phase.go / flp_phase.go / tgw_phase.go). This closes the gap where a
+// standalone `testing up` on a cluster-less workspace would otherwise render
+// create_roks_cluster=true from config and try to provision an entire cluster
+// into state-testing/. In the composite `up` flow the cluster phase runs first
+// and writes cluster-outputs.json before the BNK ∥ Testing leg, so the guard
+// never fires there.
 func writeAndInitTestingPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Workspace, workspace string, out *prefixWriter) ([]string, error) {
 	w := errWriter(out)
 	if err := tfws.WriteTFVars(ws); err != nil {
@@ -92,20 +100,22 @@ func writeAndInitTestingPhase(ctx context.Context, tfws *tf.Workspace, ws *confi
 	if err != nil {
 		return nil, err
 	}
-
-	var extra []string
-	if co != nil && co.VPCID != "" {
-		overridePath, werr := writeTestingPhaseOverride(tfws, co)
-		if werr != nil {
-			return nil, werr
-		}
-		extra = []string{overridePath}
-		fmt.Fprintf(w,
-			"→ Testing-phase handoff: cluster-outputs.json present — provisioning the jumphosts "+
-				"against the existing cluster VPC %s + transit gateway (create_roks_cluster=false, "+
-				"deploy_bnk=false). The testing phase manages ONLY the jumphost infrastructure.\n",
-			co.VPCID)
+	if co == nil || co.VPCID == "" {
+		return nil, fmt.Errorf(
+			"the testing phase provisions jumphosts in an existing cluster's VPC, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl testing up`",
+			workspace)
 	}
+
+	overridePath, werr := writeTestingPhaseOverride(tfws, co)
+	if werr != nil {
+		return nil, werr
+	}
+	extra := []string{overridePath}
+	fmt.Fprintf(w,
+		"→ Testing-phase handoff: cluster-outputs.json present — provisioning the jumphosts "+
+			"against the existing cluster VPC %s + transit gateway (create_roks_cluster=false, "+
+			"deploy_bnk=false). The testing phase manages ONLY the jumphost infrastructure.\n",
+		co.VPCID)
 
 	fmt.Fprintln(w, "→ terraform init")
 	if err := tfws.Init(ctx); err != nil {

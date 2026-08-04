@@ -16,11 +16,25 @@ The BNK supply chain reads from one COS bucket per cluster's BNK install. The bu
 | Object | What it is | Consumed by |
 |---|---|---|
 | `f5-far-auth-key.tgz` | FAR repository pull credentials — the F5-internal artefact key that lets FLO download FAR container images | `flo` module at install time |
-| `trial.jwt` (or production equivalent) | BNK subscription JWT — the licence the CNE Instance presents | `flo` and `license` modules |
+| `subscription.jwt` (or production equivalent) | BNK subscription JWT — the licence the CNE Instance presents | `flo` and `license` modules |
 | `schematic-<v>.json` | The deployer's schematic JSON for the deployed BNK version | informational, not directly mounted into the cluster |
 | (optional) FAR image tarballs | Pre-pulled FAR images for air-gapped installs | `flo` when running in disconnected mode |
 
-The bucket structure is defined by the upstream HCL — concretely by the `ibmcloud_resources_cos_bucket` variable, which defaults to `bnk-schematics-resources`. The instance defaults to `bnk-orchestration`.
+The bucket structure is defined by the upstream HCL — concretely by the `ibmcloud_resources_cos_bucket` variable. When you leave `cos.bucket` unset, `init` provisions (or discovers and reuses) an **account-scoped** bucket named `bnk-artifacts-<first-12-of-account-id>`: COS bucket names share one global namespace (like S3), so the account suffix keeps the name unique and lets a second workspace run from the same account find the bucket the first one created — no duplicate, no re-upload. The instance defaults to `bnk-supply-chain`. (The bare `bnk-artifacts` used in the manual `cos` examples below is just an illustrative name; supply your own.)
+
+## Local files instead of COS (no bucket needed)
+
+COS is not mandatory for the two artefacts the BNK phase actually needs at apply time — the FAR auth tarball and the subscription JWT. You can point the workspace at **local files** and skip COS entirely:
+
+```yaml
+bnk:
+  far_auth_local_file: /path/to/f5-far-auth-key.tgz
+  subscription_jwt_local_file: /path/to/subscription.jwt
+```
+
+When both are set, roksbnkctl reads them at render time — extracting the FAR `_json_key_base64` service account from the tarball in Go — and injects the content directly into the `flo` and `license` modules (`use_cos_bucket = false`), so no COS instance, bucket, or S3 endpoint is contacted. This is useful when the account has no orchestration COS, or when the COS S3 endpoint isn't reachable from where you run `roksbnkctl`.
+
+`roksbnkctl init` wires this up automatically: it checks COS first, and on **any** COS error (including the `dial tcp … no such host` you get when a cluster region such as `eu-fr2` has no COS S3 endpoint) it falls back to prompting for these local files and records them on the workspace. You can also set them by hand. When they're unset, the COS path below is used unchanged.
 
 ## The three command levels
 
@@ -38,17 +52,17 @@ Manages COS service instances at the account level via [Resource Controller](htt
 
 ```bash
 # Create a Standard-plan instance under the workspace's resource group
-roksbnkctl cos instance create bnk-orchestration --plan standard
+roksbnkctl cos instance create bnk-supply-chain --plan standard
 
 # Override the plan by catalog UUID when roksbnkctl hasn't mapped the tier
-roksbnkctl cos instance create bnk-orchestration --plan-id <uuid>
+roksbnkctl cos instance create bnk-supply-chain --plan-id <uuid>
 
 # List instances in the account
 roksbnkctl cos instance list
 
 # Delete an instance (default: recursive — removes bound HMAC keys, service creds)
-roksbnkctl cos instance delete bnk-orchestration
-roksbnkctl cos instance delete bnk-orchestration --no-recursive --auto
+roksbnkctl cos instance delete bnk-supply-chain
+roksbnkctl cos instance delete bnk-supply-chain --no-recursive --auto
 ```
 
 | Flag | Default | Notes |
@@ -67,20 +81,20 @@ Manages buckets within a named instance. The `--instance` flag is required for e
 
 ```bash
 # Create a standard-class bucket
-roksbnkctl cos bucket create bnk-schematics-resources \
-  --instance bnk-orchestration \
+roksbnkctl cos bucket create bnk-artifacts \
+  --instance bnk-supply-chain \
   --class standard
 
 # List buckets on the instance
-roksbnkctl cos bucket list --instance bnk-orchestration
+roksbnkctl cos bucket list --instance bnk-supply-chain
 
 # Delete (the bucket must be empty first; cos object delete --recursive isn't implemented yet)
-roksbnkctl cos bucket delete bnk-schematics-resources --instance bnk-orchestration
+roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 
 # Snapshot the entire bucket to a local directory (recursive, streaming, byte-for-byte).
 # Useful before rotating supply-chain artefacts — keeps a known-good set you can roll back to.
-roksbnkctl cos bucket get bnk-schematics-resources ./snapshot \
-  --instance bnk-orchestration
+roksbnkctl cos bucket get bnk-artifacts ./snapshot \
+  --instance bnk-supply-chain
 ```
 
 | Flag | Default | Notes |
@@ -96,38 +110,38 @@ Manages objects (files) within a bucket. The key syntax is `<bucket>/<key/with/s
 
 ```bash
 # Upload (streaming; multipart auto-engages for large files)
-roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+roksbnkctl cos object put bnk-artifacts/f5-far-auth-key.tgz \
   ./local/f5-far-auth-key.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # Download (streaming)
-roksbnkctl cos object get bnk-schematics-resources/f5-far-auth-key.tgz \
+roksbnkctl cos object get bnk-artifacts/f5-far-auth-key.tgz \
   ./downloaded.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # Delete
-roksbnkctl cos object delete bnk-schematics-resources/old-trial.jwt \
-  --instance bnk-orchestration
+roksbnkctl cos object delete bnk-artifacts/old-subscription.jwt \
+  --instance bnk-supply-chain
 
 # List (with an optional key prefix)
-roksbnkctl cos object list bnk-schematics-resources \
-  --instance bnk-orchestration
+roksbnkctl cos object list bnk-artifacts \
+  --instance bnk-supply-chain
 
-roksbnkctl cos object list bnk-schematics-resources/schematics/ \
-  --instance bnk-orchestration
+roksbnkctl cos object list bnk-artifacts/schematics/ \
+  --instance bnk-supply-chain
 ```
 
 The list output is a tab-separated `KEY SIZE MODIFIED` table — pipe through `column -t` for readability or `cut -f1` to extract just the keys.
 
 ## The BNK supply chain shape
 
-A typical `bnk-schematics-resources` bucket after a clean install looks like:
+A typical `bnk-artifacts` bucket after a clean install looks like:
 
 ```
-$ roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+$ roksbnkctl cos object list bnk-artifacts --instance bnk-supply-chain
 KEY                                     SIZE        MODIFIED
 f5-far-auth-key.tgz                     2412        2026-05-08T14:12:33Z
-trial.jwt                               1857        2026-05-08T14:12:34Z
+subscription.jwt                               1857        2026-05-08T14:12:34Z
 schematic-2.3.0-3.2598.3-0.0.170.json   18432       2026-05-08T14:13:01Z
 ```
 
@@ -136,7 +150,7 @@ Three pieces of metadata in the upstream HCL ([`terraform/variables.tf`](https:/
 | HCL variable | Default | Object |
 |---|---|---|
 | `f5_cne_far_auth_file` | `f5-far-auth-key.tgz` | FAR pull credentials |
-| `f5_cne_subscription_jwt_file` | `trial.jwt` | Subscription JWT |
+| `f5_cne_subscription_jwt_file` | `subscription.jwt` | Subscription JWT |
 | `f5_bigip_k8s_manifest_version` | `2.3.0-3.2598.3-0.0.170` | Schematic filename inferred from this |
 
 Changing any of these in `terraform.tfvars` (or the workspace `bnk:` block, which renders into tfvars) changes which COS keys FLO will look for. The HCL doesn't auto-discover key names — they're literal.
@@ -163,13 +177,13 @@ The workspace `cos:` block is optional — if the bucket is already populated (m
 ```yaml
 # ~/.roksbnkctl/<workspace>/config.yaml
 cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 ```
 
 The block maps directly to [`internal/config/workspace.go::COSCfg`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go):
@@ -188,7 +202,7 @@ Three lifecycle moments where the COS bucket is in play:
 
 ### Install time
 
-`roksbnkctl up` provisions FLO, which queries the bucket for `f5-far-auth-key.tgz` and `trial.jwt`. Missing either object → FLO fails to start → `terraform apply` retries (per [`internal/cli/lifecycle.go::applyWithRetry`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/lifecycle.go)) for ~3 attempts before erroring. The fix is always "put the missing object in the bucket and re-run `up`"; the lifecycle retry hides transient bucket-policy propagation lag but won't paper over a genuinely-empty bucket.
+`roksbnkctl up` provisions FLO, which queries the bucket for `f5-far-auth-key.tgz` and `subscription.jwt`. Missing either object → FLO fails to start → `terraform apply` retries (per [`internal/cli/lifecycle.go::applyWithRetry`](https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/lifecycle.go)) for ~3 attempts before erroring. The fix is always "put the missing object in the bucket and re-run `up`"; the lifecycle retry hides transient bucket-policy propagation lag but won't paper over a genuinely-empty bucket.
 
 ### Upgrade time
 
@@ -196,12 +210,12 @@ When `bnk.manifest_version` (or the `f5_bigip_k8s_manifest_version` HCL variable
 
 ### Licence rotation
 
-When the trial expires or a production licence arrives, swap `trial.jwt` for the new file:
+When the trial expires or a production licence arrives, swap `subscription.jwt` for the new file:
 
 ```bash
-roksbnkctl cos object put bnk-schematics-resources/trial.jwt \
+roksbnkctl cos object put bnk-artifacts/subscription.jwt \
   ./new-license.jwt \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # Force FLO to re-read the licence (delete the CNE Instance's License resource;
 # FLO's reconciler re-creates it from the updated JWT)
@@ -212,25 +226,25 @@ FLO picks up the new JWT within 60-90 seconds. No `roksbnkctl up` re-run require
 
 ## Worked example: rotating COS supply-chain assets
 
-End-to-end Part VII scenario: the FAR auth key on file is about to expire, a new one arrived from the F5 distribution side, and you need to rotate it without taking BNK down. The same flow handles licence-JWT rotation (swap `trial.jwt` for the production JWT) and FAR-image-tarball uploads for air-gapped clusters. Cross-link to [Chapter 14](./14-credentials-resolver.md) for the API-key half of the rotation story; this walkthrough focuses on the COS object half.
+End-to-end Part VII scenario: the FAR auth key on file is about to expire, a new one arrived from the F5 distribution side, and you need to rotate it without taking BNK down. The same flow handles licence-JWT rotation (swap `subscription.jwt` for the production JWT) and FAR-image-tarball uploads for air-gapped clusters. Cross-link to [Chapter 14](./14-credentials-resolver.md) for the API-key half of the rotation story; this walkthrough focuses on the COS object half.
 
 ```bash
 # 1. Sanity-check the current state
-roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+roksbnkctl cos object list bnk-artifacts --instance bnk-supply-chain
 
 # 2. Upload the new auth key (overwrites the existing file)
-roksbnkctl cos object put bnk-schematics-resources/f5-far-auth-key.tgz \
+roksbnkctl cos object put bnk-artifacts/f5-far-auth-key.tgz \
   ./new-far-auth-key.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # 3. Verify the upload
-roksbnkctl cos object list bnk-schematics-resources --instance bnk-orchestration
+roksbnkctl cos object list bnk-artifacts --instance bnk-supply-chain
 # Expected: the f5-far-auth-key.tgz row's MODIFIED timestamp is now
 
 # 4. (optional, air-gapped only) Upload the FAR image tarball
-roksbnkctl cos object put bnk-schematics-resources/far-2.3.0-images.tgz \
+roksbnkctl cos object put bnk-artifacts/far-2.3.0-images.tgz \
   ./far-2.3.0-images.tgz \
-  --instance bnk-orchestration
+  --instance bnk-supply-chain
 
 # 5. Force FLO to re-read the supply chain
 roksbnkctl k delete pod -n f5-bnk -l app=flo

@@ -17,7 +17,8 @@ terraform {
 }
 
 module "cluster" {
-  source = "./modules/cluster"
+  source         = "./modules/cluster"
+  cluster_absent = var.cluster_absent
 
   ibmcloud_api_key = var.ibmcloud_api_key
   cluster_region   = var.ibmcloud_cluster_region
@@ -25,6 +26,7 @@ module "cluster" {
   kubeconfig_dir   = var.kubeconfig_dir
 
   create_cluster         = var.create_roks_cluster
+  cluster_public_gateway = var.cluster_public_gateway
   create_transit_gateway = var.create_roks_transit_gateway
   create_cos_instance    = var.create_roks_registry_cos_instance
 
@@ -53,6 +55,7 @@ module "cluster" {
   workers_per_zone          = var.roks_workers_per_zone
   min_worker_vcpu_count     = var.roks_min_worker_vcpu_count
   min_worker_memory_gb      = var.roks_min_worker_memory_gb
+  roksbnkctl_binary         = var.roksbnkctl_binary
 }
 
 # Sentinel: captures apply-time IDs so downstream modules can declare a real

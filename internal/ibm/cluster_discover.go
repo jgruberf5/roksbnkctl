@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/IBM/go-sdk-core/v5/core"
 )
 
 // ClusterInfo is the subset of `GET /global/v2/getCluster` fields
@@ -56,10 +54,9 @@ func (c *Client) GetCluster(ctx context.Context, idOrName string) (*ClusterInfo,
 		return nil, errors.New("cluster name/id is empty")
 	}
 
-	auth := &core.IamAuthenticator{ApiKey: c.apiKey}
-	token, err := auth.GetToken()
+	token, err := c.authToken()
 	if err != nil {
-		return nil, fmt.Errorf("getting IAM token: %w", err)
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/global/v2/getCluster?cluster=%s&v1-compatible",

@@ -94,6 +94,7 @@ roksbnkctl apply [flags]
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the confirmation prompt |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
+| `--plan` | `string` | — | apply exactly this saved plan file (from `plan --out`) instead of re-planning |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ## `roksbnkctl backend`
@@ -171,7 +172,6 @@ on legacy single-state workspaces (use `roksbnkctl down` there).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip the destroy confirmation |
-| `--legacy-bnk` | `bool` | `false` | destroy BNK custom resources rendered in the legacy null_resource/curl mode (bnk_cr_mode=legacy_curl); must match the mode used at bnk up |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl bnk`](#roksbnkctl-bnk)
@@ -227,7 +227,6 @@ provision takes ~30 min) before the trial apply.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto` | `bool` | `false` | skip confirmation prompts (cluster-bootstrap + apply) |
-| `--legacy-bnk` | `bool` | `false` | deploy the BNK custom resources via the legacy null_resource/curl path (bnk_cr_mode=legacy_curl) instead of the default terraform-native kubectl/helm path |
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
@@ -720,6 +719,19 @@ Destroy everything in the workspace — terraform destroy
 roksbnkctl down [flags]
 ```
 
+Tears down the workspace's phases in reverse-dependency order: BNK and
+Testing in parallel, then the cluster. Two behaviours worth knowing:
+
+  - If the cluster was attached to an EXISTING (shared) Transit Gateway, down
+    auto-detaches that connection first — removing only this cluster's connection;
+    the shared gateway and every other cluster's connection are left intact.
+  - If this workspace CREATED a VPC that another cluster's subnets still live in
+    (the shared-VPC topology), down refuses: the VPC owner must be torn down LAST,
+    so tear the workspaces sharing the VPC down first.
+
+The Gateway and FLP phases are separate and optional; if present, tear them down
+first (down reports which command to run).
+
 **Flags**
 
 | Flag | Type | Default | Description |
@@ -794,6 +806,28 @@ roksbnkctl flp output [name] [flags]
 |---|---|---|---|
 | `--json` | `bool` | `false` | output JSON (CI-friendly) |
 | `--show-sensitive` | `bool` | `false` | reveal sensitive output values (default redacted) |
+
+← back to [`roksbnkctl flp`](#roksbnkctl-flp)
+
+### `roksbnkctl flp status`
+
+Show the F5 License Proxy's live status (services, listener, F5/TEEM, CNE fields)
+
+```
+roksbnkctl flp status [flags]
+```
+
+Fetches /api/status from the FLP's status service (the flp-status container,
+which runs alongside the proxy on the VSI pod or in the cluster) and renders it.
+
+The service URL is derived from the workspace's flp-outputs.json (the FLP endpoint
+host, port 80) unless --url is given. Output honors -o json.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--url` | `string` | — | flp-status base URL (default: derived from the FLP endpoint, port 80) |
 
 ← back to [`roksbnkctl flp`](#roksbnkctl-flp)
 
@@ -1022,10 +1056,16 @@ Install the roksbnkctl binary you're currently running into a directory
 on $PATH so you can invoke it as `roksbnkctl` from any working
 directory.
 
-Default destination, in order of preference:
-  $HOME/.local/bin  (preferred — typically writable without sudo)
-  $HOME/bin         (older convention; still on PATH for some setups)
-  /usr/local/bin    (system-wide; usually needs sudo)
+Default destination:
+  Linux/macOS, in order of preference:
+    $HOME/.local/bin  (preferred — typically writable without sudo)
+    $HOME/bin         (older convention; still on PATH for some setups)
+    /usr/local/bin    (system-wide; usually needs sudo)
+  Windows:
+    a writable directory already on %PATH% — preferring
+    %LOCALAPPDATA%\Microsoft\WindowsApps (on the per-user PATH by default,
+    no admin) — so the binary resolves immediately. Falls back to
+    %LOCALAPPDATA%\Programs\roksbnkctl (with a PATH hint) if none is usable.
 
 Override the destination with --dir.
 
@@ -1045,7 +1085,7 @@ pulls the latest GitHub release tarball over the network.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--dir` | `string` | — | destination directory (default: ~/.local/bin or /usr/local/bin) |
+| `--dir` | `string` | — | destination directory (default: a PATH dir — ~/.local/bin on Unix, %LOCALAPPDATA%\Microsoft\WindowsApps on Windows) |
 | `--force` | `bool` | `false` | overwrite even if destination resolves to the running binary |
 
 ## `roksbnkctl journal`
@@ -1491,6 +1531,7 @@ roksbnkctl plan [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--out` | `string` | — | save the plan to `<file>` (binary plan + a readable `<file>`.txt) for later `apply --plan` |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ## `roksbnkctl registry`
@@ -1508,14 +1549,17 @@ Commands:
   roksbnkctl registry bom        Build + print the bill-of-materials
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
-  roksbnkctl registry replicate  Copy the BOM into the mirror (needs a live cluster)
+  roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
 
-`registry bom` works offline against the FAR manifest; the cluster-touching
-verbs (replicate/list/diff/verify/prune) need a reachable cluster + a configured
-registry: block in the workspace config.
+`registry bom` works entirely offline against the FAR manifest. The other verbs
+need a configured registry: block and network reachability to the target registry —
+`replicate` also needs the FAR source (repo.f5.com). NONE require a Kubernetes
+cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
+roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
+any cluster exists.
 
 ### `roksbnkctl registry bom`
 
@@ -1619,7 +1663,7 @@ roksbnkctl registry prune [flags]
 
 ### `roksbnkctl registry replicate`
 
-Copy the BOM into the mirror (needs a live cluster)
+Copy the BOM into the mirror (registry-to-registry; no cluster needed)
 
 ```
 roksbnkctl registry replicate [flags]
@@ -1628,6 +1672,14 @@ roksbnkctl registry replicate [flags]
 Prepares the target registry (auth + repository namespace), then copies every
 BOM artifact into it, idempotently. Records the result in registry-mirror.json so
 the BNK install can be redirected to the mirror.
+
+Runs entirely host-side: it pulls each artifact by digest from the FAR source
+(repo.f5.com) and pushes to the target registry via go-containerregistry — no
+Kubernetes cluster is involved. So you can pre-seed the mirror as a standalone
+supply-chain step, before creating any cluster, from any host that can reach both
+the FAR source and the target registry. Requires a configured registry: block and
+the FAR source credential (registry.source_service_account_b64, the workspace FAR
+auth, or --source-sa-b64).
 
 **Flags**
 
@@ -1638,6 +1690,7 @@ the BNK install can be redirected to the mirror.
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
+| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (default: auto-captured from the mirror host; nodes install it before pulling) |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
 | `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
@@ -1708,12 +1761,12 @@ Manage the roksbnkctl binary itself
 
 Pull the latest roksbnkctl release matching the host arch
 
-Downloads the latest GitHub release tarball for this platform,
-verifies its SHA256 against the release's checksums.txt, and replaces
-the running binary in place.
+Downloads the latest GitHub release for this platform, verifies its SHA256
+against the release's checksums.txt, and replaces the running binary in place.
+Works on Linux, macOS, and Windows.
 
-Linux/macOS only — Windows can't replace a running .exe in place; use
-`scoop update roksbnkctl` instead.
+This is the latest-only, interactive form; use `roksbnkctl upgrade` to pin a
+specific `--version` or to skip the prompt with `--yes`.
 
 Requires write permission on the binary's directory (typical install
 under /usr/local/bin needs sudo; brew/scoop should use their own
@@ -2354,6 +2407,35 @@ Show the Transit Gateway id/name and the live connection state
 
 ← back to [`roksbnkctl tgw`](#roksbnkctl-tgw)
 
+## `roksbnkctl uninstall`
+
+Remove the installed roksbnkctl binary from ~/.local/bin (opposite of install)
+
+```
+roksbnkctl uninstall [flags]
+```
+
+Delete the roksbnkctl binary that `roksbnkctl install` copied onto $PATH.
+
+By default it removes `<install-dir>`/roksbnkctl, where `<install-dir>` is the same
+directory `install` uses (~/.local/bin, then ~/bin). Override with --dir.
+
+It refuses to delete the binary you are currently running on Windows (a running
+.exe cannot be removed there) — delete it manually or run uninstall from a
+different binary. On Linux/macOS removing the running (installed) binary is fine.
+
+Examples:
+  roksbnkctl uninstall                 # remove ~/.local/bin/roksbnkctl
+  roksbnkctl uninstall --dir ~/bin
+  sudo roksbnkctl uninstall --dir /usr/local/bin
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | `string` | — | directory to remove roksbnkctl from (default: ~/.local/bin or ~/bin) |
+| `--yes` / `-y` | `bool` | `false` | skip the confirmation prompt |
+
 ## `roksbnkctl up`
 
 Provision (or attach) and deploy BNK — terraform plan + apply
@@ -2374,6 +2456,37 @@ resumable: a partial failure is recovered by re-running 'roksbnkctl up'.
 | `--no-kubeconfig` | `bool` | `false` | skip the post-apply admin kubeconfig fetch |
 | `--tf-source` | `string` | — | override TF source for this run only (path or URL; relative local paths resolved against the invocation CWD) |
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
+
+## `roksbnkctl upgrade`
+
+Upgrade (or pin) the roksbnkctl binary to a GitHub release
+
+```
+roksbnkctl upgrade [flags]
+```
+
+Downloads a roksbnkctl release for this OS/arch from GitHub, verifies its
+SHA256 against the release's checksums.txt, and replaces the running binary
+in place. With no --version it upgrades to the latest release; --version pins
+a specific release (and may downgrade or reinstall).
+
+Works on Linux, macOS, and Windows. On Windows the running .exe cannot be
+overwritten, so it is moved aside to `<binary>`.old and the new binary takes its
+place; the .old file is removed automatically on the next run.
+
+Requires write permission on the binary's directory (a /usr/local/bin install
+needs sudo; Homebrew/Scoop installs should use their own upgrade verb).
+
+Note: release binaries are not yet code-signed, so on a host with an
+application-allowlist policy (e.g. Windows Device Guard/WDAC) the freshly
+downloaded binary may be blocked until its hash is trusted.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--version` | `string` | — | release to install, e.g. v1.20.1 (default: latest) |
+| `--yes` / `-y` | `bool` | `false` | skip the confirmation prompt |
 
 ## `roksbnkctl version`
 

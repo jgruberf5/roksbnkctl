@@ -105,7 +105,7 @@ output "flo_pod_deployment_status" {
   description = "Status of FLO pod deployment"
   value = var.enabled ? {
     pod_count        = 0
-    scc_policy_count = length(null_resource.flo_scc_privileged)
+    scc_policy_count = length(kubectl_manifest.flo_scc_privileged)
     namespace        = var.flo_namespace
     status_message   = "FLO deployed via Helm CLI; SCC privileged policy applied"
     next_steps = [

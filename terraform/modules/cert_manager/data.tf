@@ -14,7 +14,7 @@ data "ibm_resource_group" "resource_group" {
 
 # Look up the existing OpenShift cluster (skip when we're creating it — it doesn't exist yet)
 data "ibm_container_vpc_cluster" "cluster" {
-  count             = var.create_roks_cluster ? 0 : 1
+  count             = (var.create_roks_cluster || var.cluster_absent) ? 0 : 1
   name              = var.roks_cluster_name_or_id
   resource_group_id = data.ibm_resource_group.resource_group.id
 }

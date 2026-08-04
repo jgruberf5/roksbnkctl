@@ -37,8 +37,11 @@ terraform {
 module "cneinstance" {
   source = "./modules/cneinstance"
 
-  enabled     = var.deploy_bnk
-  bnk_cr_mode = var.bnk_cr_mode
+  # Defense-in-depth: no-op while the cluster is being created (provider +
+  # cluster-config are count=0 then; see providers.tf). Correct phases already
+  # pass create_roks_cluster=false, so this is inert there and only turns an
+  # accidental phase combination into a clean no-op rather than a plan crash.
+  enabled = var.deploy_bnk && !var.create_roks_cluster
 
   flo_namespace                      = var.flo_namespace
   utils_namespace                    = var.flo_utils_namespace
@@ -51,8 +54,8 @@ module "cneinstance" {
   f5_bigip_k8s_manifest_version      = var.f5_bigip_k8s_manifest_version
   cneinstance_ibm_trusted_profile_id = var.flo_trusted_profile_id
 
-  kube_host  = data.ibm_container_cluster_config.runtime_config.host
-  kube_token = data.ibm_container_cluster_config.runtime_config.token
+  kube_host  = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
+  kube_token = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
 
   flo_deployment_id         = var.flo_dependency_id != null ? var.flo_dependency_id : ""
   flo_deployment_dependency = var.flo_dependency_id
@@ -68,10 +71,13 @@ module "cneinstance" {
   cneinstance_env_discovery        = false
   cneinstance_cloud_env            = true
   cneinstance_cloud_provider       = "ibm"
-  cneinstance_vpc_name             = data.ibm_is_vpc.cluster_vpc.name
+  cneinstance_vpc_name             = try(data.ibm_is_vpc.cluster_vpc[0].name, "")
   cneinstance_cloud_region         = var.ibmcloud_cluster_region
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
   cneinstance_network_attachments  = var.cneinstance_network_attachments
   # null when unset → the inner module's install-guide zone defaults apply.
-  cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
+  cneinstance_network_zones  = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
+  cneinstance_vlan_prefixlen = var.cneinstance_vlan_prefixlen
+  cneinstance_tmm_k8s_routes = var.cneinstance_tmm_k8s_routes
+  roksbnkctl_binary          = var.roksbnkctl_binary
 }

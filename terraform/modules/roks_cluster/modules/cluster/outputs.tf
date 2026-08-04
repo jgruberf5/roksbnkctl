@@ -128,15 +128,16 @@ output "kubeconfig_file_path" {
 
 output "cluster_id" {
   description = "ID of the OpenShift cluster (alias for openshift_cluster_id)"
-  value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].id : data.ibm_container_vpc_cluster.existing_cluster[0].id
+  # try(...,"") tolerates the cluster-less standalone case (no adopt data source).
+  value = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].id : try(data.ibm_container_vpc_cluster.existing_cluster[0].id, "")
 }
 
 output "cluster_name" {
   description = "Name of the OpenShift cluster (alias for openshift_cluster_name)"
-  value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].name : data.ibm_container_vpc_cluster.existing_cluster[0].name
+  value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].name : try(data.ibm_container_vpc_cluster.existing_cluster[0].name, "")
 }
 
 output "openshift_cluster_crn" {
   description = "CRN of the OpenShift cluster"
-  value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].crn : data.ibm_container_vpc_cluster.existing_cluster[0].crn
+  value       = var.create_cluster ? ibm_container_vpc_cluster.openshift_cluster[0].crn : try(data.ibm_container_vpc_cluster.existing_cluster[0].crn, "")
 }

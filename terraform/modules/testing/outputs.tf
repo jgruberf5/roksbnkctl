@@ -38,12 +38,12 @@ output "testing_ssh_key_name" {
 
 output "roks_cluster_id" {
   description = "ID of the referenced OpenShift cluster"
-  value       = data.ibm_container_vpc_cluster.cluster.id
+  value       = try(data.ibm_container_vpc_cluster.cluster[0].id, "")
 }
 
 output "roks_cluster_name" {
   description = "Name of the referenced OpenShift cluster"
-  value       = data.ibm_container_vpc_cluster.cluster.name
+  value       = try(data.ibm_container_vpc_cluster.cluster[0].name, "")
 }
 
 # ============================================================

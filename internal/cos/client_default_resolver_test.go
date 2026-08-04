@@ -53,7 +53,7 @@ func TestDefaultResolver_CrossRegion_SinglePerBucketCall(t *testing.T) {
 	const (
 		homeRegion   = "ca-tor"
 		bucketRegion = "us-south"
-		bucketName   = "bnk-schematics-resources"
+		bucketName   = "bnk-artifacts"
 	)
 
 	var (

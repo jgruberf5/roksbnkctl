@@ -138,6 +138,11 @@ only one (e.g. `y` to BNK, `N` to Testing) brings up just that phase — handy
 when you want to redeploy the BNK trial without touching the jumphosts. A
 phase whose plan shows no changes is skipped without prompting.
 
+To review a change out-of-band before applying — save the full plan to a file, get
+sign-off, then apply **exactly** that plan — use the dissociated `roksbnkctl plan
+--out <file>` / `roksbnkctl apply --plan <file>` flow (see [Chapter 10 — Deploying BNK
+trials](./10-deploying-bnk-trials.md), §"Reviewing a plan before applying").
+
 Why Cluster-completes-first rather than starting Testing the moment the
 cluster VPC exists? The ROKS cluster create dominates wall-clock (~30-50 min);
 Testing is a handful of VSIs (minutes). Starting Testing against a half-built
@@ -248,12 +253,7 @@ in `state-testing/` instead. Three cases:
 1. **Fresh / empty workspaces** — nothing to migrate. The first `up` lays
    out all three state directories cleanly.
 
-2. **Legacy single-state (v1.0.x) workspaces** — **left alone**. The cluster
-   + BNK + jumphosts stay in one `state/`; `up` / `down` keep operating
-   monolithically; the phase verbs (`cluster`, `bnk`, **and the new
-   `testing`**) all refuse and point you back at the unscoped `up`/`down`.
-
-3. **Two-phase split workspaces (the common case)** — the jumphosts need to
+2. **Two-phase split workspaces (the common case)** — the jumphosts need to
    move out of `state/` into `state-testing/` **without destroying the live
    jumphosts**. The recommended path preserves them:
 

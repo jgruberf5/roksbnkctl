@@ -82,14 +82,16 @@ type LifecycleInputs struct {
 	Auto bool
 	// NoKubeconfig is --no-kubeconfig (skip the post-apply fetch).
 	NoKubeconfig bool
-	// LegacyBNK is --legacy-bnk (bnk up/down): render bnk_cr_mode =
-	// "legacy_curl" so the BNK phase deploys the legacy null_resource/curl
-	// path instead of the default terraform-native kubectl/helm path.
-	// Sprint 27 install-mode flag.
-	LegacyBNK bool
 	// VarFiles is the chokepoint-normalized --var-file slice
 	// (absolute, os.Stat-checked) — the former flagVarFiles global.
 	VarFiles []string
+
+	// PlanOut is `plan --out <file>`: save the plan to a binary plan file (plus a
+	// human-readable <file>.txt) so `apply --plan <file>` applies exactly it.
+	PlanOut string
+	// PlanFile is `apply --plan <file>`: apply that saved plan verbatim instead of
+	// re-planning — closing the review-then-apply-exactly gap.
+	PlanFile string
 
 	// Stderr, when non-nil, is the writer the BNK/trial-phase leaf helpers
 	// (and the underlying terraform handle) print to instead of os.Stderr.
@@ -355,8 +357,15 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 		return false, nil, nil
 	}
 	apply := func(actx context.Context) error {
+		// Air-gap precondition: install the private registry's CA on every
+		// node before the apply's charts pull images, or the first pull fails
+		// x509 "unknown authority" and BNK stalls in ImagePullBackOff. No-op
+		// off the mirror path (or when the mirror carries no CA).
+		if err := ensureRegistryCATrust(actx, cctx, tfws, w); err != nil {
+			return err
+		}
 		fmt.Fprintln(w, "→ terraform apply")
-		if err := applyWithRetry(actx, tfws, varFiles); err != nil {
+		if err := applyBNKWithAdmissionSweep(actx, cctx, tfws, varFiles); err != nil {
 			return err
 		}
 		tryAutoKubeconfig(actx, in, cctx, tfws)
@@ -374,6 +383,9 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	}
 	// VarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
+		if in.PlanOut != "" {
+			return fmt.Errorf("plan --out requires the local backend (this workspace uses %q)", spec)
+		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "plan")
 	}
 	cctx, tfws, err := openTF(ctx, in, true)
@@ -398,8 +410,55 @@ func RunPlan(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append([]string{}, appliedVF...), in.VarFiles...)
 	fmt.Fprintln(os.Stderr, "→ terraform plan")
+	if in.PlanOut != "" {
+		return planToFile(ctx, tfws, in, varFiles)
+	}
 	_, err = tfws.Plan(ctx, varFiles...)
 	return err
+}
+
+// planToFile saves the plan to a binary plan file (for `apply --plan`) plus a
+// human-readable <file>.txt copy (Mame's "get the plan's result output in a file").
+// The path is resolved to absolute so the artifacts land where the operator runs
+// from, not inside the embedded terraform source dir.
+func planToFile(ctx context.Context, tfws *tf.Workspace, in *LifecycleInputs, varFiles []string) error {
+	planPath, err := filepath.Abs(in.PlanOut)
+	if err != nil {
+		return err
+	}
+	changes, err := tfws.PlanTo(ctx, planPath, varFiles...)
+	if err != nil {
+		return err
+	}
+	if raw, serr := tfws.ShowPlan(ctx, planPath); serr == nil {
+		txt := planPath + ".txt"
+		if werr := os.WriteFile(txt, []byte(raw), 0o644); werr == nil {
+			fmt.Fprintf(os.Stderr, "✓ Saved plan: %s (reviewable copy: %s)\n", planPath, txt)
+		}
+	}
+	if changes {
+		fmt.Fprintf(os.Stderr, "  Review it, then apply EXACTLY this plan:\n    roksbnkctl apply -w %s --plan %s\n", in.Workspace, planPath)
+	} else {
+		fmt.Fprintln(os.Stderr, "  No changes — nothing to apply.")
+	}
+	return nil
+}
+
+// applyReviewedPlan applies a saved plan file EXACTLY (from `plan --out`), closing the
+// gap where a bare apply re-plans and could apply something other than what was
+// reviewed. No re-plan, no var-files (the plan captured them), no retry — a saved plan
+// that no longer matches state/config is refused by terraform, which is the safety the
+// review flow wants. The gateway-api admission-policy sweep still runs for the
+// crd-installer window, exactly as the normal apply path.
+func applyReviewedPlan(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, in *LifecycleInputs, recordVarFiles []string) error {
+	planPath, err := filepath.Abs(in.PlanFile)
+	if err != nil {
+		return err
+	}
+	stop := startAdmissionPolicySweep(ctx, cctx, tfws)
+	defer stop()
+	fmt.Fprintf(os.Stderr, "→ terraform apply %s (reviewed plan)\n", planPath)
+	return tfws.ApplyPlan(ctx, planPath, recordVarFiles...)
 }
 
 // RunApply = direct apply, no plan-and-confirm gate. For users who know
@@ -410,6 +469,9 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	}
 	// VarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
+		if in.PlanFile != "" {
+			return fmt.Errorf("apply --plan requires the local backend (this workspace uses %q)", spec)
+		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "apply")
 	}
 	cctx, tfws, err := openTF(ctx, in, true)
@@ -437,13 +499,23 @@ func RunApply(ctx context.Context, in *LifecycleInputs) error {
 	// only exists on the *second* phase of a `up` and contains no
 	// secrets / user inputs, so it doesn't count as "the user supplied
 	// the inputs" for this gate.
-	if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "apply"); err != nil {
-		return err
+	// A saved plan (`--plan`) already captured every variable, so the missing-var
+	// gate doesn't apply — skip it for that path.
+	if in.PlanFile == "" {
+		if err := RequireSnapshotOrVarFile(appliedVF, in.VarFiles, tfws.HasUserTFVars(), cctx.Workspace.Prefix != "", "trial", "apply"); err != nil {
+			return err
+		}
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
-	fmt.Fprintln(os.Stderr, "→ terraform apply")
-	if err := applyWithRetry(ctx, tfws, varFiles); err != nil {
-		return err
+	if in.PlanFile != "" {
+		if err := applyReviewedPlan(ctx, cctx, tfws, in, varFiles); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "→ terraform apply")
+		if err := applyBNKWithAdmissionSweep(ctx, cctx, tfws, varFiles); err != nil {
+			return err
+		}
 	}
 	tryAutoKubeconfig(ctx, in, cctx, tfws)
 	tryAutoJumphost(ctx, in, cctx, tfws)
@@ -510,6 +582,9 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if pres.Testing {
 		phases = append(phases, "testing jumphosts")
 	}
+	if pres.TGW {
+		phases = append(phases, "transit gateway connection (detach only)")
+	}
 	if pres.Cluster || pres.ClusterResidual {
 		phases = append(phases, "cluster (ROKS + transit gateway + registry COS)")
 	}
@@ -544,6 +619,24 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 		}
 		if err := g.Wait(); err != nil {
 			return err
+		}
+	}
+
+	// The Transit Gateway connection (state-tgw/) attaches the cluster VPC to an
+	// EXISTING shared gateway — its own phase the composite otherwise wouldn't
+	// touch. But the connection references the cluster VPC's CRN, so the
+	// cluster-phase VPC delete FAILS while it exists ("VPC still has an attached
+	// transit gateway connection"). Auto-disconnect it here, after BNK/Testing and
+	// BEFORE the cluster, removing ONLY this cluster's connection (the gateway and
+	// every other cluster's connection stay). Unlike the Gateway/FLP phases —
+	// guarded because their teardown has cluster-namespace finalizer ordering the
+	// composite won't automate — a TGW connection is a pure IBM resource with a
+	// deterministic ordering, so automating it is safe. in.Auto is already true
+	// here (set after the combined confirmation, or via --auto), so RunTGWDisconnect
+	// won't re-prompt.
+	if pres.TGW {
+		if err := RunTGWDisconnect(ctx, in); err != nil {
+			return fmt.Errorf("detaching the transit gateway before cluster teardown: %w", err)
 		}
 	}
 
@@ -672,14 +765,6 @@ func openTF(ctx context.Context, in *LifecycleInputs, needAPIKey bool) (*config.
 		return nil, nil, fmt.Errorf("workspace %q is not initialised; run `roksbnkctl init` first", cctx.WorkspaceName)
 	}
 
-	// Sprint 27: --legacy-bnk overrides the rendered bnk_cr_mode to the
-	// null_resource/curl baseline. Applied here (the single workspace-load
-	// site for the lifecycle verbs) so it lands before WriteTFVars; the
-	// cluster phase has no bnk_cr_mode consumer so this is a no-op there.
-	if in.LegacyBNK {
-		cctx.Workspace.BNK.CRMode = "legacy_curl"
-	}
-
 	var apiKey string
 	if needAPIKey {
 		resolver := &cred.Resolver{
@@ -772,7 +857,7 @@ func tryAutoKubeconfig(ctx context.Context, in *LifecycleInputs, cctx *config.Co
 	if cctx == nil || cctx.Workspace == nil {
 		return
 	}
-	cluster := resolveClusterIdentity(ctx, cctx, tfws)
+	cluster, _ := resolveClusterIdentity(ctx, cctx, tfws)
 	if cluster == "" {
 		return
 	}
@@ -990,36 +1075,48 @@ func tryAutoClusterJumphosts(ctx context.Context, in *LifecycleInputs, cctx *con
 		len(registered), strings.Join(registered, ", "))
 }
 
-// resolveClusterIdentity figures out which cluster to fetch the
-// kubeconfig for. Order:
+// resolveClusterIdentity figures out which cluster to fetch the kubeconfig for, and
+// reports whether the identity is a cluster ID (unambiguous) or a NAME (which a
+// duplicate-named cluster makes ambiguous). Order — IDs first, because a ROKS cluster
+// name is NOT unique in an account, so a bare name can resolve to the wrong (even a
+// dead orphan) cluster:
 //
-//  1. Terraform output `roks_cluster_id` — post-apply truth, the actual
-//     ID provisioned. Beats config.yaml when the user's --var-file
-//     overrides cluster.name.
-//  2. Terraform output `roks_cluster_name` — same idea, slightly less
-//     stable if the cluster was renamed.
-//  3. cctx.Workspace.Cluster.Name — config.yaml fallback (pre-apply or
-//     if outputs aren't reachable).
+//  1. cluster-outputs.json `cluster_id` — authoritative, unambiguous, and written by
+//     the CLUSTER phase, so it exists BEFORE the BNK phase (whose own outputs are not
+//     yet written at sweep-start on a first apply). This is the identity that must be
+//     preferred: it is immune to a duplicate cluster NAME.
+//  2. This workspace's terraform output `roks_cluster_id` — also a real ID, but only
+//     present post-apply.
+//  3. `roks_cluster_name` output, then cctx.Workspace.Cluster.Name — NAME fallbacks,
+//     usable but ambiguous if a duplicate-named cluster exists. byID=false so callers
+//     that need a guaranteed-correct cluster (the admission sweep) can warn.
 //
-// Returns "" if no source produced a usable identity — caller skips
-// auto-fetch silently.
-func resolveClusterIdentity(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) string {
+// Returns ("", false) if no source produced a usable identity.
+func resolveClusterIdentity(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) (identity string, byID bool) {
+	if cctx != nil {
+		if out, err := config.ReadClusterOutputs(cctx.WorkspaceName); err == nil && out != nil && out.ClusterID != "" {
+			return out.ClusterID, true
+		}
+	}
 	if tfws != nil {
 		if outputs, err := tfws.Output(ctx); err == nil {
-			for _, key := range []string{"roks_cluster_id", "roks_cluster_name"} {
-				if om, ok := outputs[key]; ok && len(om.Value) > 0 {
+			for _, k := range []struct {
+				key  string
+				isID bool
+			}{{"roks_cluster_id", true}, {"roks_cluster_name", false}} {
+				if om, ok := outputs[k.key]; ok && len(om.Value) > 0 {
 					var s string
 					if json.Unmarshal(om.Value, &s) == nil && s != "" {
-						return s
+						return s, k.isID
 					}
 				}
 			}
 		}
 	}
-	if cctx != nil && cctx.Workspace != nil {
-		return cctx.Workspace.Cluster.Name
+	if cctx != nil && cctx.Workspace != nil && cctx.Workspace.Cluster.Name != "" {
+		return cctx.Workspace.Cluster.Name, false
 	}
-	return ""
+	return "", false
 }
 
 // applyWithRetry wraps tfws.Apply with bounded retries on transient

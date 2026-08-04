@@ -61,13 +61,27 @@ $ roksbnkctl registry verify          # confirm completeness
 $ roksbnkctl bnk up                   # installs from the mirror
 ```
 
-`registry replicate` runs **after** the Cluster phase and **before** BNK. It is a
-deliberate, occasional supply-chain step — it is **not** part of the composite
-`roksbnkctl up` (like `gateway`, you run it explicitly). With no `--target`, it
-uses the workspace's `registry.target` (default `icr`). It copies each artifact
-registry-to-registry by digest, idempotently — re-running it only moves what
-changed (e.g. after a BNK version bump, `registry diff` shows exactly the changed
-artifacts).
+The walk-through runs `registry replicate` after the Cluster phase for convenience,
+but **`replicate` needs no cluster**. It is a purely host-side, registry-to-registry
+copy: it pulls each artifact by digest from the FAR source (`repo.f5.com`) and pushes
+to your target registry via [go-containerregistry](https://github.com/google/go-containerregistry),
+from wherever `roksbnkctl` runs. So you can **pre-seed the mirror as a standalone
+supply-chain step, before any cluster exists** — all it requires is a configured
+`registry:` block, the FAR source credential, and network reachability to both
+`repo.f5.com` and your registry:
+
+```console
+$ roksbnkctl -w mirror init --config-file mirror.yaml   # registry: block + bnk.far_auth_local_file
+$ roksbnkctl -w mirror registry target generic          # or icr
+$ roksbnkctl -w mirror registry replicate               # copies FAR → your registry, no cluster
+$ roksbnkctl -w mirror registry verify
+```
+
+`registry replicate` is a deliberate, occasional step — it is **not** part of the
+composite `roksbnkctl up` (like `gateway`, you run it explicitly). With no `--target`,
+it uses the workspace's `registry.target` (default `icr`). It copies each artifact by
+digest, idempotently — re-running only moves what changed (after a BNK version bump,
+`registry diff` shows exactly the changed artifacts).
 
 ## How the install reads the mirror
 
@@ -91,7 +105,7 @@ The target's own pull credential is wired in for you:
 
   This is the one place the two mirror kinds differ. An in-cluster/ICR mirror authorizes
   by RBAC and gets **no** pull secret; an external one (Harbor, Artifactory) gets
-  `mirror-secret`. Dropping the pull secret for *every* mirror is what used to force
+  `mirror-secret`. Dropping the pull secret for *every* mirror would force
   people to make their Harbor project world-readable — for a registry holding F5's
   proprietary images, not an acceptable requirement.
 
@@ -164,3 +178,40 @@ the ICR namespace and a full Artifactory walkthrough — are in
 > registry uses a custom or self-signed cert, add its CA to the trust store on the
 > host running `registry replicate` (and on the cluster, for the image pulls)
 > before you replicate.
+
+## A truly disconnected cluster (no worker egress)
+
+Mirroring removes external *pulls* at install time, but by default the ROKS cluster
+is still built with a **public gateway** on each subnet — its workers keep Internet
+egress. For a genuinely disconnected cluster with **no egress at all**, set:
+
+```yaml
+cluster:
+  create: true
+  name: dc-roks
+  public_gateway: false     # no public gateways → no worker Internet egress
+```
+
+`init` also prompts for this ("Attach public gateways for worker Internet egress?");
+answer **No** for a private cluster. It renders the `cluster_public_gateway = false`
+terraform variable, so no `ibm_is_public_gateway` is created and no subnet attaches
+one. An omitted or `true` value is the current behavior (egress on).
+
+> **This is an expert topology.** A cluster with no egress can only pull images and
+> reach IBM Cloud services over **private** paths that `roksbnkctl` does **not** build
+> for you. Before setting `public_gateway: false` you must provide:
+>
+> - **Private reachability to your mirror registry** — e.g. the registry in a VPC the
+>   cluster reaches over a Transit Gateway, or a Virtual Private Endpoint (VPE). All
+>   BNK images/charts then come from the mirror (this chapter).
+> - **VPEs / private service endpoints** for the IBM Cloud services the cluster needs
+>   (Container Registry if you mirror to ICR, COS for remote state, etc.).
+> - **Licensing without F5 egress** — license through an in-cluster or VSI
+>   [F5 License Proxy](./10c-flp-licensing.md) (`bnk.license_mode: f5licenseproxy`)
+>   that itself has the one controlled egress path to F5, or a `disconnected`
+>   license mode, so the cluster never calls F5 directly.
+>
+> The `public_gateway` toggle only removes the egress path; wiring the private paths
+> above is the operator's responsibility. Note the cluster **master** keeps its public
+> service endpoint regardless — this toggle governs worker/subnet egress, not the API
+> endpoint.

@@ -69,17 +69,6 @@ variable "create_roks_cluster" {
   default     = false
 }
 
-variable "bnk_cr_mode" {
-  description = "BNK install mechanism: \"kubectl\" (terraform-native helm_release + kubernetes_namespace + alekc/kubectl) or \"legacy_curl\" (null_resource local-exec baseline)."
-  type        = string
-  default     = "kubectl"
-
-  validation {
-    condition     = contains(["kubectl", "legacy_curl"], var.bnk_cr_mode)
-    error_message = "bnk_cr_mode must be \"kubectl\" or \"legacy_curl\"."
-  }
-}
-
 # Sprint 23: gate the inner cert-manager helm/null_resource bring-up so the
 # second-phase apply doesn't re-manage cert_manager that the cluster phase
 # already deployed. When false, the inner module's count flips to 0; its
@@ -124,4 +113,10 @@ variable "registry_mirror_password" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+variable "cluster_absent" {
+  description = "True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0)."
+  type        = bool
+  default     = false
 }

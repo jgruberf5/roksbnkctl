@@ -1,0 +1,57 @@
+# wf-mirror.yaml — Argo Workflow: mirror F5's artifact registry (FAR) → Harbor.
+#
+# The mirror half of the disconnected install, expressed as an Argo Workflow: the
+# roksbnkctl-tools-runner image runs the ordered roksbnkctl steps as Workflow steps
+# (init → registry replicate → registry verify), each its own pod with its own
+# status/logs/retries — the per-step visibility a single Job can't give.
+#
+# The workspace (config + the recorded mirror CA that `bnk up` needs) persists on the
+# shared `bnk-work` PVC, so wf-install.yaml picks it up. No git, no ArgoCD sync — just:
+#   argo submit -n bnk-ci --wait workflows/wf-mirror.yaml
+# The image tag is rendered from RUNNER_IMAGE before submit (>= v1.33.0: native
+# operator + node CA trust, so the mirror push works from a container).
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-mirror-
+  namespace: bnk-ci
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }   # shared with wf-install
+    - name: config
+      configMap: { name: bnk-config }                  # bnk.yaml (no secrets)
+  templates:
+    - name: mirror
+      steps:
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init --config-file /config/bnk.yaml --override-from-env" }]
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry replicate --target generic" }]
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "registry verify" }]
+
+    # One reusable step: run `roksbnkctl -w bnk <cmd>` on the runner image, with the
+    # persisted workspace at /work and the secrets late-bound from bnk-secrets.
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - secretRef: { name: bnk-secrets }           # IBMCLOUD_API_KEY, Harbor pw, FLP handoff
+        volumeMounts:
+          - { name: work, mountPath: /work }
+          - { name: config, mountPath: /config }

@@ -11,7 +11,11 @@
 # carry it in the shared root config.
 
 locals {
-  enabled = var.deploy_flp
+  # Defense-in-depth: no-op while the cluster is being created (the module's
+  # provider is count=0 then; see providers.tf). The flp phase already runs with
+  # create_roks_cluster=false, so this is inert in every correct flow and only
+  # turns an accidental phase combination into a clean no-op, not a crash.
+  enabled = var.deploy_flp && !var.create_roks_cluster
 
   # The binary helm pipes the rendered chart through. roksbnkctl passes its OWN
   # absolute path (TF_VAR_roksbnkctl_binary), so the post-renderer is always the
@@ -98,6 +102,11 @@ locals {
     var.flp_chart_version != "" ? var.flp_chart_version :
     try(data.external.flp_version[0].result.version, "")
   )
+
+  # Local chart archive staged by null_resource.flp_chart_pull below. helm_release
+  # installs from this LOCAL path so the helm PROVIDER does no OCI login (whose
+  # credential-store step breaks on Windows). See the flo module for the full story.
+  flp_chart_archive = "${var.scratch_dir}/f5-license-proxy-${local.flp_chart_version}.tgz"
 
   # mTLS leaf certs: name → SAN DNS list. postgresql/vault keep the chart's
   # in-pod SANs. The flp leaf is ALSO the FLP's public server cert, so it must
@@ -208,14 +217,13 @@ resource "null_resource" "far_archive_download" {
     region      = var.ibmcloud_cos_bucket_region
     scratch_dir = var.scratch_dir
   }
+  # cos-get: download the FAR auth tarball (binary → a file, via the COS SDK). No
+  # interpreter → cmd.exe execs roksbnkctl.exe on Windows; key via env.
   provisioner "local-exec" {
-    command = <<-EOT
-      mkdir -p "${var.scratch_dir}"
-      curl -s -f -o "${var.scratch_dir}/${var.f5_cne_far_auth_file}" \
-        -H "Authorization: Bearer ${jsondecode(data.http.iam_token[0].response_body).access_token}" \
-        -H "ibm-service-instance-id: ${data.ibm_resource_instance.cos[0].guid}" \
-        "https://s3.${var.ibmcloud_cos_bucket_region}.cloud-object-storage.appdomain.cloud/${var.ibmcloud_resources_cos_bucket}/${var.f5_cne_far_auth_file}"
-    EOT
+    command = "${local.postrender_bin} tfx cos-get --instance-crn ${data.ibm_resource_instance.cos[0].crn} --bucket ${var.ibmcloud_resources_cos_bucket} --key ${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/${var.f5_cne_far_auth_file} --region ${var.ibmcloud_cos_bucket_region}"
+    environment = {
+      IBMCLOUD_API_KEY = var.ibmcloud_api_key
+    }
   }
 }
 
@@ -225,24 +233,16 @@ resource "null_resource" "far_tgz_extractor" {
     archive_id  = null_resource.far_archive_download[0].id
     scratch_dir = var.scratch_dir
   }
+  # far-extract: write the single _json_key_base64 service-account JSON (Go
+  # tar-extract, no host tar/grep).
   provisioner "local-exec" {
-    command = <<-EOT
-      mkdir -p "${var.scratch_dir}"
-      tar -xzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" -C "${var.scratch_dir}/"
-      tar -tzf "${var.scratch_dir}/${var.f5_cne_far_auth_file}" | grep '\.json$' | head -1 > "${var.scratch_dir}/far_extracted_filename.txt"
-    EOT
+    command = "${local.postrender_bin} tfx far-extract --tarball ${var.scratch_dir}/${var.f5_cne_far_auth_file} --out ${var.scratch_dir}/far-sa.json"
   }
-}
-
-data "local_file" "far_extracted_filename" {
-  count      = local.enabled ? 1 : 0
-  filename   = "${var.scratch_dir}/far_extracted_filename.txt"
-  depends_on = [null_resource.far_tgz_extractor]
 }
 
 data "local_file" "cne_pull_64_json_file" {
   count      = local.enabled ? 1 : 0
-  filename   = "${var.scratch_dir}/${trimspace(data.local_file.far_extracted_filename[0].content)}"
+  filename   = "${var.scratch_dir}/far-sa.json"
   depends_on = [null_resource.far_tgz_extractor]
 }
 
@@ -444,64 +444,56 @@ resource "null_resource" "extract_flp_version" {
     scratch_dir      = var.scratch_dir
   }
 
+  # helm-value chart-version: pull the BNK manifest chart (same host + FAR/mirror
+  # credential as the FLP chart) and read the f5-license-proxy sub-chart version out
+  # of it — helm binary for the OCI pull, Go for the tar-extract + version grep. A
+  # manifest that lists no charts/f5-license-proxy makes the verb exit non-zero, so
+  # the provisioner still fails loudly (pin one with bnk.flp.chart_version). --file
+  # is the basename; the verb walks the untarred tree to find it. No interpreter →
+  # cmd.exe execs roksbnkctl.exe on Windows.
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      # helm >= 3.8 is required for `helm registry` (OCI).
-      HELM_MIN="3.8.0"
-      HELM_BIN="helm"
-      helm_ok() {
-        local v
-        v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
-        printf '%s\n%s\n' "$HELM_MIN" "$v" | sort -V -c 2>/dev/null
-      }
-      if ! helm_ok; then
-        HELM_TMP=$(mktemp -d "$${TMPDIR:-/tmp}/helm-install-XXXXXX")
-        curl -fsSL -o "$HELM_TMP/helm.tar.gz" "https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz"
-        tar -xzf "$HELM_TMP/helm.tar.gz" -C "$HELM_TMP"
-        HELM_BIN="$HELM_TMP/linux-amd64/helm"
-      fi
-      mkdir -p "${var.scratch_dir}/f5-manifest"
-      cd "${var.scratch_dir}/f5-manifest"
-      # Same chart host + credential as the FLP chart itself: FAR off the mirror,
-      # the mirror under it (the manifest is a mirrored artifact — see bnkbom).
-      echo "${local.chart_pull_password}" | $HELM_BIN registry login -u "${local.chart_pull_username}" --password-stdin ${local.chart_login_host}
-      $HELM_BIN pull oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
-      tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
-      V=$(grep -A 1 "charts/f5-license-proxy" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml \
-            | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
-      if [ -z "$V" ]; then
-        echo "ERROR: the BNK manifest ${var.f5_bigip_k8s_manifest_version} lists no charts/f5-license-proxy — pin one with bnk.flp.chart_version" >&2
-        exit 1
-      fi
-      printf '%s' "$V" > "${var.scratch_dir}/flp-version.txt"
-    EOT
+    command = "${local.postrender_bin} tfx helm-value chart-version --chart oci://${local.far_chart_hostname}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    environment = {
+      HELM_REGISTRY_PW = local.chart_pull_password
+    }
   }
 }
 
 data "external" "flp_version" {
-  count = local.enabled && var.flp_chart_version == "" ? 1 : 0
-  program = [
-    "bash", "-c",
-    "V=$(cat ${var.scratch_dir}/flp-version.txt 2>/dev/null | tr -d '[:space:]'); printf '{\"version\":\"%s\"}' \"$V\"",
-  ]
+  count      = local.enabled && var.flp_chart_version == "" ? 1 : 0
+  program    = [local.postrender_bin, "tfx", "read-json", "--file", "${var.scratch_dir}/flp-version.txt", "--key", "version"]
   depends_on = [null_resource.extract_flp_version]
 }
 
 # ── the FLP chart ─────────────────────────────────────────────────────────────
 
+# Stage the FLP chart archive on disk via tfx (inline auth, no login/store). The
+# helm_release below installs from this LOCAL path so the helm PROVIDER does no OCI
+# login — that login's credential-store step fails on Windows ("The stub received bad
+# data"), and dropping the provider creds pulls anonymously (403). No interpreter →
+# cmd.exe execs roksbnkctl.exe directly on Windows.
+resource "null_resource" "flp_chart_pull" {
+  count = local.enabled ? 1 : 0
+  triggers = {
+    version = local.flp_chart_version
+    archive = local.flp_chart_archive
+  }
+  provisioner "local-exec" {
+    command     = "${local.postrender_bin} tfx helm-value pull-chart --chart oci://${local.far_chart_hostname}/charts/f5-license-proxy --version ${local.flp_chart_version} --registry-login ${local.chart_login_host} --username ${local.chart_pull_username} --password-env HELM_REGISTRY_PW --out ${local.flp_chart_archive}"
+    environment = { HELM_REGISTRY_PW = local.chart_pull_password }
+  }
+  depends_on = [data.external.flp_version]
+}
+
 resource "helm_release" "flp" {
   count = local.enabled ? 1 : 0
 
-  name             = "f5-license-proxy"
-  repository       = "oci://${local.far_chart_hostname}/charts"
-  chart            = "f5-license-proxy"
-  version          = local.flp_chart_version
+  name = "f5-license-proxy"
+  # Install from the locally-staged archive (see null_resource.flp_chart_pull) — no
+  # provider OCI login.
+  chart            = local.flp_chart_archive
   namespace        = var.flp_namespace
   create_namespace = false
-
-  repository_username = local.chart_pull_username
-  repository_password = local.chart_pull_password
 
   # FLP readiness (vault unseal → postgres → proxy) IS the meaningful signal here,
   # so block on it — unlike the FLO operator whose readiness is gated downstream.
@@ -532,5 +524,6 @@ resource "helm_release" "flp" {
     kubernetes_secret_v1.far_secret,
     kubernetes_secret_v1.mirror_pull,
     kubernetes_role_binding_v1.flp_scc,
+    null_resource.flp_chart_pull,
   ]
 }

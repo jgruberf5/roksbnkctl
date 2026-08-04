@@ -36,15 +36,36 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version={{.Version}}
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version=v{{.Version}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Commit={{.ShortCommit}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
+  # flp-status: the FLP status web service (backs the mobile UI + `flp status`
+  # CLI). Linux-only — it runs as a container/service alongside the proxy (podman
+  # pod on the VSI, or a Deployment in-cluster).
+  - id: flp-status
+    main: ./cmd/flp-status
+    binary: flp-status
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
 
 archives:
-  # The name_template here is load-bearing: `internal/cli/self.go`
-  # rebuilds the same template to find the asset for the host's
-  # OS/arch when `roksbnkctl self update` runs. Keep these aligned.
-  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  # One archive per binary: goreleaser v2 rejects two binaries in a single
+  # archive, and the two cmd/ binaries (roksbnkctl + flp-status) must ship
+  # separately anyway.
+  #
+  # The roksbnkctl name_template is load-bearing: `internal/cli/self.go`
+  # rebuilds the same template to find the asset for the host's OS/arch when
+  # `roksbnkctl self update` runs. Keep these aligned.
+  - id: roksbnkctl
+    ids: [roksbnkctl]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     # goreleaser v2 renamed `format` (singular) to `formats` (list).
     format_overrides:
       - goos: windows
@@ -54,6 +75,14 @@ archives:
       - README.md
       - CHANGELOG.md
       - MIGRATING.md
+  # flp-status is primarily a container image (tools-images.yml); its binary
+  # ships here too for the standalone-VSI podman deployment. Linux-only build,
+  # so no windows override.
+  - id: flp-status
+    ids: [flp-status]
+    name_template: "flp-status_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
 
 checksum:
   name_template: "checksums.txt"

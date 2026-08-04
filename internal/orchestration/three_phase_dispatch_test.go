@@ -82,6 +82,12 @@ func downAction(p config.Presence) phaseAction {
 	if p.Testing {
 		phases = append(phases, "testing")
 	}
+	// The Transit Gateway connection detaches after BNK/Testing and BEFORE the
+	// cluster — the connection pins the cluster VPC's CRN, so the VPC delete in the
+	// cluster phase fails while it exists.
+	if p.TGW {
+		phases = append(phases, "tgw")
+	}
 	if p.Cluster {
 		phases = append(phases, "cluster")
 	}
@@ -231,6 +237,30 @@ func TestDispatchDecisionTable(t *testing.T) {
 				t.Errorf("testing down: got %s, want %s", got, r.testingDown)
 			}
 		})
+	}
+}
+
+// TestDownAction_TGWDetachBeforeCluster pins the composite-down TGW invariant:
+// when a Transit Gateway connection is present (state-tgw/), the composite `down`
+// detaches it AFTER BNK/Testing and BEFORE the cluster — because the connection
+// pins the cluster VPC's CRN and the cluster-phase VPC delete would otherwise fail.
+// It is a detach (only this cluster's connection), never a delete of the gateway.
+func TestDownAction_TGWDetachBeforeCluster(t *testing.T) {
+	// Cluster created its VPC + used an existing shared gateway → both present.
+	got := downAction(config.Presence{Cluster: true, TGW: true})
+	if !eqPhases(got.phases, []string{"tgw", "cluster"}) {
+		t.Fatalf("down with cluster+tgw = %v, want [tgw cluster] (detach before cluster)", got.phases)
+	}
+	// Full stack: bnk/testing first (parallel), then tgw detach, then cluster.
+	full := downAction(config.Presence{Cluster: true, BNK: true, Testing: true, TGW: true})
+	if !eqPhases(full.phases, []string{"bnk", "testing", "tgw", "cluster"}) {
+		t.Fatalf("down full stack = %v, want [bnk testing tgw cluster]", full.phases)
+	}
+	// A stray TGW connection with no cluster is still cleaned (Any() covers TGW),
+	// not refused.
+	tgwOnly := downAction(config.Presence{TGW: true})
+	if tgwOnly.refused || !eqPhases(tgwOnly.phases, []string{"tgw"}) {
+		t.Fatalf("down with tgw-only = %+v, want phases=[tgw] not refused", tgwOnly)
 	}
 }
 

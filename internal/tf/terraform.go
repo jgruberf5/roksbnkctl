@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 
@@ -33,6 +34,9 @@ type Workspace struct {
 	sourceDir string
 	stateDir  string
 	tf        *tfexec.Terraform
+	// stderrCap tees terraform's stderr for post-failure diagnostic summarization
+	// (nil when Open was given no stderr writer).
+	stderrCap *diagCapture
 }
 
 // Open prepares a Workspace for terraform operations:
@@ -156,8 +160,12 @@ func Open(
 	if stdout != nil {
 		tf.SetStdout(stdout)
 	}
+	// Tee terraform's stderr through a bounded capture so a failed apply/destroy
+	// can print a deduplicated diagnostic summary (live streaming is unchanged).
+	var stderrCap *diagCapture
 	if stderr != nil {
-		tf.SetStderr(stderr)
+		stderrCap = newDiagCapture(stderr, 128*1024)
+		tf.SetStderr(stderrCap)
 	}
 
 	// terraform-exec inherits the roksbnkctl process env when SetEnv is
@@ -236,6 +244,7 @@ func Open(
 		sourceDir: sourceDir,
 		stateDir:  stateDir,
 		tf:        tf,
+		stderrCap: stderrCap,
 	}, nil
 }
 
@@ -296,7 +305,38 @@ func prepareToolEnv() error {
 	setEnvIfEmpty("HELM_DATA_HOME", helmDataHome)
 	setEnvIfEmpty("HELM_REPOSITORY_CACHE", filepath.Join(helmCacheHome, "repository"))
 	setEnvIfEmpty("HELM_REPOSITORY_CONFIG", filepath.Join(helmConfigHome, "repositories.yaml"))
-	setEnvIfEmpty("HELM_REGISTRY_CONFIG", filepath.Join(helmConfigHome, "registry", "config.json"))
+	// OCI credential storage must be INLINE, never via a native credential helper.
+	// On Windows a `credsStore` in the docker/helm registry config (Docker Desktop
+	// sets "desktop" in ~/.docker/config.json) makes the terraform helm provider's
+	// OCI `Login` store the credential through that helper — which fails on the
+	// multi-KB FAR `_json_key_base64` password with "error storing credentials … The
+	// stub received bad data" (the Windows Credential Manager blob cap), breaking the
+	// FLO/FLP `helm_release` pulls. Point the helm registry config AND DOCKER_CONFIG
+	// at fresh files with an empty `auths` and NO credsStore, so the provider's login
+	// stores the auth as inline base64 in the file (no helper). Overwritten each run
+	// (the login re-populates it), and harmless on Linux where the store was already
+	// inline. tfx helm-value is unaffected — it passes its own --registry-config.
+	regConfig := filepath.Join(helmConfigHome, "registry", "config.json")
+	if err := writeCleanRegistryConfig(regConfig); err != nil {
+		return err
+	}
+	setEnvIfEmpty("HELM_REGISTRY_CONFIG", regConfig)
+	dockerConfigDir := filepath.Join(helmBase, "docker")
+	if err := writeCleanRegistryConfig(filepath.Join(dockerConfigDir, "config.json")); err != nil {
+		return err
+	}
+	setEnvIfEmpty("DOCKER_CONFIG", dockerConfigDir)
+	// Expose the helm registry-config path to the modules ON WINDOWS ONLY. There the
+	// FLO/FLP helm_release resources write the OCI pull credential INLINE here
+	// (local_file) and drop repository_username/password, so the helm provider READS
+	// the auth for its pull instead of doing a login-and-STORE — which on Windows
+	// shells out to a docker credential helper that fails on the multi-KB FAR
+	// password ("The stub received bad data"). The provider reads this same file via
+	// HELM_REGISTRY_CONFIG. Left empty elsewhere so Linux/macOS keep the proven
+	// repository_username/password login path unchanged.
+	if runtime.GOOS == "windows" {
+		_ = os.Setenv("TF_VAR_helm_registry_config", regConfig)
+	}
 
 	// Kubeconfig: only redirect $KUBECONFIG to the workspace tree when the
 	// standard $HOME/.kube location ISN'T writable (the runner case). On a
@@ -346,6 +386,19 @@ func setEnvIfEmpty(key, val string) {
 	if os.Getenv(key) == "" {
 		_ = os.Setenv(key, val)
 	}
+}
+
+// writeCleanRegistryConfig writes `{"auths":{}}` to path (creating parents). No
+// credsStore/credHelpers, so OCI credential storage (the helm provider's login) is
+// inline base64 rather than via a native credential helper — the Windows fix.
+func writeCleanRegistryConfig(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(`{"auths":{}}`), 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }
 
 // SourceDir is the path containing the resolved .tf files.
@@ -439,7 +492,51 @@ func (w *Workspace) Plan(ctx context.Context, extraVarFiles ...string) (bool, er
 	for _, p := range w.varFiles(extraVarFiles...) {
 		opts = append(opts, tfexec.VarFile(p))
 	}
-	return w.tf.Plan(ctx, opts...)
+	w.resetDiag()
+	changes, err := w.tf.Plan(ctx, opts...)
+	return changes, w.wrapDiag(err)
+}
+
+// PlanTo is Plan with `-out=<planPath>`: it saves a binary plan file that ApplyPlan
+// can later consume verbatim, so the plan a user reviews is exactly the plan that
+// applies — no re-plan, no drift between review and apply. Same var-file precedence
+// as Plan. Returns whether the plan has changes.
+func (w *Workspace) PlanTo(ctx context.Context, planPath string, extraVarFiles ...string) (bool, error) {
+	opts := []tfexec.PlanOption{tfexec.Out(planPath)}
+	for _, p := range w.varFiles(extraVarFiles...) {
+		opts = append(opts, tfexec.VarFile(p))
+	}
+	w.resetDiag()
+	changes, err := w.tf.Plan(ctx, opts...)
+	return changes, w.wrapDiag(err)
+}
+
+// ShowPlan returns the human-readable rendering of a saved plan file (the text
+// `terraform show <planfile>` prints), for writing a reviewable copy to disk.
+func (w *Workspace) ShowPlan(ctx context.Context, planPath string) (string, error) {
+	return w.tf.ShowPlanFileRaw(ctx, planPath)
+}
+
+// resetDiag clears the captured-stderr tail so a subsequent wrapDiag summarizes
+// only THIS operation's output (each retry attempt starts clean).
+func (w *Workspace) resetDiag() {
+	if w.stderrCap != nil {
+		w.stderrCap.Reset()
+	}
+}
+
+// wrapDiag appends a deduplicated diagnostic summary (parsed from the captured
+// terraform stderr) to a non-nil error, so the user sees a short "N distinct
+// errors" digest instead of the raw walls of repeated provider blocks. A no-op
+// when there's no error, no capture, or nothing parseable.
+func (w *Workspace) wrapDiag(err error) error {
+	if err == nil || w.stderrCap == nil {
+		return err
+	}
+	if summary := summarizeTerraformDiagnostics(w.stderrCap.String()); summary != "" {
+		return fmt.Errorf("%w\n\n%s", err, summary)
+	}
+	return err
 }
 
 // Apply runs `terraform apply`. tfexec auto-passes -auto-approve since
@@ -458,9 +555,29 @@ func (w *Workspace) Apply(ctx context.Context, extraVarFiles ...string) error {
 	for _, p := range sources {
 		opts = append(opts, tfexec.VarFile(p))
 	}
+	w.resetDiag()
 	if err := w.tf.Apply(ctx, opts...); err != nil {
-		return err
+		return w.wrapDiag(err)
 	}
+	phase := w.phaseLabel(sources)
+	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write terraform.applied.tfvars: %v\n", err)
+	}
+	return nil
+}
+
+// ApplyPlan runs `terraform apply <planPath>`, applying a plan file saved by PlanTo
+// EXACTLY as reviewed. terraform rejects -var-file when applying a saved plan (the
+// plan already captured every variable), so none are passed — recordVarFiles is used
+// only to write the applied-tfvars snapshot. If state or config drifted since the
+// plan was saved, terraform refuses with a stale-plan error rather than applying
+// something the operator didn't review — which is the whole point of the flow.
+func (w *Workspace) ApplyPlan(ctx context.Context, planPath string, recordVarFiles ...string) error {
+	w.resetDiag()
+	if err := w.tf.Apply(ctx, tfexec.DirOrPlan(planPath)); err != nil {
+		return w.wrapDiag(err)
+	}
+	sources := w.varFiles(recordVarFiles...)
 	phase := w.phaseLabel(sources)
 	if err := config.WriteAppliedTFVars(w.name, phase, sources); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write terraform.applied.tfvars: %v\n", err)
@@ -521,7 +638,8 @@ func (w *Workspace) Destroy(ctx context.Context, extraVarFiles ...string) error 
 	for _, p := range w.varFiles(extraVarFiles...) {
 		opts = append(opts, tfexec.VarFile(p))
 	}
-	return w.tf.Destroy(ctx, opts...)
+	w.resetDiag()
+	return w.wrapDiag(w.tf.Destroy(ctx, opts...))
 }
 
 // StateMvTo moves resource address `src` out of this workspace's state

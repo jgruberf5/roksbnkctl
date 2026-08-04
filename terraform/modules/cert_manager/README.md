@@ -2,42 +2,12 @@
 
 ## About This Workspace
 
-This Schematics-ready Terraform workspace deploys cert-manager onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs cert-manager in the correct dependency order.
-
-## Deploying with IBM Schematics
-
-### Required IBM Provider and IAM Variables
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `ibmcloud_api_key` | API Key used to authorize all deployment resources | REQUIRED | `0q7N3CzUn6oKxEsr7fLc1mxkukBeAEcsjNRQOg1kdDSY` (note: not a real API key) |
-| `ibmcloud_cluster_region` | IBM Cloud region where the target cluster resides | REQUIRED with default defined | `ca-tor` (default) |
-| `ibmcloud_resource_group` | IBM Cloud resource group name (leave empty to use account default) | Optional | `default` |
-
-### Target Cluster Variables
-
-This workspace deploys cert-manager onto an existing cluster. Cluster information is discovered automatically from the cluster data source.
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `roks_cluster_name_or_id` | Name or ID of the existing OpenShift ROKS cluster | REQUIRED | `my-openshift-cluster` |
-
-Get your existing cluster name or ID:
-```bash
-ibmcloud ks clusters --provider vpc-gen2
-```
-
-#### Community Cert-Manager Configuration
-
-| Variable | Description | Required | Example |
-| -------- | ----------- | -------- | ------- |
-| `cert_manager_namespace` | Kubernetes namespace for cert-manager | Optional | `cert-manager` (default) |
-| `cert_manager_version` | Helm chart version | Optional | `v1.17.3` (default) |
+This Terraform workspace deploys cert-manager onto an **existing** IBM Cloud ROKS (OpenShift) cluster. It does not create cluster infrastructure — provide the name or ID of a running ROKS cluster and the workspace installs cert-manager in the correct dependency order.
 
 ## Project Directory Structure
 
 ```
-ibmcloud_schematics_bigip_next_for_kubernetes_2_3_cert_manager/
+cert_manager/
 ├── main.tf                    # Root module configuration
 ├── variables.tf               # Root module variables
 ├── outputs.tf                 # Root module outputs

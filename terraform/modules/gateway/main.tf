@@ -11,7 +11,11 @@
 # co-owns fields once it reconciles them).
 
 locals {
-  enabled = var.deploy_gateway
+  # Defense-in-depth: no-op while the cluster is being created (the module's
+  # provider is count=0 then; see providers.tf). The gateway phase already runs
+  # with create_roks_cluster=false, so this is inert in every correct flow and
+  # only turns an accidental phase combination into a clean no-op, not a crash.
+  enabled = var.deploy_gateway && !var.create_roks_cluster
 
   zone_names = [for i in range(length(var.cneinstance_network_zones)) : "${var.ibmcloud_cluster_region}-${i + 1}"]
 

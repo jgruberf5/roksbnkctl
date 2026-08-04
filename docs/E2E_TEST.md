@@ -6,7 +6,7 @@ Real-system shake-out for `roksbnkctl` against a live IBM Cloud account. Validat
 
 ## Inputs
 
-- `~/bnkfun/terraform.tfvars` — supplies the cluster name (`canada-roks`), region (`ca-tor`), resource group (`default`), COS instance names (`canada-roks-cos-instance` for the registry, `bnk-orchestration` for orchestration), and the `create_roks_*` flags (all true → full provisioning path).
+- `~/bnkfun/terraform.tfvars` — supplies the cluster name (`canada-roks`), region (`ca-tor`), resource group (`default`), COS instance names (`canada-roks-cos-instance` for the registry, `bnk-supply-chain` for orchestration), and the `create_roks_*` flags (all true → full provisioning path).
 - `IBMCLOUD_API_KEY` env var (or the `ibmcloud_api_key` in tfvars) — IAM credential.
 - `terraform`, `kubectl`, `oc`, `ibmcloud`, `iperf3` on `$PATH`.
 
@@ -92,17 +92,17 @@ Run *during* Phase D's idle windows (between up and down) to amortize wall time.
 
 ### Phase F — COS bucket + object CRUD (no cloud cost beyond bytes stored; ~30 seconds)
 
-Validates Resource Controller + S3 plumbing. Uses `bnk-orchestration` (the COS instance the user's tfvars references for general orchestration storage; assumed pre-existing in the account). Creates and deletes its own scratch bucket — never writes into a pre-existing bucket — so the test is fully self-contained.
+Validates Resource Controller + S3 plumbing. Uses `bnk-supply-chain` (the COS instance the user's tfvars references for general orchestration storage; assumed pre-existing in the account). Creates and deletes its own scratch bucket — never writes into a pre-existing bucket — so the test is fully self-contained.
 
 | Step | Command | Pass criterion |
 |---|---|---|
-| F1 | `roksbnkctl cos instance list` | exits 0; `bnk-orchestration` appears |
-| F2 | `roksbnkctl cos bucket list --instance bnk-orchestration` | exits 0 |
-| F3 | `roksbnkctl cos bucket create roksbnkctl-e2e-<unique> --instance bnk-orchestration` | exits 0 (bucket name globally unique) |
-| F4 | `roksbnkctl cos object put <bucket>/blob /tmp/blob --instance bnk-orchestration` | exits 0 |
-| F5 | `roksbnkctl cos object get <bucket>/blob /tmp/blob.out --instance bnk-orchestration` | exits 0; bytes match |
-| F6 | `roksbnkctl cos object delete <bucket>/blob --instance bnk-orchestration` | exits 0 |
-| F7 | `roksbnkctl cos bucket delete <bucket> --instance bnk-orchestration` | exits 0 |
+| F1 | `roksbnkctl cos instance list` | exits 0; `bnk-supply-chain` appears |
+| F2 | `roksbnkctl cos bucket list --instance bnk-supply-chain` | exits 0 |
+| F3 | `roksbnkctl cos bucket create roksbnkctl-e2e-<unique> --instance bnk-supply-chain` | exits 0 (bucket name globally unique) |
+| F4 | `roksbnkctl cos object put <bucket>/blob /tmp/blob --instance bnk-supply-chain` | exits 0 |
+| F5 | `roksbnkctl cos object get <bucket>/blob /tmp/blob.out --instance bnk-supply-chain` | exits 0; bytes match |
+| F6 | `roksbnkctl cos object delete <bucket>/blob --instance bnk-supply-chain` | exits 0 |
+| F7 | `roksbnkctl cos bucket delete <bucket> --instance bnk-supply-chain` | exits 0 |
 
 ### Phase G — passthrough commands (no cloud cost; ~10 seconds; runs during Phase D)
 

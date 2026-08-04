@@ -61,16 +61,37 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	if tfws.HasUserTFVars() {
 		fmt.Fprintf(w, "→ Layering user tfvars from %s (overrides config.yaml-derived values)\n", tfws.UserTFVarsPath())
 	}
+	// Standalone VSI FLP: bnk.flp.vsi.vpc names an existing VPC to deploy the proxy
+	// into WITHOUT any ROKS cluster — a licensing appliance in (say) a services VPC
+	// that a disconnected cluster reaches over a Transit Gateway (that cluster then
+	// references it via bnk.flp.external). Skip the cluster-outputs requirement and
+	// target the VPC directly. The override renders roks_cluster_id_or_name = "" (an
+	// empty synthetic identity), so the cluster-adopt lookup is gated off.
+	if standaloneFLPVSI(ws) {
+		vpcID := ws.BNK.FLP.VSI.VPC
+		overridePath, werr := writeFLPPhaseOverride(tfws, &config.ClusterOutputs{VPCID: vpcID}, true, true)
+		if werr != nil {
+			return nil, werr
+		}
+		fmt.Fprintf(w, "→ FLP-phase (standalone VSI): deploying the F5 License Proxy into VPC %s — no cluster.\n", vpcID)
+		fmt.Fprintln(w, "→ terraform init")
+		if err := tfws.Init(ctx); err != nil {
+			return nil, err
+		}
+		return []string{overridePath}, nil
+	}
 	co, err := loadReuseClusterOutputs(workspace)
 	if err != nil {
 		return nil, err
 	}
 	if co == nil || co.VPCID == "" {
 		return nil, fmt.Errorf(
-			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`",
+			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. "+
+				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and bnk.flp.vsi.vpc: <existing-vpc-id>",
 			workspace)
 	}
-	overridePath, werr := writeFLPPhaseOverride(tfws, co)
+	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
+	overridePath, werr := writeFLPPhaseOverride(tfws, co, vsiMode, false)
 	if werr != nil {
 		return nil, werr
 	}
@@ -82,6 +103,17 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 		return nil, err
 	}
 	return []string{overridePath}, nil
+}
+
+// standaloneFLPVSI reports whether the workspace deploys the FLP as a standalone
+// VSI into a named VPC with NO cluster (bnk.flp.mode: vsi + bnk.flp.vsi.vpc set).
+func standaloneFLPVSI(ws *config.Workspace) bool { return StandaloneFLPVSI(ws) }
+
+// StandaloneFLPVSI is the exported form so the CLI layer can waive its
+// cluster-required precondition for a standalone FLP VSI deployment.
+func StandaloneFLPVSI(ws *config.Workspace) bool {
+	return ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi" &&
+		ws.BNK.FLP.VSI != nil && ws.BNK.FLP.VSI.VPC != ""
 }
 
 // RunFLPUp = plan + confirm + apply against state-flp/, then persist
@@ -142,12 +174,20 @@ func persistFLPOutputs(ctx context.Context, tfws *tf.Workspace, workspace string
 		// Empty unless the proxy was exposed with --add-node-port-access.
 		ExternalEndpoint:  tfStringOutput(outputs, "flp_external_endpoint"),
 		ExternalEndpoints: tfStringListOutput(outputs, "flp_external_endpoints"),
+		// Operator floating IP (standalone VSI, default on) — management/status access.
+		FloatingIP: tfStringOutput(outputs, "flp_floating_ip"),
 	}
 	if out.ExternalEndpoint != "" {
 		fmt.Fprintf(w, "→ FLP reachable from other clusters at %s\n"+
 			"  point the consuming workspace at it with:\n"+
 			"    bnk:\n      flp:\n        external:\n          url: %s\n          root_ca_b64: <`roksbnkctl -w %s flp output` → root_ca_b64>\n",
 			out.ExternalEndpoint, out.ExternalEndpoint, workspace)
+	}
+	if out.FloatingIP != "" {
+		fmt.Fprintf(w, "→ operator floating IP %s — remote status + web UI:\n"+
+			"    roksbnkctl -w %s flp status        (web UI: http://%s/)\n"+
+			"  reachable per bnk.flp.vsi.allowed_cidrs — scope those to your public IP for external access.\n",
+			out.FloatingIP, workspace, out.FloatingIP)
 	}
 	if err := config.WriteFLPOutputs(workspace, out); err != nil {
 		return fmt.Errorf("writing flp-outputs.json: %w", err)

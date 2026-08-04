@@ -1,7 +1,7 @@
 # Licensing BNK with the F5 License Proxy (FLP)
 
 By default `roksbnkctl` licenses BIG-IP Next for Kubernetes (BNK) with a
-**subscription JWT** — the `trial.jwt` (or your production token) staged in the
+**subscription JWT** — the `subscription.jwt` (or your production token) staged in the
 orchestration COS bucket. In that mode the cluster's controller reaches F5's
 licensing service directly. Nothing in this chapter changes that default.
 
@@ -444,6 +444,64 @@ bnk-license   Active   f5licenseproxy   eval          test          2026-08-13T1
   entirely; NodePort is the trade-off you accept for not needing a load balancer.
 - **The consuming workspace needs no `flp` phase at all** — no `state-flp/`, nothing to
   tear down. `bnk down` there leaves the proxy untouched, serving its other clusters.
+
+## Running the FLP as a VSI (`mode: vsi`)
+
+The flows above run the FLP as an in-cluster Helm deployment. It can instead run as a
+standalone **Virtual Server Instance** — a VM, no Kubernetes — which is the right shape
+when the proxy must be the one controlled egress point for an otherwise **disconnected**
+cluster. Select it with `bnk.flp.mode: vsi`:
+
+```yaml
+bnk:
+  license_mode: f5licenseproxy
+  flp:
+    mode: vsi
+    vsi:
+      profile: bx2-4x16          # >= 4 vCPU / 16 GB
+      zone: us-south-1
+      reach: floating            # "private" (VPC IP) or "floating" (public IP → egress to F5)
+      allowed_cidrs: [10.242.0.0/18]   # sources allowed to reach the proxy (the cluster's workers)
+```
+
+`roksbnkctl flp up` then provisions the VSI; it terminates in the same `flp-outputs.json`
+(endpoint + root CA) the Helm path produces, so `bnk up` consumes it unchanged.
+
+### Standalone — a licensing appliance in another VPC (no cluster)
+
+By default the FLP VSI joins the cluster's own VPC (from `cluster-outputs.json`), so
+`flp up` requires a cluster. Set **`bnk.flp.vsi.vpc`** to an existing VPC id and `flp up`
+deploys the proxy into **that** VPC with **no cluster at all** — a standalone licensing
+appliance:
+
+```yaml
+bnk:
+  license_mode: f5licenseproxy
+  flp:
+    mode: vsi
+    vsi:
+      vpc: r006-…                # existing VPC id — deploy here, no cluster required
+      zone: us-south-1
+      reach: floating            # the appliance's controlled egress to F5
+      allowed_cidrs: [10.0.0.0/8]   # allow the consuming cluster's workers (e.g. over a TGW)
+```
+
+This is the piece that makes a genuinely **disconnected** topology clean: put Harbor +
+the FLP in a **services VPC** that has egress, run the ROKS cluster in another VPC with
+`cluster.public_gateway: false` (no worker egress — see
+[Chapter 10a §"A truly disconnected cluster"](./10a-air-gapped-install.md)), join both
+with a Transit Gateway, and point the cluster's workspace at the proxy with
+`bnk.flp.external` (its `flp output` endpoint + root CA). The cluster reaches Harbor and
+the FLP privately over the TGW; **all egress is concentrated in the services VPC**, and
+the cluster never phones home. A worked end-to-end script is in
+`disconnected_deployment_demo.sh`.
+
+```console
+# in a services workspace (no cluster) — deploy the standalone proxy, then read its handoff
+$ roksbnkctl -w svc-flp flp up
+$ roksbnkctl -w svc-flp flp output flp_external_endpoint
+$ roksbnkctl -w svc-flp flp output flp_root_ca            # → the disconnected cluster's bnk.flp.external
+```
 
 ## Tearing down
 

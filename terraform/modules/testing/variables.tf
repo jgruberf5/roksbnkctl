@@ -150,3 +150,9 @@ variable "cluster_vpc_id" {
   type        = string
   default     = ""
 }
+
+variable "cluster_absent" {
+  description = "True only in the standalone FLP-VSI phase: no ROKS cluster exists, so cluster data-source lookups are skipped (count=0)."
+  type        = bool
+  default     = false
+}

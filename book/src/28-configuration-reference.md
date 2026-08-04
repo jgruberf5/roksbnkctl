@@ -20,10 +20,10 @@ The file is hand-editable; YAML is parsed with [`gopkg.in/yaml.v3`](https://pkg.
 ## Top-level structure
 
 ```yaml
-prefix:          # optional (since v1.8.0); workspace name-prefix base
+prefix:          # optional; workspace name-prefix base
 ibmcloud:        # required
 cluster:         # required
-resources:       # optional (since v1.8.0); per-resource create/existing toggles
+resources:       # optional; per-resource create/existing toggles
 bnk:             # optional; populates upstream HCL bnk variables
 registry:        # optional; the mirror `registry replicate` pushes to, and installs pull from
 test:            # optional; populates test.* settings
@@ -73,6 +73,8 @@ cluster:
   name: tf-openshift-cluster
   openshift_version: "4.18"
   workers_per_zone: 1
+  min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
+  min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
 ```
 
 | Field | Type | Default | Allowed | Notes |
@@ -81,6 +83,8 @@ cluster:
 | `name` | string | — (prompted by `init`) | RFC 1123 DNS label | The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator. |
 | `openshift_version` | string | `4.18` | any version IBM Cloud's catalog accepts | Pinned to a minor (`4.18`) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for "latest". |
 | `workers_per_zone` | integer | `1` | 1+ | Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone. |
+| `min_worker_vcpu_count` | integer | `16` | 2+ | Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest `bx2` profile meeting **both** minimums). Renders into `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. Only meaningful when `create: true`. |
+| `min_worker_memory_gb` | integer | `64` | 8+ | Minimum memory (GB) for the same worker-flavor auto-select. Renders into `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 
 ## `resources:` block
 
@@ -93,7 +97,10 @@ resources:
   tgw_jumphost:      { create: true }
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
-  client_region:     ca-tor               # since v1.9.0; testing-client region
+  client_region:     ca-tor               # testing-client region
+  testing_jumphost_profile: ""            # optional; pin a profile for ALL jumphosts
+  testing_min_vcpu_count:   4             # optional; jumphost auto-select floor
+  testing_min_memory_gb:    8             # optional; jumphost auto-select floor
 ```
 
 *(since `v1.8.0`)* Per-resource create/adopt toggles, written by the `init` interview. Each key is a `{create, existing}` pair: `create: true` provisions a new prefix-named resource; `create: false` declines it and (when a still-enabled resource depends on it) `existing:` names the pre-existing resource to consume instead.
@@ -109,6 +116,8 @@ resources:
 | `client_vpc` | `false` (created on demand for the TGW jumphost) | `existing` → `testing_client_vpc_name` when not creating one | `testing_create_client_vpc`, `testing_client_vpc_name` |
 
 `client_region` *(since `v1.9.0`)* is the odd one out — a plain **string**, not a `{create, existing}` toggle. It's the IBM Cloud region the testing client (TGW jumphost + client VPC) is installed in, letting the test client live in a **different region from the cluster**. The `init` interview sets it when you answer the *"Add a testing client?"* / region prompt; omitted, it renders nothing and the terraform default (`testing_client_vpc_region`) applies. It also seeds the regions [`roksbnkctl cleanup`](./11-tearing-down.md#which-regions-it-scans) scans. Renders into `testing_client_vpc_region`.
+
+`testing_jumphost_profile` / `testing_min_vcpu_count` / `testing_min_memory_gb` are plain fields (like `client_region`) that size **all** the testing jumphosts (both the TGW jumphost and the per-zone cluster jumphosts). `testing_jumphost_profile` pins an explicit IBM Cloud instance profile; leave it empty to auto-select the smallest profile meeting the two minimums. They render into `testing_jumphost_profile` / `testing_min_vcpu_count` / `testing_min_memory_gb`; omitted, the terraform defaults (`4` vCPU / `8` GB, auto-select) apply.
 
 Each `{create, existing}` entry:
 
@@ -126,6 +135,12 @@ bnk:
   cneinstance_size: Small
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
+  flo_namespace: f5-bnk               # optional; FLO namespace
+  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
+  cert_manager:                       # optional; cert-manager coordinates
+    namespace: cert-manager
+    version: v1.17.3
 ```
 
 | Field | Type | Default | Allowed | Notes |
@@ -133,9 +148,13 @@ bnk:
 | `cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large` | Sizing for the deployed CNE Instance. Renders into the upstream HCL `cneinstance_deployment_size` variable. |
 | `far_repo_url` | string | `repo.f5.com` | URL of a Docker-compatible image registry | The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror. |
 | `manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | a published `f5-bigip-k8s-manifest` chart version | Pins the FLO + CIS versions transitively (both are extracted from the manifest chart). |
-| `cr_mode` | string | (empty ⇒ `kubectl`) | `kubectl` \| `legacy_curl` | *(since Sprint 27)* Selects the BNK custom-resource install mechanism, rendered as the `bnk_cr_mode` tfvar. Empty/omitted or `kubectl` ⇒ the terraform-native path (`helm_release` + `kubernetes_*` + `alekc/kubectl` `kubectl_manifest` + `wait_for`); `legacy_curl` ⇒ the `null_resource`/`curl`/`time_sleep` baseline. The `--legacy-bnk` flag on `bnk up`/`bnk down` overrides this to `legacy_curl` for a single run. See [Chapter 10 §"The install-mode flag"](./10-deploying-bnk-trials.md#the-install-mode-flag-bnk_cr_mode). |
+| `flo_namespace` | string | `f5-bnk` | RFC 1123 namespace label | Namespace the F5 Lifecycle Operator installs into (`flo_namespace`). Set for multi-tenant clusters or to avoid a namespace collision. |
+| `flo_utils_namespace` | string | `f5-utils` | RFC 1123 namespace label | Namespace for the F5 utility components (`flo_utils_namespace`). |
+| `gslb_datacenter_name` | string | (empty) | any string | Optional CNEInstance GSLB datacenter name (`cneinstance_gslb_datacenter_name`). |
+| `cert_manager.namespace` | string | `cert-manager` | RFC 1123 namespace label | Namespace cert-manager installs into (`cert_manager_namespace`). The install/skip toggle stays on `resources.cert_manager.create`. |
+| `cert_manager.version` | string | (HCL default) | a published cert-manager chart version | Pins the cert-manager Helm chart (`cert_manager_version`). Useful for air-gap / compliance version pinning. |
 
-All four fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults.
+All fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under `bnk.network` — `roksbnkctl init` prompts for it (opt in at *"Customize BNK networking?"*), or see [Chapter 12 §`bnk.network`](./12-workspace-config.md). FLP settings live under `bnk.flp` (see the master table below); `bnk.flp.storage_class` sets the FLP's PVC StorageClass.
 
 ## `test:` block
 
@@ -310,22 +329,24 @@ Most users want `embedded` (the default). The `github` mode is for testing forks
 
 ```yaml
 cos:
-  instance: bnk-orchestration
-  bucket: bnk-schematics-resources
+  instance: bnk-supply-chain
+  bucket: bnk-artifacts
+  region: us-south
   upload:
     - source: ./local/f5-far-auth-key.tgz
       key: f5-far-auth-key.tgz
-    - source: ./local/trial.jwt
-      key: trial.jwt
+    - source: ./local/subscription.jwt
+      key: subscription.jwt
 ```
 
 | Field | Type | Default | Allowed | Notes |
 |---|---|---|---|---|
-| `instance` | string | — | COS instance name or CRN | The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime. |
-| `bucket` | string | — | S3 bucket name | The bucket within the instance. |
+| `instance` | string | (empty ⇒ `bnk-supply-chain`) | COS instance name or CRN | The instance the supply-chain bucket lives on. Names are resolved via Resource Controller at runtime. |
+| `bucket` | string | (empty ⇒ `bnk-artifacts`) | S3 bucket name | The bucket within the instance that holds the FAR auth key + subscription JWT. |
+| `region` | string | (empty ⇒ `us-south`) | any IBM Cloud region | The region the bucket lives in. |
 | `upload` | list of `{source, key}` | (empty) | host path → bucket key | Pre-flight uploads run before `roksbnkctl up`. Idempotent — re-running overwrites the bucket objects. |
 
-See [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) for the full surface.
+`instance` / `bucket` / `region` point roksbnkctl at the orchestration COS holding the FAR auth key + subscription JWT. They are honoured **both** by the terraform render (`ibmcloud_cos_instance_name` / `ibmcloud_resources_cos_bucket` / `ibmcloud_cos_bucket_region`) **and** by the `registry` FAR-file resolver, so a customer-owned bucket is used consistently across both. Empty fields fall back to the built-in defaults. See [Chapter 25 — COS supply chain management](./25-cos-supply-chain.md) for the full surface.
 
 ## `state:` block
 
@@ -448,8 +469,13 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.name` | string | (prompted) | Cluster name. |
 | `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
+| `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). |
+| `cluster.min_worker_vcpu_count` | integer | `16` | Worker-flavor auto-select floor (vCPUs) → `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. |
+| `cluster.min_worker_memory_gb` | integer | `64` | Worker-flavor auto-select floor (GB) → `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
 | `resources.transit_gateway.existing` | string | (empty) | Existing Transit Gateway to attach the cluster VPC to, by **name or id**, when `create: false`. `cluster up`/`register` connects it; `tgw connect` does it after the fact. See [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md). |
+| `resources.cluster_vpc.create` | bool | `true` | Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the `init` interview since `v1.26.0`. |
+| `resources.cluster_vpc.existing` | string | (empty) | Existing cluster VPC to build the new cluster into, by **id** (not name), when `create: false` — renders `use_existing_cluster_vpc` + `existing_cluster_vpc_id`. Lets multiple clusters share one VPC. See [Reusing an existing VPC](./08-cluster-phase.md#reusing-an-existing-vpc-multiple-clusters-in-one-vpc). |
 | `resources.registry_cos.create` | bool | `true` | Create the registry COS instance vs adopt an existing one. |
 | `resources.registry_cos.existing` | string | (empty) | Existing COS instance name when `create: false`. |
 | `resources.cert_manager.create` | bool | `true` | Install cert-manager (`install_cert_manager`). |
@@ -458,12 +484,39 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `resources.cluster_jumphosts.create` | bool | `false` | Create per-zone cluster jumphosts. |
 | `resources.client_vpc.create` | bool | `false` | Create a new client VPC for the TGW jumphost. |
 | `resources.client_vpc.existing` | string | (empty) | Existing client VPC name when `create: false`. |
+| `resources.client_region` | string | (empty) | Region the testing client (TGW jumphost + client VPC) lives in → `testing_client_vpc_region`. Since `v1.9.0`. |
+| `resources.testing_client_vpc_name` | string | (empty) | Name for the testing client VPC when `client_vpc.create: true` → `testing_client_vpc_name`. |
+| `resources.testing_ssh_key_name` | string | (empty) | Existing IBM Cloud VPC SSH key attached to the jumphosts → `testing_ssh_key_name`. Resolved by `init`. |
+| `resources.testing_jumphost_profile` | string | (empty ⇒ auto-select) | Pin an instance profile for **all** testing jumphosts → `testing_jumphost_profile`. |
+| `resources.testing_min_vcpu_count` | integer | `4` | Jumphost-profile auto-select floor (vCPUs) → `testing_min_vcpu_count`. |
+| `resources.testing_min_memory_gb` | integer | `8` | Jumphost-profile auto-select floor (GB) → `testing_min_memory_gb`. |
 | `bnk.cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large`. |
 | `bnk.far_repo_url` | string | `repo.f5.com` | FAR image registry URL. |
 | `bnk.manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | f5-bigip-k8s-manifest chart version. |
+| `bnk.far_auth_file` | string | `f5-far-auth-key.tgz` | Object KEY the FAR auth tarball is read from in the COS bucket → `far_auth_file`. |
+| `bnk.subscription_jwt_file` | string | `subscription.jwt` | Object KEY the subscription JWT is read from in the COS bucket → `subscription_jwt_file`. |
+| `bnk.far_auth_local_file` | string | (empty) | Read the FAR auth tarball from this **local path** instead of COS. When set together with `subscription_jwt_local_file`, renders `use_cos_bucket = false` + injects the content directly (no bucket). Mutually required with the JWT local file. See [Local files instead of COS](./25-cos-supply-chain.md#local-files-instead-of-cos-no-bucket-needed). |
+| `bnk.subscription_jwt_local_file` | string | (empty) | Read the subscription JWT from this **local path** instead of COS (pairs with `far_auth_local_file`; both or neither). |
+| `bnk.flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace → `flo_namespace`. |
+| `bnk.flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace → `flo_utils_namespace`. |
+| `bnk.gslb_datacenter_name` | string | (empty) | Optional CNEInstance GSLB datacenter → `cneinstance_gslb_datacenter_name`. |
+| `bnk.network.zones[]` | list | (install-guide defaults) | Per-AZ data-plane subnets (`ext_vlan_cidr`, `int_vlan_cidr`, `int_snat_cidr`, `int_vip_cidr`) + TMM self-IPs (`external_selfip`, `internal_selfip`) → `cneinstance_network_zones`. Supply all 3 zones or none. See [Chapter 12 §`bnk.network`](./12-workspace-config.md). |
+| `bnk.network.vlan_prefixlen` | int | `24` | TMM self-IP prefix length (F5SPKVlan `spec.prefixlen_v4`) → `cneinstance_vlan_prefixlen`. Match your VLAN CIDRs. |
+| `bnk.network.tmm_k8s_routes` | string | `172.17.0.0/18` | Pod CIDR TMM routes to (`TMM_K8S_ROUTES`) → `cneinstance_tmm_k8s_routes`. Your cluster's pod subnet if non-default. |
+| `bnk.cert_manager.namespace` | string | `cert-manager` | cert-manager namespace → `cert_manager_namespace`. Install/skip stays on `resources.cert_manager.create`. |
+| `bnk.cert_manager.version` | string | (HCL default) | cert-manager chart version → `cert_manager_version`. |
 | `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the [F5 License Proxy](./10c-flp-licensing.md) — either one this workspace deployed (`roksbnkctl flp up`) or one in **another** cluster (`bnk.flp.external`). Empty/omitted keeps the JWT/connected default. |
 | `bnk.flp.namespace` | string | `f5-license-proxy` | Namespace the FLP phase installs into (FLP mode only). |
 | `bnk.flp.chart_version` | string | (empty ⇒ from the BNK manifest) | Pin the `f5-license-proxy` chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts. |
+| `bnk.flp.storage_class` | string | (empty ⇒ HCL default) | Dynamic StorageClass for the FLP's PVCs → `flp_storage_class`. Set it when the cluster/region exposes a different block-storage class. (helm mode) |
+| `bnk.flp.mode` | string | (empty ⇒ `helm`) | `helm` \| `vsi`. `vsi` deploys the proxy on a standalone VSI (podman pod, no k8s) instead of the helm chart; both terminate in the same endpoint + root CA handoff. |
+| `bnk.flp.vsi.vpc` | string | (empty ⇒ the cluster VPC) | Existing VPC id to deploy the standalone FLP VSI into **without any cluster** — a licensing appliance in a services VPC. Empty ⇒ joins the workspace's cluster VPC (requires a cluster). See [Chapter 10c §"Standalone"](./10c-flp-licensing.md). |
+| `bnk.flp.vsi.profile` | string | `bx2-4x16` | VSI instance profile (≥ 4 vCPU / 8 GB) → `flp_vsi_profile`. |
+| `bnk.flp.vsi.zone` | string | (empty ⇒ `<region>-1`) | Zone for the FLP VSI → `flp_vsi_zone`. |
+| `bnk.flp.vsi.boot_size_gb` | integer | `100` | Boot volume size (≥ 80) → `flp_vsi_boot_size_gb`. |
+| `bnk.flp.vsi.reach` | string | `private` | How the CWC reaches the VSI: `private` (VPC / transit gateway) or `floating` → `flp_vsi_reach`. |
+| `bnk.flp.vsi.allowed_cidrs` | list of string | (empty ⇒ VPC space) | Source CIDRs allowed to reach the VSI's 8443 → `flp_vsi_allowed_cidrs`. |
+| `bnk.flp.vsi.forward_proxy.{host,port,protocol}` | — | (none) | Optional egress forward proxy for the VSI's calls to F5 licensing → `flp_forward_proxy_*`. |
 | `bnk.flp.node_port_access` | bool | `false` | Expose the proxy OUTSIDE its cluster so a BNK install in a different cluster can license through it ([Flow C](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster)). Set by `flp up --add-node-port-access` and persisted, so a later `flp up` does not tear the exposure down. |
 | `bnk.flp.node_port_source_cidrs` | list of string | (empty) | With `node_port_access`: open the proxy's NodePort to these CIDRs on the worker security group. A **list**, and it must name **every zone** — a multi-zone VPC carries one address prefix per zone, and a consuming pod scheduled in a zone you left out is dropped at the security group (the proxy answers some pods and silently times out for others). Set by `flp up --node-port-source-cidr` and persisted. |
 | `bnk.flp.external.url` | string | (empty) | License against a proxy in **another** cluster — its `external_endpoint` from `roksbnkctl -w <owner> flp output`. This workspace then needs no `flp up` of its own. |
@@ -479,8 +532,9 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `tf_source.repo` | string | (empty) | GitHub `owner/name`; required for `github`. |
 | `tf_source.ref` | string | (empty) | Git ref; required for `github`. |
 | `tf_source.path` | string | (empty) | Local directory; required for `local`. |
-| `cos.instance` | string | (empty) | COS instance name or CRN. |
-| `cos.bucket` | string | (empty) | Bucket name. |
+| `cos.instance` | string | (empty ⇒ `bnk-supply-chain`) | Orchestration COS instance name or CRN → `ibmcloud_cos_instance_name` + the `registry` FAR resolver. |
+| `cos.bucket` | string | (empty ⇒ `bnk-artifacts`) | Bucket holding the FAR auth key + JWT → `ibmcloud_resources_cos_bucket` + the `registry` FAR resolver. |
+| `cos.region` | string | (empty ⇒ `us-south`) | Region the orchestration COS bucket lives in → `ibmcloud_cos_bucket_region` + the `registry` FAR resolver. |
 | `cos.upload[].source` | string | — | Local file path. |
 | `cos.upload[].key` | string | — | Bucket key. |
 | `targets.<name>.host` | string | — | SSH host. |
