@@ -804,12 +804,14 @@ func guardRegistryMirror(workspaceName string, ws *config.Workspace) error {
 	m, err := config.ReadRegistryMirror(workspaceName)
 	if err != nil {
 		if errors.Is(err, config.ErrNoRegistryMirror) {
-			return fmt.Errorf("a registry mirror is configured for this workspace but has not been populated — run `roksbnkctl registry replicate` before bringing up BNK")
+			return fmt.Errorf("a registry mirror is configured for this workspace but this workspace has no record of it.\n" +
+				"  If the mirror still needs filling:      roksbnkctl registry replicate   (needs the FAR source)\n" +
+				"  If it is already populated elsewhere:   roksbnkctl registry adopt       (no source access needed)")
 		}
 		return fmt.Errorf("reading registry-mirror record: %w", err)
 	}
 	if m.ChartHost == "" || m.ImageHost == "" {
-		return fmt.Errorf("the registry-mirror record is incomplete (missing %s) — re-run `roksbnkctl registry replicate`",
+		return fmt.Errorf("the registry-mirror record is incomplete (missing %s) — re-run `roksbnkctl registry replicate`, or `roksbnkctl registry adopt` if the mirror is already populated",
 			missingMirrorHosts(m))
 	}
 	return nil

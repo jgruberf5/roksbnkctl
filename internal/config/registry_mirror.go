@@ -51,7 +51,7 @@ type MirrorArtifact struct {
 // ErrNoRegistryMirror — the workspace has no registry-mirror.json. Sentinel so
 // callers can distinguish "no mirror configured" (install from FAR directly)
 // from a real I/O error.
-var ErrNoRegistryMirror = errors.New("workspace has no registry-mirror.json — run `roksbnkctl registry replicate` to populate the mirror")
+var ErrNoRegistryMirror = errors.New("workspace has no registry-mirror.json — run `roksbnkctl registry replicate` to populate a mirror, or `roksbnkctl registry adopt` to record one that already exists")
 
 // WorkspaceRegistryMirrorPath is ~/.roksbnkctl/<workspace>/registry-mirror.json.
 func WorkspaceRegistryMirrorPath(name string) (string, error) {

@@ -189,3 +189,59 @@ func TestEngine_ProbeNamespace_NoHost(t *testing.T) {
 		t.Fatal("expected an error when the target has no push host")
 	}
 }
+
+// VerifyAll returns one Result per artifact WITH the resolved target digest, which
+// is what lets `registry adopt --verify-contents` record an inventory that drives a
+// digest-based `registry delete`. Verify keeps its old contract (failures only).
+func TestEngine_VerifyAll_CarriesDigests(t *testing.T) {
+	host := startRegistry(t)
+	opts := []crane.Option{crane.Insecure}
+
+	img, err := random.Image(512, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bom := &bnkbom.BOM{Artifacts: []bnkbom.Artifact{
+		{Kind: bnkbom.KindImage, SourceHost: host, Name: "src/ok", Tag: "v1"},
+		{Kind: bnkbom.KindImage, SourceHost: host, Name: "src/missing", Tag: "v1"},
+	}}
+	// Seed both sources, but mirror only the first.
+	for _, r := range []string{host + "/src/ok:v1", host + "/src/missing:v1", host + "/mirror/src/ok:v1"} {
+		if err := crane.Push(img, r, opts...); err != nil {
+			t.Fatalf("seed %s: %v", r, err)
+		}
+	}
+	eng := &Engine{Target: fakeTarget{host: host, ns: "mirror"}, Insecure: true}
+
+	all := eng.VerifyAll(context.Background(), bom)
+	if len(all) != 2 {
+		t.Fatalf("VerifyAll: want one result per artifact (2), got %d", len(all))
+	}
+	// Order is preserved, so results line up with bom.Artifacts.
+	if all[0].Artifact.Name != "src/ok" || all[1].Artifact.Name != "src/missing" {
+		t.Fatalf("VerifyAll did not preserve BOM order: %q, %q", all[0].Artifact.Name, all[1].Artifact.Name)
+	}
+	if all[0].Err != nil {
+		t.Errorf("mirrored artifact should verify: %v", all[0].Err)
+	}
+	// THE POINT: a passing artifact carries its digest, so the record can too.
+	if all[0].Digest == "" {
+		t.Error("VerifyAll must carry the target digest for a passing artifact")
+	}
+	want, err := crane.Digest(host+"/mirror/src/ok:v1", opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all[0].Digest != want {
+		t.Errorf("digest = %q, want the target digest %q", all[0].Digest, want)
+	}
+	if all[1].Err == nil {
+		t.Error("un-mirrored artifact should fail")
+	}
+
+	// Verify stays failures-only, so existing callers are unaffected.
+	bad := eng.Verify(context.Background(), bom)
+	if len(bad) != 1 || bad[0].Artifact.Name != "src/missing" {
+		t.Fatalf("Verify should report only the 1 failure, got %+v", bad)
+	}
+}
