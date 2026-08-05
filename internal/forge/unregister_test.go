@@ -82,3 +82,50 @@ func TestProjectIDByNameNeverCreates(t *testing.T) {
 		t.Fatal("ProjectIDByName created a project")
 	}
 }
+
+// ProjectIDByName must accept both response shapes, and must NOT silently report
+// "no project" for a body it could not parse. For EnsureProject a mis-parse just
+// creates a duplicate — loud. Here it would print "nothing to unregister" and exit
+// 0 with the cluster still registered, which is the one outcome a teardown must
+// never produce quietly.
+func TestProjectIDByNameResponseShapes(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantID  int
+		wantErr bool
+	}{
+		{"wrapped object", `{"projects":[{"id":7,"name":"acme"}]}`, 7, false},
+		{"bare array", `[{"id":9,"name":"acme"}]`, 9, false},
+		{"wrapped, absent", `{"projects":[{"id":7,"name":"other"}]}`, 0, false},
+		{"bare, absent", `[{"id":9,"name":"other"}]`, 0, false},
+		{"empty wrapped", `{"projects":[]}`, 0, false},
+		{"empty array", `[]`, 0, false},
+		// The ones that matter: unparseable must ERROR, not read as absence.
+		{"html error page", `<html><body>502 Bad Gateway</body></html>`, 0, true},
+		{"unexpected object", `{"data":{"items":[]}}`, 0, true},
+		{"empty body", ``, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			id, err := New(srv.URL, true).ProjectIDByName(context.Background(), "acme")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("body %q: want an error, got id=%d nil", tc.body, id)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("body %q: unexpected error: %v", tc.body, err)
+			}
+			if id != tc.wantID {
+				t.Fatalf("body %q: id = %d, want %d", tc.body, id, tc.wantID)
+			}
+		})
+	}
+}

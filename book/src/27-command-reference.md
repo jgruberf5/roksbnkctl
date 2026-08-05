@@ -239,10 +239,11 @@ Configure + drive BNK Forge cluster registration
 Configure and drive registration of this workspace's cluster with a
 co-located BNK Forge (v3) install — without hand-editing config.yaml.
 
-  enable    turn on auto-registration on `cluster up` (writes config.yaml)
-  disable   turn it back off
-  status    show the effective config + readiness
-  register  register this workspace's cluster with BNK Forge right now
+  enable      turn on auto-registration on `cluster up` (writes config.yaml)
+  disable     turn it back off (LOCAL only — does not unregister)
+  status      show the effective config + readiness
+  register    register this workspace's cluster with BNK Forge right now
+  unregister  remove this workspace's cluster from its BNK Forge project
 
 Registration uses BNK Forge v3's REST API (it has no CLI). It is credential-
 backed: an IBM Cloud credential template is stored in Forge so it re-derives the
@@ -252,7 +253,19 @@ session token is cached in the OS keychain.
 
 ### `roksbnkctl bnkforge disable`
 
-Turn off BNK Forge auto-registration
+Turn off BNK Forge auto-registration (**local only — does not unregister**)
+
+```
+roksbnkctl bnkforge disable
+```
+
+Clears the workspace's auto-register flag, so `cluster up` stops registering with
+BNK Forge.
+
+This is a **local setting and never contacts the server**. Despite reading like the
+inverse of `register`, it does not remove anything: a cluster already registered
+stays on Forge's Kubernetes page. To remove it, use
+[`bnkforge unregister`](#roksbnkctl-bnkforge-unregister).
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -292,6 +305,48 @@ roksbnkctl bnkforge register [flags]
 | `--project` | `string` | — | target BNK Forge project name (overrides config) |
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
 | `--username` | `string` | — | BNK Forge login username (overrides config) |
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
+### `roksbnkctl bnkforge unregister`
+
+Remove this workspace's cluster from its BNK Forge project
+
+```
+roksbnkctl bnkforge unregister [flags]
+```
+
+Undoes what `bnkforge register` did. Without it a workspace can create a
+registration it has no way to remove: `bnkforge disable` only clears the local
+auto-register flag, so after a teardown the cluster stays on Forge's Kubernetes
+page — inside a project that outlives everything it was created alongside,
+pointing at a cluster that may no longer have BNK on it, or may no longer exist.
+
+**Absence is success.** A destroy path runs when things are already partly
+dismantled, and may well run twice, so every "it was not there" case reports and
+exits 0:
+
+- no project of that name
+- the project exists but holds no cluster of that name
+- the cluster exists but the DELETE returns 404
+
+Only a genuine server failure surfaces as an error. It also **never creates
+anything** — unlike `register`, which ensures the project exists, a teardown asking
+*"is this still here?"* must not bring it into being.
+
+The cluster name comes from the workspace's recorded cluster outputs, falling back
+to the workspace name; the project from `bnkforge.project`, falling back to the
+workspace name.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--url` | `string` | — | BNK Forge base URL |
+| `--username` | `string` | — | BNK Forge username |
+| `--password` | `string` | — | BNK Forge password (prefer `BNK_FORGE_PASSWORD`) |
+| `--project` | `string` | — | BNK Forge project holding the cluster |
+| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 

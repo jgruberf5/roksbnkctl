@@ -55,9 +55,15 @@ var bnkforgeEnableCmd = &cobra.Command{
 
 var bnkforgeDisableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Turn off BNK Forge auto-registration",
-	Args:  cobra.NoArgs,
-	RunE:  runBNKForgeDisable,
+	Short: "Turn off BNK Forge auto-registration (LOCAL only — does not unregister)",
+	Long: `Clears the workspace's auto-register flag, so ` + "`cluster up`" + ` stops registering
+with BNK Forge.
+
+This is a LOCAL setting and never contacts the server. A cluster already
+registered stays on Forge's Kubernetes page — to remove it, use
+` + "`roksbnkctl bnkforge unregister`" + `.`,
+	Args: cobra.NoArgs,
+	RunE: runBNKForgeDisable,
 }
 
 var bnkforgeUnregisterCmd = &cobra.Command{

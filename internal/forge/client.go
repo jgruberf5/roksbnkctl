@@ -319,21 +319,15 @@ func (c *Client) RegisterCluster(ctx context.Context, projectID int, req Registe
 	return 0, fmt.Errorf("register returned no cluster id: %s", strings.TrimSpace(string(d)))
 }
 
-// projectClusterID returns the id of a cluster named name in projectID, or 0 if
-// none. Tolerates both {"clusters":[…]} and a bare array response.
-// UnregisterCluster removes a cluster from a BNK Forge project by name.
-//
-// The delete itself is not new — RegisterCluster has always removed a
-// same-named cluster before re-POSTing, which is why re-registering churns the
-// cluster id. This exposes that half on its own, so a teardown can undo a
-// registration instead of a workspace being able to create one it can never
-// remove.
-//
-// Returns the id that was removed, or 0 when the project holds no cluster of
-// that name — absence is not an error, so a destroy can run twice.
 // ProjectIDByName returns the id of a project, or 0 when there is none of that
 // name. Unlike EnsureProject it never creates one — a teardown asking "is this
 // still here" must not bring it into being.
+//
+// Tolerates both {"projects":[…]} and a bare array response, and treats a body it
+// cannot parse at all as an ERROR rather than as "no project". For EnsureProject a
+// mis-parse merely creates a duplicate — loud, and noticed. Here it would print
+// "nothing to unregister" and exit 0 while the cluster stayed registered, which is
+// the one outcome a teardown must never produce quietly.
 func (c *Client) ProjectIDByName(ctx context.Context, name string) (int, error) {
 	data, code, err := c.do(ctx, http.MethodGet, "/api/projects", nil)
 	if err != nil {
@@ -342,14 +336,26 @@ func (c *Client) ProjectIDByName(ctx context.Context, name string) (int, error) 
 	if !ok(code) {
 		return 0, httpErr("GET", "/api/projects", code, data)
 	}
-	var lr struct {
-		Projects []struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-		} `json:"projects"`
+	type proj struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
 	}
-	_ = json.Unmarshal(data, &lr)
-	for _, p := range lr.Projects {
+	var wrapped struct {
+		Projects []proj `json:"projects"`
+	}
+	list := []proj(nil)
+	switch {
+	case json.Unmarshal(data, &wrapped) == nil && wrapped.Projects != nil:
+		list = wrapped.Projects
+	case json.Unmarshal(data, &list) == nil:
+		// bare array fallback, matching projectClusterID
+	default:
+		// Neither shape parsed. Do NOT fall through to "no project": see the doc
+		// comment — a silent success here leaves the cluster registered forever.
+		return 0, fmt.Errorf("GET /api/projects returned an unrecognised body (%d bytes): %s",
+			len(data), truncateBody(data))
+	}
+	for _, p := range list {
 		if p.Name == name {
 			return p.ID, nil
 		}
@@ -357,6 +363,29 @@ func (c *Client) ProjectIDByName(ctx context.Context, name string) (int, error) 
 	return 0, nil
 }
 
+// truncateBody renders a short, single-line excerpt of a response body for an
+// error message — enough to recognise the shape without dumping a page of JSON.
+func truncateBody(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		return "<empty>"
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 160 {
+		return s[:160] + "…"
+	}
+	return s
+}
+
+// UnregisterCluster removes a cluster from a BNK Forge project by name.
+//
+// The delete itself is not new — RegisterCluster has always removed a same-named
+// cluster before re-POSTing, which is why re-registering churns the cluster id.
+// This exposes that half on its own, so a teardown can undo a registration
+// instead of a workspace being able to create one it can never remove.
+//
+// Returns the id that was removed, or 0 when the project holds no cluster of that
+// name — absence is not an error, so a destroy can run twice.
 func (c *Client) UnregisterCluster(ctx context.Context, projectID int, name string) (int, error) {
 	id, err := c.projectClusterID(ctx, projectID, name)
 	if err != nil {
@@ -377,6 +406,8 @@ func (c *Client) UnregisterCluster(ctx context.Context, projectID int, name stri
 	return id, nil
 }
 
+// projectClusterID returns the id of a cluster named name in projectID, or 0 if
+// none. Tolerates both {"clusters":[…]} and a bare array response.
 func (c *Client) projectClusterID(ctx context.Context, projectID int, name string) (int, error) {
 	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
 	data, code, err := c.do(ctx, http.MethodGet, p, nil)
