@@ -176,7 +176,11 @@ func init() {
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
-	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd, registryDeleteCmd)
+	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryAdoptCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd, registryDeleteCmd)
+	registryAdoptCmd.Flags().BoolVar(&registryAdoptFlags.verifyContents, "verify-contents", false,
+		"digest-check every BOM artifact before recording (needs the FAR source)")
+	registryAdoptCmd.Flags().BoolVar(&registryAdoptFlags.force, "force", false,
+		"record the mirror even when it holds nothing under the configured prefix")
 	rootCmd.AddCommand(registryCmd)
 }
 
@@ -993,6 +997,143 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+var registryAdoptFlags struct {
+	verifyContents bool
+	force          bool
+}
+
+var registryAdoptCmd = &cobra.Command{
+	Use:   "adopt",
+	Short: "Record a mirror this workspace did not populate, so `bnk up` can use it",
+	Long: `Writes registry-mirror.json for a mirror that already exists.
+
+` + "`bnk up`" + ` refuses to render against a mirror the workspace has no record of —
+otherwise BNK would be pointed at far_repo_url, which an air-gapped cluster cannot
+reach. Until now only ` + "`registry replicate`" + ` wrote that record, which means a
+workspace could only use a mirror it had populated itself.
+
+That is the wrong constraint for how mirrors are actually used. The registry is
+filled once, as a supply-chain step, and then many installs pull from it — often
+from a different workspace, a different host, or a different team. Those installs
+were forced to re-run replicate purely to re-derive a record, which needs the FAR
+source reachable at install time. An air-gapped operator frequently does not have
+that, and it is the whole point of having mirrored in the first place.
+
+adopt derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from
+the workspace config, so no source access is needed. It then asks the MIRROR what
+it holds under the configured prefix — a sanity check that catches a typo in the
+prefix or an empty registry, without pretending to prove the contents are correct.
+
+Pass --verify-contents when the source IS reachable and you want proof rather than
+assertion: it builds the BOM and digest-checks every artifact before recording,
+and the record then carries the full artifact inventory.`,
+	Args: cobra.NoArgs,
+	RunE: runRegistryAdopt,
+}
+
+// runRegistryAdopt records an existing mirror without replicating into it.
+//
+// The record it writes is identical to replicate's in every field the rest of the
+// tool reads, with one deliberate exception: Artifacts is empty unless
+// --verify-contents was passed, because without a BOM there is no way to know what
+// the mirror holds. That matters for `registry delete`, which walks Artifacts — an
+// adopted record cannot drive a delete, and adopt says so rather than leaving a
+// later delete to silently remove nothing.
+func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
+	name, ws, err := loadRegistryWorkspace()
+	if err != nil {
+		return err
+	}
+	target, err := buildTarget(cmd.Context(), name, ws)
+	if err != nil {
+		return err
+	}
+	in := resolveBOMInputs(ws)
+
+	// The CA is resolved the same way replicate resolves it — config/file first,
+	// else an out-of-band-PINNED capture. Adoption does not relax that: an
+	// unpinned capture is refused here exactly as it is there, because the CA
+	// ends up in every node's trust store either way.
+	pushHost := registryHostFromPath(target.ImageHostPath())
+	mirrorCA, caErr := resolveMirrorCA(name, ws, pushHost)
+	if caErr != nil {
+		return caErr
+	}
+
+	eng := registryEngine(target, in)
+
+	var artifacts []config.MirrorArtifact
+	manifestVersion := in.ManifestVersion
+
+	if registryAdoptFlags.verifyContents {
+		bom, berr := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+		if berr != nil {
+			return fmt.Errorf("--verify-contents needs the FAR source to build the BOM: %w", berr)
+		}
+		manifestVersion = bom.ManifestVersion
+		bad := eng.Verify(cmd.Context(), bom)
+		if len(bad) > 0 {
+			for _, r := range bad {
+				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", r.Artifact.Name, r.Err)
+			}
+			return fmt.Errorf("adopt --verify-contents: %d of %d artifacts are missing or digest-mismatched",
+				len(bad), len(bom.Artifacts))
+		}
+		for _, a := range bom.Artifacts {
+			artifacts = append(artifacts, config.MirrorArtifact{
+				Kind: string(a.Kind), Name: a.Name, Tag: a.Tag,
+			})
+		}
+		fmt.Fprintf(os.Stderr, "✓ verified %d artifacts against the source\n", len(bom.Artifacts))
+	} else {
+		// Source-free sanity check: does the mirror hold anything under the prefix?
+		n, perr := eng.ProbeNamespace(cmd.Context(), target.MirrorNamespace())
+		switch {
+		case perr != nil:
+			// Not every registry exposes _catalog. Being unable to look is not the
+			// same as looking and finding nothing, so this warns rather than fails.
+			fmt.Fprintf(os.Stderr, "  ⚠ could not list %s to sanity-check the mirror: %v\n", pushHost, perr)
+		case n == 0 && !registryAdoptFlags.force:
+			return fmt.Errorf("the mirror at %s holds no repositories under %q — "+
+				"check registry.generic_repo_prefix, or pass --force to record it anyway",
+				pushHost, target.MirrorNamespace())
+		case n == 0:
+			fmt.Fprintf(os.Stderr, "  ⚠ %s holds no repositories under %q — recording anyway (--force)\n",
+				pushHost, target.MirrorNamespace())
+		default:
+			fmt.Fprintf(os.Stderr, "  ✓ %s holds %d repositor%s under %q\n",
+				pushHost, n, map[bool]string{true: "y", false: "ies"}[n == 1], target.MirrorNamespace())
+		}
+	}
+
+	rec := &config.RegistryMirror{
+		Target:          registryTargetKind(ws),
+		Namespace:       target.MirrorNamespace(),
+		ChartHost:       target.ChartHostPath(),
+		ImageHost:       target.ImageHostPath(),
+		ManifestVersion: manifestVersion,
+		Artifacts:       artifacts,
+		RegistryHost:    pushHost,
+	}
+	if mirrorCA != "" {
+		rec.CACert = mirrorCA
+		fmt.Fprintf(os.Stderr, "  ✓ recorded the mirror CA from %s (nodes install it before pulling)\n", pushHost)
+	} else if pushHost != "" {
+		fmt.Fprintf(os.Stderr, "  ⚠ no CA recorded for %s — if it is a self-signed mirror, re-run with --registry-ca <file>\n", pushHost)
+	}
+	if err := config.WriteRegistryMirror(name, rec); err != nil {
+		return fmt.Errorf("recording mirror: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "✓ adopted the mirror at %s — `bnk up` will render against it\n", target.ChartHostPath())
+	if len(artifacts) == 0 {
+		fmt.Fprintln(os.Stderr, "  note: no artifact inventory was recorded, so `registry delete` has nothing to "+
+			"remove for this workspace. Re-run with --verify-contents (needs the FAR source) to record one.")
+	}
+	return nil
+}
+
 // ── verify ──────────────────────────────────────────────────────────────────
 
 func runRegistryVerify(cmd *cobra.Command, _ []string) error {
@@ -1026,6 +1167,16 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	}
 	if len(bad) == 0 {
 		fmt.Fprintf(os.Stderr, "✓ all %d BOM artifacts present + digest-matched in the mirror\n", len(bom.Artifacts))
+		// Verify stays read-only. It does NOT write registry-mirror.json — a verb
+		// that promises inspection should not change what a later `bnk up` does,
+		// and two commands writing the record would drift over what they put in it
+		// (replicate and adopt --verify-contents record an artifact inventory; a
+		// bare adopt cannot). It does say what to run, so a mirror proven good is
+		// one obvious command away from being usable.
+		if _, rerr := config.ReadRegistryMirror(name); errors.Is(rerr, config.ErrNoRegistryMirror) {
+			fmt.Fprintln(os.Stderr, "  note: this workspace has no mirror record, so `bnk up` will refuse to "+
+				"use it. Run `roksbnkctl registry adopt` to record it.")
+		}
 		return nil
 	}
 	for _, b := range bad {

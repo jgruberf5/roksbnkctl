@@ -439,3 +439,44 @@ func (e *Engine) Delete(ctx context.Context, artifacts []bnkbom.Artifact) []Resu
 	}
 	return results
 }
+
+// ProbeNamespace counts the repositories the mirror already holds under the
+// target's repo prefix, WITHOUT consulting the source. It is the check `registry
+// adopt` uses: adoption records a mirror this workspace did not populate, and the
+// whole point is that it must work when the FAR source is unreachable — so it
+// cannot build a BOM and cannot compare digests. What it can do is ask the mirror
+// what it holds.
+//
+// This is a sanity check, not a proof. It catches the mistakes adoption actually
+// invites — a typo in the repo prefix, an empty registry, a credential that
+// cannot read — and it deliberately does not attempt to establish that the
+// contents are correct or complete. Use Verify for that, when the source is
+// reachable.
+//
+// Returns the number of matching repositories. A registry that does not support
+// the catalog endpoint (or forbids it) returns an error the caller can downgrade
+// to a warning rather than a failure — not every registry exposes _catalog, and
+// being unable to look is different from looking and finding nothing.
+func (e *Engine) ProbeNamespace(ctx context.Context, prefix string) (int, error) {
+	host := e.Target.PushHost()
+	if host == "" {
+		return 0, fmt.Errorf("the target has no push host configured")
+	}
+	repos, err := crane.Catalog(host, e.craneOpts(ctx)...)
+	if err != nil {
+		if isAuthRejection(err) {
+			return 0, fmt.Errorf("the mirror rejected the credential for %s: %w", host, err)
+		}
+		return 0, fmt.Errorf("listing repositories on %s: %w", host, err)
+	}
+	if prefix == "" {
+		return len(repos), nil
+	}
+	n := 0
+	for _, r := range repos {
+		if r == prefix || strings.HasPrefix(r, prefix+"/") {
+			n++
+		}
+	}
+	return n, nil
+}

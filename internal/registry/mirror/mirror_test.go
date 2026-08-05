@@ -132,3 +132,60 @@ func TestIsTransient(t *testing.T) {
 		})
 	}
 }
+
+func TestEngine_ProbeNamespace(t *testing.T) {
+	host := startRegistry(t)
+	opts := []crane.Option{crane.Insecure}
+
+	img, err := random.Image(512, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{
+		host + "/bnk-mirror/one:v1",
+		host + "/bnk-mirror/two:v1",
+		host + "/somewhere-else/three:v1",
+	} {
+		if err := crane.Push(img, ref, opts...); err != nil {
+			t.Fatalf("seed %s: %v", ref, err)
+		}
+	}
+
+	eng := &Engine{Target: fakeTarget{host: host, ns: "bnk-mirror"}, Insecure: true}
+
+	// Counts only what is under the prefix — the point is to catch a prefix typo,
+	// so repositories elsewhere on the same registry must not mask an empty one.
+	n, err := eng.ProbeNamespace(context.Background(), "bnk-mirror")
+	if err != nil {
+		t.Fatalf("ProbeNamespace: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("under bnk-mirror: got %d, want 2", n)
+	}
+
+	// A prefix nothing was pushed under reports zero rather than erroring —
+	// adopt turns that into the "check registry.generic_repo_prefix" failure.
+	n, err = eng.ProbeNamespace(context.Background(), "typo-mirror")
+	if err != nil {
+		t.Fatalf("ProbeNamespace(typo): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("under typo-mirror: got %d, want 0", n)
+	}
+
+	// No prefix ⇒ everything the registry holds.
+	n, err = eng.ProbeNamespace(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ProbeNamespace(empty): %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("whole catalog: got %d, want 3", n)
+	}
+}
+
+func TestEngine_ProbeNamespace_NoHost(t *testing.T) {
+	eng := &Engine{Target: fakeTarget{host: "", ns: "bnk-mirror"}}
+	if _, err := eng.ProbeNamespace(context.Background(), "bnk-mirror"); err == nil {
+		t.Fatal("expected an error when the target has no push host")
+	}
+}
