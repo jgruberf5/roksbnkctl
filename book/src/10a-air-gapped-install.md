@@ -21,6 +21,7 @@ The registry surface is CRUD-shaped, modeled on the IBM COS client:
 | `roksbnkctl registry target` | Show or set the mirror target — `icr` / `generic` (see [Registry targets](./10b-registry-targets.md)) |
 | `roksbnkctl registry bom` | Print the bill-of-materials — every chart + image BNK needs |
 | `roksbnkctl registry replicate` | Mirror the BOM into the target registry |
+| `roksbnkctl registry adopt` | Record a mirror that already exists, without re-copying (no source access) |
 | `roksbnkctl registry list` | What's present in the target |
 | `roksbnkctl registry diff` | BOM vs. target — what's missing or stale |
 | `roksbnkctl registry verify` | Every BOM artifact present + digest-matched |
@@ -159,9 +160,26 @@ and `roksbnkctl` handles both:
 Nothing ties a mirror to a single cluster. `registry replicate` is a supply-chain
 step, not a cluster step — the record it writes (`registry-mirror.json`) just tells
 the install where to pull from. So several workspaces can point at the **same**
-registry: replicate once, then every cluster installs from it. A second workspace
-targeting an already-populated mirror copies nothing (every artifact is present and
-digest-matched) and simply records the redirect.
+registry: replicate once, then every cluster installs from it.
+
+The second workspace still needs a record of its own, though, because `bnk up`
+refuses to render against a mirror it has no record of. Use
+[`registry adopt`](./27-command-reference.md#roksbnkctl-registry-adopt):
+
+```console
+$ roksbnkctl -w cluster-b registry adopt
+  ✓ 10.241.0.4 holds 89 repositories under "bnk-mirror"
+  ✓ recorded the mirror CA from 10.241.0.4 (nodes install it before pulling)
+✓ adopted the mirror at 10.241.0.4/bnk-mirror — `bnk up` will render against it
+```
+
+`adopt` derives the record from the workspace's own registry config and asks the
+mirror what it holds — it needs **no access to `repo.f5.com` at all**, which matters
+because an air-gapped operator usually has none. Re-running `replicate` would also
+work when the source *is* reachable, and copies nothing (every artifact is present
+and digest-matched), but it cannot run without the source. Add `--verify-contents`
+to `adopt` when you do have the source and want the mirror digest-checked before it
+is recorded.
 
 That pairs naturally with a [shared licensing
 cluster](./10c-flp-licensing.md#flow-c--a-shared-licensing-cluster): one cluster
@@ -174,10 +192,13 @@ the ICR namespace and a full Artifactory walkthrough — are in
 [Registry targets](./10b-registry-targets.md).
 
 > **TLS trust.** Charts and images are pulled over the target's HTTPS endpoint.
-> ICR and a public Artifactory carry publicly-trusted certificates. If your
-> registry uses a custom or self-signed cert, add its CA to the trust store on the
-> host running `registry replicate` (and on the cluster, for the image pulls)
-> before you replicate.
+> ICR and a public Artifactory carry publicly-trusted certificates. For a custom or
+> self-signed cert, give roksbnkctl the CA itself — `registry target generic_ca
+> <file>` records it in the workspace (`registry.generic_ca_b64`), and `bnk up`
+> installs it on every node before pulling, so you do not have to touch node trust
+> by hand. roksbnkctl will **not** adopt a self-signed CA it merely discovered over
+> the wire; see [Configuration
+> reference](./28-configuration-reference.md) for the pin (`generic_ca_sha256`).
 
 ## A truly disconnected cluster (no worker egress)
 

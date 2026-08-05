@@ -1550,6 +1550,7 @@ Commands:
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
   roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
+  roksbnkctl registry adopt      Record a mirror this workspace did not populate
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
@@ -1560,6 +1561,54 @@ need a configured registry: block and network reachability to the target registr
 cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
 roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
 any cluster exists.
+
+### `roksbnkctl registry adopt`
+
+Record a mirror this workspace did not populate, so `bnk up` can use it
+
+```
+roksbnkctl registry adopt [flags]
+```
+
+Writes `registry-mirror.json` for a mirror that already exists.
+
+`bnk up` refuses to render against a mirror the workspace has no record of —
+otherwise BNK would be pointed at `far_repo_url`, which an air-gapped cluster
+cannot reach. Only `registry replicate` used to write that record, which meant a
+workspace could only use a mirror it had populated itself.
+
+That is the wrong constraint for how mirrors are actually used. A registry is
+filled once, as a supply-chain step, and then many installs pull from it — often
+from a different workspace, host, or team. Those installs were forced to re-run
+`replicate` purely to re-derive a record, and `replicate` needs the FAR source
+reachable at install time. An air-gapped operator frequently does not have that,
+which is the whole point of having mirrored.
+
+`adopt` derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from the
+workspace config, so **no source access is needed**. It then asks the *mirror* what
+it holds under the configured prefix — a sanity check that catches a typo in
+`registry.generic_repo_prefix`, an empty registry, or a credential that cannot read.
+It does not pretend to prove the contents are correct or complete.
+
+Pass `--verify-contents` when the source *is* reachable and you want proof rather
+than assertion: it builds the BOM, digest-checks every artifact before recording,
+and the record then carries the full artifact inventory **with digests** — which is
+what lets a later `registry delete` drive from it.
+
+Adoption does **not** relax the out-of-band CA pinning: an unpinned capture is
+refused here exactly as it is for `replicate`, because the CA lands in every node's
+trust store either way. See [`registry.generic_ca_b64` / `generic_ca_sha256`](./28-configuration-reference.md).
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--verify-contents` | `bool` | `false` | digest-check every BOM artifact before recording (needs the FAR source) |
+| `--force` | `bool` | `false` | record the mirror even when it holds nothing under the configured prefix |
+| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
+
+← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
 ### `roksbnkctl registry bom`
 
