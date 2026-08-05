@@ -60,6 +60,24 @@ var bnkforgeDisableCmd = &cobra.Command{
 	RunE:  runBNKForgeDisable,
 }
 
+var bnkforgeUnregisterCmd = &cobra.Command{
+	Use:   "unregister",
+	Short: "Remove this workspace's cluster from its BNK Forge project",
+	Long: `Removes the cluster this workspace registered, so a teardown can undo what
+` + "`bnkforge register`" + ` did.
+
+Without it a workspace can create a registration it has no way to remove:
+` + "`bnkforge disable`" + ` only clears the local auto-register flag and never contacts
+the server, so the cluster stays on Forge's Kubernetes page pointing at
+something that may no longer exist.
+
+Absence is success. No project, no cluster of that name, or a cluster already
+gone all report and exit 0, so this is safe to run from a destroy path that may
+run twice or run late.`,
+	Args: cobra.NoArgs,
+	RunE: runBNKForgeUnregister,
+}
+
 var bnkforgeStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show this workspace's BNK Forge registration config + readiness",
@@ -86,8 +104,13 @@ func init() {
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)")
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "target BNK Forge project name (overrides config)")
 	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
+	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge base URL")
+	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge username")
+	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD)")
+	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "BNK Forge project holding the cluster")
+	bnkforgeUnregisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
 
-	bnkforgeCmd.AddCommand(bnkforgeEnableCmd, bnkforgeDisableCmd, bnkforgeStatusCmd, bnkforgeRegisterCmd)
+	bnkforgeCmd.AddCommand(bnkforgeEnableCmd, bnkforgeDisableCmd, bnkforgeStatusCmd, bnkforgeRegisterCmd, bnkforgeUnregisterCmd)
 	rootCmd.AddCommand(bnkforgeCmd)
 }
 
@@ -178,6 +201,33 @@ func printFieldOr(set bool, label, val, fallback string) {
 	} else {
 		fmt.Printf("%-12s %s\n", label+":", fallback)
 	}
+}
+
+func runBNKForgeUnregister(cmd *cobra.Command, _ []string) error {
+	cctx, err := config.New(flagWorkspace)
+	if err != nil {
+		return err
+	}
+	var eff config.BNKForgeCfg
+	if cctx.Workspace != nil && cctx.Workspace.BNKForge != nil {
+		eff = *cctx.Workspace.BNKForge
+	}
+	if flagBNKForgeURL != "" {
+		eff.URL = flagBNKForgeURL
+	}
+	if flagBNKForgeUser != "" {
+		eff.Username = flagBNKForgeUser
+	}
+	if flagBNKForgeProject != "" {
+		eff.Project = flagBNKForgeProject
+	}
+	if flagBNKForgeInsecure {
+		eff.Insecure = true
+	}
+	if flagBNKForgePassword != "" {
+		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
+	}
+	return unregisterFromBNKForge(cmd.Context(), cctx, &eff, true)
 }
 
 func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {

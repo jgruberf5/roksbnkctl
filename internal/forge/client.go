@@ -321,6 +321,62 @@ func (c *Client) RegisterCluster(ctx context.Context, projectID int, req Registe
 
 // projectClusterID returns the id of a cluster named name in projectID, or 0 if
 // none. Tolerates both {"clusters":[…]} and a bare array response.
+// UnregisterCluster removes a cluster from a BNK Forge project by name.
+//
+// The delete itself is not new — RegisterCluster has always removed a
+// same-named cluster before re-POSTing, which is why re-registering churns the
+// cluster id. This exposes that half on its own, so a teardown can undo a
+// registration instead of a workspace being able to create one it can never
+// remove.
+//
+// Returns the id that was removed, or 0 when the project holds no cluster of
+// that name — absence is not an error, so a destroy can run twice.
+// ProjectIDByName returns the id of a project, or 0 when there is none of that
+// name. Unlike EnsureProject it never creates one — a teardown asking "is this
+// still here" must not bring it into being.
+func (c *Client) ProjectIDByName(ctx context.Context, name string) (int, error) {
+	data, code, err := c.do(ctx, http.MethodGet, "/api/projects", nil)
+	if err != nil {
+		return 0, err
+	}
+	if !ok(code) {
+		return 0, httpErr("GET", "/api/projects", code, data)
+	}
+	var lr struct {
+		Projects []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"projects"`
+	}
+	_ = json.Unmarshal(data, &lr)
+	for _, p := range lr.Projects {
+		if p.Name == name {
+			return p.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+func (c *Client) UnregisterCluster(ctx context.Context, projectID int, name string) (int, error) {
+	id, err := c.projectClusterID(ctx, projectID, name)
+	if err != nil {
+		return 0, err
+	}
+	if id == 0 {
+		return 0, nil
+	}
+	p := fmt.Sprintf("/api/k8s/clusters/%d", id)
+	d, code, derr := c.do(ctx, http.MethodDelete, p, nil)
+	if derr != nil {
+		return 0, derr
+	}
+	// 404 means someone else got there first; the end state is the one we want.
+	if !ok(code) && code != http.StatusNotFound {
+		return 0, httpErr("DELETE", p, code, d)
+	}
+	return id, nil
+}
+
 func (c *Client) projectClusterID(ctx context.Context, projectID int, name string) (int, error) {
 	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
 	data, code, err := c.do(ctx, http.MethodGet, p, nil)

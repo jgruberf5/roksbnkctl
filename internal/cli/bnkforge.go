@@ -201,3 +201,82 @@ func readClusterKubeconfig() (string, error) {
 	}
 	return "", fmt.Errorf("no cluster kubeconfig found (forge kubeconfig, KUBECONFIG, or ~/.kube/config) — run `roksbnkctl cluster up` first")
 }
+
+// unregisterFromBNKForge removes this workspace's cluster from its Forge
+// project. The mirror image of registerWithBNKForge, and deliberately quieter:
+// a teardown runs when things are already half gone, so every "it was not
+// there" is a success, not an error.
+//
+// It never creates anything. registerWithBNKForge calls EnsureProject, which
+// will happily bring a project into existence; doing that on the way down would
+// leave behind the very thing being removed.
+func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *config.BNKForgeCfg, interactive bool) error {
+	if cctx == nil || cctx.Workspace == nil {
+		return fmt.Errorf("no workspace context")
+	}
+	url := bf.URL
+	if v := os.Getenv(envForgeURL); v != "" {
+		url = v
+	}
+	if url == "" {
+		return fmt.Errorf("no BNK Forge URL (set bnkforge.url, %s, or --url)", envForgeURL)
+	}
+
+	out, err := config.ReadClusterOutputs(cctx.WorkspaceName)
+	name := ""
+	if err == nil {
+		name = out.ClusterName
+	}
+	if name == "" {
+		name = cctx.WorkspaceName
+	}
+
+	client := forge.New(url, bf.Insecure)
+	client.Token = config.ForgeTokenFromKeychain(cctx.WorkspaceName)
+	if !client.TokenValid(ctx) {
+		user := os.Getenv(envForgeUser)
+		if user == "" {
+			user = bf.Username
+		}
+		if user == "" && interactive {
+			user = promptString("BNK Forge username", "")
+		}
+		if user == "" {
+			return fmt.Errorf("no BNK Forge username (set bnkforge.username, %s, or --username)", envForgeUser)
+		}
+		pass, perr := resolveForgePassword(interactive)
+		if perr != nil {
+			return perr
+		}
+		if lerr := client.Login(ctx, user, pass); lerr != nil {
+			return fmt.Errorf("BNK Forge login failed: %w", lerr)
+		}
+		if serr := config.SaveForgeTokenToKeychain(cctx.WorkspaceName, client.Token); serr != nil {
+			fmt.Fprintf(os.Stderr, "  note: could not cache the Forge session token (%v)\n", serr)
+		}
+	}
+
+	projName := bf.Project
+	if projName == "" {
+		projName = cctx.WorkspaceName
+	}
+	pid, err := client.ProjectIDByName(ctx, projName)
+	if err != nil {
+		return fmt.Errorf("looking up project %q: %w", projName, err)
+	}
+	if pid == 0 {
+		fmt.Fprintf(os.Stderr, "✓ no BNK Forge project %q — nothing to unregister\n", projName)
+		return nil
+	}
+
+	id, err := client.UnregisterCluster(ctx, pid, name)
+	if err != nil {
+		return fmt.Errorf("unregistering cluster %q from BNK Forge: %w", name, err)
+	}
+	if id == 0 {
+		fmt.Fprintf(os.Stderr, "✓ cluster %q is not registered in project %q — nothing to do\n", name, projName)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "✓ unregistered cluster %q (id %d) from BNK Forge project %q\n", name, id, projName)
+	return nil
+}
