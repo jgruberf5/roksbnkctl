@@ -4,6 +4,26 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.37.0 — 2026-08-05
+
+### Added
+
+- **`roksbnkctl bnkforge unregister` — undo what `register` did.** A workspace could register its cluster with BNK Forge and had **no way to remove it**. `bnkforge disable` reads like the inverse but only clears the local auto-register flag and never contacts the server, so after a teardown the cluster stayed on Forge's Kubernetes page — inside a project that outlived everything it was created alongside, pointing at a cluster that might no longer have BNK on it, or might no longer exist. The capability was already half-present: `RegisterCluster` deletes a same-named cluster before re-POSTing (which is why the cluster id climbs on every re-registration); this exposes that half on its own.
+
+  **Absence is success** — no project, no cluster of that name, or a cluster already gone all report and exit 0, so it is safe on a destroy path that may run twice or run late. Only a genuine server failure surfaces as an error. It also **never creates anything**: unlike `register` it looks a project up rather than ensuring it, because a teardown asking *"is this still here?"* must not bring it into being.
+
+  Registration is **not** removed automatically on `cluster down` — the post-`up` hook has no matching hook on the way down, so a teardown must call `bnkforge unregister` explicitly.
+
+### Fixed
+
+- **`bnkforge disable` no longer implies it unregisters.** Its help and the book now state plainly that it is a local flag which never contacts the server, and point at `bnkforge unregister`.
+- **A BNK Forge project list that fails to parse is no longer read as "no project".** `ProjectIDByName` swallowed the unmarshal error, so an HTML error page or an unexpected response shape produced `✓ no BNK Forge project — nothing to unregister` and exit 0 while the cluster stayed registered forever — a silent success is the one outcome a teardown must never produce. It now accepts both `{"projects":[…]}` and a bare array (matching `projectClusterID`, which already tolerated both) and returns an error with a truncated excerpt of the body when neither shape fits. Absence is still success; "I could not tell" is not.
+
+### Changed
+
+- **Book.** `bnkforge unregister` documented in the command reference; a new "Unregistering on teardown" section in the BNK Forge chapter covers the absence-is-success cases, the never-creates guarantee, and the fact that `cluster down` does not unregister automatically. The `disable` entry is corrected in both places.
+- **`.gitignore`** now excludes built book PDFs (`roksbnkctl-book-*.pdf`) and `scripts/scratchpad/`. Multi-megabyte release artifacts had been swept into a feature branch by `git add -A`; git history is permanent, so these must never be committed.
+
 ## v1.36.0 — 2026-08-05
 
 ### Added
