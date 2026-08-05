@@ -52,3 +52,11 @@ book/book/
 # Leaked IBM ROKS kubeconfig caches (never commit cluster creds)
 **/*_k8sconfig/
 terraform/modules/**/.terraform.lock.hcl
+
+# Built book PDFs. `make release-publish` uploads these as GitHub Release assets;
+# they are multi-MB binaries and git history is permanent, so they must not be
+# committed — a `git add -A` swept two of them into a feature PR once.
+roksbnkctl-book-*.pdf
+
+# Local scratch: reproductions, throwaway manifests, one-off provisioning.
+scripts/scratchpad/

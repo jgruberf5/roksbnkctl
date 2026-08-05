@@ -72,9 +72,10 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
 | Command | What it does |
 |---|---|
 | `bnkforge enable [--url U] [--project P]` | Persist `register: true` (+ optional overrides) so every `cluster up` registers the cluster. |
-| `bnkforge disable` | Persist `register: false` — turn the auto-hook off. |
+| `bnkforge disable` | Persist `register: false` — turn the auto-hook off. **Local only: it does not unregister anything.** |
 | `bnkforge status` | Show the effective config (register / url / project), whether the `bnk-forge` CLI is on `PATH`, and whether a cluster id is recorded. |
 | `bnkforge register [--url U] [--project P]` | Register the current workspace's cluster **now**, regardless of the opt-in. Surfaces errors (the auto-hook swallows them). |
+| `bnkforge unregister [--url U] [--project P]` | Remove the cluster from its Forge project — the inverse of `register`. Every "not there" case exits 0, so it is safe on a teardown path. |
 
 `enable`, `disable`, and `register` all accept `--url` (override the Forge URL
 the CLI would read from its stored session) and `--project` (target Forge project
@@ -165,6 +166,42 @@ roksbnkctl -w acme-eu bnkforge register --project 42   # one-off project overrid
 It reads the cluster id + region from `cluster-outputs.json`, resolves your IBM
 Cloud API key the usual way, and runs exactly what the post-`up` hook runs — the
 only difference is that errors are **surfaced** rather than swallowed.
+
+## Unregistering on teardown
+
+`bnkforge disable` reads like the inverse of `register`, but it is not: it clears
+the local `register` flag and **never contacts the server**. A cluster already
+registered stays on Forge's Kubernetes page, in a project that outlives everything
+it was created alongside, pointing at a cluster that may no longer have BNK on it —
+or may no longer exist.
+
+`roksbnkctl bnkforge unregister` is the actual inverse:
+
+```bash
+roksbnkctl -w acme-eu bnkforge unregister
+✓ unregistered cluster "acme-eu" (id 13) from BNK Forge project "acme-eu"
+```
+
+**Absence is success.** A destroy runs when things are already half dismantled, and
+may run twice, so each of these reports and exits 0 rather than failing:
+
+| Situation | Output |
+|---|---|
+| No project of that name | `✓ no BNK Forge project "acme-eu" — nothing to unregister` |
+| Project exists, cluster does not | `✓ cluster "acme-eu" is not registered in project "acme-eu" — nothing to do` |
+| Cluster already deleted (404) | treated as done |
+
+Only a genuine server failure surfaces as an error. Treating absence as failure
+would make the command unusable in exactly the situation it exists for.
+
+It also **never creates anything**. `register` ensures the project exists; a
+teardown asking *"is this still here?"* must not bring it into being, or it would
+leave behind the very thing being removed.
+
+> **Registration is not removed automatically on `cluster down`.** The post-`up`
+> hook registers, but there is no matching hook on the way down — run `bnkforge
+> unregister` as part of your teardown (this is what the BNK Forge blueprints do in
+> their destroy step).
 
 ### Driving the `bnk-forge` CLI directly
 
