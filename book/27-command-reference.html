@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-71ee849a.js";
+            window.path_to_searchindex_js = "searchindex-a133a368.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -1504,6 +1504,7 @@ roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
 roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
+roksbnkctl registry adopt      Record a mirror this workspace did not populate
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
 roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
 roksbnkctl registry delete     Delete ALL replicated artifacts from the target</p>
@@ -1513,6 +1514,48 @@ need a configured registry: block and network reachability to the target registr
 cluster: replicate copies registry-to-registry (via go-containerregistry) from wherever
 roksbnkctl runs, so you can pre-seed the mirror as a standalone supply-chain step before
 any cluster exists.</p>
+<h3 id="roksbnkctl-registry-adopt"><a class="header" href="#roksbnkctl-registry-adopt"><code>roksbnkctl registry adopt</code></a></h3>
+<p>Record a mirror this workspace did not populate, so <code>bnk up</code> can use it</p>
+<pre><code>roksbnkctl registry adopt [flags]
+</code></pre>
+<p>Writes <code>registry-mirror.json</code> for a mirror that already exists.</p>
+<p><code>bnk up</code> refuses to render against a mirror the workspace has no record of —
+otherwise BNK would be pointed at <code>far_repo_url</code>, which an air-gapped cluster
+cannot reach. Only <code>registry replicate</code> used to write that record, which meant a
+workspace could only use a mirror it had populated itself.</p>
+<p>That is the wrong constraint for how mirrors are actually used. A registry is
+filled once, as a supply-chain step, and then many installs pull from it — often
+from a different workspace, host, or team. Those installs were forced to re-run
+<code>replicate</code> purely to re-derive a record, and <code>replicate</code> needs the FAR source
+reachable at install time. An air-gapped operator frequently does not have that,
+which is the whole point of having mirrored.</p>
+<p><code>adopt</code> derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from the
+workspace config, so <strong>no source access is needed</strong>. It then asks the <em>mirror</em> what
+it holds under the configured prefix — a sanity check that catches a typo in
+<code>registry.generic_repo_prefix</code>, an empty registry, or a credential that cannot read.
+It does not pretend to prove the contents are correct or complete.</p>
+<p>Pass <code>--verify-contents</code> when the source <em>is</em> reachable and you want proof rather
+than assertion: it builds the BOM, digest-checks every artifact before recording,
+and the record then carries the full artifact inventory <strong>with digests</strong> — which is
+what lets a later <code>registry delete</code> drive from it.</p>
+<p>Adoption does <strong>not</strong> relax the out-of-band CA pinning: an unpinned capture is
+refused here exactly as it is for <code>replicate</code>, because the CA lands in every node’s
+trust store either way. See <a href="./28-configuration-reference.html"><code>registry.generic_ca_b64</code> / <code>generic_ca_sha256</code></a>.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--verify-contents</code></td><td><code>bool</code></td><td><code>false</code></td><td>digest-check every BOM artifact before recording (needs the FAR source)</td></tr>
+<tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>record the mirror even when it holds nothing under the configured prefix</td></tr>
+<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-registry"><code>roksbnkctl registry</code></a></p>
 <h3 id="roksbnkctl-registry-bom"><a class="header" href="#roksbnkctl-registry-bom"><code>roksbnkctl registry bom</code></a></h3>
 <p>Build + print the BNK bill-of-materials from the FAR manifest</p>
 <pre><code>roksbnkctl registry bom [flags]
