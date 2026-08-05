@@ -387,6 +387,25 @@ func ociDir(pushRef string) string {
 // matching the source. Returns the artifacts that are missing or mismatched.
 func (e *Engine) Verify(ctx context.Context, bom *bnkbom.BOM) []Result {
 	var bad []Result
+	for _, r := range e.VerifyAll(ctx, bom) {
+		if r.Err != nil {
+			bad = append(bad, r)
+		}
+	}
+	return bad
+}
+
+// VerifyAll is Verify but returns one Result per BOM artifact, in order, with
+// Result.Digest carrying the TARGET digest of each artifact that checked out.
+//
+// Verify discards those digests, which is fine when the answer is just pass/fail
+// — but `registry adopt --verify-contents` records an artifact inventory, and an
+// inventory without digests drives a TAG-based `registry delete` instead of the
+// digest-based form the rest of the tool relies on. Adoption has just resolved
+// every digest to do its comparison; throwing them away only to record a weaker
+// record would be gratuitous.
+func (e *Engine) VerifyAll(ctx context.Context, bom *bnkbom.BOM) []Result {
+	results := make([]Result, 0, len(bom.Artifacts))
 	for _, a := range bom.Artifacts {
 		opts := e.craneOpts(ctx)
 		if a.Kind == bnkbom.KindImage {
@@ -396,26 +415,31 @@ func (e *Engine) Verify(ctx context.Context, bom *bnkbom.BOM) []Result {
 		if a.SourceHost == classicHelmHost {
 			// Classic-helm charts are repackaged; presence is verified by a
 			// target-side existence check rather than a source-digest match.
-			if _, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...); err != nil {
-				bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
+			dstDigest, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...)
+			if err != nil {
+				results = append(results, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
+				continue
 			}
+			results = append(results, Result{Artifact: a, Digest: dstDigest})
 			continue
 		}
 		srcDigest, err := crane.Digest(sanitizeRef(a.Ref()), opts...)
 		if err != nil {
-			bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("resolve source: %w", err)})
+			results = append(results, Result{Artifact: a, Err: fmt.Errorf("resolve source: %w", err)})
 			continue
 		}
 		dstDigest, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...)
 		if err != nil {
-			bad = append(bad, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
+			results = append(results, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
 			continue
 		}
 		if dstDigest != srcDigest {
-			bad = append(bad, Result{Artifact: a, Digest: dstDigest, Err: fmt.Errorf("digest mismatch: source %s, target %s", srcDigest, dstDigest)})
+			results = append(results, Result{Artifact: a, Digest: dstDigest, Err: fmt.Errorf("digest mismatch: source %s, target %s", srcDigest, dstDigest)})
+			continue
 		}
+		results = append(results, Result{Artifact: a, Digest: dstDigest})
 	}
-	return bad
+	return results
 }
 
 // Delete removes the given artifacts from the target registry — by digest when

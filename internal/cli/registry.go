@@ -176,11 +176,12 @@ func init() {
 	registryTargetCmd.Flags().BoolVar(&flagRegistryPasswordStdin, "password-stdin", false, "read the generic registry password from stdin (for `registry target generic_password`)")
 	registryDeleteCmd.Flags().BoolVar(&flagRegistryForce, "force", false, "skip the confirmation prompt")
 
-	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryAdoptCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd, registryDeleteCmd)
 	registryAdoptCmd.Flags().BoolVar(&registryAdoptFlags.verifyContents, "verify-contents", false,
 		"digest-check every BOM artifact before recording (needs the FAR source)")
 	registryAdoptCmd.Flags().BoolVar(&registryAdoptFlags.force, "force", false,
 		"record the mirror even when it holds nothing under the configured prefix")
+
+	registryCmd.AddCommand(registryBOMCmd, registryListCmd, registryDiffCmd, registryReplicateCmd, registryAdoptCmd, registryVerifyCmd, registryPruneCmd, registryTargetCmd, registryDeleteCmd)
 	rootCmd.AddCommand(registryCmd)
 }
 
@@ -649,7 +650,14 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 	for i, ma := range rec.Artifacts {
 		arts[i] = bnkbom.Artifact{Name: ma.Name, Tag: ma.Tag, Digest: ma.Digest}
 	}
-	results := registryEngine(target, resolveBOMInputs(ws)).Delete(cmd.Context(), arts)
+	// Delete talks to the mirror too, so it needs the same CA the record carries.
+	// The recorded CACert is authoritative here: it is what replicate/adopt already
+	// established for this mirror, so no rediscovery (or pin prompt) is needed.
+	delCA := rec.CACert
+	if delCA == "" {
+		delCA, _ = resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath()))
+	}
+	results := registryEngine(target, resolveBOMInputs(ws), delCA).Delete(cmd.Context(), arts)
 
 	var deleted, failed int
 	var remaining []config.MirrorArtifact
@@ -685,11 +693,18 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func registryEngine(t mirror.Target, in registryBOMInputs) *mirror.Engine {
+// registryEngine builds the copy engine. registryCA is a REQUIRED parameter rather
+// than a field callers may remember to set: every verb here talks to the mirror over
+// crane, and craneOpts only installs a private CA when Engine.RegistryCA is set — so
+// omitting it silently breaks every self-signed (i.e. air-gapped) mirror, which is
+// the case this whole subsystem exists for. Pass "" only when there is genuinely no
+// private CA (a public target); resolveMirrorCA returns exactly that.
+func registryEngine(t mirror.Target, in registryBOMInputs, registryCA string) *mirror.Engine {
 	return &mirror.Engine{
 		Target:      t,
 		SourceAuth:  source.SourceAuth(in.FARRepoURL, in.SourceSAB64),
 		Concurrency: flagRegistryConcurrency,
+		RegistryCA:  registryCA,
 	}
 }
 
@@ -936,8 +951,7 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	if caErr != nil {
 		return caErr // an explicit --registry-ca that can't be read is fatal
 	}
-	eng := registryEngine(target, in)
-	eng.RegistryCA = mirrorCA
+	eng := registryEngine(target, in, mirrorCA)
 	// Check the push credential once up front. Without this a wrong password is
 	// retried against every artifact in the BOM (401 is retryable — Harbor's token
 	// service genuinely flakes), so the command grinds for minutes and then reports
@@ -1061,7 +1075,13 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 		return caErr
 	}
 
-	eng := registryEngine(target, in)
+	// The engine must TRUST that CA, not merely record it: both things adopt does
+	// over the network — ProbeNamespace's catalog listing and --verify-contents'
+	// digest checks — go through crane. Without it a self-signed mirror (the entire
+	// target case for adoption) fails x509: the probe degrades to a warning and
+	// silently loses its only validation, and --verify-contents reports every
+	// artifact as missing.
+	eng := registryEngine(target, in, mirrorCA)
 
 	var artifacts []config.MirrorArtifact
 	manifestVersion := in.ManifestVersion
@@ -1072,7 +1092,17 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("--verify-contents needs the FAR source to build the BOM: %w", berr)
 		}
 		manifestVersion = bom.ManifestVersion
-		bad := eng.Verify(cmd.Context(), bom)
+		// VerifyAll, not Verify: it returns every artifact with its resolved TARGET
+		// digest, so the recorded inventory can carry digests. An inventory without
+		// them drives a tag-based `registry delete` rather than the digest-based
+		// form, which is the reliable one for a registry manifest DELETE.
+		results := eng.VerifyAll(cmd.Context(), bom)
+		var bad []mirror.Result
+		for _, r := range results {
+			if r.Err != nil {
+				bad = append(bad, r)
+			}
+		}
 		if len(bad) > 0 {
 			for _, r := range bad {
 				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", r.Artifact.Name, r.Err)
@@ -1080,9 +1110,9 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("adopt --verify-contents: %d of %d artifacts are missing or digest-mismatched",
 				len(bad), len(bom.Artifacts))
 		}
-		for _, a := range bom.Artifacts {
+		for _, r := range results {
 			artifacts = append(artifacts, config.MirrorArtifact{
-				Kind: string(a.Kind), Name: a.Name, Tag: a.Tag,
+				Kind: string(r.Artifact.Kind), Name: r.Artifact.Name, Tag: r.Artifact.Tag, Digest: r.Digest,
 			})
 		}
 		fmt.Fprintf(os.Stderr, "✓ verified %d artifacts against the source\n", len(bom.Artifacts))
@@ -1102,8 +1132,12 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(os.Stderr, "  ⚠ %s holds no repositories under %q — recording anyway (--force)\n",
 				pushHost, target.MirrorNamespace())
 		default:
+			suffix := "ies"
+			if n == 1 {
+				suffix = "y"
+			}
 			fmt.Fprintf(os.Stderr, "  ✓ %s holds %d repositor%s under %q\n",
-				pushHost, n, map[bool]string{true: "y", false: "ies"}[n == 1], target.MirrorNamespace())
+				pushHost, n, suffix, target.MirrorNamespace())
 		}
 	}
 
@@ -1130,6 +1164,8 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 	if len(artifacts) == 0 {
 		fmt.Fprintln(os.Stderr, "  note: no artifact inventory was recorded, so `registry delete` has nothing to "+
 			"remove for this workspace. Re-run with --verify-contents (needs the FAR source) to record one.")
+	} else {
+		fmt.Fprintf(os.Stderr, "  ✓ recorded %d artifacts with digests — `registry delete` can drive from this record\n", len(artifacts))
 	}
 	return nil
 }
@@ -1153,10 +1189,8 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	// Trust a private/self-signed mirror's CA for the verify HEAD checks too — the
 	// crane digest probes fail x509 from a container operator otherwise, exactly as
 	// the replicate push does. Best-effort capture (public targets return "").
-	eng := registryEngine(target, in)
-	if ca, _ := resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath())); ca != "" {
-		eng.RegistryCA = ca
-	}
+	verifyCA, _ := resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath()))
+	eng := registryEngine(target, in, verifyCA)
 	bad := eng.Verify(cmd.Context(), bom)
 	if flagOutput == "json" {
 		out := make([]map[string]string, 0, len(bad))
