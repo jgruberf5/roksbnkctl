@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a133a368.js";
+            window.path_to_searchindex_js = "searchindex-ee0f56b4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -8499,9 +8499,10 @@ the CLI so Forge can create a credential template if you don’t have one yet.</
 </thead>
 <tbody>
 <tr><td><code>bnkforge enable [--url U] [--project P]</code></td><td>Persist <code>register: true</code> (+ optional overrides) so every <code>cluster up</code> registers the cluster.</td></tr>
-<tr><td><code>bnkforge disable</code></td><td>Persist <code>register: false</code> — turn the auto-hook off.</td></tr>
+<tr><td><code>bnkforge disable</code></td><td>Persist <code>register: false</code> — turn the auto-hook off. <strong>Local only: it does not unregister anything.</strong></td></tr>
 <tr><td><code>bnkforge status</code></td><td>Show the effective config (register / url / project), whether the <code>bnk-forge</code> CLI is on <code>PATH</code>, and whether a cluster id is recorded.</td></tr>
 <tr><td><code>bnkforge register [--url U] [--project P]</code></td><td>Register the current workspace’s cluster <strong>now</strong>, regardless of the opt-in. Surfaces errors (the auto-hook swallows them).</td></tr>
+<tr><td><code>bnkforge unregister [--url U] [--project P]</code></td><td>Remove the cluster from its Forge project — the inverse of <code>register</code>. Every “not there” case exits 0, so it is safe on a teardown path.</td></tr>
 </tbody>
 </table>
 </div>
@@ -8590,6 +8591,40 @@ roksbnkctl -w acme-eu bnkforge register --project 42   # one-off project overrid
 <p>It reads the cluster id + region from <code>cluster-outputs.json</code>, resolves your IBM
 Cloud API key the usual way, and runs exactly what the post-<code>up</code> hook runs — the
 only difference is that errors are <strong>surfaced</strong> rather than swallowed.</p>
+<h2 id="unregistering-on-teardown"><a class="header" href="#unregistering-on-teardown">Unregistering on teardown</a></h2>
+<p><code>bnkforge disable</code> reads like the inverse of <code>register</code>, but it is not: it clears
+the local <code>register</code> flag and <strong>never contacts the server</strong>. A cluster already
+registered stays on Forge’s Kubernetes page, in a project that outlives everything
+it was created alongside, pointing at a cluster that may no longer have BNK on it —
+or may no longer exist.</p>
+<p><code>roksbnkctl bnkforge unregister</code> is the actual inverse:</p>
+<pre><code class="language-bash">roksbnkctl -w acme-eu bnkforge unregister
+✓ unregistered cluster "acme-eu" (id 13) from BNK Forge project "acme-eu"
+</code></pre>
+<p><strong>Absence is success.</strong> A destroy runs when things are already half dismantled, and
+may run twice, so each of these reports and exits 0 rather than failing:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Situation</th><th>Output</th></tr>
+</thead>
+<tbody>
+<tr><td>No project of that name</td><td><code>✓ no BNK Forge project "acme-eu" — nothing to unregister</code></td></tr>
+<tr><td>Project exists, cluster does not</td><td><code>✓ cluster "acme-eu" is not registered in project "acme-eu" — nothing to do</code></td></tr>
+<tr><td>Cluster already deleted (404)</td><td>treated as done</td></tr>
+</tbody>
+</table>
+</div>
+<p>Only a genuine server failure surfaces as an error. Treating absence as failure
+would make the command unusable in exactly the situation it exists for.</p>
+<p>It also <strong>never creates anything</strong>. <code>register</code> ensures the project exists; a
+teardown asking <em>“is this still here?”</em> must not bring it into being, or it would
+leave behind the very thing being removed.</p>
+<blockquote>
+<p><strong>Registration is not removed automatically on <code>cluster down</code>.</strong> The post-<code>up</code>
+hook registers, but there is no matching hook on the way down — run <code>bnkforge unregister</code> as part of your teardown (this is what the BNK Forge blueprints do in
+their destroy step).</p>
+</blockquote>
 <h3 id="driving-the-bnk-forge-cli-directly"><a class="header" href="#driving-the-bnk-forge-cli-directly">Driving the <code>bnk-forge</code> CLI directly</a></h3>
 <p><code>bnkforge register</code> is a thin wrapper around the <code>bnk-forge clusters register</code>
 command, which you can also run yourself. Look up the cluster’s id and region
@@ -9300,17 +9335,26 @@ provision takes ~30 min) before the trial apply.</p>
 <p>Configure + drive BNK Forge cluster registration</p>
 <p>Configure and drive registration of this workspace’s cluster with a
 co-located BNK Forge (v3) install — without hand-editing config.yaml.</p>
-<p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
-disable   turn it back off
-status    show the effective config + readiness
-register  register this workspace’s cluster with BNK Forge right now</p>
+<p>enable      turn on auto-registration on <code>cluster up</code> (writes config.yaml)
+disable     turn it back off (LOCAL only — does not unregister)
+status      show the effective config + readiness
+register    register this workspace’s cluster with BNK Forge right now
+unregister  remove this workspace’s cluster from its BNK Forge project</p>
 <p>Registration uses BNK Forge v3’s REST API (it has no CLI). It is credential-
 backed: an IBM Cloud credential template is stored in Forge so it re-derives the
 kubeconfig on demand — nothing perishable is stored. The password is read from
 BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
 session token is cached in the OS keychain.</p>
 <h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
-<p>Turn off BNK Forge auto-registration</p>
+<p>Turn off BNK Forge auto-registration (<strong>local only — does not unregister</strong>)</p>
+<pre><code>roksbnkctl bnkforge disable
+</code></pre>
+<p>Clears the workspace’s auto-register flag, so <code>cluster up</code> stops registering with
+BNK Forge.</p>
+<p>This is a <strong>local setting and never contacts the server</strong>. Despite reading like the
+inverse of <code>register</code>, it does not remove anything: a cluster already registered
+stays on Forge’s Kubernetes page. To remove it, use
+<a href="#roksbnkctl-bnkforge-unregister"><code>bnkforge unregister</code></a>.</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-enable"><a class="header" href="#roksbnkctl-bnkforge-enable"><code>roksbnkctl bnkforge enable</code></a></h3>
 <p>Enable BNK Forge auto-registration on <code>cluster up</code> (writes config.yaml for you)</p>
@@ -9347,6 +9391,45 @@ session token is cached in the OS keychain.</p>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username (overrides config)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-unregister"><a class="header" href="#roksbnkctl-bnkforge-unregister"><code>roksbnkctl bnkforge unregister</code></a></h3>
+<p>Remove this workspace’s cluster from its BNK Forge project</p>
+<pre><code>roksbnkctl bnkforge unregister [flags]
+</code></pre>
+<p>Undoes what <code>bnkforge register</code> did. Without it a workspace can create a
+registration it has no way to remove: <code>bnkforge disable</code> only clears the local
+auto-register flag, so after a teardown the cluster stays on Forge’s Kubernetes
+page — inside a project that outlives everything it was created alongside,
+pointing at a cluster that may no longer have BNK on it, or may no longer exist.</p>
+<p><strong>Absence is success.</strong> A destroy path runs when things are already partly
+dismantled, and may well run twice, so every “it was not there” case reports and
+exits 0:</p>
+<ul>
+<li>no project of that name</li>
+<li>the project exists but holds no cluster of that name</li>
+<li>the cluster exists but the DELETE returns 404</li>
+</ul>
+<p>Only a genuine server failure surfaces as an error. It also <strong>never creates
+anything</strong> — unlike <code>register</code>, which ensures the project exists, a teardown asking
+<em>“is this still here?”</em> must not bring it into being.</p>
+<p>The cluster name comes from the workspace’s recorded cluster outputs, falling back
+to the workspace name; the project from <code>bnkforge.project</code>, falling back to the
+workspace name.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge base URL</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge username</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer <code>BNK_FORGE_PASSWORD</code>)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
 </tbody>
 </table>
 </div>

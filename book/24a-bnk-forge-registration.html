@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a133a368.js";
+            window.path_to_searchindex_js = "searchindex-ee0f56b4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -240,9 +240,10 @@ the CLI so Forge can create a credential template if you don’t have one yet.</
 </thead>
 <tbody>
 <tr><td><code>bnkforge enable [--url U] [--project P]</code></td><td>Persist <code>register: true</code> (+ optional overrides) so every <code>cluster up</code> registers the cluster.</td></tr>
-<tr><td><code>bnkforge disable</code></td><td>Persist <code>register: false</code> — turn the auto-hook off.</td></tr>
+<tr><td><code>bnkforge disable</code></td><td>Persist <code>register: false</code> — turn the auto-hook off. <strong>Local only: it does not unregister anything.</strong></td></tr>
 <tr><td><code>bnkforge status</code></td><td>Show the effective config (register / url / project), whether the <code>bnk-forge</code> CLI is on <code>PATH</code>, and whether a cluster id is recorded.</td></tr>
 <tr><td><code>bnkforge register [--url U] [--project P]</code></td><td>Register the current workspace’s cluster <strong>now</strong>, regardless of the opt-in. Surfaces errors (the auto-hook swallows them).</td></tr>
+<tr><td><code>bnkforge unregister [--url U] [--project P]</code></td><td>Remove the cluster from its Forge project — the inverse of <code>register</code>. Every “not there” case exits 0, so it is safe on a teardown path.</td></tr>
 </tbody>
 </table>
 </div>
@@ -331,6 +332,40 @@ roksbnkctl -w acme-eu bnkforge register --project 42   # one-off project overrid
 <p>It reads the cluster id + region from <code>cluster-outputs.json</code>, resolves your IBM
 Cloud API key the usual way, and runs exactly what the post-<code>up</code> hook runs — the
 only difference is that errors are <strong>surfaced</strong> rather than swallowed.</p>
+<h2 id="unregistering-on-teardown"><a class="header" href="#unregistering-on-teardown">Unregistering on teardown</a></h2>
+<p><code>bnkforge disable</code> reads like the inverse of <code>register</code>, but it is not: it clears
+the local <code>register</code> flag and <strong>never contacts the server</strong>. A cluster already
+registered stays on Forge’s Kubernetes page, in a project that outlives everything
+it was created alongside, pointing at a cluster that may no longer have BNK on it —
+or may no longer exist.</p>
+<p><code>roksbnkctl bnkforge unregister</code> is the actual inverse:</p>
+<pre><code class="language-bash">roksbnkctl -w acme-eu bnkforge unregister
+✓ unregistered cluster "acme-eu" (id 13) from BNK Forge project "acme-eu"
+</code></pre>
+<p><strong>Absence is success.</strong> A destroy runs when things are already half dismantled, and
+may run twice, so each of these reports and exits 0 rather than failing:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Situation</th><th>Output</th></tr>
+</thead>
+<tbody>
+<tr><td>No project of that name</td><td><code>✓ no BNK Forge project "acme-eu" — nothing to unregister</code></td></tr>
+<tr><td>Project exists, cluster does not</td><td><code>✓ cluster "acme-eu" is not registered in project "acme-eu" — nothing to do</code></td></tr>
+<tr><td>Cluster already deleted (404)</td><td>treated as done</td></tr>
+</tbody>
+</table>
+</div>
+<p>Only a genuine server failure surfaces as an error. Treating absence as failure
+would make the command unusable in exactly the situation it exists for.</p>
+<p>It also <strong>never creates anything</strong>. <code>register</code> ensures the project exists; a
+teardown asking <em>“is this still here?”</em> must not bring it into being, or it would
+leave behind the very thing being removed.</p>
+<blockquote>
+<p><strong>Registration is not removed automatically on <code>cluster down</code>.</strong> The post-<code>up</code>
+hook registers, but there is no matching hook on the way down — run <code>bnkforge unregister</code> as part of your teardown (this is what the BNK Forge blueprints do in
+their destroy step).</p>
+</blockquote>
 <h3 id="driving-the-bnk-forge-cli-directly"><a class="header" href="#driving-the-bnk-forge-cli-directly">Driving the <code>bnk-forge</code> CLI directly</a></h3>
 <p><code>bnkforge register</code> is a thin wrapper around the <code>bnk-forge clusters register</code>
 command, which you can also run yourself. Look up the cluster’s id and region
