@@ -4,6 +4,29 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.36.0 — 2026-08-05
+
+### Added
+
+- **`roksbnkctl registry adopt` — use a mirror this workspace did not populate.** `bnk up` refuses to render against a mirror the workspace has no record of, but only `registry replicate` ever wrote that record — so a workspace could only use a mirror it had filled itself. That is the wrong constraint: a registry is populated once as a supply-chain step, then many installs pull from it, often from a different workspace, host or team. Those installs had to re-run `replicate` purely to re-derive a record, and `replicate` needs the FAR source (`repo.f5.com`) reachable at install time — which an air-gapped operator usually does not have, that being the whole point of mirroring. `adopt` derives the record from the configured registry target and asks the *mirror* what it holds, so it needs **no source access at all**. `--verify-contents` builds the BOM and digest-checks every artifact before recording, when the source *is* reachable.
+- **`registry verify` now points at the fix.** A mirror proven good but unrecorded prints a note naming `registry adopt`, so it is one obvious command away from usable. `verify` itself stays strictly read-only: a verb that promises inspection should not change what a later `bnk up` does.
+
+### Fixed
+
+- **`registry adopt` and `registry delete` did not trust the mirror CA.** Both built a copy engine without `RegistryCA`, and `craneOpts` only installs a private CA when that field is set — so against a **self-signed mirror**, which is the entire case this subsystem exists for, both ran against the system roots alone. `adopt`'s catalog probe failed `x509` and degraded to a warning, meaning the command *succeeded* while silently losing its only validation (the prefix-typo guard could never fire); `adopt --verify-contents` reported every artifact as missing against a healthy mirror; and every manifest DELETE failed. `registryEngine` now takes the CA as a **required parameter**, so a call site cannot omit it — which is how the second instance was found.
+- **An adopted inventory now carries digests.** `--verify-contents` recorded `Kind`/`Name`/`Tag` but no digest, so `registry delete` fell back to tag-based deletion rather than the digest-based form. `Verify` returned only failures, discarding digests it had just resolved; the new `VerifyAll` returns one result per artifact with its target digest, and `Verify` filters it, so its contract and existing callers are unchanged.
+- **`bnk up`'s mirror guard no longer sends air-gapped operators down a dead end.** `guardRegistryMirror` and `ErrNoRegistryMirror` told the operator to run `registry replicate`, which needs the FAR source. They now name both paths and say which applies:
+
+  ```
+  a registry mirror is configured for this workspace but this workspace has no record of it.
+    If the mirror still needs filling:      roksbnkctl registry replicate   (needs the FAR source)
+    If it is already populated elsewhere:   roksbnkctl registry adopt       (no source access needed)
+  ```
+
+### Changed
+
+- **Book.** New `registry adopt` command-reference section; the air-gap chapter's "One mirror, many clusters" guidance corrected (it told a second workspace to re-run `replicate`, which cannot run without the source), and its TLS-trust aside updated — roksbnkctl installs the mirror CA on every node itself from `registry.generic_ca_b64`, rather than the operator doing it by hand.
+
 ## v1.35.0 — 2026-08-04
 
 ### Changed
