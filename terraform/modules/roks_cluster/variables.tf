@@ -125,3 +125,26 @@ variable "cluster_absent" {
   type        = bool
   default     = false
 }
+
+variable "cluster_vpc_cidr" {
+  description = <<-EOT
+    CIDR block the cluster VPC's per-zone address prefixes are carved from
+    (e.g. "10.241.0.0/16" → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18).
+
+    Empty (the default) leaves IBM's "auto" address prefix management in place,
+    which gives EVERY VPC in a region the same prefixes — so two roksbnkctl-created
+    clusters cannot share a Transit Gateway without overlapping. Set a distinct block
+    per cluster when they must. Ignored when reusing an existing VPC. See issue #46.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cluster_vpc_cidr == "" || can(cidrhost(var.cluster_vpc_cidr, 0))
+    error_message = "cluster_vpc_cidr must be empty or a valid CIDR block, e.g. 10.241.0.0/16."
+  }
+  validation {
+    condition     = var.cluster_vpc_cidr == "" || tonumber(split("/", var.cluster_vpc_cidr)[1]) <= 18
+    error_message = "cluster_vpc_cidr needs /18 or larger. It is split into three per-zone prefixes (/n+2) and each cluster subnet is the first /n+8 of its zone: /16 gives 256-address subnets (today's size), /17 gives 128, /18 gives 64."
+  }
+}

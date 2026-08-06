@@ -27,6 +27,7 @@ Source: `terraform/variables.tf`
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
 | `roks_cos_instance_name` | `string` | `"tf-openshift-cos-instance"` | Name of the COS instance for the OpenShift image registry | no |
 | `roks_transit_gateway_name` | `string` | `"tf-tgw"` | Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true. | no |
+| `cluster_vpc_cidr` | `string` | `""` | CIDR the cluster VPC's three per-zone address prefixes are carved from (`10.241.0.0/16` → `10.241.0.0/18`, `10.241.64.0/18`, `10.241.128.0/18`). Empty leaves IBM's `auto` management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. `/18` is the smallest usable block. Ignored when `use_existing_cluster_vpc = true`. | no |
 | `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create). | no |
 | `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id. | no |
 | `install_cert_manager` | `bool` | `true` | Install cert-manager. When false, cert_manager_namespace is passed directly to flo. | no |
@@ -377,6 +378,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
 | `roks_cos_instance_name` | `string` | `"tf-openshift-cos-instance"` | Name of the COS instance for the OpenShift image registry | no |
 | `roks_transit_gateway_name` | `string` | `"tf-tgw"` | Name of the Transit Gateway | no |
+| `cluster_vpc_cidr` | `string` | `""` | CIDR the cluster VPC's three per-zone address prefixes are carved from (`10.241.0.0/16` → `10.241.0.0/18`, `10.241.64.0/18`, `10.241.128.0/18`). Empty leaves IBM's `auto` management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. `/18` is the smallest usable block. Ignored when `use_existing_cluster_vpc = true`. | no |
 | `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster). | no |
 | `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster). | no |
 | `kubeconfig_dir` | `string` | _required_ | Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner. | no |

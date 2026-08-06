@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -130,6 +131,11 @@ func RunTGWConnect(ctx context.Context, in *LifecycleInputs) error {
 
 	extraVF, target, err := writeAndInitTGWPhase(ctx, tfws, cctx.Workspace, in.Workspace)
 	if err != nil {
+		return err
+	}
+	// We are past the already-attached fast path, so this apply would CREATE an
+	// attachment. Refuse first if it would put two overlapping VPCs on one gateway.
+	if err := guardTGWPrefixOverlap(ctx, cctx, in.Workspace, target); err != nil {
 		return err
 	}
 	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
@@ -295,4 +301,104 @@ func RunTGWDisconnect(ctx context.Context, in *LifecycleInputs) error {
 	}
 	fmt.Fprintln(w, "✓ Detached from the Transit Gateway.")
 	return nil
+}
+
+// guardTGWPrefixOverlap refuses to attach this workspace's cluster VPC to a
+// gateway that already carries a VPC with overlapping address prefixes.
+//
+// The `cluster up` guard (cli.guardVPCPrefixOverlap) catches this before the VPC
+// is built. This one covers the other door into the same failure: an EXISTING VPC
+// being attached to a shared gateway — the reuse path, where the prefixes are
+// already fixed and the only remaining choice is whether to attach at all.
+//
+// A gateway cannot route to two VPCs with overlapping prefixes; it silently drops
+// traffic for one. Catching it here turns a blackhole that presents as intermittent
+// image-pull timeouts into an immediate error naming the other VPC (issue #46).
+//
+// Best-effort throughout: every lookup failure returns nil and lets the apply run.
+func guardTGWPrefixOverlap(ctx context.Context, cctx *config.Context, workspace, target string) error {
+	co, err := loadReuseClusterOutputs(workspace)
+	if err != nil || co == nil || co.VPCID == "" {
+		return nil // nothing recorded yet — the cluster-up guard covers the create path
+	}
+	ic, err := tgwIBMClient(ctx, cctx)
+	if err != nil {
+		return nil
+	}
+	region := cctx.Workspace.IBMCloud.Region
+	ours, err := ic.ListVPCAddressPrefixes(ctx, region, co.VPCID)
+	if err != nil || len(ours) == 0 {
+		return nil
+	}
+	gw, err := ic.ResolveTransitGateway(ctx, target)
+	if err != nil || gw == nil {
+		return nil
+	}
+	conns, err := ic.ListTGWConnections(ctx, gw.ID)
+	if err != nil {
+		return nil
+	}
+	vpcs, err := ic.ListVPCs(ctx, region)
+	if err != nil {
+		return nil
+	}
+	byCRN := make(map[string]ibm.VPC, len(vpcs))
+	for _, v := range vpcs {
+		byCRN[strings.ToLower(v.CRN)] = v
+	}
+
+	attached := map[string][]string{}
+	for _, c := range conns {
+		if c.NetworkType != "" && !strings.EqualFold(c.NetworkType, "vpc") {
+			continue
+		}
+		if c.Status != "attached" && c.Status != "pending" {
+			continue
+		}
+		v, ok := byCRN[strings.ToLower(c.NetworkID)]
+		if !ok || v.ID == co.VPCID {
+			continue // skip ourselves: our own attachment cannot conflict with us
+		}
+		prefixes, perr := ic.ListVPCAddressPrefixes(ctx, region, v.ID)
+		if perr != nil {
+			continue
+		}
+		for _, p := range prefixes {
+			attached[v.Name] = append(attached[v.Name], p.CIDR)
+		}
+	}
+	if len(attached) == 0 {
+		return nil
+	}
+
+	var mine []string
+	for _, p := range ours {
+		mine = append(mine, p.CIDR)
+	}
+	conflicts, err := ibm.FindPrefixConflicts(mine, attached)
+	if err != nil || len(conflicts) == 0 {
+		return nil
+	}
+	sort.Slice(conflicts, func(i, j int) bool {
+		if conflicts[i].VPCName != conflicts[j].VPCName {
+			return conflicts[i].VPCName < conflicts[j].VPCName
+		}
+		return conflicts[i].Intended < conflicts[j].Intended
+	})
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "this cluster's VPC overlaps a VPC already attached to transit gateway %q:\n", target)
+	for _, c := range conflicts {
+		fmt.Fprintf(&b, "  %s\n", c)
+	}
+	b.WriteString("\nA transit gateway cannot route to two VPCs with overlapping address prefixes:\n")
+	b.WriteString("it silently blackholes one, which surfaces as INTERMITTENT image-pull timeouts\n")
+	b.WriteString("against the mirror while every security group and ACL in the path allows it.\n\n")
+	b.WriteString("This VPC already exists, so its prefixes cannot be changed in place — moving a\n")
+	b.WriteString("subnet's CIDR replaces it, which destroys the cluster on it. Either:\n")
+	b.WriteString("  • detach the other VPC:  roksbnkctl -w <its-workspace> tgw disconnect --auto\n")
+	b.WriteString("  • or rebuild this cluster on its own block, set BEFORE `cluster up`:\n")
+	b.WriteString("      config.yaml:  cluster.vpc_cidr: 10.242.0.0/16\n")
+	b.WriteString("      env:          ROKSBNKCTL_CLUSTER_VPC_CIDR=10.242.0.0/16")
+	return errors.New(b.String())
 }

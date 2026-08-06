@@ -40,6 +40,7 @@ module "cluster" {
   # submodule resolves data.ibm_is_vpc.existing_cluster_vpc[0] instead of
   # planning ibm_is_vpc.cluster_vpc[0] (duplicate-name failure).
   use_existing_cluster_vpc = var.use_existing_cluster_vpc
+  cluster_vpc_cidr         = var.cluster_vpc_cidr
   existing_cluster_vpc_id  = var.existing_cluster_vpc_id
 
   # Creating → the name to CREATE. Adopting → the identity to LOOK UP, which

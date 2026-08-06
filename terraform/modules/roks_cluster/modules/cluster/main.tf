@@ -21,6 +21,33 @@ data "ibm_container_cluster_versions" "cluster_versions" {}
 locals {
   zones = length(var.zones) > 0 ? var.zones : data.ibm_is_zones.regional_zones.zones
 
+  # ── Cluster VPC addressing ────────────────────────────────────────────────
+  # IBM's DEFAULT ("auto") address prefix management gives every VPC in a region
+  # the SAME per-zone prefixes. Two roksbnkctl-created cluster VPCs on one Transit
+  # Gateway therefore overlap, and the gateway silently blackholes one of them —
+  # surfacing as intermittent image-pull timeouts while every SG and ACL allows the
+  # traffic. See issue #46.
+  #
+  # Supplying cluster_vpc_cidr switches this VPC to MANUAL prefixes carved from that
+  # block, so a second cluster can be given a different one and share the gateway.
+  # Empty keeps "auto" — today's behaviour, and no plan diff for an existing
+  # workspace, because moving a live subnet's CIDR would replace it (and with it the
+  # cluster).
+  manual_prefixes = var.cluster_vpc_cidr != "" && !var.use_existing_cluster_vpc
+
+  # /16 → one /18 per zone. The historical default 10.241.0.0/16 reproduces exactly
+  # what "auto" assigned (10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18), so opting
+  # in on a NEW cluster with the default changes no addresses.
+  zone_prefixes = local.manual_prefixes ? [
+    for i in range(3) : cidrsubnet(var.cluster_vpc_cidr, 2, i)
+  ] : []
+
+  # Each zone's cluster subnet: the first /24 of that zone's prefix — 256 addresses,
+  # matching the total_ipv4_address_count used in the auto case.
+  zone_subnets = local.manual_prefixes ? [
+    for p in local.zone_prefixes : cidrsubnet(p, 6, 0)
+  ] : []
+
   available_openshift_versions = data.ibm_container_cluster_versions.cluster_versions.valid_openshift_versions
 
   # Filter to versions matching the requested major.minor prefix (e.g. "4.18").
@@ -101,11 +128,24 @@ resource "ibm_is_vpc" "cluster_vpc" {
   name           = var.cluster_vpc_name
   resource_group = data.ibm_resource_group.resource_group.id
   tags           = ["terraform", "cluster"]
+  # "auto" (the IBM default) hands every VPC in the region identical prefixes —
+  # see local.manual_prefixes. "manual" lets cluster_vpc_cidr place this one.
+  address_prefix_management = local.manual_prefixes ? "manual" : "auto"
 
   timeouts {
     create = "30m"
     delete = "30m"
   }
+}
+
+# One address prefix per zone, created ONLY in manual mode. In auto mode IBM makes
+# these itself and this resource is absent, so an existing workspace sees no change.
+resource "ibm_is_vpc_address_prefix" "cluster_zone" {
+  count = local.manual_prefixes ? 3 : 0
+  name  = "${var.cluster_vpc_name}-zone${count.index + 1}"
+  vpc   = ibm_is_vpc.cluster_vpc[0].id
+  zone  = local.zones[count.index]
+  cidr  = local.zone_prefixes[count.index]
 }
 
 # Get available instance profiles in cluster region for worker node selection
@@ -123,7 +163,9 @@ resource "ibm_is_subnet" "cluster_subnet_zone1" {
   name                     = "${var.openshift_cluster_name}-subnet-zone1"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[0]
-  total_ipv4_address_count = 256
+  ipv4_cidr_block          = local.manual_prefixes ? local.zone_subnets[0] : null
+  total_ipv4_address_count = local.manual_prefixes ? null : 256
+  depends_on               = [ibm_is_vpc_address_prefix.cluster_zone]
   resource_group           = data.ibm_resource_group.resource_group.id
   # Attach the zone's public gateway INLINE (not via a separate
   # ibm_is_subnet_public_gateway_attachment). Deleting the subnet then removes the
@@ -143,7 +185,9 @@ resource "ibm_is_subnet" "cluster_subnet_zone2" {
   name                     = "${var.openshift_cluster_name}-subnet-zone2"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[1]
-  total_ipv4_address_count = 256
+  ipv4_cidr_block          = local.manual_prefixes ? local.zone_subnets[1] : null
+  total_ipv4_address_count = local.manual_prefixes ? null : 256
+  depends_on               = [ibm_is_vpc_address_prefix.cluster_zone]
   resource_group           = data.ibm_resource_group.resource_group.id
   public_gateway           = local.pgw_zone2
 
@@ -158,7 +202,9 @@ resource "ibm_is_subnet" "cluster_subnet_zone3" {
   name                     = "${var.openshift_cluster_name}-subnet-zone3"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[2]
-  total_ipv4_address_count = 256
+  ipv4_cidr_block          = local.manual_prefixes ? local.zone_subnets[2] : null
+  total_ipv4_address_count = local.manual_prefixes ? null : 256
+  depends_on               = [ibm_is_vpc_address_prefix.cluster_zone]
   resource_group           = data.ibm_resource_group.resource_group.id
   public_gateway           = local.pgw_zone3
 

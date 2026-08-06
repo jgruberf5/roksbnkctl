@@ -26,6 +26,15 @@ cluster:
   # workers_per_zone: 2         # blank = roksbnkctl default (AZ-floor clamped)
   # min_worker_vcpu_count: 16   # worker-flavor auto-select floor (blank = default 16)
   # min_worker_memory_gb: 64    # worker-flavor auto-select floor (blank = default 64)
+  #
+  # vpc_cidr: 10.242.0.0/16     # address block for a NEW cluster VPC (blank = IBM auto)
+  #   Blank lets IBM auto-assign, which gives EVERY VPC in the region the same
+  #   prefixes (10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). That is fine for one
+  #   cluster, but a transit gateway cannot route to two VPCs with overlapping
+  #   prefixes — it silently blackholes one. Set a distinct block per cluster when
+  #   two clusters will share a gateway. Split into three per-zone /18s (a /16 here),
+  #   so /18 is the smallest usable block. Applies at CREATE time only: an existing
+  #   VPC's prefixes cannot be changed without replacing its subnets.
 
 tf_source:
   type: embedded                # embedded | github | local (REQUIRED)

@@ -10,6 +10,59 @@ roksbnkctl attaches a cluster's VPC to an **existing** Transit Gateway — by na
 or by id, at create time or after — as its own small phase. Each workspace owns
 its own connection, so N clusters can point at the one gateway.
 
+## First: give each cluster VPC its own address block
+
+Decide this **before** `cluster up`, because it cannot be changed afterwards.
+
+A Transit Gateway routes on VPC **address prefixes**. Two attached VPCs claiming
+the same block make routing ambiguous, and the gateway resolves that by silently
+dropping traffic for one of them. Nothing logs an error. What you see instead is
+*intermittent* image-pull timeouts against a mirror while every security group and
+network ACL in the path plainly allows the traffic — which is why this is worth a
+minute up front.
+
+It is easy to hit by accident. IBM's default address prefix management is `auto`,
+which assigns **every** VPC in a region the same three per-zone prefixes:
+
+```
+10.241.0.0/18   10.241.64.0/18   10.241.128.0/18
+```
+
+So a second roksbnkctl-created cluster joining a shared gateway collides by
+construction, not by bad luck. Give each one a distinct block:
+
+```yaml
+cluster:
+  create: true
+  name: acme-eu-roks
+  vpc_cidr: 10.242.0.0/16     # this cluster's own block
+```
+
+or `ROKSBNKCTL_CLUSTER_VPC_CIDR=10.242.0.0/16` for CI. The block is split into
+three per-zone prefixes (a `/16` becomes three `/18`s), so **`/18` is the smallest
+usable value**. Leaving it blank keeps IBM's auto assignment, and the default
+`10.241.0.0/16` produces byte-identical prefixes to what `auto` gives today — so
+setting it explicitly on a *first* cluster changes no addresses.
+
+A worked allocation for a shared gateway:
+
+| VPC | `vpc_cidr` | Per-zone prefixes |
+|---|---|---|
+| services (Harbor, FLP) | *existing, `10.243.0.0/24`* | — |
+| first cluster | `10.241.0.0/16` | `10.241.0.0/18`, `.64.0/18`, `.128.0/18` |
+| second cluster | `10.242.0.0/16` | `10.242.0.0/18`, `.64.0/18`, `.128.0/18` |
+
+roksbnkctl checks this for you. `cluster up` refuses **before** terraform creates
+anything when the VPC it is about to build would overlap a VPC already on the
+gateway, and `tgw connect` refuses before attaching an existing VPC that would
+overlap — each naming the other VPC and the colliding prefixes. If the check
+cannot reach the API it warns and continues rather than blocking the build.
+
+**Already built two overlapping clusters?** The prefixes of a live VPC can't be
+edited — moving a subnet's CIDR replaces the subnet, which destroys the cluster on
+it. Either keep only one of them attached at a time (`tgw disconnect` on the
+other; the cluster itself survives), or rebuild one with `vpc_cidr` set.
+
 ## Attach when creating (the interview)
 
 Decline to create a gateway, and `init` **discovers the transit gateways already

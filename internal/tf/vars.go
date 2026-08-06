@@ -355,6 +355,13 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 	if c.PublicGateway != nil {
 		fmt.Fprintf(w, "cluster_public_gateway = %v\n", *c.PublicGateway)
 	}
+	// Cluster VPC addressing. Emitted only when set: empty leaves terraform on IBM's
+	// "auto" prefixes, which is the pre-existing behaviour and — importantly — the
+	// only one that produces no plan diff for a workspace whose subnets already
+	// exist. Moving a live subnet's CIDR would replace it, and the cluster with it.
+	if strings.TrimSpace(c.VPCCIDR) != "" {
+		fmt.Fprintf(w, "cluster_vpc_cidr = %q\n", strings.TrimSpace(c.VPCCIDR))
+	}
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.

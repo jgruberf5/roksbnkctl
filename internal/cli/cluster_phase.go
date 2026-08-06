@@ -377,6 +377,14 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Refuse BEFORE terraform touches anything if this VPC's address prefixes would
+	// overlap one already on the transit gateway it is joining. Cheap to check, and
+	// the alternative is expensive: the gateway cannot route to two overlapping VPCs,
+	// so it silently blackholes one — presenting as intermittent image-pull timeouts
+	// while every security group and ACL in the path allows the traffic (issue #46).
+	if err := guardVPCPrefixOverlap(ctx, cctx); err != nil {
+		return err
+	}
 	if err := writeAndInit(ctx, tfws, cctx.Workspace); err != nil {
 		return err
 	}

@@ -154,6 +154,21 @@ type ClusterCfg struct {
 	// an explicit false. Rendered as cluster_public_gateway.
 	PublicGateway *bool `yaml:"public_gateway,omitempty"`
 
+	// VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved
+	// from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18.
+	//
+	// Empty leaves IBM's "auto" address prefix management, which hands EVERY VPC in
+	// a region the same prefixes. Two roksbnkctl-created clusters then overlap, and a
+	// Transit Gateway they share cannot route to both — it silently blackholes one,
+	// which surfaces as intermittent image-pull timeouts rather than as a routing
+	// error (issue #46). Give each cluster its own block when they must share a
+	// gateway, which is the norm for disconnected installs: the cluster has to reach
+	// the private mirror over that gateway.
+	//
+	// Only meaningful when the cluster is CREATED; an adopted VPC keeps its own
+	// prefixes. Rendered as cluster_vpc_cidr.
+	VPCCIDR string `yaml:"vpc_cidr,omitempty"`
+
 	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
 	// (the cluster module picks the smallest bx2 profile meeting both minimums).
 	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)

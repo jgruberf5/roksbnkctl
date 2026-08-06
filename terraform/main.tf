@@ -50,6 +50,7 @@ module "roks_cluster" {
   roks_cos_instance_name            = var.roks_cos_instance_name
   roks_transit_gateway_name         = var.roks_transit_gateway_name
   use_existing_cluster_vpc          = var.use_existing_cluster_vpc
+  cluster_vpc_cidr                  = var.cluster_vpc_cidr
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
   kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
   roksbnkctl_binary                 = var.roksbnkctl_binary

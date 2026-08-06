@@ -34,6 +34,7 @@ import (
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
+//	ROKSBNKCTL_CLUSTER_VPC_CIDR     → cluster.vpc_cidr (per-zone prefixes; avoids TGW overlap)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
@@ -123,6 +124,15 @@ func OverrideFromEnv(ws *Workspace) []string {
 			ws.Cluster.PublicGateway = &b
 			applied = append(applied, "cluster.public_gateway (ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY)")
 		}
+	}
+
+	// The block the cluster VPC's per-zone prefixes come from. Without it every
+	// roksbnkctl-created VPC in a region gets the SAME prefixes, so two clusters
+	// cannot share a Transit Gateway — the norm for disconnected installs, which
+	// must reach their mirror over one. An env-only runner had no way to say so.
+	if v := envValue("ROKSBNKCTL_CLUSTER_VPC_CIDR"); v != "" {
+		ws.Cluster.VPCCIDR = v
+		applied = append(applied, "cluster.vpc_cidr (ROKSBNKCTL_CLUSTER_VPC_CIDR)")
 	}
 
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
