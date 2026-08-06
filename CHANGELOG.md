@@ -4,6 +4,47 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.39.0 — 2026-08-06
+
+### Added
+
+- **`cluster.vpc_cidr` — each cluster VPC can now own its address block.** ([#46](https://github.com/jgruberf5/roksbnkctl/issues/46))
+
+  Nothing in `terraform/` ever set `address_prefix_management`, so every VPC roksbnkctl created took IBM Cloud's default of `auto` — and `auto` assigns the **same** three per-zone prefixes to **every** VPC in a region:
+
+  ```
+  10.241.0.0/18   10.241.64.0/18   10.241.128.0/18
+  ```
+
+  A Transit Gateway routes on those prefixes. Two attached VPCs claiming the same block make the route ambiguous, and the gateway resolves it by silently blackholing traffic for one of them — no error, no log line. It surfaces much later as *intermittent* image-pull timeouts against a private mirror while every security group and network ACL in the path plainly allows the traffic. Because a disconnected cluster **must** share a gateway with its registry, the second disconnected cluster on a gateway collided by construction rather than by bad luck.
+
+  Set a distinct block per cluster:
+
+  ```yaml
+  cluster:
+    create: true
+    vpc_cidr: 10.242.0.0/16      # ROKSBNKCTL_CLUSTER_VPC_CIDR for argv+env callers
+  ```
+
+  The block is split into three per-zone prefixes (`cidrsubnet(cidr, 2, i)`), so **`/18` is the smallest usable value** — validated at plan time in all three module levels rather than failing mid-apply.
+
+  **Opt-in, and the default is a no-op by design.** Empty (the default) leaves `auto` in place. That matters because moving a live subnet's CIDR *replaces* the subnet — and the cluster on it — so this could not be switched on for existing workspaces. It is also why `10.241.0.0/16` yields prefixes byte-identical to what `auto` gives today: setting it explicitly on a first cluster changes no addresses, so the value can be adopted without a rebuild.
+
+### Fixed
+
+- **`cluster up` and `tgw connect` now refuse an overlap instead of building one.** The failure above is invisible at the layer it happens, so both doors into it are guarded:
+
+  - `cluster up` computes the prefixes the VPC *would* take and compares them against every VPC already attached to the gateway — **before** terraform creates anything.
+  - `tgw connect` compares the existing VPC's actual prefixes before attaching it.
+
+  Both name the conflicting VPC and the colliding CIDRs, and state the remedy (a distinct `vpc_cidr`, or detaching the other VPC — which does not require destroying its cluster). Both are **best-effort**: an unreachable API, an unresolvable gateway, or an unreadable VPC warns and continues, so this is a guard against one silent failure rather than a new precondition on building a cluster at all. Only `attached`/`pending` connections count, matching `tgwConnectionForVPC` — a `deleting` attachment is on its way out and must not block a build.
+
+### Documentation
+
+- New [Give each cluster VPC its own address block](book/src/09a-transit-gateway-sharing.md) section with a worked allocation table for a shared gateway, and what to do when two overlapping clusters already exist.
+- New troubleshooting entry for the actual presenting symptom — *intermittent* mirror pull timeouts with every security group and ACL open — including the `ibmcloud tg connections` / `vpc-address-prefixes` commands to confirm it.
+- `cluster.vpc_cidr` and `ROKSBNKCTL_CLUSTER_VPC_CIDR` added to the configuration reference (all three tables), the terraform variable reference, the unattended-setup env table, and `config.example.yaml`.
+
 ## v1.38.0 — 2026-08-06
 
 ### Added
