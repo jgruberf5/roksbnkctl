@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/IBM/go-sdk-core/v5 v5.23.2
-	github.com/IBM/ibm-cos-sdk-go v1.15.0
+	github.com/IBM/ibm-cos-sdk-go v1.14.1
 	github.com/IBM/platform-services-go-sdk v0.101.0
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/google/go-containerregistry v0.21.8

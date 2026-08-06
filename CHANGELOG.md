@@ -13,7 +13,7 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   | Module | From | To |
   |---|---|---|
   | `github.com/IBM/go-sdk-core/v5` | `5.23.1` | `5.23.2` |
-  | `github.com/IBM/ibm-cos-sdk-go` | `1.14.1` | `1.15.0` |
+  | `github.com/IBM/ibm-cos-sdk-go` | `1.14.1` | *held at `1.14.1` — see below* |
   | `github.com/google/go-containerregistry` | `0.21.7` | `0.21.8` |
 
   `go-sdk-core` `5.23.2` is a dependency-vulnerability fix, which is the reason this is not deferred. It carries `golang.org/x/net` `0.56.0` → `0.57.0`, `x/mod`, `x/tools`, `go-openapi/strfmt`, `klauspost/compress`, `leodido/go-urn`, `oklog/ulid` and `gabriel-vasile/mimetype` along with it; `go-containerregistry` pulls `docker/cli` `29.5.3` → `29.6.2`.
@@ -21,6 +21,21 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Also `docker/login-action` `4.5.2` → `4.6.0` and `github/codeql-action` `4.37.3` → `4.37.5` in the workflows.
 
   Verified locally rather than on the runner: `go mod tidy` produced no change to `go.mod`/`go.sum`, and `build`, `vet`, `staticcheck`, the unit suite and the `-tags integration` suite against an ephemeral kind cluster all pass. GitHub Actions was not delivering `push` events for this repository while these merged, so the usual PR checks did not run — see the release note below.
+
+
+### Fixed
+
+- **Held `ibm-cos-sdk-go` at `1.14.1`: `1.15.0` does not compile for Windows.** Dependabot's group bump ([#48](https://github.com/jgruberf5/roksbnkctl/pull/48)) took it to `1.15.0`, which fails both Windows targets:
+
+  ```
+  ibm-cos-sdk-go@v1.15.0/service/s3/s3manager/pipe_download.go:253:20: undefined: unix.FcntlInt
+  ```
+
+  Upstream added a pipe-size probe that calls `unix.FcntlInt` — a symbol that does not exist on Windows — and guards it with a **runtime** `runtime.GOOS != "linux" && != "darwin"` check rather than a build constraint. The file carries no `//go:build` tag at all, so the reference is compiled on every platform and the runtime guard never gets the chance to help.
+
+  Nothing in the unit suite catches this, because it only appears when cross-compiling: `linux/*` and `darwin/*` build and test cleanly. It surfaced in the pre-tag goreleaser snapshot, which is the gate that exists for exactly this. Left unpinned it would have shipped a release with the two Windows assets missing — and `roksbnkctl self update` resolves assets by name, so Windows users would have been broken rather than merely stale.
+
+  `go-sdk-core` `5.23.2` and `go-containerregistry` `0.21.8` are unaffected and kept. All six release targets (`linux`, `darwin`, `windows` × `amd64`, `arm64`) are verified to compile.
 
 ### Notes
 
