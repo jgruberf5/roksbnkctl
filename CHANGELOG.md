@@ -4,6 +4,28 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.40.0 — 2026-08-06
+
+### Changed
+
+- **Dependency updates** ([#47](https://github.com/jgruberf5/roksbnkctl/pull/47), [#48](https://github.com/jgruberf5/roksbnkctl/pull/48), [#49](https://github.com/jgruberf5/roksbnkctl/pull/49)). No behaviour change; the direct bumps are:
+
+  | Module | From | To |
+  |---|---|---|
+  | `github.com/IBM/go-sdk-core/v5` | `5.23.1` | `5.23.2` |
+  | `github.com/IBM/ibm-cos-sdk-go` | `1.14.1` | `1.15.0` |
+  | `github.com/google/go-containerregistry` | `0.21.7` | `0.21.8` |
+
+  `go-sdk-core` `5.23.2` is a dependency-vulnerability fix, which is the reason this is not deferred. It carries `golang.org/x/net` `0.56.0` → `0.57.0`, `x/mod`, `x/tools`, `go-openapi/strfmt`, `klauspost/compress`, `leodido/go-urn`, `oklog/ulid` and `gabriel-vasile/mimetype` along with it; `go-containerregistry` pulls `docker/cli` `29.5.3` → `29.6.2`.
+
+  Also `docker/login-action` `4.5.2` → `4.6.0` and `github/codeql-action` `4.37.3` → `4.37.5` in the workflows.
+
+  Verified locally rather than on the runner: `go mod tidy` produced no change to `go.mod`/`go.sum`, and `build`, `vet`, `staticcheck`, the unit suite and the `-tags integration` suite against an ephemeral kind cluster all pass. GitHub Actions was not delivering `push` events for this repository while these merged, so the usual PR checks did not run — see the release note below.
+
+### Notes
+
+- **GitHub Actions did not fire on `push` for the `v1.39.0` tag or for the three dependency merges.** Every workflow is `active`, the repository is public with Actions enabled and `allowed_actions: all`, and `workflow_dispatch` runs start normally — so this is event delivery, not configuration. `v1.39.0`'s Release and container builds were started with the `workflow_dispatch` fallback that `release.yml` documents for exactly this case, and both succeeded. Worth re-checking that tag pushes trigger on their own before relying on them again.
+
 ## v1.39.0 — 2026-08-06
 
 ### Added
