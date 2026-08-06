@@ -33,7 +33,10 @@ import (
 //	ROKSBNKCTL_CLUSTER_CREATE       → cluster.create (bool: true/false/1/0)
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
+//	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
+//	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
+//	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
@@ -109,6 +112,18 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
+	// Worker Internet egress. This is the switch that makes a NEW cluster
+	// disconnected, and it was the one topology field an argv+env runner could
+	// not reach: nil renders nothing and terraform defaults to true, so every
+	// env-built cluster came up with a public gateway. Kept a *bool so "unset"
+	// (inherit the terraform default) stays distinct from an explicit false.
+	if v := envValue("ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			ws.Cluster.PublicGateway = &b
+			applied = append(applied, "cluster.public_gateway (ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY)")
+		}
+	}
+
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
 	// it. Preserves the other resource toggles.
@@ -128,6 +143,29 @@ func OverrideFromEnv(ws *Workspace) []string {
 		ws.Resources.ClusterVPC = ResourceToggle{Create: false, Existing: v}
 		applied = append(applied, "resources.cluster_vpc.existing (ROKSBNKCTL_CLUSTER_VPC_ID)")
 	}
+	// The optional testing client (jumphost VSI + client VPC). Both default OFF,
+	// matching the `init` interview, so these exist to opt IN from a runner that
+	// has no prompts. The client VPC consumes a Transit Gateway connection, so
+	// creating one unasked is not a free mistake.
+	if v := envValue("ROKSBNKCTL_TGW_JUMPHOST_CREATE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			if ws.Resources == nil {
+				ws.Resources = &ResourcesCfg{}
+			}
+			ws.Resources.TGWJumphost.Create = b
+			applied = append(applied, "resources.tgw_jumphost.create (ROKSBNKCTL_TGW_JUMPHOST_CREATE)")
+		}
+	}
+	if v := envValue("ROKSBNKCTL_CLIENT_VPC_CREATE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			if ws.Resources == nil {
+				ws.Resources = &ResourcesCfg{}
+			}
+			ws.Resources.ClientVPC.Create = b
+			applied = append(applied, "resources.client_vpc.create (ROKSBNKCTL_CLIENT_VPC_CREATE)")
+		}
+	}
+
 	// Name the testing client VPC to create (rendered as testing_client_vpc_name).
 	if v := envValue("ROKSBNKCTL_TESTING_VPC_NAME"); v != "" {
 		if ws.Resources == nil {

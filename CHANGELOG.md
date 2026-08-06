@@ -4,6 +4,24 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Added
+
+- **Cluster topology is now reachable from the environment.** An argv+env runner (a BNK Forge container module, a CI job) could build a cluster but could not say what *kind* of cluster, because the fields that decide it had no env override:
+
+  - `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` → `cluster.public_gateway`. This is the switch that makes a new cluster **disconnected**. `public_gateway` is a `*bool` so that unset stays distinct from an explicit `false`, and only a non-nil value renders `cluster_public_gateway` — so from env alone every cluster inherited terraform's default of `true` and came up with worker egress. A disconnected cluster simply could not be built without a hand-written `config.yaml`.
+  - `ROKSBNKCTL_TGW_JUMPHOST_CREATE` → `resources.tgw_jumphost.create`
+  - `ROKSBNKCTL_CLIENT_VPC_CREATE` → `resources.client_vpc.create`
+
+  An unparseable value is ignored rather than guessed at: silently picking a topology is worse than leaving the default in place.
+
+### Fixed
+
+- **`init --non-interactive` no longer builds a testing client nobody asked for.** `DefaultResources()` set `tgw_jumphost.create` and `client_vpc.create` to `true`, while the interview asks *"Add a testing client?"* and defaults to **no** — so the two paths disagreed, and the non-interactive one erred toward creating a jumphost VSI and a client VPC unprompted. The client VPC also consumes a **Transit Gateway connection**, which is a quota'd resource, so this was not a free mistake. The function's own doc comment claimed it mirrored the interview defaults; now it does. Opt in with the two new env vars.
+
+  This changes behaviour for existing non-interactive users: a run that previously produced a jumphost and client VPC no longer will.
+
 ## v1.37.0 — 2026-08-05
 
 ### Added

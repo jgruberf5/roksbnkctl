@@ -217,15 +217,22 @@ type ResourcesCfg struct {
 // defaults). Used by the non-interactive paths so that an env override touching
 // ONE toggle (e.g. adopting an existing transit gateway) doesn't leave the rest
 // at their bool zero value (create:false) and silently disable BNK / COS / etc.
+//
+// The testing client (TGWJumphost + ClientVPC) is OFF here because that is what
+// the interview defaults to — `init` asks "Add a testing client?" and defaults
+// to no. These previously defaulted ON, so a non-interactive run built a
+// jumphost VSI and a client VPC nobody asked for, and the client VPC consumed a
+// Transit Gateway connection. Opt in with ROKSBNKCTL_TGW_JUMPHOST_CREATE /
+// ROKSBNKCTL_CLIENT_VPC_CREATE.
 func DefaultResources() *ResourcesCfg {
 	return &ResourcesCfg{
 		TransitGateway:   ResourceToggle{Create: true},
 		RegistryCOS:      ResourceToggle{Create: true},
 		CertManager:      ResourceToggle{Create: true},
 		BNK:              ResourceToggle{Create: true},
-		TGWJumphost:      ResourceToggle{Create: true},
+		TGWJumphost:      ResourceToggle{Create: false},
 		ClusterJumphosts: ResourceToggle{Create: false},
-		ClientVPC:        ResourceToggle{Create: true},
+		ClientVPC:        ResourceToggle{Create: false},
 		ClusterVPC:       ResourceToggle{Create: true},
 	}
 }

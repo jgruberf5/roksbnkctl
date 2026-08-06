@@ -45,7 +45,9 @@ resources:
 		"bnk":          ws.Resources.BNK.Create,
 		"registry_cos": ws.Resources.RegistryCOS.Create,
 		"cert_manager": ws.Resources.CertManager.Create,
-		"client_vpc":   ws.Resources.ClientVPC.Create,
+		// cluster_vpc, not client_vpc: the testing client defaults OFF now, so it
+		// cannot witness "the pre-seed survived a partial file" any more.
+		"cluster_vpc": ws.Resources.ClusterVPC.Create,
 	} {
 		if !got {
 			t.Errorf("%s.create = false, want true — a partial resources block must not zero the other toggles", name)
