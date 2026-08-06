@@ -4,7 +4,7 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased
+## v1.38.0 — 2026-08-06
 
 ### Added
 
@@ -13,6 +13,7 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   - `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` → `cluster.public_gateway`. This is the switch that makes a new cluster **disconnected**. `public_gateway` is a `*bool` so that unset stays distinct from an explicit `false`, and only a non-nil value renders `cluster_public_gateway` — so from env alone every cluster inherited terraform's default of `true` and came up with worker egress. A disconnected cluster simply could not be built without a hand-written `config.yaml`.
   - `ROKSBNKCTL_TGW_JUMPHOST_CREATE` → `resources.tgw_jumphost.create`
   - `ROKSBNKCTL_CLIENT_VPC_CREATE` → `resources.client_vpc.create`
+  - `ROKSBNKCTL_CLIENT_VPC_NAME` → `resources.client_vpc.existing` — the jumphost lives *in* a client VPC, and terraform resolves that as "the one we created, else the named existing one". Without this the env surface could only express the create branch, so opting the jumphost in without also creating a VPC produced a config terraform cannot plan.
 
   An unparseable value is ignored rather than guessed at: silently picking a topology is worse than leaving the default in place.
 
@@ -21,6 +22,14 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 - **`init --non-interactive` no longer builds a testing client nobody asked for.** `DefaultResources()` set `tgw_jumphost.create` and `client_vpc.create` to `true`, while the interview asks *"Add a testing client?"* and defaults to **no** — so the two paths disagreed, and the non-interactive one erred toward creating a jumphost VSI and a client VPC unprompted. The client VPC also consumes a **Transit Gateway connection**, which is a quota'd resource, so this was not a free mistake. The function's own doc comment claimed it mirrored the interview defaults; now it does. Opt in with the two new env vars.
 
   This changes behaviour for existing non-interactive users: a run that previously produced a jumphost and client VPC no longer will.
+
+- **A TGW jumphost with nowhere to live is now rejected at `init`.** `resources.tgw_jumphost.create: true` with neither `client_vpc.create` nor `client_vpc.existing` left terraform's VPC lookup (`modules/testing/data.tf:69`) resolving an empty name, failing opaquely mid-apply. `init` now fails fast on both seed paths and names the two ways out.
+- **One definition of the resource defaults, not three.** `DefaultResources()` said the testing client was off while `internal/tf/vars.go`'s nil-`resources` fallback still inlined an all-true set — and that is a *provisioning* path, so a legacy or hand-edited `config.yaml` with no `resources:` block would have gone on silently building a jumphost and client VPC. Both it and `init.go`'s display-only `allCreateResources` now call `config.DefaultResources()`, so the two cannot drift apart again. (That drift is the same failure this release fixes between `DefaultResources` and the interview.)
+- **The cluster-lifecycle demos no longer ship a no-op testing phase.** `testing up` provisions exactly the three toggles, and `cluster_jumphosts` was already off — so defaulting the testing client off left it provisioning nothing. Both demos write a `config.yaml` with no `resources:` block and then run `testing up` + `test`, where `test` runs its probes *from* a jumphost. Their seeds now request the jumphost and its VPC explicitly.
+
+### Changed
+
+- **Book.** The configuration reference documented `resources.tgw_jumphost.create` defaulting to `true` in three places (the example block, the toggle table, the field table) — corrected, with the client-VPC dependency and the Transit-Gateway-connection cost called out. `cluster.public_gateway` now names its env override and explains the tri-state.
 
 ## v1.37.0 — 2026-08-05
 
