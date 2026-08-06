@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ee0f56b4.js";
+            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -1453,9 +1453,13 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_CLUSTER_CREATE</code></td><td><code>cluster.create</code></td><td>bool (<code>true</code>/<code>false</code>/<code>1</code>/<code>0</code>)</td></tr>
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code></td><td><code>cluster.public_gateway</code></td><td>bool — <code>false</code> builds a <strong>disconnected</strong> cluster whose workers have no Internet egress. Unset inherits the terraform default (<code>true</code>).</td></tr>
 <tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>)</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>
+<tr><td><code>ROKSBNKCTL_TGW_JUMPHOST_CREATE</code></td><td><code>resources.tgw_jumphost.create</code></td><td>bool — the optional testing jumphost. Defaults <strong>off</strong>, as the interview does.</td></tr>
+<tr><td><code>ROKSBNKCTL_CLIENT_VPC_CREATE</code></td><td><code>resources.client_vpc.create</code></td><td>bool — the testing client VPC. Defaults <strong>off</strong>; it consumes a Transit Gateway connection.</td></tr>
+<tr><td><code>ROKSBNKCTL_CLIENT_VPC_NAME</code></td><td><code>resources.client_vpc.existing</code></td><td>Adopt an existing client VPC instead of creating one — the env equivalent of the interview’s <em>“Existing client VPC name”</em>. Required if you enable the jumphost without creating a VPC.</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_URL</code></td><td><code>bnk.cis.bigip_url</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_USERNAME</code></td><td><code>bnk.cis.bigip_username</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>
@@ -11499,7 +11503,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
   registry_cos:      { create: true }
   cert_manager:      { create: true }
   bnk:               { create: true }
-  tgw_jumphost:      { create: true }
+  tgw_jumphost:      { create: false }   # the optional testing client — OFF by default
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
   client_region:     ca-tor               # testing-client region
@@ -11518,7 +11522,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>registry_cos</code></td><td><code>true</code></td><td><code>create_roks_registry_cos_instance</code>; <code>existing</code> → <code>roks_cos_instance_name</code></td><td><code>create_roks_registry_cos_instance</code>, <code>roks_cos_instance_name</code></td></tr>
 <tr><td><code>cert_manager</code></td><td><code>true</code></td><td>—</td><td><code>install_cert_manager</code></td></tr>
 <tr><td><code>bnk</code></td><td><code>true</code></td><td>—</td><td><code>deploy_bnk</code></td></tr>
-<tr><td><code>tgw_jumphost</code></td><td><code>true</code></td><td>—</td><td><code>testing_create_tgw_jumphost</code>, <code>testing_tgw_jumphost_name</code></td></tr>
+<tr><td><code>tgw_jumphost</code></td><td><code>false</code></td><td>—</td><td><code>testing_create_tgw_jumphost</code>, <code>testing_tgw_jumphost_name</code></td></tr>
 <tr><td><code>cluster_jumphosts</code></td><td><code>false</code></td><td>—</td><td><code>testing_create_cluster_jumphosts</code>, <code>testing_cluster_jumphost_name_prefix</code></td></tr>
 <tr><td><code>client_vpc</code></td><td><code>false</code> (created on demand for the TGW jumphost)</td><td><code>existing</code> → <code>testing_client_vpc_name</code> when not creating one</td><td><code>testing_create_client_vpc</code>, <code>testing_client_vpc_name</code></td></tr>
 </tbody>
@@ -11927,7 +11931,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
-<tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a</a>).</td></tr>
+<tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
@@ -11938,9 +11942,9 @@ values. The resulting block looks like:</p>
 <tr><td><code>resources.registry_cos.existing</code></td><td>string</td><td>(empty)</td><td>Existing COS instance name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.cert_manager.create</code></td><td>bool</td><td><code>true</code></td><td>Install cert-manager (<code>install_cert_manager</code>).</td></tr>
 <tr><td><code>resources.bnk.create</code></td><td>bool</td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes (<code>deploy_bnk</code>).</td></tr>
-<tr><td><code>resources.tgw_jumphost.create</code></td><td>bool</td><td><code>true</code></td><td>Create the TGW test jumphost.</td></tr>
+<tr><td><code>resources.tgw_jumphost.create</code></td><td>bool</td><td><code>false</code></td><td>Create the TGW test jumphost — the optional testing client, off by default (the <code>init</code> interview’s <em>“Add a testing client?”</em> also defaults to no). <strong>It lives in a client VPC</strong>, so enabling it requires either <code>client_vpc.create: true</code> or <code>client_vpc.existing</code>; <code>init</code> rejects the combination with neither.</td></tr>
 <tr><td><code>resources.cluster_jumphosts.create</code></td><td>bool</td><td><code>false</code></td><td>Create per-zone cluster jumphosts.</td></tr>
-<tr><td><code>resources.client_vpc.create</code></td><td>bool</td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost.</td></tr>
+<tr><td><code>resources.client_vpc.create</code></td><td>bool</td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost. Consumes a <strong>Transit Gateway connection</strong>, which is a quota’d resource.</td></tr>
 <tr><td><code>resources.client_vpc.existing</code></td><td>string</td><td>(empty)</td><td>Existing client VPC name when <code>create: false</code>.</td></tr>
 <tr><td><code>resources.client_region</code></td><td>string</td><td>(empty)</td><td>Region the testing client (TGW jumphost + client VPC) lives in → <code>testing_client_vpc_region</code>. Since <code>v1.9.0</code>.</td></tr>
 <tr><td><code>resources.testing_client_vpc_name</code></td><td>string</td><td>(empty)</td><td>Name for the testing client VPC when <code>client_vpc.create: true</code> → <code>testing_client_vpc_name</code>.</td></tr>
