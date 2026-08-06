@@ -7,6 +7,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # ibm-cos-sdk-go 1.15.0 does not compile for Windows: pipe_download.go calls
+    # unix.FcntlInt (which does not exist there) and guards it with a RUNTIME
+    # runtime.GOOS check instead of a build constraint, with no //go:build tag on
+    # the file. Only cross-compilation catches it — linux/darwin build and test
+    # clean — so the pre-tag goreleaser snapshot is what stopped it shipping a
+    # release with both Windows assets missing (v1.40.0).
+    #
+    # Pinned to that ONE version, not a floor: a fixed 1.15.1+ should still be
+    # proposed. Drop this entry once upstream tags a build that cross-compiles.
+    ignore:
+      - dependency-name: "github.com/IBM/ibm-cos-sdk-go"
+        versions: ["1.15.0"]
     groups:
       go-deps:
         patterns: ["*"]
