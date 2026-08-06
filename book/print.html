@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -1454,6 +1454,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code></td><td><code>cluster.public_gateway</code></td><td>bool — <code>false</code> builds a <strong>disconnected</strong> cluster whose workers have no Internet egress. Unset inherits the terraform default (<code>true</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code></td><td><code>cluster.vpc_cidr</code></td><td>CIDR (<code>/18</code> or larger) for a <strong>new</strong> cluster VPC’s per-zone address prefixes. Unset = IBM <code>auto</code>, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See <a href="#first-give-each-cluster-vpc-its-own-address-block">Chapter 9a</a>.</td></tr>
 <tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>)</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>
@@ -2405,6 +2406,52 @@ a central services VPC, or cross-cluster testing.</p>
 <p>roksbnkctl attaches a cluster’s VPC to an <strong>existing</strong> Transit Gateway — by name
 or by id, at create time or after — as its own small phase. Each workspace owns
 its own connection, so N clusters can point at the one gateway.</p>
+<h2 id="first-give-each-cluster-vpc-its-own-address-block"><a class="header" href="#first-give-each-cluster-vpc-its-own-address-block">First: give each cluster VPC its own address block</a></h2>
+<p>Decide this <strong>before</strong> <code>cluster up</code>, because it cannot be changed afterwards.</p>
+<p>A Transit Gateway routes on VPC <strong>address prefixes</strong>. Two attached VPCs claiming
+the same block make routing ambiguous, and the gateway resolves that by silently
+dropping traffic for one of them. Nothing logs an error. What you see instead is
+<em>intermittent</em> image-pull timeouts against a mirror while every security group and
+network ACL in the path plainly allows the traffic — which is why this is worth a
+minute up front.</p>
+<p>It is easy to hit by accident. IBM’s default address prefix management is <code>auto</code>,
+which assigns <strong>every</strong> VPC in a region the same three per-zone prefixes:</p>
+<pre><code>10.241.0.0/18   10.241.64.0/18   10.241.128.0/18
+</code></pre>
+<p>So a second roksbnkctl-created cluster joining a shared gateway collides by
+construction, not by bad luck. Give each one a distinct block:</p>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: acme-eu-roks
+  vpc_cidr: 10.242.0.0/16     # this cluster's own block
+</code></pre>
+<p>or <code>ROKSBNKCTL_CLUSTER_VPC_CIDR=10.242.0.0/16</code> for CI. The block is split into
+three per-zone prefixes (a <code>/16</code> becomes three <code>/18</code>s), so <strong><code>/18</code> is the smallest
+usable value</strong>. Leaving it blank keeps IBM’s auto assignment, and the default
+<code>10.241.0.0/16</code> produces byte-identical prefixes to what <code>auto</code> gives today — so
+setting it explicitly on a <em>first</em> cluster changes no addresses.</p>
+<p>A worked allocation for a shared gateway:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>VPC</th><th><code>vpc_cidr</code></th><th>Per-zone prefixes</th></tr>
+</thead>
+<tbody>
+<tr><td>services (Harbor, FLP)</td><td><em>existing, <code>10.243.0.0/24</code></em></td><td>—</td></tr>
+<tr><td>first cluster</td><td><code>10.241.0.0/16</code></td><td><code>10.241.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>second cluster</td><td><code>10.242.0.0/16</code></td><td><code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>roksbnkctl checks this for you. <code>cluster up</code> refuses <strong>before</strong> terraform creates
+anything when the VPC it is about to build would overlap a VPC already on the
+gateway, and <code>tgw connect</code> refuses before attaching an existing VPC that would
+overlap — each naming the other VPC and the colliding prefixes. If the check
+cannot reach the API it warns and continues rather than blocking the build.</p>
+<p><strong>Already built two overlapping clusters?</strong> The prefixes of a live VPC can’t be
+edited — moving a subnet’s CIDR replaces the subnet, which destroys the cluster on
+it. Either keep only one of them attached at a time (<code>tgw disconnect</code> on the
+other; the cluster itself survives), or rebuild one with <code>vpc_cidr</code> set.</p>
 <h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
 <p>Decline to create a gateway, and <code>init</code> <strong>discovers the transit gateways already
 in your account</strong> and lets you pick one by number — name, location, and status —
@@ -9113,6 +9160,18 @@ roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 <h3 id="symptom-roksbnkctl-up-fails-at-apply-with-a-vpc-or-transit-gateway-quota-error-quota-20-or-cannot-add-more-than-10-gateways"><a class="header" href="#symptom-roksbnkctl-up-fails-at-apply-with-a-vpc-or-transit-gateway-quota-error-quota-20-or-cannot-add-more-than-10-gateways">Symptom: <code>roksbnkctl up</code> fails at apply with a VPC or Transit Gateway quota error (<code>Quota: 20</code>, or <code>cannot add more than 10 gateways</code>)</a></h3>
 <p><strong>Root cause</strong>: IBM Cloud caps VPCs at <strong>20 per region</strong> and Transit Gateways at <strong>10 per account</strong> (defaults). A full region/account fails the create — often ~40 minutes into a cluster build.</p>
 <p><strong>Fix</strong>: run <code>roksbnkctl doctor</code> first — the <code>ibm cloud quota</code> check reports VPCs-in-region and account-wide Transit Gateways vs the limits and <strong>warns</strong> when you’re at the wall. The <code>init</code> interview shows the same count at the create-VPC / create-TGW prompts; answer <strong>no</strong> and <strong>adopt an existing</strong> VPC/gateway (the picker lists them), or request a quota increase from IBM. See <a href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a> and <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</p>
+<h3 id="symptom-image-pulls-from-the-mirror-time-out-intermittently-but-every-security-group-and-acl-allows-the-traffic"><a class="header" href="#symptom-image-pulls-from-the-mirror-time-out-intermittently-but-every-security-group-and-acl-allows-the-traffic">Symptom: image pulls from the mirror time out <em>intermittently</em>, but every security group and ACL allows the traffic</a></h3>
+<p><strong>Root cause</strong>: two VPCs on the same Transit Gateway have <strong>overlapping address prefixes</strong>. A gateway routes on VPC address prefixes; when two attached VPCs claim the same block the route is ambiguous and the gateway silently drops traffic for one of them. Nothing logs an error, which is what sends people into hours of firewall archaeology. The classic tell is that connectivity is <em>partial</em> or <em>flaps</em> — some pulls land, some hang — rather than failing cleanly.</p>
+<p>It happens by accident because IBM’s default address-prefix management is <code>auto</code>, which gives <strong>every</strong> VPC in a region the identical three per-zone prefixes (<code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). A second roksbnkctl-created cluster joining a shared gateway therefore collides by construction.</p>
+<p><strong>Confirm it</strong> — list the prefixes of each VPC on the gateway and look for repeats:</p>
+<pre><code class="language-bash">ibmcloud tg connections &lt;gateway-id&gt; --output json | jq -r '.[]|select(.network_type=="vpc")|.network_id'
+ibmcloud is vpc-address-prefixes &lt;vpc-id&gt;     # per VPC from that list
+</code></pre>
+<p><strong>Fix</strong>: the prefixes of a <em>live</em> VPC cannot be edited — moving a subnet’s CIDR replaces the subnet, destroying the cluster on it. Either detach one (<code>roksbnkctl -w &lt;other-workspace&gt; tgw disconnect --auto</code>; the cluster survives), or rebuild one cluster on its own block, set <strong>before</strong> <code>cluster up</code>:</p>
+<pre><code class="language-yaml">cluster:
+  vpc_cidr: 10.242.0.0/16     # ROKSBNKCTL_CLUSTER_VPC_CIDR for CI
+</code></pre>
+<p><strong>Prevention (v1.39.0+)</strong>: <code>cluster up</code> refuses before terraform creates anything when the VPC it is about to build would overlap one already on the gateway, and <code>tgw connect</code> refuses before attaching — each naming the other VPC and the colliding prefixes. See <a href="#first-give-each-cluster-vpc-its-own-address-block">Give each cluster VPC its own address block</a>.</p>
 <h3 id="symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-"><a class="header" href="#symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-">Symptom: <code>down</code> fails with <code>The VPC is in use and cannot be deleted. Subnets [...]</code></a></h3>
 <p><strong>Root cause</strong>: this workspace <strong>created</strong> the VPC, and another workspace that <strong>adopted</strong> it still has a cluster (its subnets) inside. The VPC owner must be torn down <strong>last</strong> — deleting it first can’t remove a non-empty VPC, and also deletes the shared per-zone public gateways the other cluster still depends on.</p>
 <p><strong>Fix (v1.26.1+)</strong>: <code>down</code> refuses this up front, naming the foreign subnets. Tear down the workspace(s) sharing the VPC first, then re-run <code>down</code> on the owner. See the teardown-order note in <a href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</p>
@@ -11494,6 +11553,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>vpc_cidr</code></td><td>string</td><td>(empty)</td><td>a <code>/18</code> or larger IPv4 CIDR</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from (<code>10.242.0.0/16</code> → <code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code>) → <code>cluster_vpc_cidr</code>. Empty leaves IBM’s <code>auto</code> management, which gives <strong>every</strong> VPC in a region the same prefixes — two such clusters cannot share a Transit Gateway, which blackholes traffic for one of them silently. Set a distinct block per cluster when they share a gateway; see <a href="#first-give-each-cluster-vpc-its-own-address-block">Sharing a Transit Gateway</a>. Split three ways, so <code>/18</code> is the smallest usable block. CREATE-time only — ignored when adopting an existing VPC. Env: <code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -11934,6 +11994,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>cluster.vpc_cidr</code></td><td>string</td><td>(empty)</td><td>Address block for a new cluster VPC → <code>cluster_vpc_cidr</code>. Empty = IBM <code>auto</code>, which is identical for every VPC in the region; set a distinct block per cluster sharing a Transit Gateway. <code>/18</code> minimum.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</td></tr>
 <tr><td><code>resources.cluster_vpc.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the <code>init</code> interview since <code>v1.26.0</code>.</td></tr>
@@ -12027,6 +12088,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream HCL default).</td></tr>
+<tr><td><code>cluster.vpc_cidr</code></td><td><code>cluster_vpc_cidr</code> is omitted from the generated tfvars; the VPC keeps IBM’s <code>auto</code> address prefixes (<code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>).</td></tr>
 <tr><td><code>bnk.*</code></td><td>Each field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>test.throughput.*</code></td><td>Coded defaults (30s, 8 streams, <code>networkstatic/iperf3:latest</code>) apply.</td></tr>
 <tr><td><code>test.connectivity.extra_hosts</code></td><td>Connectivity probe runs with built-in URLs only.</td></tr>
@@ -12080,6 +12142,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
@@ -12462,6 +12525,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><em>required</em></td><td>Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider’s HOME-derived default, which resolves empty under the roksbnkctl runner.</td><td>no</td></tr>

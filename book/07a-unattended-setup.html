@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -270,6 +270,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code></td><td><code>cluster.public_gateway</code></td><td>bool — <code>false</code> builds a <strong>disconnected</strong> cluster whose workers have no Internet egress. Unset inherits the terraform default (<code>true</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code></td><td><code>cluster.vpc_cidr</code></td><td>CIDR (<code>/18</code> or larger) for a <strong>new</strong> cluster VPC’s per-zone address prefixes. Unset = IBM <code>auto</code>, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See <a href="./09a-transit-gateway-sharing.html#first-give-each-cluster-vpc-its-own-address-block">Chapter 9a</a>.</td></tr>
 <tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>)</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>

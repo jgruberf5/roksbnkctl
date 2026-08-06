@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -186,6 +186,52 @@ a central services VPC, or cross-cluster testing.</p>
 <p>roksbnkctl attaches a cluster’s VPC to an <strong>existing</strong> Transit Gateway — by name
 or by id, at create time or after — as its own small phase. Each workspace owns
 its own connection, so N clusters can point at the one gateway.</p>
+<h2 id="first-give-each-cluster-vpc-its-own-address-block"><a class="header" href="#first-give-each-cluster-vpc-its-own-address-block">First: give each cluster VPC its own address block</a></h2>
+<p>Decide this <strong>before</strong> <code>cluster up</code>, because it cannot be changed afterwards.</p>
+<p>A Transit Gateway routes on VPC <strong>address prefixes</strong>. Two attached VPCs claiming
+the same block make routing ambiguous, and the gateway resolves that by silently
+dropping traffic for one of them. Nothing logs an error. What you see instead is
+<em>intermittent</em> image-pull timeouts against a mirror while every security group and
+network ACL in the path plainly allows the traffic — which is why this is worth a
+minute up front.</p>
+<p>It is easy to hit by accident. IBM’s default address prefix management is <code>auto</code>,
+which assigns <strong>every</strong> VPC in a region the same three per-zone prefixes:</p>
+<pre><code>10.241.0.0/18   10.241.64.0/18   10.241.128.0/18
+</code></pre>
+<p>So a second roksbnkctl-created cluster joining a shared gateway collides by
+construction, not by bad luck. Give each one a distinct block:</p>
+<pre><code class="language-yaml">cluster:
+  create: true
+  name: acme-eu-roks
+  vpc_cidr: 10.242.0.0/16     # this cluster's own block
+</code></pre>
+<p>or <code>ROKSBNKCTL_CLUSTER_VPC_CIDR=10.242.0.0/16</code> for CI. The block is split into
+three per-zone prefixes (a <code>/16</code> becomes three <code>/18</code>s), so <strong><code>/18</code> is the smallest
+usable value</strong>. Leaving it blank keeps IBM’s auto assignment, and the default
+<code>10.241.0.0/16</code> produces byte-identical prefixes to what <code>auto</code> gives today — so
+setting it explicitly on a <em>first</em> cluster changes no addresses.</p>
+<p>A worked allocation for a shared gateway:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>VPC</th><th><code>vpc_cidr</code></th><th>Per-zone prefixes</th></tr>
+</thead>
+<tbody>
+<tr><td>services (Harbor, FLP)</td><td><em>existing, <code>10.243.0.0/24</code></em></td><td>—</td></tr>
+<tr><td>first cluster</td><td><code>10.241.0.0/16</code></td><td><code>10.241.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>second cluster</td><td><code>10.242.0.0/16</code></td><td><code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>roksbnkctl checks this for you. <code>cluster up</code> refuses <strong>before</strong> terraform creates
+anything when the VPC it is about to build would overlap a VPC already on the
+gateway, and <code>tgw connect</code> refuses before attaching an existing VPC that would
+overlap — each naming the other VPC and the colliding prefixes. If the check
+cannot reach the API it warns and continues rather than blocking the build.</p>
+<p><strong>Already built two overlapping clusters?</strong> The prefixes of a live VPC can’t be
+edited — moving a subnet’s CIDR replaces the subnet, which destroys the cluster on
+it. Either keep only one of them attached at a time (<code>tgw disconnect</code> on the
+other; the cluster itself survives), or rebuild one with <code>vpc_cidr</code> set.</p>
 <h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
 <p>Decline to create a gateway, and <code>init</code> <strong>discovers the transit gateways already
 in your account</strong> and lets you pick one by number — name, location, and status —

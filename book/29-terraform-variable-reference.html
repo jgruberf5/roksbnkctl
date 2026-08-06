@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -205,6 +205,7 @@
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
@@ -587,6 +588,7 @@
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><em>required</em></td><td>Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider’s HOME-derived default, which resolves empty under the roksbnkctl runner.</td><td>no</td></tr>

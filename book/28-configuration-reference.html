@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -267,6 +267,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>vpc_cidr</code></td><td>string</td><td>(empty)</td><td>a <code>/18</code> or larger IPv4 CIDR</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from (<code>10.242.0.0/16</code> → <code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code>) → <code>cluster_vpc_cidr</code>. Empty leaves IBM’s <code>auto</code> management, which gives <strong>every</strong> VPC in a region the same prefixes — two such clusters cannot share a Transit Gateway, which blackholes traffic for one of them silently. Set a distinct block per cluster when they share a gateway; see <a href="./09a-transit-gateway-sharing.html#first-give-each-cluster-vpc-its-own-address-block">Sharing a Transit Gateway</a>. Split three ways, so <code>/18</code> is the smallest usable block. CREATE-time only — ignored when adopting an existing VPC. Env: <code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -707,6 +708,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="./10a-air-gapped-install.html">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>cluster.vpc_cidr</code></td><td>string</td><td>(empty)</td><td>Address block for a new cluster VPC → <code>cluster_vpc_cidr</code>. Empty = IBM <code>auto</code>, which is identical for every VPC in the region; set a distinct block per cluster sharing a Transit Gateway. <code>/18</code> minimum.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>.</td></tr>
 <tr><td><code>resources.cluster_vpc.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named cluster VPC vs adopt an existing one. Selectable in the <code>init</code> interview since <code>v1.26.0</code>.</td></tr>
@@ -800,6 +802,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream HCL default).</td></tr>
+<tr><td><code>cluster.vpc_cidr</code></td><td><code>cluster_vpc_cidr</code> is omitted from the generated tfvars; the VPC keeps IBM’s <code>auto</code> address prefixes (<code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>).</td></tr>
 <tr><td><code>bnk.*</code></td><td>Each field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>test.throughput.*</code></td><td>Coded defaults (30s, 8 streams, <code>networkstatic/iperf3:latest</code>) apply.</td></tr>
 <tr><td><code>test.connectivity.extra_hosts</code></td><td>Connectivity probe runs with built-in URLs only.</td></tr>

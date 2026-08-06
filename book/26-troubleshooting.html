@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6041fe9e.js";
+            window.path_to_searchindex_js = "searchindex-2a899a93.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d5c18a15.js"></script>
@@ -338,6 +338,18 @@ roksbnkctl cos bucket delete bnk-artifacts --instance bnk-supply-chain
 <h3 id="symptom-roksbnkctl-up-fails-at-apply-with-a-vpc-or-transit-gateway-quota-error-quota-20-or-cannot-add-more-than-10-gateways"><a class="header" href="#symptom-roksbnkctl-up-fails-at-apply-with-a-vpc-or-transit-gateway-quota-error-quota-20-or-cannot-add-more-than-10-gateways">Symptom: <code>roksbnkctl up</code> fails at apply with a VPC or Transit Gateway quota error (<code>Quota: 20</code>, or <code>cannot add more than 10 gateways</code>)</a></h3>
 <p><strong>Root cause</strong>: IBM Cloud caps VPCs at <strong>20 per region</strong> and Transit Gateways at <strong>10 per account</strong> (defaults). A full region/account fails the create — often ~40 minutes into a cluster build.</p>
 <p><strong>Fix</strong>: run <code>roksbnkctl doctor</code> first — the <code>ibm cloud quota</code> check reports VPCs-in-region and account-wide Transit Gateways vs the limits and <strong>warns</strong> when you’re at the wall. The <code>init</code> interview shows the same count at the create-VPC / create-TGW prompts; answer <strong>no</strong> and <strong>adopt an existing</strong> VPC/gateway (the picker lists them), or request a quota increase from IBM. See <a href="./08-cluster-phase.html#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a> and <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>.</p>
+<h3 id="symptom-image-pulls-from-the-mirror-time-out-intermittently-but-every-security-group-and-acl-allows-the-traffic"><a class="header" href="#symptom-image-pulls-from-the-mirror-time-out-intermittently-but-every-security-group-and-acl-allows-the-traffic">Symptom: image pulls from the mirror time out <em>intermittently</em>, but every security group and ACL allows the traffic</a></h3>
+<p><strong>Root cause</strong>: two VPCs on the same Transit Gateway have <strong>overlapping address prefixes</strong>. A gateway routes on VPC address prefixes; when two attached VPCs claim the same block the route is ambiguous and the gateway silently drops traffic for one of them. Nothing logs an error, which is what sends people into hours of firewall archaeology. The classic tell is that connectivity is <em>partial</em> or <em>flaps</em> — some pulls land, some hang — rather than failing cleanly.</p>
+<p>It happens by accident because IBM’s default address-prefix management is <code>auto</code>, which gives <strong>every</strong> VPC in a region the identical three per-zone prefixes (<code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). A second roksbnkctl-created cluster joining a shared gateway therefore collides by construction.</p>
+<p><strong>Confirm it</strong> — list the prefixes of each VPC on the gateway and look for repeats:</p>
+<pre><code class="language-bash">ibmcloud tg connections &lt;gateway-id&gt; --output json | jq -r '.[]|select(.network_type=="vpc")|.network_id'
+ibmcloud is vpc-address-prefixes &lt;vpc-id&gt;     # per VPC from that list
+</code></pre>
+<p><strong>Fix</strong>: the prefixes of a <em>live</em> VPC cannot be edited — moving a subnet’s CIDR replaces the subnet, destroying the cluster on it. Either detach one (<code>roksbnkctl -w &lt;other-workspace&gt; tgw disconnect --auto</code>; the cluster survives), or rebuild one cluster on its own block, set <strong>before</strong> <code>cluster up</code>:</p>
+<pre><code class="language-yaml">cluster:
+  vpc_cidr: 10.242.0.0/16     # ROKSBNKCTL_CLUSTER_VPC_CIDR for CI
+</code></pre>
+<p><strong>Prevention (v1.39.0+)</strong>: <code>cluster up</code> refuses before terraform creates anything when the VPC it is about to build would overlap one already on the gateway, and <code>tgw connect</code> refuses before attaching — each naming the other VPC and the colliding prefixes. See <a href="./09a-transit-gateway-sharing.html#first-give-each-cluster-vpc-its-own-address-block">Give each cluster VPC its own address block</a>.</p>
 <h3 id="symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-"><a class="header" href="#symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-">Symptom: <code>down</code> fails with <code>The VPC is in use and cannot be deleted. Subnets [...]</code></a></h3>
 <p><strong>Root cause</strong>: this workspace <strong>created</strong> the VPC, and another workspace that <strong>adopted</strong> it still has a cluster (its subnets) inside. The VPC owner must be torn down <strong>last</strong> — deleting it first can’t remove a non-empty VPC, and also deletes the shared per-zone public gateways the other cluster still depends on.</p>
 <p><strong>Fix (v1.26.1+)</strong>: <code>down</code> refuses this up front, naming the foreign subnets. Tear down the workspace(s) sharing the VPC first, then re-run <code>down</code> on the owner. See the teardown-order note in <a href="./08-cluster-phase.html#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</p>
