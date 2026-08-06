@@ -303,3 +303,43 @@ func TestDefaultResourcesMatchesInterview(t *testing.T) {
 		}
 	}
 }
+
+// The jumphost lives IN a client VPC, so the env surface must be able to express
+// the interview's "use an existing one" branch — not just "create a new one".
+func TestOverrideFromEnv_ClientVPCExisting(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_TGW_JUMPHOST_CREATE", "true")
+	t.Setenv("ROKSBNKCTL_CLIENT_VPC_NAME", "shared-client-vpc")
+
+	var ws Workspace
+	ws.Resources = DefaultResources()
+	applied := OverrideFromEnv(&ws)
+
+	if !ws.Resources.TGWJumphost.Create {
+		t.Error("tgw_jumphost.create should be true")
+	}
+	if ws.Resources.ClientVPC.Create {
+		t.Error("client_vpc.create should stay false — we are adopting one")
+	}
+	if got := ws.Resources.ClientVPC.Existing; got != "shared-client-vpc" {
+		t.Errorf("client_vpc.existing = %q, want %q", got, "shared-client-vpc")
+	}
+	var found bool
+	for _, a := range applied {
+		if strings.Contains(a, "ROKSBNKCTL_CLIENT_VPC_NAME") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the applied list should name ROKSBNKCTL_CLIENT_VPC_NAME, got %v", applied)
+	}
+}
+
+// Reaching a nil Resources block must not panic.
+func TestOverrideFromEnv_ClientVPCNameNilResources(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_CLIENT_VPC_NAME", "adopted")
+	var ws Workspace
+	OverrideFromEnv(&ws)
+	if ws.Resources == nil || ws.Resources.ClientVPC.Existing != "adopted" {
+		t.Fatalf("nil Resources should be created and populated, got %+v", ws.Resources)
+	}
+}

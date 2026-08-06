@@ -181,15 +181,11 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 	// existing refs, matching the --var-file default.
 	res := ws.Resources
 	if res == nil {
-		res = &config.ResourcesCfg{
-			TransitGateway:   config.ResourceToggle{Create: true},
-			RegistryCOS:      config.ResourceToggle{Create: true},
-			CertManager:      config.ResourceToggle{Create: true},
-			BNK:              config.ResourceToggle{Create: true},
-			TGWJumphost:      config.ResourceToggle{Create: true},
-			ClusterJumphosts: config.ResourceToggle{Create: true},
-			ClientVPC:        config.ResourceToggle{Create: true},
-		}
+		// ONE definition of "the default", shared with init. This used to inline
+		// its own all-true set, which quietly disagreed once the testing client
+		// (TGW jumphost + client VPC) was defaulted off: a legacy or hand-edited
+		// config.yaml with no `resources:` block would still have built both here.
+		res = config.DefaultResources()
 	}
 
 	// IBM Cloud region + resource group.

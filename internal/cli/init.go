@@ -409,19 +409,13 @@ func persistAPIKey(workspace, apiKey string) {
 	}
 }
 
-// allCreateResources returns a ResourcesCfg with every toggle set to
-// create + no existing refs — the default a re-init-without-answers flow
-// lands so the generated base is collision-safe.
+// allCreateResources returns the toggle set printNamePlan assumes for a
+// workspace with no `resources:` block. It defers to config.DefaultResources so
+// the NAMES printed match what would actually be built — it previously inlined
+// an all-true set and would have listed a TGW jumphost and client VPC for a
+// workspace that no longer creates either.
 func allCreateResources() *config.ResourcesCfg {
-	return &config.ResourcesCfg{
-		TransitGateway:   config.ResourceToggle{Create: true},
-		RegistryCOS:      config.ResourceToggle{Create: true},
-		CertManager:      config.ResourceToggle{Create: true},
-		BNK:              config.ResourceToggle{Create: true},
-		TGWJumphost:      config.ResourceToggle{Create: true},
-		ClusterJumphosts: config.ResourceToggle{Create: false},
-		ClientVPC:        config.ResourceToggle{Create: true},
-	}
+	return config.DefaultResources()
 }
 
 // accountInterview is the result of the interactive, account-aware init

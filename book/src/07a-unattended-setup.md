@@ -103,6 +103,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_TESTING_VPC_NAME` | `resources.testing_client_vpc_name` | verbatim (names the client VPC to create) |
 | `ROKSBNKCTL_TGW_JUMPHOST_CREATE` | `resources.tgw_jumphost.create` | bool — the optional testing jumphost. Defaults **off**, as the interview does. |
 | `ROKSBNKCTL_CLIENT_VPC_CREATE` | `resources.client_vpc.create` | bool — the testing client VPC. Defaults **off**; it consumes a Transit Gateway connection. |
+| `ROKSBNKCTL_CLIENT_VPC_NAME` | `resources.client_vpc.existing` | Adopt an existing client VPC instead of creating one — the env equivalent of the interview's *"Existing client VPC name"*. Required if you enable the jumphost without creating a VPC. |
 | `ROKSBNKCTL_BIGIP_URL` | `bnk.cis.bigip_url` | verbatim |
 | `ROKSBNKCTL_BIGIP_USERNAME` | `bnk.cis.bigip_username` | verbatim |
 | `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |

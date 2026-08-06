@@ -94,7 +94,7 @@ resources:
   registry_cos:      { create: true }
   cert_manager:      { create: true }
   bnk:               { create: true }
-  tgw_jumphost:      { create: true }
+  tgw_jumphost:      { create: false }   # the optional testing client — OFF by default
   cluster_jumphosts: { create: false }
   client_vpc:        { create: false, existing: my-shared-client-vpc }
   client_region:     ca-tor               # testing-client region
@@ -111,7 +111,7 @@ resources:
 | `registry_cos` | `true` | `create_roks_registry_cos_instance`; `existing` → `roks_cos_instance_name` | `create_roks_registry_cos_instance`, `roks_cos_instance_name` |
 | `cert_manager` | `true` | — | `install_cert_manager` |
 | `bnk` | `true` | — | `deploy_bnk` |
-| `tgw_jumphost` | `true` | — | `testing_create_tgw_jumphost`, `testing_tgw_jumphost_name` |
+| `tgw_jumphost` | `false` | — | `testing_create_tgw_jumphost`, `testing_tgw_jumphost_name` |
 | `cluster_jumphosts` | `false` | — | `testing_create_cluster_jumphosts`, `testing_cluster_jumphost_name_prefix` |
 | `client_vpc` | `false` (created on demand for the TGW jumphost) | `existing` → `testing_client_vpc_name` when not creating one | `testing_create_client_vpc`, `testing_client_vpc_name` |
 
@@ -473,7 +473,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.name` | string | (prompted) | Cluster name. |
 | `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
-| `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). |
+| `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). Settable from the environment with `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY`; it is a tri-state, so *unset* inherits the terraform default rather than rendering `true`. |
 | `cluster.min_worker_vcpu_count` | integer | `16` | Worker-flavor auto-select floor (vCPUs) → `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. |
 | `cluster.min_worker_memory_gb` | integer | `64` | Worker-flavor auto-select floor (GB) → `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
@@ -484,9 +484,9 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `resources.registry_cos.existing` | string | (empty) | Existing COS instance name when `create: false`. |
 | `resources.cert_manager.create` | bool | `true` | Install cert-manager (`install_cert_manager`). |
 | `resources.bnk.create` | bool | `true` | Deploy BIG-IP Next for Kubernetes (`deploy_bnk`). |
-| `resources.tgw_jumphost.create` | bool | `true` | Create the TGW test jumphost. |
+| `resources.tgw_jumphost.create` | bool | `false` | Create the TGW test jumphost — the optional testing client, off by default (the `init` interview's *"Add a testing client?"* also defaults to no). **It lives in a client VPC**, so enabling it requires either `client_vpc.create: true` or `client_vpc.existing`; `init` rejects the combination with neither. |
 | `resources.cluster_jumphosts.create` | bool | `false` | Create per-zone cluster jumphosts. |
-| `resources.client_vpc.create` | bool | `false` | Create a new client VPC for the TGW jumphost. |
+| `resources.client_vpc.create` | bool | `false` | Create a new client VPC for the TGW jumphost. Consumes a **Transit Gateway connection**, which is a quota'd resource. |
 | `resources.client_vpc.existing` | string | (empty) | Existing client VPC name when `create: false`. |
 | `resources.client_region` | string | (empty) | Region the testing client (TGW jumphost + client VPC) lives in → `testing_client_vpc_region`. Since `v1.9.0`. |
 | `resources.testing_client_vpc_name` | string | (empty) | Name for the testing client VPC when `client_vpc.create: true` → `testing_client_vpc_name`. |
