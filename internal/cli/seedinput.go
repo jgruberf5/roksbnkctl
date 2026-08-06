@@ -85,6 +85,9 @@ func runInitFromEnv(cctx *config.Context) error {
 		return fmt.Errorf("--non-interactive init: missing required field(s): %s\n  set them via env — ROKSBNKCTL_REGION, ROKSBNKCTL_RESOURCE_GROUP, ROKSBNKCTL_PREFIX (and IBMCLOUD_API_KEY); cluster identity via ROKSBNKCTL_CLUSTER_NAME / ROKSBNKCTL_CLUSTER_CREATE",
 			strings.Join(missing, ", "))
 	}
+	if err := invalidResourceCombo(&ws); err != nil {
+		return err
+	}
 
 	if err := config.SaveWorkspace(cctx.WorkspaceName, &ws); err != nil {
 		return fmt.Errorf("saving workspace: %w", err)
@@ -202,6 +205,9 @@ func runInitFromConfigFile(cctx *config.Context) error {
 		return fmt.Errorf("--config-file %q is missing required field(s): %s\n  supply them in the file, set them via --override-from-env, or run `roksbnkctl init` interactively",
 			flagInitConfigFile, strings.Join(missing, ", "))
 	}
+	if err := invalidResourceCombo(&ws); err != nil {
+		return err
+	}
 
 	if err := config.SaveWorkspace(cctx.WorkspaceName, &ws); err != nil {
 		return fmt.Errorf("saving workspace: %w", err)
@@ -238,4 +244,24 @@ func missingRequiredConfigFields(ws *config.Workspace) []string {
 		missing = append(missing, "tf_source.type")
 	}
 	return missing
+}
+
+// invalidResourceCombo reports a resources block terraform cannot plan, so the
+// operator hears about it at `init` rather than mid-apply.
+//
+// The TGW jumphost lives IN a client VPC: terraform resolves its VPC as the one
+// it created, else the named existing one (modules/testing/data.tf:69). Asking
+// for a jumphost with neither leaves that data source with an empty name and
+// fails with an opaque IBM lookup error, long after init reported success.
+func invalidResourceCombo(ws *config.Workspace) error {
+	res := ws.Resources
+	if res == nil || !res.TGWJumphost.Create {
+		return nil
+	}
+	if res.ClientVPC.Create || strings.TrimSpace(res.ClientVPC.Existing) != "" {
+		return nil
+	}
+	return fmt.Errorf("resources.tgw_jumphost.create is true but there is no client VPC for it to live in\n" +
+		"  create one:       resources.client_vpc.create: true   (ROKSBNKCTL_CLIENT_VPC_CREATE=true)\n" +
+		"  or adopt one:     resources.client_vpc.existing: <name>  (ROKSBNKCTL_CLIENT_VPC_NAME=<name>)")
 }

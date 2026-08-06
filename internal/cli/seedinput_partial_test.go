@@ -62,3 +62,38 @@ resources:
 			"if this now passes, yaml.v3 changed and the pre-seed rationale needs revisiting")
 	}
 }
+
+// A jumphost with nowhere to live must fail at init, not mid-apply: terraform
+// resolves its VPC as "the one we created, else the named existing one", so with
+// neither the data source looks up an empty name and fails opaquely much later.
+func TestInvalidResourceCombo(t *testing.T) {
+	mk := func(jump, create bool, existing string) *config.Workspace {
+		return &config.Workspace{Resources: &config.ResourcesCfg{
+			TGWJumphost: config.ResourceToggle{Create: jump},
+			ClientVPC:   config.ResourceToggle{Create: create, Existing: existing},
+		}}
+	}
+	cases := []struct {
+		name    string
+		ws      *config.Workspace
+		wantErr bool
+	}{
+		{"no jumphost at all", mk(false, false, ""), false},
+		{"jumphost + new client VPC", mk(true, true, ""), false},
+		{"jumphost + adopted client VPC", mk(true, false, "shared-vpc"), false},
+		{"jumphost with neither", mk(true, false, ""), true},
+		{"jumphost, existing is whitespace", mk(true, false, "   "), true},
+		{"nil resources", &config.Workspace{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := invalidResourceCombo(tc.ws)
+			if tc.wantErr && err == nil {
+				t.Fatal("want an error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("want no error, got %v", err)
+			}
+		})
+	}
+}

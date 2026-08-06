@@ -37,6 +37,7 @@ import (
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
+//	ROKSBNKCTL_CLIENT_VPC_NAME      → resources.client_vpc.existing (adopt a client VPC)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
@@ -164,6 +165,19 @@ func OverrideFromEnv(ws *Workspace) []string {
 			ws.Resources.ClientVPC.Create = b
 			applied = append(applied, "resources.client_vpc.create (ROKSBNKCTL_CLIENT_VPC_CREATE)")
 		}
+	}
+	// The jumphost lives IN a client VPC — terraform resolves its VPC as
+	// "created one, else the named existing one" (modules/testing/data.tf:69).
+	// The interview offers both branches ("Create a new client VPC for it?" →
+	// no → "Existing client VPC name"); without this the env surface could only
+	// express the create branch, so opting the jumphost in without also creating
+	// a VPC produced a config terraform cannot plan.
+	if v := envValue("ROKSBNKCTL_CLIENT_VPC_NAME"); v != "" {
+		if ws.Resources == nil {
+			ws.Resources = &ResourcesCfg{}
+		}
+		ws.Resources.ClientVPC.Existing = v
+		applied = append(applied, "resources.client_vpc.existing (ROKSBNKCTL_CLIENT_VPC_NAME)")
 	}
 
 	// Name the testing client VPC to create (rendered as testing_client_vpc_name).

@@ -136,6 +136,13 @@ cluster:
   name: ${WS}
   openshift_version: "${OCP_VERSION}"
   workers_per_zone: ${WORKERS_PER_ZONE}
+resources:
+  # The testing phase provisions ONLY these toggles, and they now default OFF
+  # (matching the `init` interview). Phase 5/6 runs `testing up` + `test`, and
+  # `test` runs its probes FROM a jumphost — so the demo must ask for one
+  # explicitly or the testing phase provisions nothing.
+  tgw_jumphost: { create: true }
+  client_vpc:   { create: true }   # the jumphost lives in it
 bnk:
   manifest_version: ${BNK_VERSION}
   far_repo_url: ${FAR_REPO_URL}
