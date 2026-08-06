@@ -200,3 +200,106 @@ func TestOverrideFromEnv_CIPipelineSurface(t *testing.T) {
 		}
 	})
 }
+
+// TestOverrideFromEnv_ClusterTopology covers the fields an argv+env runner needs
+// to build a cluster it cannot answer prompts for. public_gateway is the one
+// that decides connected vs disconnected, so its tri-state matters: unset must
+// stay nil (inherit the terraform default) rather than collapse to false.
+func TestOverrideFromEnv_ClusterTopology(t *testing.T) {
+	clear := func(t *testing.T) {
+		for _, e := range []string{
+			"ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY",
+			"ROKSBNKCTL_TGW_JUMPHOST_CREATE",
+			"ROKSBNKCTL_CLIENT_VPC_CREATE",
+		} {
+			t.Setenv(e, "")
+		}
+	}
+
+	t.Run("public_gateway unset stays nil", func(t *testing.T) {
+		clear(t)
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.Cluster.PublicGateway != nil {
+			t.Fatalf("unset must leave nil so terraform's default applies, got %v", *ws.Cluster.PublicGateway)
+		}
+	})
+
+	t.Run("public_gateway=false makes a disconnected cluster", func(t *testing.T) {
+		clear(t)
+		t.Setenv("ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY", "false")
+		ws := &Workspace{}
+		applied := OverrideFromEnv(ws)
+		if ws.Cluster.PublicGateway == nil || *ws.Cluster.PublicGateway {
+			t.Fatal("expected an explicit false")
+		}
+		if !strings.Contains(strings.Join(applied, ","), "cluster.public_gateway") {
+			t.Fatalf("override not reported: %v", applied)
+		}
+	})
+
+	t.Run("public_gateway=true is explicit, not merely nil", func(t *testing.T) {
+		clear(t)
+		t.Setenv("ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY", "true")
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.Cluster.PublicGateway == nil || !*ws.Cluster.PublicGateway {
+			t.Fatal("expected an explicit true")
+		}
+	})
+
+	t.Run("garbage is ignored rather than guessed at", func(t *testing.T) {
+		clear(t)
+		t.Setenv("ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY", "yes-please")
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.Cluster.PublicGateway != nil {
+			t.Fatal("unparseable value must not silently pick a topology")
+		}
+	})
+
+	t.Run("testing client can be opted into from env", func(t *testing.T) {
+		clear(t)
+		t.Setenv("ROKSBNKCTL_TGW_JUMPHOST_CREATE", "true")
+		t.Setenv("ROKSBNKCTL_CLIENT_VPC_CREATE", "true")
+		ws := &Workspace{Resources: DefaultResources()}
+		OverrideFromEnv(ws)
+		if !ws.Resources.TGWJumphost.Create || !ws.Resources.ClientVPC.Create {
+			t.Fatal("expected both toggles on")
+		}
+	})
+
+	t.Run("toggles reach a nil Resources block", func(t *testing.T) {
+		clear(t)
+		t.Setenv("ROKSBNKCTL_TGW_JUMPHOST_CREATE", "true")
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.Resources == nil || !ws.Resources.TGWJumphost.Create {
+			t.Fatal("must allocate Resources rather than panic or no-op")
+		}
+	})
+}
+
+// TestDefaultResourcesMatchesInterview pins the default that regressed: the
+// interview asks "Add a testing client?" and defaults to no, so the
+// non-interactive path must not build one unasked. The client VPC costs a
+// Transit Gateway connection, which is a quota'd resource.
+func TestDefaultResourcesMatchesInterview(t *testing.T) {
+	r := DefaultResources()
+	if r.TGWJumphost.Create {
+		t.Error("tgw_jumphost must default off, as the interview does")
+	}
+	if r.ClientVPC.Create {
+		t.Error("client_vpc must default off, as the interview does")
+	}
+	// The toggles this function exists to protect stay on.
+	for name, on := range map[string]bool{
+		"transit_gateway": r.TransitGateway.Create, "registry_cos": r.RegistryCOS.Create,
+		"cert_manager": r.CertManager.Create, "bnk": r.BNK.Create,
+		"cluster_vpc": r.ClusterVPC.Create,
+	} {
+		if !on {
+			t.Errorf("%s must stay on: zero-value toggles silently disable the deploy", name)
+		}
+	}
+}

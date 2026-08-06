@@ -97,9 +97,12 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_CLUSTER_CREATE` | `cluster.create` | bool (`true`/`false`/`1`/`0`) |
 | `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
 | `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
+| `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` | `cluster.public_gateway` | bool — `false` builds a **disconnected** cluster whose workers have no Internet egress. Unset inherits the terraform default (`true`). |
 | `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | a Transit Gateway **name or id** — `cluster up`/`register` attaches the cluster VPC to it (see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md)) |
 | `ROKSBNKCTL_CLUSTER_VPC_ID` | `resources.cluster_vpc` (`create:false` + `existing`) | verbatim — adopt an existing cluster VPC by **ID** |
 | `ROKSBNKCTL_TESTING_VPC_NAME` | `resources.testing_client_vpc_name` | verbatim (names the client VPC to create) |
+| `ROKSBNKCTL_TGW_JUMPHOST_CREATE` | `resources.tgw_jumphost.create` | bool — the optional testing jumphost. Defaults **off**, as the interview does. |
+| `ROKSBNKCTL_CLIENT_VPC_CREATE` | `resources.client_vpc.create` | bool — the testing client VPC. Defaults **off**; it consumes a Transit Gateway connection. |
 | `ROKSBNKCTL_BIGIP_URL` | `bnk.cis.bigip_url` | verbatim |
 | `ROKSBNKCTL_BIGIP_USERNAME` | `bnk.cis.bigip_username` | verbatim |
 | `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |
