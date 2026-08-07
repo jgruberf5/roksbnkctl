@@ -120,6 +120,24 @@ leaves terraform with nothing to destroy from.
 It is also how the workflows hand off: `wf-far-mirror` writes the mirror record that
 `wf-*-disconnected` later adopts.
 
+### …which is why you run one workflow at a time
+
+That shared PVC holds **one terraform state**, and `bnk-env` is **one ConfigMap**. Two
+workflows running at once fight over both:
+
+- **Terraform state.** Both hold the same state file. The loser dies on the state lock —
+  observed here as `bnk-up` failing 11 seconds in while the other run proceeded normally.
+- **`bnk-env`.** The driver re-renders it on every invocation. A workflow that has already
+  started but has steps still pending will have those steps pick up the *new* values,
+  because `envFrom` is resolved per pod at creation. Change `ROKSBNKCTL_PREFIX` or
+  `ROKSBNKCTL_CLUSTER_NAME` for a second run and the first run's remaining steps quietly
+  target the second run's cluster.
+
+So a connected pair and a disconnected pair cannot be run in parallel to save wall-clock:
+finish one, then switch the environment and start the next. If you genuinely need
+concurrency, give each stream its own namespace, PVC and ConfigMap — the sharing is what
+makes the handoff work, and it is also what makes concurrency unsafe.
+
 ## Only one cluster VPC per Transit Gateway
 
 **roksbnkctl gives every cluster VPC it creates the same address prefixes** —
