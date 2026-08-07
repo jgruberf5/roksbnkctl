@@ -127,3 +127,31 @@ func TestSplitHostPort(t *testing.T) {
 		}
 	}
 }
+
+// A label containing a space truncated at the parser on the first live run:
+// "F5 License Proxy" came back as "F5". Cosmetic there, but the same bug on a
+// REQUIRED target would be severe — the Required lookup would miss and an
+// unreachable registry would be silently downgraded to optional, which is the exact
+// failure this gate exists to prevent.
+func TestProbeLabelsSurviveTheWire(t *testing.T) {
+	targets := []ProbeTarget{
+		{Label: "F5 License Proxy", Host: "10.243.1.4", Port: "8443"},
+		{Label: "private registry", Host: "10.243.0.4", Port: "443", Required: true},
+	}
+	script := nodeProbeScript(targets)
+	if strings.Contains(script, `probe "F5 License Proxy"`) {
+		t.Error("a label with spaces must be encoded before it reaches the space-separated probe line")
+	}
+
+	// Round-trip: what the node emits must parse back to the same label the summary
+	// looks up, or Required is silently lost.
+	line := "ROKSBNKCTL_PROBE node=n1 label=" + labelForWire("private registry") +
+		" host=10.243.0.4 port=443 dns=skipped-ip tcp=FAILED detail=no route"
+	r, ok := parseProbeLine(line)
+	if !ok {
+		t.Fatal("probe line must parse")
+	}
+	if _, err := SummariseProbeResults([]NodeProbeResult{r}, targets); err == nil {
+		t.Error("a REQUIRED multi-word target that is unreachable must still fail the install")
+	}
+}

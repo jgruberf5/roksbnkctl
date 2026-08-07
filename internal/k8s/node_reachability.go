@@ -7,6 +7,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,9 +126,18 @@ func nodeProbeScript(targets []ProbeTarget) string {
 	b.WriteString(`fi; `)
 	b.WriteString(`echo "ROKSBNKCTL_PROBE node=${NODE_NAME} label=${lbl} host=${h} port=${p} dns=${dns} tcp=${tcp} detail=${detail}"; }; `)
 	for _, t := range targets {
-		fmt.Fprintf(&b, `probe %q %q %q; `, t.Label, t.Host, t.Port)
+		// The probe line is space-separated key=value, so a label containing a space
+		// truncates at the parser: "F5 License Proxy" came back as "F5" on the first
+		// live run, and the two stray words were silently dropped as unknown fields.
+		// Collapse whitespace at the boundary rather than trusting callers.
+		fmt.Fprintf(&b, `probe %q %q %q; `, labelForWire(t.Label), t.Host, t.Port)
 	}
 	return b.String()
+}
+
+// labelForWire makes a label safe for the space-separated probe line.
+func labelForWire(s string) string {
+	return strings.Join(strings.Fields(s), "-")
 }
 
 // parseProbeLine reads one ROKSBNKCTL_PROBE line back into a result.
@@ -174,6 +184,65 @@ func parseProbeLine(line string) (NodeProbeResult, bool) {
 // would collapse "this node cannot reach the mirror" into "the DaemonSet is unhealthy"
 // — losing exactly the detail that makes the failure actionable.
 func (c *Client) CollectNodeProbeResults(ctx context.Context) ([]NodeProbeResult, error) {
+	// WAIT FOR FULL COVERAGE FIRST.
+	//
+	// Reading whatever pods exist at this instant is not enough. A pod still starting
+	// — or mid-rollout after the target set changed — contributes nothing, and its
+	// node then vanishes from the summary entirely. Observed live: three nodes, three
+	// Ready pods, all three with correct results in their logs, and the collection
+	// still returned only two because the third was replaced moments earlier.
+	//
+	// Harmless when the reported nodes all fail. Dangerous the other way round: two
+	// nodes pass, the third (which would have failed) is missing, the summary reads
+	// "2/2 reachable" and the gate passes blind — losing precisely the per-AZ break
+	// this exists to catch. So require a result from every scheduled pod, and say so
+	// plainly if that never happens.
+	want, err := c.expectedProbeNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var results []NodeProbeResult
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		results, err = c.collectProbeResultsOnce(ctx)
+		if err != nil {
+			return nil, err
+		}
+		nodes := map[string]bool{}
+		for _, r := range results {
+			if r.Node != "" {
+				nodes[r.Node] = true
+			}
+		}
+		if want == 0 || len(nodes) >= want {
+			return results, nil
+		}
+		if time.Now().After(deadline) {
+			return results, fmt.Errorf(
+				"only %d of %d nodes reported a reachability result -- the check cannot vouch for the rest, "+
+					"and a node that never reports is indistinguishable from one that would have failed. "+
+					"Check the %s DaemonSet in namespace %s",
+				len(nodes), want, registryTrustName, registryTrustNamespace)
+		}
+		select {
+		case <-ctx.Done():
+			return results, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// expectedProbeNodes is how many pods the DaemonSet intends to have — i.e. how many
+// nodes must report before the verdict is complete.
+func (c *Client) expectedProbeNodes(ctx context.Context) (int, error) {
+	ds, err := c.clientset.AppsV1().DaemonSets(registryTrustNamespace).Get(ctx, registryTrustName, metav1.GetOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("reading the %s DaemonSet to learn how many nodes must report: %w", registryTrustName, err)
+	}
+	return int(ds.Status.DesiredNumberScheduled), nil
+}
+
+func (c *Client) collectProbeResultsOnce(ctx context.Context) ([]NodeProbeResult, error) {
 	pods, err := c.clientset.CoreV1().Pods(registryTrustNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + registryTrustName,
 	})
@@ -220,9 +289,12 @@ func (c *Client) CollectNodeProbeResults(ctx context.Context) ([]NodeProbeResult
 // line that stops someone chasing the network when the fault is elsewhere, and a
 // per-zone split is only visible if the passes are shown too.
 func SummariseProbeResults(results []NodeProbeResult, targets []ProbeTarget) (string, error) {
+	// Keyed on the WIRE form: results come back carrying labelForWire(Label), so
+	// looking them up by the human label would never match and every target would
+	// silently be treated as optional — including the registry.
 	required := map[string]bool{}
 	for _, t := range targets {
-		required[t.Label] = t.Required
+		required[labelForWire(t.Label)] = t.Required
 	}
 	byLabel := map[string][]NodeProbeResult{}
 	for _, r := range results {
