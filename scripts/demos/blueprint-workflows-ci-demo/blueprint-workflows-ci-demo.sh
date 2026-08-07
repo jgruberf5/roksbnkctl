@@ -78,7 +78,7 @@ teardown(){
  "containers":[{"name":"teardown","image":"$RUNNER_IMAGE","workingDir":"/work",
   "command":["sh","-ec"],"args":["CMDS"],
   "envFrom":[{"configMapRef":{"name":"bnk-env"}},{"secretRef":{"name":"bnk-secrets"}}],
-  "env":[{"name":"ROKSBNKCTL_HOME","value":"/work/.roksbnkctl"},{"name":"HOME","value":"/home/runner"}],
+  "env":[{"name":"ROKSBNKCTL_HOME","value":"/work/.roksbnkctl"},{"name":"HOME","value":"/home/runner"}WSENV],
   "volumeMounts":[{"name":"work","mountPath":"/work"}]}],
  "volumes":[{"name":"work","persistentVolumeClaim":{"claimName":"bnk-work"}}]}}
 JSON
@@ -102,12 +102,30 @@ JSON
       for w in "${TEARDOWN_ONLY[@]}"; do [[ "$w" == "$ws" ]] && want=1; done
       (( want )) || continue
     fi
+    # Carry the SAME env the workflow pinned in its own container. bnk-env alone is
+    # NOT what the apply ran with: each workflow overrides some settings in its `env:`
+    # block, and those never reach the ConfigMap. Re-running `init --override-from-env`
+    # with only bnk-env therefore REWRITES the workspace config into something the apply
+    # never used. That is not theoretical — flp down failed with "no cluster-outputs.json
+    # was found for workspace flp" because ROKSBNKCTL_FLP_MODE=vsi lives only in
+    # wf-flp-vsi.yaml, so the rebuilt config lost the standalone-VSI path entirely.
+    # NOTE: `kubectl run --env` is useless here — --overrides replaces the whole
+    # container spec, so the pins must be injected INTO the JSON below.
+    local wsenv=""
+    case "$ws" in
+      flp)
+        wsenv=',{"name":"ROKSBNKCTL_FLP_MODE","value":"vsi"},{"name":"ROKSBNKCTL_CLUSTER_CREATE","value":"false"},{"name":"ROKSBNKCTL_CLUSTER_NAME","value":"none"}' ;;
+      bnkconn)
+        # the connected pair deliberately has NO registry; see the workspace split in the README
+        wsenv=',{"name":"ROKSBNKCTL_GENERIC_HOST","value":""},{"name":"ROKSBNKCTL_GENERIC_CA_B64","value":""},{"name":"ROKSBNKCTL_GENERIC_USERNAME","value":""},{"name":"ROKSBNKCTL_GENERIC_PASSWORD","value":""}' ;;
+    esac
+    local overrides_ws="${overrides//WSENV/$wsenv}"
     say "── roksbnkctl -w $ws $verb"
     show "roksbnkctl -w $ws init --non-interactive --override-from-env && roksbnkctl -w $ws $verb"
     [[ "$DRY_RUN" == "1" ]] && continue
     kubectl -n "$ARGO_NAMESPACE" run "teardown-$ws-$RANDOM" --rm -i --restart=Never \
       --image="$RUNNER_IMAGE" \
-      --overrides="${overrides//CMDS/roksbnkctl init -w $ws --non-interactive --override-from-env; roksbnkctl -w $ws $verb}" \
+      --overrides="${overrides_ws//CMDS/roksbnkctl init -w $ws --non-interactive --override-from-env; roksbnkctl -w $ws $verb}" \
       2>&1 | tail -20
   done
   say "The substrate (namespace, PVC, env carriers) is left in place — delete it with:"
