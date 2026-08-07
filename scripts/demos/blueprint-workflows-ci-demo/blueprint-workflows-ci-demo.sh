@@ -279,6 +279,19 @@ for wf in "${REQUESTED[@]}"; do
     wf_params+=(-p status-check=true)
     say "  flp-status image configured — enabling the status check"
   fi
+  # The cluster workflows default bnkforge=true because the blueprints always
+  # register. A bare CI run often has no Forge, and registering against an empty
+  # BNK_FORGE_URL fails the run AFTER the cluster build — an hour in, for a
+  # bookkeeping step. Decide it from whether a Forge is actually configured.
+  if grep -q 'parameters.bnkforge' "$f" 2>/dev/null; then
+    if [[ -n "${BNK_FORGE_URL:-}" ]]; then
+      wf_params+=(-p bnkforge=true)
+      say "  BNK Forge configured — registration enabled"
+    else
+      wf_params+=(-p bnkforge=false)
+      say "  no BNK_FORGE_URL — skipping Forge registration"
+    fi
+  fi
   begin_long
   run argo submit -n "$ARGO_NAMESPACE" --wait --log "${wf_params[@]}" "$rendered"
   end_long

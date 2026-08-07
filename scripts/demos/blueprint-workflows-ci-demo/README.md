@@ -98,6 +98,17 @@ argo submit -n bnk-ci --wait workflows/wf-existing-cluster.yaml -p bnkforge=fals
 > The workflow YAML carries `PLACEHOLDER_RUNNER_IMAGE`; the demo renders it from
 > `RUNNER_IMAGE` before submitting. Substitute it yourself if you submit by hand.
 
+### Workflow parameters the driver sets for you
+
+Both of these exist because an **optional** component that was never configured
+should not fail a run whose real output is fine. The driver decides from your
+`.env`; pass them yourself when submitting by hand.
+
+| Parameter | Default | The driver sets it from |
+|---|---|---|
+| `status-check` (`flp-vsi`) | `false` | `ROKSBNKCTL_FLP_VSI_STATUS_IMAGE`. `flp-status` is a separate image you build and push; the licence proxy works without it. Left ungated, an unbuilt add-on failed the run **and took `publish-handoff` with it** — and that Secret is the entire output workflows 4 and 6 consume. |
+| `bnkforge` (cluster workflows) | `true` | `BNK_FORGE_URL`. The blueprints always register, so the YAML default matches them; a bare CI run usually has no Forge, and registering against an empty URL fails **after** the cluster build — an hour in, for a bookkeeping step. |
+
 ## Why the PVC matters
 
 `bnk-work` is a real PersistentVolumeClaim, not an `emptyDir`. roksbnkctl keeps its
