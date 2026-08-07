@@ -77,4 +77,4 @@
 
 # Appendices
 
-- [A — A disconnected ROKS cluster](./appendix-a-disconnected-roks-cluster.md)
+- [A — The four cluster topologies, end to end](./appendix-a-disconnected-roks-cluster.md)
