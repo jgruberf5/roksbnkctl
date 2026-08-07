@@ -10,6 +10,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
+	"github.com/jgruberf5/roksbnkctl/internal/naming"
 )
 
 // guardVPCPrefixOverlap refuses a `cluster up` that would create a VPC whose
@@ -88,6 +89,20 @@ func guardVPCPrefixOverlap(ctx context.Context, cctx *config.Context) error {
 		byCRN[strings.ToLower(v.CRN)] = v
 	}
 
+	// EXCLUDE OUR OWN VPC. `cluster up` is idempotent and gets re-run constantly —
+	// after a partial failure, or just to converge. On any run after the first, the
+	// VPC this workspace created is itself attached to the gateway, carrying exactly
+	// the prefixes we intend to use. Comparing against it makes the guard report a
+	// VPC overlapping ITSELF and refuse a re-run that is a no-op. Identify it two
+	// ways because either can be the only one available: by the id recorded in
+	// cluster-outputs.json (absent until a run completes) and by the name terraform
+	// derives from the prefix (valid before anything is recorded).
+	ownVPCID := ""
+	if co, cerr := config.ReadClusterOutputs(cctx.WorkspaceName); cerr == nil && co != nil {
+		ownVPCID = co.VPCID
+	}
+	ownVPCName := naming.Derive(ws.Prefix).ClusterVPCName
+
 	attached := map[string][]string{}
 	for _, c := range conns {
 		// Same filter tgwConnectionForVPC uses: empty network_type means vpc, and
@@ -102,6 +117,9 @@ func guardVPCPrefixOverlap(ctx context.Context, cctx *config.Context) error {
 		v, ok := byCRN[strings.ToLower(c.NetworkID)]
 		if !ok {
 			continue // attached from another region/account — not comparable here
+		}
+		if (ownVPCID != "" && v.ID == ownVPCID) || v.Name == ownVPCName {
+			continue // ourselves: a VPC cannot overlap itself
 		}
 		prefixes, perr := cl.ListVPCAddressPrefixes(ctx, region, v.ID)
 		if perr != nil {

@@ -4,6 +4,23 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.40.2 — 2026-08-07
+
+### Fixed
+
+- **The address-prefix guard refused a workspace's own re-run.** The `cluster up` guard added in v1.39.0 compared the prefixes it intended to use against *every* VPC attached to the gateway — including the one this workspace had already created. `cluster up` is idempotent and gets re-run constantly (after a partial failure, or just to converge), and on every run after the first the guard found itself:
+
+  ```
+  the cluster VPC's address prefixes overlap a VPC already attached to transit gateway "bnkci-testing":
+    10.243.0.0/18 overlaps 10.243.0.0/18 on VPC "bnk-dc-cluster-vpc"
+  ```
+
+  `bnk-dc-cluster-vpc` *is* the workspace's own VPC. A guard that blocks an idempotent re-run is worse than no guard, because the retry after a partial failure is precisely when it needs to get out of the way — and the suggested remedies (pick another block, detach the other VPC) are both wrong when the "other VPC" is you.
+
+  The guard now excludes its own VPC, identified two ways because either can be the only one available: the id recorded in `cluster-outputs.json` (absent until a run completes) and the name terraform derives from the prefix (valid before anything is recorded). The `tgw connect` guard already did this; only the `cluster up` one was missing it, because it was written assuming the VPC does not exist yet — true on the first run and false on every one after.
+
+  Found by running the disconnected Argo workflow twice against real infrastructure.
+
 ## v1.40.1 — 2026-08-07
 
 ### Fixed

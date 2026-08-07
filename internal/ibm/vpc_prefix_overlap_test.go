@@ -140,3 +140,34 @@ func TestFindPrefixConflicts_BadCIDRSurfaces(t *testing.T) {
 		t.Error("a malformed attached CIDR should error, not silently pass")
 	}
 }
+
+// A workspace re-running `cluster up` sees its OWN VPC attached to the gateway,
+// carrying exactly the prefixes it intends to use. The caller must exclude it before
+// calling FindPrefixConflicts — this pins the arithmetic that makes that necessary,
+// so the exclusion is never mistaken for over-caution and removed.
+//
+// It is not hypothetical: the first cut of the cluster-up guard compared against
+// every attached VPC, and the second run of a disconnected workflow refused itself
+// with "10.243.0.0/18 overlaps 10.243.0.0/18 on VPC bnk-dc-cluster-vpc". A guard
+// that blocks an idempotent re-run is worse than no guard, because the retry after a
+// partial failure is exactly when you need it to get out of the way.
+func TestFindPrefixConflicts_AVPCOverlapsItself(t *testing.T) {
+	intended, _ := IntendedPrefixes("10.243.0.0/16")
+	own := map[string][]string{"bnk-dc-cluster-vpc": intended}
+
+	conflicts, err := FindPrefixConflicts(intended, own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 3 {
+		t.Fatalf("a VPC trivially overlaps itself on all three zones, got %d: %v", len(conflicts), conflicts)
+	}
+	// …so with the owner excluded, as the guard must, it is clean.
+	conflicts, err = FindPrefixConflicts(intended, map[string][]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("excluding our own VPC must leave nothing to conflict with, got %v", conflicts)
+	}
+}
