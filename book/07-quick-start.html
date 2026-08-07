@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a899a93.js";
+            window.path_to_searchindex_js = "searchindex-259927fa.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d5c18a15.js"></script>
+        <script src="toc-ecec3061.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -211,7 +211,7 @@
 <ul>
 <li>You have a <code>roksbnkctl</code> binary on <code>PATH</code> (<a href="./04-installation.html">Chapter 4</a>).</li>
 <li>You have an <strong>IBM Cloud API key</strong> for an account with permission to create ROKS clusters.</li>
-<li><code>terraform &gt;= 1.5</code> is on <code>PATH</code> and <code>roksbnkctl doctor</code> looks healthy (<a href="./05-doctor.html">Chapter 5</a>).</li>
+<li><code>terraform &gt;= 1.10</code> is on <code>PATH</code> and <code>roksbnkctl doctor</code> looks healthy (<a href="./05-doctor.html">Chapter 5</a>). The floor is 1.10, not 1.5: roksbnkctl enforces it (<code>requireTerraformVersion</code>) because remote state locking uses terraform’s native S3 lockfile (<a href="./12a-remote-state.html">Chapter 12a</a>).</li>
 </ul>
 <p>If <code>roksbnkctl doctor</code> is not green for <code>terraform</code> and <code>IBMCLOUD_API_KEY resolves</code>, fix those first — nothing below will work otherwise.</p>
 <blockquote>
