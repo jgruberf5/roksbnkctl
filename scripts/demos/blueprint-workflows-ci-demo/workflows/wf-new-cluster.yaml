@@ -43,16 +43,16 @@ spec:
         - - name: init
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+              parameters: [{ name: cmd, value: "init -w bnkconn --non-interactive --override-from-env" }]
         - - name: cluster-up
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk cluster up --auto" }]
+              parameters: [{ name: cmd, value: "-w bnkconn cluster up --auto" }]
         - - name: bnkforge-register
             template: rbk
             when: "{{workflow.parameters.bnkforge}} == true"
             arguments:
-              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+              parameters: [{ name: cmd, value: '-w bnkconn bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
 
         # ── bnk-install ──────────────────────────────────────────────────────────
         # No `registry adopt` here: nothing is mirrored, so bnk up renders against
@@ -61,11 +61,11 @@ spec:
         - - name: bnk-up
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk bnk up --auto" }]
+              parameters: [{ name: cmd, value: "-w bnkconn bnk up --auto" }]
         - - name: bnk-status
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+              parameters: [{ name: cmd, value: "-w bnkconn bnk status" }]
 
     - name: rbk
       inputs:
@@ -89,6 +89,22 @@ spec:
           # create:true — this is the only variant that makes a gateway, and it
           # returns it on teardown.
           - { name: ROKSBNKCTL_TRANSIT_GATEWAY_NAME,   value: "" }
+          # The mirror is BLANKED for the connected variants, and it has to be done
+          # here rather than by omission: bnk-env is shared with the mirror and
+          # disconnected workflows, so ROKSBNKCTL_GENERIC_HOST is set for everyone.
+          # Left inherited, `init --override-from-env` writes registry.generic_host
+          # into this workspace, tf/vars.go then renders EVERY image against the
+          # mirror, and the cluster — which is on its OWN gateway, not the one Harbor
+          # sits on — cannot reach it. That failed here as cert-manager pulling
+          # 10.241.0.4/... until `bnk up` hit its 600s deadline. OverrideFromEnv skips
+          # empty values, so blank leaves a fresh workspace with no registry at all,
+          # which is what "connected" means: render against far_repo_url.
+          - { name: ROKSBNKCTL_GENERIC_HOST,        value: "" }
+          - { name: ROKSBNKCTL_GENERIC_REPO_PREFIX, value: "" }
+          - { name: ROKSBNKCTL_GENERIC_USERNAME,    value: "" }
+          - { name: ROKSBNKCTL_GENERIC_PASSWORD,    value: "" }
+          - { name: ROKSBNKCTL_GENERIC_CA_B64,      value: "" }
+          - { name: ROKSBNKCTL_GENERIC_CA_SHA256,   value: "" }
           - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
           - { name: HOME,            value: "/home/runner" }
         volumeMounts:

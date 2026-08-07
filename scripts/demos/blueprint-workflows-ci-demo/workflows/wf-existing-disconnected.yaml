@@ -42,21 +42,21 @@ spec:
         - - name: init
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+              parameters: [{ name: cmd, value: "init -w bnkdisco --non-interactive --override-from-env" }]
         - - name: cluster-register
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: '-w bnk cluster register "$ROKSBNKCTL_CLUSTER_NAME" --registry-cos-name "$REGISTRY_COS_NAME"' }]
+              parameters: [{ name: cmd, value: '-w bnkdisco cluster register "$ROKSBNKCTL_CLUSTER_NAME" --registry-cos-name "$REGISTRY_COS_NAME"' }]
         # Pull the admin kubeconfig so the k verbs (and the cwc guard) can reach it.
         - - name: kubeconfig-fetch
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk kubeconfig --download" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco kubeconfig --download" }]
         - - name: bnkforge-register
             template: rbk
             when: "{{workflow.parameters.bnkforge}} == true"
             arguments:
-              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+              parameters: [{ name: cmd, value: '-w bnkdisco bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
 
         # ── bnk-install ──────────────────────────────────────────────────────────
         # `bnk up` refuses to render against a mirror this workspace has no record of,
@@ -66,14 +66,14 @@ spec:
         - - name: registry-adopt
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk registry adopt" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco registry adopt" }]
         # The guard runs AS A SIDECAR of this step — see the bnk-up template.
         - - name: bnk-up
             template: bnk-up
         - - name: bnk-status
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco bnk status" }]
 
 
     - name: rbk
@@ -115,7 +115,7 @@ spec:
       container:
         image: PLACEHOLDER_RUNNER_IMAGE
         command: [sh, -ec]
-        args: ["roksbnkctl -w bnk bnk up --auto"]
+        args: ["roksbnkctl -w bnkdisco bnk up --auto"]
         workingDir: /work
         envFrom:
           - configMapRef: { name: bnk-env }
@@ -151,7 +151,7 @@ spec:
             - |
               [ "${CWC_GUARD_ENABLED:-true}" = "true" ] || { echo "cwc guard disabled"; exit 0; }
               NS="${CWC_NAMESPACE:-f5-utils}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
-              K="roksbnkctl -w bnk kubectl"
+              K="roksbnkctl -w bnkdisco kubectl"
               patched=0
               # ~27 min, comfortably covering bnk up's 15m license gate.
               for _ in $(seq 1 160); do

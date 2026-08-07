@@ -49,16 +49,16 @@ spec:
         - - name: init
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+              parameters: [{ name: cmd, value: "init -w bnkdisco --non-interactive --override-from-env" }]
         - - name: cluster-up
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk cluster up --auto" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco cluster up --auto" }]
         - - name: bnkforge-register
             template: rbk
             when: "{{workflow.parameters.bnkforge}} == true"
             arguments:
-              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+              parameters: [{ name: cmd, value: '-w bnkdisco bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
 
         # ── bnk-install ──────────────────────────────────────────────────────────
         # `bnk up` REFUSES to render against a mirror this workspace has no record of,
@@ -68,15 +68,15 @@ spec:
         - - name: registry-adopt
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk registry adopt" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco registry adopt" }]
         - - name: bnk-up
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk bnk up --auto" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco bnk up --auto" }]
         - - name: bnk-status
             template: rbk
             arguments:
-              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+              parameters: [{ name: cmd, value: "-w bnkdisco bnk status" }]
 
     - name: rbk
       inputs:

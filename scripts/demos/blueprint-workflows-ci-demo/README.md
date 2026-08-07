@@ -120,6 +120,37 @@ leaves terraform with nothing to destroy from.
 It is also how the workflows hand off: `wf-far-mirror` writes the mirror record that
 `wf-*-disconnected` later adopts.
 
+### One workspace per cluster, and the mirror is not shared
+
+The PVC is shared; the **roksbnkctl workspace inside it is not**. Each workflow names
+its own, and the split is load-bearing rather than cosmetic:
+
+| Workspace | Used by | Why it is separate |
+|---|---|---|
+| `bnk` | `wf-far-mirror` | owns `registry-mirror.json`, the record of what was replicated |
+| `bnkconn` | the two **connected** workflows | must have **no** registry at all |
+| `bnkdisco` | the two **disconnected** workflows | `registry adopt` writes its own record here |
+| `flp` | `wf-flp-vsi` | separate lifecycle from any cluster |
+
+Two independent reasons, both learned the hard way:
+
+**Terraform state is per workspace, and a workspace can only describe one cluster.**
+Pointing the disconnected pair at the same workspace as the connected pair would have
+terraform plan the *existing* cluster out of existence when the prefix changed.
+
+**A mirror record is inherited by anything sharing the workspace.** `tf/vars.go` reads
+`registry-mirror.json` for the current workspace and rewrites every image reference to
+the mirror. When the connected workflows shared `bnk` with `wf-far-mirror`, `bnk up`
+rendered cert-manager as `10.241.0.4/bnk-mirror/jetstack/...` — a private address on a
+gateway that cluster is not attached to. Nothing said "wrong registry"; the pods sat in
+`ImagePullBackOff` until `bnk up` hit its 600-second deadline and reported
+`context deadline exceeded`.
+
+The connected workflows also **blank `ROKSBNKCTL_GENERIC_*` in their own `env:`**, because
+`bnk-env` is shared and carries the mirror host for everyone. `--override-from-env` skips
+empty values, so on a fresh workspace blank means "never set a registry" — which is what
+connected means.
+
 ### …which is why you run one workflow at a time
 
 That shared PVC holds **one terraform state**, and `bnk-env` is **one ConfigMap**. Two
