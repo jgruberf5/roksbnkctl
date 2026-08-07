@@ -9,3 +9,8 @@ roksbnkctl.bin
 # editor swap files
 *.swp
 *.swo
+
+# bootstrap-services.sh / bootstrap-argo.sh state: holds a generated PRIVATE SSH key,
+# Harbor's admin password and the rendered cloud-init (which embeds that password).
+# Never commit any of it.
+.bootstrap-state/

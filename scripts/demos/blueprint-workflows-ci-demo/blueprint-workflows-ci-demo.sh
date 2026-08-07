@@ -149,7 +149,35 @@ EOF
 [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"
 # These demos are RECORDED: register every credential so nothing reaches the screen.
 secret "$IBMCLOUD_API_KEY" "${ROKSBNKCTL_GENERIC_PASSWORD:-}" "${BNK_FORGE_PASSWORD:-}" "${ROKSBNKCTL_BIGIP_PASSWORD:-}"
-for c in kubectl argo; do command -v "$c" >/dev/null || die "$c not found — this demo drives Argo Workflows"; done
+# ── bootstrap: build what is missing rather than demanding it ────────────────
+# `bootstrap` provisions the whole substrate from a CLEAN SLATE — SSH key, services
+# VPC, its gateway attachment, Harbor, and the k3s + Argo Workflows controller. The
+# ONLY thing it will not create is the global transit gateway itself.
+#
+# It is idempotent, so re-running is safe, and it is opt-in: an operator who already
+# has Harbor and an Argo controller sets the values in .env and never calls it.
+if [[ "${1:-}" == "bootstrap" ]]; then
+  say "bootstrapping the services substrate + Argo controller (clean slate)…"
+  bash "$HERE/../lib/bootstrap-services.sh"
+  set -a; . "${BOOTSTRAP_STATE:-$HERE/../.bootstrap-state}/services.env"; set +a
+  bash "$HERE/../lib/bootstrap-argo.sh"
+  banner "BOOTSTRAP COMPLETE"
+  cat >&2 <<EOF
+Fold the generated values into .env (they are written to
+${BOOTSTRAP_STATE:-$HERE/../.bootstrap-state}/services.env and argo.env):
+
+  ROKSBNKCTL_GENERIC_HOST      = the Harbor PRIVATE ip
+  ROKSBNKCTL_GENERIC_PASSWORD  = the generated Harbor admin password
+  ROKSBNKCTL_GENERIC_CA_B64    = Harbor's CA, from the file that generated it
+  ROKSBNKCTL_FLP_VSI_VPC       = the services VPC
+  KUBECONFIG                   = the Argo controller, reached over an ssh tunnel
+
+Then open the tunnel and run: ./blueprint-workflows-ci-demo.sh far-mirror flp-vsi
+EOF
+  exit 0
+fi
+
+for c in kubectl argo; do command -v "$c" >/dev/null || die "$c not found — run './blueprint-workflows-ci-demo.sh bootstrap' first, or install them"; done
 [[ "$DRY_RUN" == "1" ]] || kubectl cluster-info >/dev/null 2>&1 || die "kubectl cannot reach a cluster (set KUBECONFIG)"
 ok "preflight: kubectl + argo present, runner $RUNNER_IMAGE"
 

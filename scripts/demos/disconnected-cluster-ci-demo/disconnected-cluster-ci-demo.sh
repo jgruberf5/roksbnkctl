@@ -28,10 +28,25 @@ HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # ── Inputs ───────────────────────────────────────────────────────────────────
 : "${IBMCLOUD_API_KEY:?set IBMCLOUD_API_KEY}"
 REGION="${REGION:-us-east}"                       # where the services VPC (Harbor/FLP/Argo VSI) lives
+
+# Clean-slate path: if the services substrate has already been bootstrapped, adopt it
+# rather than making the operator copy eight values across by hand. Everything below
+# still honours an explicit value, so a hand-built Harbor is unaffected.
+#
+#   bash ../lib/bootstrap-services.sh     # SSH key, services VPC, TGW attach, Harbor
+#
+# The FLP values are NOT bootstrapped — `roksbnkctl flp up` builds it, and this demo's
+# own phase 1 does that. They stay required.
+BOOTSTRAP_STATE="${BOOTSTRAP_STATE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.bootstrap-state}"
+if [[ -f "$BOOTSTRAP_STATE/services.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; . "$BOOTSTRAP_STATE/services.env"; set +a
+  echo "→ adopted the bootstrapped services substrate from $BOOTSTRAP_STATE/services.env" >&2
+fi
 RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
-SERVICES_VPC="${SERVICES_VPC:?set SERVICES_VPC to the CLI demo services VPC id or name}"
-SERVICES_SUBNET="${SERVICES_SUBNET:?set SERVICES_SUBNET (a subnet id in the services VPC)}"
-HARBOR_PRIVATE_IP="${HARBOR_PRIVATE_IP:?set HARBOR_PRIVATE_IP (Harbor VSI private IP, e.g. 10.241.0.4)}"
+SERVICES_VPC="${SERVICES_VPC:?set SERVICES_VPC, or run ../lib/bootstrap-services.sh to build one}"
+SERVICES_SUBNET="${SERVICES_SUBNET:?set SERVICES_SUBNET, or run ../lib/bootstrap-services.sh}"
+HARBOR_PRIVATE_IP="${HARBOR_PRIVATE_IP:?set HARBOR_PRIVATE_IP, or run ../lib/bootstrap-services.sh}"
 HARBOR_ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:?set HARBOR_ADMIN_PASSWORD}"
 FLP_EXTERNAL_URL="${FLP_EXTERNAL_URL:?set FLP_EXTERNAL_URL (from: roksbnkctl -w flp flp output)}"
 FLP_ROOT_CA_B64="${FLP_ROOT_CA_B64:?set FLP_ROOT_CA_B64 (base64 of the FLP root CA)}"
@@ -39,8 +54,8 @@ HARBOR_CA_B64="${HARBOR_CA_B64:?set HARBOR_CA_B64 - base64 of the Harbor CA, so 
 FAR_COS_BUCKET="${FAR_COS_BUCKET:?set FAR_COS_BUCKET (orchestration COS bucket holding f5-far-auth-key.tgz + subscription.jwt)}"
 CLUSTER_NAME="${CLUSTER_NAME:-disco-demo}"
 
-SSH_KEY_FILE="${SSH_KEY_FILE:?set SSH_KEY_FILE (private key for the VPC ssh key)}"
-SSH_KEY_NAME="${SSH_KEY_NAME:?set SSH_KEY_NAME (the IBM Cloud VPC ssh key name)}"
+SSH_KEY_FILE="${SSH_KEY_FILE:?set SSH_KEY_FILE, or run ../lib/bootstrap-services.sh (it generates one)}"
+SSH_KEY_NAME="${SSH_KEY_NAME:?set SSH_KEY_NAME, or run ../lib/bootstrap-services.sh (it registers one)}"
 ARGO_VSI_NAME="${ARGO_VSI_NAME:-bnk-argo}"
 ARGO_VSI_PROFILE="${ARGO_VSI_PROFILE:-bx2-4x16}"
 ARGO_VSI_IMAGE="${ARGO_VSI_IMAGE:-ibm-ubuntu-24-04-4-minimal-amd64-6}"   # `ibmcloud is images | grep ubuntu-24-04` if instance-create 404s

@@ -42,10 +42,39 @@ essentially one line.
 
 ## Prerequisites
 
+### From a clean slate — one command
+
+The only thing this demo will **not** create is the global **Transit Gateway**. Everything
+else — an RSA VPC SSH key, the services VPC, its gateway attachment, Harbor, and the
+k3s + Argo Workflows controller — is built for you:
+
+```bash
+export IBMCLOUD_API_KEY=… TGW_NAME=bnkci-testing
+./blueprint-workflows-ci-demo.sh bootstrap
+```
+
+It is **idempotent**, so re-running after a partial failure continues rather than
+duplicating, and it writes what it made to `../.bootstrap-state/services.env` and
+`argo.env` (both gitignored — they hold a generated private key and Harbor's password).
+Fold those values into your `.env`, open the SSH tunnel it prints, and carry on.
+
+If the gateway itself does not exist:
+
+```bash
+ibmcloud tg gateway-create --name bnkci-testing --location us-east --routing global
+```
+
+> **Why the gateway is the exception.** It is the one resource that is genuinely shared
+> and long-lived — the mirror, the licence proxy and every disconnected cluster attach to
+> it, and deleting it would break things this demo never created. Attaching to a gateway
+> is cheap and reversible; owning one is not.
+
+### Bringing your own
+
+An operator who already has Harbor and an Argo controller sets the values in `.env` and
+never runs `bootstrap`. You then need:
+
 **A cluster running Argo Workflows**, reachable via `KUBECONFIG`, plus the `argo` CLI.
-A k3s VSI is enough; see the
-[disconnected-cluster CI demo](../disconnected-cluster-ci-demo/README.md) for one
-built with cloud-init.
 
 **The runner image** — `RUNNER_TAG` must be **≥ v1.36.0** (for `registry adopt`, which
 workflows 4 and 6 depend on) and **≥ v1.37.0** if you want `bnkforge unregister` on

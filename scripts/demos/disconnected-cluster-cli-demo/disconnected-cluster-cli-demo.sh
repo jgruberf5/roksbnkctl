@@ -43,7 +43,10 @@ SSH_KEY_NAME="${SSH_KEY_NAME:-bnk-airgap-key}" # EXISTING IBM Cloud VPC SSH key
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/bnk-airgap-key}"  # its PRIVATE key on THIS host
 
 HARBOR_VSI_PROFILE="${HARBOR_VSI_PROFILE:-bx2-4x16}"
-HARBOR_IMAGE="${HARBOR_IMAGE:-ibm-ubuntu-22-04-5-minimal-amd64-3}"
+# Resolved at RUN TIME, not hardcoded. IBM retires stock image names: the previous
+# default (…-amd64-3) no longer exists, and instance-create then 404s months later
+# with nothing in the message to explain why.
+HARBOR_IMAGE="${HARBOR_IMAGE:-}"
 HARBOR_ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:-Harbor12345!}"
 HARBOR_PROJECT="${HARBOR_PROJECT:-bnk-mirror}"
 HARBOR_STATUS_PROJECT="${HARBOR_STATUS_PROJECT:-bnk-status}"   # public project for the flp-status image
@@ -230,6 +233,32 @@ pause; phase P1 "PHASE 1/5  —  Services VPC + Harbor registry (the operator ho
 say "roksbnkctl provisions neither registries nor standalone VPCs; this prerequisite is the"
 say "ibmcloud CLI. Harbor installs via cloud-init; we then put roksbnkctl ON this VSI."
 ibmcloud target -r "$SVC_REGION" -g "$RESOURCE_GROUP" >/dev/null
+
+# Clean-slate safety net, both resolved here rather than assumed:
+#
+#   the boot image — IBM retires stock names, so pick the newest available 22.04
+#   rather than a literal that will 404 `instance-create` in a few months;
+#
+#   the SSH key — a key registered in VPC whose PRIVATE half you no longer hold is
+#   worse than no key: every VSI below accepts it and none of them let you in.
+#   Generate the pair if the private file is missing, and register it if VPC has
+#   never seen it. RSA because IBM Cloud VPC rejects ed25519.
+if [[ -z "$HARBOR_IMAGE" ]]; then
+  HARBOR_IMAGE="$(ibmcloud is images --visibility public --output json \
+    | jq -r '[.[]|select(.status=="available" and (.name|test("ubuntu-22-04.*amd64")))]|sort_by(.name)|last|.name')"
+  [[ -n "$HARBOR_IMAGE" && "$HARBOR_IMAGE" != null ]] || die "no available Ubuntu 22.04 image in $SVC_REGION"
+  say "boot image resolved: $HARBOR_IMAGE"
+fi
+if [[ ! -f "$SSH_KEY_FILE" ]]; then
+  mkdir -p "$(dirname "$SSH_KEY_FILE")"
+  ssh-keygen -t rsa -b 4096 -N '' -f "$SSH_KEY_FILE" -C "$SSH_KEY_NAME" >/dev/null
+  say "generated $SSH_KEY_FILE"
+fi
+chmod 600 "$SSH_KEY_FILE"
+if ! ibmcloud is key "$SSH_KEY_NAME" >/dev/null 2>&1; then
+  run ibmcloud is key-create "$SSH_KEY_NAME" @"${SSH_KEY_FILE}.pub" --resource-group-name "$RESOURCE_GROUP" >/dev/null
+  ok "registered VPC SSH key $SSH_KEY_NAME"
+fi
 VPC_JSON="$(run ibmcloud is vpc-create "${SVC_PREFIX}-vpc" --resource-group-name "$RESOURCE_GROUP" --output json)"
 SVC_VPC_ID="$(echo "$VPC_JSON" | jq -r .id)"; SVC_VPC_CRN="$(echo "$VPC_JSON" | jq -r .crn)"
 echo "$SVC_VPC_ID" > "$STATE_DIR/svc_vpc_id"
