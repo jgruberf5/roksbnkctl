@@ -557,9 +557,9 @@ operator VSI did.
 > **Mirror the runner into Harbor once**, alongside FAR:
 >
 > ```bash
-> docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0
-> docker tag  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.33.0 <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
-> docker push <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+> docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+> docker tag  ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2 <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.40.2
+> docker push <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.40.2
 > ```
 
 ```mermaid
@@ -609,7 +609,7 @@ graph TB
 # archive + subscription JWT already live in the registry COS bucket — CI reads
 # them from there with the API key, so there is nothing to mount.
 set -euo pipefail
-RUNNER=10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0     # pin by @sha256 digest in prod
+RUNNER=10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.40.2     # pin by @sha256 digest in prod
 COMMON=( --rm -v "$PWD/state:/work" -e IBMCLOUD_API_KEY )
 
 # config.yaml carries only what env can't: the manifest + where the mirror is.
@@ -665,6 +665,57 @@ Both Workflows run in a small **k3s + Argo Workflows** cluster in the services V
 private-IP / TGW reachability the runner needs; a *hosted* controller can't reach Harbor's
 private IP or the target cluster). They share the `bnk-work` PVC, the `bnk-config` ConfigMap (the
 `bnk.yaml` above), the `bnk-secrets` Secret, and a `bnk-runner` ServiceAccount.
+
+#### Bring your own controller — versions and constraints
+
+**Argo Workflows, not Argo CD.** These are `argo submit` pipelines: no git repository, no
+`Application`, nothing to sync. If you already run Argo CD, it is not what drives this — you
+need the **Argo Workflows** controller alongside it. (Argo CD *can* own the lifecycle of the
+prerequisites below, since they are ordinary manifests.)
+
+**Tested against:**
+
+| Component | Version tested | Floor, and why |
+|---|---|---|
+| Argo Workflows | **v4.0.8** | v3.4+ for the emissary executor and `workflowtaskresults` RBAC below. Sidecar support (`sidecars:`) is used by the cwc guard. |
+| Kubernetes (controller host) | **k3s v1.36.3+k3s1** | Any conformant cluster. The `local-path` StorageClass is a k3s convenience; on your own cluster supply any RWO class. |
+| `roksbnkctl-tools-runner` | **v1.40.2** | **≥ v1.36.0** for `registry adopt` — the disconnected path cannot work without it. **≥ v1.37.0** for `bnkforge unregister` on teardown. **≥ v1.40.1** fixes a terraform variable validation that raised `Invalid index` on **every** plan under terraform 1.10. |
+| terraform (inside the runner) | **1.10.5** | **≥ 1.10** — enforced by roksbnkctl (native S3 lockfile, [Chapter 12a](./12a-remote-state.md)). Do not assume newer behaviour: 1.10 and 1.15 differ in ways that have bitten this project. |
+
+**Constraints your controller must satisfy** — the first is architectural, the rest are
+operational and each one has cost a real run:
+
+- **It must sit where it can reach the private addresses.** The controller pods pull the runner
+  image from Harbor's private IP and talk to the target cluster's API. A hosted or SaaS Argo
+  cannot do either. On your own infrastructure that means the controller's nodes are on (or
+  routed to) the services VPC — the same TGW reachability the operator VSI needs.
+
+- **One workflow at a time per workspace.** The `bnk-work` PVC holds **one terraform state**, and
+  `ReadWriteOnce` means one pod mounts it at a time anyway. Two runs against the same workspace
+  fight over the state lock and the loser fails mid-apply.
+
+- **One roksbnkctl workspace per cluster.** A workspace's terraform state describes exactly one
+  cluster, and its `registry-mirror.json` is inherited by anything sharing it — which is how a
+  *connected* cluster ends up rendering every image at a mirror it cannot reach. Give each
+  cluster its own `-w` name.
+
+- **`ROKSBNKCTL_REGISTRY_TARGET` must be set** (`generic` for Harbor). `registry adopt` has no
+  `--target` flag; it reads the workspace config. Unset, it defaults to `icr` and the air-gapped
+  cluster tries to pull from `us.icr.io` and fails with `unauthorized`.
+
+- **The namespace is `bnk-ci` in the manifests below.** It is hardcoded in each Workflow's
+  `metadata.namespace`; change it in both places if your controller is namespaced differently.
+
+- **A second RBAC grant is needed if you publish the FLP handoff** from a workflow — the ability
+  to write one named Secret. It is kept in a separate file
+  (`workflows/01-flp-handoff-rbac.yaml`) so a blanket secret-write grant is never applied by
+  accident.
+
+> **The six-blueprint pipeline.** The two Workflows below are the minimal mirror-then-install
+> shape. The full set — connected and disconnected, new and adopted clusters, the FAR mirror and
+> the standalone FLP — is in
+> [`scripts/demos/blueprint-workflows-ci-demo`](https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/blueprint-workflows-ci-demo),
+> driven entirely from environment variables with no `config.yaml` anywhere.
 
 **The shared prerequisites** — applied once (`kubectl apply -f workflows/00-prereqs.yaml`):
 
@@ -727,7 +778,7 @@ spec:
     - name: rbk                       # one reusable step: roksbnkctl -w bnk <cmd> on the runner image
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0   # >= v1.33.0: native operator + node CA trust
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.40.2   # see the version floors above
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -769,7 +820,7 @@ spec:
     # attaches, then exits (Argo kills it when bnk up finishes). A no-op on a fresh cluster.
     - name: bnk-up
       container:
-        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.40.2
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk bnk up --auto"]
         workingDir: /work
@@ -777,7 +828,7 @@ spec:
         volumeMounts: [{ name: work, mountPath: /work }]
       sidecars:
         - name: cwc-guard            # (args abridged — the full loop is in workflows/wf-install.yaml)
-          image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+          image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.40.2
           command: [sh, -ec]
           args:
             - |
@@ -790,7 +841,7 @@ spec:
     - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.33.0
+        image: 10.241.0.4/bnk-mirror/roksbnkctl-tools-runner:v1.40.2
         command: [sh, -ec]
         args: ["roksbnkctl -w bnk {{inputs.parameters.cmd}}"]
         workingDir: /work

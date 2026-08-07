@@ -36,7 +36,7 @@ The walkthrough assumes:
 
 - You have a `roksbnkctl` binary on `PATH` ([Chapter 4](./04-installation.md)).
 - You have an **IBM Cloud API key** for an account with permission to create ROKS clusters.
-- `terraform >= 1.5` is on `PATH` and `roksbnkctl doctor` looks healthy ([Chapter 5](./05-doctor.md)).
+- `terraform >= 1.10` is on `PATH` and `roksbnkctl doctor` looks healthy ([Chapter 5](./05-doctor.md)). The floor is 1.10, not 1.5: roksbnkctl enforces it (`requireTerraformVersion`) because remote state locking uses terraform's native S3 lockfile ([Chapter 12a](./12a-remote-state.md)).
 
 If `roksbnkctl doctor` is not green for `terraform` and `IBMCLOUD_API_KEY resolves`, fix those first — nothing below will work otherwise.
 
