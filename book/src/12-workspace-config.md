@@ -43,7 +43,7 @@ ibmcloud:        # IBM Cloud account + auth
 cluster:         # ROKS cluster identity
   create: true
   name: acme-eu   # equals prefix when init derived the name
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
 
 resources:       # per-resource create/adopt toggles
@@ -128,7 +128,7 @@ The plaintext field name `api_key:` is **rejected** at load time — `roksbnkctl
 cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
@@ -139,7 +139,7 @@ cluster:
 |---|---|---|---|
 | `create` | bool | `true` | When `true`, `roksbnkctl cluster up` provisions a new ROKS cluster. When `false`, `cluster register <name>` adopts an existing one. |
 | `name` | string | none — required | OpenShift cluster name when `create=true`; cluster ID-or-name to adopt when `create=false`. |
-| `openshift_version` | string | empty (latest) | E.g. `"4.18"`. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses `4.18` as a float. |
+| `openshift_version` | string | empty (latest) | E.g. `"4.20"`. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses `4.20` as a float. |
 | `workers_per_zone` | int | `1` | Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so `2` ⇒ 6 workers total. |
 | `public_gateway` | bool | `true` | Attach a public gateway to each cluster subnet for worker Internet egress. `false` builds a **private/disconnected** cluster with no egress (no `ibm_is_public_gateway`, no subnet attachment). Sets `cluster_public_gateway`. **Expert:** a `false` cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/`disconnected` licensing — see [Chapter 10a §"A truly disconnected cluster"](./10a-air-gapped-install.md). Governs worker egress only; the master keeps its public API endpoint. |
 | `min_worker_vcpu_count` | int | `16` | Minimum vCPUs when the cluster module auto-selects the `bx2` worker flavor (smallest profile meeting both minimums). `0`/omitted ⇒ HCL default. Sets `roks_min_worker_vcpu_count`. |
@@ -432,7 +432,7 @@ Setting up workspace "dev"
 
   Workspace prefix (≤ 35 chars)  [dev]: acme-eu
   Create new ROKS cluster?       [Y/n]: y
-  OpenShift version              [4.18]:
+  OpenShift version              [4.20]:
   Workers per zone               [1]: 2
   Create registry COS instance?  [Y/n]: y
   Create Transit Gateway?        [Y/n]: n

@@ -1212,7 +1212,7 @@ func resolveLatestRelease(ctx context.Context, repo string) (config.TFSourceCfg,
 // initDefaults returns prompt defaults: existing workspace values first,
 // PRD-stated defaults second. Workspace may be nil (fresh init).
 func initDefaults(cctx *config.Context) (region, rg, cluster, ocp string, workers int, create bool) {
-	region, rg, cluster, ocp = "ca-tor", "default", "bnk-demo", "4.18"
+	region, rg, cluster, ocp = "ca-tor", "default", "bnk-demo", "4.20"
 	workers, create = 1, true
 	if cctx.Workspace == nil {
 		return

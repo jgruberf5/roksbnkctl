@@ -33,7 +33,7 @@ HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # ============================ CONFIG (edit me) ===============================
 REGION="${REGION:-ca-tor}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
-OCP_VERSION="${OCP_VERSION:-4.18}"
+OCP_VERSION="${OCP_VERSION:-4.20}"
 WORKERS_PER_ZONE="${WORKERS_PER_ZONE:-1}"       # ROKS spans 3 AZs -> 1/zone = 3 workers
 
 BNK_VERSION="${BNK_VERSION:-2.3.0-3.2598.3-0.0.170}"        # installed in phase 5

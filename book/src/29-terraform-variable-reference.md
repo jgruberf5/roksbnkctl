@@ -21,7 +21,7 @@ Source: `terraform/variables.tf`
 | `deploy_cert_manager` | `bool` | `true` | When true, the cert_manager module's helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to \"direct-apply\"). | no |
 | `roks_cluster_vpc_name` | `string` | `"tf-cluster-vpc"` | Name of the cluster VPC | no |
 | `openshift_cluster_name` | `string` | `"tf-openshift-cluster"` | Name of the OpenShift cluster | no |
-| `openshift_cluster_version` | `string` | `"4.18"` | OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available. | no |
+| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available. | no |
 | `roks_workers_per_zone` | `number` | `1` | Number of worker nodes per availability zone | no |
 | `roks_min_worker_vcpu_count` | `number` | `16` | Minimum vCPU count when auto-selecting the worker node flavor | no |
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
@@ -372,7 +372,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `create_roks_registry_cos_instance` | `bool` | `true` | Create Cloud Object Storage instance for the OpenShift image registry | no |
 | `roks_cluster_vpc_name` | `string` | `"tf-cluster-vpc"` | Name of the cluster VPC | no |
 | `openshift_cluster_name` | `string` | `"tf-openshift-cluster"` | Name of the OpenShift cluster | no |
-| `openshift_cluster_version` | `string` | `"4.18"` | OpenShift cluster version (e.g. 4.18) | no |
+| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version (e.g. 4.20) | no |
 | `roks_workers_per_zone` | `number` | `1` | Number of worker nodes per availability zone | no |
 | `roks_min_worker_vcpu_count` | `number` | `16` | Minimum vCPU count when auto-selecting the worker node flavor | no |
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |

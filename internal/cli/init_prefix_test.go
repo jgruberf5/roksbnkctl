@@ -125,7 +125,9 @@ func TestRunPrefixInterview_NonTTY_DefaultAccept(t *testing.T) {
 	const wsName = "demo-accept"
 	cctx := newInitContext(t, wsName, "")
 
-	// Defaults mirror runInit's: create=true, region "us-south", ocp "4.18",
+	// The version here is an arbitrary fixture, not runInit's default — it is passed
+	// explicitly, so this test does not move when the default OpenShift minor does.
+	// Defaults otherwise mirror runInit's: create=true, region "us-south",
 	// workers 1. Under `go test` stdin is non-TTY, so the create branch never
 	// dials the API (pickRegion returns the default without touching ic) — a
 	// nil client is safe.

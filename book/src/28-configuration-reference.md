@@ -71,7 +71,7 @@ ibmcloud:
 cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
@@ -81,7 +81,7 @@ cluster:
 |---|---|---|---|---|
 | `create` | bool | `true` | `true` \| `false` | `true` provisions a new ROKS cluster; `false` attaches to an existing one (set `name` to the existing cluster's name or ID). |
 | `name` | string | — (prompted by `init`) | RFC 1123 DNS label | The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator. |
-| `openshift_version` | string | `4.18` | any version IBM Cloud's catalog accepts | Pinned to a minor (`4.18`) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for "latest". |
+| `openshift_version` | string | `4.20` | any version IBM Cloud's catalog accepts | Pinned to a minor (`4.20`) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for "latest". |
 | `workers_per_zone` | integer | `1` | 1+ | Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone. |
 | `min_worker_vcpu_count` | integer | `16` | 2+ | Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest `bx2` profile meeting **both** minimums). Renders into `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. Only meaningful when `create: true`. |
 | `min_worker_memory_gb` | integer | `64` | 8+ | Minimum memory (GB) for the same worker-flavor auto-select. Renders into `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
@@ -472,7 +472,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `ibmcloud.api_key_b64` | string | (empty) | Base64-encoded API key. Obfuscation only. |
 | `cluster.create` | bool | `true` | Provision new vs attach existing. |
 | `cluster.name` | string | (prompted) | Cluster name. |
-| `cluster.openshift_version` | string | `4.18` | OpenShift minor version. |
+| `cluster.openshift_version` | string | `4.20` | OpenShift minor version. |
 | `cluster.workers_per_zone` | integer | `1` | Workers per AZ. |
 | `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). Settable from the environment with `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY`; it is a tri-state, so *unset* inherits the terraform default rather than rendering `true`. |
 | `cluster.min_worker_vcpu_count` | integer | `16` | Worker-flavor auto-select floor (vCPUs) → `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. |

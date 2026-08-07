@@ -101,9 +101,9 @@ variable "openshift_cluster_name" {
 }
 
 variable "openshift_cluster_version" {
-  description = "OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available."
+  description = "OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available."
   type        = string
-  default     = "4.18"
+  default     = "4.20"
 }
 
 variable "roks_workers_per_zone" {

@@ -92,7 +92,7 @@ roksbnkctl init
   Choice [1-14] [3]: 10
   Workspace prefix [bnk-quickstart]:
   Workers per zone (min 1; cluster spans all 3 AZs) [1]: 2
-  OpenShift version [4.18]:
+  OpenShift version [4.20]:
   Create registry COS instance? [Y/n]: y
   Resource group [default]:
 → ✓ Resource group "default" (id ...)
@@ -127,7 +127,7 @@ Answer **n** to *Create a new ROKS cluster?* and `init` lists the account's runn
   Create a new ROKS cluster? [Y/n]: n
 → Listing running OpenShift clusters...
   Choose an existing cluster:
-     * 1) bnk-demo        (us-south, 4.18.x_openshift)
+     * 1) bnk-demo        (us-south, 4.20.x_openshift)
        2) roks-prod-ca    (ca-tor, 4.19.x_openshift)
   Choice [1-2] [1]: 1
 ```

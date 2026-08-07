@@ -26,7 +26,7 @@
 
 
 # ============================================================
-# roks_cluster — ROKS Cluster 4.18 + Transit Gateway
+# roks_cluster — ROKS Cluster 4.20 + Transit Gateway
 # ============================================================
 
 module "roks_cluster" {

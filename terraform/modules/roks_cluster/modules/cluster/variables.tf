@@ -5,7 +5,7 @@ variable "ibmcloud_api_key" {
 }
 
 variable "openshift_cluster_version" {
-  description = "OpenShift major.minor version to deploy (e.g. \"4.18\"). The latest available patch within that major.minor is selected automatically. Leave empty to use the latest available version overall."
+  description = "OpenShift major.minor version to deploy (e.g. \"4.20\"). The latest available patch within that major.minor is selected automatically. Leave empty to use the latest available version overall."
   type        = string
   default     = ""
 }

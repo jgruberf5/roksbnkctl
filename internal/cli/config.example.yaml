@@ -22,7 +22,7 @@ prefix: acme-eu                 # resource-name prefix for everything this works
 cluster:
   create: true                  # true = provision a new ROKS cluster; false = attach to an existing one
   name: acme-eu-roks            # new cluster name, or an existing cluster name/ID when create:false
-  # openshift_version: "4.18"   # blank = roksbnkctl default
+  # openshift_version: "4.20"   # blank = roksbnkctl default
   # workers_per_zone: 2         # blank = roksbnkctl default (AZ-floor clamped)
   # min_worker_vcpu_count: 16   # worker-flavor auto-select floor (blank = default 16)
   # min_worker_memory_gb: 64    # worker-flavor auto-select floor (blank = default 64)

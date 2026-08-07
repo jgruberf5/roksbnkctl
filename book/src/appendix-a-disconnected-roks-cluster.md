@@ -117,7 +117,7 @@ graph TB
 |---|---|---|
 | `roksbnkctl` / `roksbnkctl-tools-runner` | **v1.40.2** | **≥ v1.36.0** for `registry adopt` (B and D cannot work without it); **≥ v1.37.0** for `bnkforge unregister`; **≥ v1.39.0** for `cluster.vpc_cidr`; **≥ v1.40.1** fixes a variable validation that raised `Invalid index` on *every* terraform 1.10 plan. |
 | terraform | **1.10.5** (shipped inside the runner) | **≥ 1.10**, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here. |
-| OpenShift (ROKS) | **4.18.51** | `cluster.openshift_version: "4.18"` pins the minor. |
+| OpenShift (ROKS) | **4.20** (recommended default) | `cluster.openshift_version: "4.20"` pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on **4.18.51** — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check `ibmcloud ks versions` for what your account offers; IBM's own default moves ahead of this. |
 | Argo Workflows (Part 2) | **v4.0.8** | ≥ v3.4 for the emissary executor and `sidecars:`. |
 | Kubernetes hosting Argo (Part 2) | **k3s v1.36.3+k3s1** | any conformant cluster with an RWO StorageClass. |
 
@@ -375,7 +375,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-conn                  # a NEW cluster is named from the prefix; see the note below
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: true            # ← CONNECTED: worker Internet egress
 resources:
@@ -426,7 +426,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-disco
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: false           # ← DISCONNECTED: no worker egress
   vpc_cidr: 10.242.0.0/16         # ← its own block; see "Addressing" above

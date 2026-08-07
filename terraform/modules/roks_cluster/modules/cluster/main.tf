@@ -50,7 +50,7 @@ locals {
 
   available_openshift_versions = data.ibm_container_cluster_versions.cluster_versions.valid_openshift_versions
 
-  # Filter to versions matching the requested major.minor prefix (e.g. "4.18").
+  # Filter to versions matching the requested major.minor prefix (e.g. "4.20").
   # Falls back to all available versions when openshift_cluster_version is empty,
   # which causes the latest overall version to be selected.
   matching_versions = var.openshift_cluster_version != "" ? [
