@@ -4,6 +4,59 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.40.3 — 2026-08-07  (docs / demo only)
+
+No code changes — `internal/`, `terraform/` and `cmd/` are untouched since v1.40.2. This
+release exists to publish the book.
+
+### Documentation
+
+- **Appendix A rewritten around the four cluster topologies**, each covered twice — once from the
+  CLI, once as an Argo Workflow:
+
+  | | Topology | Cluster | Worker egress |
+  |---|---|---|---|
+  | A | New + connected | roksbnkctl creates it | yes |
+  | B | New + disconnected | roksbnkctl creates it | no |
+  | C | Existing + connected | adopted | yes |
+  | D | Existing + disconnected | adopted | no |
+
+  It previously documented exactly one of those (an air-gapped cluster adopted by hand) and buried
+  the CI story in a trailing section. Connected clusters need no mirror and no proxy, so the
+  appendix now says that in the first screen and routes those readers past the services-infrastructure
+  half entirely, instead of leaving them to infer it.
+
+- **Versions are now stated.** Argo Workflows **v4.0.8**, k3s **v1.36.3+k3s1**, runner **v1.40.2**,
+  terraform **1.10.5**, OpenShift **4.18.51** — what this was actually deployed and tested on, with
+  each floor and its reason. The runner image had been pinned at `v1.33.0` in nine places, which is
+  below the floor for `registry adopt` (v1.36.0) and below the fix for a terraform 1.10 validation
+  crash (v1.40.1); anyone following the appendix literally would have hit that.
+
+- **New "bring your own controller" section** for sites running their own Argo — stating plainly
+  that these are Argo **Workflows** pipelines and not Argo CD `Application`s, and listing the
+  constraints that each cost a real run: the controller must be able to reach the mirror's private
+  IP and the cluster API (so hosted/SaaS Argo cannot drive it); one workflow at a time per
+  workspace; one workspace per cluster; `ROKSBNKCTL_REGISTRY_TARGET` must be set.
+
+- `07-quick-start` claimed `terraform >= 1.5`. The enforced floor is **1.10**
+  (`requireTerraformVersion`, and Chapter 12a explains why). The gap was not academic — 1.10 and
+  1.15 differ in `||` short-circuiting inside variable validation, which is exactly what shipped
+  broken in v1.40.0.
+
+### Fixed (demo)
+
+- **`ROKSBNKCTL_REGISTRY_TARGET` was missing from the Argo demo's `.env.example`.** `registry adopt`
+  has no `--target` flag — it reads the workspace config — so it defaulted to `icr` and air-gapped
+  clusters tried to pull `us.icr.io/...` and failed `unauthorized`. `wf-far-mirror` passing
+  `--target generic` as a *flag* filled the mirror correctly but wrote nothing the later adopt read,
+  so the two silently disagreed.
+
+- **The demo's teardown still walked the old shared workspace**, where no cluster lives since the
+  one-workspace-per-cluster split — it would have destroyed nothing and reported success while two
+  ROKS clusters kept running. It now walks each workspace, runs `tgw disconnect` between `bnk down`
+  and `cluster down` (`cluster down` refuses while a connection pins the VPC's CRN), and takes an
+  optional workspace filter so each phase comes down under the environment it was built with.
+
 ## v1.40.2 — 2026-08-07
 
 ### Fixed
