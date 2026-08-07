@@ -280,6 +280,13 @@ data "external" "flp_version" {
 # f5-license-proxy chart, mirroring the helm module's chart pull. Skipped when the
 # phase supplies flp_prod_jwks_b64 directly.
 resource "null_resource" "extract_prod_jwks" {
+  lifecycle {
+    precondition {
+      condition     = local.flp_tag != ""
+      error_message = "The f5-license-proxy chart version (flp_tag) could not be resolved, so the prod-jwks pull would run with an empty --version. An empty value does not fail cleanly: the flag swallows the next argument and everything after it shifts, surfacing as an 'unknown command' naming repo.f5.com. Same shape as issue #50. Pin bnk.flp.chart_version, or check that resolve_flp_version wrote its output under the workspace scratch dir."
+    }
+  }
+
   count = local.enabled && var.flp_prod_jwks_b64 == "" ? 1 : 0
   triggers = {
     tag = local.flp_tag

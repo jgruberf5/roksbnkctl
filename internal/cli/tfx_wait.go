@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -86,6 +87,23 @@ func runTFXWaitCmd(cmd *cobra.Command, _ []string) error {
 // wait timeout — as opposed to the watch failing to establish (which triggers the
 // poll fallback). Kept internal to the dispatcher.
 var errTFXWaitTimeout = errors.New("tfx wait: watch deadline exceeded")
+
+// dnsFailFastAttempts is how many consecutive resolution failures to tolerate before
+// declaring the host unreachable. A few, because real DNS does blip; not many,
+// because a name that is wrong is wrong forever and the alternative is burning the
+// whole --timeout in silence.
+const dnsFailFastAttempts = 3
+
+// isDNSUnresolvable reports whether err is a name-resolution failure as opposed to a
+// connection or TLS problem. A refused connection or a timeout may well clear; a name
+// that does not exist will not.
+func isDNSUnresolvable(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound || strings.Contains(dnsErr.Err, "no such host")
+	}
+	return strings.Contains(err.Error(), "no such host")
+}
 
 // runTFXWait dispatches the wait strategy. Default "watch" is event-driven: the
 // API server streams the state change (the "webhook-style notification" for the
@@ -215,9 +233,27 @@ func runTFXWaitPoll(ctx context.Context, ri dynamic.ResourceInterface, name stri
 	defer cancel()
 
 	attempt := 0
+	unresolvable := 0
 	for {
 		attempt++
 		obj, err := ri.Get(ctx, name, metav1.GetOptions{})
+		// A host that does not RESOLVE is not a transient blip: retrying it for the
+		// full timeout is how "licensing hangs for 15 minutes" happens, when the real
+		// fault was a malformed or wrong --kube-host. Give DNS a few tries in case it
+		// is a genuine hiccup, then stop and say exactly what could not be resolved.
+		if err != nil && isDNSUnresolvable(err) {
+			unresolvable++
+			if unresolvable >= dnsFailFastAttempts {
+				return fmt.Errorf(
+					"the Kubernetes API host cannot be resolved after %d attempts: %w"+
+						" -- this is not transient, so waiting out the remaining timeout would not help;"+
+						" check the --kube-host this command was invoked with, since an EMPTY value from"+
+						" the caller shifts the argument list and lands a flag name in the host position",
+					unresolvable, err)
+			}
+		} else if err == nil {
+			unresolvable = 0
+		}
 		switch {
 		case err == nil:
 			if ok, desc := m.matched(obj); ok {

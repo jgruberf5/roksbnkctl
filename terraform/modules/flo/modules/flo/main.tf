@@ -356,15 +356,27 @@ data "external" "versions" {
 # ==============================================================================
 
 locals {
-  # FLO/CIS chart versions discovered terraform-side from the FAR manifest. The
-  # manifest pull + version-extract (null_resource.extract_flo_version → data.external
-  # .versions) run whenever global_enabled, independent of the FAR SOURCE. The old
-  # `&& var.use_cos_bucket` gate discarded the resolved versions on the disconnected
-  # path (local FAR → use_cos_bucket=false) even though the charts are pulled from the
-  # mirror there — leaving `--version ` empty and shifting the pull-chart args. Resolve
-  # them for the mirror path too.
-  flo_chart_version = local.global_enabled && (var.use_cos_bucket || var.use_registry_mirror) ? try(data.external.versions[0].result.flo, "") : ""
-  cis_chart_version = local.global_enabled && (var.use_cos_bucket || var.use_registry_mirror) ? try(data.external.versions[0].result.cis, "") : ""
+  # FLO/CIS chart versions discovered terraform-side from the FAR manifest.
+  #
+  # The gate is `global_enabled` ALONE, and deliberately says nothing about where FAR
+  # came from. The extract (null_resource.extract_flo_version → data.external.versions)
+  # runs whenever global_enabled, so gating the RESULT on the source discards versions
+  # that were resolved perfectly well.
+  #
+  # This has now regressed twice. The first gate was `&& var.use_cos_bucket`, which
+  # blanked the version for local-FAR-plus-mirror; the fix added
+  # `|| var.use_registry_mirror`, which still blanks it for local FAR with NO mirror —
+  # a connected cluster installing from local files (issue #50). Enumerating sources is
+  # the wrong shape: every new combination is another way to be wrong. The versions do
+  # not depend on the source, so the condition must not mention it.
+  #
+  # An empty version here does not fail cleanly. It interpolates into
+  #   ... pull-chart --chart <c> --version  --registry-login repo.f5.com ...
+  # where the flag swallows the NEXT token and everything shifts, so the user sees
+  # `unknown command "repo.f5.com"` and nothing about a missing version. The
+  # preconditions on the pull resources below turn that into a real message.
+  flo_chart_version = local.global_enabled ? try(data.external.versions[0].result.flo, "") : ""
+  cis_chart_version = local.global_enabled ? try(data.external.versions[0].result.cis, "") : ""
 
   # NAD (ens3) manifest — spec.config is a JSON string.
   nad_ens3_manifest = {
@@ -588,18 +600,45 @@ resource "kubernetes_secret_v1" "mirror_secret_utils" {
   depends_on = [kubernetes_namespace_v1.f5_utils]
 }
 
-resource "kubernetes_secret_v1" "bigip_ctlr_login" {
-  count = local.use_kubectl ? 1 : 0
-  metadata {
-    name      = "f5-bigip-ctlr-login"
-    namespace = var.flo_namespace
-  }
-  type = "Opaque"
-  data = {
-    username = var.bigip_username
-    password = var.bigip_password
-    url      = replace(var.bigip_url, "https://", "")
-  }
+# SSA, not kubernetes_secret_v1, so a RE-RUN can adopt what a failed run left behind.
+#
+# kubernetes_secret_v1 does not adopt: if the object exists in the cluster but not in
+# terraform state, it fails with `secrets "f5-bigip-ctlr-login" already exists` — and
+# it fails the same way on every retry, so a partially-failed apply becomes
+# unrecoverable without manual kubectl surgery. That is worse than the original
+# failure, and it is what issue #50 hit: the reporter's log shows the identical error
+# three times over, once per attempt.
+#
+# server_side_apply + force_conflicts takes ownership of a pre-existing object
+# instead. yaml_body is a sensitive attribute in alekc/kubectl, so the BIG-IP
+# password does not appear in plan output — verified against the provider schema, and
+# the same pattern the license module already uses for licenseserver-rootca.
+#
+# NOTE for existing installs: terraform will destroy the kubernetes_secret_v1 and
+# create the kubectl_manifest, so the Secret is briefly recreated. CIS re-reads it
+# from the mount; there is no restart. The five other kubernetes_secret_v1 resources
+# in this module share the non-adopting behaviour and are candidates for the same
+# treatment — deliberately left alone here so one bug fix does not churn five live
+# credentials at once.
+resource "kubectl_manifest" "bigip_ctlr_login" {
+  count             = local.use_kubectl ? 1 : 0
+  server_side_apply = true
+  force_conflicts   = true
+  field_manager     = "roksbnkctl"
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    type       = "Opaque"
+    metadata = {
+      name      = "f5-bigip-ctlr-login"
+      namespace = var.flo_namespace
+    }
+    stringData = {
+      username = var.bigip_username
+      password = var.bigip_password
+      url      = replace(var.bigip_url, "https://", "")
+    }
+  })
   depends_on = [kubernetes_namespace_v1.flo]
 }
 
@@ -722,6 +761,13 @@ locals {
 # No interpreter → cmd.exe execs roksbnkctl.exe directly on Windows.
 resource "null_resource" "flo_chart_pull" {
   count = local.use_kubectl ? 1 : 0
+  lifecycle {
+    precondition {
+      condition     = local.flo_chart_version != ""
+      error_message = "The f5-lifecycle-operator chart version could not be resolved from the FAR manifest, so `helm pull` would run with an empty --version. That does not fail cleanly: the empty value makes the flag swallow the next argument and every later one shifts, which surfaces as `unknown command \"repo.f5.com\"` and says nothing about a version. Check that the manifest downloaded and that extract_flo_version wrote flo-version.txt under the workspace scratch dir."
+    }
+  }
+
   triggers = {
     version = local.flo_chart_version
     archive = local.flo_chart_archive
@@ -735,6 +781,13 @@ resource "null_resource" "flo_chart_pull" {
 
 resource "null_resource" "cis_chart_pull" {
   count = local.use_kubectl ? 1 : 0
+  lifecycle {
+    precondition {
+      condition     = local.cis_chart_version != ""
+      error_message = "The f5-bnk-cis chart version could not be resolved from the FAR manifest, so `helm pull` would run with an empty --version. That does not fail cleanly: the empty value makes the flag swallow the next argument and every later one shifts, which surfaces as `unknown command \"repo.f5.com\"` and says nothing about a version. Check that the manifest downloaded and that extract_flo_version wrote cis-version.txt under the workspace scratch dir."
+    }
+  }
+
   triggers = {
     version = local.cis_chart_version
     archive = local.cis_chart_archive
@@ -865,7 +918,7 @@ resource "helm_release" "cis" {
 
   depends_on = [
     helm_release.flo,
-    kubernetes_secret_v1.bigip_ctlr_login,
+    kubectl_manifest.bigip_ctlr_login,
     null_resource.cis_chart_pull,
   ]
 }

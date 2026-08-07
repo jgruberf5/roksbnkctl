@@ -146,6 +146,10 @@ func warnLegacyState(_ *cobra.Command, _ []string) error {
 // project-scoped file instead of shell profiles.
 func Execute() {
 	loadDotenv()
+	// After every subcommand is registered: reject argument lists shifted by an
+	// empty terraform interpolation (issue #50). Done here, not in init(), so it
+	// sees the fully-built command tree.
+	installArgShiftGuards()
 	// Wire cobra's auto-generated `--version` flag at Execute() time
 	// rather than init() so the value reflects the build-time Version
 	// even when callers (tests, refgen) import the package and mutate

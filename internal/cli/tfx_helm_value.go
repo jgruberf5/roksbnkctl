@@ -83,6 +83,10 @@ var tfxHelmPullChartCmd = &cobra.Command{
 
 func init() {
 	for _, c := range []*cobra.Command{tfxHelmChartVersionCmd, tfxHelmPullFileCmd, tfxHelmProdJWKSCmd, tfxHelmPullChartCmd} {
+		// Every one of these is invoked from a terraform local-exec built by string
+		// interpolation, so an empty local silently shifts the argument list. Catch it
+		// here rather than let cobra report a stray host as an "unknown command".
+		c.Args = rejectShiftedFlagValues
 		f := c.Flags()
 		f.StringVar(&flagHelmChart, "chart", "", "chart ref (OCI url or repo/chart) (required)")
 		f.StringVar(&flagHelmVersion, "version", "", "chart version to pull")

@@ -49,6 +49,42 @@ Terraform invokes these; you do not. See docs/prd/native-windows-tfx.md.`,
 	SilenceErrors: true,
 }
 
+// Every tfx verb is invoked from a terraform local-exec built by string
+// interpolation, so ANY empty value shifts the whole argument list — the flag
+// swallows the next token and the tail falls out as a positional. Issue #50 was the
+// chart version; the same shape reaches `tfx wait --kube-host ${var.kube_host}`,
+// where an empty host would make the LICENSING gate fail with a message about
+// something else entirely. Install the shift detector on every subcommand rather
+// than per-verb, so a new verb inherits it.
+func installArgShiftGuards() {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			// Leaf verbs only — a command with children uses Args for dispatch.
+			//
+			// COMPOSE with any existing validator rather than skipping it. Most tfx
+			// verbs already set `Args: cobra.NoArgs`, and an earlier version of this
+			// walker skipped those — which left `tfx wait` unguarded, the single most
+			// important one: an empty --kube-host there makes the LICENSING gate spin
+			// on an unresolvable host for its whole 15-minute timeout.
+			if !sub.HasSubCommands() {
+				prev := sub.Args
+				sub.Args = func(cmd *cobra.Command, args []string) error {
+					if err := rejectShiftedFlagValues(cmd, args); err != nil {
+						return err // the more specific diagnosis wins
+					}
+					if prev != nil {
+						return prev(cmd, args)
+					}
+					return nil
+				}
+			}
+			walk(sub)
+		}
+	}
+	walk(tfxCmd)
+}
+
 func init() {
 	// Shared connection flags — persistent so every verb inherits them.
 	pf := tfxCmd.PersistentFlags()

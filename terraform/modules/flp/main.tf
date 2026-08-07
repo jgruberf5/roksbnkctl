@@ -473,6 +473,13 @@ data "external" "flp_version" {
 # data"), and dropping the provider creds pulls anonymously (403). No interpreter →
 # cmd.exe execs roksbnkctl.exe directly on Windows.
 resource "null_resource" "flp_chart_pull" {
+  lifecycle {
+    precondition {
+      condition     = local.flp_chart_version != ""
+      error_message = "The f5-license-proxy chart version could not be resolved from the FAR manifest, so the pull would run with an empty --version. An empty value does not fail cleanly: the flag swallows the next argument and everything after it shifts, which surfaces as an 'unknown command' naming a registry host and says nothing about a version. Same shape as issue #50."
+    }
+  }
+
   count = local.enabled ? 1 : 0
   triggers = {
     version = local.flp_chart_version
