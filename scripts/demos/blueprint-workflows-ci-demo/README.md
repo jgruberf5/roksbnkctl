@@ -78,7 +78,7 @@ never runs `bootstrap`. You then need:
 
 **The runner image** — `RUNNER_TAG` must be **≥ v1.36.0** (for `registry adopt`, which
 workflows 4 and 6 depend on) and **≥ v1.37.0** if you want `bnkforge unregister` on
-teardown. The `.env.example` default is v1.38.0.
+teardown. The `.env.example` default is v1.41.0.
 
 **Per workflow:**
 

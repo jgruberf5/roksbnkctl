@@ -332,16 +332,16 @@ for pj in "$HARBOR_PROJECT:true" "$HARBOR_STATUS_PROJECT:true"; do
 done
 
 say "Put the operator ON the VSI: ship roksbnkctl + the FAR/JWT files + the SSH key,"
-say "and install terraform (roksbnkctl shells out to it for every apply)."
+say "and install terraform >= 1.10 (the floor roksbnkctl enforces) — it shells out for every apply."
 [[ "$DRY_RUN" == "1" ]] || {
   scp -i "$SSH_KEY_FILE" $SSH_OPTS "$(command -v "$ROKSBNKCTL_BIN")" ubuntu@"$HARBOR_FIP":/home/ubuntu/roksbnkctl >/dev/null
   scp -i "$SSH_KEY_FILE" $SSH_OPTS "$FAR_AUTH_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/far-auth.tgz >/dev/null
   scp -i "$SSH_KEY_FILE" $SSH_OPTS "$SUBSCRIPTION_JWT_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/subscription.jwt >/dev/null
   scp -i "$SSH_KEY_FILE" $SSH_OPTS "$SSH_KEY_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/.flpkey >/dev/null
   onvsi "sudo install -m755 /home/ubuntu/roksbnkctl /usr/local/bin/roksbnkctl; chmod 600 /home/ubuntu/.flpkey; sudo cp /opt/harbor/certs/harbor.crt /usr/local/share/ca-certificates/harbor.crt; sudo update-ca-certificates >/dev/null 2>&1"
-  onvsi "command -v terraform >/dev/null || { curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/tf.zip && sudo apt-get install -y unzip >/dev/null 2>&1 && sudo unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null 2>&1; }"
+  onvsi "command -v terraform >/dev/null || { curl -fsSL https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip -o /tmp/tf.zip && sudo apt-get install -y unzip >/dev/null 2>&1 && sudo unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null 2>&1; }"
   # roksbnkctl also shells out to helm (chart/BOM resolution during mirror + bnk up).
-  onvsi "command -v helm >/dev/null || { curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz -o /tmp/helm.tgz && tar -xzf /tmp/helm.tgz -C /tmp && sudo install -m755 /tmp/linux-amd64/helm /usr/local/bin/helm; }; echo \"installed \$(roksbnkctl version 2>/dev/null | head -1) + terraform \$(terraform version 2>/dev/null | head -1 | awk '{print \$2}') + helm \$(helm version --short 2>/dev/null)\""
+  onvsi "command -v helm >/dev/null || { curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tgz && tar -xzf /tmp/helm.tgz -C /tmp && sudo install -m755 /tmp/linux-amd64/helm /usr/local/bin/helm; }; echo \"installed \$(roksbnkctl version 2>/dev/null | head -1) + terraform \$(terraform version 2>/dev/null | head -1 | awk '{print \$2}') + helm \$(helm version --short 2>/dev/null)\""
 }
 ok "operator ready on the Harbor VSI (roksbnkctl + terraform + helm)"
 

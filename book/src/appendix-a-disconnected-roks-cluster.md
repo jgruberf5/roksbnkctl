@@ -115,7 +115,7 @@ graph TB
 
 | Component | Tested | Floor, and why |
 |---|---|---|
-| `roksbnkctl` / `roksbnkctl-tools-runner` | **v1.40.2** | **≥ v1.36.0** for `registry adopt` (B and D cannot work without it); **≥ v1.37.0** for `bnkforge unregister`; **≥ v1.39.0** for `cluster.vpc_cidr`; **≥ v1.40.1** fixes a variable validation that raised `Invalid index` on *every* terraform 1.10 plan. |
+| `roksbnkctl` / `roksbnkctl-tools-runner` | **v1.41.0** | **≥ v1.36.0** for `registry adopt` (B and D cannot work without it); **≥ v1.37.0** for `bnkforge unregister`; **≥ v1.39.0** for `cluster.vpc_cidr`; **≥ v1.40.1** fixes a variable validation that raised `Invalid index` on *every* terraform 1.10 plan. |
 | terraform | **1.10.5** (shipped inside the runner) | **≥ 1.10**, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here. |
 | OpenShift (ROKS) | **4.20** (recommended default) | `cluster.openshift_version: "4.20"` pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on **4.18.51** — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check `ibmcloud ks versions` for what your account offers; IBM's own default moves ahead of this. |
 | Argo Workflows (Part 2) | **v4.0.8** | ≥ v3.4 for the emissary executor and `sidecars:`. |
@@ -241,8 +241,38 @@ HARBOR_CA_B64=$(base64 -w0 < harbor-ca.crt)
 ### Put the operator on the VSI
 
 For the CLI path, the Harbor VSI is the natural operator host: it is the only box with *both*
-Internet egress (to pull FAR) *and* private reach to Harbor. `scp` `roksbnkctl` and the two FAR
-artifacts across, or skip the staging entirely by using the COS supply chain below.
+Internet egress (to pull FAR) *and* private reach to Harbor.
+
+**This is not a convenience — it is a requirement.** `bnk up` pulls the BNK manifest and the
+charts **host-side** (that is deliberate: pulling the archives itself keeps the terraform helm
+provider from doing an OCI login, whose credential-store step breaks on Windows). So the operator
+host must reach the mirror's private address too. Running from a laptop that is not on the
+transit gateway gets as far as the manifest pull and then stops:
+
+```
+helm pull oci://10.243.0.4/bnk-mirror/release/f5-bigip-k8s-manifest
+  dial tcp 10.243.0.4:443: i/o timeout
+```
+
+The node reachability gate does not cover this — it answers for the *nodes*, which is a different
+question from whether the operator can pull.
+
+A stock Ubuntu VSI has none of the toolchain, so stage it once:
+
+```bash
+scp -i <key> "$(command -v roksbnkctl)" ubuntu@<HARBOR_FIP>:/home/ubuntu/roksbnkctl
+
+# terraform >= 1.10 — the floor roksbnkctl enforces (native S3 state locking, Chapter 12a).
+# Do not settle for whatever the distro ships; 1.9.x is rejected.
+curl -fsSLo /tmp/tf.zip https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip
+sudo apt-get install -y unzip && unzip -o -q /tmp/tf.zip -d /tmp && sudo install -m0755 /tmp/terraform /usr/local/bin/
+
+curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tgz
+tar xzf /tmp/helm.tgz -C /tmp && sudo install -m0755 /tmp/linux-amd64/helm /usr/local/bin/
+```
+
+Then either `scp` the two FAR artifacts across, or skip staging entirely with the COS supply
+chain below — which is what CI does, since a container has no local files.
 
 ### S2 — Mirror FAR → Harbor
 
@@ -483,6 +513,45 @@ $ roksbnkctl -w bnkdisco bnk status
 > node. Because Harbor is addressed by an **IP**, the `certs.d` key is that IP — no node
 > `/etc/hosts` entry needed.
 
+### Reachability is checked from every node first
+
+The same DaemonSet also **probes** the mirror and the licence proxy from every node before
+anything tries to pull, and `bnk up` **fails** if the mirror is unreachable from any of them:
+
+```console
+→ installing registry CA trust on all nodes (10.243.0.4) and checking reachability
+  F5-License-Proxy: 3/3 nodes reachable
+    ✓ kube-…-0000013a -> F5-License-Proxy (10.243.1.4:8443): dns=skipped-ip tcp=ok
+  registry: 3/3 nodes reachable
+    ✓ kube-…-0000013a -> registry (10.243.0.4:443): dns=skipped-ip tcp=ok
+✓ registry CA installed on all nodes; 10.243.0.4 is trusted and reachable
+```
+
+**It has to run on a node, not on the operator.** The operator host sits on the services VPC
+with egress; the workers are air-gapped behind the gateway. A check from where `roksbnkctl` runs
+answers a different question and will return a confident green for a mirror the cluster cannot
+route to. Because a DaemonSet is one pod per node, this covers every availability zone without
+enumerating them — which matters, since a security group or subnet fixed in only two of three
+zones is a common shape and otherwise shows up merely as *some* pods failing to pull.
+
+DNS and TCP are reported separately because the fixes differ: `dns=FAILED` is a resolver or
+hostname problem, `tcp=FAILED` is routing, security groups, or overlapping VPC address prefixes
+(which a gateway blackholes silently — [Addressing](#addressing-give-every-vpc-its-own-block)).
+
+The mirror is **required**: an unreachable one fails the install rather than deferring it to
+`ImagePullBackOff` and a helm `context deadline exceeded` that names neither the registry nor the
+node. The licence proxy is reported but not fatal, since a staged bring-up may legitimately point
+at an endpoint that is not up yet.
+
+Two details worth knowing:
+
+- **No CA is needed for the probe to run.** A registry already trusted by the node bundle, or one
+  with a publicly-signed certificate, skips the CA install but is still checked — being trusted
+  and being reachable are different things, and only the second fails silently.
+- **Every node must report.** A node whose pod has not answered yet is not counted as a pass; the
+  check waits for the DaemonSet's full complement and fails if it cannot hear from them all,
+  because a silent node is indistinguishable from a broken one.
+
 > **Keep `SSL_CERT_FILE` pointed at Harbor's cert** when running on the VSI — the chart pulls
 > happen host-side: `export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt`.
 
@@ -709,7 +778,7 @@ Every step reuses one template:
     - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         command: [sh, -ec]
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -722,7 +791,7 @@ Every step reuses one template:
 ```
 
 > For B and D the image is pulled from the mirror instead
-> (`<HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.40.2`), so the pipeline itself needs
+> (`<HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.41.0`), so the pipeline itself needs
 > no public registry at run time. Pin by `@sha256:` digest in production.
 
 ### 2A — New VPC + connected cluster (Argo)
@@ -778,12 +847,12 @@ can reach the cluster. Workspace `-w bnkconn`, with the same `ROKSBNKCTL_GENERIC
 ```yaml
     - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         args: ["roksbnkctl -w bnkconn bnk up --auto"]
         # …envFrom / env / volumeMounts as the rbk template…
       sidecars:
         - name: cwc-guard
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
           command: [sh, -ec]
           args:
             - |

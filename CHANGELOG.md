@@ -4,6 +4,41 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.41.0 — 2026-08-07
+
+### Added
+
+- **`bnk up` proves the mirror and the licence proxy are reachable from every node before installing** ([#52](https://github.com/jgruberf5/roksbnkctl/issues/52)). An unreachable **mirror now fails the install**; the licence proxy is reported but not fatal.
+
+  ```
+  → installing registry CA trust on all nodes (10.243.0.4) and checking reachability
+    F5-License-Proxy: 3/3 nodes reachable
+    registry: 3/3 nodes reachable
+  ✓ registry CA installed on all nodes; 10.243.0.4 is trusted and reachable
+  ```
+
+  **It runs on the nodes, because nowhere else can answer the question.** The operator host sits on the services VPC with egress; the workers are air-gapped behind a transit gateway. A check from where `roksbnkctl` runs returns a confident green for a mirror the cluster cannot route to — demonstrated during validation, where `registry adopt` timed out reaching Harbor from the operator while all three nodes reached it fine. It rides the DaemonSet that already installs the registry CA, so it needs no new machinery and no egress, and one pod per node means every availability zone is covered without enumerating them.
+
+  Previously an unreachable mirror surfaced as `ImagePullBackOff` and then a helm `context deadline exceeded` roughly ten minutes later, naming neither the registry nor the node.
+
+  **The CA is now optional.** An empty CA used to skip the whole step. A registry already trusted by the node bundle — or one with a publicly-signed certificate — needs no CA installed and can still be completely unroutable, which is the failure that costs an hour. An empty CA now skips only the install; the probes still run.
+
+  DNS and TCP are reported separately, because the fixes differ: a name that will not resolve is a resolver problem, a refused connection is routing, security groups, or overlapping VPC prefixes ([#46](https://github.com/jgruberf5/roksbnkctl/issues/46)). Every node is listed, not just failures — `3/3` is what stops someone chasing the network when the fault is elsewhere, and a per-zone split is only visible if the passes are shown too.
+
+  Validated against a real disconnected cluster (3 nodes, 3 AZs, Harbor and the FLP reachable only over a transit gateway): the success path as part of a complete air-gapped install, and the failure path against an unroutable address with the real mirror as a control, confirming `registry: 0/3` and the error that stops `bnk up`.
+
+### Fixed
+
+- **The gate could pass without hearing from every node.** Results were read from whatever pods existed at that instant, so a pod still starting — or mid-rollout after the target set changed — contributed nothing and its node vanished from the summary. Observed live: three nodes, three Ready pods, all three with correct results in their logs, and the summary printing `0/2 nodes reachable`. Harmless in that direction; the reverse is not, since two passes and one silent node reads as `2/2 reachable` and lets through exactly the per-AZ break the probe exists to catch. Coverage now comes from the DaemonSet's `DesiredNumberScheduled` and is polled before any verdict is issued.
+
+- **A probe label containing a space truncated at the parser**, so `F5 License Proxy` reported as `F5`. Cosmetic there, but `Required` is keyed on the label — the same bug on a multi-word required target would have silently downgraded it to optional.
+
+### Documentation
+
+- Appendix A documents the reachability gate, and now states plainly that **the operator host must itself reach the mirror**: `bnk up` pulls the manifest and charts host-side, so running from a laptop that is not on the transit gateway stops at `helm pull … i/o timeout`. The node gate does not cover this — it answers for the nodes, which is a different question. The operator toolchain (terraform ≥ 1.10, helm) is now spelled out, since a stock VSI has none of it.
+
+- **The CLI demo installed terraform 1.9.8 — below the 1.10 floor roksbnkctl enforces**, so it provisioned a terraform its own binary rejects. Now 1.10.5, matching the runner image, the book, and the enforced floor. helm aligned to 3.16.3, and the demo runner tag to this release.
+
 ## v1.40.3 — 2026-08-07  (docs / demo only)
 
 No code changes — `internal/`, `terraform/` and `cmd/` are untouched since v1.40.2. This
