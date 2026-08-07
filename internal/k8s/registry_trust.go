@@ -51,17 +51,26 @@ const (
 //     present on every ROKS node is auto-discovered. imagePullPolicy is
 //     IfNotPresent so the installer itself never needs a pull.
 //   - wait        when true, block until the DaemonSet is Ready on all nodes.
-func (c *Client) EnsureRegistryCATrust(ctx context.Context, host, caPEM, image string, wait bool) error {
+func (c *Client) EnsureRegistryCATrust(ctx context.Context, host, caPEM, image string, wait bool, targets ...ProbeTarget) error {
 	host = strings.TrimSpace(host)
 	caPEM = strings.TrimSpace(caPEM)
 	if host == "" {
 		return fmt.Errorf("registry CA trust: empty host")
 	}
-	if caPEM == "" {
-		return fmt.Errorf("registry CA trust: empty CA PEM for %s", host)
-	}
+	// The CA is OPTIONAL. A registry whose CA is already in the node trust bundle, or
+	// one with a publicly-signed certificate, needs no CA installed — but it still
+	// needs to be REACHABLE, and reachability is the thing that fails silently. So an
+	// empty CA skips the install and runs the probes; it is not an error.
+	installCA := caPEM != ""
 
-	sum := sha256.Sum256([]byte(caPEM))
+	// The annotation hash covers the probe set as well as the CA: change either and the
+	// DaemonSet must roll, or CollectNodeProbeResults would read a previous run's logs
+	// and report a verdict for targets nobody asked about.
+	hashInput := caPEM
+	for _, tg := range targets {
+		hashInput += "|" + tg.Label + "|" + tg.Host + "|" + tg.Port
+	}
+	sum := sha256.Sum256([]byte(hashInput))
 	caHash := hex.EncodeToString(sum[:])[:16]
 
 	if image == "" {
@@ -81,10 +90,12 @@ func (c *Client) EnsureRegistryCATrust(ctx context.Context, host, caPEM, image s
 	if err := c.ensurePrivilegedSCCBinding(ctx, registryTrustNamespace, registryTrustName); err != nil {
 		return err
 	}
+	// The ConfigMap is created either way so the pod's volume mount always resolves;
+	// with no CA it simply holds nothing to install.
 	if err := c.ensureCAConfigMap(ctx, registryTrustNamespace, caPEM); err != nil {
 		return err
 	}
-	if err := c.ensureInstallerDaemonSet(ctx, host, image, caHash); err != nil {
+	if err := c.ensureInstallerDaemonSet(ctx, host, image, caHash, installCA, targets); err != nil {
 		return err
 	}
 
@@ -159,17 +170,31 @@ func (c *Client) ensureCAConfigMap(ctx context.Context, ns, caPEM string) error 
 // shell loop variable — no external heredoc interpolation can eat it (the
 // failure mode that wrote the CA to a bogus in-container path). host is
 // substituted here by Go, not by any shell.
-func registryCAInstallCmd(host string) string {
-	return fmt.Sprintf(
-		`set -e; for d in /host/etc/containers/certs.d /host/etc/docker/certs.d; do `+
-			`mkdir -p "$d/%s"; rm -f "$d/%s/ca.crt"; install -m644 /ca/ca.crt "$d/%s/ca.crt"; done; `+
-			`echo "registry CA installed for %s"; sleep infinity`,
-		host, host, host, host)
+func registryCAInstallCmd(host string, installCA bool, targets []ProbeTarget) string {
+	var b strings.Builder
+	// NOT `set -e`: a probe that fails must still reach the `sleep infinity` below.
+	// Exiting would make the pod non-Ready, which stalls the DaemonSet rollout the CA
+	// install depends on and turns "this node cannot reach the mirror" into "the
+	// DaemonSet is unhealthy" — losing the only detail worth having.
+	if installCA {
+		fmt.Fprintf(&b,
+			`for d in /host/etc/containers/certs.d /host/etc/docker/certs.d; do `+
+				`mkdir -p "$d/%s" && rm -f "$d/%s/ca.crt" && install -m644 /ca/ca.crt "$d/%s/ca.crt"; done; `+
+				`echo "registry CA installed for %s"; `,
+			host, host, host, host)
+	} else {
+		fmt.Fprintf(&b, `echo "no CA supplied for %s -- assuming it is already trusted; running reachability probes only"; `, host)
+	}
+	if len(targets) > 0 {
+		b.WriteString(nodeProbeScript(targets))
+	}
+	b.WriteString(`echo "node checks complete"; sleep infinity`)
+	return b.String()
 }
 
-func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHash string) error {
+func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHash string, installCA bool, targets []ProbeTarget) error {
 	priv := true
-	installCmd := registryCAInstallCmd(host)
+	installCmd := registryCAInstallCmd(host, installCA, targets)
 
 	labels := map[string]string{"app": registryTrustName}
 	ds := &appsv1.DaemonSet{
@@ -191,6 +216,14 @@ func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHa
 						Command:         []string{"/bin/sh", "-c"},
 						Args:            []string{installCmd},
 						SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+						// The probe stamps its own node into every line, so results can be
+						// attributed without correlating pod names back to nodes.
+						Env: []corev1.EnvVar{{
+							Name: "NODE_NAME",
+							ValueFrom: &corev1.EnvVarSource{
+								FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"},
+							},
+						}},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "hostetc", MountPath: "/host/etc"},
 							{Name: "ca", MountPath: "/ca"},
