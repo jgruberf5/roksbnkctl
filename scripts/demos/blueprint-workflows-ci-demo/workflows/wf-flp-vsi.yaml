@@ -1,0 +1,123 @@
+# wf-flp-vsi.yaml — build a STANDALONE F5 License Proxy on an IBM Cloud VSI.
+#
+# BNK Forge blueprint parity: `blueprints/flp-vsi` → module roksbnkctl/flp.
+#
+# No cluster. `flp up --auto` in mode `vsi` provisions a VSI, installs the licence
+# proxy on it and (with floating_ip) gives it an operator address for `flp status` and
+# the :80 status UI. Air-gapped clusters then license against it PRIVATELY over a
+# transit gateway — it is the one controlled path to F5.
+#
+#   argo submit -n bnk-ci --wait workflows/wf-flp-vsi.yaml
+#
+# THE HANDOFF. `flp output` prints two values the cluster workflows need:
+#   flp_external_endpoint → ROKSBNKCTL_FLP_EXTERNAL_URL
+#   flp_root_ca           → ROKSBNKCTL_FLP_ROOT_CA_B64   (already base64 — pass VERBATIM;
+#                                                         re-encoding hands the CWC a corrupt CA)
+# The last step writes both into the `flp-handoff` Secret so a disconnected-cluster
+# workflow can consume them with envFrom instead of a human copying base64 by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-flp-vsi-
+  namespace: bnk-ci
+spec:
+  entrypoint: flp
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      # flp-status is an OPTIONAL add-on: it only exists if a status image was
+      # built and pushed and ROKSBNKCTL_FLP_VSI_STATUS_IMAGE points at it. The
+      # proxy itself licenses fine without it. Defaulting this to false so an
+      # unconfigured optional component cannot fail the run — the step that
+      # actually matters is publish-handoff, which is what workflows 4 and 6
+      # consume. The driver flips it to true when a status image is configured.
+      - name: status-check
+        value: "false"
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: flp
+      steps:
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w flp --non-interactive --override-from-env" }]
+        - - name: flp-up
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w flp flp up --auto" }]
+        - - name: flp-status
+            template: rbk
+            when: "{{workflow.parameters.status-check}} == true"
+            arguments:
+              parameters: [{ name: cmd, value: "-w flp flp status" }]
+        # The handoff, written to a Secret rather than printed: the root CA is not a
+        # credential, but the endpoint + CA pair is what a cluster trusts, and a Secret
+        # is what the consuming workflow can envFrom directly.
+        - - name: publish-handoff
+            template: handoff
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+        env:
+          # A standalone appliance: no cluster, and mode `vsi` + a non-empty vsi.vpc is
+          # the PAIR that selects the cluster-less path. Either alone keeps the
+          # cluster-required behaviour.
+          - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
+          - { name: ROKSBNKCTL_CLUSTER_NAME,   value: "none" }
+          - { name: ROKSBNKCTL_FLP_MODE,       value: "vsi" }
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }
+
+    # Reads the two outputs and applies them as a Secret in THIS namespace.
+    #
+    # TWO DIFFERENT CLUSTERS ARE IN PLAY HERE, and mixing them up is the easy mistake:
+    #   `roksbnkctl kubectl …`  targets the cluster the WORKSPACE manages. Useless in
+    #                           this workflow — the flp workspace has no cluster at all
+    #                           (cluster.create=false, name=none).
+    #   plain `kubectl …`       targets the cluster Argo itself is running on, via the
+    #                           pod's ServiceAccount token. That is where the handoff
+    #                           Secret belongs, because that is what the next workflow
+    #                           will envFrom.
+    # The runner image carries a standalone kubectl, so no extra tooling is needed.
+    #
+    # Writing Secrets needs RBAC beyond the executor Role — apply 01-flp-handoff-rbac.yaml
+    # before running this workflow.
+    - name: handoff
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args:
+          - |
+            URL="$(roksbnkctl -w flp flp output flp_external_endpoint | tr -d '\r')"
+            CA="$(roksbnkctl -w flp flp output flp_root_ca | tr -d '\r')"
+            [ -n "$URL" ] && [ -n "$CA" ] || { echo "flp output returned no endpoint/CA — is the FLP up?" >&2; exit 1; }
+            echo "FLP endpoint: $URL"
+            echo "FLP root CA:  ${#CA} bytes of base64 — passed VERBATIM (re-encoding corrupts it)"
+            kubectl create secret generic flp-handoff -n bnk-ci \
+              --from-literal=ROKSBNKCTL_FLP_EXTERNAL_URL="$URL" \
+              --from-literal=ROKSBNKCTL_FLP_ROOT_CA_B64="$CA" \
+              --dry-run=client -o yaml | kubectl apply -f -
+            echo "✓ flp-handoff Secret written — a disconnected-cluster workflow can envFrom it"
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+        env:
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

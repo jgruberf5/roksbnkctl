@@ -1,0 +1,95 @@
+# wf-new-cluster.yaml — build a NEW VPC + CONNECTED ROKS cluster + transit gateway,
+# then install BNK onto it. No private registry, no licence proxy.
+#
+# BNK Forge blueprint parity: `blueprints/roks-new-cluster` → modules
+# roksbnkctl/cluster-create then roksbnkctl/bnk-install.
+#
+# This is the simplest end-to-end shape and the one to read first: the cluster has
+# worker egress, so BNK pulls charts and images straight from repo.f5.com and licenses
+# directly against F5. Nothing is mirrored and nothing is proxied.
+#
+#   argo submit -n bnk-ci --wait workflows/wf-new-cluster.yaml
+#
+# WHAT MAKES IT "CONNECTED" is one variable: ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY=true,
+# pinned in the rbk template below. It is a tri-state (*bool) in the config, so leaving
+# it unset would inherit terraform's default rather than assert anything — this
+# workflow states it, and wf-new-cluster-disconnected.yaml states the opposite.
+#
+# Expect 45–90 minutes: `cluster up` provisions a real ROKS cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-new-cluster-
+  namespace: bnk-ci
+spec:
+  entrypoint: build
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      # false skips BNK Forge registration — the blueprint always registers, but a
+      # bare CI run may have no Forge to register with.
+      - name: bnkforge
+        value: "true"
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: build
+      steps:
+        # ── cluster-create ───────────────────────────────────────────────────────
+        # init is re-run before each phase deliberately: the workspace is rebuilt from
+        # the environment every time, so a step is meaningful on its own and a retry
+        # never depends on a file some earlier pod happened to leave behind.
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+        - - name: cluster-up
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk cluster up --auto" }]
+        - - name: bnkforge-register
+            template: rbk
+            when: "{{workflow.parameters.bnkforge}} == true"
+            arguments:
+              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+
+        # ── bnk-install ──────────────────────────────────────────────────────────
+        # No `registry adopt` here: nothing is mirrored, so bnk up renders against
+        # far_repo_url — which a connected cluster can reach. The disconnected
+        # workflows adopt a mirror first; that is the difference between them.
+        - - name: bnk-up
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk bnk up --auto" }]
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+        env:
+          - { name: ROKSBNKCTL_CLUSTER_CREATE,         value: "true" }
+          - { name: ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY, value: "true" }   # ← CONNECTED
+          # Blanked ON PURPOSE. bnk-env may carry a gateway name for the reuse
+          # workflows; inheriting it here would ADOPT the shared gateway instead of
+          # creating <prefix>-tgw. OverrideFromEnv skips the var when empty
+          # (envoverride.go:131), so blank leaves resources.transit_gateway at
+          # create:true — this is the only variant that makes a gateway, and it
+          # returns it on teardown.
+          - { name: ROKSBNKCTL_TRANSIT_GATEWAY_NAME,   value: "" }
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

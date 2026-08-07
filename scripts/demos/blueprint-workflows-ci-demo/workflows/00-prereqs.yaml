@@ -1,0 +1,68 @@
+# 00-prereqs.yaml — the shared substrate every workflow in this demo needs.
+# Applied once, before any `argo submit`.
+#
+#   - bnk-ci namespace
+#   - bnk-work PVC: the PERSISTENT workspace. roksbnkctl keeps its config, terraform
+#     state and the recorded mirror record under /work/.roksbnkctl, and `bnk down` /
+#     `cluster down` READ that state to tear down cleanly. An emptyDir would orphan
+#     the IAM trusted profile and leave terraform with no state to destroy from.
+#   - bnk-runner ServiceAccount + the minimal RBAC Argo's emissary executor needs
+#     (it writes its own workflowtaskresults).
+#
+# The two env carriers are applied separately by the demo script, because one is
+# rendered from your .env and the other must never reach git:
+#
+#   bnk-env      ConfigMap — every NON-SECRET ROKSBNKCTL_* setting. Deliberately a
+#                ConfigMap so the whole workspace shape is visible in the Argo UI and
+#                in `kubectl get cm bnk-env -o yaml`; that is the point of the demo.
+#   bnk-secrets  Secret    — the credentials only. Never rendered to a file, never
+#                logged, never printed by a workflow step.
+#
+# Every workflow consumes BOTH with envFrom, so a step's environment IS the workspace
+# definition — there is no config.yaml anywhere in this demo.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bnk-ci
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bnk-work
+  namespace: bnk-ci
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 8Gi
+  # storageClassName omitted → k3s local-path default
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bnk-runner
+  namespace: bnk-ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bnk-runner-executor
+  namespace: bnk-ci
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bnk-runner-executor
+  namespace: bnk-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bnk-runner-executor
+subjects:
+  - kind: ServiceAccount
+    name: bnk-runner
+    namespace: bnk-ci

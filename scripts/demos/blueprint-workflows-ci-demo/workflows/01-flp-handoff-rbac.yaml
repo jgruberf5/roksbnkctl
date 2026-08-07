@@ -1,0 +1,39 @@
+# 01-flp-handoff-rbac.yaml — lets ONLY wf-flp-vsi's handoff step write the
+# `flp-handoff` Secret.
+#
+# Apply this only if you intend to run wf-flp-vsi.yaml. It is deliberately a separate
+# file rather than part of 00-prereqs: granting a CI ServiceAccount blanket secret-write
+# is exactly the sort of thing that gets copied into a production namespace by accident.
+#
+# resourceNames pins it to the one Secret the workflow publishes, so the runner cannot
+# read, rewrite or delete bnk-secrets — the credentials it consumes stay out of reach.
+# (`create` cannot be constrained by resourceNames in Kubernetes RBAC, so the create
+# verb is namespace-wide; get/update/patch are pinned. The workflow uses
+# create --dry-run | apply, which needs both.)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bnk-runner-flp-handoff
+  namespace: bnk-ci
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["flp-handoff"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bnk-runner-flp-handoff
+  namespace: bnk-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bnk-runner-flp-handoff
+subjects:
+  - kind: ServiceAccount
+    name: bnk-runner
+    namespace: bnk-ci

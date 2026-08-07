@@ -1,0 +1,117 @@
+# wf-new-cluster-disconnected.yaml — build a NEW VPC + DISCONNECTED ROKS cluster +
+# transit gateway, then install BNK onto it from a private mirror, licensed through an
+# F5 License Proxy.
+#
+# BNK Forge blueprint parity: `blueprints/roks-new-cluster-disconnected` → modules
+# roksbnkctl/cluster-create then roksbnkctl/bnk-install.
+#
+# The workers have NO Internet egress, so every chart and image must come from the
+# mirror wf-far-mirror.yaml filled, and licensing must go through the proxy
+# wf-flp-vsi.yaml built. Both are prerequisites of this workflow.
+#
+#   argo submit -n bnk-ci --wait workflows/wf-new-cluster-disconnected.yaml
+#
+# THREE THINGS make it disconnected, and all three are visible below:
+#   ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY=false   no worker egress (the switch)
+#   ROKSBNKCTL_TRANSIT_GATEWAY_NAME=<existing> JOIN the gateway the mirror + FLP are on
+#   registry adopt                            record the mirror so bnk up renders at it
+#   flp-handoff Secret                        licence via the proxy, not F5 directly
+#
+# The gateway is REQUIRED, not optional. A new gateway of its own would leave the
+# cluster unable to reach the mirror it exists to install from — and teardown would
+# then try to DELETE a gateway other things are attached to.
+#
+# Expect 45–90 minutes: `cluster up` provisions a real ROKS cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-new-cluster-disco-
+  namespace: bnk-ci
+spec:
+  entrypoint: build
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      # false skips BNK Forge registration — the blueprint always registers, but a
+      # bare CI run may have no Forge to register with.
+      - name: bnkforge
+        value: "true"
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: build
+      steps:
+        # ── cluster-create ───────────────────────────────────────────────────────
+        # init is re-run before each phase deliberately: the workspace is rebuilt from
+        # the environment every time, so a step is meaningful on its own and a retry
+        # never depends on a file some earlier pod happened to leave behind.
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+        - - name: cluster-up
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk cluster up --auto" }]
+        - - name: bnkforge-register
+            template: rbk
+            when: "{{workflow.parameters.bnkforge}} == true"
+            arguments:
+              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+
+        # ── bnk-install ──────────────────────────────────────────────────────────
+        # `bnk up` REFUSES to render against a mirror this workspace has no record of,
+        # and only `registry replicate` writes that record — which needs the FAR source
+        # this cluster cannot reach. `registry adopt` writes it from the registry config
+        # alone, with no source access, which is the whole reason it exists.
+        - - name: registry-adopt
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry adopt" }]
+        - - name: bnk-up
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk bnk up --auto" }]
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+          # Written by wf-flp-vsi.yaml: ROKSBNKCTL_FLP_EXTERNAL_URL + _ROOT_CA_B64.
+          # Last envFrom wins, so the handoff overrides anything stale in bnk-env.
+          - secretRef:    { name: flp-handoff }
+        env:
+          - { name: ROKSBNKCTL_CLUSTER_CREATE,         value: "true" }
+          - { name: ROKSBNKCTL_LICENSE_MODE,           value: "f5licenseproxy" }
+          - { name: ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY, value: "false" }  # ← DISCONNECTED
+          # ROKSBNKCTL_TRANSIT_GATEWAY_NAME comes from bnk-env and is REQUIRED here.
+          # A disconnected cluster exists to pull from a private mirror it cannot
+          # reach over the Internet; putting it on a brand-new gateway would isolate
+          # it from the one thing it depends on. Harbor and the FLP already sit on
+          # that gateway, so the new cluster joins them there.
+          #
+          # …which is exactly why ROKSBNKCTL_CLUSTER_VPC_CIDR (from bnk-env) matters
+          # for THIS workflow above all others. Sharing a gateway means the cluster
+          # VPC must not overlap Harbor's or another cluster's, and IBM's default
+          # "auto" prefixes are IDENTICAL for every VPC in a region — so a second run
+          # of this workflow collides by construction. The gateway does not report
+          # that; it silently blackholes one VPC and you see intermittent image-pull
+          # timeouts from the mirror. `cluster up` refuses up front since v1.39.0,
+          # but set a distinct block per cluster and it never comes up.
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

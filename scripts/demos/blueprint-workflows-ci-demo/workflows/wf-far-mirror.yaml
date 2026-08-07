@@ -1,0 +1,101 @@
+# wf-far-mirror.yaml — replicate F5's artifact registry (FAR) into a private OCI
+# registry, and nothing else.
+#
+# BNK Forge blueprint parity: `blueprints/far-mirror` → module roksbnkctl/far-mirror.
+# The step sequence and the environment below are the same ones that module declares,
+# so what runs here is what runs in a Forge deployment.
+#
+# THE POINT OF THIS WORKFLOW: there is no config.yaml. Every setting arrives as an
+# environment variable — the non-secret ones from the `bnk-env` ConfigMap, the
+# credentials from the `bnk-secrets` Secret, both attached with envFrom. `init
+# --non-interactive --override-from-env` builds the whole workspace from that
+# environment. This is the only shape available to an argv+env caller: a Forge
+# container module and most CI runners have no shell, no prompts and nowhere to stage
+# a file.
+#
+# NO CLUSTER IS INVOLVED. `registry replicate` is a host-side registry-to-registry
+# copy: it reads the workspace, pulls from FAR by digest and pushes to the target.
+# ROKSBNKCTL_CLUSTER_CREATE=false + CLUSTER_NAME=none say so explicitly, which is why
+# this can be the very first thing a pipeline does — before any cluster exists.
+#
+#   argo submit -n bnk-ci --wait workflows/wf-far-mirror.yaml
+#
+# Prerequisite: a reachable OCI registry (Harbor, Artifactory, Quay, registry:2) with
+# credentials that can push. See the README for standing up a Harbor VSI; this
+# workflow does not build one, because populating a registry and creating one are
+# different jobs with different lifetimes.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-far-mirror-
+  namespace: bnk-ci
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  # onExit is NOT set: a failed replicate should leave the workspace on the PVC so the
+  # next run resumes rather than starting from an empty mirror. `registry replicate`
+  # is idempotent — artifacts already present at the right digest are skipped.
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: mirror
+      steps:
+        # 1. Build the workspace from the environment alone. No file is templated.
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+        # 2. Show what the environment produced. Not required — but this is the step
+        #    that makes the demo legible: `registry target` prints the mirror settings
+        #    init derived from env alone, with the password redacted by roksbnkctl.
+        - - name: show-target
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry target" }]
+        # 3. The bill of materials: every chart and image a BNK install pulls, derived
+        #    from the F5 manifest. Fails early and clearly if the FAR credential in COS
+        #    cannot be resolved — before any copying starts.
+        - - name: registry-bom
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry bom" }]
+        # 4. The copy. Each artifact is pulled by digest from FAR and pushed to the
+        #    target; anything already present at the same digest is skipped.
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry replicate --target generic" }]
+        # 5. Proof, not assertion: re-reads the BOM and confirms every artifact is
+        #    present AND digest-matched. This is what a pipeline should gate on.
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry verify" }]
+
+    # One reusable step. The runner image's ENTRYPOINT is roksbnkctl, but we invoke it
+    # through `sh -ec` so the command reads as a single legible line in the Argo UI.
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }      # every non-secret setting
+          - secretRef:    { name: bnk-secrets }  # IBMCLOUD_API_KEY, registry password
+        env:
+          # Pinned here rather than in bnk-env because they are what makes THIS
+          # workflow the mirror-only one — a reader should see them next to the steps.
+          - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
+          - { name: ROKSBNKCTL_CLUSTER_NAME,   value: "none" }
+          - { name: ROKSBNKCTL_REGISTRY_TARGET, value: "generic" }
+          # roksbnkctl keeps its workspace under the mounted PVC so `registry delete`
+          # and a later `bnk up` in another workflow see the same mirror record.
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

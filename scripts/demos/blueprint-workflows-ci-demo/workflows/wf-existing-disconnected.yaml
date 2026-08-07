@@ -1,0 +1,193 @@
+# wf-existing-disconnected.yaml — install BNK onto an EXISTING, DISCONNECTED ROKS
+# cluster that is already on a transit gateway. Nothing is provisioned.
+#
+# BNK Forge blueprint parity: `blueprints/roks-disconnected` → modules
+# roksbnkctl/cluster-registry, roksbnkctl/bnk-install, roksbnkctl/cwc-guard.
+#
+# The air-gapped end state, and the one the whole toolchain exists for: an adopted
+# cluster with no worker egress, pulling every artifact from the private mirror and
+# licensing through the F5 License Proxy. Both wf-far-mirror.yaml and wf-flp-vsi.yaml
+# are prerequisites.
+#
+#   argo submit -n bnk-ci --wait workflows/wf-existing-disconnected.yaml
+#
+# Note there is no ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY here: that switch only applies to
+# a cluster being CREATED. An adopted cluster's topology is whatever it already is —
+# what makes this workflow the disconnected one is that it adopts a mirror and licenses
+# through the proxy.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-existing-disco-
+  namespace: bnk-ci
+spec:
+  entrypoint: build
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      - name: bnkforge
+        value: "true"
+      # The cwc guard works around an F5 packaging defect (a single-replica RWO
+      # Deployment shipped with RollingUpdate, so the replacement pod cannot attach the
+      # volume). Set false once F5 ships `strategy: Recreate`.
+      - name: cwc-guard
+        value: "true"
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: build
+      steps:
+        # ── cluster-registry: adopt, do not create ───────────────────────────────
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w bnk --non-interactive --override-from-env" }]
+        - - name: cluster-register
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: '-w bnk cluster register "$ROKSBNKCTL_CLUSTER_NAME" --registry-cos-name "$REGISTRY_COS_NAME"' }]
+        # Pull the admin kubeconfig so the k verbs (and the cwc guard) can reach it.
+        - - name: kubeconfig-fetch
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk kubeconfig --download" }]
+        - - name: bnkforge-register
+            template: rbk
+            when: "{{workflow.parameters.bnkforge}} == true"
+            arguments:
+              parameters: [{ name: cmd, value: '-w bnk bnkforge register --project "$BNKFORGE_PROJECT" --insecure=$BNKFORGE_INSECURE' }]
+
+        # ── bnk-install ──────────────────────────────────────────────────────────
+        # `bnk up` refuses to render against a mirror this workspace has no record of,
+        # and only `registry replicate` writes that record — which needs the FAR source
+        # this cluster cannot reach. `registry adopt` writes it from the registry config
+        # alone, no source access required.
+        - - name: registry-adopt
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk registry adopt" }]
+        # The guard runs AS A SIDECAR of this step — see the bnk-up template.
+        - - name: bnk-up
+            template: bnk-up
+        - - name: bnk-status
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnk bnk status" }]
+
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+          # Written by wf-flp-vsi.yaml: the proxy endpoint + its root CA.
+          - secretRef:    { name: flp-handoff }
+        env:
+          # ADOPT, never create — this workflow must not be able to build a cluster.
+          - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
+          - { name: ROKSBNKCTL_LICENSE_MODE,   value: "f5licenseproxy" }
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }
+
+    # `bnk up` WITH the cwc guard running alongside it.
+    #
+    # The guard cannot be a step after this one, because the deadlock is what makes
+    # THIS step fail: the F5 Lifecycle Operator rolls f5-spk-cwc part-way through the
+    # install, the rollout wedges, the License CR never reaches Active, and `bnk up`'s
+    # license gate (tfx wait --for status.state=Active, 15m) times out. A post-install
+    # remedy would never be reached. So the guard is a SIDECAR — Argo starts it with the
+    # main container and kills it when `bnk up` returns.
+    #
+    # Only the workflows that REUSE an existing cluster carry it. A freshly built
+    # cluster has no prior volume attachments for the replacement pod to collide with,
+    # so wf-new-cluster*.yaml deliberately do not.
+    - name: bnk-up
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl -w bnk bnk up --auto"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+          # Written by wf-flp-vsi.yaml: the proxy endpoint + its root CA.
+          - secretRef:    { name: flp-handoff }
+        env:
+          - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
+          - { name: ROKSBNKCTL_LICENSE_MODE,   value: "f5licenseproxy" }
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }
+      sidecars:
+        # F5 DEFECT. f5-spk-cwc is a single-replica Deployment that mounts a
+        # ReadWriteOnce PVC but ships strategy RollingUpdate. maxSurge rounds up to 1,
+        # so the replacement pod is scheduled BEFORE the incumbent is terminated;
+        # landing on another node it cannot attach the volume ("Multi-Attach error"),
+        # the rollout never completes, and licensing never activates.
+        #
+        # The guard forces strategy=Recreate (old pod terminated first, volume freed)
+        # and clears an existing deadlock by cycling replicas 0→1. It is silent,
+        # self-terminating, and exits 0 unconditionally so it can never fail the step —
+        # on a cluster that does not deadlock it simply watches until `bnk up` finishes.
+        #
+        # Uses `roksbnkctl kubectl`, which targets the ADOPTED cluster via the workspace
+        # kubeconfig on the shared PVC (downloaded by the kubeconfig-fetch step). No
+        # second `ibmcloud login` and no second credential path.
+        - name: cwc-guard
+          image: PLACEHOLDER_RUNNER_IMAGE
+          command: [sh, -ec]
+          args:
+            - |
+              [ "${CWC_GUARD_ENABLED:-true}" = "true" ] || { echo "cwc guard disabled"; exit 0; }
+              NS="${CWC_NAMESPACE:-f5-utils}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
+              K="roksbnkctl -w bnk kubectl"
+              patched=0
+              # ~27 min, comfortably covering bnk up's 15m license gate.
+              for _ in $(seq 1 160); do
+                if $K -n "$NS" get deploy "$DEP" >/dev/null 2>&1; then
+                  if [ "$patched" = 0 ]; then
+                    $K -n "$NS" patch deploy "$DEP" --type=merge \
+                      -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1 \
+                      && { patched=1; echo "cwc: strategy=Recreate applied"; }
+                  fi
+                  # A live deadlock shows as >1 cwc pod with one stuck ContainerCreating.
+                  # Patching strategy does NOT release an already-attached volume, so
+                  # cycle to 0 and back to free it.
+                  pods="$($K -n "$NS" get pods 2>/dev/null | grep "$DEP" || true)"
+                  if [ "$(echo "$pods" | grep -c "$DEP")" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
+                    echo "cwc: Multi-Attach deadlock — cycling replicas to release the RWO volume"
+                    $K -n "$NS" scale deploy "$DEP" --replicas=0 >/dev/null 2>&1
+                    for _ in $(seq 1 20); do
+                      [ "$($K -n "$NS" get pods 2>/dev/null | grep -c "$DEP")" = 0 ] && break
+                      sleep 6
+                    done
+                    $K -n "$NS" scale deploy "$DEP" --replicas=1 >/dev/null 2>&1
+                  fi
+                  if [ "$($K -n "$NS" get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ]; then
+                    echo "cwc: licence Active — guard done"; exit 0
+                  fi
+                fi
+                sleep 10
+              done
+              exit 0
+          workingDir: /work
+          envFrom:
+            - configMapRef: { name: bnk-env }
+            - secretRef:    { name: bnk-secrets }
+          env:
+            - { name: CWC_GUARD_ENABLED, value: "{{workflow.parameters.cwc-guard}}" }
+            - { name: ROKSBNKCTL_HOME,   value: "/work/.roksbnkctl" }
+            - { name: HOME,              value: "/home/runner" }
+          volumeMounts:
+            - { name: work, mountPath: /work }
