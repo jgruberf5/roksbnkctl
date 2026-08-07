@@ -777,7 +777,7 @@ variable "cluster_vpc_cidr" {
     error_message = "cluster_vpc_cidr must be empty or a valid CIDR block, e.g. 10.241.0.0/16."
   }
   validation {
-    condition     = var.cluster_vpc_cidr == "" || tonumber(split("/", var.cluster_vpc_cidr)[1]) <= 18
+    condition     = var.cluster_vpc_cidr == "" || try(tonumber(split("/", var.cluster_vpc_cidr)[1]) <= 18, false)
     error_message = "cluster_vpc_cidr needs /18 or larger. It is split into three per-zone prefixes (/n+2) and each cluster subnet is the first /n+8 of its zone: /16 gives 256-address subnets (today's size), /17 gives 128, /18 gives 64."
   }
 }

@@ -209,6 +209,14 @@ build-integration-tags:
 integration-test:
 	@bash scripts/integration-test.sh
 
+# Exercise terraform variable `validation` blocks with real values, against the
+# terraform we SHIP (the runner image), not the newer one a dev box may have.
+# `terraform validate` does not evaluate these conditions at all, and terraform
+# changed `||` short-circuiting between 1.10 and 1.15 — that combination shipped
+# a broken condition in v1.40.0. See scripts/tf-variable-validation-test.sh.
+tf-validation-test:
+	@bash scripts/tf-variable-validation-test.sh
+
 # release: full release-prep driver. Run before `git tag vX.Y.Z` to verify
 # every release artifact builds cleanly and every publish surface is
 # wired. Steps:
@@ -270,16 +278,19 @@ integration-test:
 SKIP_INTEGRATION_TEST ?=
 
 release:
-	@echo "==> [1/8] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
+	@echo "==> [1/9] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
 	@$(MAKE) stamp-changelog
 	@echo ""
-	@echo "==> [2/8] Running staticcheck ./... (Sprint 9 pre-tag gate)"
+	@echo "==> [2/9] Running staticcheck ./... (Sprint 9 pre-tag gate)"
 	@$(MAKE) staticcheck
 	@echo ""
-	@echo "==> [3/8] Compile-checking under -tags integration (Sprint 9 pre-tag gate)"
+	@echo "==> [3/9] terraform variable validation against the SHIPPED terraform"
+	@$(MAKE) tf-validation-test
+	@echo ""
+	@echo "==> [4/9] Compile-checking under -tags integration (Sprint 9 pre-tag gate)"
 	@$(MAKE) build-integration-tags
 	@echo ""
-	@echo "==> [4/8] Running integration tests against kind (Sprint 10 pre-tag gate)"
+	@echo "==> [5/9] Running integration tests against kind (Sprint 10 pre-tag gate)"
 	@if [ -n "$(SKIP_INTEGRATION_TEST)" ]; then \
 	    echo "    SKIP_INTEGRATION_TEST=$(SKIP_INTEGRATION_TEST) — skipped explicitly (contributor opt-out)"; \
 	elif ! command -v kind >/dev/null 2>&1; then \
@@ -305,16 +316,16 @@ release:
 	    $(MAKE) integration-test; \
 	fi
 	@echo ""
-	@echo "==> [5/8] Building HTML + PDF book via $(BOOK_IMAGE)"
+	@echo "==> [6/9] Building HTML + PDF book via $(BOOK_IMAGE)"
 	@$(MAKE) book-pdf BOOK_BACKEND=docker
 	@echo ""
-	@echo "==> [6/8] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
+	@echo "==> [7/9] Linting .goreleaser.yml via $(GORELEASER_IMAGE)"
 	@$(MAKE) goreleaser-check
 	@echo ""
-	@echo "==> [7/8] Snapshot build (multi-platform binaries → dist/)"
+	@echo "==> [8/9] Snapshot build (multi-platform binaries → dist/)"
 	@$(MAKE) goreleaser-snapshot
 	@echo ""
-	@echo "==> [8/8] Verifying GitHub Pages is enabled"
+	@echo "==> [9/9] Verifying GitHub Pages is enabled"
 	@$(MAKE) pages-assure
 	@echo ""
 	@echo "==> Release artifacts ready:"
@@ -411,7 +422,7 @@ book-publish:
 #   - tag $(VERSION) exists on origin and has an associated GitHub Release
 #   - `gh` is authenticated (gh auth status)
 #   - BOOK_BACKEND=docker prerequisites (docker daemon + the
-#     tools/docker/mdbook image) — same as `make release` step [5/8]
+#     tools/docker/mdbook image) — same as `make release` step [6/9]
 release-publish:
 	@if [ "$(VERSION)" = "dev" ]; then \
 	    echo "VERSION=dev refuses to publish — re-run as 'make release-publish VERSION=v1.0.0'" >&2; \

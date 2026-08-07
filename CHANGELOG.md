@@ -4,6 +4,25 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.40.1 — 2026-08-07
+
+### Fixed
+
+- **`cluster_vpc_cidr`'s size validation broke every terraform plan on the terraform we ship.** v1.40.0 (and v1.39.0) carried:
+
+  ```hcl
+  condition = var.cluster_vpc_cidr == "" || tonumber(split("/", var.cluster_vpc_cidr)[1]) <= 18
+  ```
+
+  written on the assumption that `||` short-circuits. In **terraform 1.10** it does not — both operands are evaluated — so with the variable at its default `""` the right side ran `split("/", "")[1]` and raised `Invalid index` before any plan could start. Since `""` is the default, this failed *every* phase (`cluster up`, `flp up`, `bnk up`) for anyone who had not set the variable. Fixed by wrapping the size check in `try(..., false)`, which gives `||` the behaviour it was assumed to have.
+
+  **Why every gate missed it.** Two blind spots lined up:
+
+  1. `terraform validate` does not evaluate `validation` conditions against values — it only type-checks configuration. The pre-tag gate ran `validate` and passed.
+  2. Terraform **changed this behaviour between releases**: 1.15 short-circuits `||` here, 1.10 does not. Dev machines had 1.15; the runner image ships **1.10.5**, and roksbnkctl's stated floor is 1.10 (`requireTerraformVersion(…, 1, 10)`). So local testing exercised a terraform no user is obliged to have, and the failure only appeared on a real pipeline run.
+
+  New gate closing both: `scripts/tf-variable-validation-test.sh` runs real `terraform plan`s over each `validation` block, **inside the runner image** so the version under test is the version that ships. It is `make tf-validation-test`, and step 3 of 9 in `make release`. Reverting the fix makes it fail, which is how it was verified.
+
 ## v1.40.0 — 2026-08-06
 
 ### Changed
