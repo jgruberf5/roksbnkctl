@@ -58,6 +58,7 @@ ALL_WORKFLOWS=(far-mirror flp-vsi new-cluster new-cluster-disconnected existing-
 # Adopted clusters are never destroyed — existing-* registered them, so roksbnkctl
 # does not own them.
 teardown(){
+  local -a TEARDOWN_ONLY=("$@")
   [[ -n "${IBMCLOUD_API_KEY:-}" ]] || { [[ -f "$HERE/.env" ]] && { set -a; . "$HERE/.env"; set +a; }; }
   [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY (or provide .env) to tear down"
   secret "$IBMCLOUD_API_KEY" "${ROKSBNKCTL_GENERIC_PASSWORD:-}" "${BNK_FORGE_PASSWORD:-}" "${ROKSBNKCTL_BIGIP_PASSWORD:-}"
@@ -82,8 +83,25 @@ teardown(){
  "volumes":[{"name":"work","persistentVolumeClaim":{"claimName":"bnk-work"}}]}}
 JSON
 )
-  for pair in "bnk:bnk down --auto" "bnk:cluster down --auto" "flp:flp down --auto"; do
+  # One workspace per cluster (see the README), so teardown walks each in turn.
+  # `tgw disconnect` comes BETWEEN bnk down and cluster down: cluster down refuses
+  # while a connection exists, because the connection pins the VPC's CRN and the VPC
+  # delete would fail. Disconnecting only removes THIS cluster's connection — the
+  # shared gateway and everyone else's connections stay, which is what the
+  # disconnected pair needs since it adopted a gateway it does not own.
+  for pair in "bnkdisco:bnk down --auto" "bnkdisco:tgw disconnect --auto" "bnkdisco:cluster down --auto" \
+              "bnkconn:bnk down --auto"  "bnkconn:tgw disconnect --auto"  "bnkconn:cluster down --auto" \
+              "flp:flp down --auto"; do
     ws="${pair%%:*}"; verb="${pair##*:}"
+    # Optional workspace filter: `teardown bnkdisco`. Running all six workflows means
+    # TWO clusters and therefore two prefixes, and teardown rebuilds each workspace's
+    # config from the CURRENT bnk-env — so each phase must be torn down with the
+    # environment it was built with, one at a time.
+    if (( ${#TEARDOWN_ONLY[@]} )); then
+      local want=0 w
+      for w in "${TEARDOWN_ONLY[@]}"; do [[ "$w" == "$ws" ]] && want=1; done
+      (( want )) || continue
+    fi
     say "── roksbnkctl -w $ws $verb"
     show "roksbnkctl -w $ws init --non-interactive --override-from-env && roksbnkctl -w $ws $verb"
     [[ "$DRY_RUN" == "1" ]] && continue
@@ -96,7 +114,7 @@ JSON
   say "  kubectl delete ns $ARGO_NAMESPACE"
   ok "teardown complete — any ADOPTED cluster was left running"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { shift; teardown "$@"; exit 0; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — THE SIX BNK FORGE BLUEPRINTS AS ARGO WORKFLOWS"
