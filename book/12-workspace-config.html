@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -215,7 +215,7 @@ ibmcloud:        # IBM Cloud account + auth
 cluster:         # ROKS cluster identity
   create: true
   name: acme-eu   # equals prefix when init derived the name
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
 
 resources:       # per-resource create/adopt toggles
@@ -299,7 +299,7 @@ cos:             # optional COS supply-chain config
 <pre><code class="language-yaml">cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
@@ -313,7 +313,7 @@ cos:             # optional COS supply-chain config
 <tbody>
 <tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td>When <code>true</code>, <code>roksbnkctl cluster up</code> provisions a new ROKS cluster. When <code>false</code>, <code>cluster register &lt;name&gt;</code> adopts an existing one.</td></tr>
 <tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
-<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.20"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.20</code> as a float.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
 <tr><td><code>public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Attach a public gateway to each cluster subnet for worker Internet egress. <code>false</code> builds a <strong>private/disconnected</strong> cluster with no egress (no <code>ibm_is_public_gateway</code>, no subnet attachment). Sets <code>cluster_public_gateway</code>. <strong>Expert:</strong> a <code>false</code> cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/<code>disconnected</code> licensing — see <a href="./10a-air-gapped-install.html">Chapter 10a §“A truly disconnected cluster”</a>. Governs worker egress only; the master keeps its public API endpoint.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
@@ -603,7 +603,7 @@ Setting up workspace "dev"
 
   Workspace prefix (≤ 35 chars)  [dev]: acme-eu
   Create new ROKS cluster?       [Y/n]: y
-  OpenShift version              [4.18]:
+  OpenShift version              [4.20]:
   Workers per zone               [1]: 2
   Create registry COS instance?  [Y/n]: y
   Create Transit Gateway?        [Y/n]: n

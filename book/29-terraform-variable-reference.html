@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -199,7 +199,7 @@
 <tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, the cert_manager module’s helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to "direct-apply").</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available.</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available.</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
@@ -582,7 +582,7 @@
 <tr><td><code>create_roks_registry_cos_instance</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Cloud Object Storage instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18)</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20)</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>

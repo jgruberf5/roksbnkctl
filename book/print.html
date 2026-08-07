@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -1195,7 +1195,7 @@ Did you mean '--workspace s'?
   Choice [1-14] [3]: 10
   Workspace prefix [bnk-quickstart]:
   Workers per zone (min 1; cluster spans all 3 AZs) [1]: 2
-  OpenShift version [4.18]:
+  OpenShift version [4.20]:
   Create registry COS instance? [Y/n]: y
   Resource group [default]:
 → ✓ Resource group "default" (id ...)
@@ -1225,7 +1225,7 @@ Did you mean '--workspace s'?
 <pre><code>  Create a new ROKS cluster? [Y/n]: n
 → Listing running OpenShift clusters...
   Choose an existing cluster:
-     * 1) bnk-demo        (us-south, 4.18.x_openshift)
+     * 1) bnk-demo        (us-south, 4.20.x_openshift)
        2) roks-prod-ca    (ca-tor, 4.19.x_openshift)
   Choice [1-2] [1]: 1
 </code></pre>
@@ -4020,7 +4020,7 @@ ibmcloud:        # IBM Cloud account + auth
 cluster:         # ROKS cluster identity
   create: true
   name: acme-eu   # equals prefix when init derived the name
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
 
 resources:       # per-resource create/adopt toggles
@@ -4104,7 +4104,7 @@ cos:             # optional COS supply-chain config
 <pre><code class="language-yaml">cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 2
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
@@ -4118,7 +4118,7 @@ cos:             # optional COS supply-chain config
 <tbody>
 <tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td>When <code>true</code>, <code>roksbnkctl cluster up</code> provisions a new ROKS cluster. When <code>false</code>, <code>cluster register &lt;name&gt;</code> adopts an existing one.</td></tr>
 <tr><td><code>name</code></td><td>string</td><td>none — required</td><td>OpenShift cluster name when <code>create=true</code>; cluster ID-or-name to adopt when <code>create=false</code>.</td></tr>
-<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.18"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.18</code> as a float.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td>empty (latest)</td><td>E.g. <code>"4.20"</code>. Empty lets IBM Cloud pick the current default. Quote it — YAML otherwise parses <code>4.20</code> as a float.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>int</td><td><code>1</code></td><td>Worker nodes per AZ; cluster runs across 3 AZs by default in MZR regions, so <code>2</code> ⇒ 6 workers total.</td></tr>
 <tr><td><code>public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Attach a public gateway to each cluster subnet for worker Internet egress. <code>false</code> builds a <strong>private/disconnected</strong> cluster with no egress (no <code>ibm_is_public_gateway</code>, no subnet attachment). Sets <code>cluster_public_gateway</code>. <strong>Expert:</strong> a <code>false</code> cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/<code>disconnected</code> licensing — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a §“A truly disconnected cluster”</a>. Governs worker egress only; the master keeps its public API endpoint.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
@@ -4408,7 +4408,7 @@ Setting up workspace "dev"
 
   Workspace prefix (≤ 35 chars)  [dev]: acme-eu
   Create new ROKS cluster?       [Y/n]: y
-  OpenShift version              [4.18]:
+  OpenShift version              [4.20]:
   Workers per zone               [1]: 2
   Create registry COS instance?  [Y/n]: y
   Create Transit Gateway?        [Y/n]: n
@@ -4631,7 +4631,7 @@ Local state files left in place — verify the remote read-back, then remove the
 <tr><td><code>roks_workers_per_zone</code></td><td><code>1</code></td><td>Worker nodes per AZ. <code>2</code> ⇒ 6 workers in a 3-AZ MZR region.</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>true</code></td><td>Set <code>false</code> to adopt an existing cluster. Pair with <code>roks_cluster_id_or_name</code>.</td></tr>
 <tr><td><code>cluster_public_gateway</code></td><td><code>true</code></td><td><code>false</code> = private/disconnected cluster (no public gateways, no worker egress). <code>config.yaml</code>’s <code>cluster.public_gateway</code>. Expert — needs private connectivity you provide.</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>"4.18"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.18</code> as float otherwise.</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>"4.20"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.20</code> as float otherwise.</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>Small</code></td><td><code>Small</code>/<code>Medium</code>/<code>Large</code>. CNEInstance sizing.</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td>upstream pin</td><td>Pin a specific BNK manifest chart version.</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>repo.f5.com</code></td><td>FAR Docker/Helm registry. Override only for staging.</td></tr>
@@ -11536,7 +11536,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <pre><code class="language-yaml">cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
@@ -11549,7 +11549,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tbody>
 <tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td><code>true</code> | <code>false</code></td><td><code>true</code> provisions a new ROKS cluster; <code>false</code> attaches to an existing one (set <code>name</code> to the existing cluster’s name or ID).</td></tr>
 <tr><td><code>name</code></td><td>string</td><td>— (prompted by <code>init</code>)</td><td>RFC 1123 DNS label</td><td>The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator.</td></tr>
-<tr><td><code>openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.18</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td><code>4.20</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.20</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
@@ -11989,7 +11989,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud.api_key_b64</code></td><td>string</td><td>(empty)</td><td>Base64-encoded API key. Obfuscation only.</td></tr>
 <tr><td><code>cluster.create</code></td><td>bool</td><td><code>true</code></td><td>Provision new vs attach existing.</td></tr>
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
-<tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.20</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
 <tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
@@ -12136,7 +12136,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, the cert_manager module’s helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to "direct-apply").</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18). Leave empty to use the latest available.</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available.</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
@@ -12519,7 +12519,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>create_roks_registry_cos_instance</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Cloud Object Storage instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.18"</code></td><td>OpenShift cluster version (e.g. 4.18)</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20)</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
@@ -13342,9 +13342,9 @@ services VPC in Part 0.</li>
 <tr><th>Component</th><th>Tested</th><th>Floor, and why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.40.2</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan.</td></tr>
+<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.41.0</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan.</td></tr>
 <tr><td>terraform</td><td><strong>1.10.5</strong> (shipped inside the runner)</td><td><strong>≥ 1.10</strong>, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here.</td></tr>
-<tr><td>OpenShift (ROKS)</td><td><strong>4.18.51</strong></td><td><code>cluster.openshift_version: "4.18"</code> pins the minor.</td></tr>
+<tr><td>OpenShift (ROKS)</td><td><strong>4.20</strong> (recommended default)</td><td><code>cluster.openshift_version: "4.20"</code> pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on <strong>4.18.51</strong> — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check <code>ibmcloud ks versions</code> for what your account offers; IBM’s own default moves ahead of this.</td></tr>
 <tr><td>Argo Workflows (Part 2)</td><td><strong>v4.0.8</strong></td><td>≥ v3.4 for the emissary executor and <code>sidecars:</code>.</td></tr>
 <tr><td>Kubernetes hosting Argo (Part 2)</td><td><strong>k3s v1.36.3+k3s1</strong></td><td>any conformant cluster with an RWO StorageClass.</td></tr>
 </tbody>
@@ -13454,8 +13454,30 @@ HARBOR_CA_B64=$(base64 -w0 &lt; harbor-ca.crt)
 </code></pre>
 <h3 id="put-the-operator-on-the-vsi"><a class="header" href="#put-the-operator-on-the-vsi">Put the operator on the VSI</a></h3>
 <p>For the CLI path, the Harbor VSI is the natural operator host: it is the only box with <em>both</em>
-Internet egress (to pull FAR) <em>and</em> private reach to Harbor. <code>scp</code> <code>roksbnkctl</code> and the two FAR
-artifacts across, or skip the staging entirely by using the COS supply chain below.</p>
+Internet egress (to pull FAR) <em>and</em> private reach to Harbor.</p>
+<p><strong>This is not a convenience — it is a requirement.</strong> <code>bnk up</code> pulls the BNK manifest and the
+charts <strong>host-side</strong> (that is deliberate: pulling the archives itself keeps the terraform helm
+provider from doing an OCI login, whose credential-store step breaks on Windows). So the operator
+host must reach the mirror’s private address too. Running from a laptop that is not on the
+transit gateway gets as far as the manifest pull and then stops:</p>
+<pre><code>helm pull oci://10.243.0.4/bnk-mirror/release/f5-bigip-k8s-manifest
+  dial tcp 10.243.0.4:443: i/o timeout
+</code></pre>
+<p>The node reachability gate does not cover this — it answers for the <em>nodes</em>, which is a different
+question from whether the operator can pull.</p>
+<p>A stock Ubuntu VSI has none of the toolchain, so stage it once:</p>
+<pre><code class="language-bash">scp -i &lt;key&gt; "$(command -v roksbnkctl)" ubuntu@&lt;HARBOR_FIP&gt;:/home/ubuntu/roksbnkctl
+
+# terraform &gt;= 1.10 — the floor roksbnkctl enforces (native S3 state locking, Chapter 12a).
+# Do not settle for whatever the distro ships; 1.9.x is rejected.
+curl -fsSLo /tmp/tf.zip https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip
+sudo apt-get install -y unzip &amp;&amp; unzip -o -q /tmp/tf.zip -d /tmp &amp;&amp; sudo install -m0755 /tmp/terraform /usr/local/bin/
+
+curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tgz
+tar xzf /tmp/helm.tgz -C /tmp &amp;&amp; sudo install -m0755 /tmp/linux-amd64/helm /usr/local/bin/
+</code></pre>
+<p>Then either <code>scp</code> the two FAR artifacts across, or skip staging entirely with the COS supply
+chain below — which is what CI does, since a container has no local files.</p>
 <h3 id="s2--mirror-far--harbor"><a class="header" href="#s2--mirror-far--harbor">S2 — Mirror FAR → Harbor</a></h3>
 <p><code>registry replicate</code> pulls from <code>repo.f5.com</code> (the VSI’s egress) and pushes to Harbor at its
 <strong>private IP</strong>.</p>
@@ -13562,7 +13584,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-conn                  # a NEW cluster is named from the prefix; see the note below
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: true            # ← CONNECTED: worker Internet egress
 resources:
@@ -13608,7 +13630,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-disco
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: false           # ← DISCONNECTED: no worker egress
   vpc_cidr: 10.242.0.0/16         # ← its own block; see "Addressing" above
@@ -13663,6 +13685,38 @@ node-cached image (so it needs no egress), and gates the install on the CA landi
 node. Because Harbor is addressed by an <strong>IP</strong>, the <code>certs.d</code> key is that IP — no node
 <code>/etc/hosts</code> entry needed.</p>
 </blockquote>
+<h3 id="reachability-is-checked-from-every-node-first"><a class="header" href="#reachability-is-checked-from-every-node-first">Reachability is checked from every node first</a></h3>
+<p>The same DaemonSet also <strong>probes</strong> the mirror and the licence proxy from every node before
+anything tries to pull, and <code>bnk up</code> <strong>fails</strong> if the mirror is unreachable from any of them:</p>
+<pre><code class="language-console">→ installing registry CA trust on all nodes (10.243.0.4) and checking reachability
+  F5-License-Proxy: 3/3 nodes reachable
+    ✓ kube-…-0000013a -&gt; F5-License-Proxy (10.243.1.4:8443): dns=skipped-ip tcp=ok
+  registry: 3/3 nodes reachable
+    ✓ kube-…-0000013a -&gt; registry (10.243.0.4:443): dns=skipped-ip tcp=ok
+✓ registry CA installed on all nodes; 10.243.0.4 is trusted and reachable
+</code></pre>
+<p><strong>It has to run on a node, not on the operator.</strong> The operator host sits on the services VPC
+with egress; the workers are air-gapped behind the gateway. A check from where <code>roksbnkctl</code> runs
+answers a different question and will return a confident green for a mirror the cluster cannot
+route to. Because a DaemonSet is one pod per node, this covers every availability zone without
+enumerating them — which matters, since a security group or subnet fixed in only two of three
+zones is a common shape and otherwise shows up merely as <em>some</em> pods failing to pull.</p>
+<p>DNS and TCP are reported separately because the fixes differ: <code>dns=FAILED</code> is a resolver or
+hostname problem, <code>tcp=FAILED</code> is routing, security groups, or overlapping VPC address prefixes
+(which a gateway blackholes silently — <a href="#addressing-give-every-vpc-its-own-block">Addressing</a>).</p>
+<p>The mirror is <strong>required</strong>: an unreachable one fails the install rather than deferring it to
+<code>ImagePullBackOff</code> and a helm <code>context deadline exceeded</code> that names neither the registry nor the
+node. The licence proxy is reported but not fatal, since a staged bring-up may legitimately point
+at an endpoint that is not up yet.</p>
+<p>Two details worth knowing:</p>
+<ul>
+<li><strong>No CA is needed for the probe to run.</strong> A registry already trusted by the node bundle, or one
+with a publicly-signed certificate, skips the CA install but is still checked — being trusted
+and being reachable are different things, and only the second fails silently.</li>
+<li><strong>Every node must report.</strong> A node whose pod has not answered yet is not counted as a pass; the
+check waits for the DaemonSet’s full complement and fails if it cannot hear from them all,
+because a silent node is indistinguishable from a broken one.</li>
+</ul>
 <blockquote>
 <p><strong>Keep <code>SSL_CERT_FILE</code> pointed at Harbor’s cert</strong> when running on the VSI — the chart pulls
 happen host-side: <code>export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt</code>.</p>
@@ -13868,7 +13922,7 @@ blanket secret-write grant is never applied by accident.</p>
 <pre><code class="language-yaml">    - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         command: [sh, -ec]
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -13881,7 +13935,7 @@ blanket secret-write grant is never applied by accident.</p>
 </code></pre>
 <blockquote>
 <p>For B and D the image is pulled from the mirror instead
-(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.40.2</code>), so the pipeline itself needs
+(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.41.0</code>), so the pipeline itself needs
 no public registry at run time. Pin by <code>@sha256:</code> digest in production.</p>
 </blockquote>
 <h3 id="2a--new-vpc--connected-cluster-argo"><a class="header" href="#2a--new-vpc--connected-cluster-argo">2A — New VPC + connected cluster (Argo)</a></h3>
@@ -13923,12 +13977,12 @@ published by the FLP workflow rather than passing through a human.</p>
 can reach the cluster. Workspace <code>-w bnkconn</code>, with the same <code>ROKSBNKCTL_GENERIC_*</code> blanking.</p>
 <pre><code class="language-yaml">    - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         args: ["roksbnkctl -w bnkconn bnk up --auto"]
         # …envFrom / env / volumeMounts as the rbk template…
       sidecars:
         - name: cwc-guard
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
           command: [sh, -ec]
           args:
             - |

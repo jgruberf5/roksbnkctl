@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -221,7 +221,7 @@
 <tr><td><code>roks_workers_per_zone</code></td><td><code>1</code></td><td>Worker nodes per AZ. <code>2</code> ⇒ 6 workers in a 3-AZ MZR region.</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>true</code></td><td>Set <code>false</code> to adopt an existing cluster. Pair with <code>roks_cluster_id_or_name</code>.</td></tr>
 <tr><td><code>cluster_public_gateway</code></td><td><code>true</code></td><td><code>false</code> = private/disconnected cluster (no public gateways, no worker egress). <code>config.yaml</code>’s <code>cluster.public_gateway</code>. Expert — needs private connectivity you provide.</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>"4.18"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.18</code> as float otherwise.</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>"4.20"</code></td><td>OpenShift minor. Quote it — YAML/HCL parses <code>4.20</code> as float otherwise.</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>Small</code></td><td><code>Small</code>/<code>Medium</code>/<code>Large</code>. CNEInstance sizing.</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td>upstream pin</td><td>Pin a specific BNK manifest chart version.</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>repo.f5.com</code></td><td>FAR Docker/Helm registry. Override only for staging.</td></tr>

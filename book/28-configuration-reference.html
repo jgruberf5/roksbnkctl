@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -250,7 +250,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <pre><code class="language-yaml">cluster:
   create: true
   name: tf-openshift-cluster
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
@@ -263,7 +263,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tbody>
 <tr><td><code>create</code></td><td>bool</td><td><code>true</code></td><td><code>true</code> | <code>false</code></td><td><code>true</code> provisions a new ROKS cluster; <code>false</code> attaches to an existing one (set <code>name</code> to the existing cluster’s name or ID).</td></tr>
 <tr><td><code>name</code></td><td>string</td><td>— (prompted by <code>init</code>)</td><td>RFC 1123 DNS label</td><td>The cluster name. Used as the OpenShift cluster identity and as the resource group disambiguator.</td></tr>
-<tr><td><code>openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.18</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
+<tr><td><code>openshift_version</code></td><td>string</td><td><code>4.20</code></td><td>any version IBM Cloud’s catalog accepts</td><td>Pinned to a minor (<code>4.20</code>) rather than patch — IBM ships continuous patch updates within a minor. Leave empty for “latest”.</td></tr>
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
@@ -703,7 +703,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud.api_key_b64</code></td><td>string</td><td>(empty)</td><td>Base64-encoded API key. Obfuscation only.</td></tr>
 <tr><td><code>cluster.create</code></td><td>bool</td><td><code>true</code></td><td>Provision new vs attach existing.</td></tr>
 <tr><td><code>cluster.name</code></td><td>string</td><td>(prompted)</td><td>Cluster name.</td></tr>
-<tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.18</code></td><td>OpenShift minor version.</td></tr>
+<tr><td><code>cluster.openshift_version</code></td><td>string</td><td><code>4.20</code></td><td>OpenShift minor version.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>Workers per AZ.</td></tr>
 <tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="./10a-air-gapped-install.html">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-259927fa.js";
+            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -302,9 +302,9 @@ services VPC in Part 0.</li>
 <tr><th>Component</th><th>Tested</th><th>Floor, and why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.40.2</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan.</td></tr>
+<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.41.0</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan.</td></tr>
 <tr><td>terraform</td><td><strong>1.10.5</strong> (shipped inside the runner)</td><td><strong>≥ 1.10</strong>, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here.</td></tr>
-<tr><td>OpenShift (ROKS)</td><td><strong>4.18.51</strong></td><td><code>cluster.openshift_version: "4.18"</code> pins the minor.</td></tr>
+<tr><td>OpenShift (ROKS)</td><td><strong>4.20</strong> (recommended default)</td><td><code>cluster.openshift_version: "4.20"</code> pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on <strong>4.18.51</strong> — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check <code>ibmcloud ks versions</code> for what your account offers; IBM’s own default moves ahead of this.</td></tr>
 <tr><td>Argo Workflows (Part 2)</td><td><strong>v4.0.8</strong></td><td>≥ v3.4 for the emissary executor and <code>sidecars:</code>.</td></tr>
 <tr><td>Kubernetes hosting Argo (Part 2)</td><td><strong>k3s v1.36.3+k3s1</strong></td><td>any conformant cluster with an RWO StorageClass.</td></tr>
 </tbody>
@@ -414,8 +414,30 @@ HARBOR_CA_B64=$(base64 -w0 &lt; harbor-ca.crt)
 </code></pre>
 <h3 id="put-the-operator-on-the-vsi"><a class="header" href="#put-the-operator-on-the-vsi">Put the operator on the VSI</a></h3>
 <p>For the CLI path, the Harbor VSI is the natural operator host: it is the only box with <em>both</em>
-Internet egress (to pull FAR) <em>and</em> private reach to Harbor. <code>scp</code> <code>roksbnkctl</code> and the two FAR
-artifacts across, or skip the staging entirely by using the COS supply chain below.</p>
+Internet egress (to pull FAR) <em>and</em> private reach to Harbor.</p>
+<p><strong>This is not a convenience — it is a requirement.</strong> <code>bnk up</code> pulls the BNK manifest and the
+charts <strong>host-side</strong> (that is deliberate: pulling the archives itself keeps the terraform helm
+provider from doing an OCI login, whose credential-store step breaks on Windows). So the operator
+host must reach the mirror’s private address too. Running from a laptop that is not on the
+transit gateway gets as far as the manifest pull and then stops:</p>
+<pre><code>helm pull oci://10.243.0.4/bnk-mirror/release/f5-bigip-k8s-manifest
+  dial tcp 10.243.0.4:443: i/o timeout
+</code></pre>
+<p>The node reachability gate does not cover this — it answers for the <em>nodes</em>, which is a different
+question from whether the operator can pull.</p>
+<p>A stock Ubuntu VSI has none of the toolchain, so stage it once:</p>
+<pre><code class="language-bash">scp -i &lt;key&gt; "$(command -v roksbnkctl)" ubuntu@&lt;HARBOR_FIP&gt;:/home/ubuntu/roksbnkctl
+
+# terraform &gt;= 1.10 — the floor roksbnkctl enforces (native S3 state locking, Chapter 12a).
+# Do not settle for whatever the distro ships; 1.9.x is rejected.
+curl -fsSLo /tmp/tf.zip https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip
+sudo apt-get install -y unzip &amp;&amp; unzip -o -q /tmp/tf.zip -d /tmp &amp;&amp; sudo install -m0755 /tmp/terraform /usr/local/bin/
+
+curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tgz
+tar xzf /tmp/helm.tgz -C /tmp &amp;&amp; sudo install -m0755 /tmp/linux-amd64/helm /usr/local/bin/
+</code></pre>
+<p>Then either <code>scp</code> the two FAR artifacts across, or skip staging entirely with the COS supply
+chain below — which is what CI does, since a container has no local files.</p>
 <h3 id="s2--mirror-far--harbor"><a class="header" href="#s2--mirror-far--harbor">S2 — Mirror FAR → Harbor</a></h3>
 <p><code>registry replicate</code> pulls from <code>repo.f5.com</code> (the VSI’s egress) and pushes to Harbor at its
 <strong>private IP</strong>.</p>
@@ -522,7 +544,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-conn                  # a NEW cluster is named from the prefix; see the note below
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: true            # ← CONNECTED: worker Internet egress
 resources:
@@ -568,7 +590,7 @@ tf_source: { type: embedded }
 cluster:
   create: true
   name: bnk-disco
-  openshift_version: "4.18"
+  openshift_version: "4.20"
   workers_per_zone: 1
   public_gateway: false           # ← DISCONNECTED: no worker egress
   vpc_cidr: 10.242.0.0/16         # ← its own block; see "Addressing" above
@@ -623,6 +645,38 @@ node-cached image (so it needs no egress), and gates the install on the CA landi
 node. Because Harbor is addressed by an <strong>IP</strong>, the <code>certs.d</code> key is that IP — no node
 <code>/etc/hosts</code> entry needed.</p>
 </blockquote>
+<h3 id="reachability-is-checked-from-every-node-first"><a class="header" href="#reachability-is-checked-from-every-node-first">Reachability is checked from every node first</a></h3>
+<p>The same DaemonSet also <strong>probes</strong> the mirror and the licence proxy from every node before
+anything tries to pull, and <code>bnk up</code> <strong>fails</strong> if the mirror is unreachable from any of them:</p>
+<pre><code class="language-console">→ installing registry CA trust on all nodes (10.243.0.4) and checking reachability
+  F5-License-Proxy: 3/3 nodes reachable
+    ✓ kube-…-0000013a -&gt; F5-License-Proxy (10.243.1.4:8443): dns=skipped-ip tcp=ok
+  registry: 3/3 nodes reachable
+    ✓ kube-…-0000013a -&gt; registry (10.243.0.4:443): dns=skipped-ip tcp=ok
+✓ registry CA installed on all nodes; 10.243.0.4 is trusted and reachable
+</code></pre>
+<p><strong>It has to run on a node, not on the operator.</strong> The operator host sits on the services VPC
+with egress; the workers are air-gapped behind the gateway. A check from where <code>roksbnkctl</code> runs
+answers a different question and will return a confident green for a mirror the cluster cannot
+route to. Because a DaemonSet is one pod per node, this covers every availability zone without
+enumerating them — which matters, since a security group or subnet fixed in only two of three
+zones is a common shape and otherwise shows up merely as <em>some</em> pods failing to pull.</p>
+<p>DNS and TCP are reported separately because the fixes differ: <code>dns=FAILED</code> is a resolver or
+hostname problem, <code>tcp=FAILED</code> is routing, security groups, or overlapping VPC address prefixes
+(which a gateway blackholes silently — <a href="#addressing-give-every-vpc-its-own-block">Addressing</a>).</p>
+<p>The mirror is <strong>required</strong>: an unreachable one fails the install rather than deferring it to
+<code>ImagePullBackOff</code> and a helm <code>context deadline exceeded</code> that names neither the registry nor the
+node. The licence proxy is reported but not fatal, since a staged bring-up may legitimately point
+at an endpoint that is not up yet.</p>
+<p>Two details worth knowing:</p>
+<ul>
+<li><strong>No CA is needed for the probe to run.</strong> A registry already trusted by the node bundle, or one
+with a publicly-signed certificate, skips the CA install but is still checked — being trusted
+and being reachable are different things, and only the second fails silently.</li>
+<li><strong>Every node must report.</strong> A node whose pod has not answered yet is not counted as a pass; the
+check waits for the DaemonSet’s full complement and fails if it cannot hear from them all,
+because a silent node is indistinguishable from a broken one.</li>
+</ul>
 <blockquote>
 <p><strong>Keep <code>SSL_CERT_FILE</code> pointed at Harbor’s cert</strong> when running on the VSI — the chart pulls
 happen host-side: <code>export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt</code>.</p>
@@ -828,7 +882,7 @@ blanket secret-write grant is never applied by accident.</p>
 <pre><code class="language-yaml">    - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         command: [sh, -ec]
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -841,7 +895,7 @@ blanket secret-write grant is never applied by accident.</p>
 </code></pre>
 <blockquote>
 <p>For B and D the image is pulled from the mirror instead
-(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.40.2</code>), so the pipeline itself needs
+(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.41.0</code>), so the pipeline itself needs
 no public registry at run time. Pin by <code>@sha256:</code> digest in production.</p>
 </blockquote>
 <h3 id="2a--new-vpc--connected-cluster-argo"><a class="header" href="#2a--new-vpc--connected-cluster-argo">2A — New VPC + connected cluster (Argo)</a></h3>
@@ -883,12 +937,12 @@ published by the FLP workflow rather than passing through a human.</p>
 can reach the cluster. Workspace <code>-w bnkconn</code>, with the same <code>ROKSBNKCTL_GENERIC_*</code> blanking.</p>
 <pre><code class="language-yaml">    - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
         args: ["roksbnkctl -w bnkconn bnk up --auto"]
         # …envFrom / env / volumeMounts as the rbk template…
       sidecars:
         - name: cwc-guard
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.40.2
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
           command: [sh, -ec]
           args:
             - |
