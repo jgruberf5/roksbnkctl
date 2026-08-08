@@ -76,6 +76,25 @@ bnk:
   #   bigip_url: https://10.1.1.5
   #   bigip_username: admin
   #   bigip_password_b64: ""                  # base64(password); prefer ROKSBNKCTL_BIGIP_PASSWORD env
+  # preflight:                                # tunes the checks `bnk up` runs BEFORE it plans
+  #   # The per-node reachability gate probes the mirror (and the FLP, when one is
+  #   # configured) from every node, in every AZ, before anything pulls an image.
+  #   #
+  #   # reachability_retry_seconds is how long ONE target may keep failing before the
+  #   # verdict is believed. A Transit Gateway attachment is asynchronous: IBM programs
+  #   # the routes some time after the connection reports `attached`, and a probe run
+  #   # 73s after attach has failed on a path that was healthy minutes later. A success
+  #   # ends the retry immediately, so a healthy environment never pays this.
+  #   #   raise it  — a fabric that programs routes slowly, or a gateway attached in the
+  #   #               same run as the install
+  #   #   set it 0  — a static environment where a failure is never a race; one shot
+  #   reachability_retry_seconds: 180
+  #   #
+  #   # reachability_timeout_seconds bounds the wait for EVERY node to report. It is
+  #   # clamped to stay above the retry budget: a wait shorter than the retry gives up
+  #   # while the probe is still legitimately retrying, and reports a timeout that looks
+  #   # like the network but is really this file.
+  #   reachability_timeout_seconds: 480
   # network:                                  # per-AZ data-plane addressing (all 6 fields per zone)
   #   zones:
   #     - ext_vlan_cidr: 10.10.1.0/24

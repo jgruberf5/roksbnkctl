@@ -5,9 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,32 +80,26 @@ func (r NodeProbeResult) String() string {
 // DNS is checked separately from TCP because they fail for different reasons and want
 // different fixes: DNS is a resolver/hostname problem, TCP is routing, security groups
 // or a gateway attachment.
-// probeRetryBudget is how long a target may keep failing before the verdict is
-// believed. ROKSBNKCTL_PROBE_RETRY_SECONDS overrides it (0 disables retrying, which
-// is useful in tests that want the old one-shot behaviour).
 //
-// WHY RETRY AT ALL (issue #57). A Transit Gateway attachment is asynchronous: IBM
+// WHY IT RETRIES (issue #57). A Transit Gateway attachment is asynchronous: IBM
 // programs the routes some time after the connection reports `attached`. A probe run
 // ~73 seconds after attach saw both targets unreachable, `bnk up` refused, and the
 // path was healthy minutes later — a sibling cluster on the same gateway and the same
 // blueprint passed simply because it landed on the other side of route programming.
 //
 // So "not reachable" and "not reachable YET" are different claims, and a single TCP
-// failure cannot tell them apart. Three minutes is chosen to comfortably exceed the
-// observed propagation delay while still failing a genuinely broken path faster than
-// the ImagePullBackOff + helm-timeout route this gate exists to replace.
-func probeRetryBudget() int {
-	if v := os.Getenv("ROKSBNKCTL_PROBE_RETRY_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			return n
-		}
-	}
-	return 180
-}
-
-func nodeProbeScript(targets []ProbeTarget) string {
+// failure cannot tell them apart. retrySeconds is how long a target may keep failing
+// before the verdict is believed; 0 is one-shot. The value is a WORKSPACE SETTING
+// (bnk.preflight.reachability_retry_seconds) rather than a constant here, because the
+// right budget is a property of the environment: a gateway that has been up for days
+// needs none, and a fabric that programs routes slowly needs more than any default we
+// could pick for it.
+func nodeProbeScript(targets []ProbeTarget, retrySeconds int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `budget=%d; `, probeRetryBudget())
+	if retrySeconds < 0 {
+		retrySeconds = 0
+	}
+	fmt.Fprintf(&b, `budget=%d; `, retrySeconds)
 	b.WriteString(`probe() { lbl="$1"; h="$2"; p="$3"; dns=skipped-ip; tcp=FAILED; detail=""; `)
 	b.WriteString(`deadline=$(( $(date +%s) + budget )); attempts=0; `)
 	// Retry until the budget is spent. A SUCCESS ends it immediately, so a healthy
@@ -144,8 +136,9 @@ func nodeProbeScript(targets []ProbeTarget) string {
 	// The elapsed/attempt counts turn "unreachable" into "unreachable for the whole
 	// budget", which is the difference between a race and a real break.
 	b.WriteString(`[ "$tcp" != ok ] && [ "$attempts" -gt 1 ] && detail="$detail (still failing after ${attempts} attempts over ${budget}s)"; `)
-	// ts lets the collector prove the verdict belongs to THIS run rather than to a
-	// pod that has been sitting since a previous one.
+	// ts records when the verdict was reached. Freshness is guaranteed structurally —
+	// the DaemonSet rolls every run (see ensureInstallerDaemonSet) — so this is for
+	// the human reading the log, who wants to know how long the retry loop ran.
 	b.WriteString(`echo "ROKSBNKCTL_PROBE ts=$(date +%s) node=${NODE_NAME} label=${lbl} host=${h} port=${p} dns=${dns} tcp=${tcp} detail=${detail}"; }; `)
 	for _, t := range targets {
 		// The probe line is space-separated key=value, so a label containing a space

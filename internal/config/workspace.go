@@ -380,9 +380,6 @@ type BNKCfg struct {
 	Preflight *BNKPreflightCfg `yaml:"preflight,omitempty"`
 }
 
-// BNKFLPCfg configures the F5 License Proxy (FLP) phase deployment. All optional;
-// nil block means FLP is off. It never carries secrets — the FLP generates its own
-// certs, and its subscription JWT is the same one resolved from COS.
 // BNKPreflightCfg tunes the per-node reachability gate.
 //
 // These are exposed because the right values are a property of the ENVIRONMENT, not
@@ -410,6 +407,9 @@ type BNKPreflightCfg struct {
 	ReachabilityTimeoutSeconds *int `yaml:"reachability_timeout_seconds,omitempty"`
 }
 
+// BNKFLPCfg configures the F5 License Proxy (FLP) phase deployment. All optional;
+// nil block means FLP is off. It never carries secrets — the FLP generates its own
+// certs, and its subscription JWT is the same one resolved from COS.
 type BNKFLPCfg struct {
 	// Mode selects HOW the FLP phase deploys the proxy:
 	//   "" | "helm" → the f5-license-proxy Helm chart into the ROKS cluster (default).

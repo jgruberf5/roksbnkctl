@@ -4,6 +4,7 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -57,8 +58,17 @@ func TestNodeProbeFailurePath(t *testing.T) {
 		targets = append(targets, ProbeTarget{Label: "control", Host: control, Port: "443"})
 	}
 
-	// Empty CA on purpose: the probe must still run.
-	if err := kc.EnsureRegistryCATrust(ctx, unreachable, "", "", true, targets...); err != nil {
+	// Empty CA on purpose: the probe must still run. Retry budget 0 keeps this test
+	// fast — it is asserting that an unreachable target FAILS, and there is no route
+	// propagation to wait for when the address was never routable.
+	if err := kc.EnsureRegistryCATrust(ctx, RegistryTrustOptions{
+		Host:              unreachable,
+		Wait:              true,
+		Targets:           targets,
+		ProbeRetrySeconds: 0,
+		ReadyTimeout:      4 * time.Minute,
+		RunID:             fmt.Sprintf("itest-%d", time.Now().UnixNano()),
+	}); err != nil {
 		t.Logf("DaemonSet step returned (may be expected): %v", err)
 	}
 	results, err := kc.CollectNodeProbeResults(ctx)

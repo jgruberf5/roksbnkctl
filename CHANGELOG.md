@@ -4,6 +4,39 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Added
+
+- **The reachability gate's timers are now workspace settings** ([#57](https://github.com/jgruberf5/roksbnkctl/issues/57)). Both were constants; the right values are a property of the environment, not of the tool.
+
+  ```yaml
+  bnk:
+    preflight:
+      reachability_retry_seconds: 180     # per target, before the verdict is believed
+      reachability_timeout_seconds: 480   # for every node to report
+  ```
+
+  `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` and `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS` set the same two on the CI path, where the workspace is built by `init --non-interactive --override-from-env` and there is no `config.yaml` to edit.
+
+  `0` retry seconds is a legitimate setting — one shot, for a static environment where a failure is never a race — and is distinguished from "unset". The timeout is clamped to stay above the retry budget, because a wait shorter than the retry gives up while the probe is still working and reports a timeout that reads as a network problem but is really the config.
+
+### Fixed
+
+- **The reachability gate raced Transit Gateway route propagation, and its verdict was sticky** ([#57](https://github.com/jgruberf5/roksbnkctl/issues/57)). Two independent problems, both reported from a real run.
+
+  A TGW attachment is asynchronous: IBM programs the routes some time after the connection reports `attached`. The probe ran once, ~73 seconds after attach, treated a single TCP failure as terminal, and `bnk up` refused a path that was healthy minutes later — while a sibling cluster on the same gateway and the same blueprint passed simply by landing on the other side of route programming. "Unreachable" and "not reachable *yet*" are different claims, and one connect attempt cannot tell them apart.
+
+  Each target is now retried until its budget is spent. A success ends the retry immediately, so a healthy environment pays nothing, and a failure reports how hard it tried:
+
+  ```
+  ✗ kube-…-0000013a -> registry (10.243.0.4:443): dns=skipped-ip tcp=FAILED
+      (tcp connect failed -- refused, filtered, or no route
+       (still failing after 19 attempts over 180s))
+  ```
+
+  The verdict was also a recording. The probe runs once per pod and then holds the pod Ready, and the DaemonSet's pod template changed only when the CA or the target list changed — so a second `bnk up` with identical inputs did not roll it, the pods kept sleeping, and the collector re-read a log written minutes or hours earlier. Someone who fixed the routing and re-ran was shown the original failure, with nothing to indicate it was stale. The gate now rolls the DaemonSet every run: one pod restart per node against a node-cached image, and the CA install is idempotent.
+
 ## v1.41.0 — 2026-08-07
 
 ### Added

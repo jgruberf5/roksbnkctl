@@ -38,41 +38,68 @@ const (
 	registryTrustName      = "registry-ca-installer"
 	registryTrustCAKey     = "ca.crt"
 	registryTrustHashAnnot = "roksbnkctl.f5.com/registry-ca-hash"
+	registryTrustRunAnnot  = "roksbnkctl.f5.com/probe-run"
 )
 
-// EnsureRegistryCATrust installs (or refreshes) the registry CA on every node
-// via a privileged DaemonSet and blocks until it is Ready on all nodes.
+// RegistryTrustOptions is what one reachability gate needs to know.
 //
-//   - host       the bare registry host[:port] as it appears in pull refs
-//     (e.g. "10.241.0.4"). The CA lands at certs.d/<host>/ca.crt.
-//   - caPEM      the PEM-encoded CA (or self-signed leaf) the registry serves.
-//   - image      the installer image. It must be node-cached (air-gap nodes
-//     cannot pull public images); when empty, the node-resolver image already
-//     present on every ROKS node is auto-discovered. imagePullPolicy is
-//     IfNotPresent so the installer itself never needs a pull.
-//   - wait        when true, block until the DaemonSet is Ready on all nodes.
-func (c *Client) EnsureRegistryCATrust(ctx context.Context, host, caPEM, image string, wait bool, targets ...ProbeTarget) error {
-	host = strings.TrimSpace(host)
-	caPEM = strings.TrimSpace(caPEM)
+// It replaced a positional signature with a variadic tail once the tunables arrived:
+// four of these are workspace settings, and threading them as arguments made every
+// call site a puzzle about which bool meant what.
+type RegistryTrustOptions struct {
+	// Host is the bare registry host[:port] as it appears in pull refs (e.g.
+	// "10.241.0.4"). The CA lands at certs.d/<host>/ca.crt.
+	Host string
+	// CAPEM is the PEM-encoded CA (or self-signed leaf) the registry serves. It is
+	// OPTIONAL: a registry already in the node trust bundle, or one with a publicly
+	// signed certificate, needs no CA — but it still needs to be REACHABLE, and
+	// reachability is the half that fails silently. Empty skips the install and runs
+	// the probes.
+	CAPEM string
+	// Image is the installer image. It must be node-cached (air-gap nodes cannot pull
+	// public images); empty auto-discovers the node-resolver image already present on
+	// every ROKS node. imagePullPolicy is IfNotPresent so the installer never pulls.
+	Image string
+	// Wait blocks until the DaemonSet is Ready on all nodes.
+	Wait bool
+	// Targets are the endpoints every node probes.
+	Targets []ProbeTarget
+
+	// ProbeRetrySeconds is how long a single target may keep failing before its
+	// verdict is believed (issue #57). 0 is one-shot.
+	ProbeRetrySeconds int
+	// ReadyTimeout bounds the wait for every node to report. It must exceed
+	// ProbeRetrySeconds — a wait shorter than the retry gives up while the probe is
+	// still legitimately retrying, and reports a timeout that looks like the network
+	// but is really the configuration. config.Workspace.ReachabilityTimeout clamps it.
+	ReadyTimeout time.Duration
+	// RunID makes the verdict belong to THIS run. See ensureInstallerDaemonSet.
+	RunID string
+}
+
+// EnsureRegistryCATrust installs (or refreshes) the registry CA on every node
+// via a privileged DaemonSet, probes the configured targets from each of them, and
+// blocks until every node has reported.
+func (c *Client) EnsureRegistryCATrust(ctx context.Context, o RegistryTrustOptions) error {
+	host := strings.TrimSpace(o.Host)
+	caPEM := strings.TrimSpace(o.CAPEM)
 	if host == "" {
 		return fmt.Errorf("registry CA trust: empty host")
 	}
-	// The CA is OPTIONAL. A registry whose CA is already in the node trust bundle, or
-	// one with a publicly-signed certificate, needs no CA installed — but it still
-	// needs to be REACHABLE, and reachability is the thing that fails silently. So an
-	// empty CA skips the install and runs the probes; it is not an error.
 	installCA := caPEM != ""
 
 	// The annotation hash covers the probe set as well as the CA: change either and the
 	// DaemonSet must roll, or CollectNodeProbeResults would read a previous run's logs
 	// and report a verdict for targets nobody asked about.
 	hashInput := caPEM
-	for _, tg := range targets {
+	for _, tg := range o.Targets {
 		hashInput += "|" + tg.Label + "|" + tg.Host + "|" + tg.Port
 	}
+	hashInput += fmt.Sprintf("|retry=%d", o.ProbeRetrySeconds)
 	sum := sha256.Sum256([]byte(hashInput))
 	caHash := hex.EncodeToString(sum[:])[:16]
 
+	image := o.Image
 	if image == "" {
 		img, err := c.nodeCachedImage(ctx)
 		if err != nil {
@@ -95,14 +122,18 @@ func (c *Client) EnsureRegistryCATrust(ctx context.Context, host, caPEM, image s
 	if err := c.ensureCAConfigMap(ctx, registryTrustNamespace, caPEM); err != nil {
 		return err
 	}
-	if err := c.ensureInstallerDaemonSet(ctx, host, image, caHash, installCA, targets); err != nil {
+	if err := c.ensureInstallerDaemonSet(ctx, host, image, caHash, o.RunID, installCA, o.Targets, o.ProbeRetrySeconds); err != nil {
 		return err
 	}
 
-	if !wait {
+	if !o.Wait {
 		return nil
 	}
-	return c.waitRegistryTrustReady(ctx, 3*time.Minute)
+	timeout := o.ReadyTimeout
+	if timeout <= 0 {
+		timeout = 8 * time.Minute
+	}
+	return c.waitRegistryTrustReady(ctx, timeout)
 }
 
 // nodeCachedImage returns an image known to be present on every ROKS node, so
@@ -170,7 +201,7 @@ func (c *Client) ensureCAConfigMap(ctx context.Context, ns, caPEM string) error 
 // shell loop variable — no external heredoc interpolation can eat it (the
 // failure mode that wrote the CA to a bogus in-container path). host is
 // substituted here by Go, not by any shell.
-func registryCAInstallCmd(host string, installCA bool, targets []ProbeTarget) string {
+func registryCAInstallCmd(host string, installCA bool, targets []ProbeTarget, retrySeconds int) string {
 	var b strings.Builder
 	// NOT `set -e`: a probe that fails must still reach the `sleep infinity` below.
 	// Exiting would make the pod non-Ready, which stalls the DaemonSet rollout the CA
@@ -186,15 +217,30 @@ func registryCAInstallCmd(host string, installCA bool, targets []ProbeTarget) st
 		fmt.Fprintf(&b, `echo "no CA supplied for %s -- assuming it is already trusted; running reachability probes only"; `, host)
 	}
 	if len(targets) > 0 {
-		b.WriteString(nodeProbeScript(targets))
+		b.WriteString(nodeProbeScript(targets, retrySeconds))
 	}
 	b.WriteString(`echo "node checks complete"; sleep infinity`)
 	return b.String()
 }
 
-func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHash string, installCA bool, targets []ProbeTarget) error {
+// ensureInstallerDaemonSet creates or updates the installer DaemonSet.
+//
+// THE STICKY VERDICT (issue #57). The probe runs ONCE per pod and then sleeps
+// forever, and CollectNodeProbeResults reads that pod's log. So the verdict is only
+// as fresh as the pod. Before, the pod template changed only when the CA or the target
+// set changed — meaning a second `bnk up` with identical inputs did not roll the
+// DaemonSet, the pods kept sleeping, and the collector re-read a log written minutes
+// or hours earlier. A user who fixed the routing and re-ran was shown the same failure
+// with no way to tell it was a recording.
+//
+// So a per-run annotation forces a rollout every time the gate runs. The cost is one
+// pod restart per node against a node-cached image — seconds — and the CA install is
+// idempotent, so re-running it is free. The alternative, trusting a timestamp in the
+// log, keeps the stale pod alive and only teaches us to distrust it; there is nothing
+// useful to do with a verdict we have decided is too old.
+func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHash, runID string, installCA bool, targets []ProbeTarget, retrySeconds int) error {
 	priv := true
-	installCmd := registryCAInstallCmd(host, installCA, targets)
+	installCmd := registryCAInstallCmd(host, installCA, targets, retrySeconds)
 
 	labels := map[string]string{"app": registryTrustName}
 	ds := &appsv1.DaemonSet{
@@ -204,7 +250,7 @@ func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHa
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      labels,
-					Annotations: map[string]string{registryTrustHashAnnot: caHash},
+					Annotations: podTemplateAnnotations(caHash, runID),
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: registryTrustName,
@@ -253,11 +299,25 @@ func (c *Client) ensureInstallerDaemonSet(ctx context.Context, host, image, caHa
 	if err != nil {
 		return err
 	}
-	// Preserve resourceVersion for the update; a changed hash/host/image rolls
-	// the pods (the pod-template annotation carries the CA hash).
+	// Preserve resourceVersion for the update; a changed hash/host/image/run rolls
+	// the pods (the pod-template annotations carry both the CA hash and the run id).
 	ds.ResourceVersion = existing.ResourceVersion
 	_, err = dsClient.Update(ctx, ds, metav1.UpdateOptions{})
 	return err
+}
+
+// podTemplateAnnotations carries what must roll the DaemonSet.
+//
+// The CA hash rolls it when the inputs change; the run id rolls it every run, so the
+// probe result the collector reads was produced by this invocation. An empty run id
+// keeps the historical behaviour (roll only on a changed hash) — useful for callers
+// that only want the CA installed and are not reading a verdict.
+func podTemplateAnnotations(caHash, runID string) map[string]string {
+	a := map[string]string{registryTrustHashAnnot: caHash}
+	if runID != "" {
+		a[registryTrustRunAnnot] = runID
+	}
+	return a
 }
 
 // waitRegistryTrustReady blocks until the installer DaemonSet reports Ready on

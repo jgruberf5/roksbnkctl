@@ -552,6 +552,52 @@ Two details worth knowing:
   check waits for the DaemonSet's full complement and fails if it cannot hear from them all,
   because a silent node is indistinguishable from a broken one.
 
+#### It retries, and the budget is yours to set
+
+A Transit Gateway attachment is **asynchronous**. IBM programs the routes some time after the
+connection reports `attached`, so a cluster built and installed in one run can probe a path that
+is correct but not yet live. This has been seen for real: a probe 73 seconds after attach failed
+on both targets, `bnk up` refused, and the same path was healthy minutes later — while a sibling
+cluster on the same gateway and the same blueprint passed, purely by landing on the other side of
+route programming.
+
+"Unreachable" and "not reachable **yet**" are different claims, and one TCP failure cannot tell
+them apart. So each target is retried until its budget is spent; a success ends the retry
+immediately, so a healthy environment never pays for it. A failure then says how hard it tried:
+
+```text
+✗ kube-…-0000013a -> registry (10.243.0.4:443): dns=skipped-ip tcp=FAILED
+    (tcp connect failed -- refused, filtered, or no route
+     (still failing after 19 attempts over 180s))
+```
+
+Both timers are workspace settings, because the right values are a property of the environment
+rather than of the tool:
+
+```yaml
+bnk:
+  preflight:
+    reachability_retry_seconds: 180     # per target, before the verdict is believed
+    reachability_timeout_seconds: 480   # for every node to report
+```
+
+| | Env var | Default | When to change it |
+|---|---|---|---|
+| `reachability_retry_seconds` | `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` | `180` | **Raise** when the gateway is attached in the same run as the install, or the fabric programs routes slowly. **Set `0`** for a static environment where a failure is never a race — one shot, fail immediately. |
+| `reachability_timeout_seconds` | `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS` | `480` | Raise alongside a large retry budget. It is clamped to stay above the retry budget regardless, since a wait shorter than the retry would give up while the probe was still working. |
+
+The env vars matter for the CI path, where the workspace is built by
+`init --non-interactive --override-from-env` and there is no `config.yaml` to edit.
+
+#### Each run gets a fresh verdict
+
+The probe runs once per pod and then holds the pod Ready. That means the result `bnk up` reads is
+only as fresh as the pod that wrote it — so the gate rolls the DaemonSet on **every** run, even
+when the CA and the target list are unchanged. Without that, a re-run after fixing the routing
+re-read the original pod's log and showed the same failure, with nothing to indicate it was a
+recording. The cost is one pod restart per node against a node-cached image, and the CA install
+is idempotent.
+
 > **Keep `SSL_CERT_FILE` pointed at Harbor's cert** when running on the VSI — the chart pulls
 > happen host-side: `export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt`.
 
