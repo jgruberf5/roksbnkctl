@@ -236,3 +236,31 @@ one. An omitted or `true` value is the current behavior (egress on).
 > above is the operator's responsibility. Note the cluster **master** keeps its public
 > service endpoint regardless — this toggle governs worker/subnet egress, not the API
 > endpoint.
+
+### `bnk up` checks the private paths before it installs
+
+Because those private paths are yours to wire, `bnk up` verifies them rather than
+assuming them. Before it plans anything it probes the mirror — and the F5 License
+Proxy, when one is configured — **from every node, in every availability zone**, and
+**fails if the mirror is unreachable from any of them**.
+
+The check has to run on a node. The host running `roksbnkctl` typically sits on the
+services VPC with egress, while the workers are air-gapped behind the gateway; a probe
+from there returns a confident green for a mirror the cluster cannot route to. This was
+not hypothetical during validation — `registry adopt` timed out reaching Harbor from the
+operator host while all three nodes reached it fine.
+
+Without the gate, an unroutable mirror surfaced as `ImagePullBackOff` and then a helm
+`context deadline exceeded` about ten minutes later, naming neither the registry nor the
+node. A security group or subnet fixed in two zones out of three is a common shape, and
+one pod per node is what makes it visible.
+
+A registry with no CA to install — already in the node trust bundle, or publicly signed —
+is still probed. Being trusted and being reachable are different things, and only the
+second fails silently.
+
+Both of the gate's timers are tunable under
+[`bnk.preflight`](./28-configuration-reference.md#bnkpreflight--the-reachability-gates-timers);
+raise the retry budget when the Transit Gateway is attached in the same run as the
+install. The full output, rationale, and per-topology walkthroughs are in
+[Appendix A](./appendix-a-disconnected-roks-cluster.md).

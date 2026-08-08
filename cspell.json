@@ -262,6 +262,7 @@
     "preface",
     "prefixlen",
     "preflight",
+    "unroutable",
     "preflights",
     "preinstalls",
     "prereq",

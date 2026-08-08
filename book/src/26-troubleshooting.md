@@ -38,6 +38,24 @@ Pre-setting `IBMCLOUD_API_KEY` skips the API-key prompt (it's the first link in 
 
 ## `roksbnkctl up` lifecycle
 
+### Symptom: `bnk up` refuses with `cluster "…" already has BNK installed … but workspace "…" has no terraform state for it`
+
+**Root cause**: exactly what it says — the cluster is serving a BNK install that this workspace's state knows nothing about. This is the normal shape when a cluster moves between deployments: BNK Forge gives each project its own deployment-scoped volume, so the second project to adopt a cluster legitimately has no state for the first project's install.
+
+Before v1.42.0 there was no refusal. An empty state planned a *full* install — `resources_to_add=64` over a cluster that already had all 64 — and ground on for about thirteen minutes before exiting 1 without naming the cause or the cluster, three times over with retries ([#53](https://github.com/jgruberf5/roksbnkctl/issues/53)). The refusal replaces that with a fast, named failure.
+
+**Fix**: pick one —
+
+- run from the workspace that installed it, whose state can converge or remove the install;
+- remove BNK from the cluster first, then re-run here;
+- if the install is genuinely abandoned, clear it from the cluster deliberately rather than letting an apply collide with it.
+
+`roksbnkctl -w <ws> bnk status` shows what is actually on the cluster.
+
+The check is narrow by construction: it fires only when this workspace's BNK state holds **no** managed resources *and* the cluster is actually serving an install. A workspace that owns an install converges exactly as before and never reaches it. If the cluster cannot be reached, or what the state holds cannot be determined — including an `s3` remote backend whose state cannot be listed — the guard stays silent rather than inventing a refusal.
+
+> There is deliberately **no** `bnk adopt` yet. Deriving and validating a complete install record from a live cluster is a larger change than a guard, and wants its own testing against real installs.
+
 ### Symptom: `terraform apply` errors `timeout while waiting for state to become 'normal'`
 
 **Root cause**: IBM Cloud's control plane is occasionally 5-15 minutes slow propagating cluster state — a known transient. The cluster *was* created; the API just hasn't caught up to reporting it as Ready.
@@ -316,6 +334,36 @@ cluster:
 **Root cause**: BNK licensing completes only when the License CR reports `status.state: Active` (or the `LicenseActive` condition), which roksbnkctl polls for deterministically (~15-minute bound). A hang usually means the FAR supply chain is wrong — a missing/expired JWT, or the JWT uploaded under the wrong object key — or, in `f5licenseproxy` mode, the F5 License Proxy isn't reachable.
 
 **Fix**: confirm the JWT is present under the **exact** object key `subscription.jwt` (`roksbnkctl cos object list <bucket> --instance bnk-supply-chain`) and not expired; for FLP mode check `roksbnkctl flp status` before `bnk up`. See [Licensing BNK with the FLP](./10c-flp-licensing.md).
+
+Since v1.41.0 the reachability gate catches the *network* half of this before the install starts, so a licensing hang that is really an unreachable proxy now surfaces as a named per-node failure instead — see the next entry.
+
+### Symptom: `bnk up` fails the reachability gate on a cluster whose network you believe is correct
+
+```
+✗ kube-…-0000013a -> registry (10.243.0.4:443): dns=skipped-ip tcp=FAILED
+    (tcp connect failed -- refused, filtered, or no route)
+```
+
+**Root cause**: most often the gate is right and something (a security group, an ACL, a missing Transit Gateway attachment, or [overlapping VPC address prefixes](./09a-transit-gateway-sharing.md)) genuinely blocks the path from that node.
+
+But there is one case where the network is correct and the probe is early. **A Transit Gateway attachment is asynchronous**: IBM programs the routes some time *after* the connection reports `attached`. A workspace that creates the VPC, joins the gateway, and installs in a single run can probe a path that is correct but not yet live. A probe 73 seconds after attach has failed on a path that was healthy minutes later, while a sibling cluster on the same gateway and the same blueprint passed simply by landing on the other side of route programming ([#57](https://github.com/jgruberf5/roksbnkctl/issues/57)).
+
+**Fix**: read the attempt count in the detail first — it is what tells the two apart:
+
+- `(still failing after 19 attempts over 180s)` — it kept trying for the whole budget. That is a real break; go look at the security groups, the TGW attachment, and the VPC prefixes.
+- No attempt clause, or a low count — it gave up early. Raise the budget:
+
+  ```yaml
+  bnk:
+    preflight:
+      reachability_retry_seconds: 600
+  ```
+
+  or `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS=600` on a CI runner. See [Chapter 28 §`bnk.preflight`](./28-configuration-reference.md#bnkpreflight--the-reachability-gates-timers).
+
+Check `dns` before `tcp`: `dns=FAILED` is a resolver or hostname problem and no retry budget will fix it.
+
+> **Re-running gives you a fresh answer.** Since v1.42.0 the gate rolls its DaemonSet on every run, so the verdict always belongs to the run you just started. Before that, a re-run after fixing the routing re-read the original pod's log and showed the same failure with nothing to indicate it was a recording.
 
 ## Networking
 

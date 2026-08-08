@@ -1,8 +1,7 @@
 # Registering the cluster with BNK Forge
 
 [BNK Forge](https://github.com/jgruberf5) is a separate platform — a FastAPI/React
-app with its own `bnk-forge` CLI — for operating BIG-IP Next for Kubernetes across
-a fleet of clusters. When you run BNK Forge co-located with your ROKS deployments,
+app — for operating BIG-IP Next for Kubernetes across a fleet of clusters. When you run BNK Forge co-located with your ROKS deployments,
 `roksbnkctl` can hand each cluster it provisions straight to BNK Forge, so the
 cluster shows up in the Forge fleet the moment `cluster up` finishes.
 
@@ -18,13 +17,13 @@ add` elsewhere in the tool:
 ```bash
 roksbnkctl -w acme-eu bnkforge enable     # auto-register on every `cluster up`
 roksbnkctl -w acme-eu bnkforge register   # register the current cluster right now
-roksbnkctl -w acme-eu bnkforge status     # show config + readiness (CLI, session, cluster id)
+roksbnkctl -w acme-eu bnkforge status     # show config + readiness (url, session, cluster id)
 ```
 
 `enable` turns on the post-`cluster up` hook; `register` is the on-demand path
-(no re-`up` needed) for a cluster that already exists. Either way the actual work
-is done by the `bnk-forge` CLI, which **ships with BNK Forge, not roksbnkctl** —
-see [Prerequisites](#prerequisites).
+(no re-`up` needed) for a cluster that already exists. Both talk to BNK Forge v3's
+REST API directly — there is no external CLI to install; see
+[Prerequisites](#prerequisites).
 
 ## Why credential-backed
 
@@ -55,17 +54,23 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
   Cloud credential template. (This backend support is being added on a BNK Forge
   branch; an older Forge that only accepts a static kubeconfig won't work with
   this flow.)
-- **The `bnk-forge` CLI on your `PATH`.** roksbnkctl doesn't build or bundle it —
-  it's a separate script that ships with BNK Forge. roksbnkctl shells out to
-  whatever `bnk-forge` is on `PATH`; if none is found, registration is skipped
-  with a one-line note. `roksbnkctl bnkforge status` tells you whether it's found.
-- **A BNK Forge session** — run `bnk-forge login` once so a session is stored in
-  `~/.bnk-forge/config.json`. Without a stored session, roksbnkctl lets the CLI
-  prompt you interactively (a separate, in-memory session); on a non-interactive
-  run (no TTY) the registration is simply skipped.
+- **The Forge URL and credentials.** `BNK_FORGE_URL`, `BNK_FORGE_USER` and
+  `BNK_FORGE_PASSWORD` (or `bnkforge.url` / `--url` / `--username`). The password is
+  **never persisted** — the resulting session token is cached in the OS keychain, and
+  reused until it expires. `roksbnkctl bnkforge status` shows what is resolved.
+
+  On a terminal, `bnkforge register` prompts for anything missing. The automatic
+  post-`up` hook runs **non-interactively**: with no cached token and no env
+  credentials it declines with a one-line note rather than blocking a deploy on a
+  prompt.
 - **An IBM Cloud API key** resolvable for the workspace (the usual env / keychain /
-  config chain — see [Chapter 14](./14-credentials-resolver.md)). It's passed to
-  the CLI so Forge can create a credential template if you don't have one yet.
+  config chain — see [Chapter 14](./14-credentials-resolver.md)). It becomes the
+  credential template Forge derives kubeconfigs from.
+
+> **No external CLI.** Nothing is looked up on `PATH`, and there is no
+> `~/.bnk-forge/config.json`. Earlier roksbnkctl versions shelled out to a v1
+> `bnk-forge` binary; v3 has no such CLI, so `roksbnkctl` speaks to the REST API
+> itself.
 
 ## The `bnkforge` commands
 
@@ -73,14 +78,13 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
 |---|---|
 | `bnkforge enable [--url U] [--project P]` | Persist `register: true` (+ optional overrides) so every `cluster up` registers the cluster. |
 | `bnkforge disable` | Persist `register: false` — turn the auto-hook off. **Local only: it does not unregister anything.** |
-| `bnkforge status` | Show the effective config (register / url / project), whether the `bnk-forge` CLI is on `PATH`, and whether a cluster id is recorded. |
-| `bnkforge register [--url U] [--project P]` | Register the current workspace's cluster **now**, regardless of the opt-in. Surfaces errors (the auto-hook swallows them). |
+| `bnkforge status` | Show the effective config (register / url / project), whether a Forge session token is cached, and whether a cluster id is recorded. |
+| `bnkforge register [--url U] [--project P] [--force]` | Register the current workspace's cluster **now**, regardless of the opt-in. Surfaces errors (the auto-hook swallows them). `--force` takes over a cluster held by another Forge project — see [Registration is non-destructive](#registration-is-non-destructive). |
 | `bnkforge unregister [--url U] [--project P]` | Remove the cluster from its Forge project — the inverse of `register`. Every "not there" case exits 0, so it is safe on a teardown path. |
 
-`enable`, `disable`, and `register` all accept `--url` (override the Forge URL
-the CLI would read from its stored session) and `--project` (target Forge project
-id). On `enable` those are **persisted**; on `register` they're **one-off**
-overrides that aren't written to `config.yaml`.
+`enable`, `disable`, and `register` all accept `--url` (override the Forge URL) and
+`--project` (target Forge project). On `enable` those are **persisted**; on
+`register` they're **one-off** overrides that aren't written to `config.yaml`.
 
 ### What `enable` writes
 
@@ -97,8 +101,8 @@ bnkforge:
 | Field | Type | Default | Set by |
 |---|---|---|---|
 | `register` | bool | `false` | `bnkforge enable` / `disable`. `false` / omitted ⇒ no-op. |
-| `url` | string | (CLI's stored-session URL) | `bnkforge enable --url`. Overrides the URL the CLI reads from `~/.bnk-forge/config.json`. |
-| `project` | string | (CLI auto-selects) | `bnkforge enable --project`. Empty ⇒ the CLI uses the active/sole project, or prompts. |
+| `url` | string | (`BNK_FORGE_URL`) | `bnkforge enable --url`. Falls back to the `BNK_FORGE_URL` env var. |
+| `project` | string | (the workspace name) | `bnkforge enable --project`. Empty ⇒ a Forge project named after the workspace, created if absent. |
 
 The block is additive — an absent `bnkforge:` block (any existing `config.yaml`)
 loads unchanged.
@@ -106,7 +110,7 @@ loads unchanged.
 ## What happens on `cluster up`
 
 > **Forge kubeconfig for module-based registration.** Independently of the
-> credential-backed CLI flow below, every `cluster up` also writes a portable,
+> credential-backed flow below, every `cluster up` also writes a portable,
 > self-contained **cert-based** kubeconfig to `$ROKSBNKCTL_HOME/forge/kubeconfig.yaml`
 > (one cluster entry with the public server + CA-if-any, and the cluster's admin
 > client certificate/key). ROKS is OpenShift: its API server authenticates via
@@ -123,33 +127,71 @@ no-op). The hook is exactly what `bnkforge register` runs, with errors swallowed
 It:
 
 1. **Checks the opt-in.** No `bnkforge.register: true` ⇒ it does nothing.
-2. **Finds the `bnk-forge` CLI** on `PATH`. Not found ⇒ a one-line note, and the
-   deploy proceeds normally.
-3. **Reads the cluster identity** from `cluster-outputs.json` (cluster id, region,
+2. **Reads the cluster identity** from `cluster-outputs.json` (cluster id, region,
    name). No recorded cluster id yet ⇒ skipped with a note.
-4. **Resolves the IBM Cloud API key non-interactively** (env → keychain → config)
-   and passes it through as `IBMCLOUD_API_KEY` so the CLI can create a credential
-   template if needed. If it can't be resolved without a prompt, it's left to the
-   CLI (which can use an existing template or ask).
-5. **Invokes `bnk-forge clusters register`** with the cluster facts, passing your
-   terminal through so any login / selection prompts work. The CLI then:
-   - **Resolves auth** — reuses the stored `~/.bnk-forge/config.json` session if
-     it's still valid; otherwise, if interactive, prompts for a separate login;
-     otherwise (no TTY, no valid session) it skips.
-   - **Selects or creates an IBM Cloud credential template** — uses an existing
-     one if there's exactly one (or you pick), else creates one from the API key.
-   - **Registers the cluster** by id + region + credential template (no static
-     kubeconfig).
+3. **Resolves the IBM Cloud API key non-interactively** (env → keychain → config).
+   This is what gets stored as the credential template, so Forge can re-derive the
+   kubeconfig on demand instead of holding a perishable one.
+4. **Authenticates to Forge over its REST API.** A cached session token from the OS
+   keychain is reused when still valid; otherwise it logs in with
+   `BNK_FORGE_USER` / `BNK_FORGE_PASSWORD` and caches the new token. The password
+   itself is never persisted. The auto-hook runs **non-interactively**, so with no
+   valid token and no env credentials it declines rather than blocking a deploy on
+   a prompt.
+5. **Ensures the credential template and the project**, then **registers the
+   cluster** by id + region + template.
 
 Sample output on a successful run:
 
 ```
-→ Registering cluster "acme-eu-roks" with BNK Forge…
-  Using stored BNK-Forge session (https://forge.example.com)
-  Using IBM credential template 'roksbnkctl-eu-de' (id=3)
-✓ Registered cluster acme-eu-roks (id=17) with BNK-Forge
-  BNK-Forge will derive the kubeconfig on demand from the credential template.
+→ Registering cluster "acme-eu-roks" with BNK Forge (https://forge.example.com)…
+✓ Registered cluster "acme-eu-roks" with BNK Forge (project "acme-eu", forge cluster id 17).
 ```
+
+### Registration is non-destructive
+
+Re-registering used to DELETE any same-named cluster and re-POST it. Within one
+project that was called idempotent, and very nearly is — except the **cluster id
+changed**, so anything referencing it broke and any scan history attached to the old
+id was discarded. Across projects it was worse: the lookup was project-scoped, so a
+cluster held by *another* project was invisible, and the POST either moved it
+silently or failed with a bare exit 1 that named nothing.
+
+Since v1.42.0 ([#54](https://github.com/jgruberf5/roksbnkctl/issues/54)):
+
+| The cluster name is held by | What happens |
+|---|---|
+| **this** project | Updated in place — **the cluster id is preserved** |
+| **another** project | **Refused**, naming the owning project and both ids. `--force` takes it over |
+| nobody | Created |
+
+```console
+$ roksbnkctl -w acme-eu bnkforge register
+Error: cluster is registered to another BNK Forge project: "acme-eu-roks" is held by
+project "platform-team" (id 93, cluster id 35). Re-registering would move it, changing
+its cluster id and removing it from that project's view. Pass --force to take it over
+deliberately, or unregister it there first
+```
+
+`--force` is a real **move** — the cluster is removed from the owning project and
+re-created in yours, so its id changes. That is inherent to moving it, and is what
+`--force` opts into.
+
+> **The automatic post-`up` hook never forces.** An unattended step silently taking
+> another project's cluster is precisely the harm the refusal exists to prevent. Only
+> an explicit `roksbnkctl bnkforge register --force` can do it.
+
+Two behaviours worth knowing when Forge is older or your account is narrowly scoped:
+
+- **An older Forge build with no `PUT`** for the cluster resource falls back to the
+  historical delete-and-recreate, so registration still works; the id changes, which
+  is the cost of the older server. The fallback fires only on `404`/`405` — a
+  transient `500` is reported as an error rather than escalated into a destructive
+  retry.
+- **A project you cannot read** produces a warning, not a failure. The cross-project
+  scan is a second opinion on top of a direct query of *your* project; refusing to
+  register because some other project was unreadable would block a least-privilege
+  Forge account from its own work.
 
 ## Registering on demand (no re-`up`)
 
@@ -203,85 +245,64 @@ leave behind the very thing being removed.
 > unregister` as part of your teardown (this is what the BNK Forge blueprints do in
 > their destroy step).
 
-### Driving the `bnk-forge` CLI directly
+### Doing it by hand against the REST API
 
-`bnkforge register` is a thin wrapper around the `bnk-forge clusters register`
-command, which you can also run yourself. Look up the cluster's id and region
-from the recorded identity:
+There is no CLI to drive, but the flow is four ordinary REST calls, so it is
+reproducible with `curl` when you need to see exactly what Forge receives. Look up
+the cluster's identity first:
 
 ```bash
 roksbnkctl -w acme-eu cluster show     # cluster_id, region, cluster_name
 ```
 
-Then register it (this is exactly what the wrapper runs, minus the auto-resolved key):
+| Step | Call |
+|---|---|
+| 1. Log in | `POST /api/auth/login` → `{"token": …}` |
+| 2. Credential template | `GET`/`POST /api/credential-templates` (IBM provider, your API key) |
+| 3. Project | `GET`/`POST /api/projects`, then `PUT /api/projects/{id}` to set the ROKS/IBM platform |
+| 4. Register | `POST /api/projects/{id}/k8s/clusters`, or `PUT /api/k8s/clusters/{id}` to update in place |
 
-```bash
-bnk-forge clusters register \
-  --name acme-eu-roks \
-  --cluster-id cre6h4l20jjsg4kvt3a0 \
-  --region eu-de \
-  --provider IBM \
-  --ibmcloud-api-key "$IBMCLOUD_API_KEY"
-```
-
-Preview the exact request without sending it:
-
-```bash
-bnk-forge clusters register \
-  --name acme-eu-roks --cluster-id cre6h4l20jjsg4kvt3a0 --region eu-de \
-  --dry-run
-```
-
-#### `bnk-forge clusters register` flags
-
-| Flag | Required | Notes |
-|---|---|---|
-| `--name` | yes | The cluster name as it appears in BNK Forge. |
-| `--cluster-id` | yes | The provider cluster id (the ROKS cluster id). |
-| `--region` | yes | The cloud region (e.g. `eu-de`). |
-| `--provider` | no | Cloud provider. roksbnkctl passes `IBM`. |
-| `--project` | no | Target Forge project id. Else active / sole / prompt. |
-| `--ibmcloud-api-key` | no | IBM Cloud API key for the credential template (or set `IBMCLOUD_API_KEY`). |
-| `--resource-group` | no | IBM Cloud resource group for a newly-created template. Default `default`. |
-| `--credential-template-id` | no | Use this existing template id; skip select/create. |
-| `--credential-template-name` | no | Name for a newly-created template. Default `roksbnkctl-<region>`. |
-| `--new-credential` | no | Force creating a new credential template. |
-| `--url` | no | BNK Forge URL, overriding the stored session. |
-| `--save-session` | no | Persist a fallback login to `~/.bnk-forge/config.json`. |
-| `-y`, `--yes` | no | Non-interactive: auto-select when unambiguous, never prompt. |
-| `--dry-run` | no | Print the registration request without sending it. |
-
-roksbnkctl's wrapper supplies `--name`, `--cluster-id`, `--region`, `--provider
-IBM`, and — when set — `--project` and `--url`, plus the resolved
-`IBMCLOUD_API_KEY` in the environment.
+Step 3's `PUT` matters: without it Forge shows the project's platform as *Unknown*.
+Step 4 is the one that changed in v1.42.0 — `roksbnkctl` prefers the in-place `PUT`
+so the cluster id survives, and only falls back to `DELETE` + `POST` against a Forge
+build that has no `PUT` route.
 
 ## Behaviour notes
 
 - **Best-effort — it never blocks or fails the deploy.** Whatever happens with
   Forge, `cluster up` succeeds if the cluster came up. Worst case you get a
   one-line note and register later with `roksbnkctl bnkforge register`.
-- **Idempotent.** Re-registering a cluster that's already in Forge is safe — the
-  CLI reports `already registered — leaving it as is` (the backend returns a
-  conflict, which the CLI treats as a no-op). Running `cluster up` again on an
-  unchanged cluster re-runs the hook harmlessly.
-- **Registering later.** If it was skipped (CLI missing, no session, no TTY), fix
+- **Re-registering preserves the cluster id.** Running `cluster up` again on an
+  unchanged cluster re-runs the hook harmlessly: the cluster is updated in place,
+  so references to its Forge id and any scan history attached to it survive. Before
+  v1.42.0 the id changed on every re-register
+  ([#54](https://github.com/jgruberf5/roksbnkctl/issues/54)).
+- **The auto-hook never forces.** A cluster held by another Forge project is left
+  alone and the note says so; only an explicit `bnkforge register --force` moves it.
+- **Registering later.** If it was skipped (no session, no credentials, no TTY), fix
   the prerequisite and run `roksbnkctl bnkforge register` — no re-`up` needed.
 
 ## Troubleshooting
 
-- **`the bnk-forge CLI is not on PATH`** — install BNK Forge's `bnk-forge` CLI
-  (it doesn't come with roksbnkctl) and make sure it's on the `PATH` roksbnkctl
-  sees. `roksbnkctl bnkforge status` confirms whether it's found.
-- **`No valid BNK-Forge session and no TTY to prompt`** — run `bnk-forge login`
-  once to store a session, then re-run. On a CI / non-interactive runner a stored
-  session is required (there's no prompt to fall back to).
-- **`Multiple IBM credential templates — pass --credential-template-id <id>`** —
-  Forge has more than one IBM credential template and can't pick non-interactively.
-  Run [`bnk-forge clusters register`](#driving-the-bnk-forge-cli-directly) with
-  `--credential-template-id <id>` (or run it interactively to choose).
+- **`no BNK Forge URL (set bnkforge.url, BNK_FORGE_URL, or --url)`** — nothing told
+  `roksbnkctl` where Forge lives. `roksbnkctl bnkforge status` shows what resolved.
+- **`no BNK Forge username` / `no BNK Forge password`** — the cached session token
+  is absent or expired and there is nothing to log in with. Set `BNK_FORGE_USER` and
+  `BNK_FORGE_PASSWORD`, or run `roksbnkctl bnkforge register` at a terminal to be
+  prompted. On a CI runner the env vars are the only path — there is no prompt to
+  fall back to.
+- **`cluster is registered to another BNK Forge project`** — the name is held by a
+  different project; the message names it and both ids. Either unregister it there,
+  or pass `--force` to move it deliberately (its cluster id changes, because a move
+  re-creates it). This refusal is the point: silently taking another project's
+  cluster is the harm.
 - **`HTTP 403` / lacks permission to manage credential templates** — your BNK
-  Forge session's role can't create/list credential templates. Log in as an
-  operator/admin, or have one pre-create the template and pass its id.
+  Forge session's role can't create or list credential templates. Log in as an
+  operator/admin, or have one pre-create the template.
+
+  A `403` on a *project's cluster list* is different and is **not** fatal: the
+  cross-project ownership scan warns and continues, so a least-privilege account can
+  still register into its own project.
 - **`no cluster id recorded in cluster-outputs.json yet`** — the cluster identity
   wasn't written. Run `roksbnkctl cluster register <name>` (or re-run `cluster
   up`) so `cluster-outputs.json` is populated, then register.
