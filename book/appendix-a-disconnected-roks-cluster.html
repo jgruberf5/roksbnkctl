@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
+            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -302,7 +302,7 @@ services VPC in Part 0.</li>
 <tr><th>Component</th><th>Tested</th><th>Floor, and why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.41.0</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan.</td></tr>
+<tr><td><code>roksbnkctl</code> / <code>roksbnkctl-tools-runner</code></td><td><strong>v1.42.0</strong></td><td><strong>≥ v1.36.0</strong> for <code>registry adopt</code> (B and D cannot work without it); <strong>≥ v1.37.0</strong> for <code>bnkforge unregister</code>; <strong>≥ v1.39.0</strong> for <code>cluster.vpc_cidr</code>; <strong>≥ v1.40.1</strong> fixes a variable validation that raised <code>Invalid index</code> on <em>every</em> terraform 1.10 plan; <strong>≥ v1.42.0</strong> retries the reachability gate, which matters most for topology <strong>B</strong> — it builds the VPC and joins the gateway in the same run as the install.</td></tr>
 <tr><td>terraform</td><td><strong>1.10.5</strong> (shipped inside the runner)</td><td><strong>≥ 1.10</strong>, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here.</td></tr>
 <tr><td>OpenShift (ROKS)</td><td><strong>4.20</strong> (recommended default)</td><td><code>cluster.openshift_version: "4.20"</code> pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on <strong>4.18.51</strong> — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check <code>ibmcloud ks versions</code> for what your account offers; IBM’s own default moves ahead of this.</td></tr>
 <tr><td>Argo Workflows (Part 2)</td><td><strong>v4.0.8</strong></td><td>≥ v3.4 for the emissary executor and <code>sidecars:</code>.</td></tr>
@@ -677,6 +677,47 @@ and being reachable are different things, and only the second fails silently.</l
 check waits for the DaemonSet’s full complement and fails if it cannot hear from them all,
 because a silent node is indistinguishable from a broken one.</li>
 </ul>
+<h4 id="it-retries-and-the-budget-is-yours-to-set"><a class="header" href="#it-retries-and-the-budget-is-yours-to-set">It retries, and the budget is yours to set</a></h4>
+<p>A Transit Gateway attachment is <strong>asynchronous</strong>. IBM programs the routes some time after the
+connection reports <code>attached</code>, so a cluster built and installed in one run can probe a path that
+is correct but not yet live. This has been seen for real: a probe 73 seconds after attach failed
+on both targets, <code>bnk up</code> refused, and the same path was healthy minutes later — while a sibling
+cluster on the same gateway and the same blueprint passed, purely by landing on the other side of
+route programming.</p>
+<p>“Unreachable” and “not reachable <strong>yet</strong>” are different claims, and one TCP failure cannot tell
+them apart. So each target is retried until its budget is spent; a success ends the retry
+immediately, so a healthy environment never pays for it. A failure then says how hard it tried:</p>
+<pre><code class="language-text">✗ kube-…-0000013a -&gt; registry (10.243.0.4:443): dns=skipped-ip tcp=FAILED
+    (tcp connect failed -- refused, filtered, or no route
+     (still failing after 19 attempts over 180s))
+</code></pre>
+<p>Both timers are workspace settings, because the right values are a property of the environment
+rather than of the tool:</p>
+<pre><code class="language-yaml">bnk:
+  preflight:
+    reachability_retry_seconds: 180     # per target, before the verdict is believed
+    reachability_timeout_seconds: 480   # for every node to report
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Env var</th><th>Default</th><th>When to change it</th></tr>
+</thead>
+<tbody>
+<tr><td><code>reachability_retry_seconds</code></td><td><code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code></td><td><code>180</code></td><td><strong>Raise</strong> when the gateway is attached in the same run as the install, or the fabric programs routes slowly. <strong>Set <code>0</code></strong> for a static environment where a failure is never a race — one shot, fail immediately.</td></tr>
+<tr><td><code>reachability_timeout_seconds</code></td><td><code>ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS</code></td><td><code>480</code></td><td>Raise alongside a large retry budget. It is clamped to stay above the retry budget regardless, since a wait shorter than the retry would give up while the probe was still working.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The env vars matter for the CI path, where the workspace is built by
+<code>init --non-interactive --override-from-env</code> and there is no <code>config.yaml</code> to edit.</p>
+<h4 id="each-run-gets-a-fresh-verdict"><a class="header" href="#each-run-gets-a-fresh-verdict">Each run gets a fresh verdict</a></h4>
+<p>The probe runs once per pod and then holds the pod Ready. That means the result <code>bnk up</code> reads is
+only as fresh as the pod that wrote it — so the gate rolls the DaemonSet on <strong>every</strong> run, even
+when the CA and the target list are unchanged. Without that, a re-run after fixing the routing
+re-read the original pod’s log and showed the same failure, with nothing to indicate it was a
+recording. The cost is one pod restart per node against a node-cached image, and the CA install
+is idempotent.</p>
 <blockquote>
 <p><strong>Keep <code>SSL_CERT_FILE</code> pointed at Harbor’s cert</strong> when running on the VSI — the chart pulls
 happen host-side: <code>export SSL_CERT_FILE=/opt/harbor/certs/harbor.crt</code>.</p>
@@ -882,7 +923,7 @@ blanket secret-write grant is never applied by accident.</p>
 <pre><code class="language-yaml">    - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
         command: [sh, -ec]
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -895,7 +936,7 @@ blanket secret-write grant is never applied by accident.</p>
 </code></pre>
 <blockquote>
 <p>For B and D the image is pulled from the mirror instead
-(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.41.0</code>), so the pipeline itself needs
+(<code>&lt;HARBOR_PRIVATE_IP&gt;/bnk-mirror/roksbnkctl-tools-runner:v1.42.0</code>), so the pipeline itself needs
 no public registry at run time. Pin by <code>@sha256:</code> digest in production.</p>
 </blockquote>
 <h3 id="2a--new-vpc--connected-cluster-argo"><a class="header" href="#2a--new-vpc--connected-cluster-argo">2A — New VPC + connected cluster (Argo)</a></h3>
@@ -937,12 +978,12 @@ published by the FLP workflow rather than passing through a human.</p>
 can reach the cluster. Workspace <code>-w bnkconn</code>, with the same <code>ROKSBNKCTL_GENERIC_*</code> blanking.</p>
 <pre><code class="language-yaml">    - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
         args: ["roksbnkctl -w bnkconn bnk up --auto"]
         # …envFrom / env / volumeMounts as the rbk template…
       sidecars:
         - name: cwc-guard
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
           command: [sh, -ec]
           args:
             - |

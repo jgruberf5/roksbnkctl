@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
+            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -197,6 +197,20 @@
 <p><strong>Root cause</strong>: <code>roksbnkctl version</code> (like any command) only resolves if the binary sits in a directory on the Windows <code>%PATH%</code>. If the install landed the binary somewhere off <code>%PATH%</code> (for example <code>~/.local/bin</code>, a Unix convention that is never on the Windows <code>%PATH%</code>), the copy succeeds but the command doesn’t resolve.</p>
 <p><strong>Fix</strong>: <code>roksbnkctl install</code> (and the <code>install.ps1</code> one-liner) install into a directory already on <code>%PATH%</code> — preferring <code>%LOCALAPPDATA%\Microsoft\WindowsApps</code> (on the per-user PATH by default, no admin) — so the binary resolves immediately in the same session. Remove any stray copy left in a non-PATH directory with <code>Remove-Item "$env:USERPROFILE\.local\bin\roksbnkctl.exe"</code>. If a run ever lands in a non-PATH directory, it prints the PowerShell one-liner (<code>[Environment]::SetEnvironmentVariable('Path', ...,'User')</code>) to add it.</p>
 <h2 id="roksbnkctl-up-lifecycle"><a class="header" href="#roksbnkctl-up-lifecycle"><code>roksbnkctl up</code> lifecycle</a></h2>
+<h3 id="symptom-bnk-up-refuses-with-cluster--already-has-bnk-installed--but-workspace--has-no-terraform-state-for-it"><a class="header" href="#symptom-bnk-up-refuses-with-cluster--already-has-bnk-installed--but-workspace--has-no-terraform-state-for-it">Symptom: <code>bnk up</code> refuses with <code>cluster "…" already has BNK installed … but workspace "…" has no terraform state for it</code></a></h3>
+<p><strong>Root cause</strong>: exactly what it says — the cluster is serving a BNK install that this workspace’s state knows nothing about. This is the normal shape when a cluster moves between deployments: BNK Forge gives each project its own deployment-scoped volume, so the second project to adopt a cluster legitimately has no state for the first project’s install.</p>
+<p>Before v1.42.0 there was no refusal. An empty state planned a <em>full</em> install — <code>resources_to_add=64</code> over a cluster that already had all 64 — and ground on for about thirteen minutes before exiting 1 without naming the cause or the cluster, three times over with retries (<a href="https://github.com/jgruberf5/roksbnkctl/issues/53">#53</a>). The refusal replaces that with a fast, named failure.</p>
+<p><strong>Fix</strong>: pick one —</p>
+<ul>
+<li>run from the workspace that installed it, whose state can converge or remove the install;</li>
+<li>remove BNK from the cluster first, then re-run here;</li>
+<li>if the install is genuinely abandoned, clear it from the cluster deliberately rather than letting an apply collide with it.</li>
+</ul>
+<p><code>roksbnkctl -w &lt;ws&gt; bnk status</code> shows what is actually on the cluster.</p>
+<p>The check is narrow by construction: it fires only when this workspace’s BNK state holds <strong>no</strong> managed resources <em>and</em> the cluster is actually serving an install. A workspace that owns an install converges exactly as before and never reaches it. If the cluster cannot be reached, or what the state holds cannot be determined — including an <code>s3</code> remote backend whose state cannot be listed — the guard stays silent rather than inventing a refusal.</p>
+<blockquote>
+<p>There is deliberately <strong>no</strong> <code>bnk adopt</code> yet. Deriving and validating a complete install record from a live cluster is a larger change than a guard, and wants its own testing against real installs.</p>
+</blockquote>
 <h3 id="symptom-terraform-apply-errors-timeout-while-waiting-for-state-to-become-normal"><a class="header" href="#symptom-terraform-apply-errors-timeout-while-waiting-for-state-to-become-normal">Symptom: <code>terraform apply</code> errors <code>timeout while waiting for state to become 'normal'</code></a></h3>
 <p><strong>Root cause</strong>: IBM Cloud’s control plane is occasionally 5-15 minutes slow propagating cluster state — a known transient. The cluster <em>was</em> created; the API just hasn’t caught up to reporting it as Ready.</p>
 <p><strong>Fix</strong>: <code>roksbnkctl up</code> retries the apply automatically up to 3 attempts with a 60-second sleep between (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/cli/lifecycle.go"><code>applyWithRetry</code> in <code>internal/cli/lifecycle.go</code></a>). If all three retries fail, just re-run <code>roksbnkctl up</code> manually — terraform’s state is durable, and the second attempt skips every resource that’s already provisioned.</p>
@@ -359,6 +373,31 @@ ibmcloud is vpc-address-prefixes &lt;vpc-id&gt;     # per VPC from that list
 <h3 id="symptom-roksbnkctl-bnk-up-hangs-on-licensing--the-license-cr-never-reaches-active"><a class="header" href="#symptom-roksbnkctl-bnk-up-hangs-on-licensing--the-license-cr-never-reaches-active">Symptom: <code>roksbnkctl bnk up</code> hangs on licensing / the License CR never reaches <code>Active</code></a></h3>
 <p><strong>Root cause</strong>: BNK licensing completes only when the License CR reports <code>status.state: Active</code> (or the <code>LicenseActive</code> condition), which roksbnkctl polls for deterministically (~15-minute bound). A hang usually means the FAR supply chain is wrong — a missing/expired JWT, or the JWT uploaded under the wrong object key — or, in <code>f5licenseproxy</code> mode, the F5 License Proxy isn’t reachable.</p>
 <p><strong>Fix</strong>: confirm the JWT is present under the <strong>exact</strong> object key <code>subscription.jwt</code> (<code>roksbnkctl cos object list &lt;bucket&gt; --instance bnk-supply-chain</code>) and not expired; for FLP mode check <code>roksbnkctl flp status</code> before <code>bnk up</code>. See <a href="./10c-flp-licensing.html">Licensing BNK with the FLP</a>.</p>
+<p>Since v1.41.0 the reachability gate catches the <em>network</em> half of this before the install starts, so a licensing hang that is really an unreachable proxy now surfaces as a named per-node failure instead — see the next entry.</p>
+<h3 id="symptom-bnk-up-fails-the-reachability-gate-on-a-cluster-whose-network-you-believe-is-correct"><a class="header" href="#symptom-bnk-up-fails-the-reachability-gate-on-a-cluster-whose-network-you-believe-is-correct">Symptom: <code>bnk up</code> fails the reachability gate on a cluster whose network you believe is correct</a></h3>
+<pre><code>✗ kube-…-0000013a -&gt; registry (10.243.0.4:443): dns=skipped-ip tcp=FAILED
+    (tcp connect failed -- refused, filtered, or no route)
+</code></pre>
+<p><strong>Root cause</strong>: most often the gate is right and something (a security group, an ACL, a missing Transit Gateway attachment, or <a href="./09a-transit-gateway-sharing.html">overlapping VPC address prefixes</a>) genuinely blocks the path from that node.</p>
+<p>But there is one case where the network is correct and the probe is early. <strong>A Transit Gateway attachment is asynchronous</strong>: IBM programs the routes some time <em>after</em> the connection reports <code>attached</code>. A workspace that creates the VPC, joins the gateway, and installs in a single run can probe a path that is correct but not yet live. A probe 73 seconds after attach has failed on a path that was healthy minutes later, while a sibling cluster on the same gateway and the same blueprint passed simply by landing on the other side of route programming (<a href="https://github.com/jgruberf5/roksbnkctl/issues/57">#57</a>).</p>
+<p><strong>Fix</strong>: read the attempt count in the detail first — it is what tells the two apart:</p>
+<ul>
+<li>
+<p><code>(still failing after 19 attempts over 180s)</code> — it kept trying for the whole budget. That is a real break; go look at the security groups, the TGW attachment, and the VPC prefixes.</p>
+</li>
+<li>
+<p>No attempt clause, or a low count — it gave up early. Raise the budget:</p>
+<pre><code class="language-yaml">bnk:
+  preflight:
+    reachability_retry_seconds: 600
+</code></pre>
+<p>or <code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS=600</code> on a CI runner. See <a href="./28-configuration-reference.html#bnkpreflight--the-reachability-gates-timers">Chapter 28 §<code>bnk.preflight</code></a>.</p>
+</li>
+</ul>
+<p>Check <code>dns</code> before <code>tcp</code>: <code>dns=FAILED</code> is a resolver or hostname problem and no retry budget will fix it.</p>
+<blockquote>
+<p><strong>Re-running gives you a fresh answer.</strong> Since v1.42.0 the gate rolls its DaemonSet on every run, so the verdict always belongs to the run you just started. Before that, a re-run after fixing the routing re-read the original pod’s log and showed the same failure with nothing to indicate it was a recording.</p>
+</blockquote>
 <h2 id="networking"><a class="header" href="#networking">Networking</a></h2>
 <h3 id="symptom-roksbnkctl-test-connectivity-reports-get-https-dial-tcp-io-timeout-for-an-internal-only-url"><a class="header" href="#symptom-roksbnkctl-test-connectivity-reports-get-https-dial-tcp-io-timeout-for-an-internal-only-url">Symptom: <code>roksbnkctl test connectivity</code> reports <code>Get "https://...": dial tcp: i/o timeout</code> for an internal-only URL</a></h3>
 <p><strong>Root cause</strong>: connectivity probes run from <code>--backend local</code> by default. From your laptop, internal-only URLs (cluster-private VIPs, internal GSLB names) aren’t reachable.</p>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
+            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -390,6 +390,28 @@ above is the operator’s responsibility. Note the cluster <strong>master</stron
 service endpoint regardless — this toggle governs worker/subnet egress, not the API
 endpoint.</p>
 </blockquote>
+<h3 id="bnk-up-checks-the-private-paths-before-it-installs"><a class="header" href="#bnk-up-checks-the-private-paths-before-it-installs"><code>bnk up</code> checks the private paths before it installs</a></h3>
+<p>Because those private paths are yours to wire, <code>bnk up</code> verifies them rather than
+assuming them. Before it plans anything it probes the mirror — and the F5 License
+Proxy, when one is configured — <strong>from every node, in every availability zone</strong>, and
+<strong>fails if the mirror is unreachable from any of them</strong>.</p>
+<p>The check has to run on a node. The host running <code>roksbnkctl</code> typically sits on the
+services VPC with egress, while the workers are air-gapped behind the gateway; a probe
+from there returns a confident green for a mirror the cluster cannot route to. This was
+not hypothetical during validation — <code>registry adopt</code> timed out reaching Harbor from the
+operator host while all three nodes reached it fine.</p>
+<p>Without the gate, an unroutable mirror surfaced as <code>ImagePullBackOff</code> and then a helm
+<code>context deadline exceeded</code> about ten minutes later, naming neither the registry nor the
+node. A security group or subnet fixed in two zones out of three is a common shape, and
+one pod per node is what makes it visible.</p>
+<p>A registry with no CA to install — already in the node trust bundle, or publicly signed —
+is still probed. Being trusted and being reachable are different things, and only the
+second fails silently.</p>
+<p>Both of the gate’s timers are tunable under
+<a href="./28-configuration-reference.html#bnkpreflight--the-reachability-gates-timers"><code>bnk.preflight</code></a>;
+raise the retry budget when the Transit Gateway is attached in the same run as the
+install. The full output, rationale, and per-topology walkthroughs are in
+<a href="./appendix-a-disconnected-roks-cluster.html">Appendix A</a>.</p>
 
                     </main>
 

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
+            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -422,6 +422,7 @@ stays on Forge’s Kubernetes page. To remove it, use
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes)</td></tr>
 <tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
@@ -430,6 +431,11 @@ stays on Forge’s Kubernetes page. To remove it, use
 </tbody>
 </table>
 </div>
+<p>Registering is <strong>non-destructive</strong>: a cluster already held by <em>this</em> project is
+updated in place, so its Forge cluster id and any scan history survive. A cluster
+held by <em>another</em> project is refused, naming the owner — <code>--force</code> moves it
+deliberately. The automatic post-<code>cluster up</code> hook never forces. See
+<a href="./24a-bnk-forge-registration.html#registration-is-non-destructive">Chapter 24a</a>.</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-unregister"><a class="header" href="#roksbnkctl-bnkforge-unregister"><code>roksbnkctl bnkforge unregister</code></a></h3>
 <p>Remove this workspace’s cluster from its BNK Forge project</p>

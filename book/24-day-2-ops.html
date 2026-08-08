@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a135ecd1.js";
+            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -264,6 +264,28 @@ roksbnkctl logs ↔  roksbnkctl k logs
 </ul>
 <h2 id="kubectloc-passthroughs-stay-as-escape-hatches"><a class="header" href="#kubectloc-passthroughs-stay-as-escape-hatches">kubectl/oc passthroughs stay as escape hatches</a></h2>
 <p>The <code>roksbnkctl kubectl &lt;args...&gt;</code> and <code>roksbnkctl oc &lt;args...&gt;</code> passthroughs are <strong>preserved</strong> alongside the internalised verbs. They shell out to the host binary (with the workspace’s <code>KUBECONFIG</code> and credentials loaded) for anything outside the internalised subset.</p>
+<blockquote>
+<p><strong><code>-w</code> selects the cluster here too.</strong> The passthroughs resolve the same workspace-scoped
+kubeconfig <strong>and context</strong> the <code>k</code> verbs do, so <code>-w acme-eu kubectl get nodes</code> lists
+<code>acme-eu</code>’s nodes. This was not always true: before v1.42.0 they took the ambient
+<code>KUBECONFIG</code> and then fell back to <code>~/.roksbnkctl/forge/kubeconfig.yaml</code> — a single file
+every workspace shares — so two workspaces on different clusters silently retargeted each
+other (<a href="https://github.com/jgruberf5/roksbnkctl/issues/55">#55</a>). The output looked
+entirely believable, which is what made it dangerous for <code>delete</code>.</p>
+<p>Two deliberate limits. An explicit <code>--context</code> or <code>--kubeconfig</code> in <strong>your</strong> arguments
+always wins — being told which cluster you mean is not something the tool overrides. And a
+workspace with no known cluster keeps the historical ambient behaviour rather than failing.
+If the workspace <em>does</em> know its cluster but no kubeconfig on disk can authenticate to it,
+you get the same error the <code>k</code> verbs give, telling you to run <code>kubeconfig --download</code> —
+rather than a silent fall-back to whatever the shared file points at.</p>
+<p><code>roksbnkctl shell</code> and <code>roksbnkctl exec</code> pin the same kubeconfig. Neither can pin a
+<em>context</em>, though — they hand you an arbitrary command line, and <code>kubectl</code> reads no
+environment variable for the context — so when the pinned file’s <code>current-context</code> names a
+different cluster they say so on stderr instead of letting the next command address it.</p>
+<p>Across the <code>--on</code> SSH boundary nothing is pinned: a kubeconfig path and a context name are
+local facts that mean nothing on the remote host, which is exactly why that boundary
+scrubs them (<a href="./16-on-flag-ssh-jumphosts.html">Chapter 16</a>).</p>
+</blockquote>
 <p>When to reach for the passthrough:</p>
 <div class="table-wrapper">
 <table>
