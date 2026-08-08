@@ -374,11 +374,42 @@ type BNKCfg struct {
 	// and service endpoint are NOT config — they are produced by `flp up` and read
 	// from flp-outputs.json when `bnk up` runs in FLP mode.
 	FLP *BNKFLPCfg `yaml:"flp,omitempty"`
+
+	// Preflight tunes the pre-install checks `bnk up` runs before it plans anything.
+	// Nil takes the defaults; every field is independently optional.
+	Preflight *BNKPreflightCfg `yaml:"preflight,omitempty"`
 }
 
 // BNKFLPCfg configures the F5 License Proxy (FLP) phase deployment. All optional;
 // nil block means FLP is off. It never carries secrets — the FLP generates its own
 // certs, and its subscription JWT is the same one resolved from COS.
+// BNKPreflightCfg tunes the per-node reachability gate.
+//
+// These are exposed because the right values are a property of the ENVIRONMENT, not
+// of roksbnkctl. A Transit Gateway attachment is asynchronous — IBM programs the
+// routes some time after the connection reports `attached` — and how long that takes
+// varies by account, region and gateway. A probe run ~73s after attach saw both
+// targets unreachable and refused an install whose path was healthy minutes later
+// (issue #57), while a sibling cluster on the same gateway passed simply by landing
+// on the other side of route programming.
+//
+// A site that consistently sees slower propagation should raise the budget rather
+// than rediscover the race; a site with a static, long-established gateway can lower
+// it to fail faster.
+type BNKPreflightCfg struct {
+	// ReachabilityRetrySeconds is how long a target may keep failing before the
+	// verdict is believed. 0 disables retrying (one shot — the pre-v1.42 behaviour).
+	// Blank/absent takes the default of 180.
+	ReachabilityRetrySeconds *int `yaml:"reachability_retry_seconds,omitempty"`
+
+	// ReachabilityTimeoutSeconds is how long to wait for the probe DaemonSet to
+	// report from every node. It MUST exceed ReachabilityRetrySeconds, or the wait
+	// gives up while the probe is still legitimately retrying — the config loader
+	// raises it rather than let that misconfiguration through silently. Blank/absent
+	// takes the default of 480.
+	ReachabilityTimeoutSeconds *int `yaml:"reachability_timeout_seconds,omitempty"`
+}
+
 type BNKFLPCfg struct {
 	// Mode selects HOW the FLP phase deploys the proxy:
 	//   "" | "helm" → the f5-license-proxy Helm chart into the ROKS cluster (default).
