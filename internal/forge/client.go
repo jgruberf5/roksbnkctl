@@ -11,9 +11,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -290,21 +292,195 @@ type RegisterRequest struct {
 	Kubeconfig    string `json:"kubeconfig"`
 }
 
-// RegisterCluster is idempotent: if a cluster with the same name already exists
-// in the project (from a prior run — a re-record or a re-triggered CI pipeline),
-// it is removed first so the fresh registration (with a current kubeconfig)
-// doesn't conflict. Returns the Forge cluster id.
-func (c *Client) RegisterCluster(ctx context.Context, projectID int, req RegisterRequest) (int, error) {
-	if existing, err := c.projectClusterID(ctx, projectID, req.Name); err == nil && existing != 0 {
-		dp := fmt.Sprintf("/api/k8s/clusters/%d", existing)
-		d, code, derr := c.do(ctx, http.MethodDelete, dp, nil)
+// ClusterOwner identifies the Forge project currently holding a cluster.
+type ClusterOwner struct {
+	ProjectID   int
+	ProjectName string
+	ClusterID   int
+}
+
+// FindClusterOwner looks for a cluster of this name across EVERY project, not just
+// the one being registered into.
+//
+// The project-scoped lookup cannot see a cluster held elsewhere, so registration used
+// to POST straight over the top of another project's cluster — either moving it
+// silently or failing with a bare exit 1 that named nothing (issue #54).
+//
+// Returns a zero ClusterOwner when nothing holds the name.
+//
+// It is deliberately NOT fail-closed on access. This scan is a second opinion layered
+// on the direct same-project query, which has already run; a caller reaching it has
+// been told "not mine". Refusing to register because some OTHER project could not be
+// read turns an ordinary least-privilege Forge account into a blocked deployment. A
+// body that does not parse is different — that is a protocol mismatch, not a
+// permission, and reading it as "nobody owns it" is exactly what lets a silent
+// takeover through. So: unreadable → warn and carry on; unrecognisable → error.
+func (c *Client) FindClusterOwner(ctx context.Context, name string) (ClusterOwner, error) {
+	data, code, err := c.do(ctx, http.MethodGet, "/api/projects", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "! cannot list BNK Forge projects to check who holds cluster %q: %v\n"+
+			"  Continuing; cross-project ownership was not verified.\n", name, err)
+		return ClusterOwner{}, nil
+	}
+	if !ok(code) {
+		fmt.Fprintf(os.Stderr, "! cannot list BNK Forge projects to check who holds cluster %q: %v\n"+
+			"  Continuing; cross-project ownership was not verified.\n",
+			name, httpErr("GET", "/api/projects", code, data))
+		return ClusterOwner{}, nil
+	}
+	type proj struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	// Three shapes have to be told apart, and the third must NOT be mistaken for the
+	// second: {"projects":[…]}, a bare array, and a body that does not parse at all.
+	// `{"projects": null}` is a legitimate EMPTY answer — an unmarshal into a struct
+	// leaves the slice nil either way, so keying off nil-ness alone would call an
+	// empty Forge unparseable and fail every registration against it.
+	var probe map[string]json.RawMessage
+	var list []proj
+	switch {
+	case json.Unmarshal(data, &probe) == nil:
+		raw, has := probe["projects"]
+		if !has {
+			return ClusterOwner{}, fmt.Errorf("GET /api/projects returned an object with no \"projects\" key (%d bytes): %s",
+				len(data), truncateBody(data))
+		}
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return ClusterOwner{}, fmt.Errorf("GET /api/projects \"projects\" was not a list (%d bytes): %s",
+				len(data), truncateBody(data))
+		}
+	case json.Unmarshal(data, &list) == nil:
+		// bare array
+	default:
+		// An unparseable body must not read as "nobody owns it" — that is precisely
+		// the answer that lets a silent takeover through.
+		return ClusterOwner{}, fmt.Errorf("GET /api/projects returned an unrecognised body (%d bytes): %s",
+			len(data), truncateBody(data))
+	}
+	for _, pr := range list {
+		id, cerr := c.projectClusterID(ctx, pr.ID, name)
+		if cerr != nil {
+			// A project we cannot read is a project we cannot make a claim about. Say
+			// so and keep going, rather than fail the registration.
+			//
+			// Failing closed here looked like the safe choice and is not: this scan is
+			// a SECOND opinion layered on top of the direct same-project query that has
+			// already run, and the caller only reaches it when that query said "not
+			// mine". A least-privilege Forge account that can see its own project but
+			// not others would otherwise have every first-time registration blocked by
+			// a permissions nuance — a hard stop where the tool used to work.
+			fmt.Fprintf(os.Stderr,
+				"! cannot check project %q (%d) for an existing cluster %q: %v\n"+
+					"  Continuing; if that project holds it, this registration will move it.\n",
+				pr.Name, pr.ID, name, cerr)
+			continue
+		}
+		if id != 0 {
+			return ClusterOwner{ProjectID: pr.ID, ProjectName: pr.Name, ClusterID: id}, nil
+		}
+	}
+	return ClusterOwner{}, nil
+}
+
+// ErrClusterOwnedElsewhere is returned when the cluster is registered to a DIFFERENT
+// Forge project. Callers surface it as a refusal; --force overrides.
+var ErrClusterOwnedElsewhere = errors.New("cluster is registered to another BNK Forge project")
+
+// RegisterCluster records a cluster with a Forge project, NON-DESTRUCTIVELY.
+//
+// It used to DELETE any same-named cluster and re-POST it. That was described as
+// idempotent, and within one project it very nearly is — except the cluster id
+// CHANGES, so anything holding a reference breaks, and any scan or history attached
+// to the old id is discarded. Across projects it was worse: the project-scoped lookup
+// could not see a cluster held elsewhere, so the POST either moved it silently or
+// failed with a bare exit 1 (issue #54).
+//
+// Now:
+//   - held by THIS project  → update in place, preserving the id;
+//   - held by ANOTHER       → refuse with ErrClusterOwnedElsewhere unless force;
+//   - held by nobody        → create.
+//
+// The in-place update is best-effort: if the Forge build has no PUT for this
+// resource, it falls back to the historical delete-and-recreate rather than failing a
+// registration that used to work. The cross-project refusal has no such caveat — it
+// needs no new endpoint, only the lookup above.
+func (c *Client) RegisterCluster(ctx context.Context, projectID int, req RegisterRequest, force bool) (int, error) {
+	// Ask THIS project directly first. It is the authoritative, single-request answer
+	// for the common case, and it does not depend on /api/projects listing anything —
+	// a paginated or permission-filtered project list that omitted the owner would
+	// otherwise send us straight to POST, over the top of the very cluster this guard
+	// exists to protect.
+	owner := ClusterOwner{ProjectID: projectID}
+	if id, oerr := c.projectClusterID(ctx, projectID, req.Name); oerr == nil && id != 0 {
+		owner.ClusterID = id
+	} else {
+		// Not ours. Only now is the cross-project scan worth its cost.
+		found, ferr := c.FindClusterOwner(ctx, req.Name)
+		if ferr != nil {
+			return 0, ferr
+		}
+		owner = found
+	}
+	switch {
+	case owner.ClusterID != 0 && owner.ProjectID != projectID && !force:
+		return 0, fmt.Errorf("%w: %q is held by project %q (id %d, cluster id %d). "+
+			"Re-registering would move it, changing its cluster id and removing it from that project's view. "+
+			"Pass --force to take it over deliberately, or unregister it there first",
+			ErrClusterOwnedElsewhere, req.Name, owner.ProjectName, owner.ProjectID, owner.ClusterID)
+
+	case owner.ClusterID != 0 && owner.ProjectID == projectID:
+		// Ours: update in place so the id survives.
+		up := fmt.Sprintf("/api/k8s/clusters/%d", owner.ClusterID)
+		// The PUT body is deliberately ignored: the id we care about is the one we
+		// already hold, and the point of this branch is that it does not change.
+		_, code, uerr := c.do(ctx, http.MethodPut, up, req)
+		if uerr == nil && ok(code) {
+			return owner.ClusterID, nil
+		}
+		// Fall back to delete-and-recreate ONLY when the route genuinely is not there.
+		//
+		// Treating every PUT failure as "this build has no PUT" turns a transient 500
+		// or a timeout into a destructive retry: the cluster is deleted and re-created
+		// with a new id, losing precisely the continuity this branch exists to
+		// preserve, against a server that supports PUT perfectly well. 404/405 is the
+		// signal that the method or route is absent; anything else is a real failure
+		// and is reported as one.
+		if uerr != nil {
+			return 0, fmt.Errorf("updating cluster %q (id %d) in project %d: %w", req.Name, owner.ClusterID, projectID, uerr)
+		}
+		if code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+			return 0, httpErr("PUT", up, code, nil)
+		}
+		dp := fmt.Sprintf("/api/k8s/clusters/%d", owner.ClusterID)
+		d, code2, derr := c.do(ctx, http.MethodDelete, dp, nil)
 		if derr != nil {
 			return 0, derr
 		}
-		if !ok(code) && code != http.StatusNotFound {
-			return 0, httpErr("DELETE", dp, code, d)
+		if !ok(code2) && code2 != http.StatusNotFound {
+			return 0, httpErr("DELETE", dp, code2, d)
 		}
+
+	case owner.ClusterID != 0:
+		// A forced takeover from ANOTHER project. This must not take the in-place
+		// branch above: that PUT carries no project field, so it would update the
+		// cluster where it already lives — leaving it registered to the other project,
+		// absent from this one, and its kubeconfig quietly overwritten, while the
+		// command reported success. The takeover has to be a real move, so the id
+		// changes; that is inherent to moving it and is what --force opts into.
+		dp := fmt.Sprintf("/api/k8s/clusters/%d", owner.ClusterID)
+		d, code, derr := c.do(ctx, http.MethodDelete, dp, nil)
+		if derr != nil {
+			return 0, fmt.Errorf("taking cluster %q from project %q (%d): %w", req.Name, owner.ProjectName, owner.ProjectID, derr)
+		}
+		if !ok(code) && code != http.StatusNotFound {
+			return 0, fmt.Errorf("taking cluster %q from project %q (%d): %w",
+				req.Name, owner.ProjectName, owner.ProjectID, httpErr("DELETE", dp, code, d))
+		}
+		fmt.Fprintf(os.Stderr, "! --force: removed cluster %q from project %q (id %d) and re-registering it here; its cluster id changes\n",
+			req.Name, owner.ProjectName, owner.ProjectID)
 	}
+
 	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
 	d, code, err := c.do(ctx, http.MethodPost, p, req)
 	if err != nil {

@@ -114,17 +114,12 @@ func refreshKubeconfig(ctx context.Context, in *ClusterInputs, path string, data
 	}
 }
 
-// preferForgeKubeconfig runs the freshness gate and, if a usable forge
-// kubeconfig results, returns env with KUBECONFIG repointed at it so the
-// consumer (kubectl/oc/shell) uses the auto-refreshed token config. On ""
-// the env is returned unchanged (fall back to the admin/default config).
-func preferForgeKubeconfig(ctx context.Context, in *ClusterInputs, env []string) []string {
-	path := EnsureFreshKubeconfig(ctx, in, false)
-	if path == "" {
-		return env
-	}
-	return setEnvKV(env, "KUBECONFIG", path)
-}
+// The old preferForgeKubeconfig lived here: it ran the freshness gate and repointed
+// KUBECONFIG at the SHARED forge kubeconfig. That substitution is what made two
+// workspaces retarget each other (issue #55), so it now belongs to
+// pinLocalKubeconfig in kubetarget.go, which prefers the WORKSPACE's own kubeconfig
+// and falls back to the forge file only when there is no workspace-specific answer.
+// The freshness gate itself is unchanged and still runs on both paths.
 
 // setEnvKV returns env with key set to val: it replaces an existing
 // key=... entry in place, or appends one if absent.

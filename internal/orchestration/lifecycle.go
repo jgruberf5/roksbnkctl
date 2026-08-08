@@ -337,6 +337,14 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	varFiles := append(append([]string{}, in.VarFiles...), extraVF...)
 
 	w := in.errOut()
+	// Refuse BEFORE planning if the cluster already carries a BNK install this
+	// workspace has no state for. Planning first would report ~60 resources to add
+	// over an install that already exists, then spend ~13 minutes failing to create
+	// them (issue #53). Narrow by construction: a workspace WITH state converges as
+	// before and never reaches this.
+	if err := guardUnownedBNKInstall(ctx, cctx, tfws, w); err != nil {
+		return false, nil, err
+	}
 	fmt.Fprintln(w, "→ terraform plan")
 	changes, err := tfws.Plan(ctx, varFiles...)
 	if err != nil {

@@ -26,6 +26,7 @@ var (
 	flagBNKForgeUser     string
 	flagBNKForgePassword string
 	flagBNKForgeInsecure bool
+	flagBNKForgeForce    bool
 )
 
 var bnkforgeCmd = &cobra.Command{
@@ -110,6 +111,8 @@ func init() {
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)")
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "target BNK Forge project name (overrides config)")
 	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
+	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeForce, "force", false,
+		"take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes)")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge base URL")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge username")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD)")
@@ -264,5 +267,5 @@ func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
 	}
-	return registerWithBNKForge(cmd.Context(), cctx, &eff, true)
+	return registerWithBNKForge(cmd.Context(), cctx, &eff, true, flagBNKForgeForce)
 }
