@@ -157,6 +157,49 @@ bnk:
 
 All fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under `bnk.network` — `roksbnkctl init` prompts for it (opt in at *"Customize BNK networking?"*), or see [Chapter 12 §`bnk.network`](./12-workspace-config.md). FLP settings live under `bnk.flp` (see the master table below); `bnk.flp.storage_class` sets the FLP's PVC StorageClass.
 
+### `bnk.preflight:` — the reachability gate's timers
+
+Before `bnk up` plans anything, it probes the mirror (and the F5 License Proxy, when one is
+configured) from **every node, in every AZ**. These two fields tune that gate. Neither is a
+terraform variable — they govern the check itself, not what is installed.
+
+```yaml
+bnk:
+  preflight:
+    reachability_retry_seconds: 180     # per target, before the verdict is believed
+    reachability_timeout_seconds: 480   # for every node to report
+```
+
+| Field | Type | Default | Env var | Notes |
+|---|---|---|---|---|
+| `reachability_retry_seconds` | int | `180` | `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` | How long **one target** may keep failing before its verdict is believed. `0` means one shot. |
+| `reachability_timeout_seconds` | int | `480` | `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS` | How long to wait for **every node** to report. Clamped to stay above the retry budget. |
+
+They are exposed because the right values are a property of the environment, not of `roksbnkctl`.
+A Transit Gateway attachment is **asynchronous** — IBM programs the routes some time after the
+connection reports `attached` — so a workspace that creates the VPC and joins the gateway in the
+same run as the install can probe a path that is correct but not yet live. A probe 73 seconds
+after attach has failed on a path that was healthy minutes later.
+
+- **Raise the retry budget** when the gateway is attached in the same run, or the fabric is known
+  to program routes slowly.
+- **Set it to `0`** for a static, long-established gateway where a failure is never a race — one
+  shot, fail immediately.
+
+A success ends the retry immediately, so a healthy environment never pays the budget; only a
+failing target does. `0` is distinguished from "unset", so setting it explicitly is honoured
+rather than falling back to the default.
+
+The timeout is **clamped** to stay above the retry budget. Raising only the retry would otherwise
+produce a wait that gives up while the probe is still legitimately retrying — a timeout that
+reads as a network problem but is really this file. The clamp is a floor, not a policy: a value
+comfortably above the budget is used exactly as written.
+
+The env vars matter for the CI path in particular, where the workspace is built by
+`init --non-interactive --override-from-env` and there is no `config.yaml` to edit
+([Chapter 7a](./07a-unattended-setup.md)). See
+[Appendix A](./appendix-a-disconnected-roks-cluster.md) for the gate's full output and rationale.
+
 ## `test:` block
 
 ```yaml
@@ -384,11 +427,13 @@ state:
 ## `bnkforge:` block
 
 Opt-in integration with a co-located [BNK Forge](./24a-bnk-forge-registration.md)
-install. When `register: true` and the `bnk-forge` CLI is on `PATH`, a post-apply
-hook on `cluster up` registers the just-provisioned ROKS cluster with BNK Forge —
+install. When `register: true`, a post-apply hook on `cluster up` registers the
+just-provisioned ROKS cluster with BNK Forge over its v3 REST API —
 **credential-backed**, so Forge re-derives the kubeconfig on demand from an IBM
 Cloud credential template rather than storing a perishable one. Best-effort: it
-never blocks or fails the deploy. Absent (or `register: false`) ⇒ no-op. See
+never blocks or fails the deploy. Absent (or `register: false`) ⇒ no-op. The hook
+**never** passes `--force`, so it cannot take a cluster held by another Forge
+project. See
 [Chapter 24a — Registering the cluster with BNK Forge](./24a-bnk-forge-registration.md).
 
 **Set this block with the CLI — don't hand-edit it:** `roksbnkctl bnkforge
@@ -406,8 +451,10 @@ bnkforge:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `register` | bool | `false` | Opt the workspace in. `false`/omitted ⇒ no registration. |
-| `url` | string | (CLI's stored-session URL) | Overrides the BNK Forge server URL the `bnk-forge` CLI would read from its stored session (`~/.bnk-forge/config.json`). Empty ⇒ use the stored session's URL. |
-| `project` | string | (CLI auto-selects) | Target BNK Forge project id to register the cluster under. Empty ⇒ the CLI picks the active/sole project, or prompts. |
+| `url` | string | (`BNK_FORGE_URL`) | The BNK Forge server URL. Empty ⇒ the `BNK_FORGE_URL` env var; with neither, registration errors. |
+| `project` | string | (the workspace name) | BNK Forge project to register the cluster under. Empty ⇒ a project named after the workspace, created if it does not exist. |
+| `username` | string | (`BNK_FORGE_USER`) | Forge login. The **password** is never stored in `config.yaml` — it comes from `BNK_FORGE_PASSWORD` or an interactive prompt, and only the resulting session token is cached (OS keychain). |
+| `insecure` | bool | `false` | Skip TLS verification. Forge installs commonly carry a self-signed certificate. |
 
 ## `targets:` block
 
@@ -509,6 +556,8 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.network.zones[]` | list | (install-guide defaults) | Per-AZ data-plane subnets (`ext_vlan_cidr`, `int_vlan_cidr`, `int_snat_cidr`, `int_vip_cidr`) + TMM self-IPs (`external_selfip`, `internal_selfip`) → `cneinstance_network_zones`. Supply all 3 zones or none. See [Chapter 12 §`bnk.network`](./12-workspace-config.md). |
 | `bnk.network.vlan_prefixlen` | int | `24` | TMM self-IP prefix length (F5SPKVlan `spec.prefixlen_v4`) → `cneinstance_vlan_prefixlen`. Match your VLAN CIDRs. |
 | `bnk.network.tmm_k8s_routes` | string | `172.17.0.0/18` | Pod CIDR TMM routes to (`TMM_K8S_ROUTES`) → `cneinstance_tmm_k8s_routes`. Your cluster's pod subnet if non-default. |
+| `bnk.preflight.reachability_retry_seconds` | int | `180` | How long one target may keep failing in the pre-install reachability gate before the verdict is believed. `0` = one shot. Not a tfvar. Env: `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS`. |
+| `bnk.preflight.reachability_timeout_seconds` | int | `480` | How long to wait for every node to report. Clamped above the retry budget. Not a tfvar. Env: `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS`. |
 | `bnk.cert_manager.namespace` | string | `cert-manager` | cert-manager namespace → `cert_manager_namespace`. Install/skip stays on `resources.cert_manager.create`. |
 | `bnk.cert_manager.version` | string | (HCL default) | cert-manager chart version → `cert_manager_version`. |
 | `bnk.license_mode` | string | (empty ⇒ `connected`) | `connected` \| `disconnected` \| `f5licenseproxy`. Rendered as the `license_mode` tfvar. `f5licenseproxy` licenses BNK via the [F5 License Proxy](./10c-flp-licensing.md) — either one this workspace deployed (`roksbnkctl flp up`) or one in **another** cluster (`bnk.flp.external`). Empty/omitted keeps the JWT/connected default. |

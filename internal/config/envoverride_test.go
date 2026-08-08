@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOverrideFromEnv(t *testing.T) {
@@ -341,5 +342,54 @@ func TestOverrideFromEnv_ClientVPCNameNilResources(t *testing.T) {
 	OverrideFromEnv(&ws)
 	if ws.Resources == nil || ws.Resources.ClientVPC.Existing != "adopted" {
 		t.Fatalf("nil Resources should be created and populated, got %+v", ws.Resources)
+	}
+}
+
+// The reachability tunables need an env surface for the same reason everything else
+// here does: a CI runner building a workspace from argv alone has no config.yaml to
+// edit, and these are exactly the values a pipeline raises when its fabric programs
+// routes slowly (issue #57).
+func TestOverrideFromEnv_Reachability(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_REACHABILITY_RETRY_SECONDS", "600")
+	t.Setenv("ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS", "900")
+
+	ws := &Workspace{}
+	OverrideFromEnv(ws)
+
+	if ws.BNK.Preflight == nil {
+		t.Fatal("the preflight block must be created when only env names it")
+	}
+	if got := ws.ReachabilityRetrySeconds(); got != 600 {
+		t.Errorf("retry = %d, want 600", got)
+	}
+	if got, want := ws.ReachabilityTimeout(), 900*time.Second; got != want {
+		t.Errorf("timeout = %s, want %s", got, want)
+	}
+}
+
+// 0 means one-shot and is a legitimate choice for a static environment. It must be
+// distinguishable from "unset", which is why the fields are pointers — a plain int
+// would silently reinstate the 180s default.
+func TestOverrideFromEnv_ReachabilityZeroIsNotUnset(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_REACHABILITY_RETRY_SECONDS", "0")
+	ws := &Workspace{}
+	OverrideFromEnv(ws)
+	if got := ws.ReachabilityRetrySeconds(); got != 0 {
+		t.Errorf("an explicit 0 must survive the env round-trip, got %d", got)
+	}
+}
+
+// Garbage must leave the default in place rather than land as a 0 budget — a typo
+// silently turning the retry off is the failure mode this guards.
+func TestOverrideFromEnv_ReachabilityRejectsGarbage(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_REACHABILITY_RETRY_SECONDS", "later")
+	t.Setenv("ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS", "-1")
+	ws := &Workspace{}
+	OverrideFromEnv(ws)
+	if got := ws.ReachabilityRetrySeconds(); got != DefaultReachabilityRetrySeconds {
+		t.Errorf("an unparseable value must leave the default, got %d", got)
+	}
+	if got, want := ws.ReachabilityTimeout(), time.Duration(DefaultReachabilityTimeoutSeconds)*time.Second; got != want {
+		t.Errorf("a negative timeout must leave the default, got %s", got)
 	}
 }

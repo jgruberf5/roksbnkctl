@@ -119,6 +119,30 @@ Two verbs are **deliberately not aliased** to avoid shadowing existing top-level
 
 The `roksbnkctl kubectl <args...>` and `roksbnkctl oc <args...>` passthroughs are **preserved** alongside the internalised verbs. They shell out to the host binary (with the workspace's `KUBECONFIG` and credentials loaded) for anything outside the internalised subset.
 
+> **`-w` selects the cluster here too.** The passthroughs resolve the same workspace-scoped
+> kubeconfig **and context** the `k` verbs do, so `-w acme-eu kubectl get nodes` lists
+> `acme-eu`'s nodes. This was not always true: before v1.42.0 they took the ambient
+> `KUBECONFIG` and then fell back to `~/.roksbnkctl/forge/kubeconfig.yaml` — a single file
+> every workspace shares — so two workspaces on different clusters silently retargeted each
+> other ([#55](https://github.com/jgruberf5/roksbnkctl/issues/55)). The output looked
+> entirely believable, which is what made it dangerous for `delete`.
+>
+> Two deliberate limits. An explicit `--context` or `--kubeconfig` in **your** arguments
+> always wins — being told which cluster you mean is not something the tool overrides. And a
+> workspace with no known cluster keeps the historical ambient behaviour rather than failing.
+> If the workspace *does* know its cluster but no kubeconfig on disk can authenticate to it,
+> you get the same error the `k` verbs give, telling you to run `kubeconfig --download` —
+> rather than a silent fall-back to whatever the shared file points at.
+>
+> `roksbnkctl shell` and `roksbnkctl exec` pin the same kubeconfig. Neither can pin a
+> *context*, though — they hand you an arbitrary command line, and `kubectl` reads no
+> environment variable for the context — so when the pinned file's `current-context` names a
+> different cluster they say so on stderr instead of letting the next command address it.
+>
+> Across the `--on` SSH boundary nothing is pinned: a kubeconfig path and a context name are
+> local facts that mean nothing on the remote host, which is exactly why that boundary
+> scrubs them ([Chapter 16](./16-on-flag-ssh-jumphosts.md)).
+
 When to reach for the passthrough:
 
 | Use case | Why passthrough |

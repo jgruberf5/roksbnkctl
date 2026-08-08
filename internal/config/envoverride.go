@@ -291,6 +291,26 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "bnk.flp.external.root_ca_b64 (ROKSBNKCTL_FLP_ROOT_CA_B64)")
 	}
 
+	// The reachability gate's tunables (issue #57). They belong on the env surface for
+	// the same reason as everything else here: a CI runner building a workspace from
+	// argv alone has no config.yaml to edit, and these are exactly the values a
+	// pipeline needs to raise when its fabric programs routes slowly.
+	//
+	// 0 is MEANINGFUL for the retry budget — it means one-shot — so the parse must
+	// distinguish "set to 0" from "absent", which is why the fields are pointers.
+	if v := envValue("ROKSBNKCTL_REACHABILITY_RETRY_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			preflightCfg(ws).ReachabilityRetrySeconds = &n
+			applied = append(applied, "bnk.preflight.reachability_retry_seconds (ROKSBNKCTL_REACHABILITY_RETRY_SECONDS)")
+		}
+	}
+	if v := envValue("ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			preflightCfg(ws).ReachabilityTimeoutSeconds = &n
+			applied = append(applied, "bnk.preflight.reachability_timeout_seconds (ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS)")
+		}
+	}
+
 	// The FLP deployment backend (helm vs. a standalone VSI appliance) and the
 	// supply chain the phase reads its entitlement material from. Both maps live
 	// in envoverride_flp.go — see there for the variable → field tables.
@@ -307,6 +327,16 @@ func registryCfg(ws *Workspace) *RegistryCfg {
 		ws.Registry = &RegistryCfg{}
 	}
 	return ws.Registry
+}
+
+// preflightCfg returns ws.BNK.Preflight, creating it when the config never had a
+// preflight block — the normal case, since both fields have working defaults and
+// only an environment that needs different ones ever names them.
+func preflightCfg(ws *Workspace) *BNKPreflightCfg {
+	if ws.BNK.Preflight == nil {
+		ws.BNK.Preflight = &BNKPreflightCfg{}
+	}
+	return ws.BNK.Preflight
 }
 
 // flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both

@@ -300,11 +300,18 @@ roksbnkctl bnkforge register [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--force` | `bool` | `false` | take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes) |
 | `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
 | `--project` | `string` | — | target BNK Forge project name (overrides config) |
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
 | `--username` | `string` | — | BNK Forge login username (overrides config) |
+
+Registering is **non-destructive**: a cluster already held by *this* project is
+updated in place, so its Forge cluster id and any scan history survive. A cluster
+held by *another* project is refused, naming the owner — `--force` moves it
+deliberately. The automatic post-`cluster up` hook never forces. See
+[Chapter 24a](./24a-bnk-forge-registration.md#registration-is-non-destructive).
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 

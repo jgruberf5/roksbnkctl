@@ -80,34 +80,41 @@ func (r NodeProbeResult) String() string {
 // DNS is checked separately from TCP because they fail for different reasons and want
 // different fixes: DNS is a resolver/hostname problem, TCP is routing, security groups
 // or a gateway attachment.
-func nodeProbeScript(targets []ProbeTarget) string {
+//
+// WHY IT RETRIES (issue #57). A Transit Gateway attachment is asynchronous: IBM
+// programs the routes some time after the connection reports `attached`. A probe run
+// ~73 seconds after attach saw both targets unreachable, `bnk up` refused, and the
+// path was healthy minutes later — a sibling cluster on the same gateway and the same
+// blueprint passed simply because it landed on the other side of route programming.
+//
+// So "not reachable" and "not reachable YET" are different claims, and a single TCP
+// failure cannot tell them apart. retrySeconds is how long a target may keep failing
+// before the verdict is believed; 0 is one-shot. The value is a WORKSPACE SETTING
+// (bnk.preflight.reachability_retry_seconds) rather than a constant here, because the
+// right budget is a property of the environment: a gateway that has been up for days
+// needs none, and a fabric that programs routes slowly needs more than any default we
+// could pick for it.
+func nodeProbeScript(targets []ProbeTarget, retrySeconds int) string {
 	var b strings.Builder
+	if retrySeconds < 0 {
+		retrySeconds = 0
+	}
+	fmt.Fprintf(&b, `budget=%d; `, retrySeconds)
 	b.WriteString(`probe() { lbl="$1"; h="$2"; p="$3"; dns=skipped-ip; tcp=FAILED; detail=""; `)
+	b.WriteString(`deadline=$(( $(date +%s) + budget )); attempts=0; `)
+	// Retry until the budget is spent. A SUCCESS ends it immediately, so a healthy
+	// path costs one attempt and the budget is only ever paid by a failing one.
+	b.WriteString(`while :; do attempts=$((attempts+1)); dns=skipped-ip; tcp=FAILED; detail=""; `)
 	// A bare IPv4 needs no resolution: "dns=ok" for an IP would be noise and
 	// "dns=FAILED" would be wrong.
 	b.WriteString(`case "$h" in *[!0-9.]*) `)
 	b.WriteString(`if getent hosts "$h" >/dev/null 2>&1; then dns=ok; else dns=FAILED; detail="name does not resolve from this node"; fi ;; `)
 	b.WriteString(`esac; `)
 	b.WriteString(`if [ "$dns" != FAILED ]; then `)
-	// PURE TCP FIRST, and curl only as a last resort.
-	//
-	// The question this preflight asks is "can this node open a connection", and a TCP
-	// connect answers exactly that. curl answers a DIFFERENT question — "does an HTTPS
-	// service respond" — and conflates the two: probing an open port that does not
-	// speak TLS makes curl sit until --connect-timeout and exit 28, which is
-	// indistinguishable from never having connected. Verified by running this script
-	// against a live SSH port, which curl reported as unreachable.
-	//
-	// TLS problems are real but they are a separate class with a separate fix, and
-	// folding them into "unreachable" would send someone to the network for a
-	// certificate problem.
-	// Pick the tool ONCE, then trust its verdict.
-	//
-	// An earlier cut chained these with `&&`, so a tool that RAN and said "cannot
-	// connect" fell through to the next one — and a closed port ended up reported by
-	// curl as "may be open but not speaking TLS; inconclusive", which is both wrong and
-	// unactionable. "The tool is absent" and "the tool answered no" are different
-	// facts; only the first justifies trying something else.
+	// Pick the tool ONCE, then trust its verdict. "The tool is absent" and "the tool
+	// answered no" are different facts; only the first justifies trying another.
+	// A pure TCP connect answers exactly the question being asked; curl answers a
+	// different one and its timeout cannot be told apart from never connecting.
 	b.WriteString(`  if command -v bash >/dev/null 2>&1; then `)
 	b.WriteString(`    if timeout 6 bash -c "exec 3<>/dev/tcp/$h/$p" >/dev/null 2>&1; then tcp=ok; `)
 	b.WriteString(`    else detail="tcp connect failed -- refused, filtered, or no route"; fi; `)
@@ -116,20 +123,27 @@ func nodeProbeScript(targets []ProbeTarget) string {
 	b.WriteString(`    else detail="tcp connect failed -- refused, filtered, or no route"; fi; `)
 	b.WriteString(`  elif command -v curl >/dev/null 2>&1; then `)
 	b.WriteString(`    curl -sk --connect-timeout 6 --max-time 10 -o /dev/null "https://$h:$p/" >/dev/null 2>&1; rc=$?; `)
-	// 0/22/35/60 all prove the transport came up (an HTTP status, or a TLS complaint).
 	b.WriteString(`    case "$rc" in 0|22|35|60) tcp=ok ;; `)
 	b.WriteString(`      6) dns=FAILED; detail="curl could not resolve" ;; `)
 	b.WriteString(`      7) detail="connection refused or no route" ;; `)
 	b.WriteString(`      28) detail="curl timed out -- no TCP connection, or the port does not speak TLS" ;; `)
 	b.WriteString(`      *) detail="curl exit $rc" ;; esac; `)
-	b.WriteString(`  else tcp=skipped; detail="no bash, nc or curl on this node image"; fi; `)
+	b.WriteString(`  else tcp=skipped; detail="no bash, nc or curl on this node image"; break; fi; `)
 	b.WriteString(`fi; `)
-	b.WriteString(`echo "ROKSBNKCTL_PROBE node=${NODE_NAME} label=${lbl} host=${h} port=${p} dns=${dns} tcp=${tcp} detail=${detail}"; }; `)
+	b.WriteString(`[ "$tcp" = ok ] && break; `)
+	b.WriteString(`[ "$(date +%s)" -ge "$deadline" ] && break; `)
+	b.WriteString(`sleep 10; done; `)
+	// The elapsed/attempt counts turn "unreachable" into "unreachable for the whole
+	// budget", which is the difference between a race and a real break.
+	b.WriteString(`[ "$tcp" != ok ] && [ "$attempts" -gt 1 ] && detail="$detail (still failing after ${attempts} attempts over ${budget}s)"; `)
+	// ts records when the verdict was reached. Freshness is guaranteed structurally —
+	// the DaemonSet rolls every run (see ensureInstallerDaemonSet) — so this is for
+	// the human reading the log, who wants to know how long the retry loop ran.
+	b.WriteString(`echo "ROKSBNKCTL_PROBE ts=$(date +%s) node=${NODE_NAME} label=${lbl} host=${h} port=${p} dns=${dns} tcp=${tcp} detail=${detail}"; }; `)
 	for _, t := range targets {
 		// The probe line is space-separated key=value, so a label containing a space
 		// truncates at the parser: "F5 License Proxy" came back as "F5" on the first
-		// live run, and the two stray words were silently dropped as unknown fields.
-		// Collapse whitespace at the boundary rather than trusting callers.
+		// live run. Collapse whitespace at the boundary rather than trusting callers.
 		fmt.Fprintf(&b, `probe %q %q %q; `, labelForWire(t.Label), t.Host, t.Port)
 	}
 	return b.String()

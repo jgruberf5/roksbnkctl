@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
@@ -66,12 +68,33 @@ func ensureRegistryCATrust(ctx context.Context, cctx *config.Context, tfws *tf.W
 		}
 	}
 
+	// Both tunables come from the workspace (bnk.preflight), because the right values
+	// are a property of the environment rather than of the tool: a gateway that has
+	// been up for days needs no retry budget at all, and a fabric that programs routes
+	// slowly needs more than any default could anticipate. See config/preflight.go.
+	retry := cctx.Workspace.ReachabilityRetrySeconds()
+	timeout := cctx.Workspace.ReachabilityTimeout()
+
 	if ca == "" {
 		fmt.Fprintf(w, "→ no registry CA recorded for %s — assuming it is already trusted; checking reachability from every node\n", host)
 	} else {
 		fmt.Fprintf(w, "→ installing registry CA trust on all nodes (%s) and checking reachability\n", host)
 	}
-	if err := kc.EnsureRegistryCATrust(ctx, host, ca, "", true, targets...); err != nil {
+	if retry > 0 {
+		fmt.Fprintf(w, "  each target is retried for up to %ds before it is called unreachable (bnk.preflight.reachability_retry_seconds)\n", retry)
+	}
+	if err := kc.EnsureRegistryCATrust(ctx, k8s.RegistryTrustOptions{
+		Host:              host,
+		CAPEM:             ca,
+		Wait:              true,
+		Targets:           targets,
+		ProbeRetrySeconds: retry,
+		ReadyTimeout:      timeout,
+		// A fresh run id every time, so the DaemonSet rolls and the verdict read back
+		// belongs to THIS run. Without it a re-run after fixing the routing re-reads the
+		// original pod's log and shows the same failure (issue #57).
+		RunID: probeRunID(),
+	}); err != nil {
 		return fmt.Errorf("registry CA trust: %w", err)
 	}
 
@@ -92,4 +115,11 @@ func ensureRegistryCATrust(ctx context.Context, cctx *config.Context, tfws *tf.W
 		fmt.Fprintf(w, "✓ %s reachable from every node\n", host)
 	}
 	return nil
+}
+
+// probeRunID is a value that differs on every invocation, so the installer
+// DaemonSet's pod template changes and the probe actually re-runs. Only uniqueness
+// matters; the nanosecond clock supplies it, and the value never leaves the cluster.
+func probeRunID() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36)
 }
