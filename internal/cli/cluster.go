@@ -191,6 +191,7 @@ func clusterInputs() *orchestration.ClusterInputs {
 		SetWorkspace:        func(ws string) { flagWorkspace = ws },
 		WorkspaceEnv:        workspaceEnv,
 		WorkspaceEnvCore:    workspaceEnvCore,
+		ResolveKubeTarget:   resolveWorkspaceKubeTarget,
 		DispatchRemote:      dispatchRemote,
 		DispatchRemoteShell: dispatchRemoteShell,
 		OpenIBMClient:       openIBMClient,
@@ -211,6 +212,11 @@ func runKubeconfig(cmd *cobra.Command, _ []string) error {
 	return orchestration.RunKubeconfig(cmd.Context(), clusterInputs())
 }
 
+// The passthroughs pin themselves to the -w workspace's cluster, so `kubectl`/`oc`
+// address what the `k` verbs address. Without it the shared forge kubeconfig makes two
+// workspaces retarget each other, silently (issue #55). The pin is applied inside
+// orchestration — it must happen AFTER the DisableFlagParsing `-w` extraction, which
+// is what tells us which workspace was meant.
 func runKubectlPassthrough(cmd *cobra.Command, args []string) error {
 	return orchestration.RunKubectlPassthrough(cmd.Context(), clusterInputs(), args)
 }

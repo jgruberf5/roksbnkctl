@@ -39,7 +39,10 @@ func tryRegisterBNKForge(ctx context.Context, cctx *config.Context) {
 	if cctx == nil || cctx.Workspace == nil || cctx.Workspace.BNKForge == nil || !cctx.Workspace.BNKForge.Register {
 		return
 	}
-	if err := registerWithBNKForge(ctx, cctx, cctx.Workspace.BNKForge, false); err != nil {
+	// force=false always here: this is the AUTOMATIC registration that runs as part of
+	// cluster/bnk up. An unattended step must never silently take a cluster from another
+	// project — that is exactly the harm in issue #54.
+	if err := registerWithBNKForge(ctx, cctx, cctx.Workspace.BNKForge, false, false); err != nil {
 		fmt.Fprintf(os.Stderr, "→ BNK Forge registration didn't complete (%v) — the cluster is up; register later with `roksbnkctl bnkforge register`.\n", err)
 	}
 }
@@ -52,7 +55,7 @@ func tryRegisterBNKForge(ctx context.Context, cctx *config.Context) {
 // interactive=true permits prompting for the username / password; the auto-hook
 // passes false, so it relies on env vars (BNK_FORGE_USER/PASSWORD) or a cached
 // session token and otherwise errors rather than blocking a deploy on a prompt.
-func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.BNKForgeCfg, interactive bool) error {
+func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.BNKForgeCfg, interactive, force bool) error {
 	if cctx == nil || cctx.Workspace == nil {
 		return fmt.Errorf("no workspace context")
 	}
@@ -149,7 +152,7 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 		Region:        out.Region,
 		TemplateID:    tid,
 		Kubeconfig:    base64.StdEncoding.EncodeToString([]byte(kubeconfig)),
-	})
+	}, force)
 	if err != nil {
 		return fmt.Errorf("registering cluster with BNK Forge: %w", err)
 	}
