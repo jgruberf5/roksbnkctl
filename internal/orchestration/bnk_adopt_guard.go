@@ -43,8 +43,11 @@ func guardUnownedBNKInstall(ctx context.Context, cctx *config.Context, tfws *tf.
 	if cctx == nil || cctx.Workspace == nil || tfws == nil {
 		return nil
 	}
-	if bnkStateHasResources(tfws.StateDir()) {
-		return nil // we own an install; converge normally
+	has, known := bnkStateHasResources(ctx, cctx, tfws)
+	if !known || has {
+		// Either we own an install (converge normally), or we could not determine what
+		// the state holds. Both stay silent — see bnkStateHasResources.
+		return nil
 	}
 	ns := strings.TrimSpace(cctx.Workspace.BNK.FLONamespace)
 	if ns == "" {
@@ -89,26 +92,54 @@ func guardUnownedBNKInstall(ctx context.Context, cctx *config.Context, tfws *tf.
 }
 
 // bnkStateHasResources reports whether the BNK phase's terraform state holds any
-// managed resources.
+// managed resources, and whether that answer is KNOWN at all.
 //
-// Read off disk rather than via `terraform state list`: this runs before the plan, on
-// a path where the workspace may not be initialised yet, and shelling out would be
-// both slower and able to fail for reasons that have nothing to do with the question.
-// An unreadable or absent state reads as "no resources", which is the conservative
-// answer — it only ever leads to the cluster being checked.
-func bnkStateHasResources(stateDir string) bool {
+// The two-value shape is the point. "No local state file" means two entirely
+// different things depending on the backend:
+//
+//   - LOCAL backend — genuinely no state. Reading it as "no resources" is correct and
+//     conservative: it only ever leads to the cluster being checked.
+//   - S3 backend (PRD 16) — the state lives in object storage. There is no
+//     <stateDir>/terraform.tfstate, and .terraform/terraform.tfstate holds backend
+//     configuration with no "resources" key at all. A workspace that installed BNK
+//     itself would read as empty, its own FLO pod would be found running, and the
+//     guard would refuse its every converge — advising the user to "use the workspace
+//     that installed it", which is the workspace being refused.
+//
+// So the on-disk read stays the fast path, and a remote backend that it cannot answer
+// for is confirmed with `terraform state list`. writeAndInitSecondPhase has already
+// run `init` by the time the guard is reached, so the backend is live. If that also
+// fails, the answer is unknown and the guard stays silent — this exists to convert a
+// slow confusing failure into a fast clear one, not to invent a new way to refuse.
+func bnkStateHasResources(ctx context.Context, cctx *config.Context, tfws *tf.Workspace) (has bool, known bool) {
+	stateDir := tfws.StateDir()
 	if stateDir == "" {
-		return false
+		return false, false
 	}
-	dir := stateDir
+	if stateFileHasResources(stateDir) {
+		return true, true
+	}
+	if !remoteStateBackend(cctx) {
+		return false, true // local backend: absent state really is no state
+	}
+	out, err := tfws.RunReadOnly(ctx, []string{"state", "list"})
+	if err != nil {
+		return false, false // cannot tell — say nothing
+	}
+	return strings.TrimSpace(out) != "", true
+}
+
+// stateFileHasResources is the on-disk half: true only when a state file in stateDir
+// carries a non-empty "resources" array. Matching on the empty forms is more robust
+// than a full parse, which would have to track state-format changes to stay correct.
+// A missing or unrecognised file is false — the caller decides what that means, which
+// depends entirely on the backend.
+func stateFileHasResources(stateDir string) bool {
 	for _, name := range []string{"terraform.tfstate", filepath.Join(".terraform", "terraform.tfstate")} {
-		b, err := os.ReadFile(filepath.Join(dir, name))
+		b, err := os.ReadFile(filepath.Join(stateDir, name))
 		if err != nil || len(b) == 0 {
 			continue
 		}
-		// A state with managed resources has a non-empty "resources" array. Matching
-		// on the empty forms is more robust than a full parse, which would have to
-		// track state-format changes to stay correct.
 		s := string(b)
 		if !strings.Contains(s, `"resources"`) {
 			continue
@@ -119,4 +150,18 @@ func bnkStateHasResources(stateDir string) bool {
 		return true
 	}
 	return false
+}
+
+// remoteStateBackend reports whether terraform state lives somewhere other than this
+// workspace's state dir, in which case its absence on disk proves nothing.
+func remoteStateBackend(cctx *config.Context) bool {
+	if cctx == nil || cctx.Workspace == nil {
+		return false
+	}
+	switch strings.TrimSpace(cctx.Workspace.State.Backend) {
+	case "", "local":
+		return false
+	default:
+		return true
+	}
 }

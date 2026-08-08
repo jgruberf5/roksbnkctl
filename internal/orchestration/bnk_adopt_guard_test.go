@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
 // The guard's whole safety property is that it fires ONLY on an empty state. A
 // workspace that owns an install must converge exactly as before — a false positive
 // here would block legitimate re-runs, which is worse than the bug being fixed.
-func TestBNKStateHasResources(t *testing.T) {
+func TestStateFileHasResources(t *testing.T) {
 	cases := []struct {
 		name  string
 		state string
@@ -19,8 +21,8 @@ func TestBNKStateHasResources(t *testing.T) {
 		{"empty resources, spaced", `{"version":4,"resources": []}`, false},
 		{"empty resources, compact", `{"version":4,"resources":[]}`, false},
 		{"has resources", `{"version":4,"resources":[{"mode":"managed","type":"helm_release"}]}`, true},
-		// Not a state we recognise: treated as "no resources", which only leads to
-		// checking the cluster — never to a spurious refusal on its own.
+		// Not a state we recognise: treated as "no resources on disk". What that MEANS
+		// is the caller's decision, and depends on the backend.
 		{"unparseable", `not json at all`, false},
 		{"no resources key", `{"version":4,"outputs":{}}`, false},
 	}
@@ -31,9 +33,42 @@ func TestBNKStateHasResources(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if got := bnkStateHasResources(dir); got != c.want {
-			t.Errorf("%s: bnkStateHasResources = %v, want %v", c.name, got, c.want)
+		if got := stateFileHasResources(dir); got != c.want {
+			t.Errorf("%s: stateFileHasResources = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// The backend decides what an absent local state file proves.
+//
+// With backend s3 the state lives in object storage: there is no
+// <stateDir>/terraform.tfstate, and .terraform/terraform.tfstate holds only backend
+// config with no "resources" key. Reading that as "nothing installed" would make the
+// guard refuse every s3 workspace its own `bnk up` — including the one that did the
+// install — so the guard must not draw a conclusion from disk alone there.
+func TestRemoteStateBackend(t *testing.T) {
+	cases := []struct {
+		backend string
+		want    bool
+	}{
+		{"", false},
+		{"local", false},
+		{"  local  ", false},
+		{"s3", true},
+		{"S3-ish-future-backend", true},
+	}
+	for _, c := range cases {
+		cctx := &config.Context{Workspace: &config.Workspace{}}
+		cctx.Workspace.State.Backend = c.backend
+		if got := remoteStateBackend(cctx); got != c.want {
+			t.Errorf("remoteStateBackend(%q) = %v, want %v", c.backend, got, c.want)
+		}
+	}
+	if remoteStateBackend(nil) {
+		t.Error("nil context must not read as a remote backend")
+	}
+	if remoteStateBackend(&config.Context{}) {
+		t.Error("nil workspace must not read as a remote backend")
 	}
 }
 

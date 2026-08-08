@@ -24,6 +24,10 @@ type mockForge struct {
 	// clustersByProject lets a test model a cluster held by ANOTHER project. When
 	// set it takes precedence over `clusters` for GET /api/projects/{id}/k8s/clusters.
 	clustersByProject map[string][]map[string]any
+	// clusterListStatus forces a non-200 on GET /api/projects/{id}/k8s/clusters for
+	// specific projects — a least-privilege account that can see the project list but
+	// not every project's contents.
+	clusterListStatus map[string]int
 	nextID            int
 	registerBody      map[string]any // captured POST body of the last cluster register
 	registerPath      string
@@ -86,8 +90,12 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/k8s/clusters") {
 			if r.Method == http.MethodGet {
+				pid := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/k8s/clusters"), "/api/projects/")
+				if code := m.clusterListStatus[pid]; code != 0 {
+					writeJSON(w, code, map[string]any{"detail": "forbidden"})
+					return
+				}
 				if m.clustersByProject != nil {
-					pid := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/k8s/clusters"), "/api/projects/")
 					writeJSON(w, 200, map[string]any{"clusters": m.clustersByProject[pid]})
 					return
 				}
@@ -125,15 +133,26 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 			return
 		}
 		idStr := strings.TrimPrefix(r.URL.Path, "/api/k8s/clusters/")
+		// Record every DELETE, not only ones matching `clusters` — a cross-project
+		// takeover deletes a cluster that lives in clustersByProject, and that is
+		// exactly the call those tests assert on.
+		m.deletedIDs = append(m.deletedIDs, idStr)
 		kept := m.clusters[:0]
 		for _, cl := range m.clusters {
-			if fmt.Sprint(cl["id"]) == idStr {
-				m.deletedIDs = append(m.deletedIDs, idStr)
-			} else {
+			if fmt.Sprint(cl["id"]) != idStr {
 				kept = append(kept, cl)
 			}
 		}
 		m.clusters = kept
+		for pid, cls := range m.clustersByProject {
+			keptP := cls[:0]
+			for _, cl := range cls {
+				if fmt.Sprint(cl["id"]) != idStr {
+					keptP = append(keptP, cl)
+				}
+			}
+			m.clustersByProject[pid] = keptP
+		}
 		w.WriteHeader(204)
 	})
 	return mux
@@ -309,7 +328,14 @@ func TestRegisterOtherProject_RefusedWithoutForce(t *testing.T) {
 }
 
 // --force is the deliberate takeover. It must work, so the refusal is a speed bump
-// rather than a dead end.
+// rather than a dead end — and it must actually MOVE the cluster.
+//
+// The obvious implementation shares the in-place PUT with the same-project path, and
+// is silently wrong: that PUT carries no project field, so it updates the cluster
+// where it already lives. The cluster stays with the other project, never appears in
+// this one, has its kubeconfig quietly overwritten, and the command exits 0. So the
+// assertions here are about the DELETE and the POST, not about the absence of an
+// error.
 func TestRegisterOtherProject_ForceTakesOver(t *testing.T) {
 	m := &mockForge{token: "t", nextID: 40,
 		projects: []map[string]any{{"id": 93, "name": "owner-proj"}, {"id": 96, "name": "mine"}},
@@ -322,10 +348,104 @@ func TestRegisterOtherProject_ForceTakesOver(t *testing.T) {
 	c := New(srv.URL, false)
 	c.Token = "t"
 
-	if _, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
+	fid, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
 		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
-	}, true); err != nil {
+	}, true)
+	if err != nil {
 		t.Fatalf("--force must allow the takeover: %v", err)
+	}
+	if len(m.putIDs) != 0 {
+		t.Errorf("a cross-project takeover must NOT be an in-place PUT (that leaves it in the other project): %v", m.putIDs)
+	}
+	if len(m.deletedIDs) != 1 || m.deletedIDs[0] != "35" {
+		t.Errorf("the takeover must remove the cluster from the owning project, deleted: %v", m.deletedIDs)
+	}
+	if m.registerPath != "/api/projects/96/k8s/clusters" {
+		t.Errorf("the cluster must be re-created in the TARGET project, posted to %q", m.registerPath)
+	}
+	if fid == 0 || fid == 35 {
+		t.Errorf("a move re-creates, so a fresh id is expected, got %d", fid)
+	}
+}
+
+// A transient PUT failure must not escalate into a destructive retry.
+//
+// Reading every PUT failure as "this build has no PUT" turns a momentary 500 into
+// DELETE + re-POST: the cluster id changes, and the scan history attached to it is
+// discarded — losing exactly the continuity the in-place update exists to preserve,
+// against a server that supports PUT perfectly well. Only 404/405 means the route is
+// absent.
+func TestRegisterSameProject_TransientPUTFailureIsNotDestructive(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 40, putStatus: 500,
+		clusters: []map[string]any{{"id": 5, "name": "ws"}}}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	_, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
+		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
+	}, false)
+	if err == nil {
+		t.Fatal("a 500 on the in-place update must be reported, not worked around destructively")
+	}
+	if len(m.deletedIDs) != 0 {
+		t.Errorf("a transient failure must not delete the cluster: %v", m.deletedIDs)
+	}
+}
+
+// A project this account cannot read must not block registration.
+//
+// The cross-project scan is a second opinion layered on the direct same-project query
+// that already ran and already said "not mine". Failing closed on it turns an ordinary
+// least-privilege Forge account — one that can see its own project but not others —
+// into a blocked deployment, where the tool used to work.
+func TestFindClusterOwner_UnreadableProjectDoesNotBlock(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 40,
+		projects: []map[string]any{{"id": 93, "name": "locked"}, {"id": 96, "name": "mine"}},
+		clustersByProject: map[string][]map[string]any{
+			"96": {},
+		},
+		clusterListStatus: map[string]int{"93": 403}}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	owner, err := c.FindClusterOwner(context.Background(), "ws")
+	if err != nil {
+		t.Fatalf("an unreadable project must not fail the lookup: %v", err)
+	}
+	if owner.ClusterID != 0 {
+		t.Errorf("nothing readable owns the cluster, got %+v", owner)
+	}
+
+	fid, rerr := c.RegisterCluster(context.Background(), 96, RegisterRequest{
+		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
+	}, false)
+	if rerr != nil {
+		t.Fatalf("registration must still succeed: %v", rerr)
+	}
+	if fid == 0 {
+		t.Error("expected a freshly created cluster id")
+	}
+}
+
+// An unrecognisable project list is a different matter: reading a body we cannot parse
+// as "nobody owns it" is precisely what lets a silent takeover through. Unreadable is
+// tolerated; unparseable is not.
+func TestFindClusterOwner_UnparseableBodyIsStillAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<html>not json</html>"))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	if _, err := c.FindClusterOwner(context.Background(), "ws"); err == nil {
+		t.Fatal("an unparseable project list must be an error, not an empty answer")
 	}
 }
 

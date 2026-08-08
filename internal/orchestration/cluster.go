@@ -60,13 +60,6 @@ type ClusterInputs struct {
 	// used only on the ssh:<target> backend dispatch path.
 	Bootstrap       bool
 	InsecureHostKey bool
-	// PinnedKubeconfig is a kubeconfig the CLI layer resolved for THIS workspace's
-	// cluster (internal/cli.workspaceKubeTarget). When set it wins over both the
-	// ambient lookup and the shared forge kubeconfig, because those are single files
-	// every workspace shares — which is how `-w a kubectl` ended up talking to
-	// workspace b's cluster (issue #55). Empty means "no workspace-specific answer",
-	// and the historical ambient behaviour applies.
-	PinnedKubeconfig string
 	// ExportKubeconfig / KubeconfigDownload / KubeconfigCluster are the
 	// `kubeconfig` subcommand flags (flagExportKubeconfig /
 	// flagKubeconfigDownload / flagKubeconfigCluster).
@@ -90,6 +83,13 @@ type ClusterInputs struct {
 	// here so the moved code composes env exactly as before.
 	WorkspaceEnv     func() (*config.Context, []string, error)
 	WorkspaceEnvCore func() (*config.Context, []string, error)
+	// ResolveKubeTarget answers "which kubeconfig + context addresses THIS
+	// workspace's cluster" (cli.resolveWorkspaceKubeTarget → workspaceKubeTarget).
+	// It is read at the moment the pin is applied, never earlier: -w arrives inside
+	// argv on the DisableFlagParsing verbs, so resolving before applyWorkspaceFlag
+	// would pin the wrong cluster. See kubetarget.go. Nil disables the pin entirely
+	// (tests, and the ibmcloud passthrough, which has no kubeconfig notion).
+	ResolveKubeTarget func() (path string, kubeContext string, err error)
 	// DispatchRemote / DispatchRemoteShell are cli.dispatchRemote /
 	// cli.dispatchRemoteShell (remote.go stays in cli per the scope —
 	// it holds the single Sprint 15 SSH-boundary assertion). On success
@@ -112,9 +112,16 @@ func RunShell(ctx context.Context, in *ClusterInputs) error {
 		// Remote shell. Always TTY — that's the point of `shell`.
 		return in.DispatchRemoteShell(ctx, in.On)
 	}
-	// Self-heal an expiring session and prefer the auto-refreshed token
-	// kubeconfig before dropping into the subshell.
-	env = preferForgeKubeconfig(ctx, in, env)
+	// Pin to this workspace's cluster, self-healing an expiring session on the way
+	// (issue #55). `shell` hands out an arbitrary command line, so there is no argv
+	// slot for --context and no env var kubectl reads for one — pin the FILE and say
+	// so when its current-context disagrees.
+	tgt, terr := resolveKubeTarget(in)
+	if terr != nil {
+		return terr
+	}
+	env = pinLocalKubeconfig(ctx, in, env, tgt, true)
+	noteUnpinnableContext(in, tgt, "shell")
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"
@@ -147,6 +154,15 @@ func RunExec(ctx context.Context, in *ClusterInputs, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Same workspace pin as shell and the passthroughs (issue #55) — `exec` reaches a
+	// cluster too. No credential refresh: exec never did one, and adding a round-trip
+	// to `roksbnkctl exec ls` would be a surprising cost for an unrelated command.
+	tgt, terr := resolveKubeTarget(in)
+	if terr != nil {
+		return terr
+	}
+	env = pinLocalKubeconfig(ctx, in, env, tgt, false)
+	noteUnpinnableContext(in, tgt, "exec")
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {
 		return fmt.Errorf("%s not found on PATH", argv[0])
@@ -628,16 +644,19 @@ func runPassthrough(ctx context.Context, in *ClusterInputs, tool string, args []
 	if err != nil {
 		return err
 	}
-	// A workspace-resolved kubeconfig is the most specific answer available, so it
-	// wins outright. Falling through to preferForgeKubeconfig here would replace it
-	// with the SHARED forge file and reintroduce the cross-workspace retarget.
-	if in.PinnedKubeconfig != "" {
-		env = setEnvKV(env, "KUBECONFIG", in.PinnedKubeconfig)
-	} else {
-		// Self-heal an expiring session and prefer the auto-refreshed token
-		// kubeconfig before exec'ing the wrapped tool (kubectl / oc).
-		env = preferForgeKubeconfig(ctx, in, env)
+	// Local exec: pin to this workspace's cluster (issue #55). Resolved HERE, after
+	// applyWorkspaceFlag has taken -w out of argv and after the remote branch above —
+	// see kubetarget.go for why both orderings matter. A caller who named a --context
+	// or --kubeconfig themselves is never overridden.
+	var tgt resolvedKubeTarget
+	if !userPinnedCluster(argv) {
+		if tgt, err = resolveKubeTarget(in); err != nil {
+			return err
+		}
 	}
+	env = pinLocalKubeconfig(ctx, in, env, tgt, true)
+	// Safe to prepend only now: the leading `--` (if any) is already stripped.
+	argv = injectKubeContext(argv, tgt.Context)
 	bin, err := exec.LookPath(tool)
 	if err != nil {
 		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)

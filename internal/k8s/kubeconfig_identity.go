@@ -108,6 +108,28 @@ func CanAddressCluster(data []byte, clusterID string) bool {
 	return ContextForCluster(data, clusterID) != ""
 }
 
+// KubeconfigCurrentContext returns a kubeconfig file's current-context, or ""
+// when the file is missing, unreadable, or sets none.
+//
+// Used where a context cannot be pinned explicitly — `shell` and `exec` hand the
+// user an arbitrary command line, and kubectl reads no environment variable for
+// the context — so the caller can at least SAY that the file it just pinned
+// selects a different cluster than the workspace does.
+func KubeconfigCurrentContext(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	cfg, err := clientcmd.Load(data)
+	if err != nil {
+		return ""
+	}
+	return cfg.CurrentContext
+}
+
 // KubeconfigCanAddressCluster is CanAddressCluster over a file path. A
 // missing or unreadable file is simply "no" — callers walk a candidate list.
 func KubeconfigCanAddressCluster(path, clusterID string) bool {
