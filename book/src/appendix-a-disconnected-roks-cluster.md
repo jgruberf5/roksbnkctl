@@ -115,7 +115,7 @@ graph TB
 
 | Component | Tested | Floor, and why |
 |---|---|---|
-| `roksbnkctl` / `roksbnkctl-tools-runner` | **v1.41.0** | **≥ v1.36.0** for `registry adopt` (B and D cannot work without it); **≥ v1.37.0** for `bnkforge unregister`; **≥ v1.39.0** for `cluster.vpc_cidr`; **≥ v1.40.1** fixes a variable validation that raised `Invalid index` on *every* terraform 1.10 plan. |
+| `roksbnkctl` / `roksbnkctl-tools-runner` | **v1.42.0** | **≥ v1.36.0** for `registry adopt` (B and D cannot work without it); **≥ v1.37.0** for `bnkforge unregister`; **≥ v1.39.0** for `cluster.vpc_cidr`; **≥ v1.40.1** fixes a variable validation that raised `Invalid index` on *every* terraform 1.10 plan; **≥ v1.42.0** retries the reachability gate, which matters most for topology **B** — it builds the VPC and joins the gateway in the same run as the install. |
 | terraform | **1.10.5** (shipped inside the runner) | **≥ 1.10**, enforced. Do not assume newer behaviour — 1.10 and 1.15 differ in ways that have shipped bugs here. |
 | OpenShift (ROKS) | **4.20** (recommended default) | `cluster.openshift_version: "4.20"` pins the minor; the latest patch within it is selected automatically. The end-to-end run recorded here was on **4.18.51** — the pipeline is version-agnostic, but that is the build the timings and screenshots come from. Check `ibmcloud ks versions` for what your account offers; IBM's own default moves ahead of this. |
 | Argo Workflows (Part 2) | **v4.0.8** | ≥ v3.4 for the emissary executor and `sidecars:`. |
@@ -824,7 +824,7 @@ Every step reuses one template:
     - name: rbk
       inputs: { parameters: [{ name: cmd }] }
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
         command: [sh, -ec]
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
@@ -837,7 +837,7 @@ Every step reuses one template:
 ```
 
 > For B and D the image is pulled from the mirror instead
-> (`<HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.41.0`), so the pipeline itself needs
+> (`<HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:v1.42.0`), so the pipeline itself needs
 > no public registry at run time. Pin by `@sha256:` digest in production.
 
 ### 2A — New VPC + connected cluster (Argo)
@@ -893,12 +893,12 @@ can reach the cluster. Workspace `-w bnkconn`, with the same `ROKSBNKCTL_GENERIC
 ```yaml
     - name: bnk-up
       container:
-        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+        image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
         args: ["roksbnkctl -w bnkconn bnk up --auto"]
         # …envFrom / env / volumeMounts as the rbk template…
       sidecars:
         - name: cwc-guard
-          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.41.0
+          image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0
           command: [sh, -ec]
           args:
             - |
