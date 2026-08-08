@@ -211,12 +211,21 @@ func runKubeconfig(cmd *cobra.Command, _ []string) error {
 	return orchestration.RunKubeconfig(cmd.Context(), clusterInputs())
 }
 
+// The passthroughs pin themselves to the -w workspace's cluster before dispatching,
+// so `kubectl`/`oc` address what the `k` verbs address. Without it the shared forge
+// kubeconfig makes two workspaces retarget each other, silently (issue #55).
 func runKubectlPassthrough(cmd *cobra.Command, args []string) error {
-	return orchestration.RunKubectlPassthrough(cmd.Context(), clusterInputs(), args)
+	args, pinned := pinPassthroughToWorkspaceCluster("kubectl", args)
+	in := clusterInputs()
+	in.PinnedKubeconfig = pinned
+	return orchestration.RunKubectlPassthrough(cmd.Context(), in, args)
 }
 
 func runOCPassthrough(cmd *cobra.Command, args []string) error {
-	return orchestration.RunOCPassthrough(cmd.Context(), clusterInputs(), args)
+	args, pinned := pinPassthroughToWorkspaceCluster("oc", args)
+	in := clusterInputs()
+	in.PinnedKubeconfig = pinned
+	return orchestration.RunOCPassthrough(cmd.Context(), in, args)
 }
 
 func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {

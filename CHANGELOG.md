@@ -4,6 +4,32 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Fixed
+
+- **`kubectl`/`oc` passthroughs ignored `-w` and could target the wrong cluster** ([#55](https://github.com/jgruberf5/roksbnkctl/issues/55)). The `k` verbs already resolve a workspace-scoped kubeconfig *and context*; the raw passthroughs did not. They took the ambient `KUBECONFIG` and then `preferForgeKubeconfig` replaced it with `~/.roksbnkctl/forge/kubeconfig.yaml` — a single file every workspace shares. Two workspaces on different clusters therefore retargeted each other, so `-w a kubectl get nodes` could list cluster **b**'s nodes, and `-w a kubectl delete …` could delete in **b**.
+
+  The failure was silent and the output believable, which is the worst combination — downstream harnesses had grown an explicit "verify the cluster identity before asserting" guard to work around it.
+
+  The passthroughs now resolve the same target the `k` verbs do, pinning both the kubeconfig and the `--context`. Deliberately conservative: a workspace with no known cluster keeps the historical ambient behaviour, and an explicit `--context`/`--kubeconfig` from the caller always wins.
+
+- **`bnkforge register` was destructive** ([#54](https://github.com/jgruberf5/roksbnkctl/issues/54)). It DELETEd any same-named cluster and re-POSTed it. Within one project that was called idempotent, but the **cluster id changed**, breaking references and discarding the scan history attached to it. Across projects it was worse: the lookup was project-scoped, so a cluster held by another project was invisible and the POST either moved it silently or failed with a bare exit 1 naming nothing.
+
+  Registration is now non-destructive: held by **this** project → updated in place, id preserved; held by **another** → refused, naming the owning project and its ids, with `--force` to take over deliberately; held by nobody → created.
+
+  Two safety properties are deliberate. The same-project lookup asks that project directly rather than trusting `/api/projects` to list it — a paginated or permission-filtered list that omitted the owner would otherwise send us straight to POST, over the top of the cluster this guard protects. And the in-place update falls back to the old delete-and-recreate when a Forge build has no `PUT` for the resource, so an older server keeps working rather than failing outright.
+
+  **The automatic registration that runs inside `cluster up` / `bnk up` never forces.** An unattended step silently taking another project's cluster is precisely the harm.
+
+- **`bnk up` spent ~13 minutes failing opaquely on a cluster that already had BNK** ([#53](https://github.com/jgruberf5/roksbnkctl/issues/53)). It could not distinguish "nothing is installed" from "something is installed that I do not own", so an empty workspace state planned a full install — `resources_to_add=64` over a cluster that already had all 64 — and ground on for about thirteen minutes before exiting 1 without naming the cause or the cluster, three times over with retries.
+
+  This is the normal shape when a cluster moves between deployments: BNK Forge gives each project its own deployment-scoped volume, so the second project legitimately has no state for the first's install.
+
+  `bnk up` now refuses **before planning**, naming the cluster, the namespace and the options. The check is narrow by construction — it fires only when the workspace's BNK state holds no managed resources *and* the cluster is actually serving a BNK install — so a workspace that owns an install converges exactly as before. If the cluster cannot be reached or its state cannot be read, the guard stays silent: the point is to turn a slow confusing failure into a fast clear one, not to add a new way to refuse.
+
+  This is the "minimum" the issue proposes. A full `bnk adopt`, mirroring `registry adopt`, is not included here — it needs to derive and validate a complete install record from a live cluster, which is a larger change than a guard and wants its own testing against real installs.
+
 ## v1.41.0 — 2026-08-07
 
 ### Added

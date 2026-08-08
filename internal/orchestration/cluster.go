@@ -60,6 +60,13 @@ type ClusterInputs struct {
 	// used only on the ssh:<target> backend dispatch path.
 	Bootstrap       bool
 	InsecureHostKey bool
+	// PinnedKubeconfig is a kubeconfig the CLI layer resolved for THIS workspace's
+	// cluster (internal/cli.workspaceKubeTarget). When set it wins over both the
+	// ambient lookup and the shared forge kubeconfig, because those are single files
+	// every workspace shares — which is how `-w a kubectl` ended up talking to
+	// workspace b's cluster (issue #55). Empty means "no workspace-specific answer",
+	// and the historical ambient behaviour applies.
+	PinnedKubeconfig string
 	// ExportKubeconfig / KubeconfigDownload / KubeconfigCluster are the
 	// `kubeconfig` subcommand flags (flagExportKubeconfig /
 	// flagKubeconfigDownload / flagKubeconfigCluster).
@@ -621,9 +628,16 @@ func runPassthrough(ctx context.Context, in *ClusterInputs, tool string, args []
 	if err != nil {
 		return err
 	}
-	// Self-heal an expiring session and prefer the auto-refreshed token
-	// kubeconfig before exec'ing the wrapped tool (kubectl / oc).
-	env = preferForgeKubeconfig(ctx, in, env)
+	// A workspace-resolved kubeconfig is the most specific answer available, so it
+	// wins outright. Falling through to preferForgeKubeconfig here would replace it
+	// with the SHARED forge file and reintroduce the cross-workspace retarget.
+	if in.PinnedKubeconfig != "" {
+		env = setEnvKV(env, "KUBECONFIG", in.PinnedKubeconfig)
+	} else {
+		// Self-heal an expiring session and prefer the auto-refreshed token
+		// kubeconfig before exec'ing the wrapped tool (kubectl / oc).
+		env = preferForgeKubeconfig(ctx, in, env)
+	}
 	bin, err := exec.LookPath(tool)
 	if err != nil {
 		return fmt.Errorf("%s not found on PATH (install it to use `roksbnkctl %s`)", tool, tool)

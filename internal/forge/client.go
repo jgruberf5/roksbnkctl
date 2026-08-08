@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -290,21 +291,140 @@ type RegisterRequest struct {
 	Kubeconfig    string `json:"kubeconfig"`
 }
 
-// RegisterCluster is idempotent: if a cluster with the same name already exists
-// in the project (from a prior run — a re-record or a re-triggered CI pipeline),
-// it is removed first so the fresh registration (with a current kubeconfig)
-// doesn't conflict. Returns the Forge cluster id.
-func (c *Client) RegisterCluster(ctx context.Context, projectID int, req RegisterRequest) (int, error) {
-	if existing, err := c.projectClusterID(ctx, projectID, req.Name); err == nil && existing != 0 {
-		dp := fmt.Sprintf("/api/k8s/clusters/%d", existing)
-		d, code, derr := c.do(ctx, http.MethodDelete, dp, nil)
+// ClusterOwner identifies the Forge project currently holding a cluster.
+type ClusterOwner struct {
+	ProjectID   int
+	ProjectName string
+	ClusterID   int
+}
+
+// FindClusterOwner looks for a cluster of this name across EVERY project, not just
+// the one being registered into.
+//
+// The project-scoped lookup cannot see a cluster held elsewhere, so registration used
+// to POST straight over the top of another project's cluster — either moving it
+// silently or failing with a bare exit 1 that named nothing (issue #54).
+//
+// Returns a zero ClusterOwner when nothing holds the name.
+func (c *Client) FindClusterOwner(ctx context.Context, name string) (ClusterOwner, error) {
+	data, code, err := c.do(ctx, http.MethodGet, "/api/projects", nil)
+	if err != nil {
+		return ClusterOwner{}, err
+	}
+	if !ok(code) {
+		return ClusterOwner{}, httpErr("GET", "/api/projects", code, data)
+	}
+	type proj struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	// Three shapes have to be told apart, and the third must NOT be mistaken for the
+	// second: {"projects":[…]}, a bare array, and a body that does not parse at all.
+	// `{"projects": null}` is a legitimate EMPTY answer — an unmarshal into a struct
+	// leaves the slice nil either way, so keying off nil-ness alone would call an
+	// empty Forge unparseable and fail every registration against it.
+	var probe map[string]json.RawMessage
+	var list []proj
+	switch {
+	case json.Unmarshal(data, &probe) == nil:
+		raw, has := probe["projects"]
+		if !has {
+			return ClusterOwner{}, fmt.Errorf("GET /api/projects returned an object with no \"projects\" key (%d bytes): %s",
+				len(data), truncateBody(data))
+		}
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return ClusterOwner{}, fmt.Errorf("GET /api/projects \"projects\" was not a list (%d bytes): %s",
+				len(data), truncateBody(data))
+		}
+	case json.Unmarshal(data, &list) == nil:
+		// bare array
+	default:
+		// An unparseable body must not read as "nobody owns it" — that is precisely
+		// the answer that lets a silent takeover through.
+		return ClusterOwner{}, fmt.Errorf("GET /api/projects returned an unrecognised body (%d bytes): %s",
+			len(data), truncateBody(data))
+	}
+	for _, pr := range list {
+		id, cerr := c.projectClusterID(ctx, pr.ID, name)
+		if cerr != nil {
+			// One unreadable project must not be reported as "unowned" — that would
+			// turn a lookup failure into a silent takeover. Surface it.
+			return ClusterOwner{}, fmt.Errorf("checking project %q (%d) for cluster %q: %w", pr.Name, pr.ID, name, cerr)
+		}
+		if id != 0 {
+			return ClusterOwner{ProjectID: pr.ID, ProjectName: pr.Name, ClusterID: id}, nil
+		}
+	}
+	return ClusterOwner{}, nil
+}
+
+// ErrClusterOwnedElsewhere is returned when the cluster is registered to a DIFFERENT
+// Forge project. Callers surface it as a refusal; --force overrides.
+var ErrClusterOwnedElsewhere = errors.New("cluster is registered to another BNK Forge project")
+
+// RegisterCluster records a cluster with a Forge project, NON-DESTRUCTIVELY.
+//
+// It used to DELETE any same-named cluster and re-POST it. That was described as
+// idempotent, and within one project it very nearly is — except the cluster id
+// CHANGES, so anything holding a reference breaks, and any scan or history attached
+// to the old id is discarded. Across projects it was worse: the project-scoped lookup
+// could not see a cluster held elsewhere, so the POST either moved it silently or
+// failed with a bare exit 1 (issue #54).
+//
+// Now:
+//   - held by THIS project  → update in place, preserving the id;
+//   - held by ANOTHER       → refuse with ErrClusterOwnedElsewhere unless force;
+//   - held by nobody        → create.
+//
+// The in-place update is best-effort: if the Forge build has no PUT for this
+// resource, it falls back to the historical delete-and-recreate rather than failing a
+// registration that used to work. The cross-project refusal has no such caveat — it
+// needs no new endpoint, only the lookup above.
+func (c *Client) RegisterCluster(ctx context.Context, projectID int, req RegisterRequest, force bool) (int, error) {
+	// Ask THIS project directly first. It is the authoritative, single-request answer
+	// for the common case, and it does not depend on /api/projects listing anything —
+	// a paginated or permission-filtered project list that omitted the owner would
+	// otherwise send us straight to POST, over the top of the very cluster this guard
+	// exists to protect.
+	owner := ClusterOwner{ProjectID: projectID}
+	if id, oerr := c.projectClusterID(ctx, projectID, req.Name); oerr == nil && id != 0 {
+		owner.ClusterID = id
+	} else {
+		// Not ours. Only now is the cross-project scan worth its cost.
+		found, ferr := c.FindClusterOwner(ctx, req.Name)
+		if ferr != nil {
+			return 0, ferr
+		}
+		owner = found
+	}
+	switch {
+	case owner.ClusterID != 0 && owner.ProjectID != projectID && !force:
+		return 0, fmt.Errorf("%w: %q is held by project %q (id %d, cluster id %d). "+
+			"Re-registering would move it, changing its cluster id and removing it from that project's view. "+
+			"Pass --force to take it over deliberately, or unregister it there first",
+			ErrClusterOwnedElsewhere, req.Name, owner.ProjectName, owner.ProjectID, owner.ClusterID)
+
+	case owner.ClusterID != 0:
+		// Ours (or a forced takeover): update in place so the id survives.
+		up := fmt.Sprintf("/api/k8s/clusters/%d", owner.ClusterID)
+		// The PUT body is deliberately ignored: the id we care about is the one we
+		// already hold, and the point of this branch is that it does not change.
+		_, code, uerr := c.do(ctx, http.MethodPut, up, req)
+		if uerr == nil && ok(code) {
+			return owner.ClusterID, nil
+		}
+		// No PUT on this build — fall back to the old behaviour rather than break a
+		// registration that used to succeed. The id changes; that is the cost.
+		dp := fmt.Sprintf("/api/k8s/clusters/%d", owner.ClusterID)
+		d, code2, derr := c.do(ctx, http.MethodDelete, dp, nil)
 		if derr != nil {
 			return 0, derr
 		}
-		if !ok(code) && code != http.StatusNotFound {
-			return 0, httpErr("DELETE", dp, code, d)
+		if !ok(code2) && code2 != http.StatusNotFound {
+			return 0, httpErr("DELETE", dp, code2, d)
 		}
 	}
+
 	p := fmt.Sprintf("/api/projects/%d/k8s/clusters", projectID)
 	d, code, err := c.do(ctx, http.MethodPost, p, req)
 	if err != nil {

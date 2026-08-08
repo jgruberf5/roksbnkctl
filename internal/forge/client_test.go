@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,15 +14,20 @@ import (
 // mockForge is a minimal stateful BNK Forge v3 API for tests. Preseed
 // credTemplates / projects / clusters to exercise the find-existing paths.
 type mockForge struct {
-	token           string
-	credTemplates   []map[string]any
-	projects        []map[string]any
-	clusters        []map[string]any // registered clusters (for idempotency)
-	deletedIDs      []string         // cluster ids DELETEd
-	nextID          int
-	registerBody    map[string]any // captured POST body of the last cluster register
-	registerPath    string
-	projectPlatform map[string]any // captured PUT body of the project platform update
+	token         string
+	credTemplates []map[string]any
+	projects      []map[string]any
+	clusters      []map[string]any // registered clusters (for idempotency)
+	deletedIDs    []string         // cluster ids DELETEd
+	putIDs        []string         // cluster ids updated in place (PUT)
+	putStatus     int              // status for PUT /api/k8s/clusters/{id}; 0 => 200
+	// clustersByProject lets a test model a cluster held by ANOTHER project. When
+	// set it takes precedence over `clusters` for GET /api/projects/{id}/k8s/clusters.
+	clustersByProject map[string][]map[string]any
+	nextID            int
+	registerBody      map[string]any // captured POST body of the last cluster register
+	registerPath      string
+	projectPlatform   map[string]any // captured PUT body of the project platform update
 }
 
 func (m *mockForge) id() int { m.nextID++; return m.nextID }
@@ -80,6 +86,11 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/k8s/clusters") {
 			if r.Method == http.MethodGet {
+				if m.clustersByProject != nil {
+					pid := strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/k8s/clusters"), "/api/projects/")
+					writeJSON(w, 200, map[string]any{"clusters": m.clustersByProject[pid]})
+					return
+				}
 				writeJSON(w, 200, map[string]any{"clusters": m.clusters})
 				return
 			}
@@ -99,6 +110,16 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 	})
 	// DELETE /api/k8s/clusters/{id} — used by the idempotent re-register.
 	mux.HandleFunc("/api/k8s/clusters/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			id := strings.TrimPrefix(r.URL.Path, "/api/k8s/clusters/")
+			if m.putStatus != 0 && m.putStatus != 200 {
+				w.WriteHeader(m.putStatus) // model a build with no PUT for this resource
+				return
+			}
+			m.putIDs = append(m.putIDs, id)
+			writeJSON(w, 200, map[string]any{"id": id})
+			return
+		}
 		if r.Method != http.MethodDelete {
 			writeJSON(w, 200, map[string]any{})
 			return
@@ -152,7 +173,7 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 		Name: "ws", Provider: "IBM", CloudProvider: "ibm",
 		ClusterID: "cid", Region: "eu-gb", TemplateID: tid,
 		Kubeconfig: "YXBpVmVyc2lvbjp2MQ==", // base64 — Forge requires it in the body
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -200,8 +221,11 @@ func TestEnsureReusesExisting(t *testing.T) {
 	}
 }
 
-func TestRegisterIdempotent_ReplacesExisting(t *testing.T) {
-	// A cluster named "ws" is already registered in the project (a prior run).
+// Re-registering a cluster THIS project already holds must update it in place and
+// keep its id. The old behaviour DELETEd and re-POSTed, which was called idempotent
+// but changed the cluster id — breaking anything holding a reference and discarding
+// the scan history attached to it (issue #54).
+func TestRegisterSameProject_UpdatesInPlaceAndKeepsID(t *testing.T) {
 	m := &mockForge{token: "t", nextID: 40, clusters: []map[string]any{{"id": 5, "name": "ws"}}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
@@ -210,15 +234,117 @@ func TestRegisterIdempotent_ReplacesExisting(t *testing.T) {
 
 	fid, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
 		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
+	if fid != 5 {
+		t.Errorf("the cluster id must survive a re-register, got %d want 5", fid)
+	}
+	if len(m.deletedIDs) != 0 {
+		t.Errorf("re-registering our own cluster must not DELETE it, deleted: %v", m.deletedIDs)
+	}
+	if len(m.putIDs) != 1 || m.putIDs[0] != "5" {
+		t.Errorf("expected an in-place PUT of cluster 5, got %v", m.putIDs)
+	}
+}
+
+// A Forge build with no PUT for this resource must still register — falling back to
+// the historical delete-and-recreate rather than failing something that used to work.
+// The id changes; that is the cost of the older server.
+func TestRegisterSameProject_FallsBackWhenNoPUT(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 40, putStatus: 405,
+		clusters: []map[string]any{{"id": 5, "name": "ws"}}}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	fid, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
+		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
+	}, false)
+	if err != nil {
+		t.Fatalf("register should fall back, not fail: %v", err)
+	}
 	if len(m.deletedIDs) != 1 || m.deletedIDs[0] != "5" {
-		t.Errorf("expected the stale cluster id 5 to be DELETEd first, got %v", m.deletedIDs)
+		t.Errorf("expected the DELETE fallback, got %v", m.deletedIDs)
 	}
 	if fid == 0 || fid == 5 {
-		t.Errorf("expected a fresh cluster id, got %d", fid)
+		t.Errorf("the fallback recreates, so a fresh id is expected, got %d", fid)
+	}
+}
+
+// The dangerous case: a cluster held by ANOTHER project. Registering used to POST
+// straight over it — moving it silently, or failing with a bare exit 1 that named
+// nothing. It must refuse, and the refusal must name the owner.
+func TestRegisterOtherProject_RefusedWithoutForce(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 40,
+		projects: []map[string]any{{"id": 93, "name": "owner-proj"}, {"id": 96, "name": "mine"}},
+		clustersByProject: map[string][]map[string]any{
+			"93": {{"id": 35, "name": "ws"}},
+			"96": {},
+		}}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	_, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
+		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
+	}, false)
+	if err == nil {
+		t.Fatal("registering a cluster held by another project must be refused")
+	}
+	if !errors.Is(err, ErrClusterOwnedElsewhere) {
+		t.Errorf("the refusal must be identifiable by callers: %v", err)
+	}
+	for _, want := range []string{"owner-proj", "93"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name the owning project (%q missing): %v", want, err)
+		}
+	}
+	if len(m.deletedIDs) != 0 {
+		t.Errorf("a refused registration must not have deleted anything: %v", m.deletedIDs)
+	}
+}
+
+// --force is the deliberate takeover. It must work, so the refusal is a speed bump
+// rather than a dead end.
+func TestRegisterOtherProject_ForceTakesOver(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 40,
+		projects: []map[string]any{{"id": 93, "name": "owner-proj"}, {"id": 96, "name": "mine"}},
+		clustersByProject: map[string][]map[string]any{
+			"93": {{"id": 35, "name": "ws"}},
+			"96": {},
+		}}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	if _, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
+		Name: "ws", Provider: "IBM", CloudProvider: "ibm", ClusterID: "cid", Region: "eu-gb", Kubeconfig: "eA==",
+	}, true); err != nil {
+		t.Fatalf("--force must allow the takeover: %v", err)
+	}
+}
+
+// An empty Forge answers {"projects": null}. That is "no projects", not a broken
+// body — reading it as unparseable would fail every registration against a fresh
+// server.
+func TestFindClusterOwner_EmptyProjectsIsNotAnError(t *testing.T) {
+	m := &mockForge{token: "t"}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := New(srv.URL, false)
+	c.Token = "t"
+
+	owner, err := c.FindClusterOwner(context.Background(), "ws")
+	if err != nil {
+		t.Fatalf("an empty project list must not be an error: %v", err)
+	}
+	if owner.ClusterID != 0 {
+		t.Errorf("nothing should own the cluster, got %+v", owner)
 	}
 }
 
