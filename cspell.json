@@ -263,6 +263,8 @@
     "prefixlen",
     "preflight",
     "unroutable",
+    "stabilises",
+    "govulncheck",
     "preflights",
     "preinstalls",
     "prereq",

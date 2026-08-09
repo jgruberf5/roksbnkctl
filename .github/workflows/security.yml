@@ -11,7 +11,7 @@ name: Security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'bnk-*']   # main is the trunk; bnk-<major>-<minor> are the release lines
   schedule:
     - cron: '0 7 * * 1' # Mondays 07:00 UTC
   workflow_dispatch:
