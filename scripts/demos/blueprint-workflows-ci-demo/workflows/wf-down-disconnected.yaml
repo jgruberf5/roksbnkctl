@@ -1,0 +1,85 @@
+# wf-down-disconnected.yaml — tear down the DISCONNECTED workspace, as a workflow.
+#
+# The inverse of wf-new-cluster-disconnected.yaml / wf-existing-disconnected.yaml, and it runs the same
+# way everything else here does: `argo submit`. Teardown used to be `kubectl run`
+# pods driven from the operator's laptop, which meant the half of the lifecycle that
+# actually costs money was the half no pipeline could run.
+#
+#   argo submit -n bnk-ci workflows/wf-down-disconnected.yaml                  # BNK only
+#   argo submit -n bnk-ci workflows/wf-down-disconnected.yaml -p phase=all     # everything
+#
+# ORDER IS LOAD-BEARING. `tgw disconnect` sits BETWEEN `bnk down` and `cluster down`:
+# cluster down refuses while a gateway connection exists, because the connection pins
+# the VPC's CRN and the VPC delete would fail. Disconnecting removes only THIS
+# cluster's connection — the shared gateway and every other attachment stay.
+#
+# WHAT IT WILL NOT DO. It cannot destroy the substrate `bootstrap` created — the Argo
+# VSI is the host this workflow runs on, and Harbor and the services VPC are what it
+# reaches the world through. A pod cannot outlive the node it is scheduled on. Use
+# `./blueprint-workflows-ci-demo.sh unbootstrap` for that, from outside the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-down-disco-
+  namespace: bnk-ci
+spec:
+  entrypoint: down
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      # bnk  — remove BNK, LEAVE the cluster up. This is the step required between a
+      #        build variant and its reuse variant: the adopting workspace has no
+      #        state for the install already on the cluster, so `bnk up` refuses.
+      # all  — bnk down, then release the gateway connection, then destroy the cluster.
+      - name: phase
+        value: "bnk"
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: down
+      steps:
+        # init is re-run FIRST so the config is rebuilt from the SAME environment the
+        # apply used. It matters most for the transit gateway: without it the restored
+        # config comes back with create:true and terraform tries to DELETE a gateway
+        # the mirror, the FLP and other VPCs are still attached to.
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w bnkdisco --non-interactive --override-from-env" }]
+        - - name: bnk-down
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnkdisco bnk down --auto" }]
+        - - name: tgw-disconnect
+            template: rbk
+            when: "{{workflow.parameters.phase}} == all"
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnkdisco tgw disconnect --auto" }]
+        - - name: cluster-down
+            template: rbk
+            when: "{{workflow.parameters.phase}} == all"
+            arguments:
+              parameters: [{ name: cmd, value: "-w bnkdisco cluster down --auto" }]
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+        env:
+          # The registry values are INHERITED here, unlike the connected variant which
+          # blanks them. `bnk down` reads the mirror record, and the rebuilt config
+          # must match the one the apply used or terraform destroys from the wrong
+          # shape. Everything needed is already in bnk-env + bnk-secrets.
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

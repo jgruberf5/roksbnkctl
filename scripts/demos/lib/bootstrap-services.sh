@@ -78,6 +78,57 @@ HARBOR_IMAGE="${HARBOR_IMAGE:-$(ibmcloud is images --visibility public --output 
 [[ -n "$HARBOR_IMAGE" && "$HARBOR_IMAGE" != null ]] || { echo "no available Ubuntu 22.04 image found" >&2; exit 1; }
 say "boot image $HARBOR_IMAGE"
 
+# stale_state — drop a recorded id whose resource no longer exists.
+#
+# This script is idempotent by remembering ids in $BOOTSTRAP_STATE and skipping
+# creation when the file is present. That is only sound if the id still resolves.
+# After a teardown the files survive, so a re-bootstrap reuses ids for things that
+# were deleted — and the failure lands somewhere else entirely: a stale svc_conn_id
+# meant the connection was never re-created, and the run died 4 minutes later at
+# "services-VPC TGW connection never reached 'attached'", pointing at the gateway
+# rather than at a leftover file.
+#
+# The VPC block already did this check inline; nothing else did.
+#
+#   stale_state <state-file> <command that resolves the id…>
+stale_state(){
+  local what="$1" f="$BOOTSTRAP_STATE/$1"; shift
+  [[ -f "$f" ]] || return 0
+  local id; id="$(cat "$f" 2>/dev/null)"
+  [[ -n "$id" ]] || { rm -f "$f"; return 0; }
+  if ! "$@" "$id" >/dev/null 2>&1; then
+    say "recorded $what ($id) no longer exists — will recreate"
+    rm -f "$f"
+  fi
+}
+
+# Recorded ADDRESSES go stale the same way ids do, and this one is worse: the
+# floating-IP block skips reservation when the file exists, so a stale address means
+# Harbor comes up with NO public IP at all. The run then fails at "Harbor did not come
+# up at https://<the address that no longer belongs to anyone>", which reads like a
+# slow cloud-init rather than a missing IP.
+stale_addr(){
+  local what="$1" f="$BOOTSTRAP_STATE/$1"
+  [[ -f "$f" ]] || return 0
+  local a; a="$(cat "$f" 2>/dev/null)"
+  [[ -n "$a" ]] || { rm -f "$f"; return 0; }
+  ibmcloud is floating-ips --output json 2>/dev/null | jq -e --arg a "$a" 'any(.[]?; .address==$a)' >/dev/null 2>&1 \
+    || { say "recorded $what ($a) is not a reserved floating ip any more — will re-reserve"; rm -f "$f"; }
+}
+stale_addr harbor_fip
+
+stale_state subnet_id      ibmcloud is subnet
+stale_state pgw_id         ibmcloud is public-gateway
+stale_state harbor_vsi_id  ibmcloud is instance
+# The gateway connection is checked against the GATEWAY (an id, never a name —
+# `ibmcloud tg connections` handed a name fails with "The gateway was not found").
+if [[ -f "$BOOTSTRAP_STATE/svc_conn_id" ]]; then
+  _cid="$(cat "$BOOTSTRAP_STATE/svc_conn_id")"
+  ibmcloud tg connections "$TGW_ID" --output json 2>/dev/null \
+    | jq -e --arg c "$_cid" 'any(.[]?; .id==$c)' >/dev/null 2>&1 \
+    || { say "recorded svc_conn_id ($_cid) is not on $TGW_NAME — will re-attach"; rm -f "$BOOTSTRAP_STATE/svc_conn_id"; }
+fi
+
 # ── Services VPC + subnet + public gateway + SG ──────────────────────────────
 if [[ -f "$BOOTSTRAP_STATE/svc_vpc_id" ]]; then
   SVC_VPC_ID="$(cat "$BOOTSTRAP_STATE/svc_vpc_id")"

@@ -58,149 +58,57 @@ ALL_WORKFLOWS=(far-mirror flp-vsi new-cluster new-cluster-disconnected existing-
 # Adopted clusters are never destroyed — existing-* registered them, so roksbnkctl
 # does not own them.
 teardown(){
-  local -a TEARDOWN_ONLY=("$@")
+  local -a ONLY=("$@")
   [[ -n "${IBMCLOUD_API_KEY:-}" ]] || { [[ -f "$HERE/.env" ]] && { set -a; . "$HERE/.env"; set +a; }; }
   [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY (or provide .env) to tear down"
   secret "$IBMCLOUD_API_KEY" "${ROKSBNKCTL_GENERIC_PASSWORD:-}" "${BNK_FORGE_PASSWORD:-}" "${ROKSBNKCTL_BIGIP_PASSWORD:-}"
   banner "TEARDOWN — blueprint workflows"
-  say "Each down destroys from the workspace state on the PVC — which is why the pod MUST"
-  say "mount it, and why the PVC is not an emptyDir. Without the mount there is no"
+  say "Teardown runs as WORKFLOWS, the same way everything else here does — so it is"
+  say "visible in the Argo UI, re-runnable, and executable by a pipeline rather than"
+  say "only from an operator's laptop."
+  say ""
+  say "Each down destroys from the workspace state on the PVC, which is why the pod"
+  say "MUST mount it and why the PVC is not an emptyDir: without it there is no"
   say "terraform state to destroy from and no mirror record for bnk down to read."
-  say "init is re-run first so the config is rebuilt from the SAME environment the apply"
-  say "used. That matters most for the transit gateway: without it the restored config"
-  say "would come back with create:true and terraform would try to DELETE a gateway the"
-  say "mirror, the FLP and other VPCs are still attached to."
-  # A pod that mirrors the workflow container exactly: same image, same PVC, same env
-  # carriers. Anything less cannot tear down what the workflows built.
-  local overrides
-  overrides=$(cat <<JSON
-{"spec":{"serviceAccountName":"bnk-runner",
- "containers":[{"name":"teardown","image":"$RUNNER_IMAGE","workingDir":"/work",
-  "command":["sh","-ec"],"args":["CMDS"],
-  "envFrom":[{"configMapRef":{"name":"bnk-env"}},{"secretRef":{"name":"bnk-secrets"}}],
-  "env":[{"name":"ROKSBNKCTL_HOME","value":"/work/.roksbnkctl"},{"name":"HOME","value":"/home/runner"}WSENV],
-  "volumeMounts":[{"name":"work","mountPath":"/work"}]}],
- "volumes":[{"name":"work","persistentVolumeClaim":{"claimName":"bnk-work"}}]}}
-JSON
-)
-  # One workspace per cluster (see the README), so teardown walks each in turn.
-  # `tgw disconnect` comes BETWEEN bnk down and cluster down: cluster down refuses
-  # while a connection exists, because the connection pins the VPC's CRN and the VPC
-  # delete would fail. Disconnecting only removes THIS cluster's connection — the
-  # shared gateway and everyone else's connections stay, which is what the
-  # disconnected pair needs since it adopted a gateway it does not own.
-  for pair in "bnkdisco:bnk down --auto" "bnkdisco:tgw disconnect --auto" "bnkdisco:cluster down --auto" \
-              "bnkconn:bnk down --auto"  "bnkconn:tgw disconnect --auto"  "bnkconn:cluster down --auto" \
-              "flp:flp down --auto"; do
-    ws="${pair%%:*}"; verb="${pair##*:}"
-    # Optional workspace filter: `teardown bnkdisco`. Running all six workflows means
-    # TWO clusters and therefore two prefixes, and teardown rebuilds each workspace's
-    # config from the CURRENT bnk-env — so each phase must be torn down with the
-    # environment it was built with, one at a time.
-    if (( ${#TEARDOWN_ONLY[@]} )); then
+
+  # Disconnected first: it is the one attached to the SHARED gateway, and leaving it
+  # attached blocks nothing else but costs the most to forget.
+  local -a plan=(bnkdisco:down-disconnected bnkconn:down-connected flp:down-flp-vsi)
+  local rc=0 pair ws wf
+  for pair in "${plan[@]}"; do
+    ws="${pair%%:*}"; wf="${pair##*:}"
+    if (( ${#ONLY[@]} )); then
       local want=0 w
-      for w in "${TEARDOWN_ONLY[@]}"; do [[ "$w" == "$ws" ]] && want=1; done
+      for w in "${ONLY[@]}"; do [[ "$w" == "$ws" ]] && want=1; done
       (( want )) || continue
     fi
-    # Carry the SAME env the workflow pinned in its own container. bnk-env alone is
-    # NOT what the apply ran with: each workflow overrides some settings in its `env:`
-    # block, and those never reach the ConfigMap. Re-running `init --override-from-env`
-    # with only bnk-env therefore REWRITES the workspace config into something the apply
-    # never used. That is not theoretical — flp down failed with "no cluster-outputs.json
-    # was found for workspace flp" because ROKSBNKCTL_FLP_MODE=vsi lives only in
-    # wf-flp-vsi.yaml, so the rebuilt config lost the standalone-VSI path entirely.
-    # NOTE: `kubectl run --env` is useless here — --overrides replaces the whole
-    # container spec, so the pins must be injected INTO the JSON below.
-    local wsenv=""
-    case "$ws" in
-      flp)
-        wsenv=',{"name":"ROKSBNKCTL_FLP_MODE","value":"vsi"},{"name":"ROKSBNKCTL_CLUSTER_CREATE","value":"false"},{"name":"ROKSBNKCTL_CLUSTER_NAME","value":"none"}' ;;
-      bnkconn)
-        # the connected pair deliberately has NO registry; see the workspace split in the README
-        wsenv=',{"name":"ROKSBNKCTL_GENERIC_HOST","value":""},{"name":"ROKSBNKCTL_GENERIC_CA_B64","value":""},{"name":"ROKSBNKCTL_GENERIC_USERNAME","value":""},{"name":"ROKSBNKCTL_GENERIC_PASSWORD","value":""}' ;;
-    esac
-    local overrides_ws="${overrides//WSENV/$wsenv}"
-    say "── roksbnkctl -w $ws $verb"
-    show "roksbnkctl -w $ws init --non-interactive --override-from-env && roksbnkctl -w $ws $verb"
-    [[ "$DRY_RUN" == "1" ]] && continue
-    kubectl -n "$ARGO_NAMESPACE" run "teardown-$ws-$RANDOM" --rm -i --restart=Never \
-      --image="$RUNNER_IMAGE" \
-      --overrides="${overrides_ws//CMDS/roksbnkctl init -w $ws --non-interactive --override-from-env; roksbnkctl -w $ws $verb}" \
-      2>&1 | tail -20
+    say "── $ws  ($wf)"
+    # phase=all: bnk down → tgw disconnect → cluster down. The FLP workflow takes no
+    # phase — there is only one thing to destroy.
+    if [[ "$wf" == down-flp-vsi ]]; then
+      submit_wf "$wf" || rc=1
+    else
+      submit_wf "$wf" -p phase=all || rc=1
+    fi
   done
-  say "The substrate (namespace, PVC, env carriers) is left in place — delete it with:"
-  say "  kubectl delete ns $ARGO_NAMESPACE"
-  ok "teardown complete — any ADOPTED cluster was left running"
+
+  echo >&2
+  say "What teardown does NOT remove — the substrate `bootstrap` created:"
+  say "  the Argo VSI (the host these very workflows run on), Harbor, the services"
+  say "  VPC and its gateway attachment. A workflow cannot destroy the node it is"
+  say "  scheduled on, so that step has to come from OUTSIDE the cluster:"
+  say "      ./blueprint-workflows-ci-demo.sh unbootstrap"
+  (( rc == 0 )) && ok "teardown complete — any ADOPTED cluster was left running" \
+                || echo "${R}${B}teardown had failures — see the workflows above.${N}" >&2
+  return $rc
 }
-# ============================ bnk-down =======================================
-# Remove BNK from a workspace's cluster, LEAVING THE CLUSTER UP.
-#
-# This is the step the ALL_WORKFLOWS comment above requires and nothing provided:
-# the reuse variants adopt the cluster the build variants just made, "with BNK
-# removed between them by `roksbnkctl bnk down`". Written as prose, it was not
-# runnable — `teardown bnkconn` is the only thing close, and it also runs
-# `tgw disconnect` and `cluster down`, destroying the very cluster the next
-# workflow is supposed to adopt.
-#
-# Skipping it is not subtle any more: `bnk up` from the adopting workspace refuses
-# immediately, because that workspace has no state for the install already on the
-# cluster (issue #53). Before that guard existed it planned a full re-install over
-# a working one and spent ~13 minutes failing.
-#
-#   ./blueprint-workflows-ci-demo.sh bnk-down bnkconn
-bnk_down(){
-  local ws="${1:?usage: bnk-down <workspace>   (e.g. bnkconn, bnkdisco)}"
+
+[[ "${1:-}" == "unbootstrap" ]] && {
+  shift
+  # Deliberately NOT a workflow: it deletes the Argo VSI those workflows run on.
   [[ -n "${IBMCLOUD_API_KEY:-}" ]] || { [[ -f "$HERE/.env" ]] && { set -a; . "$HERE/.env"; set +a; }; }
-  [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY (or provide .env)"
-  secret "$IBMCLOUD_API_KEY" "${ROKSBNKCTL_GENERIC_PASSWORD:-}" "${BNK_FORGE_PASSWORD:-}" "${ROKSBNKCTL_BIGIP_PASSWORD:-}"
-  banner "BNK DOWN — $ws (the cluster stays up)"
-  local wsenv=""
-  [[ "$ws" == bnkconn ]] && wsenv=',{"name":"ROKSBNKCTL_REGISTRY_TARGET","value":""},{"name":"ROKSBNKCTL_GENERIC_HOST","value":""},{"name":"ROKSBNKCTL_GENERIC_CA_B64","value":""},{"name":"ROKSBNKCTL_GENERIC_USERNAME","value":""},{"name":"ROKSBNKCTL_GENERIC_PASSWORD","value":""}'
-  local ov
-  ov=$(cat <<JSON
-{"spec":{"serviceAccountName":"bnk-runner",
- "containers":[{"name":"bnkdown","image":"$RUNNER_IMAGE","workingDir":"/work",
-  "command":["sh","-ec"],"args":["roksbnkctl init -w $ws --non-interactive --override-from-env; roksbnkctl -w $ws bnk down --auto"],
-  "envFrom":[{"configMapRef":{"name":"bnk-env"}},{"secretRef":{"name":"bnk-secrets"}}],
-  "env":[{"name":"ROKSBNKCTL_HOME","value":"/work/.roksbnkctl"},{"name":"HOME","value":"/home/runner"}$wsenv],
-  "volumeMounts":[{"name":"work","mountPath":"/work"}]}],
- "volumes":[{"name":"work","persistentVolumeClaim":{"claimName":"bnk-work"}}]}}
-JSON
-)
-  show "roksbnkctl -w $ws bnk down --auto   # cluster, VPC and gateway all stay"
-  [[ "$DRY_RUN" == "1" ]] && return 0
-  # `| tail` would mask the pod's exit code behind tail's, which is exactly the
-  # mistake this script already made once with `argo submit --wait`: it printed a ✓
-  # over a terraform run that had died on a state lock. PIPESTATUS keeps the real one.
-  kubectl -n "$ARGO_NAMESPACE" run "bnkdown-$ws-$RANDOM" --rm -i --restart=Never \
-    --image="$RUNNER_IMAGE" --overrides="$ov" 2>&1 | tail -25
-  local rc=${PIPESTATUS[0]}
-  if (( rc != 0 )); then
-    echo "${R}${B}bnk down failed for $ws (exit $rc) — BNK is still installed.${N}" >&2
-    echo "  If terraform reported 'Error acquiring the state lock', a previous run was" >&2
-    echo "  interrupted and left a lock behind. Clear it with:" >&2
-    echo "    ./blueprint-workflows-ci-demo.sh unlock $ws" >&2
-    return 1
-  fi
-  ok "BNK removed from $ws's cluster — it is now adoptable by an existing-* workflow"
-}
-# Clear a terraform state lock left by an interrupted run.
-#
-# The state lives on the bnk-work PVC, so there is no host path to delete the lock
-# file from — it needs a pod that mounts the same claim. An interrupted `bnk down`
-# (a killed job, a dropped tunnel) leaves .terraform.tfstate.lock.info behind and
-# every later run dies with "Error acquiring the state lock".
-unlock_ws(){
-  local ws="${1:?usage: unlock <workspace>}"
-  banner "UNLOCK — $ws"
-  kubectl -n "$ARGO_NAMESPACE" run "unlock-$ws-$RANDOM" --rm -i --restart=Never \
-    --image=busybox:1.36 --overrides="{\"spec\":{\"containers\":[{\"name\":\"c\",\"image\":\"busybox:1.36\",\"command\":[\"sh\",\"-c\",\"find /work/.roksbnkctl/$ws -name '*.lock.info' -print -delete 2>/dev/null; echo done\"],\"volumeMounts\":[{\"name\":\"work\",\"mountPath\":\"/work\"}]}],\"volumes\":[{\"name\":\"work\",\"persistentVolumeClaim\":{\"claimName\":\"bnk-work\"}}]}}" 2>&1 | tail -6
-  ok "locks cleared for $ws"
-}
-[[ "${1:-}" == "unlock" ]] && { shift; unlock_ws "$@"; exit 0; }
-
-[[ "${1:-}" == "bnk-down" ]] && { shift; bnk_down "$@"; exit 0; }
-
+  TGW_NAME="${ROKSBNKCTL_TRANSIT_GATEWAY_NAME:-${TGW_NAME:-bnkci-testing}}" \
+    bash "$HERE/../lib/unbootstrap.sh" "$@"; exit $?; }
 [[ "${1:-}" == "teardown" ]] && { shift; teardown "$@"; exit 0; }
 
 # ============================ Phase 0: preflight =============================

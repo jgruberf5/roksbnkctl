@@ -1,0 +1,55 @@
+# wf-down-flp-vsi.yaml — destroy the standalone F5 License Proxy VSI.
+#
+# The inverse of wf-flp-vsi.yaml.
+#
+#   argo submit -n bnk-ci workflows/wf-down-flp-vsi.yaml
+#
+# The three env pins below are NOT optional. ROKSBNKCTL_FLP_MODE=vsi lives only in
+# wf-flp-vsi.yaml — it never reaches bnk-env — so an init that omits it rebuilds the
+# workspace WITHOUT the standalone-VSI path and `flp down` then fails with
+# "no cluster-outputs.json was found for workspace flp", looking for a cluster this
+# workspace never had. The teardown that this workflow replaces learned that the
+# hard way.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-down-flp-
+  namespace: bnk-ci
+spec:
+  entrypoint: down
+  serviceAccountName: bnk-runner
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: down
+      steps:
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w flp --non-interactive --override-from-env" }]
+        - - name: flp-down
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w flp flp down --auto" }]
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: PLACEHOLDER_RUNNER_IMAGE
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        envFrom:
+          - configMapRef: { name: bnk-env }
+          - secretRef:    { name: bnk-secrets }
+        env:
+          - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
+          - { name: ROKSBNKCTL_CLUSTER_NAME,   value: "none" }
+          - { name: ROKSBNKCTL_FLP_MODE,       value: "vsi" }
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }
