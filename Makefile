@@ -126,10 +126,19 @@ goreleaser-check:
 # .goreleaser.yml, produces archives + checksums in dist/, validates the
 # release.extra_files paths (incl. the PDF book artifact). Does NOT
 # tag, push, or publish — that's the integrator's tag-cut step.
+#
+# ROKSBNKCTL_RELEASE_LINE is what release.yml computes from branch ancestry;
+# a local snapshot has no such context, so derive it from the checked-out
+# branch. It only affects the stamped `cli.Line`, and a snapshot is never
+# published — but leaving it empty would make the snapshot binary behave
+# differently from the released one, which is the sort of difference a
+# dry-run exists to avoid.
+RELEASE_LINE ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null | sed -n 's/^\(main\|bnk-[0-9][0-9-]*\)$$/\1/p')
 goreleaser-snapshot:
 	docker run --rm \
 	    -v $(CURDIR):/work \
 	    -w /work \
+	    -e ROKSBNKCTL_RELEASE_LINE="$(or $(RELEASE_LINE),snapshot)" \
 	    $(GORELEASER_IMAGE) release --snapshot --clean
 
 # pages-assure: confirm GitHub Pages is enabled for this repo (publishing

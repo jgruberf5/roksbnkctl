@@ -1,5 +1,52 @@
 # Contributing to roksbnkctl
 
+## Branches and release lines
+
+`roksbnkctl` tracks the F5 BNK product line by branching. There is one repository.
+
+| Branch | Role |
+|---|---|
+| `main` | The trunk. Tracks the **newest** BNK orchestration being developed. |
+| `bnk-<major>-<minor>` | A release line, cut from `main` when that BNK version's orchestration stabilises. Receives fixes for that line only. |
+
+Work targets a branch by opening a PR against it. `ci.yml` and `security.yml`
+trigger on `pull_request` with **no** branch filter, so a PR based on any release
+branch gets the full suite — vet, staticcheck, tests on three OSes, CodeQL,
+govulncheck, gitleaks, Trivy, smoke, and the kind integration tier. Pushes to
+`main` and to `bnk-*` are covered too.
+
+Fixes land on the branch that needs them and are carried forward by
+`git cherry-pick`. `main` is a trunk, not a merge target: merging two release
+lines into it produces a branch that tracks no product line coherently, and that
+breaks as soon as a third line exists.
+
+### Versions do not encode the BNK version
+
+**`roksbnkctl`'s version is independent of the BNK version.** Every branch shares
+one rising semver sequence, so `v1.43.0` might be a `bnk-2-3` release and
+`v1.44.0` a `main` release. The number says *nothing* about which BNK line a
+build serves.
+
+Two mechanisms exist because of that, and both are easy to break by accident:
+
+- **The release line stamp.** `release.yml` resolves the line from branch
+  ancestry, goreleaser writes it into the binary (`internal/cli.Line`) and into
+  the release notes as `<!-- roksbnkctl-release-line: … -->`. `self update` reads
+  it and offers only that line's releases; `--version` still crosses lines, but
+  now asks first. A release with no marker (everything before `v1.42.0`) reads as
+  "unknown" and stays eligible for every binary — never make an unmarked release
+  mean a *specific* line.
+- **`:latest` follows the trunk only.** `tools-images.yml` moves the `:latest`
+  container tag only for a tag reachable from `origin/main`. A release-line tag
+  publishes `:<tag>` and nothing else, so a `bnk-2-3` release cannot repoint
+  `:latest` at 2.3 for everyone on 2.4. Release branches get a moving
+  `:<branch>-dev` (e.g. `:bnk-2-3-dev`) so their tip is testable without cutting
+  a release; `:dev` stays the trunk's.
+
+If you add tooling that resolves an image or a release, resolve it **per line**.
+Defaulting to `:latest` or to GitHub's "latest release" silently crosses lines —
+that is exactly the bug `scripts/tf-variable-validation-test.sh` used to have.
+
 ## Setting up a contributor host
 
 This guide assumes a clone of the repo on a Linux or macOS host with Go 1.26+, git, make, and docker already installed (the "build tools" assumed-present prerequisites).

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -99,7 +100,10 @@ func pickNewerRelease(ctx context.Context, w io.Writer) (string, error) {
 	}
 	var newer []string
 	for _, r := range rels {
-		if r.TagName == "" {
+		// Offer only this line's releases. Listing the other line's tags here
+		// would be an invitation to pick one, and the numbers give no hint that
+		// they belong somewhere else.
+		if r.TagName == "" || !r.onSameLine() {
 			continue
 		}
 		v, verr := version.NewVersion(strings.TrimPrefix(r.TagName, "v"))
@@ -157,8 +161,12 @@ func selfUpdate(ctx context.Context, w io.Writer, pinned string, auto bool) erro
 		err error
 	)
 	if pinned == "" {
-		fmt.Fprintln(w, "→ Checking for the latest release")
-		rel, err = fetchLatestRelease(ctx)
+		if l := ReleaseLine(); l != "" {
+			fmt.Fprintf(w, "→ Checking for the latest release on line %s\n", l)
+		} else {
+			fmt.Fprintln(w, "→ Checking for the latest release")
+		}
+		rel, err = fetchLatestOnLine(ctx)
 	} else {
 		tag := normalizeTag(pinned)
 		fmt.Fprintf(w, "→ Fetching release %s\n", tag)
@@ -170,6 +178,22 @@ func selfUpdate(ctx context.Context, w io.Writer, pinned string, auto bool) erro
 
 	fmt.Fprintf(w, "  Current: %s\n", Version)
 	fmt.Fprintf(w, "  Target:  %s\n", rel.TagName)
+
+	// A --version pin may deliberately cross lines; that is what the flag is
+	// for. But it must not do so silently — the version numbers alone give the
+	// operator nothing to notice, and the consequence is a binary that renders
+	// another BNK line's orchestration against their cluster.
+	if !rel.onSameLine() {
+		fmt.Fprintf(w, "\n!  %s is on release line %q; this build is on %q.\n", rel.TagName, rel.Line(), ReleaseLine())
+		fmt.Fprintf(w, "   These lines target DIFFERENT BNK versions — the orchestration `bnk up` renders differs.\n")
+		if auto {
+			return fmt.Errorf("refusing to cross release lines (%s → %s) without confirmation; re-run without --yes to confirm interactively",
+				ReleaseLine(), rel.Line())
+		}
+		if !promptYesNo(fmt.Sprintf("Cross from %s to %s anyway?", ReleaseLine(), rel.Line()), false) {
+			return errors.New("aborted")
+		}
+	}
 
 	switch {
 	case pinned == "" && sameVersion(Version, rel.TagName):
@@ -263,12 +287,72 @@ type ghAsset struct {
 
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
+	Body    string    `json:"body"`
 	Assets  []ghAsset `json:"assets"`
 }
 
-func fetchLatestRelease(ctx context.Context) (*ghRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", roksbnkctlRepo)
-	return getRelease(ctx, url, fmt.Sprintf("no releases for %s yet", roksbnkctlRepo))
+// releaseLineMarker matches the machine-readable line stamp goreleaser puts in
+// every release body (.goreleaser.yml `release.header`). An HTML comment because
+// it must survive Markdown rendering without being visible — the human-readable
+// line sits next to it and is free to be reworded.
+var releaseLineMarker = regexp.MustCompile(`(?m)<!--\s*roksbnkctl-release-line:\s*([A-Za-z0-9._-]+)\s*-->`)
+
+// Line reports which release line a release belongs to, or "" when it carries no
+// marker.
+//
+// Every release cut before the trunk/release-branch split is unmarked, and that
+// is deliberately NOT an error: those predate the two lines, so they cannot be
+// cross-line-wrong. They stay eligible for every binary.
+func (r ghRelease) Line() string {
+	if m := releaseLineMarker.FindStringSubmatch(r.Body); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// onSameLine reports whether a release is a safe automatic target for this
+// build. Unknown on either side means "no constraint" — an unstamped binary
+// (every build before the split) behaves exactly as it always did.
+func (r ghRelease) onSameLine() bool {
+	mine, theirs := ReleaseLine(), r.Line()
+	return mine == "" || theirs == "" || mine == theirs
+}
+
+// fetchLatestOnLine returns the newest release belonging to this build's line.
+//
+// It deliberately does NOT use GitHub's /releases/latest: that is the highest
+// version across the WHOLE repo, and roksbnkctl's version is not tied to the BNK
+// version — both lines share one rising sequence, so v1.43.0 (bnk-2-3) and
+// v1.44.0 (main) differ by product line, not by number. Following GitHub's
+// "latest" would hand a BNK 2.3 operator a 2.4 binary, and the next `bnk up`
+// would render 2.4 orchestration against a 2.3 cluster.
+func fetchLatestOnLine(ctx context.Context) (*ghRelease, error) {
+	rels, err := fetchReleases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var best *ghRelease
+	var bestV *version.Version
+	for i := range rels {
+		r := rels[i]
+		if r.TagName == "" || !r.onSameLine() {
+			continue
+		}
+		v, verr := version.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if verr != nil {
+			continue
+		}
+		if bestV == nil || v.GreaterThan(bestV) {
+			best, bestV = &rels[i], v
+		}
+	}
+	if best == nil {
+		if l := ReleaseLine(); l != "" {
+			return nil, fmt.Errorf("no releases on line %q for %s — pin one with `--version` to cross lines deliberately", l, roksbnkctlRepo)
+		}
+		return nil, fmt.Errorf("no releases for %s yet", roksbnkctlRepo)
+	}
+	return best, nil
 }
 
 // fetchReleases lists the repo's releases (GitHub returns them newest-first).

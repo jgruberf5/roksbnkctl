@@ -39,6 +39,11 @@ builds:
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Version=v{{.Version}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.Commit={{.ShortCommit}}
       - -X github.com/jgruberf5/roksbnkctl/internal/cli.BuildDate={{.Date}}
+      # Which release line this build came from ("main" or e.g. "bnk-2-3").
+      # release.yml computes it; `self update` uses it so a BNK 2.3 operator is
+      # not silently moved onto the 2.4 line by a version number that cannot
+      # express the difference.
+      - -X github.com/jgruberf5/roksbnkctl/internal/cli.Line={{ .Env.ROKSBNKCTL_RELEASE_LINE }}
   # flp-status: the FLP status web service (backs the mobile UI + `flp status`
   # CLI). Linux-only — it runs as a container/service alongside the proxy (podman
   # pod on the VSI, or a Deployment in-cluster).
@@ -106,6 +111,9 @@ release:
   # CHANGELOG.md.
   header: |
     ## roksbnkctl {{ .Tag }}
+
+    <!-- roksbnkctl-release-line: {{ .Env.ROKSBNKCTL_RELEASE_LINE }} -->
+    **Release line:** `{{ .Env.ROKSBNKCTL_RELEASE_LINE }}`
 
     Single-binary CLI for deploying F5 BIG-IP Next for Kubernetes on IBM Cloud ROKS.
 
