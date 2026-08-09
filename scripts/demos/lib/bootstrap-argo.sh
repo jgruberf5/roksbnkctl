@@ -28,6 +28,9 @@ BOOTSTRAP_STATE="${BOOTSTRAP_STATE:-$HERE/../.bootstrap-state}"
 : "${SSH_KEY_NAME:?source services.env from bootstrap-services.sh first}"
 : "${SSH_KEY_FILE:?source services.env from bootstrap-services.sh first}"
 
+# ssh into the VSI through a key ssh will accept (DrvFs cannot hold 0600).
+source "$HERE/ssh-key.sh"
+
 SVC_REGION="${SVC_REGION:-us-east}"
 SVC_ZONE="${SVC_ZONE:-${SVC_REGION}-1}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
@@ -80,7 +83,7 @@ done
 ibmcloud is virtual-network-interface-floating-ip-add "$VNI" "${ARGO_VSI_NAME}-fip" >/dev/null 2>&1 || true
 say "Argo VSI floating IP $ARGO_FIP"
 
-V(){ ssh -i "$SSH_KEY_FILE" $SSH_OPTS ubuntu@"$ARGO_FIP" "sudo bash -lc '$*'"; }
+V(){ ssh -i "$(ssh_key)" $SSH_OPTS ubuntu@"$ARGO_FIP" "sudo bash -lc '$*'"; }
 
 say "waiting for cloud-init (k3s + Argo Workflows $ARGO_WF_VERSION)…"
 ready=0
@@ -119,7 +122,22 @@ cat >&2 <<EOF
 
     The k3s API is NOT published. Open the tunnel before using kubectl/argo:
 
-      ssh -i $SSH_KEY_FILE -N -L ${ARGO_LOCAL_PORT}:127.0.0.1:6443 ubuntu@$ARGO_FIP &
+      ssh -i "$SSH_KEY_FILE" -N -L ${ARGO_LOCAL_PORT}:127.0.0.1:6443 ubuntu@$ARGO_FIP &
       set -a; source $BOOTSTRAP_STATE/argo.env; set +a
       argo list -n bnk-ci
 EOF
+# The hint deliberately names SSH_KEY_FILE, not \$(ssh_key): the staged copy is
+# per-run and is removed when this script exits, so printing it would hand the
+# operator a path that is already gone. If ssh rejects the durable key for mode
+# (a DrvFs mount cannot hold 0600), say how to fix it rather than leaving them
+# with "Permission denied (publickey)".
+if [[ "$(stat -c %a "$SSH_KEY_FILE" 2>/dev/null)" != 600 ]]; then
+  cat >&2 <<EOF
+
+    NOTE: $SSH_KEY_FILE is on a filesystem that cannot hold mode 0600, so ssh will
+    refuse it with "Permission denied (publickey)". Copy it somewhere POSIX first:
+
+      install -m600 "$SSH_KEY_FILE" /tmp/bnk-svc-key
+      ssh -i /tmp/bnk-svc-key -N -L ${ARGO_LOCAL_PORT}:127.0.0.1:6443 ubuntu@$ARGO_FIP &
+EOF
+fi

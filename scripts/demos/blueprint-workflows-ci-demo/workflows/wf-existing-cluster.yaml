@@ -92,6 +92,20 @@ spec:
           # `bnk up` hit its 600s deadline. OverrideFromEnv skips empty values, so
           # blank leaves a fresh workspace with no registry, which is what
           # "connected" means: render against far_repo_url.
+          #
+          # ROKSBNKCTL_REGISTRY_TARGET must be blanked TOO, and it is the one that
+          # actually matters. envoverride.go's registryCfg() CREATES ws.Registry the
+          # moment target is set, so `target: generic` alone materialises a registry
+          # block even with every generic_* value empty. `bnk up` then finds a mirror
+          # configured, looks for the mirror RECORD this workspace never wrote, and
+          # dies with:
+          #
+          #   a registry mirror is configured for this workspace but this workspace
+          #   has no record of it.
+          #
+          # ~37 minutes in, after the cluster was already built. Blanking the six
+          # generic_* values without this one is not enough.
+          - { name: ROKSBNKCTL_REGISTRY_TARGET,     value: "" }
           - { name: ROKSBNKCTL_GENERIC_HOST,        value: "" }
           - { name: ROKSBNKCTL_GENERIC_REPO_PREFIX, value: "" }
           - { name: ROKSBNKCTL_GENERIC_USERNAME,    value: "" }

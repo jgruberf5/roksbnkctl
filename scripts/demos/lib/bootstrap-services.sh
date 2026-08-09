@@ -37,6 +37,9 @@ SSH_KEY_FILE="${SSH_KEY_FILE:-$BOOTSTRAP_STATE/${SSH_KEY_NAME}}"
 mkdir -p "$BOOTSTRAP_STATE"; chmod 700 "$BOOTSTRAP_STATE"
 say(){ echo "==> $*" >&2; }
 
+# ssh into the VSIs through a key ssh will accept (DrvFs cannot hold 0600).
+source "$HERE/ssh-key.sh"
+
 ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$SVC_REGION" -g "$RESOURCE_GROUP" -q >/dev/null
 TGW_ID="$(ibmcloud tg gateways --output json | jq -r --arg n "$TGW_NAME" '.[]|select(.name==$n)|.id')"
 [[ -n "$TGW_ID" && "$TGW_ID" != null ]] || {
@@ -185,7 +188,7 @@ say "Harbor projects: $HARBOR_PROJECT, $HARBOR_STATUS_PROJECT"
 # so pull harbor.crt off the VSI rather than out of the TLS handshake.
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20"
 for _ in $(seq 1 20); do
-  ssh -i "$SSH_KEY_FILE" $SSH_OPTS ubuntu@"$HARBOR_FIP" 'sudo cat /opt/harbor/certs/harbor.crt' \
+  ssh -i "$(ssh_key)" $SSH_OPTS ubuntu@"$HARBOR_FIP" 'sudo cat /opt/harbor/certs/harbor.crt' \
       > "$BOOTSTRAP_STATE/harbor-ca.crt" 2>/dev/null \
     && grep -q 'BEGIN CERTIFICATE' "$BOOTSTRAP_STATE/harbor-ca.crt" && break
   sleep 15
