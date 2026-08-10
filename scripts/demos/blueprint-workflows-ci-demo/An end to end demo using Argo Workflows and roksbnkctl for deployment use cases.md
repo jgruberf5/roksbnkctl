@@ -81,7 +81,7 @@ blackholes one. It does **not** surface as a routing error. It surfaces as
 *intermittent image-pull timeouts from the mirror*, with every security group and ACL
 in the path allowing the traffic, which sends you looking at firewalls.
 
-The demo now refuses to submit when it detects this, naming the VPC it collides with:
+The demo refuses to submit when it detects this, naming the VPC it collides with:
 
 ```
 Refusing: ROKSBNKCTL_CLUSTER_VPC_CIDR (10.242.0.0/16) overlaps a VPC already on bnkci-testing.
@@ -101,19 +101,16 @@ Everything is submitted the same way:
 argo submit -n bnk-ci workflows/wf-new-cluster.yaml
 ```
 
-or through the UI's **+ SUBMIT NEW WORKFLOW** button. The workflow list is the home
-screen:
+or through the UI's **+ SUBMIT NEW WORKFLOW** button, which opens the manifest with
+its parameters ready to edit:
+
+![Submitting a workflow](screenshots/submit-wf-new-cluster.png)
+
+The workflow list is the home screen:
 
 ![The workflow list](screenshots/20-workflow-list.png)
 
 Each row is one run: its phase, how long it took, and how many steps have finished.
-
-> **`argo submit --wait` is not a completion signal.** Its watch is a long-lived
-> connection to the API server, and this demo reaches that server through an SSH
-> tunnel. When the tunnel blips, argo logs `Failed to re-establish workflow watch` and
-> **returns** — so a script that trusts it reports success while the workflow is still
-> Running. The demo now polls the workflow's `status.phase`, which is the only thing
-> that actually answers "is it done".
 
 ---
 
@@ -159,17 +156,8 @@ Five steps: `init` → `cluster-up` → `bnkforge-register` → `bnk-up` → `bn
 
 This variant makes its **own** Transit Gateway and returns it on teardown, so it does
 not touch the shared one. It also has no registry at all — "connected" means rendering
-against `far_repo_url` directly.
-
-> **The connected variants must blank `ROKSBNKCTL_REGISTRY_TARGET`, not just the
-> `GENERIC_*` values.** `bnk-env` is shared with the mirror and disconnected
-> workflows, so the registry settings reach every workflow. Blanking the six
-> `GENERIC_*` values is not enough: `registryCfg()` creates the registry block the
-> moment `target` is set, so `target: generic` alone materialises a mirror
-> configuration with no host. `bnk up` then looks for the mirror record this
-> workspace never wrote and fails with *"a registry mirror is configured for this
-> workspace but this workspace has no record of it"* — **37 minutes in, after the
-> cluster is already built.**
+against `far_repo_url` directly. The workflow blanks the registry settings it inherits
+from `bnk-env`, so nothing is required of you here.
 
 ---
 
@@ -191,9 +179,7 @@ cluster "bnk-ci" already has BNK installed (the F5 Lifecycle Operator is running
 namespace "f5-bnk"), but workspace "bnkadopt" has no terraform state for it.
 ```
 
-That refusal is correct and it is fast — before it existed, the same situation planned
-a full re-install over a working one and spent about thirteen minutes failing without
-naming the cause. The fix is one command:
+Remove BNK from the workspace that installed it first:
 
 ```bash
 ./blueprint-workflows-ci-demo.sh bnk-down bnkconn
@@ -343,21 +329,14 @@ public gateway, the floating IPs, the SSH key, and this demo's gateway attachmen
 dependency order. The **shared transit gateway is never deleted**; the demo does not
 create it, other projects attach to it, and only this demo's connection is removed.
 
-> Forgetting this step is expensive and quiet. `teardown` used to print
-> "✓ teardown complete" while leaving two VSIs, a VPC, two floating IPs and an SSH key
-> running, because there was no inverse of `bootstrap` at all.
+> Do not skip it. `teardown` alone leaves both VSIs, the services VPC, the floating
+> IPs and the SSH key running — and nothing else will remove them.
 
 ## If something goes wrong
 
-**`a registry mirror is configured for this workspace but this workspace has no record of it`**
-A connected workflow inherited registry settings. `bnk-env` is shared by every
-workflow, so the connected variants must blank `ROKSBNKCTL_REGISTRY_TARGET` **as well
-as** the six `GENERIC_*` values — `target` alone materialises a registry block.
-
 **`cluster "…" already has BNK installed … but workspace "…" has no terraform state for it`**
 You are adopting a cluster that still has BNK on it from another workspace. Run
-`bnk-down <the workspace that installed it>` first. The refusal is immediate; before
-that guard existed this planned a full re-install and spent ~13 minutes failing.
+`bnk-down <the workspace that installed it>` first.
 
 **`Refusing: ROKSBNKCTL_CLUSTER_VPC_CIDR (…) overlaps a VPC already on …`**
 Pick a block nothing else on the gateway uses. The message names the VPC and its
@@ -367,15 +346,10 @@ cluster that is already attached is not a collision.
 **`Error acquiring the state lock`**
 An interrupted run left a lock on the PVC. `./blueprint-workflows-ci-demo.sh unlock <workspace>`.
 
-**`Permission denied (publickey)` from the bootstrap**
-If the repo is on a Windows drive under WSL, DrvFs cannot hold mode `0600`, so ssh
-refuses the key. The bootstrap now stages a copy on a Linux filesystem automatically;
-if you are driving ssh yourself, `install -m600 <key> /tmp/key` first.
-
-**A workflow "finished" but nothing happened**
-Do not trust `argo submit --wait`. Its watch is a long-lived connection, and through an
-SSH tunnel a blip makes it return early. Check `kubectl get wf -n bnk-ci` for the real
-phase.
+**`Permission denied (publickey)` when you ssh to a VSI yourself**
+If the repo is on a Windows drive under WSL, DrvFs cannot hold mode `0600` and ssh
+refuses the key. Copy it somewhere POSIX first: `install -m600 <key> /tmp/key`.
+The bootstrap does this for itself; only your own ssh commands need it.
 
 ---
 
@@ -385,8 +359,6 @@ Every use case below was run on **roksbnkctl v1.42.0** against IBM Cloud ROKS
 **4.20.32**, and confirmed by checking BNK pods on the cluster — not just by the
 workflow's exit status.
 
-![All four](screenshots/50-all-four-succeeded.png)
-
 | # | Use case | Workflow run | Result |
 |---|---|---|---|
 | 1 | New cluster, connected | `bnk-new-cluster-hbhj8` | Succeeded — 11 pods Running |
@@ -395,10 +367,6 @@ workflow's exit status.
 | 4 | Existing cluster, disconnected | `bnk-existing-disco-kdl84` | Succeeded — 14 pods, all images from the mirror |
 | — | FAR mirror | `bnk-far-mirror-lzdx9` | Succeeded — 89 repositories |
 | — | F5 License Proxy | `bnk-flp-vsi-z6qx2` | Succeeded — `flp-handoff` published |
-
-The two `Failed` rows in that screenshot are real and deliberately left in place: they
-are the runs that exposed the registry-target and adopt-ordering bugs described above.
-Both are fixed in the workflows shipped here.
 
 ## Refreshing the screenshots
 
