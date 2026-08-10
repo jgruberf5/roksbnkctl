@@ -53,6 +53,49 @@ SECRET_KEYS=(IBMCLOUD_API_KEY ROKSBNKCTL_GENERIC_PASSWORD ROKSBNKCTL_BIGIP_PASSW
 # cascades into the cluster. The guard refuses the combination that gets this wrong.
 ALL_WORKFLOWS=(far-mirror flp-vsi new-cluster new-cluster-disconnected existing-cluster existing-disconnected)
 
+# ============================ submit_wf ======================================
+# submit_wf <workflow-basename> [argo params…] — render, submit, and VERIFY.
+#
+# The single place a workflow is run. Teardown used to bypass this entirely with
+# `kubectl run`, which meant the half of the lifecycle that costs money was the half
+# no pipeline could execute and no one could watch in the Argo UI.
+#
+# Defined HERE, above teardown(), because the `teardown` dispatch line executes as
+# the script is read — a helper defined further down does not exist yet at that
+# point, and bash reports it as `submit_wf: command not found` after the banner has
+# already printed, which reads like a broken workflow rather than a missing function.
+#
+# Returns non-zero unless the workflow reaches Succeeded. `argo submit --wait` is not
+# trusted here: its watch is a long-lived connection, and through an SSH tunnel a
+# blip makes it return early.
+submit_wf(){
+  local wf="$1"; shift
+  local f="$HERE/workflows/wf-${wf}.yaml"
+  [[ -f "$f" ]] || { echo "no such workflow: $wf" >&2; return 1; }
+  mkdir -p "$STATE_DIR"
+  local rendered="$STATE_DIR/wf-${wf}.rendered.yaml"
+  sed "s|PLACEHOLDER_RUNNER_IMAGE|$RUNNER_IMAGE|g" "$f" > "$rendered"
+  show "argo submit -n $ARGO_NAMESPACE workflows/wf-${wf}.yaml $*"
+  [[ "$DRY_RUN" == "1" ]] && return 0
+  local name
+  name="$(argo submit -n "$ARGO_NAMESPACE" -o name "$@" "$rendered" 2>/dev/null | tail -1)"
+  name="${name#workflow.argoproj.io/}"
+  [[ -n "$name" ]] || { echo "${R}${B}submit failed for $wf${N}" >&2; return 1; }
+  say "submitted $name — following its logs"
+  argo logs -n "$ARGO_NAMESPACE" --follow "$name" 2>/dev/null || true
+  local ph=""
+  for _ in $(seq 1 720); do
+    ph="$(kubectl get wf -n "$ARGO_NAMESPACE" "$name" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    case "$ph" in Succeeded|Failed|Error) break ;; esac
+    sleep 10
+  done
+  if [[ "$ph" != Succeeded ]]; then
+    echo "${R}${B}$wf ended in phase '${ph:-unknown}'.${N}  argo logs -n $ARGO_NAMESPACE $name" >&2
+    return 1
+  fi
+  ok "$wf finished ($name)"
+}
+
 # ============================ teardown =======================================
 # Removes what the WORKFLOWS created, newest-dependency first, then the substrate.
 # Adopted clusters are never destroyed — existing-* registered them, so roksbnkctl
@@ -93,7 +136,7 @@ teardown(){
   done
 
   echo >&2
-  say "What teardown does NOT remove — the substrate `bootstrap` created:"
+  say 'What teardown does NOT remove — the substrate `bootstrap` created:'
   say "  the Argo VSI (the host these very workflows run on), Harbor, the services"
   say "  VPC and its gateway attachment. A workflow cannot destroy the node it is"
   say "  scheduled on, so that step has to come from OUTSIDE the cluster:"

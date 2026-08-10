@@ -54,7 +54,14 @@ done
 say "VSIs gone"
 
 # 2. Floating IPs. Released AFTER the instances, or the release races the detach.
-for id in $(ibmcloud is floating-ips --output json 2>/dev/null | jq -r --arg p "$SVC_PREFIX" '.[]|select(.name|startswith($p))|.id'); do
+#
+# BOTH prefixes: Harbor's is named after SVC_PREFIX ("bnk-svc-harbor-fip") but the
+# Argo one is named after ARGO_VSI_NAME ("bnk-argo-fip"). Matching only SVC_PREFIX
+# leaves bnk-argo-fip reserved and billable after everything else is gone — which is
+# exactly what a first run of this script did.
+for id in $(ibmcloud is floating-ips --output json 2>/dev/null \
+            | jq -r --arg p "$SVC_PREFIX" --arg a "$ARGO_VSI_NAME" \
+                   '.[]|select((.name|startswith($p)) or (.name|startswith($a)))|.id'); do
   ibmcloud is floating-ip-release "$id" -f >/dev/null 2>&1 && say "released floating ip $id"
 done
 

@@ -291,14 +291,23 @@ If those still say `repo.f5.com`, the workspace never picked up the mirror — c
 
 ## Removing a demo
 
-### Order matters
+Teardown runs as **workflows**, like everything else — visible in the Argo UI,
+re-runnable, and executable by a pipeline rather than only from a laptop.
+
+| Workflow | Removes |
+|---|---|
+| `wf-down-connected.yaml` | the connected workspace (`bnkconn`) |
+| `wf-down-disconnected.yaml` | the disconnected workspace (`bnkdisco`) |
+| `wf-down-flp-vsi.yaml` | the F5 License Proxy VSI |
 
 ```bash
-./blueprint-workflows-ci-demo.sh teardown            # everything
+./blueprint-workflows-ci-demo.sh teardown            # all three
 ./blueprint-workflows-ci-demo.sh teardown bnkdisco   # one workspace
 ```
 
-Teardown walks `bnk down` → `tgw disconnect` → `cluster down` per workspace, and that
+### Order matters
+
+Each cluster workflow runs `bnk down` → `tgw disconnect` → `cluster down`, and that
 order is load-bearing: `cluster down` refuses while a gateway connection exists,
 because the connection pins the VPC's CRN and the VPC delete would fail.
 `tgw disconnect` removes **only this cluster's** connection — the shared gateway and
@@ -310,13 +319,33 @@ they did not create them.
 ### Removing BNK but keeping the cluster
 
 ```bash
-./blueprint-workflows-ci-demo.sh bnk-down <workspace>
+./blueprint-workflows-ci-demo.sh bnk-down bnkconn
 ```
 
-This is what you want between a build variant and its reuse variant. Do **not** use
-`teardown` for it — that also runs `cluster down`.
+That is `phase=bnk` on the same workflow — BNK goes, the cluster, VPC and gateway
+stay. It is what you want between a build variant and its reuse variant. Do **not**
+use `teardown` for it: that is `phase=all`, and it destroys the cluster you are about
+to adopt.
 
----
+### The substrate is not a workflow
+
+```bash
+./blueprint-workflows-ci-demo.sh unbootstrap
+```
+
+This one deliberately is **not** an Argo workflow, and cannot be: the Argo VSI is the
+node those workflows are scheduled on, and Harbor and the services VPC are how they
+reach anything. A pod cannot outlive its host, so the last step runs from outside the
+cluster.
+
+It removes what `bootstrap` created — both VSIs, the services VPC with its subnet and
+public gateway, the floating IPs, the SSH key, and this demo's gateway attachment — in
+dependency order. The **shared transit gateway is never deleted**; the demo does not
+create it, other projects attach to it, and only this demo's connection is removed.
+
+> Forgetting this step is expensive and quiet. `teardown` used to print
+> "✓ teardown complete" while leaving two VSIs, a VPC, two floating IPs and an SSH key
+> running, because there was no inverse of `bootstrap` at all.
 
 ## If something goes wrong
 
