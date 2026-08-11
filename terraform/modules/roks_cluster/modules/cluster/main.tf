@@ -35,6 +35,14 @@ locals {
   # cluster).
   manual_prefixes = var.cluster_vpc_cidr != "" && !var.use_existing_cluster_vpc
 
+  # Created or adopted — everything downstream uses these two, never the resources.
+  cluster_subnet_ids = var.use_existing_cluster_subnets ? var.existing_cluster_subnet_ids : [
+    try(ibm_is_subnet.cluster_subnet_zone1[0].id, null),
+    try(ibm_is_subnet.cluster_subnet_zone2[0].id, null),
+    try(ibm_is_subnet.cluster_subnet_zone3[0].id, null),
+  ]
+  cluster_subnet_zones = var.use_existing_cluster_subnets ? data.ibm_is_subnet.existing_cluster[*].zone : local.zones
+
   # /16 → one /18 per zone. The historical default 10.241.0.0/16 reproduces exactly
   # what "auto" assigned (10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18), so opting
   # in on a NEW cluster with the default changes no addresses.
@@ -158,8 +166,33 @@ data "ibm_is_instance_profiles" "cluster_worker_profiles" {
 # ============================================================
 
 # Create subnets for OpenShift cluster in each zone
+# ── Adopted cluster subnets (BYO network) ────────────────────────────────────
+# Placing a cluster in a VPC someone else allocated is only half of what "bring
+# your own network" means: address space is handed out centrally, and the subnets
+# already carry the ACLs and routing that make them acceptable. Creating fresh
+# subnets inside that VPC lands the cluster outside all of it.
+#
+# The zone comes from the SUBNET, not from local.zones — a pre-created subnet lives
+# where its owner put it, and the cluster's zone blocks have to agree with that or
+# IBM rejects the worker pool.
+data "ibm_is_subnet" "existing_cluster" {
+  count      = var.use_existing_cluster_subnets ? length(var.existing_cluster_subnet_ids) : 0
+  identifier = var.existing_cluster_subnet_ids[count.index]
+
+  lifecycle {
+    precondition {
+      condition     = var.use_existing_cluster_vpc
+      error_message = "existing_cluster_subnet_ids requires use_existing_cluster_vpc: a subnet cannot be adopted independently of the VPC that contains it. Set resources.cluster_vpc = { create: false, existing: <vpc-id> }."
+    }
+    precondition {
+      condition     = length(var.existing_cluster_subnet_ids) == 3
+      error_message = "existing_cluster_subnet_ids needs exactly 3 subnet ids, one per zone, in zone order — a ROKS cluster spans three availability zones."
+    }
+  }
+}
+
 resource "ibm_is_subnet" "cluster_subnet_zone1" {
-  count                    = var.create_cluster ? 1 : 0
+  count                    = var.create_cluster && !var.use_existing_cluster_subnets ? 1 : 0
   name                     = "${var.openshift_cluster_name}-subnet-zone1"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[0]
@@ -181,7 +214,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone1" {
 }
 
 resource "ibm_is_subnet" "cluster_subnet_zone2" {
-  count                    = var.create_cluster ? 1 : 0
+  count                    = var.create_cluster && !var.use_existing_cluster_subnets ? 1 : 0
   name                     = "${var.openshift_cluster_name}-subnet-zone2"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[1]
@@ -198,7 +231,7 @@ resource "ibm_is_subnet" "cluster_subnet_zone2" {
 }
 
 resource "ibm_is_subnet" "cluster_subnet_zone3" {
-  count                    = var.create_cluster ? 1 : 0
+  count                    = var.create_cluster && !var.use_existing_cluster_subnets ? 1 : 0
   name                     = "${var.openshift_cluster_name}-subnet-zone3"
   vpc                      = local.cluster_vpc_id
   zone                     = local.zones[2]
@@ -358,18 +391,18 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
   cos_instance_crn  = var.create_cos_instance ? ibm_resource_instance.cos_instance[0].crn : null
 
   zones {
-    subnet_id = ibm_is_subnet.cluster_subnet_zone1[0].id
-    name      = local.zones[0]
+    subnet_id = local.cluster_subnet_ids[0]
+    name      = local.cluster_subnet_zones[0]
   }
 
   zones {
-    subnet_id = ibm_is_subnet.cluster_subnet_zone2[0].id
-    name      = local.zones[1]
+    subnet_id = local.cluster_subnet_ids[1]
+    name      = local.cluster_subnet_zones[1]
   }
 
   zones {
-    subnet_id = ibm_is_subnet.cluster_subnet_zone3[0].id
-    name      = local.zones[2]
+    subnet_id = local.cluster_subnet_ids[2]
+    name      = local.cluster_subnet_zones[2]
   }
 
   disable_public_service_endpoint     = false
@@ -433,9 +466,9 @@ locals {
   } : {}
 
   # Get zone-specific worker IPs
-  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone1[0].id][0], null) : null
-  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone2[0].id][0], null) : null
-  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[ibm_is_subnet.cluster_subnet_zone3[0].id][0], null) : null
+  zone1_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[local.cluster_subnet_ids[0]][0], null) : null
+  zone2_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[local.cluster_subnet_ids[1]][0], null) : null
+  zone3_worker_ip = var.create_cluster && length(local.zone_worker_map) > 0 ? try(local.zone_worker_map[local.cluster_subnet_ids[2]][0], null) : null
 
   # Get cluster security group from data source
   cluster_security_group = var.create_cluster && length(data.ibm_is_security_group.cluster_sg) > 0 ? data.ibm_is_security_group.cluster_sg[0].id : null

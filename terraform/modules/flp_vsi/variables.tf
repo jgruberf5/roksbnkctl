@@ -194,3 +194,22 @@ variable "flp_vsi_ssh_key" {
   type        = string
   default     = ""
 }
+
+# ── BYO / build-your-own network for the proxy (#60) ─────────────────────────
+variable "flp_vsi_create_vpc" {
+  description = "Build the proxy its own VPC, address prefix and public gateway instead of placing it in one that already exists. Default false keeps existing workspaces byte-identical."
+  type        = bool
+  default     = false
+}
+
+variable "flp_vsi_vpc_name" {
+  description = "Name for the VPC created when flp_vsi_create_vpc = true. Empty uses flp-vsi-vpc."
+  type        = string
+  default     = ""
+}
+
+variable "flp_vsi_subnet_cidr" {
+  description = "Address prefix for the VPC created when flp_vsi_create_vpc = true. Must not overlap anything the consuming clusters can already route to."
+  type        = string
+  default     = "10.250.0.0/24"
+}

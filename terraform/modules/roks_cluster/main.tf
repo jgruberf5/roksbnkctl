@@ -39,9 +39,11 @@ module "cluster" {
   # The bnk/testing phase passes true + the cluster-phase VPC id so the
   # submodule resolves data.ibm_is_vpc.existing_cluster_vpc[0] instead of
   # planning ibm_is_vpc.cluster_vpc[0] (duplicate-name failure).
-  use_existing_cluster_vpc = var.use_existing_cluster_vpc
-  cluster_vpc_cidr         = var.cluster_vpc_cidr
-  existing_cluster_vpc_id  = var.existing_cluster_vpc_id
+  use_existing_cluster_vpc     = var.use_existing_cluster_vpc
+  use_existing_cluster_subnets = var.use_existing_cluster_subnets
+  existing_cluster_subnet_ids  = var.existing_cluster_subnet_ids
+  cluster_vpc_cidr             = var.cluster_vpc_cidr
+  existing_cluster_vpc_id      = var.existing_cluster_vpc_id
 
   # Creating → the name to CREATE. Adopting → the identity to LOOK UP, which
   # is carried by roks_cluster_id_or_name. The submodule resolves an adopted

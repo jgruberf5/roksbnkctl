@@ -169,6 +169,20 @@ type ClusterCfg struct {
 	// prefixes. Rendered as cluster_vpc_cidr.
 	VPCCIDR string `yaml:"vpc_cidr,omitempty"`
 
+	// ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per
+	// zone in zone order, instead of creating them (#61).
+	//
+	// Adopting the VPC alone is only half of "bring your own network": in an estate
+	// that allocates address space centrally the subnets carry the ACLs and routing
+	// that make them acceptable, and a cluster placed in freshly-created subnets
+	// sits outside all of it.
+	//
+	// Requires resources.cluster_vpc = { create: false, existing: <vpc-id> } — a
+	// subnet cannot be adopted independently of the VPC containing it. Rendered as
+	// use_existing_cluster_subnets + existing_cluster_subnet_ids; the subnets' zones
+	// are read from the subnets themselves, not from the region default.
+	ExistingSubnetIDs []string `yaml:"existing_subnet_ids,omitempty"`
+
 	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
 	// (the cluster module picks the smallest bx2 profile meeting both minimums).
 	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
@@ -472,6 +486,24 @@ type BNKFLPVSICfg struct {
 	// the FLP VSI joins the workspace's cluster VPC (from cluster-outputs.json), the
 	// original behavior which requires a cluster.
 	VPC string `yaml:"vpc,omitempty"`
+
+	// CreateVPC builds the proxy its OWN VPC, address prefix and public gateway
+	// rather than placing it in one that already exists (#60).
+	//
+	// The proxy is the component that needs egress to F5, which makes it a natural
+	// FIRST deployment in an air-gapped estate — it could not be one, because there
+	// was no create path and something else had to have made a VPC first. In
+	// practice that meant landing it in the registry's VPC, coupling licensing to a
+	// registry it has nothing to do with.
+	//
+	// Mutually exclusive with VPC. Default false keeps existing workspaces unchanged.
+	CreateVPC bool `yaml:"create_vpc,omitempty"`
+	// VPCName names the VPC created when CreateVPC is set. Empty → flp-vsi-vpc.
+	VPCName string `yaml:"vpc_name,omitempty"`
+	// SubnetCIDR is the address prefix for that VPC. It must not overlap anything
+	// the consuming clusters can already route to — a transit gateway silently
+	// blackholes one of two overlapping VPCs.
+	SubnetCIDR string `yaml:"subnet_cidr,omitempty"`
 	// Profile is the IBM Cloud VSI instance profile. Empty → DefaultFLPVSIProfile
 	// (bx2-4x16 — meets the FLP's 4 vCPU / 8 GB minimum).
 	Profile string `yaml:"profile,omitempty"`

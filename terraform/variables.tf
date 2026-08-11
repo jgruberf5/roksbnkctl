@@ -781,3 +781,45 @@ variable "cluster_vpc_cidr" {
     error_message = "cluster_vpc_cidr needs /18 or larger. It is split into three per-zone prefixes (/n+2) and each cluster subnet is the first /n+8 of its zone: /16 gives 256-address subnets (today's size), /17 gives 128, /18 gives 64."
   }
 }
+
+# ── BYO cluster subnets (#61) ────────────────────────────────────────────────
+# Adopting the VPC alone is not enough for an estate that allocates address space
+# centrally: the subnets carry the ACLs and routing, and a cluster placed in
+# freshly-created subnets sits outside all of it.
+variable "use_existing_cluster_subnets" {
+  description = "Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC."
+  type        = bool
+  default     = false
+}
+
+variable "existing_cluster_subnet_ids" {
+  description = "Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves."
+  type        = list(string)
+  default     = []
+}
+
+# ── The proxy's own network (#60) ────────────────────────────────────────────
+# Forwarded to modules/flp_vsi. Default false keeps every existing workspace on
+# the adopt path, byte-identical.
+variable "flp_vsi_create_vpc" {
+  description = "Build the F5 License Proxy its own VPC instead of placing it in an existing one."
+  type        = bool
+  default     = false
+}
+
+variable "flp_vsi_vpc_name" {
+  description = "Name for the VPC created when flp_vsi_create_vpc = true."
+  type        = string
+  default     = ""
+}
+
+variable "flp_vsi_subnet_cidr" {
+  description = "Address prefix for the VPC created when flp_vsi_create_vpc = true."
+  type        = string
+  default     = "10.250.0.0/24"
+
+  validation {
+    condition     = var.flp_vsi_subnet_cidr == "" || can(cidrhost(var.flp_vsi_subnet_cidr, 0))
+    error_message = "flp_vsi_subnet_cidr must be a valid IPv4 CIDR, e.g. 10.250.0.0/24."
+  }
+}

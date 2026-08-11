@@ -225,6 +225,23 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "existing_cluster_vpc_id = %q\n", res.ClusterVPC.Existing)
 	}
 
+	// BYO cluster SUBNETS (#61). Adopting the VPC alone still creates subnets
+	// inside it, which defeats the point when the subnets are the thing carrying
+	// the ACLs and routing. Emitted only when ids are supplied; absent leaves
+	// use_existing_cluster_subnets false and the create path byte-identical.
+	//
+	// The pairing with the VPC is enforced in terraform (a precondition on the
+	// subnet data source) rather than dropped silently here, so a half-configured
+	// workspace fails at plan with a message naming the missing half.
+	if len(ws.Cluster.ExistingSubnetIDs) > 0 {
+		fmt.Fprintln(w, "use_existing_cluster_subnets = true")
+		quoted := make([]string, 0, len(ws.Cluster.ExistingSubnetIDs))
+		for _, id := range ws.Cluster.ExistingSubnetIDs {
+			quoted = append(quoted, fmt.Sprintf("%q", id))
+		}
+		fmt.Fprintf(w, "existing_cluster_subnet_ids = [%s]\n", strings.Join(quoted, ", "))
+	}
+
 	// Registry COS instance. Only meaningful when the cluster is created;
 	// the upstream count gate is (create_cluster && create_cos_instance).
 	fmt.Fprintf(w, "create_roks_registry_cos_instance = %v\n", res.RegistryCOS.Create)
@@ -506,6 +523,18 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		// mode: vsi — the standalone-VSI backend. The deploy_flp_vsi toggle itself is
 		// forced by the FLP-phase override; these render the VSI's shape from config.
 		if vsi := flp.VSI; vsi != nil {
+			// The proxy's own network (#60) — a sibling of the shape settings below,
+			// not nested under any of them: opting in without also pinning a profile
+			// is the common case, and the terraform defaults cover the rest.
+			if vsi.CreateVPC {
+				fmt.Fprintln(w, "flp_vsi_create_vpc = true")
+				if vsi.VPCName != "" {
+					fmt.Fprintf(w, "flp_vsi_vpc_name = %q\n", vsi.VPCName)
+				}
+				if vsi.SubnetCIDR != "" {
+					fmt.Fprintf(w, "flp_vsi_subnet_cidr = %q\n", vsi.SubnetCIDR)
+				}
+			}
 			if vsi.Profile != "" {
 				fmt.Fprintf(w, "flp_vsi_profile = %q\n", vsi.Profile)
 			}

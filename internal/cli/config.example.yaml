@@ -27,6 +27,14 @@ cluster:
   # min_worker_vcpu_count: 16   # worker-flavor auto-select floor (blank = default 16)
   # min_worker_memory_gb: 64    # worker-flavor auto-select floor (blank = default 64)
   #
+  # existing_subnet_ids:        # place the cluster in subnets that ALREADY EXIST,
+  #   - 0757-aaaa…              #   one per zone, in zone order. Requires
+  #   - 0757-bbbb…              #   resources.cluster_vpc { create: false, existing: … } —
+  #   - 0757-cccc…              #   a subnet cannot be adopted without its VPC.
+  #   For estates that allocate address space centrally: the subnets carry the ACLs
+  #   and routing, so adopting the VPC alone still lands the cluster in three subnets
+  #   this tool invented. Their zones are read from the subnets themselves.
+  #
   # vpc_cidr: 10.242.0.0/16     # address block for a NEW cluster VPC (blank = IBM auto)
   #   Blank lets IBM auto-assign, which gives EVERY VPC in the region the same
   #   prefixes (10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). That is fine for one
@@ -70,6 +78,17 @@ bnk:
   #   version: v1.17.3
   # flp:                                      # F5 License Proxy phase (roksbnkctl flp up)
   #   namespace: f5-license-proxy
+  #   vsi:
+  #     vpc: r014-…                           # ADOPT an existing VPC, or…
+  #     create_vpc: true                      # …have the proxy build its OWN network.
+  #     vpc_name:    acme-flp-vpc             #   (mutually exclusive with vpc)
+  #     subnet_cidr: 10.250.0.0/24            #   must not overlap anything the
+  #                                           #   consuming clusters can already reach —
+  #                                           #   a transit gateway blackholes one of two
+  #                                           #   overlapping VPCs silently.
+  #     The proxy is the component that needs egress to F5, so it is often the FIRST
+  #     thing deployed into an air-gapped estate. create_vpc lets it be, instead of
+  #     requiring a registry (or anything else) to have made a VPC first.
   #   chart_version: ""
   #   storage_class: ""                       # PVC StorageClass (blank = IBM VPC block default)
   # cis:                                      # optional BIG-IP CIS controller
