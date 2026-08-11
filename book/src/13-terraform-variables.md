@@ -19,6 +19,26 @@ The Terraform HCL is bundled into the `roksbnkctl` binary via `go:embed`. On fir
 └── modules/
 ```
 
+### The extracted tree is the base plus a per-release overlay
+
+Extraction writes the base tree above, then layers `terraform/lines/<line>/` on
+top of it, where `<line>` is the BNK release derived from `bnk.manifest_version`
+(`2.3.0-3.2598.3-0.0.170` → `2.3`). Same relative path replaces, new path is
+added, nothing is removed — so an overlay can only add to or replace the base,
+never quietly delete a resource it declares.
+
+**No supported release needs one today, so `lines/` ships empty and the extracted
+tree is byte-identical to the base.** It is documented here anyway, because the
+consequence is not obvious and will not announce itself: the extracted tree is no
+longer a function of the binary alone, but of the binary *and the workspace's
+manifest version*. If you are ever comparing your extracted `main.tf` against the
+repo's and they differ, that is the first thing to check.
+
+Why this rather than a branch per BNK release — which was tried and withdrawn —
+is in [`terraform/lines/README.md`](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/lines/README.md).
+The short version: a branch forks the whole tool to express a difference that
+lives in a handful of `.tf` files.
+
 That `terraform.tfvars.example` file is the canonical reference for what's tunable — every variable with a sensible starter value, grouped by module (ROKS cluster, cert-manager, FLO, CNEInstance, License, testing). `terraform/variables.tf` (linked at the [GitHub canonical URL](https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf)) is the formal declaration with types, descriptions, and defaults.
 
 You don't edit the example file in place. Copy or generate from it instead.
@@ -34,6 +54,7 @@ $ roksbnkctl tfvars > ~/.roksbnkctl/dev/terraform.tfvars.user
 What gets pre-filled:
 
 - Every field from `config.yaml` that maps to a tfvar (cluster name, region, workers, BNK fields, COS fields)
+- `cluster_network_mode` — rendered **unconditionally**, unlike the settings around it. Most are omitted when unset so the HCL default stands; this one decides how a cluster is *built*, and a value that means two different things depending on which side you read it from is worth avoiding. Unset renders `"single-nic"`, which is today's behaviour exactly.
 - The cluster's identity from `cluster-outputs.json` if `cluster up` has already run
 - A commented-out section for the variables you might want to tune next (jumphost profile, GSLB datacenter, license mode)
 

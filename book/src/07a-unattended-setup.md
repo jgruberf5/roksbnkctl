@@ -98,6 +98,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
 | `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
 | `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` | `cluster.public_gateway` | bool — `false` builds a **disconnected** cluster whose workers have no Internet egress. Unset inherits the terraform default (`true`). |
+| `ROKSBNKCTL_CLUSTER_NETWORK_MODE` | `cluster.network_mode` | How the workers are attached: `single-nic` (default) or `multi-nic`. Create-time only. Exists for exactly this chapter's case — a runner that never writes a `config.yaml` would otherwise have no way to ask for it. |
 | `ROKSBNKCTL_CLUSTER_VPC_CIDR` | `cluster.vpc_cidr` | CIDR (`/18` or larger) for a **new** cluster VPC's per-zone address prefixes. Unset = IBM `auto`, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See [Chapter 9a](./09a-transit-gateway-sharing.md#first-give-each-cluster-vpc-its-own-address-block). |
 | `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | a Transit Gateway **name or id** — `cluster up`/`register` attaches the cluster VPC to it (see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md)) |
 | `ROKSBNKCTL_CLUSTER_VPC_ID` | `resources.cluster_vpc` (`create:false` + `existing`) | verbatim — adopt an existing cluster VPC by **ID** |

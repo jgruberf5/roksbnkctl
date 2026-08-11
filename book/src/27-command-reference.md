@@ -239,11 +239,10 @@ Configure + drive BNK Forge cluster registration
 Configure and drive registration of this workspace's cluster with a
 co-located BNK Forge (v3) install — without hand-editing config.yaml.
 
-  enable      turn on auto-registration on `cluster up` (writes config.yaml)
-  disable     turn it back off (LOCAL only — does not unregister)
-  status      show the effective config + readiness
-  register    register this workspace's cluster with BNK Forge right now
-  unregister  remove this workspace's cluster from its BNK Forge project
+  enable    turn on auto-registration on `cluster up` (writes config.yaml)
+  disable   turn it back off
+  status    show the effective config + readiness
+  register  register this workspace's cluster with BNK Forge right now
 
 Registration uses BNK Forge v3's REST API (it has no CLI). It is credential-
 backed: an IBM Cloud credential template is stored in Forge so it re-derives the
@@ -253,19 +252,14 @@ session token is cached in the OS keychain.
 
 ### `roksbnkctl bnkforge disable`
 
-Turn off BNK Forge auto-registration (**local only — does not unregister**)
+Turn off BNK Forge auto-registration (LOCAL only — does not unregister)
 
-```
-roksbnkctl bnkforge disable
-```
+Clears the workspace's auto-register flag, so `cluster up` stops registering
+with BNK Forge.
 
-Clears the workspace's auto-register flag, so `cluster up` stops registering with
-BNK Forge.
-
-This is a **local setting and never contacts the server**. Despite reading like the
-inverse of `register`, it does not remove anything: a cluster already registered
-stays on Forge's Kubernetes page. To remove it, use
-[`bnkforge unregister`](#roksbnkctl-bnkforge-unregister).
+This is a LOCAL setting and never contacts the server. A cluster already
+registered stays on Forge's Kubernetes page — to remove it, use
+`roksbnkctl bnkforge unregister`.
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -307,11 +301,11 @@ roksbnkctl bnkforge register [flags]
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
 | `--username` | `string` | — | BNK Forge login username (overrides config) |
 
-Registering is **non-destructive**: a cluster already held by *this* project is
-updated in place, so its Forge cluster id and any scan history survive. A cluster
-held by *another* project is refused, naming the owner — `--force` moves it
-deliberately. The automatic post-`cluster up` hook never forces. See
-[Chapter 24a](./24a-bnk-forge-registration.md#registration-is-non-destructive).
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
+### `roksbnkctl bnkforge status`
+
+Show this workspace's BNK Forge registration config + readiness
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -323,43 +317,27 @@ Remove this workspace's cluster from its BNK Forge project
 roksbnkctl bnkforge unregister [flags]
 ```
 
-Undoes what `bnkforge register` did. Without it a workspace can create a
-registration it has no way to remove: `bnkforge disable` only clears the local
-auto-register flag, so after a teardown the cluster stays on Forge's Kubernetes
-page — inside a project that outlives everything it was created alongside,
-pointing at a cluster that may no longer have BNK on it, or may no longer exist.
+Removes the cluster this workspace registered, so a teardown can undo what
+`bnkforge register` did.
 
-**Absence is success.** A destroy path runs when things are already partly
-dismantled, and may well run twice, so every "it was not there" case reports and
-exits 0:
+Without it a workspace can create a registration it has no way to remove:
+`bnkforge disable` only clears the local auto-register flag and never contacts
+the server, so the cluster stays on Forge's Kubernetes page pointing at
+something that may no longer exist.
 
-- no project of that name
-- the project exists but holds no cluster of that name
-- the cluster exists but the DELETE returns 404
-
-Only a genuine server failure surfaces as an error. It also **never creates
-anything** — unlike `register`, which ensures the project exists, a teardown asking
-*"is this still here?"* must not bring it into being.
-
-The cluster name comes from the workspace's recorded cluster outputs, falling back
-to the workspace name; the project from `bnkforge.project`, falling back to the
-workspace name.
+Absence is success. No project, no cluster of that name, or a cluster already
+gone all report and exit 0, so this is safe to run from a destroy path that may
+run twice or run late.
 
 **Flags**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD) |
+| `--project` | `string` | — | BNK Forge project holding the cluster |
 | `--url` | `string` | — | BNK Forge base URL |
 | `--username` | `string` | — | BNK Forge username |
-| `--password` | `string` | — | BNK Forge password (prefer `BNK_FORGE_PASSWORD`) |
-| `--project` | `string` | — | BNK Forge project holding the cluster |
-| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
-
-← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
-
-### `roksbnkctl bnkforge status`
-
-Show this workspace's BNK Forge registration config + readiness
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
@@ -422,8 +400,11 @@ roksbnkctl cluster config [flags]
 
 Prints the cluster identity recorded at cluster up / register time
 (~/.roksbnkctl/`<workspace>`/cluster-outputs.json): cluster ID, endpoints, VPC,
-transit gateway, and registry COS. This is the RECORDED config; for live runtime
-state (node readiness) use `roksbnkctl cluster status`.
+transit gateway, registry COS, and the create-time settings the cluster was
+built with (network mode, and the VPC address block when this tool created the
+VPC). This is the RECORDED config, and for the create-time settings it is
+AUTHORITATIVE — config.yaml describes what is wanted, this describes what
+exists. For live runtime state (node readiness) use `roksbnkctl cluster status`.
 
 **Flags**
 
@@ -1612,7 +1593,6 @@ Commands:
   roksbnkctl registry list       List artifacts currently in the mirror
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
   roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
-  roksbnkctl registry adopt      Record a mirror this workspace did not populate
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
   roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
   roksbnkctl registry delete     Delete ALL replicated artifacts from the target
@@ -1632,43 +1612,36 @@ Record a mirror this workspace did not populate, so `bnk up` can use it
 roksbnkctl registry adopt [flags]
 ```
 
-Writes `registry-mirror.json` for a mirror that already exists.
+Writes registry-mirror.json for a mirror that already exists.
 
 `bnk up` refuses to render against a mirror the workspace has no record of —
-otherwise BNK would be pointed at `far_repo_url`, which an air-gapped cluster
-cannot reach. Only `registry replicate` used to write that record, which meant a
+otherwise BNK would be pointed at far_repo_url, which an air-gapped cluster cannot
+reach. Until now only `registry replicate` wrote that record, which means a
 workspace could only use a mirror it had populated itself.
 
-That is the wrong constraint for how mirrors are actually used. A registry is
+That is the wrong constraint for how mirrors are actually used. The registry is
 filled once, as a supply-chain step, and then many installs pull from it — often
-from a different workspace, host, or team. Those installs were forced to re-run
-`replicate` purely to re-derive a record, and `replicate` needs the FAR source
-reachable at install time. An air-gapped operator frequently does not have that,
-which is the whole point of having mirrored.
+from a different workspace, a different host, or a different team. Those installs
+were forced to re-run replicate purely to re-derive a record, which needs the FAR
+source reachable at install time. An air-gapped operator frequently does not have
+that, and it is the whole point of having mirrored in the first place.
 
-`adopt` derives the record from the configured registry target: the chart and image
-hosts, the repo namespace, the manifest version, and the mirror CA all come from the
-workspace config, so **no source access is needed**. It then asks the *mirror* what
-it holds under the configured prefix — a sanity check that catches a typo in
-`registry.generic_repo_prefix`, an empty registry, or a credential that cannot read.
-It does not pretend to prove the contents are correct or complete.
+adopt derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from
+the workspace config, so no source access is needed. It then asks the MIRROR what
+it holds under the configured prefix — a sanity check that catches a typo in the
+prefix or an empty registry, without pretending to prove the contents are correct.
 
-Pass `--verify-contents` when the source *is* reachable and you want proof rather
-than assertion: it builds the BOM, digest-checks every artifact before recording,
-and the record then carries the full artifact inventory **with digests** — which is
-what lets a later `registry delete` drive from it.
-
-Adoption does **not** relax the out-of-band CA pinning: an unpinned capture is
-refused here exactly as it is for `replicate`, because the CA lands in every node's
-trust store either way. See [`registry.generic_ca_b64` / `generic_ca_sha256`](./28-configuration-reference.md).
+Pass --verify-contents when the source IS reachable and you want proof rather than
+assertion: it builds the BOM and digest-checks every artifact before recording,
+and the record then carries the full artifact inventory.
 
 **Flags**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--verify-contents` | `bool` | `false` | digest-check every BOM artifact before recording (needs the FAR source) |
 | `--force` | `bool` | `false` | record the mirror even when it holds nothing under the configured prefix |
-| `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
+| `--verify-contents` | `bool` | `false` | digest-check every BOM artifact before recording (needs the FAR source) |
 
 ← back to [`roksbnkctl registry`](#roksbnkctl-registry)
 
@@ -1799,11 +1772,11 @@ auth, or --source-sa-b64).
 | `--concurrency` | `int` | `0` | parallel copy workers (default: 4) |
 | `--far-repo-url` | `string` | — | FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com) |
 | `--include-deps` | `bool` | `false` | force-include the non-F5 dependency artifacts (cert-manager, node-labeler) |
+| `--insecure-capture-ca` | `bool` | `false` | adopt a self-signed mirror CA over an UNAUTHENTICATED connection (trust-on-first-use); prefer --registry-ca or --registry-ca-fingerprint |
 | `--manifest-version` | `string` | — | BNK manifest version (default: workspace bnk.manifest_version) |
 | `--no-include-deps` | `bool` | `false` | exclude the non-F5 dependency artifacts |
-| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else `registry.generic_ca_b64`) |
-| `--registry-ca-fingerprint` | `string` | — | Expected SHA-256 of the mirror CA (`sha256:ab:cd…` or bare hex), authenticating a captured CA out of band |
-| `--insecure-capture-ca` | `bool` | `false` | Adopt a self-signed mirror CA over an **unauthenticated** connection (trust-on-first-use). Prefer `--registry-ca` or `--registry-ca-fingerprint` |
+| `--registry-ca` | `string` | — | PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else registry.generic_ca_b64) |
+| `--registry-ca-fingerprint` | `string` | — | expected SHA-256 of the mirror CA ("sha256:ab:cd…" or bare hex), authenticating a captured CA out of band |
 | `--source-sa-b64` | `string` | — | FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64) |
 | `--target` | `string` | — | mirror target backend: icr\|generic (default: workspace registry.target, else "icr") |
 
@@ -1826,6 +1799,7 @@ first argument is either a backend KIND (sets registry.target) or a FIELD name
   Kinds:  icr | generic
   Fields: icr_host  icr_namespace
           generic_host  generic_repo_prefix  generic_username  generic_password
+          generic_ca (a PEM file)  generic_ca_sha256
 
 Examples:
   roksbnkctl registry target                          # show current config
@@ -1836,6 +1810,7 @@ Examples:
   roksbnkctl registry target generic_repo_prefix bnk
   roksbnkctl registry target generic_username ci-bot
   echo "$TOKEN" | roksbnkctl registry target generic_password --password-stdin
+  roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt
 
 **Flags**
 

@@ -315,7 +315,67 @@ cluster:
   vpc_cidr: 10.242.0.0/16     # ROKSBNKCTL_CLUSTER_VPC_CIDR for CI
 ```
 
+> **Set it before `cluster up`, not after.** Editing `vpc_cidr` in a workspace
+> whose cluster already exists does not re-address anything — an existing VPC's
+> prefixes cannot be changed without replacing its subnets. It now says so:
+>
+> ```
+> ! cluster.vpc_cidr is a CREATE-time setting and it has changed.
+>   Cluster "x" was created from 10.242.0.0/16; this workspace now says 10.99.0.0/16.
+>   The new value is ignored — ...
+>   A future release will refuse this rather than ignore it; ...
+> ```
+>
+> The warning fires only on a real disagreement with the block the cluster was
+> **created from**, so a workspace that set it once and left it alone stays
+> silent. A workspace built by `cluster register` also stays silent, because the
+> adopt path records no block to disagree with — see [Chapter 9](./09-registering-existing-cluster.md).
+
 **Prevention (v1.39.0+)**: `cluster up` refuses before terraform creates anything when the VPC it is about to build would overlap one already on the gateway, and `tgw connect` refuses before attaching — each naming the other VPC and the colliding prefixes. See [Give each cluster VPC its own address block](./09a-transit-gateway-sharing.md#first-give-each-cluster-vpc-its-own-address-block).
+
+### Symptom: `cluster ... was created as a single-nic cluster, but this workspace now asks for multi-nic`
+
+**Root cause**: `cluster.network_mode` is a **create-time** setting and it changed
+after the cluster was built. There is no in-place conversion between modes.
+
+**Why it refuses rather than warns**: terraform would happily plan this — as a
+*destroy and create* of the running cluster, rendered as ~60 lines that read like
+an update. The refusal happens before planning, so you never get the chance to
+approve it by mistake.
+
+**Fix**: set `cluster.network_mode` back to what the cluster is, or build the
+other mode as a **new cluster in a new workspace**. What the cluster actually is
+comes from `cluster-outputs.json`, not from `config.yaml`.
+
+Note that *removing* the setting is not the same as changing it: an unset
+`network_mode` defers to the record and is never refused. See
+[Chapter 8a §Which side wins](./08a-three-phase-lifecycle.md#which-side-wins).
+
+### Symptom: `BNK 2.3 does not support multi-nic clusters (it supports single-nic)`
+
+**Root cause**: the BNK release — derived from `bnk.manifest_version` — cannot
+drive a cluster of that network mode. 2.3 does not express the multi-NIC network
+attachments or CNEInstance options.
+
+**Fix**: use a `bnk.manifest_version` on a line that supports the mode (2.4+ for
+multi-nic), or a cluster built in a mode this line supports. The pairing is
+checked at plan time precisely so this is a message rather than a failed apply
+against real infrastructure.
+
+### Symptom: `! unknown BNK release line: BNK 2.5 is not in this build's support matrix`
+
+**This is a warning, and the run continues.** It is expected, not a defect.
+
+**Root cause**: the support matrix ships *inside* the binary, so a release newer
+than your build is unknown to it. That is missing information, not a known
+incompatibility — refusing on it would make every build refuse every BNK release
+that shipped after it, which is unhelpful when the binary is pinned (the
+[BNK Forge modules](./24a-bnk-forge-registration.md) pin the runner image by
+digest, so "use a newer build" is not an action available to whoever is choosing
+the release).
+
+**What it means**: the combination is *unverified here*, not blessed. Upgrade
+`roksbnkctl` if you want it actually checked.
 
 ### Symptom: `down` fails with `The VPC is in use and cannot be deleted. Subnets [...]`
 

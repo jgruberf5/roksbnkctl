@@ -179,13 +179,16 @@ Not every pairing exists:
 
 | BNK line | `single-nic` | `multi-nic` |
 |---|---|---|
-| 2.3 | ✅ | ❌ — 2.3 does not express the multi-NIC network attachments or CNEInstance options |
-| 2.4 | ✅ | ✅ |
+| 2.3 | **yes** | **no** — 2.3 does not express the multi-NIC network attachments or CNEInstance options |
+| 2.4 | **yes** | **yes** — provisional; see the note below |
 
 A 2.4 install still drives a single-NIC cluster, including one created before
 multi-NIC existed. That is what lets an existing deployment move to 2.4 without
 touching its cluster. What does not exist is a conversion: a cluster is built in
 one mode and stays in it.
+
+The 2.4 row is **provisional**: it was written before 2.4 shipped and has never
+been run against it. Every value in it is an expectation, not an observation.
 
 `roksbnkctl` checks the pairing before it plans and refuses an unsupported one
 there, rather than letting it fail against real infrastructure. The matrix is

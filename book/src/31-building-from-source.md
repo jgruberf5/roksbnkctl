@@ -211,7 +211,7 @@ The push triggers [`release.yml`](https://github.com/jgruberf5/roksbnkctl/blob/m
 3. Attach the binaries, checksums (`checksums.txt`), and the rendered book PDF (if mdbook-pdf is configured) to the GitHub release.
 4. Generate release notes from the CHANGELOG and the commits since the previous tag.
 
-The release-gate criteria — what has to hold before tagging — are documented in [PLAN.md §"v1.0 (M4)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md). The most important: full E2E green for 3 consecutive nights on the release branch.
+The release-gate criteria — what has to hold before tagging — are documented in [PLAN.md §"v1.0 (M4)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md). The most important: full E2E green for 3 consecutive nights on `main`.
 
 ## Cross-references
 

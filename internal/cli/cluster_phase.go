@@ -73,8 +73,11 @@ var clusterConfigCmd = &cobra.Command{
 	Short:   "Print the recorded cluster identity (cluster-outputs.json)",
 	Long: `Prints the cluster identity recorded at cluster up / register time
 (~/.roksbnkctl/<workspace>/cluster-outputs.json): cluster ID, endpoints, VPC,
-transit gateway, and registry COS. This is the RECORDED config; for live runtime
-state (node readiness) use ` + "`roksbnkctl cluster status`" + `.`,
+transit gateway, registry COS, and the create-time settings the cluster was
+built with (network mode, and the VPC address block when this tool created the
+VPC). This is the RECORDED config, and for the create-time settings it is
+AUTHORITATIVE — config.yaml describes what is wanted, this describes what
+exists. For live runtime state (node readiness) use ` + "`roksbnkctl cluster status`" + `.`,
 	Args: cobra.NoArgs,
 	RunE: runClusterShow,
 }

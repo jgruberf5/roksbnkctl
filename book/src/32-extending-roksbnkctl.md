@@ -91,6 +91,46 @@ The bootstrap step runs `apt-get install -y <packages>` on the SSH target when t
 
 For each backend, the implementation work is small (one map entry). The doctor checks, e2e coverage, and docs are the bulk — same shape as adding a new backend, scaled to the smaller surface.
 
+## Supporting a new BNK release
+
+Two version axes vary independently here — the BNK release, and the IBM platform
+capability the cluster was built with. Adding a release means telling the tool
+about the new cell, not forking anything.
+
+**1. Add a row to `internal/config/support_matrix.yaml`.**
+
+```yaml
+  - bnk: "2.5"
+    contract: [1, 2]                       # schema versions this line can read
+    network_modes: [single-nic, multi-nic]
+    notes: >-
+      What changed, and anything a reader needs to know before trusting the row.
+```
+
+The line itself is *derived* from `bnk.manifest_version` (`2.5.0-…` → `2.5`), so
+there is no new config field and nothing that can disagree with the manifest
+actually being installed.
+
+**2. Add `terraform/lines/2.5/` only if the HCL genuinely differs.** It mirrors
+the base tree and is layered on top at extraction: same path replaces, new path
+is added, nothing is removed. A difference a *variable* can express belongs in
+the base as a variable — an overlay is a fork of a file, and two copies of a file
+drift. An empty `lines/` is the correct state whenever the base serves every
+supported release, which is the case today.
+
+**3. Add the CI coverage for the cell.** From the matrix's own header: *"Adding a
+cell means adding a CI plan for it. A cell with no coverage is a claim nobody has
+checked."*
+
+**4. Mark it provisional until it has actually run.** A row written before the
+release ships is an expectation, not an observation. Say so in the row — the
+`2.4` row does — so that a plan-time pass isn't mistaken for verification.
+
+Note what is *not* on this list: cutting a branch. That was the first answer and
+it was withdrawn. A branch per release forks the whole tool — CLI fixes, IBM
+module updates, docs, CI — to express a difference that lives in a handful of
+`.tf` files, and it makes every subsequent change pick a target branch.
+
 ## Adding a new chapter to the book
 
 The book is mdBook with markdown source under [`book/src/`](https://github.com/jgruberf5/roksbnkctl/tree/main/book/src). Adding a chapter:

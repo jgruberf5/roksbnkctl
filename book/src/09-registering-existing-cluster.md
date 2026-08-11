@@ -99,7 +99,7 @@ Either way, `cluster register` won't write `cluster-outputs.json` until both the
 
 ## The `cluster-outputs.json` write
 
-On success, `cluster register` writes `~/.roksbnkctl/<workspace>/cluster-outputs.json` — the same file `cluster up` writes. The contents look identical except for one field:
+On success, `cluster register` writes `~/.roksbnkctl/<workspace>/cluster-outputs.json` — the same file `cluster up` writes. The contents look nearly identical; the differences are `source`, and what is deliberately left **empty**:
 
 ```json
 {
@@ -108,6 +108,8 @@ On success, `cluster register` writes `~/.roksbnkctl/<workspace>/cluster-outputs
   "region": "ca-tor",
   "resource_group_id": "abc123...",
   "vpc_id": "r038-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "canada-roks-cos",
   "master_url": "https://c106.ca-tor.containers.cloud.ibm.com:31415",
@@ -118,6 +120,24 @@ On success, `cluster register` writes `~/.roksbnkctl/<workspace>/cluster-outputs
 ```
 
 The `source` field is `cluster-register` (vs `cluster-up` for self-provisioned clusters). Downstream commands that care about provenance — for example, a future `roksbnkctl cluster down` would refuse to destroy a `cluster-register`-sourced cluster — read this field. Subnet IDs (`subnet_ids`) and transit gateway ID (`transit_gateway_id`) are left blank for registered clusters; the bundled HCL doesn't need them when `roksbnkctl up` runs against a pre-existing cluster.
+
+**`vpc_cidr` is also left empty here, and that is deliberate.** It records the
+block *this tool used to create* a VPC. On the adopt path the setting never
+applied, so writing the configured value would record something that was never
+true of the VPC.
+
+That has one consequence worth knowing: because the create-time warning for
+`cluster.vpc_cidr` fires only on a disagreement with a **recorded** value, a
+workspace built by `cluster register` will never emit it — there is nothing
+recorded to disagree with. Silence there means "not knowable", not "your value
+is fine". See [Chapter 26](./26-troubleshooting.md).
+
+**`network_mode`, by contrast, is recorded** — from the config, since an adopted
+cluster's mode cannot yet be detected from the IBM API. On a single-NIC cluster
+(every cluster today) the default is correct and nothing needs saying. When
+multi-NIC ROKS ships, adopting one will mean setting `cluster.network_mode` to
+match **what the cluster is**, not what you want — the opposite of how the same
+field reads on `cluster up`.
 
 ## Worked example: register canada-roks
 

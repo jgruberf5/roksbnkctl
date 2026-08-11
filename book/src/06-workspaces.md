@@ -36,7 +36,7 @@ Three things are worth calling out:
 
 - **`~/.roksbnkctl/config.yaml`** is *global* — non-secret user-wide preferences plus the `current_workspace` pointer. It is **not** a workspace config; the per-workspace files live one level deeper.
 - **`state/` and `state-cluster/`** are intentionally separate so [`roksbnkctl cluster up`](./08-cluster-phase.md) and `roksbnkctl up` don't tangle their Terraform state. Most users won't touch either directly.
-- **`cluster-outputs.json`** is the persisted identity of the workspace's ROKS cluster — written by `cluster up` or [`cluster register`](./09-registering-existing-cluster.md), read by `roksbnkctl up` so BNK trials don't have to re-state cluster identity in every tfvars.
+- **`cluster-outputs.json`** is the persisted identity of the workspace's ROKS cluster — written by `cluster up` or [`cluster register`](./09-registering-existing-cluster.md), read by `roksbnkctl up` so BNK trials don't have to re-state cluster identity in every tfvars. It also records the **create-time** settings the cluster was built with, and for those it outranks `config.yaml` — the record says what the cluster *is*, the config says what is wanted. See [Chapter 8a §Which side wins](./08a-three-phase-lifecycle.md#which-side-wins).
 
 Override the base directory with the `ROKSBNKCTL_HOME` env var. Test fixtures use this; everyday users shouldn't need it.
 

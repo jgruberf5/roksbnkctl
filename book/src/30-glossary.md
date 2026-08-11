@@ -101,8 +101,16 @@ A Service type that provisions an external endpoint (a cloud LB on managed Kuber
 **Long-lived ops pod**
 The k8s backend's persistent execution context. Deployed by `roksbnkctl ops install`; subsequent `--backend k8s` dispatches `kubectl exec` into the same pod rather than starting a fresh Pod each call. Contrasted with the *one-shot Job pattern* used for iperf3 and DNS probes. See [Chapter 19](./19-in-cluster-ops-pod.md).
 
+**BNK line** / **release line** — The `<major>.<minor>` of a BNK release, e.g. `2.3`. Not configured: *derived* from `bnk.manifest_version`. Selects the terraform overlay ([Chapter 13](./13-terraform-variables.md)) and gates the support-matrix check. An unset `manifest_version` derives the line from the built-in default rather than failing, because that field has always been optional.
+
+**Network mode** (`single-nic` | `multi-nic`) — How a cluster's worker nodes are attached. Fixed when the cluster is created and never converted in place. `single-nic` is the default and describes every cluster built with this tool today; `multi-nic` needs BNK 2.4+ and IBM support that has not yet shipped.
+
+**Contract schema version** — The `schema_version` in `cluster-outputs.json`, currently 2. Absent means 1. Declares the shape of the handoff record so a reader can tell what it is looking at.
+
+**Support matrix** — `internal/config/support_matrix.yaml`: which BNK lines drive which network modes, and which contract versions each can read. Checked before planning. A known line with an unsupported mode is refused; a line the matrix has never heard of *warns and proceeds*, since that usually means the binary predates the release rather than that the pairing is wrong.
+
 **Manifest version** (`f5_bigip_k8s_manifest_version`)
-The version pin on the f5-bigip-k8s-manifest Helm chart. Transitively pins both the FLO and CIS versions (both are extracted from the manifest chart). See [Chapter 13](./13-terraform-variables.md).
+The version pin on the f5-bigip-k8s-manifest Helm chart. Transitively pins both the FLO and CIS versions (both are extracted from the manifest chart). See [Chapter 13](./13-terraform-variables.md). It also determines the derived **BNK line** above, so it selects the terraform overlay and gates the support-matrix check — a larger blast radius than the name suggests, and the reason there is no separate line field that could disagree with it.
 
 **mdBook**
 [rust-lang/mdBook](https://rust-lang.github.io/mdBook/) — the static-site generator the book is built with. Markdown source under `book/src/`, HTML output under `book/book/`. See [Chapter 31 §"The book build"](./31-building-from-source.md#the-book-build).

@@ -88,14 +88,45 @@ The Cluster phase writes `cluster-outputs.json` on success (or
 `cluster register` writes it for a pre-existing cluster). Both BNK and
 Testing read it to learn the cluster's identity without re-specifying it:
 
-- **BNK** reads the cluster id/name (to attach to the existing cluster) and
-  the VPC id.
+- **BNK** reads the cluster id/name (to attach to the existing cluster), the
+  VPC id, and the cluster's **network mode** and **contract schema version** —
+  which it checks against the BNK release it is about to install, before it
+  plans anything (see [Chapter 28](./28-configuration-reference.md#bnk-release-and-network-mode)).
 - **Testing** reads the cluster VPC id (the jumphost attaches to it), the
   cluster id/name, and the **transit gateway name** (the Testing module
   looks the gateway up by name to bridge the client VPC to the cluster).
 
 The transit-gateway *name* is recorded alongside the id specifically so the
 Testing phase can run standalone against a registered cluster.
+
+### Which side wins
+
+For most settings `config.yaml` is the input and the record is just an echo of
+the result. For **create-time** settings the relationship inverts: the record
+describes what the cluster *is*, and the config is a request that has to agree
+with it. A cluster is never converted in place, so a contradiction is either a
+mistake or a request for a different cluster.
+
+That gives three cases, and the middle one is the one worth knowing:
+
+| `cluster.network_mode` | vs the record | result |
+|---|---|---|
+| set, and matches | agrees | proceeds |
+| **unset** | cannot disagree | **defers to the record** |
+| set, and differs | contradicts | **refused**, before planning |
+
+**Silence is not an assertion.** An unset `network_mode` means the config has no
+opinion, not that it insists on `single-nic` — so it defers to whatever the
+cluster actually is. This matters because a `config.yaml` is not always
+hand-written and durable: the [BNK Forge modules](./24a-bnk-forge-registration.md)
+regenerate one per step from a curated environment, so a mode set by the step
+that *created* the cluster is simply absent by the time the step that *installs
+BNK* runs. Reading that absence as a demand for `single-nic` would refuse a
+correct deployment at its second step, over a contradiction nobody expressed.
+
+The refusal in the third row is what stops terraform from planning a
+**replacement** of a running cluster — which it will do quite happily, rendered
+as output that reads like an update.
 
 ## Parallel `up`: Cluster first, then BNK || Testing
 

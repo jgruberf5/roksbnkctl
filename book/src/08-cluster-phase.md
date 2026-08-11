@@ -139,7 +139,7 @@ clusters can reach each other over one VPC and one gateway.
 
 ## `cluster-outputs.json` — the cluster identity record
 
-When `roksbnkctl cluster up` apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:
+When `roksbnkctl cluster up` apply succeeds, it writes a workspace-scoped JSON file describing the cluster. Most of it comes from Terraform outputs (cluster name, ID, region, RG, VPC, registry COS); the **create-time settings** — `network_mode`, and `vpc_cidr` when this tool created the VPC — come from the workspace config instead, because that is the only place they are knowable and the moment they become settled:
 
 ```
 ~/.roksbnkctl/<workspace>/cluster-outputs.json
@@ -154,6 +154,9 @@ Sample contents:
   "region": "us-south",
   "resource_group_id": "abc123...",
   "vpc_id": "r006-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
+  "vpc_cidr": "10.242.0.0/16",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "bnk-quickstart-cos-instance",
   "master_url": "https://c106.us-south.containers.cloud.ibm.com:31415",
@@ -164,6 +167,33 @@ Sample contents:
 ```
 
 The `source` field discriminates between `cluster-up` (we created it) and `cluster-register` (we discovered an existing cluster — see [Chapter 9](./09-registering-existing-cluster.md)). Subsequent commands read this file to learn the workspace's cluster identity without hitting IBM APIs.
+
+### Reading this file from your own tooling
+
+The file is a **versioned contract**, and the rules for reading it matter more
+than the field list, because every rule exists to keep a file written by one
+version readable by another.
+
+- **`schema_version` absent means 1.** Every record written before the field
+  existed describes a real cluster and must stay readable; treating a missing
+  value as `0` would invalidate all of them.
+- **`network_mode` absent means `single-nic`.** That is what every cluster built
+  before the field existed actually is.
+- **`vpc_cidr` absent means unknown, not "no block was set."** It is recorded
+  only when *this tool created the VPC*; on the adopt path the setting never
+  applied, so recording the configured value would record something that was
+  never true.
+- **`node_interfaces` is declared but written by nothing today.** Multi-NIC ROKS
+  has not shipped, so no code path can populate it honestly yet. Empty means
+  *unknown* — never "this cluster has no extra interfaces". Both readings are
+  true of every cluster that exists right now, which is exactly what makes the
+  wrong one easy to adopt and expensive to unwind later.
+- **Unknown fields are ignored, deliberately.** New keys are only ever added, so
+  an older reader keeps working against a newer file.
+
+For the create-time settings, this file — not `config.yaml` — is the authority.
+See [Chapter 8a](./08a-three-phase-lifecycle.md#which-side-wins) for what happens
+when the two disagree.
 
 `roksbnkctl cluster down` deletes the file as part of its post-destroy cleanup. `roksbnkctl cluster show` pretty-prints it for human readers:
 

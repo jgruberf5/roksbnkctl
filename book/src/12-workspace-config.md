@@ -133,6 +133,8 @@ cluster:
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
+  vpc_cidr: 10.242.0.0/16       # optional; address block for a NEW cluster VPC
+  network_mode: single-nic      # optional; single-nic (default) | multi-nic
 ```
 
 | Field | Type | Default | Notes |
@@ -144,8 +146,10 @@ cluster:
 | `public_gateway` | bool | `true` | Attach a public gateway to each cluster subnet for worker Internet egress. `false` builds a **private/disconnected** cluster with no egress (no `ibm_is_public_gateway`, no subnet attachment). Sets `cluster_public_gateway`. **Expert:** a `false` cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/`disconnected` licensing — see [Chapter 10a §"A truly disconnected cluster"](./10a-air-gapped-install.md). Governs worker egress only; the master keeps its public API endpoint. |
 | `min_worker_vcpu_count` | int | `16` | Minimum vCPUs when the cluster module auto-selects the `bx2` worker flavor (smallest profile meeting both minimums). `0`/omitted ⇒ HCL default. Sets `roks_min_worker_vcpu_count`. |
 | `min_worker_memory_gb` | int | `64` | Minimum memory (GB) for the same auto-select. `0`/omitted ⇒ HCL default. Sets `roks_min_worker_memory_gb`. |
+| `vpc_cidr` | string | empty (IBM `auto`) | Address block a **new** cluster VPC's three per-zone prefixes are carved from, so `/18` is the smallest usable value. Empty leaves IBM's `auto`, which gives every VPC in a region the same prefixes — two such VPCs cannot share a Transit Gateway. Sets `cluster_vpc_cidr`. **CREATE-time only**; changing it later warns. |
+| `network_mode` | string | `single-nic` | How the worker nodes are attached. Omitted means `single-nic`, which is what every cluster built with this tool is — the field exists to *name* that, not to change it. `multi-nic` requires BNK 2.4+. Sets `cluster_network_mode`. **CREATE-time only and enforced**: an explicit value contradicting the built cluster is refused, because there is no in-place conversion. See [Chapter 28](./28-configuration-reference.md#bnk-release-and-network-mode). |
 
-The `cluster:` block translates to terraform variables `create_roks_cluster`, `openshift_cluster_name`, `roks_cluster_id_or_name`, `openshift_cluster_version`, `roks_workers_per_zone`, `cluster_public_gateway` — see [Chapter 13](./13-terraform-variables.md) and [Chapter 29](./29-terraform-variable-reference.md) for the full mapping.
+The `cluster:` block translates to terraform variables `create_roks_cluster`, `openshift_cluster_name`, `roks_cluster_id_or_name`, `openshift_cluster_version`, `roks_workers_per_zone`, `cluster_public_gateway`, `cluster_vpc_cidr`, `cluster_network_mode` — see [Chapter 13](./13-terraform-variables.md) and [Chapter 29](./29-terraform-variable-reference.md) for the full mapping.
 
 When a `prefix` is set, `init` fills `cluster.name` with the prefix itself (the cluster name carries no suffix — see [Chapter 13](./13-terraform-variables.md#why-the-cluster-name-takes-no-suffix)). Setting `cluster.create: false` adopts an existing cluster by name/ID via `cluster.name`, exactly as before — the cluster is **not** part of the `resources:` block below.
 

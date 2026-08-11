@@ -27,7 +27,6 @@ Source: `terraform/variables.tf`
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
 | `roks_cos_instance_name` | `string` | `"tf-openshift-cos-instance"` | Name of the COS instance for the OpenShift image registry | no |
 | `roks_transit_gateway_name` | `string` | `"tf-tgw"` | Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true. | no |
-| `cluster_vpc_cidr` | `string` | `""` | CIDR the cluster VPC's three per-zone address prefixes are carved from (`10.241.0.0/16` → `10.241.0.0/18`, `10.241.64.0/18`, `10.241.128.0/18`). Empty leaves IBM's `auto` management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. `/18` is the smallest usable block. Ignored when `use_existing_cluster_vpc = true`. | no |
 | `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create). | no |
 | `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id. | no |
 | `install_cert_manager` | `bool` | `true` | Install cert-manager. When false, cert_manager_namespace is passed directly to flo. | no |
@@ -115,6 +114,13 @@ Source: `terraform/variables.tf`
 | `tgw_connection_name` | `string` | `""` | Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide). | no |
 | `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
+| `cluster_vpc_cidr` | `string` | `""` | <<-EOT | no |
+| `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
+| `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
+| `flp_vsi_create_vpc` | `bool` | `false` | Build the F5 License Proxy its own VPC instead of placing it in an existing one. | no |
+| `flp_vsi_vpc_name` | `string` | `""` | Name for the VPC created when flp_vsi_create_vpc = true. | no |
+| `flp_vsi_subnet_cidr` | `string` | `"10.250.0.0/24"` | Address prefix for the VPC created when flp_vsi_create_vpc = true. | no |
+| `cluster_network_mode` | `string` | `"single-nic"` | How the cluster's worker nodes are attached: single-nic (default) or multi-nic. | no |
 
 ## Module: `cert_manager`
 
@@ -288,6 +294,9 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `far_service_account_b64` | `string` | `""` | Base64 FAR service account (from bnk.far_auth_local_file), used when use_cos_bucket=false. | no |
 | `f5_cne_subscription_jwt` | `string` | `""` | Subscription JWT contents (from bnk.subscription_jwt_local_file), used when use_cos_bucket=false. | no |
 | `flp_vsi_ssh_key` | `string` | `""` | Existing VPC SSH key name to attach to the FLP VSI (operator access). Empty = no key. | no |
+| `flp_vsi_create_vpc` | `bool` | `false` | Build the proxy its own VPC, address prefix and public gateway instead of placing it in one that already exists. Default false keeps existing workspaces byte-identical. | no |
+| `flp_vsi_vpc_name` | `string` | `""` | Name for the VPC created when flp_vsi_create_vpc = true. Empty uses flp-vsi-vpc. | no |
+| `flp_vsi_subnet_cidr` | `string` | `"10.250.0.0/24"` | Address prefix for the VPC created when flp_vsi_create_vpc = true. Must not overlap anything the consuming clusters can already route to. | no |
 
 ## Module: `gateway`
 
@@ -378,12 +387,14 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
 | `roks_cos_instance_name` | `string` | `"tf-openshift-cos-instance"` | Name of the COS instance for the OpenShift image registry | no |
 | `roks_transit_gateway_name` | `string` | `"tf-tgw"` | Name of the Transit Gateway | no |
-| `cluster_vpc_cidr` | `string` | `""` | CIDR the cluster VPC's three per-zone address prefixes are carved from (`10.241.0.0/16` → `10.241.0.0/18`, `10.241.64.0/18`, `10.241.128.0/18`). Empty leaves IBM's `auto` management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. `/18` is the smallest usable block. Ignored when `use_existing_cluster_vpc = true`. | no |
 | `use_existing_cluster_vpc` | `bool` | `false` | Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster). | no |
 | `existing_cluster_vpc_id` | `string` | `""` | ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster). | no |
 | `kubeconfig_dir` | `string` | _required_ | Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the cluster phase invokes `roksbnkctl tfx <verb>` in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
+| `cluster_vpc_cidr` | `string` | `""` | <<-EOT | no |
+| `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
+| `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
 
 ## Module: `testing`
 

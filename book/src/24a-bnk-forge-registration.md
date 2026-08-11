@@ -318,3 +318,27 @@ build that has no `PUT` route.
   — how the IBM Cloud API key passed to Forge is resolved.
 - [Chapter 28 — Configuration reference](./28-configuration-reference.md#bnkforge-block)
   — the `bnkforge:` field schema.
+
+## Two behaviours that exist because of how Forge drives this tool
+
+The [Forge modules](https://github.com/jgruberf5/roksbnkctl-bnk-forge) run one
+container per roksbnkctl phase, argv-only, each step re-running
+`init --override-from-env --non-interactive` from a **curated environment** over
+a deployment-scoped shared `/work`, against a **digest-pinned** runner image.
+Two of roksbnkctl's checks are shaped by that, and both would otherwise break
+blueprints:
+
+**An unknown BNK line warns instead of refusing.** `manifest_version` is a
+free-text input on the `bnk-install` module, the support matrix ships inside the
+binary, and the image is pinned by digest — so a user selecting a release newer
+than the pinned build would hit a hard refusal on a combination never known to be
+wrong, with no action available to them. It warns and proceeds instead.
+
+**An unset `network_mode` defers to the recorded cluster.** Each step's
+environment carries only what that step needs, so a mode set by `cluster-create`
+is simply absent when `bnk-install` regenerates `config.yaml`. Reading that
+absence as a demand for `single-nic` would refuse a correct multi-NIC deployment
+at its second module. Only an *explicit* contradiction is refused.
+
+The practical rule for blueprint authors: **only the module that CREATES a
+cluster needs to know the network mode.** Everything downstream reads the record.
