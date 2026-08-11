@@ -39,9 +39,20 @@ func (w *Workspace) BNKLine() (string, error) {
 	if w == nil {
 		return "", fmt.Errorf("no workspace")
 	}
+	// EMPTY IS NOT MISSING INFORMATION — it is the default, and the default is a
+	// known version. bnk.manifest_version has always been optional: absent means
+	// the HCL's own default is what gets installed, so the line is perfectly
+	// derivable and refusing here would turn an optional field into a required
+	// one. Every workspace that never set it — including the BNK Forge
+	// bnk-install module, whose manifest_version input defaults to blank — would
+	// stop working at `bnk up`.
+	//
+	// A non-empty value that cannot be parsed is different: something was meant
+	// and cannot be honoured, and guessing would pick a terraform layer and a set
+	// of CRDs on that guess.
 	mv := strings.TrimSpace(w.BNK.ManifestVersion)
 	if mv == "" {
-		return "", fmt.Errorf("bnk.manifest_version is empty, so the BNK release line cannot be determined — set it to a published f5-bigip-k8s-manifest version such as %s", DefaultManifestVersion)
+		mv = DefaultManifestVersion
 	}
 	m := manifestVersionRe.FindStringSubmatch(mv)
 	if m == nil {

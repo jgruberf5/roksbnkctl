@@ -18,11 +18,13 @@ func TestBNKLine(t *testing.T) {
 		{"2.4.0-1.2.3-0.0.1", "2.4", false},
 		{"2.10.0-x", "2.10", false}, // two-digit minor must not truncate
 		{"3.0", "3.0", false},
-		// Refuse rather than guess: a default here picks a terraform layer and a
-		// set of CRDs on a guess, discovered as an apply failure on a real cluster.
-		{"", "", true},
-		{"garbage", "", true},
-		{"v2.3.0", "", true}, // a leading v is not the published shape
+		// UNSET is not unknown. The field has always been optional — absent means
+		// the HCL default installs — so the line is derivable and must be
+		// derived. Erroring here made an optional field required and broke
+		// `bnk up` for every workspace that never set it. Caught by the e2e.
+		{"", "2.3", false},
+		{"garbage", "", true}, // meant something, cannot be honoured — still fatal
+		{"v2.3.0", "", true},  // a leading v is not the published shape
 	}
 	for _, c := range cases {
 		ws := &Workspace{BNK: BNKCfg{ManifestVersion: c.manifest}}
@@ -122,5 +124,26 @@ func TestSupportMatrixLoads(t *testing.T) {
 		if l.BNK == "" || len(l.NetworkModes) == 0 || len(l.Contract) == 0 {
 			t.Errorf("incomplete row %+v — a row missing modes or contract silently permits nothing", l)
 		}
+	}
+}
+
+// The exact shape the e2e hit: a workspace built by `init --non-interactive`
+// from an environment that never mentioned a manifest version. That is a
+// SUPPORTED configuration — the HCL default installs — and it must reach
+// `bnk up`, not be refused by a version check.
+func TestUnsetManifestVersionIsSupportedEndToEnd(t *testing.T) {
+	ws := &Workspace{} // no bnk: block at all, as init --non-interactive writes
+
+	line, err := ws.BNKLine()
+	if err != nil {
+		t.Fatalf("an unset manifest version is the default, not an error: %v", err)
+	}
+	if line != "2.3" {
+		t.Errorf("line = %q, want the default's line 2.3", line)
+	}
+	// And the pairing it produces must actually be supported, or the guard still
+	// refuses for a second reason.
+	if err := CheckSupported(line, NetworkModeSingleNIC, ContractSchemaVersion); err != nil {
+		t.Errorf("default line + single-nic + current contract must be supported: %v", err)
 	}
 }
