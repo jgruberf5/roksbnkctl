@@ -114,7 +114,9 @@ func Open(
 		fmt.Fprintf(os.Stderr, "warning: could not prepare helm/kubeconfig env: %v\n", err)
 	}
 
-	sourceDir, err := FetchSource(ctx, wsCfg.TFSource, srcRoot)
+	// Fetch the source FOR this BNK line, so a release that needs different HCL
+	// gets it without every other release having to move.
+	sourceDir, err := FetchSourceForLine(ctx, wsCfg.TFSource, srcRoot, wsCfg.BNKLineOrEmpty())
 	if err != nil {
 		return nil, err
 	}

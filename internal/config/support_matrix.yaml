@@ -1,0 +1,36 @@
+# Which combinations of BNK release and cluster network mode are supported.
+#
+# DATA, NOT CODE, AND NOT TRIBAL KNOWLEDGE. Two version axes vary independently
+# here — the BNK release and the IBM platform capability — and they interact.
+# Writing the valid cells down is what lets `cluster up` and `bnk up` refuse an
+# unsupported pairing at plan time instead of failing against a real cluster.
+#
+# `contract` lists the cluster-outputs.json schema versions a BNK line can read.
+# A line that understands schema 1 can drive clusters created before multi-NIC
+# existed; that is what keeps existing deployments working.
+#
+# Adding a cell means adding a CI plan for it. A cell with no coverage is a claim
+# nobody has checked.
+lines:
+  - bnk: "2.3"
+    contract: [1, 2]
+    network_modes: [single-nic]
+    notes: >-
+      The shipped line. Single-NIC only — multi-NIC ROKS changes the F5 network
+      attachments and CNEInstance options, which 2.3 does not express.
+
+  # PROVISIONAL — written before 2.4 shipped, and never run against it.
+  #
+  # Every value in this row is an EXPECTATION, not an observation: that 2.4 reads
+  # both contract versions, and that it expresses multi-NIC. It exists so the
+  # machinery has something to select when 2.4 arrives, not because the pairing
+  # has been verified. Confirm each field against the real release before
+  # treating a plan-time pass on this row as meaningful.
+  - bnk: "2.4"
+    contract: [1, 2]
+    network_modes: [single-nic, multi-nic]
+    notes: >-
+      PROVISIONAL, not yet verified against a released 2.4. Expected to add
+      multi-NIC while still driving single-NIC clusters, including ones created
+      before multi-NIC existed, so an existing deployment can move to 2.4 without
+      touching its cluster.

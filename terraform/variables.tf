@@ -823,3 +823,24 @@ variable "flp_vsi_subnet_cidr" {
     error_message = "flp_vsi_subnet_cidr must be a valid IPv4 CIDR, e.g. 10.250.0.0/24."
   }
 }
+
+# ── Worker network attachment mode ───────────────────────────────────────────
+# single-nic is today's behaviour and the default. multi-nic changes both the IBM
+# cluster creation semantics and what the BNK phase must attach to, which is why
+# it is fixed at creation and never converted in place.
+# Declared and validated here before any module consumes it. That is deliberate:
+# the value decides how a cluster is BUILT, so an unknown one must be rejected at
+# plan time by the same configuration that will later act on it — not only by the
+# CLI, which a `terraform apply` run by hand would bypass. The multi-nic HCL
+# arrives as a per-line overlay (see lines/README.md) once the IBM module that
+# expresses it ships.
+variable "cluster_network_mode" {
+  description = "How the cluster's worker nodes are attached: single-nic (default) or multi-nic."
+  type        = string
+  default     = "single-nic"
+
+  validation {
+    condition     = contains(["single-nic", "multi-nic"], var.cluster_network_mode)
+    error_message = "cluster_network_mode must be single-nic or multi-nic."
+  }
+}

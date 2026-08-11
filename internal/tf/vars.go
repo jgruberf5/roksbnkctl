@@ -248,6 +248,12 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "existing_cluster_vpc_id = %q\n", res.ClusterVPC.Existing)
 	}
 
+	// The worker attachment mode. Rendered ALWAYS, unlike most settings here,
+	// because the terraform default and the tool default must never be able to
+	// disagree about something that decides how a cluster is built. A single-nic
+	// value reproduces today's behaviour exactly.
+	fmt.Fprintf(w, "cluster_network_mode = %q\n", ws.ClusterNetworkMode())
+
 	// BYO cluster SUBNETS (#61). Adopting the VPC alone still creates subnets
 	// inside it, which defeats the point when the subnets are the thing carrying
 	// the ACLs and routing. Emitted only when ids are supplied; absent leaves

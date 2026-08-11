@@ -342,6 +342,19 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	// over an install that already exists, then spend ~13 minutes failing to create
 	// them (issue #53). Narrow by construction: a workspace WITH state converges as
 	// before and never reaches this.
+
+	// Both halves of the version question are known here and nowhere earlier: the
+	// BNK line from bnk.manifest_version, and what the cluster actually IS from its
+	// own record. Refusing an unsupported pairing now costs a second; discovering it
+	// during the apply costs a cluster in a state neither half expects.
+	if err := guardSupportedCombination(cctx, w); err != nil {
+		return false, nil, err
+	}
+	// A create-time setting that contradicts the built cluster means a REPLACEMENT,
+	// not a change. Refuse the enforceable ones, warn on the rest.
+	if err := guardCreateTimeSettings(cctx, w); err != nil {
+		return false, nil, err
+	}
 	if err := guardUnownedBNKInstall(ctx, cctx, tfws, w); err != nil {
 		return false, nil, err
 	}
